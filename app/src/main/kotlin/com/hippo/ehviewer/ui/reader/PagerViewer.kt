@@ -42,6 +42,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import me.saket.telephoto.zoomable.DoubleClickToZoomListener
 import me.saket.telephoto.zoomable.OverzoomEffect
 import me.saket.telephoto.zoomable.Viewport
 import me.saket.telephoto.zoomable.ZoomLimit
@@ -61,6 +62,8 @@ fun PagerViewer(
     navigator: () -> NavigationRegions,
     onSelectPage: (Page) -> Unit,
     onMenuRegionClick: () -> Unit,
+    onPrevFolder: () -> Unit = {},
+    onNextFolder: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -73,6 +76,19 @@ fun PagerViewer(
         derivedStateOf {
             pagerState.layoutInfo.viewportSize.toSize()
         }
+    }
+    val doubleTap = remember(isRtl, navigator, onPrevFolder, onNextFolder) {
+        doubleTapAction(
+            isRtl = isRtl,
+            getViewportSize = {
+                // Prefer live pager viewport; fall back to last known layoutSize
+                val live = pagerState.layoutInfo.viewportSize.toSize()
+                if (live != Size.Zero) live else layoutSize
+            },
+            getNavigator = navigator,
+            onPrevFolder = onPrevFolder,
+            onNextFolder = onNextFolder,
+        )
     }
     if (isVertical) {
         VerticalPager(
@@ -94,6 +110,7 @@ fun PagerViewer(
                 pagerState = pagerState,
                 onSelectPage = onSelectPage,
                 onMenuRegionClick = onMenuRegionClick,
+                onDoubleClick = doubleTap,
                 scope = scope,
             )
         }
@@ -119,6 +136,7 @@ fun PagerViewer(
                 pagerState = pagerState,
                 onSelectPage = onSelectPage,
                 onMenuRegionClick = onMenuRegionClick,
+                onDoubleClick = doubleTap,
                 scope = scope,
             )
         }
@@ -138,6 +156,7 @@ private fun PageContainer(
     pagerState: PagerState,
     onSelectPage: (Page) -> Unit,
     onMenuRegionClick: () -> Unit,
+    onDoubleClick: DoubleClickToZoomListener,
     scope: CoroutineScope,
 ) {
     @Suppress("NAME_SHADOWING")
@@ -236,7 +255,7 @@ private fun PageContainer(
                 state = zoomableState,
                 onClick = onTap.partially1(zoomableState),
                 onLongClick = onLongClick,
-                onDoubleClick = DoubleTapZoom,
+                onDoubleClick = onDoubleClick,
             ),
         )
     }

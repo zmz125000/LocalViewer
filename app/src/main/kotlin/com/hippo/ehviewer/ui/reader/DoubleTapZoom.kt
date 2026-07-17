@@ -1,14 +1,29 @@
 package com.hippo.ehviewer.ui.reader
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import com.hippo.ehviewer.Settings
+import eu.kanade.tachiyomi.ui.reader.viewer.NavigationRegions
+import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
+import eu.kanade.tachiyomi.ui.reader.viewer.getAction
 import me.saket.telephoto.zoomable.DoubleClickToZoomListener
 import me.saket.telephoto.zoomable.ZoomableState
 
-object DoubleTapZoom : DoubleClickToZoomListener {
+/**
+ * Double-tap handler.
+ * - [Settings.doubleTapToZoom] on → zoom in/out (original behavior).
+ * - off → prev/next **gallery folder** using the same navigation zones as single-tap page turns.
+ */
+fun doubleTapAction(
+    isRtl: Boolean,
+    getViewportSize: () -> Size,
+    getNavigator: () -> NavigationRegions,
+    onPrevFolder: () -> Unit,
+    onNextFolder: () -> Unit,
+): DoubleClickToZoomListener = object : DoubleClickToZoomListener {
     override suspend fun onDoubleClick(state: ZoomableState, centroid: Offset) {
         if (Settings.doubleTapToZoom.value) {
-            val zoomFraction = state.zoomFraction ?: return // Content isn't ready yet
+            val zoomFraction = state.zoomFraction ?: return
             if (zoomFraction > 0.05f) {
                 state.resetZoom()
             } else {
@@ -18,6 +33,34 @@ object DoubleTapZoom : DoubleClickToZoomListener {
                     centroid = centroid,
                 )
             }
+            return
+        }
+
+        val size = getViewportSize()
+        if (size.width <= 0f || size.height <= 0f) return
+        val region = getNavigator().getAction(Offset(centroid.x / size.width, centroid.y / size.height))
+        when (region) {
+            NavigationRegion.NEXT -> onNextFolder()
+            NavigationRegion.PREV -> onPrevFolder()
+            NavigationRegion.RIGHT -> if (isRtl) onPrevFolder() else onNextFolder()
+            NavigationRegion.LEFT -> if (isRtl) onNextFolder() else onPrevFolder()
+            NavigationRegion.MENU -> Unit
+        }
+    }
+}
+
+/** Default zoom-only listener (no folder navigation). */
+object DoubleTapZoom : DoubleClickToZoomListener {
+    override suspend fun onDoubleClick(state: ZoomableState, centroid: Offset) {
+        if (!Settings.doubleTapToZoom.value) return
+        val zoomFraction = state.zoomFraction ?: return
+        if (zoomFraction > 0.05f) {
+            state.resetZoom()
+        } else {
+            state.zoomTo(
+                zoomFactor = state.contentTransformation.scaleMetadata.initialScale.scaleX * 2f,
+                centroid = centroid,
+            )
         }
     }
 }

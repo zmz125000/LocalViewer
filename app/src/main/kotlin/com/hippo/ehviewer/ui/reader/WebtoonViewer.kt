@@ -13,9 +13,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.Page
@@ -38,6 +40,8 @@ fun WebtoonViewer(
     navigator: () -> NavigationRegions,
     onSelectPage: (Page) -> Unit,
     onMenuRegionClick: () -> Unit,
+    onPrevFolder: () -> Unit = {},
+    onNextFolder: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -52,6 +56,17 @@ fun WebtoonViewer(
             }
         }
     }.collectAsState(0.dp)
+    val doubleTap = remember(navigator, onPrevFolder, onNextFolder) {
+        doubleTapAction(
+            isRtl = false,
+            getViewportSize = {
+                lazyListState.layoutInfo.viewportSize.toSize().takeIf { it != Size.Zero } ?: Size.Zero
+            },
+            getNavigator = navigator,
+            onPrevFolder = onPrevFolder,
+            onNextFolder = onNextFolder,
+        )
+    }
     LazyColumn(
         modifier = modifier.zoomable(
             state = zoomableState,
@@ -76,7 +91,7 @@ fun WebtoonViewer(
                     onSelectPage(items[info.index])
                 }
             },
-            onDoubleClick = DoubleTapZoom,
+            onDoubleClick = doubleTap,
         ),
         state = lazyListState,
         contentPadding = PaddingValues(horizontal = sidePadding),

@@ -112,9 +112,10 @@ abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, sta
 
     override fun close() {
         lock.write { cache.evictAll() }
-        info?.run {
+        info?.let { gallery ->
             progressScope.launch {
-                EhDB.putReadProgress(gid, startPage)
+                // Ensure GALLERIES row exists — Progress has FK to GALLERIES
+                runCatching { EhDB.putReadProgress(gallery, startPage) }
             }
         }
     }

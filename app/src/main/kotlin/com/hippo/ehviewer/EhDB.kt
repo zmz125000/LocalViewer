@@ -37,6 +37,7 @@ import com.ehviewer.core.database.roomDb
 import com.ehviewer.core.files.delete
 import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.model.GalleryInfo
+import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.download.DownloadManager
 import kotlinx.coroutines.flow.Flow
 import okio.Path
@@ -61,7 +62,24 @@ object EhDB {
 
     fun getReadProgressFlow(gid: Long) = db.progressDao().getPageFlow(gid)
     suspend fun getReadProgress(gid: Long) = db.progressDao().getPage(gid)
-    suspend fun putReadProgress(gid: Long, page: Int) = db.progressDao().upsert(ProgressInfo(gid, page))
+    /**
+     * Progress rows have a FK to GALLERIES. Upsert is a no-op (logged) if the gallery
+     * entity is missing — can happen when local/SMB galleries were never written to history.
+     */
+    suspend fun putReadProgress(gid: Long, page: Int) {
+        runCatching {
+            db.progressDao().upsert(ProgressInfo(gid, page))
+        }.onFailure {
+            // FK missing gallery — try once after ensuring a stub is not always possible here
+            // without full GalleryInfo; swallow to avoid crashing reader teardown.
+            logcat(it)
+        }
+    }
+
+    suspend fun putReadProgress(galleryInfo: GalleryInfo, page: Int) {
+        putGalleryInfo(galleryInfo.asEntity())
+        db.progressDao().upsert(ProgressInfo(galleryInfo.gid, page))
+    }
     suspend fun clearProgressInfo() = db.progressDao().deleteAll()
 
     suspend fun getAllDownloadInfo() = db.downloadsDao().joinList().onEach {

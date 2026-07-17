@@ -63,6 +63,7 @@ import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.unreachable
+import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
@@ -77,9 +78,11 @@ import com.hippo.ehviewer.gallery.useArchivePageLoader
 import com.hippo.ehviewer.gallery.useEhPageLoader
 import com.hippo.ehviewer.gallery.useFolderPageLoader
 import com.hippo.ehviewer.gallery.useSmbFolderPageLoader
+import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.MainActivity
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
 import com.hippo.ehviewer.ui.theme.EhTheme
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitInputText
@@ -193,7 +196,7 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                     is ReaderScreenArgs.Archive -> null
                 }
                 key(loader) {
-                    ReaderScreen(loader, info)
+                    ReaderScreen(pageLoader = loader, info = info, args = args)
                 }
             }
         }
@@ -201,8 +204,8 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
 }
 
 @Composable
-context(activity: MainActivity, _: SnackbarHostState, _: DialogState, _: CoroutineScope, _: DestinationsNavigator)
-fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?) {
+context(activity: MainActivity, _: SnackbarHostState, _: DialogState, _: CoroutineScope, nav: DestinationsNavigator)
+fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScreenArgs) {
     LaunchedEffect(Unit) {
         val orientation = activity.requestedOrientation
         Settings.orientationMode.valueFlow()
@@ -309,6 +312,38 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?) {
             } else {
                 WindowInsets.systemBars
             }
+            // Guard against re-entrant double-taps while a folder switch is in flight
+            val folderNavBusy = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+            fun goFolder(next: Boolean) {
+                if (!folderNavBusy.compareAndSet(false, true)) return
+                // Navigate on Main after the gesture/input frame finishes — avoids
+                // Compose "Cannot start a writer when a reader is pending" crashes.
+                launch {
+                    try {
+                        val sibling = withIOContext {
+                            GallerySiblingNavigator.sibling(args, next)
+                        } ?: return@launch
+                        // Write gallery row before opening so progress/history FKs succeed
+                        sibling.let { s ->
+                            val info = when (s) {
+                                is ReaderScreenArgs.LocalFolder -> s.info
+                                is ReaderScreenArgs.SmbFolder -> s.info
+                                else -> null
+                            }
+                            info?.let { withIOContext { EhDB.putHistoryInfo(it) } }
+                        }
+                        // Replace current reader so back still returns to folder browser once
+                        nav.navigate(ReaderScreenDestination(sibling)) {
+                            launchSingleTop = true
+                            popUpTo(ReaderScreenDestination) {
+                                inclusive = true
+                            }
+                        }
+                    } finally {
+                        folderNavBusy.set(false)
+                    }
+                }
+            }
             GalleryPager(
                 type = readingMode,
                 pagerState = pagerState,
@@ -318,6 +353,8 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?) {
                 onNavigationModeChange = { showNavigationOverlay = true },
                 onSelectPage = onSelectPage,
                 onMenuRegionClick = { appbarVisible = !appbarVisible },
+                onPrevFolder = { goFolder(next = false) },
+                onNextFolder = { goFolder(next = true) },
                 modifier = Modifier.background(bgColor).pointerInput(syncState) {
                     awaitEachGesture {
                         waitForUpOrCancellation()
