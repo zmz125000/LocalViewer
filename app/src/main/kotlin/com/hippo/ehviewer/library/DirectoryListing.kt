@@ -1,15 +1,11 @@
 package com.hippo.ehviewer.library
 
-import com.ehviewer.core.files.isDirectory
-import com.ehviewer.core.files.isFile
-import com.ehviewer.core.files.list
 import okio.Path
 
 /**
  * One level of a hierarchical browser: directories first, then galleries.
- * Peeks one level into each child directory (no deep recursion).
- * Image counting stops at [BROWSE_IMAGE_SCAN_CAP] for browse UI.
- * Cover is the first image found (no natural sort).
+ * Peeks one level into each child directory using [forEachBrowseChild]
+ * (single SAF query with MIME — no per-file metadata round-trips).
  */
 sealed interface BrowseEntry {
     val name: String
@@ -19,9 +15,7 @@ sealed interface BrowseEntry {
     data class FolderGallery(
         override val name: String,
         val path: Path,
-        /** Exact count, or [BROWSE_IMAGE_SCAN_CAP] when [pageCountCapped]. */
         val pageCount: Int,
-        /** True when more than [BROWSE_IMAGE_SCAN_CAP] images (UI shows ∞). */
         val pageCountCapped: Boolean = false,
         val coverPath: Path?,
     ) : BrowseEntry
@@ -32,10 +26,6 @@ sealed interface BrowseEntry {
     ) : BrowseEntry
 }
 
-/**
- * List a local directory for the folder browser.
- * Uses [BrowseSession] cache when present; call [BrowseSession.invalidateLocalListing] to force refresh.
- */
 fun listLocalDirectory(dir: Path, useCache: Boolean = true): List<BrowseEntry> {
     val key = BrowseSession.pathKey(dir)
     if (useCache) {
@@ -47,20 +37,18 @@ fun listLocalDirectory(dir: Path, useCache: Boolean = true): List<BrowseEntry> {
 }
 
 fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
-    val children = runCatching { dir.list() }.getOrDefault(emptyList())
-    val childDirs = ArrayList<Path>()
+    val childDirs = ArrayList<BrowseChild>()
     var coverPath: Path? = null
     var imageCount = 0
     var imagesCapped = false
     val archives = ArrayList<BrowseEntry.ArchiveGallery>()
 
-    for (child in children) {
-        val name = child.name
-        if (name.startsWith('.')) continue
+    // Parent listing: need every subdirectory; image count capped; cover = first image.
+    dir.forEachBrowseChild { child ->
         when {
             child.isDirectory -> childDirs += child
-            child.isFile && isImageFileName(name) -> {
-                if (coverPath == null) coverPath = child
+            isImageFileName(child.name) -> {
+                if (coverPath == null) coverPath = child.path
                 if (!imagesCapped) {
                     imageCount++
                     if (imageCount > BROWSE_IMAGE_SCAN_CAP) {
@@ -69,25 +57,26 @@ fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
                     }
                 }
             }
-            child.isFile && isArchiveFileName(name) ->
+            isArchiveFileName(child.name) ->
                 archives += BrowseEntry.ArchiveGallery(
-                    name = name.substringBeforeLast('.').ifEmpty { name },
-                    path = child,
+                    name = child.name.substringBeforeLast('.').ifEmpty { child.name },
+                    path = child.path,
                 )
         }
+        true // always continue — need full dir set for parent
     }
 
     val dirs = ArrayList<BrowseEntry.Directory>()
     val leafGalleries = ArrayList<BrowseEntry.FolderGallery>()
 
     for (sub in childDirs) {
-        when (val kind = classifyChildDirectory(sub)) {
+        when (val kind = classifyChildDirectory(sub.path)) {
             is ChildDirKind.Navigable ->
-                dirs += BrowseEntry.Directory(sub.name, sub)
+                dirs += BrowseEntry.Directory(sub.name, sub.path)
             is ChildDirKind.LeafGallery ->
                 leafGalleries += BrowseEntry.FolderGallery(
                     name = sub.name,
-                    path = sub,
+                    path = sub.path,
                     pageCount = kind.pageCount,
                     pageCountCapped = kind.pageCountCapped,
                     coverPath = kind.coverPath,
@@ -133,45 +122,45 @@ private sealed interface ChildDirKind {
 }
 
 /**
- * Peek one level into [sub].
- * - First subdirectory ⇒ navigable (immediate).
- * - Cover = first image found (no sort).
- * - After image count exceeds [BROWSE_IMAGE_SCAN_CAP], only scan remaining entries for subdirs.
+ * Peek one level with streaming visit (one SAF cursor / one File.listFiles):
+ * - First subdirectory ⇒ Navigable (stop cursor immediately)
+ * - Cover = first image; after CAP only scan remaining for more subdirs
  */
 private fun classifyChildDirectory(sub: Path): ChildDirKind {
-    val children = runCatching { sub.list() }.getOrDefault(emptyList())
     var coverPath: Path? = null
     var imageCount = 0
     var imagesCapped = false
+    var sawSubdir = false
     val archives = ArrayList<BrowseEntry.ArchiveGallery>()
 
-    for (child in children) {
-        val name = child.name
-        if (name.startsWith('.')) continue
-
-        // After cap: only care about subdirs (cheap-ish skip of file-type checks once dir ruled out)
-        if (imagesCapped) {
-            if (child.isDirectory) return ChildDirKind.Navigable
-            continue
+    sub.forEachBrowseChild { child ->
+        if (child.isDirectory) {
+            sawSubdir = true
+            return@forEachBrowseChild false
         }
-
+        if (imagesCapped) {
+            // Only looking for subdirs now (checked above).
+            return@forEachBrowseChild true
+        }
         when {
-            child.isDirectory -> return ChildDirKind.Navigable
-            child.isFile && isImageFileName(name) -> {
-                if (coverPath == null) coverPath = child
+            isImageFileName(child.name) -> {
+                if (coverPath == null) coverPath = child.path
                 imageCount++
                 if (imageCount > BROWSE_IMAGE_SCAN_CAP) {
                     imageCount = BROWSE_IMAGE_SCAN_CAP
                     imagesCapped = true
                 }
             }
-            child.isFile && isArchiveFileName(name) ->
+            isArchiveFileName(child.name) ->
                 archives += BrowseEntry.ArchiveGallery(
-                    name = name.substringBeforeLast('.').ifEmpty { name },
-                    path = child,
+                    name = child.name.substringBeforeLast('.').ifEmpty { child.name },
+                    path = child.path,
                 )
         }
+        true
     }
+
+    if (sawSubdir) return ChildDirKind.Navigable
 
     if (coverPath != null || imagesCapped) {
         return ChildDirKind.LeafGallery(
@@ -200,16 +189,12 @@ sealed interface BrowseEntryRemote {
 
     data class Directory(override val name: String) : BrowseEntryRemote
 
-    /**
-     * @param relativeName empty = current directory gallery; otherwise child folder name under parent.
-     */
     data class FolderGallery(
         override val name: String,
         val relativeName: String,
         val pageCount: Int,
         val pageCountCapped: Boolean = false,
         val coverFileName: String?,
-        /** Partial names for UI only; reader re-lists when capped/empty. */
         val imageFileNames: List<String>,
     ) : BrowseEntryRemote
 
@@ -220,9 +205,6 @@ sealed interface BrowseEntryRemote {
     ) : BrowseEntryRemote
 }
 
-/**
- * Classify current-dir listing plus peeks of child directories.
- */
 fun classifyRemoteListingWithPeeks(
     currentDirName: String,
     entries: List<RemoteChild>,
@@ -319,14 +301,9 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
 
     for (e in peek) {
         if (e.name.startsWith('.')) continue
-
-        if (imagesCapped) {
-            if (e.isDirectory) return RemoteChildKind.Navigable
-            continue
-        }
-
+        if (e.isDirectory) return RemoteChildKind.Navigable
+        if (imagesCapped) continue
         when {
-            e.isDirectory -> return RemoteChildKind.Navigable
             isImageFileName(e.name) -> {
                 if (coverFileName == null) coverFileName = e.name
                 if (imageNames.size < BROWSE_IMAGE_SCAN_CAP) imageNames += e.name
