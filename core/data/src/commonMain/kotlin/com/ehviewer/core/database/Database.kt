@@ -11,7 +11,9 @@ import com.ehviewer.core.database.dao.DownloadsDao
 import com.ehviewer.core.database.dao.FilterDao
 import com.ehviewer.core.database.dao.GalleryDao
 import com.ehviewer.core.database.dao.HistoryDao
+import com.ehviewer.core.database.dao.LibraryRootDao
 import com.ehviewer.core.database.dao.LocalFavoritesDao
+import com.ehviewer.core.database.dao.LocalGalleryDao
 import com.ehviewer.core.database.dao.ProgressDao
 import com.ehviewer.core.database.dao.QuickSearchDao
 import com.ehviewer.core.database.dao.SearchDao
@@ -24,7 +26,9 @@ import com.ehviewer.core.database.model.FilterModeConverter
 import com.ehviewer.core.database.model.GalleryEntity
 import com.ehviewer.core.database.model.GalleryFtsEntity
 import com.ehviewer.core.database.model.HistoryInfo
+import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.LocalFavoriteInfo
+import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.database.model.ProgressInfo
 import com.ehviewer.core.database.model.QuickSearch
 import com.ehviewer.core.database.model.Search
@@ -81,4 +85,14 @@ abstract class EhDatabase : RoomDatabase() {
 )
 abstract class SearchDatabase : RoomDatabase() {
     abstract fun searchDao(): SearchDao
+}
+
+@Database(
+    entities = [LibraryRootEntity::class, LocalGalleryEntity::class],
+    version = 1,
+    exportSchema = true,
+)
+abstract class LocalLibraryDatabase : RoomDatabase() {
+    abstract fun libraryRootDao(): LibraryRootDao
+    abstract fun localGalleryDao(): LocalGalleryDao
 }

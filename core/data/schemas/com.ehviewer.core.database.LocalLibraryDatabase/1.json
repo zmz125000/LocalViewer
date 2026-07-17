@@ -1,0 +1,148 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "f45b16c4a3d1548e1fed807617627b7a",
+    "entities": [
+      {
+        "tableName": "LIBRARY_ROOTS",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`ID` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `TREE_URI` TEXT NOT NULL, `DISPLAY_NAME` TEXT NOT NULL, `ADDED_AT` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "ID",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "treeUri",
+            "columnName": "TREE_URI",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "DISPLAY_NAME",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "addedAt",
+            "columnName": "ADDED_AT",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "ID"
+          ]
+        }
+      },
+      {
+        "tableName": "LOCAL_GALLERIES",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`ID` INTEGER NOT NULL, `ROOT_ID` INTEGER NOT NULL, `RELATIVE_PATH` TEXT NOT NULL, `TITLE` TEXT NOT NULL, `KIND` INTEGER NOT NULL, `PAGE_COUNT` INTEGER NOT NULL, `COVER_PATH` TEXT, `CONTENT_PATH` TEXT NOT NULL, `MTIME` INTEGER NOT NULL, PRIMARY KEY(`ID`), FOREIGN KEY(`ROOT_ID`) REFERENCES `LIBRARY_ROOTS`(`ID`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "ID",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rootId",
+            "columnName": "ROOT_ID",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "relativePath",
+            "columnName": "RELATIVE_PATH",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "TITLE",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "KIND",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pageCount",
+            "columnName": "PAGE_COUNT",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coverPath",
+            "columnName": "COVER_PATH",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "contentPath",
+            "columnName": "CONTENT_PATH",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mtime",
+            "columnName": "MTIME",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "ID"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_LOCAL_GALLERIES_ROOT_ID_RELATIVE_PATH",
+            "unique": true,
+            "columnNames": [
+              "ROOT_ID",
+              "RELATIVE_PATH"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_LOCAL_GALLERIES_ROOT_ID_RELATIVE_PATH` ON `${TABLE_NAME}` (`ROOT_ID`, `RELATIVE_PATH`)"
+          },
+          {
+            "name": "index_LOCAL_GALLERIES_TITLE",
+            "unique": false,
+            "columnNames": [
+              "TITLE"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_LOCAL_GALLERIES_TITLE` ON `${TABLE_NAME}` (`TITLE`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "LIBRARY_ROOTS",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "ROOT_ID"
+            ],
+            "referencedColumns": [
+              "ID"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f45b16c4a3d1548e1fed807617627b7a')"
+    ]
+  }
+}

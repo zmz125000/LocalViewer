@@ -75,6 +75,7 @@ import com.hippo.ehviewer.gallery.status
 import com.hippo.ehviewer.gallery.unblock
 import com.hippo.ehviewer.gallery.useArchivePageLoader
 import com.hippo.ehviewer.gallery.useEhPageLoader
+import com.hippo.ehviewer.gallery.useFolderPageLoader
 import com.hippo.ehviewer.ui.MainActivity
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.theme.EhTheme
@@ -109,6 +110,14 @@ sealed interface ReaderScreenArgs {
 
     @Serializable
     data class Archive(val path: String) : ReaderScreenArgs
+
+    /** Local image folder (direct children only). */
+    @Serializable
+    data class LocalFolder(
+        val path: String,
+        val page: Int = -1,
+        val info: BaseGalleryInfo? = null,
+    ) : ReaderScreenArgs
 }
 
 @Composable
@@ -165,7 +174,11 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
             }
             is Either.Right -> {
                 val loader = result.value
-                val info = (args as? ReaderScreenArgs.Gallery)?.info
+                val info = when (args) {
+                    is ReaderScreenArgs.Gallery -> args.info
+                    is ReaderScreenArgs.LocalFolder -> args.info
+                    is ReaderScreenArgs.Archive -> null
+                }
                 key(loader) {
                     ReaderScreen(loader, info)
                 }
@@ -386,6 +399,15 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
         } else {
             useEhPageLoader(info, page, block)
         }
+    }
+    is ReaderScreenArgs.LocalFolder -> {
+        val info = args.info
+        val page = when {
+            args.page != -1 -> args.page
+            info != null -> EhDB.getReadProgress(info.gid)
+            else -> 0
+        }
+        useFolderPageLoader(args.path.toPath(), info, page, block)
     }
     is ReaderScreenArgs.Archive -> useArchivePageLoader(
         args.path.toPath(),

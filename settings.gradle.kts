@@ -29,11 +29,12 @@ dependencyResolutionManagement {
 
 plugins {
     id("com.android.settings") version "9.2.1"
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
 android {
     compileSdk = 37
-    minSdk = 23
+    minSdk = 36
     targetSdk = 37
     ndkVersion = "29.0.14206865"
     buildToolsVersion = "37.0.0"

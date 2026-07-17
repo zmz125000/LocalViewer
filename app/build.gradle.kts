@@ -55,12 +55,12 @@ android {
     val snapshot = !hasProperty("release")
 
     defaultConfig {
-        applicationId = "moe.tarsin.ehviewer"
-        versionCode = 180063
+        applicationId = "moe.tarsin.localviewer"
+        versionCode = 1
         versionName = if (snapshot) {
-            "1.15.0-SNAPSHOT"
+            "0.1.0-SNAPSHOT"
         } else {
-            "1.14.6"
+            "0.1.0"
         }
         buildConfigField("boolean", "SNAPSHOT", "$snapshot")
         buildConfigField("String", "RAW_VERSION_NAME", "\"$versionName\"")
@@ -79,11 +79,7 @@ android {
 
     productFlavors {
         create("default") {
-            minSdk = 26
-        }
-        create("marshmallow") {
-            applicationIdSuffix = ".m"
-            versionNameSuffix = "-M"
+            minSdk = 36
         }
     }
 

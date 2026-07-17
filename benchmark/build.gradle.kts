@@ -15,13 +15,12 @@ android {
     flavorDimensions += listOf("api")
     productFlavors {
         create("default") { dimension = "api" }
-        create("marshmallow") { dimension = "api" }
     }
 
     testOptions.managedDevices.localDevices {
-        create("pixel6Api35") {
+        create("pixel6Api36") {
             device = "Pixel 6"
-            apiLevel = 35
+            apiLevel = 36
             testedAbi = "x86_64"
             systemImageSource = "aosp-atd"
         }
@@ -34,7 +33,7 @@ kotlin {
 }
 
 baselineProfile {
-    managedDevices += "pixel6Api35"
+    managedDevices += "pixel6Api36"
     useConnectedDevices = false
 }
 

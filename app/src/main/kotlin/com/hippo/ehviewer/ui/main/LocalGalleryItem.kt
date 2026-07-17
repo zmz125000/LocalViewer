@@ -1,0 +1,214 @@
+package com.hippo.ehviewer.ui.main
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material3.Badge
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
+import coil3.compose.rememberAsyncImagePainter
+import coil3.request.ImageRequest
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.database.model.LocalGalleryEntity
+import com.ehviewer.core.files.toUri
+import com.ehviewer.core.i18n.R
+import com.ehviewer.core.ui.component.CrystalCard
+import com.ehviewer.core.ui.component.ElevatedCard
+import com.hippo.ehviewer.EhDB
+import com.hippo.ehviewer.ktbuilder.imageRequest
+import okio.Path.Companion.toPath
+
+private const val MIN_RATIO = 0.5f
+private const val MAX_RATIO = 1.5f
+
+@Composable
+private fun coverRequest(coverPath: String?): ImageRequest? {
+    val context = LocalContext.current
+    return remember(coverPath) {
+        coverPath?.let { path ->
+            with(context) {
+                imageRequest {
+                    data(path.toPath().toUri())
+                    memoryCacheKey(path)
+                    diskCacheKey(path)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LocalGalleryListItem(
+    gallery: LocalGalleryEntity,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = onClick,
+    showPages: Boolean,
+    showProgress: Boolean,
+    modifier: Modifier = Modifier,
+) = CrystalCard(
+    modifier = modifier,
+    onClick = onClick,
+    onLongClick = onLongClick,
+) {
+    Row {
+        Box(
+            modifier = Modifier.aspectRatio(DEFAULT_RATIO).clip(ShapeDefaults.Medium),
+            contentAlignment = Alignment.Center,
+        ) {
+            val request = coverRequest(gallery.coverPath)
+            if (request != null) {
+                Image(
+                    painter = rememberAsyncImagePainter(model = request),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Icon(
+                    imageVector = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                        Icons.Default.Inventory2
+                    } else {
+                        Icons.Default.Folder
+                    },
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+        Column(modifier = Modifier.padding(start = 8.dp, top = 2.dp, end = 4.dp, bottom = 4.dp)) {
+            Text(
+                text = gallery.title,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            val kindLabel = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                stringResource(R.string.library_gallery_archive)
+            } else {
+                stringResource(R.string.library_gallery_folder)
+            }
+            Text(
+                text = kindLabel,
+                modifier = Modifier
+                    .clip(ShapeDefaults.Small)
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .padding(vertical = 2.dp, horizontal = 8.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            if (showPages && gallery.pageCount > 0) {
+                val readProgress = if (showProgress) {
+                    remember(gallery.id) { EhDB.getReadProgressFlow(gallery.id) }.collectAsState(0).value
+                } else {
+                    0
+                }
+                Text(
+                    text = if (readProgress > 0) {
+                        "${readProgress + 1}/${gallery.pageCount}P"
+                    } else {
+                        "${gallery.pageCount}P"
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun LocalGalleryGridItem(
+    gallery: LocalGalleryEntity,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = onClick,
+    showPages: Boolean,
+    showProgress: Boolean,
+    modifier: Modifier = Modifier,
+) = ElevatedCard(
+    modifier = modifier,
+    onClick = onClick,
+    onLongClick = onLongClick,
+) {
+    Box {
+        var ratio by remember(gallery.id) { mutableFloatStateOf(DEFAULT_RATIO) }
+        val request = coverRequest(gallery.coverPath)
+        if (request != null) {
+            AsyncImage(
+                model = request,
+                contentDescription = null,
+                modifier = Modifier.aspectRatio(ratio),
+                contentScale = ContentScale.Crop,
+                onSuccess = {
+                    ratio = (it.result.image.width.toFloat() / it.result.image.height)
+                        .coerceIn(MIN_RATIO, MAX_RATIO)
+                },
+            )
+        } else {
+            Box(
+                modifier = Modifier.aspectRatio(DEFAULT_RATIO).fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                        Icons.Default.Inventory2
+                    } else {
+                        Icons.Default.Folder
+                    },
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+        if (showPages && gallery.pageCount > 0) {
+            Badge(
+                modifier = Modifier.align(Alignment.TopEnd).widthIn(min = 32.dp).height(24.dp),
+            ) {
+                val readProgress = if (showProgress) {
+                    remember(gallery.id) { EhDB.getReadProgressFlow(gallery.id) }.collectAsState(0).value
+                } else {
+                    0
+                }
+                Text(
+                    text = if (readProgress > 0) {
+                        "${readProgress + 1}/${gallery.pageCount}"
+                    } else {
+                        "${gallery.pageCount}"
+                    },
+                )
+            }
+        }
+    }
+}

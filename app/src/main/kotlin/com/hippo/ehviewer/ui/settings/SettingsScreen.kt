@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Adb
-import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.Scaffold
@@ -17,13 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import com.ehviewer.core.i18n.R
-import com.ehviewer.core.ui.icons.EhIcons
-import com.ehviewer.core.ui.icons.filled.SadPanda
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.AboutScreenDestination
 import com.hippo.ehviewer.ui.destinations.AdvancedScreenDestination
-import com.hippo.ehviewer.ui.destinations.DownloadScreenDestination
-import com.hippo.ehviewer.ui.destinations.EhScreenDestination
+import com.hippo.ehviewer.ui.destinations.LibrarySettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.PrivacyScreenDestination
 import com.hippo.ehviewer.ui.main.NavigationIcon
 import com.ramcosta.composedestinations.annotation.Destination
@@ -45,15 +42,9 @@ fun AnimatedVisibilityScope.SettingsScreen(navigator: DestinationsNavigator) = S
     ) {
         Column(modifier = Modifier.padding(it).nestedScroll(scrollBehavior.nestedScrollConnection)) {
             PreferenceHeader(
-                icon = EhIcons.Default.SadPanda,
-                title = R.string.settings_eh,
-                childRoute = EhScreenDestination,
-                navigator = navigator,
-            )
-            PreferenceHeader(
-                icon = Icons.Default.Download,
-                title = R.string.settings_download,
-                childRoute = DownloadScreenDestination,
+                icon = Icons.Default.Folder,
+                title = R.string.settings_library,
+                childRoute = LibrarySettingsScreenDestination,
                 navigator = navigator,
             )
             PreferenceHeader(

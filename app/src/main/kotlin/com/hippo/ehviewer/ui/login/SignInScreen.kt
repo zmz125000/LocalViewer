@@ -80,7 +80,7 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.Job
 import moe.tarsin.navigate
 
-@Destination<RootGraph>(start = true)
+@Destination<RootGraph>
 @Composable
 fun AnimatedVisibilityScope.SignInScreen(navigator: DestinationsNavigator) = Screen(navigator) {
     val windowSizeClass = LocalWindowSizeClass.current

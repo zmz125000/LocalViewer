@@ -49,14 +49,20 @@ import com.ehviewer.core.ui.icons.big.History
 import com.ehviewer.core.ui.util.Await
 import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.ui.util.thenIf
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.util.launch
+import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
+import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.doGalleryInfoAction
 import com.hippo.ehviewer.ui.main.GalleryInfoListItem
+import com.hippo.ehviewer.ui.navToLocalFolderReader
+import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.util.FavouriteStatusRouter
 import com.ramcosta.composedestinations.annotation.Destination
@@ -158,7 +164,23 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         onDismiss = { EhDB.deleteHistoryInfo(info) },
                     ) {
                         GalleryInfoListItem(
-                            onClick = { navigate(info.asDst()) },
+                            onClick = {
+                                // Local library entries skip the EH detail page
+                                if (info.token == LOCAL_GALLERY_TOKEN) {
+                                    launch {
+                                        val local = withIOContext { LocalLibrary.loadGallery(info.gid) }
+                                        if (local != null) {
+                                            if (local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                                                navToReader(local.contentPath)
+                                            } else {
+                                                navToLocalFolderReader(local.contentPath, info)
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    navigate(info.asDst())
+                                }
+                            },
                             onLongClick = { launch { doGalleryInfoAction(info) } },
                             info = info,
                             showPages = showPages,

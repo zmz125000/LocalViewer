@@ -127,7 +127,8 @@ object Settings : DataStorePreferences(null) {
     val downloadSortMode = intPref("download_sort_mode", SortMode.Default.flag)
     val downloadFilterMode = intPref("download_filter_mode", DownloadsFilterMode.Default.flag)
     val hasSignedIn = boolPref("has_signed_in", EhCookieStore.hasSignedIn())
-    val needSignIn = boolPref("need_sign_in", true)
+    // Local viewer: never force EH sign-in
+    val needSignIn = boolPref("need_sign_in", false)
     val gridView = boolPref("grid_view", false)
     val qSSaveProgress = boolPref("qs_save_progress", true)
     val displayName = stringOrNullPref("display_name")

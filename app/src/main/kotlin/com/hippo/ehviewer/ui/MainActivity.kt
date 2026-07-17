@@ -46,13 +46,9 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FormatListNumbered
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.DrawerDefaults
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
@@ -128,17 +124,11 @@ import com.hippo.ehviewer.client.parser.GalleryPageUrlParser
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.download.DownloadService
 import com.hippo.ehviewer.download.downloadLocation
-import com.hippo.ehviewer.ui.destinations.DownloadScreenDestination
-import com.hippo.ehviewer.ui.destinations.DownloadsScreenDestination
-import com.hippo.ehviewer.ui.destinations.FavouritesScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
-import com.hippo.ehviewer.ui.destinations.HomePageScreenDestination
+import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
 import com.hippo.ehviewer.ui.destinations.ProgressScreenDestination
 import com.hippo.ehviewer.ui.destinations.SettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.SignInScreenDestination
-import com.hippo.ehviewer.ui.destinations.SubscriptionScreenDestination
-import com.hippo.ehviewer.ui.destinations.ToplistScreenDestination
-import com.hippo.ehviewer.ui.destinations.WhatshotScreenDestination
 import com.hippo.ehviewer.ui.screen.asDst
 import com.hippo.ehviewer.ui.screen.asDstWith
 import com.hippo.ehviewer.ui.screen.navWithUrl
@@ -171,13 +161,8 @@ import splitties.systemservices.clipboardManager
 import splitties.systemservices.connectivityManager
 
 private val navItems = arrayOf<Triple<Direction, Int, ImageVector>>(
-    Triple(HomePageScreenDestination, R.string.homepage, Icons.Default.Home),
-    Triple(SubscriptionScreenDestination, R.string.subscription, EhIcons.Default.Subscriptions),
-    Triple(WhatshotScreenDestination, R.string.whats_hot, Icons.Default.Whatshot),
-    Triple(ToplistScreenDestination, R.string.toplist, Icons.Default.FormatListNumbered),
-    Triple(FavouritesScreenDestination, R.string.favourite, Icons.Default.Favorite),
+    Triple(LibraryScreenDestination, R.string.library, Icons.Default.Folder),
     Triple(HistoryScreenDestination, R.string.history, Icons.Default.History),
-    Triple(DownloadsScreenDestination, R.string.downloads, Icons.Default.Download),
     Triple(SettingsScreenDestination, R.string.settings, Icons.Default.Settings),
 )
 
@@ -231,29 +216,11 @@ class MainActivity : AppCompatActivity() {
                 callback()
             }
 
-            suspend fun DialogState.checkDownloadLocation() {
-                val valid = withIOContext { downloadLocation.isDirectory }
-                if (!valid) {
-                    awaitConfirmationOrCancel(
-                        confirmText = R.string.open_settings,
-                        title = R.string.waring,
-                        showCancelButton = false,
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.invalid_download_location),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                    }
-                    navigator.navigate(DownloadScreenDestination)
-                }
-            }
-
             val hasNetwork = remember { connectivityManager.activeNetwork != null }
             if (!AppConfig.isBenchmark) {
                 val noNetwork = stringResource(R.string.no_network)
                 LaunchedEffect(Unit) {
-                    runCatching { checkDownloadLocation() }
-                    runCatching { checkAppLinkVerify() }
+                    // Local viewer: skip EH download-location / app-link checks
                     if (hasNetwork) {
                         runSuspendCatching {
                             withIOContext {
@@ -320,7 +287,7 @@ class MainActivity : AppCompatActivity() {
                             if (args.getString(DownloadService.KEY_ACTION) == DownloadService.ACTION_CLEAR_DOWNLOAD_SERVICE) {
                                 DownloadService.clear()
                             }
-                            navigator.navigate(DownloadsScreenDestination)
+                            navigator.navigate(LibraryScreenDestination)
                         }
                     }
                 }
@@ -468,8 +435,7 @@ class MainActivity : AppCompatActivity() {
                                 CompositionLocalProvider(LocalSharedTransitionScope provides this) {
                                     val start = when {
                                         needSignIn -> SignInScreenDestination
-                                        hasNetwork -> navItems[launchPage].first
-                                        else -> DownloadsScreenDestination
+                                        else -> navItems.getOrElse(launchPage) { navItems[0] }.first
                                     }
                                     DestinationsNavHost(
                                         navGraph = NavGraphs.root,

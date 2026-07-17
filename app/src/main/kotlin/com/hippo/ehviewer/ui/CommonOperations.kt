@@ -271,6 +271,10 @@ fun navToReader(info: BaseGalleryInfo, page: Int = -1) = navToReader(ReaderScree
 context(_: DestinationsNavigator)
 fun navToReader(path: String) = navToReader(ReaderScreenArgs.Archive(path))
 
+context(_: DestinationsNavigator)
+fun navToLocalFolderReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1) =
+    navToReader(ReaderScreenArgs.LocalFolder(path, page, info))
+
 context(nav: DestinationsNavigator)
 private fun navToReader(args: ReaderScreenArgs) = nav.navigate(ReaderScreenDestination(args)) { launchSingleTop = true }
 
