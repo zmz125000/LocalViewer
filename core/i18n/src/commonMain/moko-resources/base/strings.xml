@@ -18,6 +18,8 @@
     <string name="library">Library</string>
     <string name="network">Network</string>
     <string name="folder">Folder</string>
+    <string name="browse">Browse</string>
+    <string name="browse_empty">No browse sources. Add a library folder in Settings, or add an SMB share with +.</string>
     <string name="library_empty">No galleries yet. Add a library folder in Settings.</string>
     <string name="library_add_root">Add library folder</string>
     <string name="library_roots">Library folders</string>

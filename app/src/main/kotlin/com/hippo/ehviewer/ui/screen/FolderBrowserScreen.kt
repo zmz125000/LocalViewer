@@ -46,7 +46,6 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.listLocalDirectory
 import com.hippo.ehviewer.library.stableGalleryId
-import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseCover
@@ -67,9 +66,9 @@ import okio.Path.Companion.toPath
 @Destination<RootGraph>
 @Composable
 fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator) = Screen(navigator) {
-    DrawerHandle(true)
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
     // Session-scoped stack survives reader navigation (unlike remember {}).
+    // When opened from Browse with a pre-set stack, start inside that root (no root picker).
     var stack by remember {
         mutableStateOf(BrowseSession.localStack)
     }
@@ -140,10 +139,16 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
     }
 
     fun goUp() {
-        if (stack.isNotEmpty()) updateStack(stack.dropLast(1))
+        if (stack.size > 1) {
+            updateStack(stack.dropLast(1))
+        } else {
+            // Leave folder browser back to Browse hub
+            updateStack(emptyList())
+            navigator.popBackStack()
+        }
     }
 
-    BackHandler(enabled = stack.isNotEmpty()) { goUp() }
+    BackHandler { goUp() }
 
     fun openFolderGallery(entry: BrowseEntry.FolderGallery) {
         val frame = stack.lastOrNull() ?: return
@@ -175,28 +180,22 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
             TopAppBar(
                 title = { Text(title) },
                 navigationIcon = {
-                    if (stack.isNotEmpty()) {
-                        IconButton(onClick = { goUp() }, shapes = IconButtonDefaults.shapes()) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-                        }
-                    } else {
-                        NavigationIcon()
+                    IconButton(onClick = { goUp() }, shapes = IconButtonDefaults.shapes()) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                     }
                 },
                 actions = {
-                    if (stack.isNotEmpty()) {
-                        IconButton(
-                            onClick = {
-                                launch {
-                                    refreshing = true
-                                    reload(force = true)
-                                    refreshing = false
-                                }
-                            },
-                            shapes = IconButtonDefaults.shapes(),
-                        ) {
-                            Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.library_rescan))
-                        }
+                    IconButton(
+                        onClick = {
+                            launch {
+                                refreshing = true
+                                reload(force = true)
+                                refreshing = false
+                            }
+                        },
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.library_rescan))
                     }
                 },
                 scrollBehavior = scrollBehavior,
@@ -216,6 +215,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
         ) {
             when {
                 stack.isEmpty() -> {
+                    // Should open from Browse with a pre-selected root; show fallback if not
                     if (roots.isEmpty()) {
                         BrowseEmptyHint(stringResource(R.string.folder_no_roots))
                     } else {

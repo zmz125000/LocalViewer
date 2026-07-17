@@ -253,12 +253,8 @@ fun SearchBarScreen(
                             IconButton(onClick = { hideSearchView() }, shapes = IconButtonDefaults.shapes()) {
                                 Icon(Icons.AutoMirrored.Default.ArrowBack, contentDescription = null)
                             }
-                        } else {
-                            val drawerState = LocalNavDrawerState.current
-                            IconButton(onClick = { scope.launch { drawerState.open() } }, shapes = IconButtonDefaults.shapes()) {
-                                Icon(Icons.Default.Menu, contentDescription = null)
-                            }
                         }
+                        // Drawer replaced by bottom navigation — no menu icon when collapsed
                     },
                     trailingIcon = {
                         if (expanded) {

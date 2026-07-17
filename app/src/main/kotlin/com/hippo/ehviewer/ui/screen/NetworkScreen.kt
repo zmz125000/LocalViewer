@@ -48,7 +48,6 @@ import com.ehviewer.core.util.launchIO
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
-import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
@@ -65,7 +64,6 @@ import moe.tarsin.string
 @Destination<RootGraph>
 @Composable
 fun AnimatedVisibilityScope.NetworkScreen(navigator: DestinationsNavigator) = Screen(navigator) {
-    DrawerHandle(true)
     val sources by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
     var editor by remember { mutableStateOf<SmbEditorState?>(null) }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()

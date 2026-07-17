@@ -31,34 +31,23 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
-import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.DrawerDefaults
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -75,27 +64,17 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.currentCompositeKeyHashCode
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.BlurEffect
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.TileMode
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
@@ -126,10 +105,9 @@ import com.hippo.ehviewer.client.parser.GalleryPageUrlParser
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.download.DownloadService
 import com.hippo.ehviewer.download.downloadLocation
-import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
+import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
-import com.hippo.ehviewer.ui.destinations.NetworkScreenDestination
 import com.hippo.ehviewer.ui.destinations.ProgressScreenDestination
 import com.hippo.ehviewer.ui.destinations.SettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.SignInScreenDestination
@@ -143,7 +121,6 @@ import com.hippo.ehviewer.ui.tools.awaitInputText
 import com.hippo.ehviewer.updater.AppUpdater
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.addTextToClipboard
-import com.hippo.ehviewer.util.calculateFraction
 import com.hippo.ehviewer.util.displayString
 import com.hippo.ehviewer.util.getParcelableExtraCompat
 import com.hippo.ehviewer.util.getUrlFromClipboard
@@ -164,13 +141,21 @@ import moe.tarsin.coroutines.runSuspendCatching
 import splitties.systemservices.clipboardManager
 import splitties.systemservices.connectivityManager
 
-private val navItems = arrayOf<Triple<Direction, Int, ImageVector>>(
-    Triple(LibraryScreenDestination, R.string.library, Icons.AutoMirrored.Filled.LibraryBooks),
-    Triple(NetworkScreenDestination, R.string.network, Icons.Default.Lan),
-    Triple(FolderBrowserScreenDestination, R.string.folder, Icons.Default.Folder),
-    Triple(HistoryScreenDestination, R.string.history, Icons.Default.History),
-    Triple(SettingsScreenDestination, R.string.settings, Icons.Default.Settings),
+private data class BottomNavItem(
+    val direction: Direction,
+    val labelRes: Int,
+    val icon: ImageVector,
 )
+
+/** Primary bottom-nav destinations (order = bar order). */
+private val bottomNavItems = listOf(
+    BottomNavItem(LibraryScreenDestination, R.string.library, Icons.AutoMirrored.Filled.LibraryBooks),
+    BottomNavItem(BrowseScreenDestination, R.string.browse, Icons.Default.Explore),
+    BottomNavItem(HistoryScreenDestination, R.string.history, Icons.Default.History),
+    BottomNavItem(SettingsScreenDestination, R.string.settings, Icons.Default.Settings),
+)
+
+private val bottomNavDirections: Set<Direction> = bottomNavItems.map { it.direction }.toSet()
 
 class MainActivity : AppCompatActivity() {
 
@@ -210,17 +195,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
         setMD3Content {
-            val configuration = LocalConfiguration.current
             val navDrawerState = rememberDrawerState(DrawerValue.Closed)
             val sideSheetState = rememberDrawerState2(DrawerValue.Closed)
             val snackbarState = remember { SnackbarHostState() }
             val scope = rememberCoroutineScope()
             val navController = rememberNavController()
             val navigator = navController.rememberDestinationsNavigator()
-            fun closeDrawer(callback: () -> Unit = {}) = scope.launch {
-                navDrawerState.close()
-                callback()
-            }
 
             val hasNetwork = remember { connectivityManager.activeNetwork != null }
             if (!AppConfig.isBenchmark) {
@@ -356,6 +336,8 @@ class MainActivity : AppCompatActivity() {
             val adaptiveInfo = currentWindowAdaptiveInfoV2()
             val needSignIn by Settings.needSignIn.collectAsState()
             val launchPage by Settings.launchPage.collectAsState()
+            val showBottomBar = bottomNavItems.any { it.direction == currentDestination } ||
+                currentDestination == null
             CompositionLocalProvider(
                 LocalNavDrawerState provides navDrawerState,
                 LocalSideSheetState provides sideSheetState,
@@ -364,7 +346,10 @@ class MainActivity : AppCompatActivity() {
                 LocalSnackBarFabPadding provides animateDpAsState(snackbarFabPadding, label = "SnackbarFabPadding"),
                 LocalWindowSizeClass provides adaptiveInfo.windowSizeClass,
             ) {
+                // Do not consume status-bar insets here — each screen TopAppBar already does.
+                // Only reserve space for the bottom nav so we don't double-pad under the notch/status bar.
                 Scaffold(
+                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
                     snackbarHost = {
                         SnackbarHost(
                             hostState = snackbarState,
@@ -375,81 +360,52 @@ class MainActivity : AppCompatActivity() {
                             },
                         )
                     },
-                ) {
-                    var minOffset by remember {
-                        mutableFloatStateOf(-with(density) { DrawerDefaults.MaximumDrawerWidth.toPx() })
-                    }
-                    ModalNavigationDrawer(
-                        drawerContent = {
-                            ModalDrawerSheet(
-                                drawerState = navDrawerState,
-                                modifier = Modifier.widthIn(max = (configuration.screenWidthDp - 56).dp)
-                                    .onSizeChanged { minOffset = -it.width.toFloat() },
-                                windowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Start),
-                            ) {
-                                val scrollState = rememberScrollState()
-                                Column(
-                                    modifier = Modifier.verticalScroll(scrollState)
-                                        .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Bottom)),
-                                ) {
-                                    Image(
-                                        painter = painterResource(id = com.hippo.ehviewer.R.drawable.sadpanda_low_poly),
-                                        contentDescription = null,
-                                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                                        contentScale = ContentScale.FillWidth,
+                    bottomBar = {
+                        if (showBottomBar && !needSignIn) {
+                            NavigationBar {
+                                bottomNavItems.forEach { item ->
+                                    val selected = currentDestination == item.direction
+                                    NavigationBarItem(
+                                        selected = selected,
+                                        onClick = {
+                                            if (!selected) {
+                                                // Simple tab switch without deep nav-option DSL
+                                                // (keeps stack shallow for top-level destinations)
+                                                navigator.navigate(item.direction)
+                                            }
+                                        },
+                                        icon = {
+                                            Icon(imageVector = item.icon, contentDescription = null)
+                                        },
+                                        label = {
+                                            Text(text = stringResource(id = item.labelRes))
+                                        },
                                     )
-                                    navItems.forEach { (direction, stringId, icon) ->
-                                        NavigationDrawerItem(
-                                            label = {
-                                                Text(text = stringResource(id = stringId))
-                                            },
-                                            selected = currentDestination === direction,
-                                            onClick = {
-                                                navigator.navigate(direction)
-                                                closeDrawer()
-                                            },
-                                            modifier = Modifier.padding(horizontal = 12.dp),
-                                            icon = {
-                                                Icon(imageVector = icon, contentDescription = null)
-                                            },
-                                        )
-                                    }
                                 }
                             }
-                        },
-                        drawerState = navDrawerState,
-                        gesturesEnabled = drawerEnabled && sideSheetState.isClosed || navDrawerState.isOpen,
+                        }
+                    },
+                ) { paddingValues ->
+                    MutableSideSheet(
+                        drawerState = sideSheetState,
+                        // Only bottom padding for NavigationBar height (not status bar)
+                        modifier = Modifier.padding(bottom = paddingValues.calculateBottomPadding()),
+                        enabled = drawerEnabled,
                     ) {
-                        val radius by remember {
-                            snapshotFlow {
-                                val step = calculateFraction(minOffset, 0f, navDrawerState.currentOffset)
-                                with(density) { lerp(0, 10, step).dp.toPx() }
-                            }
-                        }.collectAsState(0f)
-                        MutableSideSheet(
-                            drawerState = sideSheetState,
-                            modifier = Modifier.graphicsLayer {
-                                if (radius != 0f) {
-                                    renderEffect = BlurEffect(radius, radius, TileMode.Clamp)
-                                    shape = RectangleShape
-                                    clip = true
+                        SharedTransitionLayout {
+                            CompositionLocalProvider(LocalSharedTransitionScope provides this) {
+                                val start = when {
+                                    needSignIn -> SignInScreenDestination
+                                    else -> bottomNavItems.getOrElse(launchPage.coerceIn(0, bottomNavItems.lastIndex)) {
+                                        bottomNavItems[0]
+                                    }.direction
                                 }
-                            },
-                            enabled = drawerEnabled,
-                        ) {
-                            SharedTransitionLayout {
-                                CompositionLocalProvider(LocalSharedTransitionScope provides this) {
-                                    val start = when {
-                                        needSignIn -> SignInScreenDestination
-                                        else -> navItems.getOrElse(launchPage) { navItems[0] }.first
-                                    }
-                                    DestinationsNavHost(
-                                        navGraph = NavGraphs.root,
-                                        start = start,
-                                        defaultTransitions = rememberEhNavAnim(),
-                                        navController = navController,
-                                    )
-                                }
+                                DestinationsNavHost(
+                                    navGraph = NavGraphs.root,
+                                    start = start,
+                                    defaultTransitions = rememberEhNavAnim(),
+                                    navController = navController,
+                                )
                             }
                         }
                     }
