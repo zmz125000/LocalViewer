@@ -41,6 +41,7 @@ import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.library.BrowseEntry
+import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.listLocalDirectory
@@ -59,6 +60,7 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import okio.Path
+import okio.Path.Companion.toPath
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
@@ -66,8 +68,15 @@ import okio.Path
 fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator) = Screen(navigator) {
     DrawerHandle(true)
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
-    // null = root picker; non-null = browsing inside a library root
-    var stack by remember { mutableStateOf<List<BrowseFrame>>(emptyList()) }
+    // Session-scoped stack survives reader navigation (unlike remember {}).
+    var stack by remember {
+        mutableStateOf(BrowseSession.localStack)
+    }
+    fun updateStack(newStack: List<BrowseSession.LocalFrame>) {
+        stack = newStack
+        BrowseSession.localStack = newStack
+    }
+
     var entries by remember { mutableStateOf<List<BrowseEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
@@ -77,7 +86,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
     val title = current?.title ?: stringResource(R.string.folder)
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
-    suspend fun reload() {
+    suspend fun reload(force: Boolean = false) {
         val frame = stack.lastOrNull()
         if (frame == null) {
             entries = emptyList()
@@ -87,7 +96,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
         loading = true
         error = null
         runCatching {
-            withIOContext { listLocalDirectory(frame.path) }
+            withIOContext {
+                if (force) BrowseSession.invalidateLocalListing(frame.path)
+                listLocalDirectory(frame.path.toPath(), useCache = !force)
+            }
         }.onSuccess {
             entries = it
         }.onFailure {
@@ -97,33 +109,47 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
         loading = false
     }
 
-    LaunchedEffect(stack) { reload() }
+    LaunchedEffect(stack) { reload(force = false) }
 
     fun enterRoot(root: LibraryRootEntity) {
         val path = LocalLibrary.rootPath(root) ?: return
-        stack = listOf(BrowseFrame(root.id, path, root.displayName, relativePath = ""))
+        updateStack(
+            listOf(
+                BrowseSession.LocalFrame(
+                    rootId = root.id,
+                    path = path.toString(),
+                    title = root.displayName,
+                    relativePath = "",
+                ),
+            ),
+        )
     }
 
     fun enterDir(entry: BrowseEntry.Directory) {
         val frame = stack.lastOrNull() ?: return
         val rel = if (frame.relativePath.isEmpty()) entry.name else "${frame.relativePath}/${entry.name}"
-        stack = stack + BrowseFrame(frame.rootId, entry.path, entry.name, rel)
+        updateStack(
+            stack + BrowseSession.LocalFrame(
+                rootId = frame.rootId,
+                path = entry.path.toString(),
+                title = entry.name,
+                relativePath = rel,
+            ),
+        )
     }
 
     fun goUp() {
-        if (stack.isNotEmpty()) stack = stack.dropLast(1)
+        if (stack.isNotEmpty()) updateStack(stack.dropLast(1))
     }
 
-    // System / gesture back must step up the folder stack, not pop to Library.
     BackHandler(enabled = stack.isNotEmpty()) { goUp() }
 
     fun openFolderGallery(entry: BrowseEntry.FolderGallery) {
         val frame = stack.lastOrNull() ?: return
-        // Stable id from the gallery path relative to root, not the parent frame
         val rel = when {
-            frame.relativePath.isEmpty() && entry.path == frame.path -> "."
+            frame.relativePath.isEmpty() && entry.path.toString() == frame.path -> "."
             frame.relativePath.isEmpty() -> entry.name
-            entry.path == frame.path -> frame.relativePath.ifEmpty { "." }
+            entry.path.toString() == frame.path -> frame.relativePath.ifEmpty { "." }
             else -> "${frame.relativePath}/${entry.name}"
         }
         val gid = stableGalleryId(frame.rootId, rel)
@@ -131,7 +157,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
             gid = gid,
             token = LOCAL_GALLERY_TOKEN,
             title = entry.name,
-            pages = entry.pageCount,
+            pages = if (entry.pageCountCapped) 0 else entry.pageCount,
             favoriteSlot = NOT_FAVORITED,
             rating = -1f,
         )
@@ -140,9 +166,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
     }
 
     fun openArchive(entry: BrowseEntry.ArchiveGallery) {
-        launchIO {
-            // history optional for archives opened by path
-        }
         navToReader(entry.path.toString())
     }
 
@@ -165,7 +188,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
                             onClick = {
                                 launch {
                                     refreshing = true
-                                    reload()
+                                    reload(force = true)
                                     refreshing = false
                                 }
                             },
@@ -184,7 +207,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
             onRefresh = {
                 launch {
                     refreshing = true
-                    reload()
+                    reload(force = true)
                     refreshing = false
                 }
             },
@@ -237,6 +260,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
                                     is BrowseEntry.FolderGallery -> BrowseFolderGalleryRow(
                                         name = entry.name,
                                         pageCount = entry.pageCount,
+                                        pageCountCapped = entry.pageCountCapped,
                                         coverPath = entry.coverPath,
                                         onClick = { openFolderGallery(entry) },
                                     )
@@ -254,10 +278,3 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
         }
     }
 }
-
-private data class BrowseFrame(
-    val rootId: Long,
-    val path: Path,
-    val title: String,
-    val relativePath: String,
-)

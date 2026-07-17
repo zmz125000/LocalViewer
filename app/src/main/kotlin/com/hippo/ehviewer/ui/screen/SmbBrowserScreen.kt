@@ -40,6 +40,7 @@ import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.library.BrowseEntryRemote
+import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.smb.SmbGateway
@@ -69,12 +70,21 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 ) = Screen(navigator) {
     DrawerHandle(false)
     var source by remember { mutableStateOf<SmbSourceEntity?>(null) }
-    // Path segments under pathPrefix
+
+    // Session-scoped path; seed from args only if session empty for this source.
     var segments by remember {
+        val stored = BrowseSession.smbSegments(sourceId)
         mutableStateOf(
-            initialRelativePath.split('/').filter { it.isNotEmpty() },
+            stored.ifEmpty {
+                initialRelativePath.split('/').filter { it.isNotEmpty() }
+            },
         )
     }
+    fun updateSegments(new: List<String>) {
+        segments = new
+        BrowseSession.setSmbSegments(sourceId, new)
+    }
+
     var entries by remember { mutableStateOf<List<BrowseEntryRemote>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
@@ -88,7 +98,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         source = withIOContext { SmbRepository.load(sourceId) }
     }
 
-    suspend fun reload() {
+    suspend fun reload(force: Boolean = false) {
         val src = source ?: SmbRepository.load(sourceId)?.also { source = it } ?: run {
             error = "Source missing"
             loading = false
@@ -98,7 +108,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         error = null
         val password = SmbPasswordStore.get(src.id)
         runCatching {
-            withIOContext { SmbGateway.listDirectory(src, password, relativeDir) }
+            withIOContext {
+                if (force) BrowseSession.invalidateSmbListing(src.id, relativeDir)
+                SmbGateway.listDirectory(src, password, relativeDir, useCache = !force)
+            }
         }.onSuccess {
             entries = it
             SmbRepository.markOk(src.id)
@@ -112,41 +125,46 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     LaunchedEffect(sourceId, relativeDir, source?.id) {
         if (source != null || SmbRepository.load(sourceId) != null) {
-            reload()
+            reload(force = false)
         }
     }
 
     fun enterDir(name: String) {
-        segments = segments + name
+        updateSegments(segments + name)
     }
 
     fun goUp() {
         if (segments.isNotEmpty()) {
-            segments = segments.dropLast(1)
+            updateSegments(segments.dropLast(1))
         } else {
             navigator.popBackStack()
         }
     }
 
-    // Gesture/system back steps up path stack before leaving the browser.
     BackHandler(enabled = segments.isNotEmpty()) {
-        segments = segments.dropLast(1)
+        updateSegments(segments.dropLast(1))
     }
 
     fun openFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
         val src = source ?: return
-        val gid = stableGalleryId(src.id, "smb:$relativeDir")
+        val remote = if (entry.relativeName.isEmpty()) {
+            relativeDir
+        } else {
+            SmbGateway.joinRelativePath(relativeDir, entry.relativeName)
+        }
+        val gid = stableGalleryId(src.id, "smb:$remote")
         val info = BaseGalleryInfo(
             gid = gid,
             token = LOCAL_GALLERY_TOKEN,
             title = entry.name,
-            pages = entry.pageCount,
+            pages = if (entry.pageCountCapped) 0 else entry.pageCount,
             favoriteSlot = NOT_FAVORITED,
             rating = -1f,
         )
         launchIO { EhDB.putHistoryInfo(info) }
-        // Navigate on main thread (click path)
-        navToSmbFolderReader(src.id, relativeDir, entry.imageFileNames, info)
+        // When capped or partial, pass empty names so reader re-lists full set
+        val names = if (entry.pageCountCapped) emptyList() else entry.imageFileNames
+        navToSmbFolderReader(src.id, remote, names, info)
     }
 
     fun openArchive(@Suppress("UNUSED_PARAMETER") entry: BrowseEntryRemote.ArchiveGallery) {
@@ -167,7 +185,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         onClick = {
                             launch {
                                 refreshing = true
-                                reload()
+                                reload(force = true)
                                 refreshing = false
                             }
                         },
@@ -185,7 +203,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             onRefresh = {
                 launch {
                     refreshing = true
-                    reload()
+                    reload(force = true)
                     refreshing = false
                 }
             },
@@ -223,11 +241,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             item(key = "hdr-gal") {
                                 BrowseSectionHeader(stringResource(R.string.browse_galleries))
                             }
-                            items(galleries, key = { "g-${it.name}" }) { entry ->
+                            items(galleries, key = { "g-${it.name}-${it.hashCode()}" }) { entry ->
                                 when (entry) {
                                     is BrowseEntryRemote.FolderGallery -> BrowseFolderGalleryRow(
                                         name = entry.name,
                                         pageCount = entry.pageCount,
+                                        pageCountCapped = entry.pageCountCapped,
                                         onClick = { openFolderGallery(entry) },
                                     )
                                     is BrowseEntryRemote.ArchiveGallery -> BrowseArchiveGalleryRow(

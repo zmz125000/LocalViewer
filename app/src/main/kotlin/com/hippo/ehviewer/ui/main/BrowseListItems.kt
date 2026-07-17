@@ -58,15 +58,16 @@ fun BrowseFolderGalleryRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     coverPath: Path? = null,
+    pageCountCapped: Boolean = false,
 ) {
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = {
             Text(
-                if (pageCount > 0) {
-                    stringResource(R.string.browse_folder_gallery_pages, pageCount)
-                } else {
-                    stringResource(R.string.library_gallery_folder)
+                when {
+                    pageCountCapped -> stringResource(R.string.browse_folder_gallery_pages_many)
+                    pageCount > 0 -> stringResource(R.string.browse_folder_gallery_pages, pageCount)
+                    else -> stringResource(R.string.library_gallery_folder)
                 },
             )
         },

@@ -31,6 +31,7 @@
     <string name="library_gallery_archive">Archive</string>
     <string name="browse_directory">Directory</string>
     <string name="browse_folder_gallery_pages">%d pages</string>
+    <string name="browse_folder_gallery_pages_many">∞ pages</string>
     <string name="browse_directories">Directories</string>
     <string name="browse_galleries">Galleries</string>
     <string name="folder_empty">This folder is empty.</string>
