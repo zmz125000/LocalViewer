@@ -1,8 +1,8 @@
 package com.hippo.ehviewer.ui.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
@@ -114,9 +114,19 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
         if (stack.isNotEmpty()) stack = stack.dropLast(1)
     }
 
+    // System / gesture back must step up the folder stack, not pop to Library.
+    BackHandler(enabled = stack.isNotEmpty()) { goUp() }
+
     fun openFolderGallery(entry: BrowseEntry.FolderGallery) {
         val frame = stack.lastOrNull() ?: return
-        val gid = stableGalleryId(frame.rootId, frame.relativePath.ifEmpty { "." })
+        // Stable id from the gallery path relative to root, not the parent frame
+        val rel = when {
+            frame.relativePath.isEmpty() && entry.path == frame.path -> "."
+            frame.relativePath.isEmpty() -> entry.name
+            entry.path == frame.path -> frame.relativePath.ifEmpty { "." }
+            else -> "${frame.relativePath}/${entry.name}"
+        }
+        val gid = stableGalleryId(frame.rootId, rel)
         val info = BaseGalleryInfo(
             gid = gid,
             token = LOCAL_GALLERY_TOKEN,
@@ -227,6 +237,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
                                     is BrowseEntry.FolderGallery -> BrowseFolderGalleryRow(
                                         name = entry.name,
                                         pageCount = entry.pageCount,
+                                        coverPath = entry.coverPath,
                                         onClick = { openFolderGallery(entry) },
                                     )
                                     is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(

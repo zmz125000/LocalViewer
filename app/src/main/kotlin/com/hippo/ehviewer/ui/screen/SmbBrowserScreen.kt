@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -125,6 +126,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         } else {
             navigator.popBackStack()
         }
+    }
+
+    // Gesture/system back steps up path stack before leaving the browser.
+    BackHandler(enabled = segments.isNotEmpty()) {
+        segments = segments.dropLast(1)
     }
 
     fun openFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
