@@ -49,6 +49,7 @@ import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
+import com.hippo.ehviewer.ui.main.BrowseCover
 import com.hippo.ehviewer.ui.main.BrowseDirectoryRow
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
@@ -261,7 +262,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
                                         name = entry.name,
                                         pageCount = entry.pageCount,
                                         pageCountCapped = entry.pageCountCapped,
-                                        coverPath = entry.coverPath,
+                                        cover = entry.coverPath?.let { BrowseCover.Local(it) },
                                         onClick = { openFolderGallery(entry) },
                                     )
                                     is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(

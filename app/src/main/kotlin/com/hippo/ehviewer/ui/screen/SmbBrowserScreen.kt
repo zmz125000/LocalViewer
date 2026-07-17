@@ -49,6 +49,7 @@ import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
+import com.hippo.ehviewer.ui.main.BrowseCover
 import com.hippo.ehviewer.ui.main.BrowseDirectoryRow
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
@@ -243,12 +244,26 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             }
                             items(galleries, key = { "g-${it.name}-${it.hashCode()}" }) { entry ->
                                 when (entry) {
-                                    is BrowseEntryRemote.FolderGallery -> BrowseFolderGalleryRow(
-                                        name = entry.name,
-                                        pageCount = entry.pageCount,
-                                        pageCountCapped = entry.pageCountCapped,
-                                        onClick = { openFolderGallery(entry) },
-                                    )
+                                    is BrowseEntryRemote.FolderGallery -> {
+                                        val coverRemote = entry.coverFileName?.let { fileName ->
+                                            val remote = if (entry.relativeName.isEmpty()) {
+                                                SmbGateway.joinRelativePath(relativeDir, fileName)
+                                            } else {
+                                                SmbGateway.joinRelativePath(
+                                                    SmbGateway.joinRelativePath(relativeDir, entry.relativeName),
+                                                    fileName,
+                                                )
+                                            }
+                                            BrowseCover.Smb(sourceId, remote)
+                                        }
+                                        BrowseFolderGalleryRow(
+                                            name = entry.name,
+                                            pageCount = entry.pageCount,
+                                            pageCountCapped = entry.pageCountCapped,
+                                            cover = coverRemote,
+                                            onClick = { openFolderGallery(entry) },
+                                        )
+                                    }
                                     is BrowseEntryRemote.ArchiveGallery -> BrowseArchiveGalleryRow(
                                         name = entry.name,
                                         onClick = { openArchive(entry) },

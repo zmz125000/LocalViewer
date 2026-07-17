@@ -9,6 +9,7 @@ import okio.Path
  * One level of a hierarchical browser: directories first, then galleries.
  * Peeks one level into each child directory (no deep recursion).
  * Image counting stops at [BROWSE_IMAGE_SCAN_CAP] for browse UI.
+ * Cover is the first image found (no natural sort).
  */
 sealed interface BrowseEntry {
     val name: String
@@ -48,9 +49,10 @@ fun listLocalDirectory(dir: Path, useCache: Boolean = true): List<BrowseEntry> {
 fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
     val children = runCatching { dir.list() }.getOrDefault(emptyList())
     val childDirs = ArrayList<Path>()
-    val images = ArrayList<Path>()
-    val archives = ArrayList<BrowseEntry.ArchiveGallery>()
+    var coverPath: Path? = null
+    var imageCount = 0
     var imagesCapped = false
+    val archives = ArrayList<BrowseEntry.ArchiveGallery>()
 
     for (child in children) {
         val name = child.name
@@ -58,10 +60,13 @@ fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
         when {
             child.isDirectory -> childDirs += child
             child.isFile && isImageFileName(name) -> {
-                if (images.size < BROWSE_IMAGE_SCAN_CAP) {
-                    images += child
-                } else {
-                    imagesCapped = true
+                if (coverPath == null) coverPath = child
+                if (!imagesCapped) {
+                    imageCount++
+                    if (imageCount > BROWSE_IMAGE_SCAN_CAP) {
+                        imageCount = BROWSE_IMAGE_SCAN_CAP
+                        imagesCapped = true
+                    }
                 }
             }
             child.isFile && isArchiveFileName(name) ->
@@ -96,17 +101,16 @@ fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
     dirs.sortWith { a, b -> naturalCompare(a.name, b.name) }
     leafGalleries.sortWith { a, b -> naturalCompare(a.name, b.name) }
     archives.sortWith { a, b -> naturalCompare(a.name, b.name) }
-    images.sortWith { a, b -> naturalCompare(a.name, b.name) }
 
     val galleries = ArrayList<BrowseEntry>(leafGalleries.size + archives.size + 1)
     galleries += leafGalleries
-    if (images.isNotEmpty() || imagesCapped) {
+    if (coverPath != null || imagesCapped) {
         galleries += BrowseEntry.FolderGallery(
             name = dir.name.ifEmpty { "Gallery" },
             path = dir,
-            pageCount = if (imagesCapped) BROWSE_IMAGE_SCAN_CAP else images.size,
+            pageCount = imageCount,
             pageCountCapped = imagesCapped,
-            coverPath = images.firstOrNull(),
+            coverPath = coverPath,
         )
     }
     galleries += archives
@@ -129,26 +133,36 @@ private sealed interface ChildDirKind {
 }
 
 /**
- * Peek one level into [sub]. Stops image collection at [BROWSE_IMAGE_SCAN_CAP].
- * Returns [ChildDirKind.Navigable] as soon as a subdirectory is found.
+ * Peek one level into [sub].
+ * - First subdirectory ⇒ navigable (immediate).
+ * - Cover = first image found (no sort).
+ * - After image count exceeds [BROWSE_IMAGE_SCAN_CAP], only scan remaining entries for subdirs.
  */
 private fun classifyChildDirectory(sub: Path): ChildDirKind {
     val children = runCatching { sub.list() }.getOrDefault(emptyList())
-    val images = ArrayList<Path>()
-    val archives = ArrayList<BrowseEntry.ArchiveGallery>()
+    var coverPath: Path? = null
+    var imageCount = 0
     var imagesCapped = false
+    val archives = ArrayList<BrowseEntry.ArchiveGallery>()
 
     for (child in children) {
         val name = child.name
         if (name.startsWith('.')) continue
+
+        // After cap: only care about subdirs (cheap-ish skip of file-type checks once dir ruled out)
+        if (imagesCapped) {
+            if (child.isDirectory) return ChildDirKind.Navigable
+            continue
+        }
+
         when {
             child.isDirectory -> return ChildDirKind.Navigable
             child.isFile && isImageFileName(name) -> {
-                if (images.size < BROWSE_IMAGE_SCAN_CAP) {
-                    images += child
-                } else {
+                if (coverPath == null) coverPath = child
+                imageCount++
+                if (imageCount > BROWSE_IMAGE_SCAN_CAP) {
+                    imageCount = BROWSE_IMAGE_SCAN_CAP
                     imagesCapped = true
-                    // Keep scanning only for archives? not needed for leaf gallery classification
                 }
             }
             child.isFile && isArchiveFileName(name) ->
@@ -159,12 +173,11 @@ private fun classifyChildDirectory(sub: Path): ChildDirKind {
         }
     }
 
-    if (images.isNotEmpty() || imagesCapped) {
-        images.sortWith { a, b -> naturalCompare(a.name, b.name) }
+    if (coverPath != null || imagesCapped) {
         return ChildDirKind.LeafGallery(
-            pageCount = if (imagesCapped) BROWSE_IMAGE_SCAN_CAP else images.size,
+            pageCount = imageCount,
             pageCountCapped = imagesCapped,
-            coverPath = images.firstOrNull(),
+            coverPath = coverPath,
         )
     }
 
@@ -177,7 +190,7 @@ private fun classifyChildDirectory(sub: Path): ChildDirKind {
 }
 
 // ---------------------------------------------------------------------------
-// SMB / remote classification (same rules as local, with peek results supplied)
+// SMB / remote classification
 // ---------------------------------------------------------------------------
 
 data class RemoteChild(val name: String, val isDirectory: Boolean)
@@ -196,22 +209,19 @@ sealed interface BrowseEntryRemote {
         val pageCount: Int,
         val pageCountCapped: Boolean = false,
         val coverFileName: String?,
-        /** Partial list for cover/UI; reader should re-list when capped or empty. */
+        /** Partial names for UI only; reader re-lists when capped/empty. */
         val imageFileNames: List<String>,
     ) : BrowseEntryRemote
 
     data class ArchiveGallery(
         override val name: String,
         val fileName: String,
-        /** Parent-relative dir of the archive (empty = current). */
         val parentRelativeName: String = "",
     ) : BrowseEntryRemote
 }
 
 /**
- * Classify current-dir listing plus optional peeks of child directories.
- *
- * @param childPeeks map of child-dir-name → its direct children (one-level peek).
+ * Classify current-dir listing plus peeks of child directories.
  */
 fun classifyRemoteListingWithPeeks(
     currentDirName: String,
@@ -220,9 +230,11 @@ fun classifyRemoteListingWithPeeks(
 ): List<BrowseEntryRemote> {
     val dirs = ArrayList<BrowseEntryRemote.Directory>()
     val leafGalleries = ArrayList<BrowseEntryRemote.FolderGallery>()
+    var coverFileName: String? = null
+    var imageCount = 0
+    var imagesCapped = false
     val imageNames = ArrayList<String>()
     val archives = ArrayList<BrowseEntryRemote.ArchiveGallery>()
-    var imagesCapped = false
 
     for (e in entries) {
         if (e.name.startsWith('.')) continue
@@ -247,10 +259,14 @@ fun classifyRemoteListingWithPeeks(
                 }
             }
             isImageFileName(e.name) -> {
-                if (imageNames.size < BROWSE_IMAGE_SCAN_CAP) {
-                    imageNames += e.name
-                } else {
-                    imagesCapped = true
+                if (coverFileName == null) coverFileName = e.name
+                if (!imagesCapped) {
+                    if (imageNames.size < BROWSE_IMAGE_SCAN_CAP) imageNames += e.name
+                    imageCount++
+                    if (imageCount > BROWSE_IMAGE_SCAN_CAP) {
+                        imageCount = BROWSE_IMAGE_SCAN_CAP
+                        imagesCapped = true
+                    }
                 }
             }
             isArchiveFileName(e.name) ->
@@ -264,18 +280,17 @@ fun classifyRemoteListingWithPeeks(
     dirs.sortWith { a, b -> naturalCompare(a.name, b.name) }
     leafGalleries.sortWith { a, b -> naturalCompare(a.name, b.name) }
     archives.sortWith { a, b -> naturalCompare(a.name, b.name) }
-    imageNames.sortWith(::naturalCompare)
 
     val result = ArrayList<BrowseEntryRemote>(dirs.size + leafGalleries.size + archives.size + 1)
     result += dirs
     result += leafGalleries
-    if (imageNames.isNotEmpty() || imagesCapped) {
+    if (coverFileName != null || imagesCapped) {
         result += BrowseEntryRemote.FolderGallery(
             name = currentDirName.ifEmpty { "Gallery" },
             relativeName = "",
-            pageCount = if (imagesCapped) BROWSE_IMAGE_SCAN_CAP else imageNames.size,
+            pageCount = imageCount,
             pageCountCapped = imagesCapped,
-            coverFileName = imageNames.firstOrNull(),
+            coverFileName = coverFileName,
             imageFileNames = imageNames,
         )
     }
@@ -296,18 +311,28 @@ private sealed interface RemoteChildKind {
 }
 
 private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): RemoteChildKind {
-    val images = ArrayList<String>()
-    val archives = ArrayList<BrowseEntryRemote.ArchiveGallery>()
+    var coverFileName: String? = null
+    var imageCount = 0
     var imagesCapped = false
+    val imageNames = ArrayList<String>()
+    val archives = ArrayList<BrowseEntryRemote.ArchiveGallery>()
 
     for (e in peek) {
         if (e.name.startsWith('.')) continue
+
+        if (imagesCapped) {
+            if (e.isDirectory) return RemoteChildKind.Navigable
+            continue
+        }
+
         when {
             e.isDirectory -> return RemoteChildKind.Navigable
             isImageFileName(e.name) -> {
-                if (images.size < BROWSE_IMAGE_SCAN_CAP) {
-                    images += e.name
-                } else {
+                if (coverFileName == null) coverFileName = e.name
+                if (imageNames.size < BROWSE_IMAGE_SCAN_CAP) imageNames += e.name
+                imageCount++
+                if (imageCount > BROWSE_IMAGE_SCAN_CAP) {
+                    imageCount = BROWSE_IMAGE_SCAN_CAP
                     imagesCapped = true
                 }
             }
@@ -320,13 +345,12 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
         }
     }
 
-    if (images.isNotEmpty() || imagesCapped) {
-        images.sortWith(::naturalCompare)
+    if (coverFileName != null || imagesCapped) {
         return RemoteChildKind.LeafGallery(
-            pageCount = if (imagesCapped) BROWSE_IMAGE_SCAN_CAP else images.size,
+            pageCount = imageCount,
             pageCountCapped = imagesCapped,
-            coverFileName = images.firstOrNull(),
-            imageFileNames = images,
+            coverFileName = coverFileName,
+            imageFileNames = imageNames,
         )
     }
     if (archives.isNotEmpty()) {
@@ -336,7 +360,6 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
     return RemoteChildKind.Hidden
 }
 
-/** @deprecated Prefer [classifyRemoteListingWithPeeks]. */
 fun classifyRemoteListing(
     currentDirName: String,
     entries: List<RemoteChild>,
