@@ -8,6 +8,7 @@ import androidx.core.net.toUri
 import com.ehviewer.core.database.LocalLibraryDatabase
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.LocalGalleryEntity
+import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.database.roomDb
 import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.toOkioPath
@@ -25,9 +26,11 @@ import splitties.init.appCtx
 
 private const val URI_FLAGS = FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE_URI_PERMISSION
 
+/** Single Room instance for local library + SMB source metadata. */
+internal val localLibraryDb by lazy { roomDb<LocalLibraryDatabase>("local_library.db") }
+
 object LocalLibrary {
-    private const val DB_NAME = "local_library.db"
-    private val db = roomDb<LocalLibraryDatabase>(DB_NAME)
+    private val db get() = localLibraryDb
 
     private val scanMutex = Mutex()
     private val _scanning = MutableStateFlow(false)

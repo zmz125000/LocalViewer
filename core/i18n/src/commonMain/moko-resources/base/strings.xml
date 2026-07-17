@@ -16,6 +16,8 @@
 <resources>
     <string name="app_name" translatable="false">LocalViewer</string>
     <string name="library">Library</string>
+    <string name="network">Network</string>
+    <string name="folder">Folder</string>
     <string name="library_empty">No galleries yet. Add a library folder in Settings.</string>
     <string name="library_add_root">Add library folder</string>
     <string name="library_roots">Library folders</string>
@@ -27,6 +29,32 @@
     <string name="settings_library_summary">Local folders to scan for picture galleries</string>
     <string name="library_gallery_folder">Folder</string>
     <string name="library_gallery_archive">Archive</string>
+    <string name="browse_directory">Directory</string>
+    <string name="browse_folder_gallery_pages">%d pages</string>
+    <string name="browse_directories">Directories</string>
+    <string name="browse_galleries">Galleries</string>
+    <string name="folder_empty">This folder is empty.</string>
+    <string name="folder_no_roots">No library folders. Add one in Settings → Library.</string>
+    <string name="folder_open_gallery">Open gallery</string>
+    <string name="network_empty">No network sources. Tap + to add an SMB share.</string>
+    <string name="network_add_smb">Add SMB share</string>
+    <string name="network_edit_smb">Edit SMB share</string>
+    <string name="network_display_name">Display name</string>
+    <string name="network_host">Host</string>
+    <string name="network_port">Port</string>
+    <string name="network_share">Share</string>
+    <string name="network_path">Path (optional)</string>
+    <string name="network_username">Username</string>
+    <string name="network_password">Password</string>
+    <string name="network_domain">Domain (optional)</string>
+    <string name="network_test">Test connection</string>
+    <string name="network_test_ok">Connection OK</string>
+    <string name="network_test_fail">Connection failed: %s</string>
+    <string name="network_delete">Delete</string>
+    <string name="network_browse">Browse</string>
+    <string name="network_save">Save</string>
+    <string name="smb_archive_not_supported">Opening archives over SMB is not supported yet</string>
+    <string name="smb_listing_error">Failed to list directory: %s</string>
     <string name="site_e" translatable="false">e-hentai</string>
     <string name="site_ex" translatable="false">exhentai</string>
     <!-- Theme -->

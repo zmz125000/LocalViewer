@@ -1,0 +1,240 @@
+package com.hippo.ehviewer.ui.screen
+
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.res.stringResource
+import com.ehviewer.core.database.model.SmbSourceEntity
+import com.ehviewer.core.i18n.R
+import com.ehviewer.core.model.BaseGalleryInfo
+import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
+import com.ehviewer.core.ui.component.FastScrollLazyColumn
+import com.ehviewer.core.util.launch
+import com.ehviewer.core.util.launchIO
+import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.EhDB
+import com.hippo.ehviewer.library.BrowseEntryRemote
+import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
+import com.hippo.ehviewer.library.stableGalleryId
+import com.hippo.ehviewer.smb.SmbGateway
+import com.hippo.ehviewer.smb.SmbPasswordStore
+import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.ui.DrawerHandle
+import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
+import com.hippo.ehviewer.ui.main.BrowseDirectoryRow
+import com.hippo.ehviewer.ui.main.BrowseEmptyHint
+import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
+import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.navToSmbFolderReader
+import com.ramcosta.composedestinations.annotation.Destination
+import com.ramcosta.composedestinations.annotation.RootGraph
+import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import moe.tarsin.snackbar
+import moe.tarsin.string
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Destination<RootGraph>
+@Composable
+fun AnimatedVisibilityScope.SmbBrowserScreen(
+    sourceId: Long,
+    initialRelativePath: String = "",
+    navigator: DestinationsNavigator,
+) = Screen(navigator) {
+    DrawerHandle(false)
+    var source by remember { mutableStateOf<SmbSourceEntity?>(null) }
+    // Path segments under pathPrefix
+    var segments by remember {
+        mutableStateOf(
+            initialRelativePath.split('/').filter { it.isNotEmpty() },
+        )
+    }
+    var entries by remember { mutableStateOf<List<BrowseEntryRemote>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var refreshing by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+
+    val relativeDir = segments.joinToString("/")
+    val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
+
+    LaunchedEffect(sourceId) {
+        source = withIOContext { SmbRepository.load(sourceId) }
+    }
+
+    suspend fun reload() {
+        val src = source ?: SmbRepository.load(sourceId)?.also { source = it } ?: run {
+            error = "Source missing"
+            loading = false
+            return
+        }
+        loading = true
+        error = null
+        val password = SmbPasswordStore.get(src.id)
+        runCatching {
+            withIOContext { SmbGateway.listDirectory(src, password, relativeDir) }
+        }.onSuccess {
+            entries = it
+            SmbRepository.markOk(src.id)
+        }.onFailure {
+            error = it.message
+            entries = emptyList()
+            SmbRepository.markError(src.id, it.message ?: "error")
+        }
+        loading = false
+    }
+
+    LaunchedEffect(sourceId, relativeDir, source?.id) {
+        if (source != null || SmbRepository.load(sourceId) != null) {
+            reload()
+        }
+    }
+
+    fun enterDir(name: String) {
+        segments = segments + name
+    }
+
+    fun goUp() {
+        if (segments.isNotEmpty()) {
+            segments = segments.dropLast(1)
+        } else {
+            navigator.popBackStack()
+        }
+    }
+
+    fun openFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
+        val src = source ?: return
+        val gid = stableGalleryId(src.id, "smb:$relativeDir")
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = LOCAL_GALLERY_TOKEN,
+            title = entry.name,
+            pages = entry.pageCount,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+        )
+        launchIO { EhDB.putHistoryInfo(info) }
+        // Navigate on main thread (click path)
+        navToSmbFolderReader(src.id, relativeDir, entry.imageFileNames, info)
+    }
+
+    fun openArchive(@Suppress("UNUSED_PARAMETER") entry: BrowseEntryRemote.ArchiveGallery) {
+        launch { snackbar(string(R.string.smb_archive_not_supported)) }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(title) },
+                navigationIcon = {
+                    IconButton(onClick = { goUp() }, shapes = IconButtonDefaults.shapes()) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = {
+                            launch {
+                                refreshing = true
+                                reload()
+                                refreshing = false
+                            }
+                        },
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null)
+                    }
+                },
+                scrollBehavior = scrollBehavior,
+            )
+        },
+    ) { padding ->
+        PullToRefreshBox(
+            isRefreshing = refreshing || loading,
+            onRefresh = {
+                launch {
+                    refreshing = true
+                    reload()
+                    refreshing = false
+                }
+            },
+            modifier = Modifier.padding(padding).fillMaxSize(),
+        ) {
+            when {
+                loading && entries.isEmpty() -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularWavyProgressIndicator()
+                    }
+                }
+                error != null && entries.isEmpty() -> {
+                    BrowseEmptyHint(string(R.string.smb_listing_error, error!!))
+                }
+                entries.isEmpty() -> {
+                    BrowseEmptyHint(stringResource(R.string.folder_empty))
+                }
+                else -> {
+                    val dirs = entries.filterIsInstance<BrowseEntryRemote.Directory>()
+                    val galleries = entries.filter { it !is BrowseEntryRemote.Directory }
+                    val listState = rememberLazyListState()
+                    FastScrollLazyColumn(
+                        state = listState,
+                        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
+                    ) {
+                        if (dirs.isNotEmpty()) {
+                            item(key = "hdr-dirs") {
+                                BrowseSectionHeader(stringResource(R.string.browse_directories))
+                            }
+                            items(dirs, key = { "d-${it.name}" }) { dir ->
+                                BrowseDirectoryRow(name = dir.name, onClick = { enterDir(dir.name) })
+                            }
+                        }
+                        if (galleries.isNotEmpty()) {
+                            item(key = "hdr-gal") {
+                                BrowseSectionHeader(stringResource(R.string.browse_galleries))
+                            }
+                            items(galleries, key = { "g-${it.name}" }) { entry ->
+                                when (entry) {
+                                    is BrowseEntryRemote.FolderGallery -> BrowseFolderGalleryRow(
+                                        name = entry.name,
+                                        pageCount = entry.pageCount,
+                                        onClick = { openFolderGallery(entry) },
+                                    )
+                                    is BrowseEntryRemote.ArchiveGallery -> BrowseArchiveGalleryRow(
+                                        name = entry.name,
+                                        onClick = { openArchive(entry) },
+                                    )
+                                    is BrowseEntryRemote.Directory -> Unit
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

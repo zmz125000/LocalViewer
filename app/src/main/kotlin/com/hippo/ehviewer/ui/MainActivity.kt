@@ -46,8 +46,10 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.DrawerDefaults
 import androidx.compose.material3.DrawerState
@@ -124,8 +126,10 @@ import com.hippo.ehviewer.client.parser.GalleryPageUrlParser
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.download.DownloadService
 import com.hippo.ehviewer.download.downloadLocation
+import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
+import com.hippo.ehviewer.ui.destinations.NetworkScreenDestination
 import com.hippo.ehviewer.ui.destinations.ProgressScreenDestination
 import com.hippo.ehviewer.ui.destinations.SettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.SignInScreenDestination
@@ -161,7 +165,9 @@ import splitties.systemservices.clipboardManager
 import splitties.systemservices.connectivityManager
 
 private val navItems = arrayOf<Triple<Direction, Int, ImageVector>>(
-    Triple(LibraryScreenDestination, R.string.library, Icons.Default.Folder),
+    Triple(LibraryScreenDestination, R.string.library, Icons.AutoMirrored.Filled.LibraryBooks),
+    Triple(NetworkScreenDestination, R.string.network, Icons.Default.Lan),
+    Triple(FolderBrowserScreenDestination, R.string.folder, Icons.Default.Folder),
     Triple(HistoryScreenDestination, R.string.history, Icons.Default.History),
     Triple(SettingsScreenDestination, R.string.settings, Icons.Default.Settings),
 )

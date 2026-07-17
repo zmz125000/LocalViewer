@@ -275,6 +275,15 @@ context(_: DestinationsNavigator)
 fun navToLocalFolderReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1) =
     navToReader(ReaderScreenArgs.LocalFolder(path, page, info))
 
+context(_: DestinationsNavigator)
+fun navToSmbFolderReader(
+    sourceId: Long,
+    remoteDir: String,
+    imageNames: List<String>,
+    info: BaseGalleryInfo? = null,
+    page: Int = -1,
+) = navToReader(ReaderScreenArgs.SmbFolder(sourceId, remoteDir, imageNames, page, info))
+
 context(nav: DestinationsNavigator)
 private fun navToReader(args: ReaderScreenArgs) = nav.navigate(ReaderScreenDestination(args)) { launchSingleTop = true }
 

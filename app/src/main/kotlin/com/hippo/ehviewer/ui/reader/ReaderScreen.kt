@@ -76,6 +76,8 @@ import com.hippo.ehviewer.gallery.unblock
 import com.hippo.ehviewer.gallery.useArchivePageLoader
 import com.hippo.ehviewer.gallery.useEhPageLoader
 import com.hippo.ehviewer.gallery.useFolderPageLoader
+import com.hippo.ehviewer.gallery.useSmbFolderPageLoader
+import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.MainActivity
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.theme.EhTheme
@@ -115,6 +117,16 @@ sealed interface ReaderScreenArgs {
     @Serializable
     data class LocalFolder(
         val path: String,
+        val page: Int = -1,
+        val info: BaseGalleryInfo? = null,
+    ) : ReaderScreenArgs
+
+    /** SMB image folder — pages fetched into local disk cache on demand. */
+    @Serializable
+    data class SmbFolder(
+        val sourceId: Long,
+        val remoteDir: String,
+        val imageNames: List<String>,
         val page: Int = -1,
         val info: BaseGalleryInfo? = null,
     ) : ReaderScreenArgs
@@ -177,6 +189,7 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                 val info = when (args) {
                     is ReaderScreenArgs.Gallery -> args.info
                     is ReaderScreenArgs.LocalFolder -> args.info
+                    is ReaderScreenArgs.SmbFolder -> args.info
                     is ReaderScreenArgs.Archive -> null
                 }
                 key(loader) {
@@ -408,6 +421,23 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             else -> 0
         }
         useFolderPageLoader(args.path.toPath(), info, page, block)
+    }
+    is ReaderScreenArgs.SmbFolder -> {
+        val source = requireNotNull(SmbRepository.load(args.sourceId)) { "SMB source not found" }
+        val info = args.info
+        val page = when {
+            args.page != -1 -> args.page
+            info != null -> EhDB.getReadProgress(info.gid)
+            else -> 0
+        }
+        val names = args.imageNames.ifEmpty {
+            com.hippo.ehviewer.smb.SmbGateway.listImageFileNames(
+                source,
+                com.hippo.ehviewer.smb.SmbPasswordStore.get(source.id),
+                args.remoteDir,
+            )
+        }
+        useSmbFolderPageLoader(source, args.remoteDir, names, info, page, block)
     }
     is ReaderScreenArgs.Archive -> useArchivePageLoader(
         args.path.toPath(),

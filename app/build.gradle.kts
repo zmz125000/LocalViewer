@@ -204,6 +204,8 @@ dependencies {
     implementation(libs.androidx.room.paging)
 
     implementation(libs.androidx.work.runtime)
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.smbj)
     implementation(libs.material.motion.core)
     implementation(libs.material.kolor)
 
