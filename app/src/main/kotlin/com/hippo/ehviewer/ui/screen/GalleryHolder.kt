@@ -64,7 +64,8 @@ fun collectListThumbSizeAsState(): State<Dp> {
     val density = LocalDensity.current
     return Settings.listThumbSize.collectAsState {
         with(density) {
-            (it.toDp() * 9).coerceAtLeast(120.dp)
+            // Square covers at ~75% of prior (×6 / 96dp) list-card height
+            (it.toDp() * 4.5f).coerceAtLeast(72.dp)
         }
     }
 }

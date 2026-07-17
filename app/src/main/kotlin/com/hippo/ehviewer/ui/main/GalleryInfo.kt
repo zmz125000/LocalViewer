@@ -71,7 +71,7 @@ fun GalleryInfoListItem(
         with(listThumbGenerator) {
             EhThumbCard(
                 key = info,
-                modifier = Modifier.aspectRatio(DEFAULT_RATIO),
+                modifier = Modifier.aspectRatio(DEFAULT_RATIO, matchHeightConstraintsFirst = true),
             )
         }
         Column(modifier = Modifier.padding(start = 8.dp, top = 2.dp, end = 4.dp, bottom = 4.dp)) {
@@ -227,4 +227,5 @@ fun GalleryInfoGridItem(
 
 private const val MIN_RATIO = 0.5F
 private const val MAX_RATIO = 1.5F
-const val DEFAULT_RATIO = 0.67F
+/** Cover width/height; 1f = square (shorter list cards than portrait 0.67). */
+const val DEFAULT_RATIO = 1F

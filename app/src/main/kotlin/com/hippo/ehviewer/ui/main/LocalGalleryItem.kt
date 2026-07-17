@@ -24,9 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,9 +45,6 @@ import com.ehviewer.core.ui.component.ElevatedCard
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.ktbuilder.imageRequest
 import okio.Path.Companion.toPath
-
-private const val MIN_RATIO = 0.5f
-private const val MAX_RATIO = 1.5f
 
 @Composable
 private fun coverRequest(coverPath: String?): ImageRequest? {
@@ -82,7 +77,10 @@ fun LocalGalleryListItem(
 ) {
     Row {
         Box(
-            modifier = Modifier.aspectRatio(DEFAULT_RATIO).clip(ShapeDefaults.Medium),
+            // Square cover (matchHeight so fixed list row height defines the square size)
+            modifier = Modifier
+                .aspectRatio(1f, matchHeightConstraintsFirst = true)
+                .clip(ShapeDefaults.Medium),
             contentAlignment = Alignment.Center,
         ) {
             val request = coverRequest(gallery.coverPath)
@@ -162,22 +160,17 @@ fun LocalGalleryGridItem(
     onLongClick = onLongClick,
 ) {
     Box {
-        var ratio by remember(gallery.id) { mutableFloatStateOf(DEFAULT_RATIO) }
         val request = coverRequest(gallery.coverPath)
         if (request != null) {
             AsyncImage(
                 model = request,
                 contentDescription = null,
-                modifier = Modifier.aspectRatio(ratio),
+                modifier = Modifier.aspectRatio(1f),
                 contentScale = ContentScale.Crop,
-                onSuccess = {
-                    ratio = (it.result.image.width.toFloat() / it.result.image.height)
-                        .coerceIn(MIN_RATIO, MAX_RATIO)
-                },
             )
         } else {
             Box(
-                modifier = Modifier.aspectRatio(DEFAULT_RATIO).fillMaxSize(),
+                modifier = Modifier.aspectRatio(1f).fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
