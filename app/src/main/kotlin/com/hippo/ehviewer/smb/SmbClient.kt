@@ -27,18 +27,28 @@ import java.util.EnumSet
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * smbj helper with pooled sessions (no reconnect per file) and SMB3-oriented config.
+ * smbj helper with a **per-source TCP connection pool**.
  *
- * Listing never walks whole shares — one directory (+ one-level peeks of children).
+ * One connection was fine for sequential browse, but the reader seekbar needs a free
+ * connection while other pages are still downloading — otherwise the jump waits on
+ * in-flight multi-credit reads (TCP head-of-line).
+ *
+ * Pool size is [MAX_CONNECTIONS_PER_SOURCE]. Each borrow is exclusive for the duration
+ * of one list/download so a long read cannot block another connection's work.
  */
 object SmbGateway {
+    /** Parallel TCP sessions per SMB source (reader seek + prefetch). */
+    const val MAX_CONNECTIONS_PER_SOURCE = 3
+
     private val config: SmbConfig = SmbConfig.builder()
         // Prefer modern dialects for Win11 / current Samba; still includes 3.0 for older appliances.
         .withDialects(SMB2Dialect.SMB_3_1_1, SMB2Dialect.SMB_3_0_2, SMB2Dialect.SMB_3_0)
@@ -52,11 +62,7 @@ object SmbGateway {
 
     private val client = SMBClient(config)
 
-    /** Per-source open tree; reused across list/download until invalidate/error. */
-    private val live = ConcurrentHashMap<Long, LiveShare>()
-
-    /** Serializes connect / reconnect for a given source (reads may run concurrently after). */
-    private val connectLocks = ConcurrentHashMap<Long, Mutex>()
+    private val pools = ConcurrentHashMap<Long, SourcePool>()
 
     private data class LiveShare(
         val fingerprint: String,
@@ -64,7 +70,87 @@ object SmbGateway {
         val session: Session,
         val share: DiskShare,
         val lastUsedMs: AtomicLong = AtomicLong(System.currentTimeMillis()),
-    )
+    ) {
+        fun closeQuietly() {
+            runCatching { share.close() }
+            runCatching { session.close() }
+            runCatching { connection.close() }
+        }
+    }
+
+    /**
+     * Free-list pool: borrow a [LiveShare] exclusively, grow up to [MAX_CONNECTIONS_PER_SOURCE].
+     */
+    private class SourcePool(var fingerprint: String) {
+        private val free = Channel<LiveShare>(capacity = MAX_CONNECTIONS_PER_SOURCE)
+        private val all = mutableListOf<LiveShare>()
+        private val size = AtomicInteger(0)
+        private val growLock = Mutex()
+
+        suspend fun <T> borrow(open: () -> LiveShare, block: (DiskShare) -> T): T {
+            var live = free.tryReceive().getOrNull()
+            if (live == null || !live.connection.isConnected) {
+                if (live != null) {
+                    // Dead entry from free list — drop it.
+                    retire(live)
+                    live = null
+                }
+                live = tryGrow(open) ?: free.receive().also { candidate ->
+                    if (!candidate.connection.isConnected) {
+                        retire(candidate)
+                        // One more attempt after retiring a dead peer.
+                        return borrow(open, block)
+                    }
+                }
+            }
+            return try {
+                block(live.share).also {
+                    live.lastUsedMs.set(System.currentTimeMillis())
+                }
+            } finally {
+                // Only return healthy connections; transport errors retire in withShare.
+                if (live.connection.isConnected) {
+                    free.trySend(live)
+                }
+            }
+        }
+
+        private suspend fun tryGrow(open: () -> LiveShare): LiveShare? {
+            if (size.get() >= MAX_CONNECTIONS_PER_SOURCE) return null
+            return growLock.withLock {
+                if (size.get() >= MAX_CONNECTIONS_PER_SOURCE) return@withLock null
+                val opened = open()
+                all.add(opened)
+                size.incrementAndGet()
+                opened
+            }
+        }
+
+        /** Remove [live] permanently (do not return to free list). */
+        fun retire(live: LiveShare) {
+            synchronized(all) { all.remove(live) }
+            size.updateAndGet { (it - 1).coerceAtLeast(0) }
+            live.closeQuietly()
+        }
+
+        /** Close every session (source deleted / credentials changed). */
+        fun closeAll() {
+            // Drain free list without blocking forever.
+            while (true) {
+                val item = free.tryReceive().getOrNull() ?: break
+                // already in all
+            }
+            val snapshot = synchronized(all) {
+                val copy = all.toList()
+                all.clear()
+                copy
+            }
+            size.set(0)
+            snapshot.forEach { it.closeQuietly() }
+        }
+
+        fun fingerprintMatches(fp: String) = fingerprint == fp
+    }
 
     private fun auth(source: SmbSourceEntity, password: String): AuthenticationContext {
         val user = source.username.ifBlank { "Guest" }
@@ -88,9 +174,6 @@ object SmbGateway {
             append(password)
         }
 
-    private fun connectLock(sourceId: Long): Mutex =
-        connectLocks.getOrPut(sourceId) { Mutex() }
-
     private fun joinPath(prefix: String, vararg parts: String): String {
         val segments = buildList {
             if (prefix.isNotBlank()) add(prefix.trim('/'))
@@ -109,14 +192,14 @@ object SmbGateway {
         if (parent.isEmpty()) child else "$parent/$child"
 
     /**
-     * Drop pooled session for [sourceId] (password change, delete source, transport error).
+     * Drop pooled sessions for [sourceId] (password change, delete source, transport error).
      */
     fun disconnect(sourceId: Long) {
-        live.remove(sourceId)?.closeQuietly()
+        pools.remove(sourceId)?.closeAll()
     }
 
     fun disconnectAll() {
-        val ids = live.keys.toList()
+        val ids = pools.keys.toList()
         ids.forEach { disconnect(it) }
     }
 
@@ -240,8 +323,8 @@ object SmbGateway {
     fun joinRelativePath(parent: String, child: String) = joinRelative(parent, child)
 
     /**
-     * Obtain a live [DiskShare], reconnecting when fingerprint changes or transport died.
-     * Concurrent callers may use the same share after connect completes.
+     * Borrow one pooled connection for [block]. Grows the pool when all members are busy
+     * so seekbar jumps can start a download without waiting on an in-flight page.
      */
     private suspend fun <T> withShare(
         source: SmbSourceEntity,
@@ -249,49 +332,31 @@ object SmbGateway {
         block: (DiskShare) -> T,
     ): T = withContext(Dispatchers.IO) {
         val id = source.id
-        // source.id == 0 during pre-save "test" is handled by testConnection; here id is always persisted.
-        val share = ensureShare(source, password)
+        val fp = fingerprint(source, password)
+        val pool = pools.getOrPut(id) { SourcePool(fp) }
+        if (!pool.fingerprintMatches(fp)) {
+            pools.remove(id)?.closeAll()
+            pools[id] = SourcePool(fp)
+        }
+        val active = pools[id]!!
+
         try {
-            block(share).also {
-                live[id]?.lastUsedMs?.set(System.currentTimeMillis())
-            }
+            active.borrow(open = { openLive(source, password, fp) }, block = block)
         } catch (first: Throwable) {
             // Permission / path errors are not fixed by reconnecting.
             if (first is SMBApiException && isIgnorableListError(first)) {
                 throw first
             }
-            // One reconnect attempt on failure (stale session / dropped TCP).
             logcat(first)
+            // Transport / session death: drop entire pool and retry once on a fresh connection.
             disconnect(id)
-            val retryShare = ensureShare(source, password)
+            val retryPool = pools.getOrPut(id) { SourcePool(fp) }
             try {
-                block(retryShare)
+                retryPool.borrow(open = { openLive(source, password, fp) }, block = block)
             } catch (second: Throwable) {
                 disconnect(id)
                 throw second
             }
-        }
-    }
-
-    private suspend fun ensureShare(source: SmbSourceEntity, password: String): DiskShare {
-        val id = source.id
-        val fp = fingerprint(source, password)
-        live[id]?.let { existing ->
-            if (existing.fingerprint == fp && existing.connection.isConnected) {
-                return existing.share
-            }
-        }
-        return connectLock(id).withLock {
-            live[id]?.let { existing ->
-                if (existing.fingerprint == fp && existing.connection.isConnected) {
-                    return@withLock existing.share
-                }
-                live.remove(id)
-                existing.closeQuietly()
-            }
-            val opened = openLive(source, password, fp)
-            live[id] = opened
-            opened.share
         }
     }
 
@@ -308,12 +373,6 @@ object SmbGateway {
             runCatching { connection.close() }
             throw e
         }
-    }
-
-    private fun LiveShare.closeQuietly() {
-        runCatching { share.close() }
-        runCatching { session.close() }
-        runCatching { connection.close() }
     }
 }
 
@@ -341,4 +400,3 @@ private fun isIgnorableListError(e: SMBApiException): Boolean {
         status == NtStatus.STATUS_OBJECT_PATH_NOT_FOUND ||
         status == NtStatus.STATUS_OBJECT_NAME_INVALID
 }
-

@@ -10,7 +10,9 @@ import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.util.FileUtils
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -18,6 +20,14 @@ import kotlinx.coroutines.sync.withPermit
 import moe.tarsin.kt.install
 import okio.Path
 
+/**
+ * SMB folder reader with seek-friendly downloads:
+ * - Connection pool ([SmbGateway.MAX_CONNECTIONS_PER_SOURCE]) so a seekbar jump can start
+ *   on a free TCP session without waiting for the current page transfer to finish.
+ * - One reserved interactive slot for [onRequest]; prefetch uses the remaining slots.
+ * - Per-file mutex in [SmbCache] joins overlapping downloads (small jump / prefetch race).
+ * - Large jumps cancel far-away prefetch jobs so they stop borrowing pool connections.
+ */
 suspend inline fun <T> useSmbFolderPageLoader(
     source: SmbSourceEntity,
     remoteDir: String,
@@ -30,8 +40,15 @@ suspend inline fun <T> useSmbFolderPageLoader(
         check(imageFileNames.isNotEmpty()) { "No images in SMB folder" }
         val password = SmbPasswordStore.get(source.id)
         val size = imageFileNames.size
-        // Pipelined reads on the pooled SMB session (2 concurrent *different* files).
-        val downloadSlots = Semaphore(2)
+        val poolSize = SmbGateway.MAX_CONNECTIONS_PER_SOURCE
+        // Reserve 1 connection for the page the user is looking at / just seeked to.
+        val interactiveSlots = Semaphore(1)
+        val prefetchSlots = Semaphore((poolSize - 1).coerceAtLeast(1))
+        // In-flight downloads by page index — join small-jump overlap, cancel large jumps.
+        val downloadJobs = ConcurrentHashMap<Int, Job>()
+        // Pages within this distance of the target keep running; farther jobs are cancelled.
+        val keepWindow = 4
+
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
                 override val title by lazy {
@@ -66,32 +83,92 @@ suspend inline fun <T> useSmbFolderPageLoader(
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
                     pages.forEach { index ->
-                        scope.launch(Dispatchers.IO) {
-                            runCatching { downloadToCache(index) }
-                        }
+                        ensureDownload(index, interactive = false)
                     }
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
-                    scope.launch(Dispatchers.IO) {
-                        runCatching {
-                            downloadToCache(index)
-                            notifySourceReady(index)
-                        }.onFailure {
-                            notifyPageFailed(index, it.message)
+                    // Large seek: drop distant prefeches so pool capacity frees for the new region.
+                    cancelDistantDownloads(index)
+                    ensureDownload(index, interactive = true) {
+                        notifySourceReady(index)
+                    }
+                }
+
+                private fun cancelDistantDownloads(center: Int) {
+                    val snapshot = downloadJobs.entries.toList()
+                    for ((idx, job) in snapshot) {
+                        if (kotlin.math.abs(idx - center) > keepWindow) {
+                            job.cancel()
+                            downloadJobs.remove(idx, job)
                         }
                     }
+                }
+
+                /**
+                 * Start or join a download for [index].
+                 * - Small jump / same page: reuses the existing job (and [SmbCache] path lock).
+                 * - Interactive: uses reserved pool capacity so seek does not queue behind prefetch.
+                 */
+                private fun ensureDownload(
+                    index: Int,
+                    interactive: Boolean,
+                    onReady: (() -> Unit)? = null,
+                ) {
+                    if (index !in 0 until size) return
+                    val name = imageFileNames[index]
+                    val cache = SmbCache.cachePath(source.id, remoteDir, name)
+                    if (SmbCache.isCached(cache)) {
+                        onReady?.invoke()
+                        return
+                    }
+                    // Overlap: join in-flight job for this page (common on small seeks).
+                    downloadJobs[index]?.let { existing ->
+                        if (existing.isActive) {
+                            if (onReady != null) {
+                                scope.launch(Dispatchers.IO) {
+                                    existing.join()
+                                    if (SmbCache.isCached(cache)) onReady()
+                                    else {
+                                        // Previous job failed/cancelled — retry as interactive.
+                                        ensureDownload(index, interactive = true, onReady = onReady)
+                                    }
+                                }
+                            }
+                            return
+                        }
+                    }
+                    val job = scope.launch(Dispatchers.IO) {
+                        try {
+                            val slots = if (interactive) interactiveSlots else prefetchSlots
+                            slots.withPermit {
+                                downloadToCache(index)
+                            }
+                            if (SmbCache.isCached(cache)) {
+                                onReady?.invoke()
+                            }
+                        } catch (_: kotlinx.coroutines.CancellationException) {
+                            // Distant-prefetch cancel or loader teardown — ignore.
+                        } catch (e: Throwable) {
+                            // Never rethrow: a failed child would cancel the whole reader scope.
+                            if (interactive) {
+                                notifyPageFailed(index, e.message)
+                            }
+                        } finally {
+                            downloadJobs.remove(index)
+                        }
+                    }
+                    downloadJobs[index] = job
                 }
 
                 private suspend fun downloadToCache(index: Int) {
                     val name = imageFileNames[index]
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
                     if (SmbCache.isCached(cache)) return
-                    downloadSlots.withPermit {
-                        val rel = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
-                        SmbCache.downloadIfNeeded(cache) { out ->
-                            SmbGateway.downloadFile(source, password, rel, out)
-                        }
+                    val rel = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
+                    // Per-path mutex: two connections never write the same cache file.
+                    SmbCache.downloadIfNeeded(cache) { out ->
+                        SmbGateway.downloadFile(source, password, rel, out)
                     }
                 }
             },
