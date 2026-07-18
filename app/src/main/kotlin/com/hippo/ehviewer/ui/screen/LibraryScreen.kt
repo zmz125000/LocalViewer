@@ -23,7 +23,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -145,11 +144,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
 
-        PullToRefreshBox(
-            isRefreshing = refreshing || scanning,
-            onRefresh = { refresh() },
-            modifier = Modifier.fillMaxSize(),
-        ) {
+        Box(Modifier.fillMaxSize()) {
             if (galleries.isEmpty() && !scanning && !refreshing) {
                 Column(
                     modifier = Modifier
