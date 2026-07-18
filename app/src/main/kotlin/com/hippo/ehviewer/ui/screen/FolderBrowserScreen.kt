@@ -2,13 +2,21 @@ package com.hippo.ehviewer.ui.screen
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularWavyProgressIndicator
@@ -34,14 +42,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.ehviewer.core.ui.component.FastScrollLazyColumn
+import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseEntry
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.BrowseSession
@@ -52,9 +64,12 @@ import com.hippo.ehviewer.library.listLocalDirectory
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
+import com.hippo.ehviewer.ui.main.BrowseArchiveGridItem
 import com.hippo.ehviewer.ui.main.BrowseCover
+import com.hippo.ehviewer.ui.main.BrowseDirectoryGridItem
 import com.hippo.ehviewer.ui.main.BrowseDirectoryRow
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
+import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
@@ -91,6 +106,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
+    val listMode by Settings.listMode.collectAsState()
+    val useGrid = listMode == 1
 
     val current = stack.lastOrNull()
     val currentPath = current?.path
@@ -99,11 +117,21 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun saveCurrentScroll() {
         val path = currentPath ?: return
-        BrowseSession.saveLocalScroll(
-            path,
-            listState.firstVisibleItemIndex,
-            listState.firstVisibleItemScrollOffset,
-        )
+        if (useGrid) {
+            BrowseSession.saveLocalScroll(
+                path,
+                gridState.firstVisibleItemIndex,
+                gridState.firstVisibleItemScrollOffset,
+                listMode = 1,
+            )
+        } else {
+            BrowseSession.saveLocalScroll(
+                path,
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
+                listMode = 0,
+            )
+        }
     }
 
     suspend fun reload(force: Boolean = false) {
@@ -144,26 +172,35 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onDispose { saveCurrentScroll() }
     }
 
-    // Restore once per path visit (exact scroll, else explorer-style anchor).
-    var restoredPath by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(currentPath, listedPath, entries) {
+    // Restore once per path+mode visit (exact scroll, else explorer-style anchor for list).
+    var restoredKey by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(currentPath, listedPath, entries, listMode) {
         val path = currentPath ?: return@LaunchedEffect
         if (listedPath != path || entries.isEmpty()) return@LaunchedEffect
-        if (restoredPath == path) return@LaunchedEffect
+        val visitKey = BrowseSession.scrollModeKey(path, listMode)
+        if (restoredKey == visitKey) return@LaunchedEffect
         val dirs = entries.filterIsInstance<BrowseEntry.Directory>()
-        val saved = BrowseSession.localScroll(path)
-        when {
-            saved != null -> {
-                val maxIndex = (browseListItemCount(dirs.size, entries.size - dirs.size) - 1).coerceAtLeast(0)
-                listState.scrollToItem(saved.index.coerceIn(0, maxIndex), saved.offset)
+        val saved = BrowseSession.localScroll(path, listMode)
+        val maxIndex = (browseListItemCount(dirs.size, entries.size - dirs.size) - 1).coerceAtLeast(0)
+        if (useGrid) {
+            if (saved != null) {
+                gridState.scrollToItem(saved.index.coerceIn(0, maxIndex), saved.offset)
+            } else {
+                gridState.scrollToItem(0)
             }
-            else -> {
-                val anchor = BrowseSession.takeLocalScrollAnchor(path)
-                val index = anchor?.let { browseDirectoryRowIndex(dirs.map { d -> d.name }, it) }
-                listState.scrollToItem(index ?: 0)
+        } else {
+            when {
+                saved != null -> {
+                    listState.scrollToItem(saved.index.coerceIn(0, maxIndex), saved.offset)
+                }
+                else -> {
+                    val anchor = BrowseSession.takeLocalScrollAnchor(path)
+                    val index = anchor?.let { browseDirectoryRowIndex(dirs.map { d -> d.name }, it) }
+                    listState.scrollToItem(index ?: 0)
+                }
             }
         }
-        restoredPath = path
+        restoredKey = visitKey
     }
 
     fun enterRoot(root: LibraryRootEntity) {
@@ -278,6 +315,21 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 actions = {
                     IconButton(
                         onClick = {
+                            saveCurrentScroll()
+                            Settings.listMode.value = if (listMode == 0) 1 else 0
+                        },
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        val icon = if (listMode == 1) Icons.Default.GridView else Icons.AutoMirrored.Filled.ViewList
+                        val desc = if (listMode == 0) {
+                            stringResource(R.string.settings_eh_list_mode_thumb)
+                        } else {
+                            stringResource(R.string.settings_eh_list_mode_detail)
+                        }
+                        Icon(imageVector = icon, contentDescription = desc)
+                    }
+                    IconButton(
+                        onClick = {
                             launch {
                                 refreshing = true
                                 reload(force = true)
@@ -352,32 +404,85 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 else -> {
                     val dirs = entries.filterIsInstance<BrowseEntry.Directory>()
                     val galleries = entries.filter { it !is BrowseEntry.Directory }
-                    FastScrollLazyColumn(
-                        state = listState,
-                        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
-                    ) {
-                        if (dirs.isNotEmpty()) {
-                            item(key = "hdr-dirs") { BrowseSectionHeader(stringResource(R.string.browse_directories)) }
-                            items(dirs, key = { "d-${it.path}" }) { dir ->
-                                BrowseDirectoryRow(name = dir.name, onClick = { enterDir(dir) })
+                    if (useGrid) {
+                        FastScrollLazyVerticalGrid(
+                            columns = GridCells.Fixed(3),
+                            state = gridState,
+                            modifier = Modifier
+                                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                                .fillMaxSize(),
+                            contentPadding = PaddingValues(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            if (dirs.isNotEmpty()) {
+                                item(
+                                    key = "hdr-dirs",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
+                                    BrowseSectionHeader(stringResource(R.string.browse_directories))
+                                }
+                                items(dirs, key = { "d-${it.path}" }) { dir ->
+                                    BrowseDirectoryGridItem(name = dir.name, onClick = { enterDir(dir) })
+                                }
+                            }
+                            if (galleries.isNotEmpty()) {
+                                item(
+                                    key = "hdr-gal",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
+                                    BrowseSectionHeader(stringResource(R.string.browse_galleries))
+                                }
+                                items(galleries, key = { "g-${it.name}-${it.hashCode()}" }) { entry ->
+                                    when (entry) {
+                                        is BrowseEntry.FolderGallery -> BrowseFolderGalleryGridItem(
+                                            name = entry.name,
+                                            pageCount = entry.pageCount,
+                                            pageCountCapped = entry.pageCountCapped,
+                                            cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                            onClick = { openFolderGallery(entry) },
+                                        )
+                                        is BrowseEntry.ArchiveGallery -> BrowseArchiveGridItem(
+                                            name = entry.name,
+                                            onClick = { openArchive(entry) },
+                                        )
+                                        is BrowseEntry.Directory -> Unit
+                                    }
+                                }
                             }
                         }
-                        if (galleries.isNotEmpty()) {
-                            item(key = "hdr-gal") { BrowseSectionHeader(stringResource(R.string.browse_galleries)) }
-                            items(galleries, key = { "g-${it.name}-${it.hashCode()}" }) { entry ->
-                                when (entry) {
-                                    is BrowseEntry.FolderGallery -> BrowseFolderGalleryRow(
-                                        name = entry.name,
-                                        pageCount = entry.pageCount,
-                                        pageCountCapped = entry.pageCountCapped,
-                                        cover = entry.coverPath?.let { BrowseCover.Local(it) },
-                                        onClick = { openFolderGallery(entry) },
-                                    )
-                                    is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(
-                                        name = entry.name,
-                                        onClick = { openArchive(entry) },
-                                    )
-                                    is BrowseEntry.Directory -> Unit
+                    } else {
+                        FastScrollLazyColumn(
+                            state = listState,
+                            modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
+                        ) {
+                            if (dirs.isNotEmpty()) {
+                                item(key = "hdr-dirs") {
+                                    BrowseSectionHeader(stringResource(R.string.browse_directories))
+                                }
+                                items(dirs, key = { "d-${it.path}" }) { dir ->
+                                    BrowseDirectoryRow(name = dir.name, onClick = { enterDir(dir) })
+                                }
+                            }
+                            if (galleries.isNotEmpty()) {
+                                item(key = "hdr-gal") {
+                                    BrowseSectionHeader(stringResource(R.string.browse_galleries))
+                                }
+                                items(galleries, key = { "g-${it.name}-${it.hashCode()}" }) { entry ->
+                                    when (entry) {
+                                        is BrowseEntry.FolderGallery -> BrowseFolderGalleryRow(
+                                            name = entry.name,
+                                            pageCount = entry.pageCount,
+                                            pageCountCapped = entry.pageCountCapped,
+                                            cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                            onClick = { openFolderGallery(entry) },
+                                        )
+                                        is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(
+                                            name = entry.name,
+                                            onClick = { openArchive(entry) },
+                                        )
+                                        is BrowseEntry.Directory -> Unit
+                                    }
                                 }
                             }
                         }

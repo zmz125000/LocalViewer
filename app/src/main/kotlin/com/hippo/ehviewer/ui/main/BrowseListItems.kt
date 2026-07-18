@@ -4,14 +4,18 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -30,11 +34,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImagePainter
 import coil3.compose.rememberAsyncImagePainter
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.ktbuilder.imageRequest
 import com.hippo.ehviewer.smb.SmbCache
@@ -96,7 +103,160 @@ fun BrowseFolderGalleryRow(
 }
 
 @Composable
-private fun BrowseCoverThumb(cover: BrowseCover?) {
+fun BrowseArchiveGalleryRow(
+    name: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ListItem(
+        headlineContent = { Text(name) },
+        supportingContent = { Text(stringResource(R.string.library_gallery_archive)) },
+        leadingContent = {
+            Icon(
+                Icons.AutoMirrored.Filled.InsertDriveFile,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.tertiary,
+            )
+        },
+        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+    )
+}
+
+// --- Grid (3-column thumb mode) ---
+
+@Composable
+fun BrowseDirectoryGridItem(
+    name: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    BrowseGridCell(
+        name = name,
+        onClick = onClick,
+        modifier = modifier,
+        thumb = {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.Folder,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        },
+    )
+}
+
+@Composable
+fun BrowseFolderGalleryGridItem(
+    name: String,
+    pageCount: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    cover: BrowseCover? = null,
+    pageCountCapped: Boolean = false,
+) {
+    BrowseGridCell(
+        name = name,
+        onClick = onClick,
+        modifier = modifier,
+        thumb = {
+            Box(Modifier.fillMaxSize()) {
+                BrowseCoverThumb(
+                    cover = cover,
+                    modifier = Modifier.fillMaxSize().clip(ShapeDefaults.Medium),
+                    placeholderSize = 40.dp,
+                )
+                if (pageCount > 0 || pageCountCapped) {
+                    Badge(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .widthIn(min = 32.dp)
+                            .height(24.dp),
+                    ) {
+                        Text(
+                            text = when {
+                                pageCountCapped -> "∞"
+                                else -> "$pageCount"
+                            },
+                        )
+                    }
+                }
+            }
+        },
+    )
+}
+
+@Composable
+fun BrowseArchiveGridItem(
+    name: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    BrowseGridCell(
+        name = name,
+        onClick = onClick,
+        modifier = modifier,
+        thumb = {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.InsertDriveFile,
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp),
+                    tint = MaterialTheme.colorScheme.tertiary,
+                )
+            }
+        },
+    )
+}
+
+@Composable
+private fun BrowseGridCell(
+    name: String,
+    onClick: () -> Unit,
+    thumb: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ElevatedCard(
+        modifier = modifier.fillMaxWidth(),
+        onClick = onClick,
+        onLongClick = onClick,
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(ShapeDefaults.Medium),
+            ) {
+                thumb()
+            }
+            Text(
+                text = name,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Start,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+fun BrowseCoverThumb(
+    cover: BrowseCover?,
+    modifier: Modifier = Modifier.size(56.dp),
+    placeholderSize: androidx.compose.ui.unit.Dp = 24.dp,
+) {
     val context = LocalContext.current
     var localPath by remember(cover) {
         mutableStateOf(
@@ -166,7 +326,7 @@ private fun BrowseCoverThumb(cover: BrowseCover?) {
     }
 
     Box(
-        modifier = Modifier.size(56.dp).clip(ShapeDefaults.Small),
+        modifier = modifier,
         contentAlignment = Alignment.Center,
     ) {
         if (request != null) {
@@ -183,6 +343,7 @@ private fun BrowseCoverThumb(cover: BrowseCover?) {
                 Icon(
                     Icons.Default.PhotoLibrary,
                     contentDescription = null,
+                    modifier = Modifier.size(placeholderSize),
                     tint = MaterialTheme.colorScheme.secondary,
                 )
             }
@@ -190,30 +351,11 @@ private fun BrowseCoverThumb(cover: BrowseCover?) {
             Icon(
                 Icons.Default.PhotoLibrary,
                 contentDescription = null,
+                modifier = Modifier.size(placeholderSize),
                 tint = MaterialTheme.colorScheme.secondary,
             )
         }
     }
-}
-
-@Composable
-fun BrowseArchiveGalleryRow(
-    name: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    ListItem(
-        headlineContent = { Text(name) },
-        supportingContent = { Text(stringResource(R.string.library_gallery_archive)) },
-        leadingContent = {
-            Icon(
-                Icons.AutoMirrored.Filled.InsertDriveFile,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.tertiary,
-            )
-        },
-        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
-    )
 }
 
 @Composable

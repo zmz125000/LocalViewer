@@ -2,13 +2,21 @@ package com.hippo.ehviewer.ui.screen
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularWavyProgressIndicator
@@ -33,14 +41,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.ehviewer.core.ui.component.FastScrollLazyColumn
+import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
@@ -54,9 +66,12 @@ import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
+import com.hippo.ehviewer.ui.main.BrowseArchiveGridItem
 import com.hippo.ehviewer.ui.main.BrowseCover
+import com.hippo.ehviewer.ui.main.BrowseDirectoryGridItem
 import com.hippo.ehviewer.ui.main.BrowseDirectoryRow
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
+import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.navToSmbFolderReader
@@ -99,18 +114,32 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
+    val listMode by Settings.listMode.collectAsState()
+    val useGrid = listMode == 1
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
     val relativeDir = segments.joinToString("/")
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
 
     fun saveCurrentScroll() {
-        BrowseSession.saveSmbScroll(
-            sourceId,
-            relativeDir,
-            listState.firstVisibleItemIndex,
-            listState.firstVisibleItemScrollOffset,
-        )
+        if (useGrid) {
+            BrowseSession.saveSmbScroll(
+                sourceId,
+                relativeDir,
+                gridState.firstVisibleItemIndex,
+                gridState.firstVisibleItemScrollOffset,
+                listMode = 1,
+            )
+        } else {
+            BrowseSession.saveSmbScroll(
+                sourceId,
+                relativeDir,
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
+                listMode = 0,
+            )
+        }
     }
 
     LaunchedEffect(sourceId) {
@@ -159,21 +188,29 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     var restoredDir by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(sourceId, relativeDir, listedDir, entries) {
+    LaunchedEffect(sourceId, relativeDir, listedDir, entries, listMode) {
         if (listedDir != relativeDir || entries.isEmpty()) return@LaunchedEffect
-        val visitKey = "$sourceId|$relativeDir"
+        val visitKey = BrowseSession.scrollModeKey("$sourceId|$relativeDir", listMode)
         if (restoredDir == visitKey) return@LaunchedEffect
         val dirs = entries.filterIsInstance<BrowseEntryRemote.Directory>()
-        val saved = BrowseSession.smbScroll(sourceId, relativeDir)
-        when {
-            saved != null -> {
-                val maxIndex = (browseListItemCount(dirs.size, entries.size - dirs.size) - 1).coerceAtLeast(0)
-                listState.scrollToItem(saved.index.coerceIn(0, maxIndex), saved.offset)
+        val saved = BrowseSession.smbScroll(sourceId, relativeDir, listMode)
+        val maxIndex = (browseListItemCount(dirs.size, entries.size - dirs.size) - 1).coerceAtLeast(0)
+        if (useGrid) {
+            if (saved != null) {
+                gridState.scrollToItem(saved.index.coerceIn(0, maxIndex), saved.offset)
+            } else {
+                gridState.scrollToItem(0)
             }
-            else -> {
-                val anchor = BrowseSession.takeSmbScrollAnchor(sourceId, relativeDir)
-                val index = anchor?.let { browseDirectoryRowIndex(dirs.map { d -> d.name }, it) }
-                listState.scrollToItem(index ?: 0)
+        } else {
+            when {
+                saved != null -> {
+                    listState.scrollToItem(saved.index.coerceIn(0, maxIndex), saved.offset)
+                }
+                else -> {
+                    val anchor = BrowseSession.takeSmbScrollAnchor(sourceId, relativeDir)
+                    val index = anchor?.let { browseDirectoryRowIndex(dirs.map { d -> d.name }, it) }
+                    listState.scrollToItem(index ?: 0)
+                }
             }
         }
         restoredDir = visitKey
@@ -250,6 +287,21 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 actions = {
                     IconButton(
                         onClick = {
+                            saveCurrentScroll()
+                            Settings.listMode.value = if (listMode == 0) 1 else 0
+                        },
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        val icon = if (listMode == 1) Icons.Default.GridView else Icons.AutoMirrored.Filled.ViewList
+                        val desc = if (listMode == 0) {
+                            stringResource(R.string.settings_eh_list_mode_thumb)
+                        } else {
+                            stringResource(R.string.settings_eh_list_mode_detail)
+                        }
+                        Icon(imageVector = icon, contentDescription = desc)
+                    }
+                    IconButton(
+                        onClick = {
                             launch {
                                 refreshing = true
                                 reload(force = true)
@@ -309,60 +361,111 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 else -> {
                     val dirs = entries.filterIsInstance<BrowseEntryRemote.Directory>()
                     val galleries = entries.filter { it !is BrowseEntryRemote.Directory }
-                    FastScrollLazyColumn(
-                        state = listState,
-                        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
-                    ) {
-                        if (dirs.isNotEmpty()) {
-                            item(key = "hdr-dirs") {
-                                BrowseSectionHeader(stringResource(R.string.browse_directories))
+                    fun galleryKey(it: BrowseEntryRemote): String = when (it) {
+                        is BrowseEntryRemote.FolderGallery ->
+                            "g-${it.relativeName.ifEmpty { it.name }}"
+                        is BrowseEntryRemote.ArchiveGallery ->
+                            "a-${it.parentRelativeName}/${it.fileName}"
+                        is BrowseEntryRemote.Directory -> "d-${it.name}"
+                    }
+                    fun coverFor(entry: BrowseEntryRemote.FolderGallery): BrowseCover.Smb? =
+                        entry.coverFileName?.let { fileName ->
+                            val remote = if (entry.relativeName.isEmpty()) {
+                                SmbGateway.joinRelativePath(relativeDir, fileName)
+                            } else {
+                                SmbGateway.joinRelativePath(
+                                    SmbGateway.joinRelativePath(relativeDir, entry.relativeName),
+                                    fileName,
+                                )
                             }
-                            items(dirs, key = { "d-${it.name}" }) { dir ->
-                                BrowseDirectoryRow(name = dir.name, onClick = { enterDir(dir.name) })
+                            BrowseCover.Smb(sourceId, remote)
+                        }
+                    if (useGrid) {
+                        FastScrollLazyVerticalGrid(
+                            columns = GridCells.Fixed(3),
+                            state = gridState,
+                            modifier = Modifier
+                                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                                .fillMaxSize(),
+                            contentPadding = PaddingValues(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            if (dirs.isNotEmpty()) {
+                                item(
+                                    key = "hdr-dirs",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
+                                    BrowseSectionHeader(stringResource(R.string.browse_directories))
+                                }
+                                items(dirs, key = { "d-${it.name}" }) { dir ->
+                                    BrowseDirectoryGridItem(
+                                        name = dir.name,
+                                        onClick = { enterDir(dir.name) },
+                                    )
+                                }
+                            }
+                            if (galleries.isNotEmpty()) {
+                                item(
+                                    key = "hdr-gal",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
+                                    BrowseSectionHeader(stringResource(R.string.browse_galleries))
+                                }
+                                items(galleries, key = { galleryKey(it) }) { entry ->
+                                    when (entry) {
+                                        is BrowseEntryRemote.FolderGallery ->
+                                            BrowseFolderGalleryGridItem(
+                                                name = entry.name,
+                                                pageCount = entry.pageCount,
+                                                pageCountCapped = entry.pageCountCapped,
+                                                cover = coverFor(entry),
+                                                onClick = { openFolderGallery(entry) },
+                                            )
+                                        is BrowseEntryRemote.ArchiveGallery ->
+                                            BrowseArchiveGridItem(
+                                                name = entry.name,
+                                                onClick = { openArchive(entry) },
+                                            )
+                                        is BrowseEntryRemote.Directory -> Unit
+                                    }
+                                }
                             }
                         }
-                        if (galleries.isNotEmpty()) {
-                            item(key = "hdr-gal") {
-                                BrowseSectionHeader(stringResource(R.string.browse_galleries))
+                    } else {
+                        FastScrollLazyColumn(
+                            state = listState,
+                            modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
+                        ) {
+                            if (dirs.isNotEmpty()) {
+                                item(key = "hdr-dirs") {
+                                    BrowseSectionHeader(stringResource(R.string.browse_directories))
+                                }
+                                items(dirs, key = { "d-${it.name}" }) { dir ->
+                                    BrowseDirectoryRow(name = dir.name, onClick = { enterDir(dir.name) })
+                                }
                             }
-                            items(
-                                galleries,
-                                key = {
-                                    when (it) {
+                            if (galleries.isNotEmpty()) {
+                                item(key = "hdr-gal") {
+                                    BrowseSectionHeader(stringResource(R.string.browse_galleries))
+                                }
+                                items(galleries, key = { galleryKey(it) }) { entry ->
+                                    when (entry) {
                                         is BrowseEntryRemote.FolderGallery ->
-                                            "g-${it.relativeName.ifEmpty { it.name }}"
+                                            BrowseFolderGalleryRow(
+                                                name = entry.name,
+                                                pageCount = entry.pageCount,
+                                                pageCountCapped = entry.pageCountCapped,
+                                                cover = coverFor(entry),
+                                                onClick = { openFolderGallery(entry) },
+                                            )
                                         is BrowseEntryRemote.ArchiveGallery ->
-                                            "a-${it.parentRelativeName}/${it.fileName}"
-                                        is BrowseEntryRemote.Directory -> "d-${it.name}"
+                                            BrowseArchiveGalleryRow(
+                                                name = entry.name,
+                                                onClick = { openArchive(entry) },
+                                            )
+                                        is BrowseEntryRemote.Directory -> Unit
                                     }
-                                },
-                            ) { entry ->
-                                when (entry) {
-                                    is BrowseEntryRemote.FolderGallery -> {
-                                        val coverRemote = entry.coverFileName?.let { fileName ->
-                                            val remote = if (entry.relativeName.isEmpty()) {
-                                                SmbGateway.joinRelativePath(relativeDir, fileName)
-                                            } else {
-                                                SmbGateway.joinRelativePath(
-                                                    SmbGateway.joinRelativePath(relativeDir, entry.relativeName),
-                                                    fileName,
-                                                )
-                                            }
-                                            BrowseCover.Smb(sourceId, remote)
-                                        }
-                                        BrowseFolderGalleryRow(
-                                            name = entry.name,
-                                            pageCount = entry.pageCount,
-                                            pageCountCapped = entry.pageCountCapped,
-                                            cover = coverRemote,
-                                            onClick = { openFolderGallery(entry) },
-                                        )
-                                    }
-                                    is BrowseEntryRemote.ArchiveGallery -> BrowseArchiveGalleryRow(
-                                        name = entry.name,
-                                        onClick = { openArchive(entry) },
-                                    )
-                                    is BrowseEntryRemote.Directory -> Unit
                                 }
                             }
                         }

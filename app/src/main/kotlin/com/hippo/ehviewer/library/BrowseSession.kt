@@ -75,12 +75,17 @@ object BrowseSession {
     private val localAnchor = ConcurrentHashMap<String, String>()
     private val smbAnchor = ConcurrentHashMap<String, String>()
 
-    fun saveLocalScroll(pathKey: String, index: Int, offset: Int) {
+    /** Scroll map key: path + list/grid mode so switching mode keeps separate positions. */
+    fun scrollModeKey(pathKey: String, listMode: Int): String = "$pathKey#m$listMode"
+
+    fun saveLocalScroll(pathKey: String, index: Int, offset: Int, listMode: Int = 0) {
         if (pathKey.isEmpty()) return
-        localScroll[pathKey] = ListScrollPosition(index, offset.coerceAtLeast(0))
+        localScroll[scrollModeKey(pathKey, listMode)] =
+            ListScrollPosition(index, offset.coerceAtLeast(0))
     }
 
-    fun localScroll(pathKey: String): ListScrollPosition? = localScroll[pathKey]
+    fun localScroll(pathKey: String, listMode: Int = 0): ListScrollPosition? =
+        localScroll[scrollModeKey(pathKey, listMode)]
 
     fun setLocalScrollAnchor(pathKey: String, childName: String) {
         if (pathKey.isEmpty() || childName.isEmpty()) return
@@ -89,13 +94,13 @@ object BrowseSession {
 
     fun takeLocalScrollAnchor(pathKey: String): String? = localAnchor.remove(pathKey)
 
-    fun saveSmbScroll(sourceId: Long, relativeDir: String, index: Int, offset: Int) {
-        smbScroll[smbListingKey(sourceId, relativeDir)] =
+    fun saveSmbScroll(sourceId: Long, relativeDir: String, index: Int, offset: Int, listMode: Int = 0) {
+        smbScroll[scrollModeKey(smbListingKey(sourceId, relativeDir), listMode)] =
             ListScrollPosition(index, offset.coerceAtLeast(0))
     }
 
-    fun smbScroll(sourceId: Long, relativeDir: String): ListScrollPosition? =
-        smbScroll[smbListingKey(sourceId, relativeDir)]
+    fun smbScroll(sourceId: Long, relativeDir: String, listMode: Int = 0): ListScrollPosition? =
+        smbScroll[scrollModeKey(smbListingKey(sourceId, relativeDir), listMode)]
 
     fun setSmbScrollAnchor(sourceId: Long, relativeDir: String, childName: String) {
         if (childName.isEmpty()) return
