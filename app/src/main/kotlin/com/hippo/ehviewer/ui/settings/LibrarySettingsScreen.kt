@@ -1,12 +1,20 @@
 package com.hippo.ehviewer.ui.settings
 
+import android.content.ActivityNotFoundException
+import android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+import android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+import android.provider.DocumentsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -15,6 +23,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -22,19 +31,28 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_FOLDER
+import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
 import com.ehviewer.core.database.model.SmbSourceEntity
+import com.ehviewer.core.files.isDirectory
+import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
+import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.library.AddRootResult
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.displayNameForTreeUri
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.Screen
@@ -54,9 +72,11 @@ import kotlin.time.Clock
 import moe.tarsin.snackbar
 import moe.tarsin.string
 
+private const val URI_FLAGS = FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE_URI_PERMISSION
+
 /**
  * Manage library (scanned), browse-only folders, and SMB network sources.
- * Adding sources is done from the Browse top bar.
+ * Each section has an “Add …” row; Browse top bar can also add sources.
  */
 @Destination<RootGraph>
 @Composable
@@ -67,6 +87,43 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
     val smbSources by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
     val scanning by LocalLibrary.scanning.collectAsState()
     var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }
+    val context = LocalContext.current
+    val cannotGetLocation = stringResource(id = R.string.settings_download_cant_get_download_location)
+    val alreadyAdded = stringResource(id = R.string.library_root_already_added)
+    var pendingSafRole by remember { mutableIntStateOf(LIBRARY_ROOT_ROLE_LIBRARY) }
+
+    val pickRoot = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
+        treeUri ?: return@rememberLauncherForActivityResult
+        val role = pendingSafRole
+        launchIO {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(treeUri, URI_FLAGS)
+                val documentUri = DocumentsContract.buildDocumentUriUsingTree(
+                    treeUri,
+                    DocumentsContract.getTreeDocumentId(treeUri),
+                )
+                val path = documentUri.toOkioPath()
+                check(path.isDirectory) { "$path is not a directory" }
+                val name = context.displayNameForTreeUri(treeUri.toString())
+                when (LocalLibrary.addRoot(treeUri.toString(), name, role)) {
+                    is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
+                    is AddRootResult.AlreadyExists -> launch { snackbar(alreadyAdded) }
+                }
+            }.onFailure {
+                logcat(it)
+                launch { snackbar(cannotGetLocation) }
+            }
+        }
+    }
+
+    fun launchSafPicker(role: Int) {
+        pendingSafRole = role
+        try {
+            pickRoot.launch(null)
+        } catch (_: ActivityNotFoundException) {
+            launch { snackbar(string(R.string.error_cant_find_activity)) }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -95,57 +152,105 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
             item(key = "hdr-library") {
                 BrowseSectionHeader(stringResource(R.string.library))
             }
-            if (libraryRoots.isEmpty()) {
-                item(key = "library-empty") {
-                    Text(
-                        text = stringResource(R.string.library_no_roots),
-                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                    )
-                }
-            } else {
-                items(libraryRoots, key = { "lib-${it.id}" }) { root ->
-                    ListItem(
-                        headlineContent = { Text(root.displayName) },
-                        supportingContent = {
-                            Text(text = root.treeUri.toUri().displayPath ?: root.treeUri)
-                        },
-                        trailingContent = {
-                            IconButton(
-                                onClick = { launchIO { LocalLibrary.removeRoot(root) } },
-                                shapes = IconButtonDefaults.shapes(),
-                            ) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = stringResource(R.string.library_remove_root),
-                                )
-                            }
-                        },
-                    )
-                }
+            items(libraryRoots, key = { "lib-${it.id}" }) { root ->
+                ListItem(
+                    headlineContent = { Text(root.displayName) },
+                    supportingContent = {
+                        Text(text = root.treeUri.toUri().displayPath ?: root.treeUri)
+                    },
+                    trailingContent = {
+                        IconButton(
+                            onClick = { launchIO { LocalLibrary.removeRoot(root) } },
+                            shapes = IconButtonDefaults.shapes(),
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = stringResource(R.string.library_remove_root),
+                            )
+                        }
+                    },
+                )
+            }
+            item(key = "add-library") {
+                AddSourceRow(
+                    title = stringResource(R.string.library_add_library_source),
+                    onClick = { launchSafPicker(LIBRARY_ROOT_ROLE_LIBRARY) },
+                )
             }
 
             item(key = "hdr-folder") {
                 BrowseSectionHeader(stringResource(R.string.folder))
             }
-            if (folderRoots.isEmpty()) {
-                item(key = "folder-empty") {
-                    Text(
-                        text = stringResource(R.string.folder_no_browse_roots),
-                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                    )
-                }
-            } else {
-                items(folderRoots, key = { "fol-${it.id}" }) { root ->
-                    ListItem(
-                        headlineContent = { Text(root.displayName) },
-                        supportingContent = {
-                            Text(text = root.treeUri.toUri().displayPath ?: root.treeUri)
-                        },
-                        trailingContent = {
+            items(folderRoots, key = { "fol-${it.id}" }) { root ->
+                ListItem(
+                    headlineContent = { Text(root.displayName) },
+                    supportingContent = {
+                        Text(text = root.treeUri.toUri().displayPath ?: root.treeUri)
+                    },
+                    trailingContent = {
+                        IconButton(
+                            onClick = { launchIO { LocalLibrary.removeRoot(root) } },
+                            shapes = IconButtonDefaults.shapes(),
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = stringResource(R.string.library_remove_root),
+                            )
+                        }
+                    },
+                )
+            }
+            item(key = "add-folder") {
+                AddSourceRow(
+                    title = stringResource(R.string.library_add_folder_source),
+                    onClick = { launchSafPicker(LIBRARY_ROOT_ROLE_FOLDER) },
+                )
+            }
+
+            item(key = "hdr-smb") {
+                BrowseSectionHeader(stringResource(R.string.network))
+            }
+            items(smbSources, key = { "s-${it.id}" }) { source ->
+                ListItem(
+                    headlineContent = { Text(source.displayName) },
+                    supportingContent = {
+                        Text(
+                            buildString {
+                                append("\\\\")
+                                append(source.host)
+                                if (source.share.isNotBlank()) {
+                                    append("\\")
+                                    append(source.share)
+                                    if (source.pathPrefix.isNotBlank()) {
+                                        append("\\")
+                                        append(source.pathPrefix.replace('/', '\\'))
+                                    }
+                                }
+                            },
+                        )
+                    },
+                    trailingContent = {
+                        Row {
                             IconButton(
-                                onClick = { launchIO { LocalLibrary.removeRoot(root) } },
+                                onClick = { smbEditor = source.toDuplicateEditorState() },
+                                shapes = IconButtonDefaults.shapes(),
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = stringResource(R.string.network_duplicate_smb),
+                                )
+                            }
+                            IconButton(
+                                onClick = { smbEditor = source.toEditorState() },
+                                shapes = IconButtonDefaults.shapes(),
+                            ) {
+                                Icon(
+                                    Icons.Default.Edit,
+                                    contentDescription = stringResource(R.string.network_edit_smb),
+                                )
+                            }
+                            IconButton(
+                                onClick = { launchIO { SmbRepository.delete(source) } },
                                 shapes = IconButtonDefaults.shapes(),
                             ) {
                                 Icon(
@@ -153,75 +258,15 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                                     contentDescription = stringResource(R.string.library_remove_root),
                                 )
                             }
-                        },
-                    )
-                }
+                        }
+                    },
+                )
             }
-
-            item(key = "hdr-smb") {
-                BrowseSectionHeader(stringResource(R.string.network))
-            }
-            if (smbSources.isEmpty()) {
-                item(key = "smb-empty") {
-                    Text(
-                        text = stringResource(R.string.network_empty),
-                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                    )
-                }
-            } else {
-                items(smbSources, key = { "s-${it.id}" }) { source ->
-                    ListItem(
-                        headlineContent = { Text(source.displayName) },
-                        supportingContent = {
-                            Text(
-                                buildString {
-                                    append("\\\\")
-                                    append(source.host)
-                                    if (source.share.isNotBlank()) {
-                                        append("\\")
-                                        append(source.share)
-                                        if (source.pathPrefix.isNotBlank()) {
-                                            append("\\")
-                                            append(source.pathPrefix.replace('/', '\\'))
-                                        }
-                                    }
-                                },
-                            )
-                        },
-                        trailingContent = {
-                            Row {
-                                IconButton(
-                                    onClick = { smbEditor = source.toDuplicateEditorState() },
-                                    shapes = IconButtonDefaults.shapes(),
-                                ) {
-                                    Icon(
-                                        Icons.Default.ContentCopy,
-                                        contentDescription = stringResource(R.string.network_duplicate_smb),
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { smbEditor = source.toEditorState() },
-                                    shapes = IconButtonDefaults.shapes(),
-                                ) {
-                                    Icon(
-                                        Icons.Default.Edit,
-                                        contentDescription = stringResource(R.string.network_edit_smb),
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { launchIO { SmbRepository.delete(source) } },
-                                    shapes = IconButtonDefaults.shapes(),
-                                ) {
-                                    Icon(
-                                        Icons.Default.Delete,
-                                        contentDescription = stringResource(R.string.library_remove_root),
-                                    )
-                                }
-                            }
-                        },
-                    )
-                }
+            item(key = "add-smb") {
+                AddSourceRow(
+                    title = stringResource(R.string.network_add_smb),
+                    onClick = { smbEditor = SmbEditorState() },
+                )
             }
         }
     }
@@ -300,4 +345,24 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
             },
         )
     }
+}
+
+@Composable
+private fun AddSourceRow(title: String, onClick: () -> Unit) {
+    ListItem(
+        headlineContent = {
+            Text(
+                text = title,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        },
+        leadingContent = {
+            Icon(
+                Icons.Default.Add,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        },
+        modifier = Modifier.clickable(onClick = onClick),
+    )
 }

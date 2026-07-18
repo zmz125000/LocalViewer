@@ -25,8 +25,8 @@
     <string name="network_duplicate_smb">Duplicate</string>
     <string name="library_empty">No galleries yet. Add a library source from the Browse top bar.</string>
     <string name="library_add_root">Add library folder</string>
-    <string name="library_add_library_source">Add library source</string>
-    <string name="library_add_folder_source">Add browse folder</string>
+    <string name="library_add_library_source">Add Library Source</string>
+    <string name="library_add_folder_source">Add Folder Source</string>
     <string name="library_root_already_added">This folder is already added</string>
     <string name="library_roots">Library folders</string>
     <string name="folder_no_browse_roots">No browse-only folders.</string>
@@ -47,8 +47,8 @@
     <string name="folder_no_roots">No library folders. Add one in Settings → Library.</string>
     <string name="folder_open_gallery">Open gallery</string>
     <string name="network_empty">No network sources.</string>
-    <string name="network_add_smb">Add SMB share</string>
-    <string name="network_edit_smb">Edit SMB share</string>
+    <string name="network_add_smb">Add SMB Share</string>
+    <string name="network_edit_smb">Edit SMB Share</string>
     <string name="network_display_name">Display name</string>
     <string name="network_display_name_optional">Display name (optional)</string>
     <string name="network_host">Host</string>
