@@ -23,6 +23,32 @@ fun isArchiveFileName(name: String): Boolean {
 }
 
 /**
+ * Turn a SAF tree document-id path segment into a human folder name.
+ *
+ * Okio [okio.Path.name] for a tree root is often the raw/URL-encoded document id,
+ * e.g. `primary%3APictures` or `8254-36A8%3ADCIM`, not the display name.
+ */
+fun humanizePathName(raw: String): String {
+    if (raw.isEmpty()) return raw
+    val decoded = runCatching {
+        java.net.URLDecoder.decode(raw, Charsets.UTF_8)
+    }.getOrDefault(raw)
+    // ExternalStorageProvider document ids: "primary:Pictures" or "UUID:DCIM/..."
+    val afterVolume = if (':' in decoded && !decoded.contains('/')) {
+        decoded.substringAfterLast(':')
+    } else if (':' in decoded) {
+        // "primary:Pictures/Album" → use path after volume
+        decoded.substringAfter(':', missingDelimiterValue = decoded)
+    } else {
+        decoded
+    }
+    return afterVolume
+        .substringAfterLast('/')
+        .substringAfterLast('\\')
+        .ifEmpty { decoded }
+}
+
+/**
  * Natural-order comparison for file names (digit runs compared as integers).
  */
 fun naturalCompare(a: String, b: String): Int {

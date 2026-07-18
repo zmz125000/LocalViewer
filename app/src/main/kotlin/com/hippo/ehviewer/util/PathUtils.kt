@@ -55,7 +55,8 @@ val Path.displayName: String
                 }
             }
         }
-        return name
+        // Tree roots still expose the document id as Path.name (primary%3APictures).
+        return com.hippo.ehviewer.library.humanizePathName(name)
     }
 
 fun Path.sha1() = openFileDescriptor("r").use { nativeSha1(it.fd) }

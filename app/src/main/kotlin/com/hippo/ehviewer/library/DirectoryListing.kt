@@ -95,7 +95,8 @@ fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
     galleries += leafGalleries
     if (coverPath != null || imagesCapped) {
         galleries += BrowseEntry.FolderGallery(
-            name = dir.name.ifEmpty { "Gallery" },
+            // Tree-root Path.name is often a SAF document id (e.g. primary%3APictures).
+            name = humanizePathName(dir.name).ifEmpty { "Gallery" },
             path = dir,
             pageCount = imageCount,
             pageCountCapped = imagesCapped,

@@ -106,7 +106,7 @@ object LocalLibrary {
             db.localGalleryDao().deleteByRootId(root.id)
             return
         }
-        val galleries = LibraryScanner.scan(root.id, path)
+        val galleries = LibraryScanner.scan(root.id, path, rootDisplayName = root.displayName)
         db.localGalleryDao().replaceForRoot(root.id, galleries)
     }
 

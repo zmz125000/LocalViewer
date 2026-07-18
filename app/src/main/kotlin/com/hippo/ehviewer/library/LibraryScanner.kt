@@ -19,9 +19,9 @@ object LibraryScanner {
      * - Images in subfolders are **not** part of the parent gallery; subfolders are scanned recursively.
      * - zip/cbz (and other archive types) in a directory are each a separate gallery.
      */
-    fun scan(rootId: Long, rootPath: Path): List<LocalGalleryEntity> {
+    fun scan(rootId: Long, rootPath: Path, rootDisplayName: String = ""): List<LocalGalleryEntity> {
         val results = ArrayList<LocalGalleryEntity>()
-        scanDir(rootId, rootPath, relativePath = "", results)
+        scanDir(rootId, rootPath, relativePath = "", rootDisplayName = rootDisplayName, out = results)
         return results
     }
 
@@ -29,6 +29,7 @@ object LibraryScanner {
         rootId: Long,
         dir: Path,
         relativePath: String,
+        rootDisplayName: String,
         out: MutableList<LocalGalleryEntity>,
     ) {
         val children = runCatching { dir.list() }.getOrElse {
@@ -52,7 +53,13 @@ object LibraryScanner {
         if (images.isNotEmpty()) {
             images.sortWith { a, b -> naturalCompare(a.name, b.name) }
             val cover = images.first()
-            val title = dir.name.ifEmpty { relativePath.ifEmpty { "Library" } }
+            // Root path .name is often a SAF document id (primary%3APictures); prefer stored display name.
+            val title = when {
+                relativePath.isEmpty() ->
+                    rootDisplayName.ifBlank { humanizePathName(dir.name) }.ifBlank { "Library" }
+                else ->
+                    humanizePathName(dir.name).ifEmpty { relativePath.substringAfterLast('/') }
+            }
             val mtime = dir.metadataOrNull()?.lastModifiedAtMillis ?: 0L
             out += LocalGalleryEntity(
                 id = stableGalleryId(rootId, relativePath.ifEmpty { "." }),
@@ -93,7 +100,7 @@ object LibraryScanner {
             } else {
                 "$relativePath/${sub.name}"
             }
-            scanDir(rootId, sub, rel, out)
+            scanDir(rootId, sub, rel, rootDisplayName, out)
         }
     }
 }
