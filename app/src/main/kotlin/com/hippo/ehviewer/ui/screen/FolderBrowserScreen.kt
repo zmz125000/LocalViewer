@@ -21,6 +21,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -54,13 +55,11 @@ import com.hippo.ehviewer.ui.main.BrowseDirectoryRow
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
-import com.hippo.ehviewer.ui.main.NavigationIcon
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
-import okio.Path
 import okio.Path.Companion.toPath
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -79,23 +78,42 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
     }
 
     var entries by remember { mutableStateOf<List<BrowseEntry>>(emptyList()) }
+    /** Path the current [entries] belong to — avoids showing the wrong dir during reload. */
+    var listedPath by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val listState = rememberLazyListState()
 
     val current = stack.lastOrNull()
+    val currentPath = current?.path
     val title = current?.title ?: stringResource(R.string.folder)
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+
+    fun saveCurrentScroll() {
+        val path = currentPath ?: return
+        BrowseSession.saveLocalScroll(
+            path,
+            listState.firstVisibleItemIndex,
+            listState.firstVisibleItemScrollOffset,
+        )
+    }
 
     suspend fun reload(force: Boolean = false) {
         val frame = stack.lastOrNull()
         if (frame == null) {
             entries = emptyList()
+            listedPath = null
             error = null
             return
         }
+        val targetPath = frame.path
         loading = true
         error = null
+        // Drop stale rows so we never paint child content under a parent path (or vice versa).
+        if (listedPath != targetPath) {
+            entries = emptyList()
+        }
         runCatching {
             withIOContext {
                 if (force) BrowseSession.invalidateLocalListing(frame.path)
@@ -103,16 +121,46 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
             }
         }.onSuccess {
             entries = it
+            listedPath = targetPath
         }.onFailure {
             error = it.message
             entries = emptyList()
+            listedPath = targetPath
         }
         loading = false
     }
 
     LaunchedEffect(stack) { reload(force = false) }
 
+    // Persist scroll when leaving a directory (enter subfolder, go up, open reader, leave screen).
+    DisposableEffect(currentPath) {
+        onDispose { saveCurrentScroll() }
+    }
+
+    // Restore once per path visit (exact scroll, else explorer-style anchor).
+    var restoredPath by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(currentPath, listedPath, entries) {
+        val path = currentPath ?: return@LaunchedEffect
+        if (listedPath != path || entries.isEmpty()) return@LaunchedEffect
+        if (restoredPath == path) return@LaunchedEffect
+        val dirs = entries.filterIsInstance<BrowseEntry.Directory>()
+        val saved = BrowseSession.localScroll(path)
+        when {
+            saved != null -> {
+                val maxIndex = (browseListItemCount(dirs.size, entries.size - dirs.size) - 1).coerceAtLeast(0)
+                listState.scrollToItem(saved.index.coerceIn(0, maxIndex), saved.offset)
+            }
+            else -> {
+                val anchor = BrowseSession.takeLocalScrollAnchor(path)
+                val index = anchor?.let { browseDirectoryRowIndex(dirs.map { d -> d.name }, it) }
+                listState.scrollToItem(index ?: 0)
+            }
+        }
+        restoredPath = path
+    }
+
     fun enterRoot(root: LibraryRootEntity) {
+        saveCurrentScroll()
         val path = LocalLibrary.rootPath(root) ?: return
         updateStack(
             listOf(
@@ -128,6 +176,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
 
     fun enterDir(entry: BrowseEntry.Directory) {
         val frame = stack.lastOrNull() ?: return
+        saveCurrentScroll()
+        BrowseSession.setLocalScrollAnchor(frame.path, entry.name)
         val rel = if (frame.relativePath.isEmpty()) entry.name else "${frame.relativePath}/${entry.name}"
         updateStack(
             stack + BrowseSession.LocalFrame(
@@ -141,9 +191,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
 
     fun goUp() {
         if (stack.size > 1) {
-            updateStack(stack.dropLast(1))
+            val leaving = stack.last()
+            val parent = stack.dropLast(1)
+            saveCurrentScroll()
+            BrowseSession.setLocalScrollAnchor(parent.last().path, leaving.title)
+            updateStack(parent)
         } else {
             // Leave folder browser back to Browse hub
+            saveCurrentScroll()
             updateStack(emptyList())
             navigator.popBackStack()
         }
@@ -258,7 +313,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
                         }
                     }
                 }
-                loading && entries.isEmpty() -> {
+                loading && (entries.isEmpty() || listedPath != currentPath) -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularWavyProgressIndicator()
                     }
@@ -272,7 +327,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
                 else -> {
                     val dirs = entries.filterIsInstance<BrowseEntry.Directory>()
                     val galleries = entries.filter { it !is BrowseEntry.Directory }
-                    val listState = rememberLazyListState()
                     FastScrollLazyColumn(
                         state = listState,
                         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
@@ -307,4 +361,19 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
             }
         }
     }
+}
+
+/** LazyColumn item count for browse lists (optional section headers). */
+internal fun browseListItemCount(dirCount: Int, galleryCount: Int): Int {
+    var n = 0
+    if (dirCount > 0) n += 1 + dirCount
+    if (galleryCount > 0) n += 1 + galleryCount
+    return n
+}
+
+/** Index of a directory row (after the directories section header). */
+internal fun browseDirectoryRowIndex(dirNames: List<String>, name: String): Int? {
+    val i = dirNames.indexOf(name)
+    if (i < 0) return null
+    return 1 + i
 }
