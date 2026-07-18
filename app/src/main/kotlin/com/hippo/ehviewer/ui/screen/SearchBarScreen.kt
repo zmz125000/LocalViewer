@@ -118,6 +118,8 @@ fun SearchBarScreen(
     suggestionProvider: SuggestionProvider? = null,
     localSearch: Boolean = true,
     searchBarOffsetY: () -> Int = { 0 },
+    /** Shown on the left of the search field when collapsed (e.g. list-mode toggle). */
+    leadingIcon: @Composable () -> Unit = {},
     trailingIcon: @Composable () -> Unit = {},
     filter: @Composable (() -> Unit)? = null,
     floatingActionButton: @Composable () -> Unit = {},
@@ -263,8 +265,9 @@ fun SearchBarScreen(
                             IconButton(onClick = { hideSearchView() }, shapes = IconButtonDefaults.shapes()) {
                                 Icon(Icons.AutoMirrored.Default.ArrowBack, contentDescription = null)
                             }
+                        } else {
+                            leadingIcon()
                         }
-                        // Drawer replaced by bottom navigation — no menu icon when collapsed
                     },
                     trailingIcon = {
                         if (expanded) {
