@@ -117,29 +117,41 @@ private fun BrowseCoverThumb(cover: BrowseCover?) {
     var fetchFailed by remember(cover) { mutableStateOf(false) }
 
     // Lazy: only runs when this row is composed (in LazyColumn viewport).
+    // Retry a few times — a single broken-pipe on a pooled connection must not
+    // permanently blank gallery thumbs while scrolling the browse list.
     LaunchedEffect(cover) {
         val smb = cover as? BrowseCover.Smb ?: return@LaunchedEffect
         if (localPath != null || fetchFailed) return@LaunchedEffect
-        runCatching {
-            val name = smb.remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-            val parent = smb.remoteRelativeFile.substringBeforeLast('/', missingDelimiterValue = "")
-                .substringBeforeLast('\\', missingDelimiterValue = "")
-                .replace('\\', '/')
-            val cache = SmbCache.cachePath(smb.sourceId, parent, name)
-            if (SmbCache.isCached(cache)) {
-                localPath = cache
-                return@runCatching
-            }
-            val source = SmbRepository.load(smb.sourceId) ?: error("SMB source missing")
-            val password = SmbPasswordStore.get(smb.sourceId)
-            SmbCache.downloadIfNeeded(cache) { out ->
-                SmbGateway.downloadFile(source, password, smb.remoteRelativeFile, out)
-            }
+        val name = smb.remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
+        val parent = smb.remoteRelativeFile.substringBeforeLast('/', missingDelimiterValue = "")
+            .substringBeforeLast('\\', missingDelimiterValue = "")
+            .replace('\\', '/')
+        val cache = SmbCache.cachePath(smb.sourceId, parent, name)
+        if (SmbCache.isCached(cache)) {
             localPath = cache
-        }.onFailure {
-            logcat(it)
-            fetchFailed = true
+            return@LaunchedEffect
         }
+        var lastError: Throwable? = null
+        repeat(3) { attempt ->
+            val result = runCatching {
+                val source = SmbRepository.load(smb.sourceId) ?: error("SMB source missing")
+                val password = SmbPasswordStore.get(smb.sourceId)
+                SmbCache.downloadIfNeeded(cache) { out ->
+                    SmbGateway.downloadFile(source, password, smb.remoteRelativeFile, out)
+                }
+                cache
+            }
+            if (result.isSuccess) {
+                localPath = result.getOrNull()
+                return@LaunchedEffect
+            }
+            lastError = result.exceptionOrNull()
+            if (attempt < 2) {
+                kotlinx.coroutines.delay(150L * (attempt + 1))
+            }
+        }
+        lastError?.let { logcat(it) }
+        fetchFailed = true
     }
 
     val request = remember(localPath) {

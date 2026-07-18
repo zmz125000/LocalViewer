@@ -394,6 +394,10 @@
     <string name="settings_download_media_scan_summary_off">Most gallery apps will ignore pictures in the download path</string>
     <string name="settings_download_concurrency">Concurrency download</string>
     <string name="settings_download_concurrency_summary">Up to %s images</string>
+    <string name="settings_smb_concurrency">SMB concurrent connections</string>
+    <string name="settings_smb_concurrency_summary">Up to %s parallel transfers (seek + prefetch)</string>
+    <string name="settings_reader_preload_image">Reader preload</string>
+    <string name="settings_reader_preload_image_summary">Prefetch next %s pages (SMB downloads ahead; local opens on demand)</string>
     <string name="settings_download_download_delay">Download delay</string>
     <string name="settings_download_download_delay_summary">Delay %s ms per download</string>
     <string name="settings_download_timeout_speed">Minimum download speed (in KB/s)</string>
@@ -426,7 +430,8 @@
     <string name="settings_advanced_dump_logcat_summary">Save logcat to external storage</string>
     <string name="settings_advanced_dump_logcat_failed">Dump logcat failed</string>
     <string name="settings_advanced_dump_logcat_to">Logcat dumped to %s</string>
-    <string name="settings_advanced_read_cache_size">Read cache size</string>
+    <string name="settings_advanced_read_cache_size">Image disk cache</string>
+    <string name="settings_advanced_read_cache_size_summary">Max size for SMB page cache (and legacy online image cache)</string>
     <string name="settings_advanced_app_language_title">App language</string>
     <string name="settings_advanced_enable_quic">QUIC support</string>
     <string name="settings_advanced_hardware_bitmap_threshold">Hardware bitmap (better performance) threshold</string>

@@ -37,8 +37,6 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.download.downloadLocation
-import com.hippo.ehviewer.spider.MIN_SPEED_LEVEL
-import com.hippo.ehviewer.spider.speedLevelToSpeed
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
 import com.hippo.ehviewer.ui.main.NavigationIcon
@@ -146,37 +144,6 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                 title = stringResource(id = R.string.settings_download_media_scan),
                 summary = if (mediaScan.value) stringResource(id = R.string.settings_download_media_scan_summary_on) else stringResource(id = R.string.settings_download_media_scan_summary_off),
                 state = mediaScan,
-            )
-            val multiThreadDownload = Settings.multiThreadDownload.asMutableState()
-            SimpleMenuPreferenceInt(
-                title = stringResource(id = R.string.settings_download_concurrency),
-                summary = stringResource(id = R.string.settings_download_concurrency_summary, multiThreadDownload.value),
-                entry = com.hippo.ehviewer.R.array.multi_thread_download_entries,
-                entryValueRes = com.hippo.ehviewer.R.array.multi_thread_download_entry_values,
-                state = multiThreadDownload,
-            )
-            val downloadDelay = Settings.downloadDelay.asMutableState()
-            SimpleMenuPreferenceInt(
-                title = stringResource(id = R.string.settings_download_download_delay),
-                summary = stringResource(id = R.string.settings_download_download_delay_summary, downloadDelay.value),
-                entry = com.hippo.ehviewer.R.array.download_delay_entries,
-                entryValueRes = com.hippo.ehviewer.R.array.download_delay_entry_values,
-                state = downloadDelay,
-            )
-            IntSliderPreference(
-                maxValue = 10,
-                minValue = MIN_SPEED_LEVEL,
-                title = stringResource(id = R.string.settings_download_timeout_speed),
-                state = Settings.timeoutSpeed.asMutableState(),
-                display = ::speedLevelToSpeed,
-            )
-            val preloadImage = Settings.preloadImage.asMutableState()
-            SimpleMenuPreferenceInt(
-                title = stringResource(id = R.string.settings_download_preload_image),
-                summary = stringResource(id = R.string.settings_download_preload_image_summary, preloadImage.value),
-                entry = com.hippo.ehviewer.R.array.preload_image_entries,
-                entryValueRes = com.hippo.ehviewer.R.array.preload_image_entry_values,
-                state = preloadImage,
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_download_save_as_cbz),

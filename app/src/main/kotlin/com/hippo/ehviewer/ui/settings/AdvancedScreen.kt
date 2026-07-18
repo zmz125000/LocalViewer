@@ -157,8 +157,25 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                     }
                 }
             }
+            val preloadImage = Settings.preloadImage.asMutableState()
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.settings_reader_preload_image),
+                summary = stringResource(id = R.string.settings_reader_preload_image_summary, preloadImage.value),
+                entry = com.hippo.ehviewer.R.array.preload_image_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.preload_image_entry_values,
+                state = preloadImage,
+            )
+            val smbConnections = Settings.multiThreadDownload.asMutableState()
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.settings_smb_concurrency),
+                summary = stringResource(id = R.string.settings_smb_concurrency_summary, smbConnections.value),
+                entry = com.hippo.ehviewer.R.array.multi_thread_download_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.multi_thread_download_entry_values,
+                state = smbConnections,
+            )
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_advanced_read_cache_size),
+                summary = stringResource(id = R.string.settings_advanced_read_cache_size_summary),
                 entry = com.hippo.ehviewer.R.array.read_cache_size_entries,
                 entryValueRes = com.hippo.ehviewer.R.array.read_cache_size_entry_values,
                 state = Settings.readCacheSize.asMutableState(),

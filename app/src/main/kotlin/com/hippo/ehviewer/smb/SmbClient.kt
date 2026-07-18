@@ -16,6 +16,7 @@ import com.hierynomus.smbj.auth.AuthenticationContext
 import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.session.Session
 import com.hierynomus.smbj.share.DiskShare
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.RemoteChild
@@ -38,16 +39,23 @@ import kotlinx.coroutines.withContext
 /**
  * smbj helper with a **per-source TCP connection pool**.
  *
- * One connection was fine for sequential browse, but the reader seekbar needs a free
- * connection while other pages are still downloading — otherwise the jump waits on
- * in-flight multi-credit reads (TCP head-of-line).
+ * Important stability rules:
+ * - A connection is **exclusive** while borrowed (no concurrent use of the same session).
+ * - On **any** error/cancel, that connection is **retired** (never returned to free list).
+ * - Never [disconnect] the whole pool because one request failed — that closed sockets still
+ *   in use by other downloads and caused `Broken pipe` / stuck readers and missing thumbs.
+ * - Failed sockets that were not returned used to leak [SourcePool] size → pool full but free
+ *   empty → permanent wait on [Channel.receive] (thumbnails/reader hang).
  *
- * Pool size is [MAX_CONNECTIONS_PER_SOURCE]. Each borrow is exclusive for the duration
- * of one list/download so a long read cannot block another connection's work.
+ * Pool size follows [Settings.multiThreadDownload] (SMB concurrency in Advanced).
  */
 object SmbGateway {
+    /** Absolute max free-list capacity (matches multi-thread menu upper bound). */
+    private const val POOL_CAPACITY = 7
+
     /** Parallel TCP sessions per SMB source (reader seek + prefetch). */
-    const val MAX_CONNECTIONS_PER_SOURCE = 3
+    fun maxConnectionsPerSource(): Int =
+        Settings.multiThreadDownload.value.coerceIn(1, POOL_CAPACITY)
 
     private val config: SmbConfig = SmbConfig.builder()
         // Prefer modern dialects for Win11 / current Samba; still includes 3.0 for older appliances.
@@ -58,11 +66,14 @@ object SmbGateway {
         // Client asks for max; server negotiates actual multi-credit window (often 4–8 MiB).
         .withNegotiatedBufferSize()
         .withTimeout(60, TimeUnit.SECONDS)
+        // Keepalive so idle pooled sessions are less likely to be dropped mid-reuse.
+        .withSoTimeout(120, TimeUnit.SECONDS)
         .build()
 
     private val client = SMBClient(config)
 
     private val pools = ConcurrentHashMap<Long, SourcePool>()
+    private val poolCreateLock = Mutex()
 
     private data class LiveShare(
         val fingerprint: String,
@@ -76,69 +87,111 @@ object SmbGateway {
             runCatching { session.close() }
             runCatching { connection.close() }
         }
+
+        val isUsable: Boolean
+            get() = connection.isConnected
     }
 
     /**
-     * Free-list pool: borrow a [LiveShare] exclusively, grow up to [MAX_CONNECTIONS_PER_SOURCE].
+     * Free-list pool: borrow a [LiveShare] exclusively, grow up to [maxConnectionsPerSource].
      */
     private class SourcePool(var fingerprint: String) {
-        private val free = Channel<LiveShare>(capacity = MAX_CONNECTIONS_PER_SOURCE)
+        private val free = Channel<LiveShare>(capacity = POOL_CAPACITY)
         private val all = mutableListOf<LiveShare>()
         private val size = AtomicInteger(0)
         private val growLock = Mutex()
 
         suspend fun <T> borrow(open: () -> LiveShare, block: (DiskShare) -> T): T {
-            var live = free.tryReceive().getOrNull()
-            if (live == null || !live.connection.isConnected) {
-                if (live != null) {
-                    // Dead entry from free list — drop it.
-                    retire(live)
-                    live = null
-                }
-                live = tryGrow(open) ?: free.receive().also { candidate ->
-                    if (!candidate.connection.isConnected) {
-                        retire(candidate)
-                        // One more attempt after retiring a dead peer.
-                        return borrow(open, block)
+            val live = acquire(open)
+            var reusable = false
+            try {
+                val result = block(live.share)
+                live.lastUsedMs.set(System.currentTimeMillis())
+                // Only reuse on full success + still connected.
+                reusable = live.isUsable
+                return result
+            } finally {
+                if (reusable) {
+                    // Channel is Rendezvous/buffered; drop if full (should not happen).
+                    if (!free.trySend(live).isSuccess) {
+                        retire(live)
                     }
+                } else {
+                    // Error, cancellation, or dead socket — never put back on free list.
+                    retire(live)
                 }
             }
-            return try {
-                block(live.share).also {
-                    live.lastUsedMs.set(System.currentTimeMillis())
-                }
-            } finally {
-                // Only return healthy connections; transport errors retire in withShare.
-                if (live.connection.isConnected) {
-                    free.trySend(live)
+        }
+
+        private suspend fun acquire(open: () -> LiveShare): LiveShare {
+            // Prefer free list; skip dead sockets.
+            while (true) {
+                val candidate = free.tryReceive().getOrNull() ?: break
+                if (candidate.isUsable) return candidate
+                retire(candidate)
+            }
+            tryGrow(open)?.let { return it }
+            // All connections busy: wait for one to free.
+            // Guard against waiting forever on a drained/broken pool.
+            var waits = 0
+            while (true) {
+                val candidate = free.receive()
+                if (candidate.isUsable) return candidate
+                retire(candidate)
+                tryGrow(open)?.let { return it }
+                waits++
+                if (waits > POOL_CAPACITY * 2) {
+                    // Pool is stuck (size leak or all dead): force open one more if under hard cap,
+                    // else open a one-shot connection outside the size counter? Prefer reset size.
+                    return forceOpen(open)
                 }
             }
         }
 
         private suspend fun tryGrow(open: () -> LiveShare): LiveShare? {
-            if (size.get() >= MAX_CONNECTIONS_PER_SOURCE) return null
+            val max = maxConnectionsPerSource()
+            if (size.get() >= max) return null
             return growLock.withLock {
-                if (size.get() >= MAX_CONNECTIONS_PER_SOURCE) return@withLock null
+                if (size.get() >= max) return@withLock null
                 val opened = open()
-                all.add(opened)
+                synchronized(all) { all.add(opened) }
                 size.incrementAndGet()
                 opened
             }
         }
 
-        /** Remove [live] permanently (do not return to free list). */
+        /** Last-resort open when free list only yields dead sockets. */
+        private suspend fun forceOpen(open: () -> LiveShare): LiveShare = growLock.withLock {
+            // If at capacity, retire one free/dead slot conceptually by allowing overflow by 0:
+            // close the oldest unusable from all if needed.
+            if (size.get() >= maxConnectionsPerSource()) {
+                val dead = synchronized(all) { all.firstOrNull { !it.isUsable } }
+                if (dead != null) retire(dead)
+            }
+            if (size.get() >= POOL_CAPACITY) {
+                // Hard stop: open ephemeral connection not tracked — still track to avoid FD leak.
+                val victim = synchronized(all) { all.firstOrNull() }
+                if (victim != null) retire(victim)
+            }
+            val opened = open()
+            synchronized(all) { all.add(opened) }
+            size.incrementAndGet()
+            opened
+        }
+
+        /** Remove [live] permanently. Idempotent. */
         fun retire(live: LiveShare) {
-            synchronized(all) { all.remove(live) }
-            size.updateAndGet { (it - 1).coerceAtLeast(0) }
+            val removed = synchronized(all) { all.remove(live) }
+            if (removed) {
+                size.updateAndGet { (it - 1).coerceAtLeast(0) }
+            }
             live.closeQuietly()
         }
 
-        /** Close every session (source deleted / credentials changed). */
+        /** Close every session (source deleted / credentials changed only). */
         fun closeAll() {
-            // Drain free list without blocking forever.
             while (true) {
-                val item = free.tryReceive().getOrNull() ?: break
-                // already in all
+                free.tryReceive().getOrNull() ?: break
             }
             val snapshot = synchronized(all) {
                 val copy = all.toList()
@@ -325,6 +378,10 @@ object SmbGateway {
     /**
      * Borrow one pooled connection for [block]. Grows the pool when all members are busy
      * so seekbar jumps can start a download without waiting on an in-flight page.
+     *
+     * On failure the **single** borrowed connection is retired inside [SourcePool.borrow].
+     * We retry once with a new borrow — never close the whole pool (would break other
+     * concurrent thumbnail/reader transfers with Broken pipe).
      */
     private suspend fun <T> withShare(
         source: SmbSourceEntity,
@@ -333,12 +390,7 @@ object SmbGateway {
     ): T = withContext(Dispatchers.IO) {
         val id = source.id
         val fp = fingerprint(source, password)
-        val pool = pools.getOrPut(id) { SourcePool(fp) }
-        if (!pool.fingerprintMatches(fp)) {
-            pools.remove(id)?.closeAll()
-            pools[id] = SourcePool(fp)
-        }
-        val active = pools[id]!!
+        val active = poolFor(id, fp)
 
         try {
             active.borrow(open = { openLive(source, password, fp) }, block = block)
@@ -347,16 +399,29 @@ object SmbGateway {
             if (first is SMBApiException && isIgnorableListError(first)) {
                 throw first
             }
+            // Cancellation must not retry or log as failure.
+            if (first is kotlinx.coroutines.CancellationException) throw first
             logcat(first)
-            // Transport / session death: drop entire pool and retry once on a fresh connection.
-            disconnect(id)
-            val retryPool = pools.getOrPut(id) { SourcePool(fp) }
+            // Failed connection already retired. Retry once on a (likely new) connection.
             try {
-                retryPool.borrow(open = { openLive(source, password, fp) }, block = block)
+                poolFor(id, fp).borrow(open = { openLive(source, password, fp) }, block = block)
             } catch (second: Throwable) {
-                disconnect(id)
+                if (second is kotlinx.coroutines.CancellationException) throw second
+                logcat(second)
                 throw second
             }
+        }
+    }
+
+    private suspend fun poolFor(id: Long, fp: String): SourcePool {
+        pools[id]?.let { existing ->
+            if (existing.fingerprintMatches(fp)) return existing
+        }
+        return poolCreateLock.withLock {
+            val existing = pools[id]
+            if (existing != null && existing.fingerprintMatches(fp)) return@withLock existing
+            existing?.closeAll()
+            SourcePool(fp).also { pools[id] = it }
         }
     }
 
