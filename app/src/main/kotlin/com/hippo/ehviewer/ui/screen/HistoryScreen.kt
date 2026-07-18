@@ -277,10 +277,11 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         modifier = Modifier.padding(16.dp),
                         tint = MaterialTheme.colorScheme.primary,
                     )
-                    val emptyHint = if (keyword.isEmpty()) {
-                        stringResource(id = R.string.no_history)
-                    } else {
-                        stringResource(id = R.string.gallery_list_empty_hit)
+                    val saveHistory by Settings.saveHistory.collectAsState()
+                    val emptyHint = when {
+                        !saveHistory && keyword.isEmpty() -> stringResource(id = R.string.history_disabled)
+                        keyword.isEmpty() -> stringResource(id = R.string.no_history)
+                        else -> stringResource(id = R.string.gallery_list_empty_hit)
                     }
                     Text(
                         text = emptyHint,

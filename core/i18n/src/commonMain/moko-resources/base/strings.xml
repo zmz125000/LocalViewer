@@ -510,6 +510,9 @@
     <string name="settings_privacy">Privacy</string>
     <string name="settings_privacy_secure">Prevent screenshots</string>
     <string name="settings_privacy_secure_summary">Prevent the content of the app from being taken screenshots of or shown in the \"Recent Apps\" list.</string>
+    <string name="settings_privacy_save_history">Save history</string>
+    <string name="settings_privacy_save_history_summary">Record recently opened library galleries and browse folders. Turning this off clears existing history.</string>
+    <string name="history_disabled">History is turned off in Privacy settings</string>
     <string name="clear_search_history">Clear device search history</string>
     <string name="clear_search_history_summary">Remove searches you have performed from this device</string>
     <string name="clear_search_history_confirm">Clear search history?</string>

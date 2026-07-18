@@ -9,12 +9,19 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.launch
+import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhApplication.Companion.searchDatabase
+import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.ui.Screen
@@ -67,6 +74,20 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 summary = stringResource(id = R.string.settings_privacy_secure_summary),
                 state = Settings.enabledSecurity.asMutableState(),
             )
+            val saveHistory = Settings.saveHistory.asMutableState()
+            var previousSaveHistory by remember { mutableStateOf(saveHistory.value) }
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_privacy_save_history),
+                summary = stringResource(id = R.string.settings_privacy_save_history_summary),
+                state = saveHistory,
+            )
+            // Turning history off also wipes existing entries.
+            LaunchedEffect(saveHistory.value) {
+                if (previousSaveHistory && !saveHistory.value) {
+                    withIOContext { EhDB.clearHistoryInfo() }
+                }
+                previousSaveHistory = saveHistory.value
+            }
             val searchHistoryCleared = stringResource(id = R.string.search_history_cleared)
             Preference(
                 title = stringResource(id = R.string.clear_search_history),

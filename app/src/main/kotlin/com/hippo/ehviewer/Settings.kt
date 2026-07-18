@@ -101,6 +101,8 @@ object Settings : DataStorePreferences(null) {
     val security = boolPref("require_unlock", false)
     val securityDelay = intPref("require_unlock_delay", 0)
     val enabledSecurity = boolPref("enable_secure", false)
+    /** When false, history is not written and Privacy toggle clears existing rows. */
+    val saveHistory = boolPref("save_history", true)
 
     // Advanced
     val saveParseErrorBody = boolPref("save_parse_error_body", true)

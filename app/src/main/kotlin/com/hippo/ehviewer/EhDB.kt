@@ -244,6 +244,7 @@ object EhDB {
     fun searchLocalFav(keyword: String) = db.localFavoritesDao().joinListLazy("*$keyword*")
 
     suspend fun putHistoryInfo(galleryInfo: GalleryInfo) {
+        if (!Settings.saveHistory.value) return
         putGalleryInfo(galleryInfo.asEntity())
         db.historyDao().upsert(HistoryInfo(galleryInfo.gid))
     }
