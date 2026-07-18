@@ -10,9 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ViewList
@@ -31,7 +29,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -113,34 +110,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
     val relativeDir = segments.joinToString("/")
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
-
-    fun saveCurrentScroll() {
-        if (useGrid) {
-            BrowseSession.saveSmbScroll(
-                sourceId,
-                relativeDir,
-                gridState.firstVisibleItemIndex,
-                gridState.firstVisibleItemScrollOffset,
-                listMode = 1,
-            )
-        } else {
-            BrowseSession.saveSmbScroll(
-                sourceId,
-                relativeDir,
-                listState.firstVisibleItemIndex,
-                listState.firstVisibleItemScrollOffset,
-                listMode = 0,
-            )
-        }
-    }
 
     LaunchedEffect(sourceId) {
         source = withIOContext { SmbRepository.load(sourceId) }
@@ -155,6 +130,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val targetDir = relativeDir
         loading = true
         error = null
+        // Drop stale rows (and unmount list) so dispose saves the *leaving* dir's scroll.
         if (listedDir != targetDir) {
             entries = emptyList()
         }
@@ -190,54 +166,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
-    DisposableEffect(sourceId, relativeDir) {
-        onDispose { saveCurrentScroll() }
-    }
-
-    var restoredDir by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(sourceId, relativeDir, listedDir, entries, listMode) {
-        if (listedDir != relativeDir || entries.isEmpty()) return@LaunchedEffect
-        val visitKey = BrowseSession.scrollModeKey("$sourceId|$relativeDir", listMode)
-        if (restoredDir == visitKey) return@LaunchedEffect
-        val dirs = entries.filterIsInstance<BrowseEntryRemote.Directory>()
-        val saved = BrowseSession.smbScroll(sourceId, relativeDir, listMode)
-        val maxIndex = (browseListItemCount(dirs.size, entries.size - dirs.size) - 1).coerceAtLeast(0)
-        if (useGrid) {
-            if (saved != null) {
-                gridState.scrollToItem(saved.index.coerceIn(0, maxIndex), saved.offset)
-            } else {
-                gridState.scrollToItem(0)
-            }
-        } else {
-            when {
-                saved != null -> {
-                    listState.scrollToItem(saved.index.coerceIn(0, maxIndex), saved.offset)
-                }
-                else -> {
-                    val anchor = BrowseSession.takeSmbScrollAnchor(sourceId, relativeDir)
-                    val index = anchor?.let { browseDirectoryRowIndex(dirs.map { d -> d.name }, it) }
-                    listState.scrollToItem(index ?: 0)
-                }
-            }
-        }
-        restoredDir = visitKey
-    }
-
     fun enterDir(name: String) {
-        saveCurrentScroll()
-        BrowseSession.setSmbScrollAnchor(sourceId, relativeDir, name)
         updateSegments(segments + name)
     }
 
     fun goUp() {
         if (segments.isNotEmpty()) {
-            val leaving = segments.last()
-            val parent = segments.dropLast(1)
-            saveCurrentScroll()
-            BrowseSession.setSmbScrollAnchor(sourceId, parent.joinToString("/"), leaving)
-            updateSegments(parent)
+            updateSegments(segments.dropLast(1))
         } else {
-            saveCurrentScroll()
             navigator.popBackStack()
         }
     }
@@ -294,7 +230,6 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 actions = {
                     IconButton(
                         onClick = {
-                            saveCurrentScroll()
                             Settings.listMode.value = if (listMode == 0) 1 else 0
                         },
                         shapes = IconButtonDefaults.shapes(),
@@ -327,7 +262,6 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             if (fromHistory) {
                 ExtendedFloatingActionButton(
                     onClick = {
-                        saveCurrentScroll()
                         if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
                             navigator.navigate(HistoryScreenDestination) {
                                 launchSingleTop = true
@@ -366,6 +300,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     BrowseEmptyHint(stringResource(R.string.folder_empty))
                 }
                 else -> {
+                    val dirKey = listedDir ?: relativeDir
                     val dirs = entries.filterIsInstance<BrowseEntryRemote.Directory>()
                     val galleries = entries.filter { it !is BrowseEntryRemote.Directory }
                     fun galleryKey(it: BrowseEntryRemote): String = when (it) {
@@ -388,6 +323,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             BrowseCover.Smb(sourceId, remote)
                         }
                     if (useGrid) {
+                        val gridState = rememberSmbBrowseGridState(sourceId, dirKey, listMode)
                         FastScrollLazyVerticalGrid(
                             columns = GridCells.Fixed(3),
                             state = gridState,
@@ -440,6 +376,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             }
                         }
                     } else {
+                        val listState = rememberSmbBrowseListState(sourceId, dirKey, listMode)
                         FastScrollLazyColumn(
                             state = listState,
                             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),

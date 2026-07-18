@@ -7,12 +7,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ViewList
@@ -38,11 +38,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.first
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
@@ -105,8 +107,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var loading by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
 
@@ -114,25 +114,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val currentPath = current?.path
     val title = current?.title ?: stringResource(R.string.folder)
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-
-    fun saveCurrentScroll() {
-        val path = currentPath ?: return
-        if (useGrid) {
-            BrowseSession.saveLocalScroll(
-                path,
-                gridState.firstVisibleItemIndex,
-                gridState.firstVisibleItemScrollOffset,
-                listMode = 1,
-            )
-        } else {
-            BrowseSession.saveLocalScroll(
-                path,
-                listState.firstVisibleItemIndex,
-                listState.firstVisibleItemScrollOffset,
-                listMode = 0,
-            )
-        }
-    }
 
     suspend fun reload(force: Boolean = false) {
         val frame = stack.lastOrNull()
@@ -146,6 +127,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         loading = true
         error = null
         // Drop stale rows so we never paint child content under a parent path (or vice versa).
+        // Also removes the Lazy list from composition so its DisposableEffect can save scroll
+        // for the *leaving* path (not the destination).
         if (listedPath != targetPath) {
             entries = emptyList()
         }
@@ -174,44 +157,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     LaunchedEffect(stack) { reload(force = false) }
 
-    // Persist scroll when leaving a directory (enter subfolder, go up, open reader, leave screen).
-    DisposableEffect(currentPath) {
-        onDispose { saveCurrentScroll() }
-    }
-
-    // Restore once per path+mode visit (exact scroll, else explorer-style anchor for list).
-    var restoredKey by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(currentPath, listedPath, entries, listMode) {
-        val path = currentPath ?: return@LaunchedEffect
-        if (listedPath != path || entries.isEmpty()) return@LaunchedEffect
-        val visitKey = BrowseSession.scrollModeKey(path, listMode)
-        if (restoredKey == visitKey) return@LaunchedEffect
-        val dirs = entries.filterIsInstance<BrowseEntry.Directory>()
-        val saved = BrowseSession.localScroll(path, listMode)
-        val maxIndex = (browseListItemCount(dirs.size, entries.size - dirs.size) - 1).coerceAtLeast(0)
-        if (useGrid) {
-            if (saved != null) {
-                gridState.scrollToItem(saved.index.coerceIn(0, maxIndex), saved.offset)
-            } else {
-                gridState.scrollToItem(0)
-            }
-        } else {
-            when {
-                saved != null -> {
-                    listState.scrollToItem(saved.index.coerceIn(0, maxIndex), saved.offset)
-                }
-                else -> {
-                    val anchor = BrowseSession.takeLocalScrollAnchor(path)
-                    val index = anchor?.let { browseDirectoryRowIndex(dirs.map { d -> d.name }, it) }
-                    listState.scrollToItem(index ?: 0)
-                }
-            }
-        }
-        restoredKey = visitKey
-    }
-
     fun enterRoot(root: LibraryRootEntity) {
-        saveCurrentScroll()
         val path = LocalLibrary.rootPath(root) ?: return
         updateStack(
             listOf(
@@ -227,8 +173,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun enterDir(entry: BrowseEntry.Directory) {
         val frame = stack.lastOrNull() ?: return
-        saveCurrentScroll()
-        BrowseSession.setLocalScrollAnchor(frame.path, entry.name)
         val rel = if (frame.relativePath.isEmpty()) entry.name else "${frame.relativePath}/${entry.name}"
         updateStack(
             stack + BrowseSession.LocalFrame(
@@ -242,14 +186,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun goUp() {
         if (stack.size > 1) {
-            val leaving = stack.last()
-            val parent = stack.dropLast(1)
-            saveCurrentScroll()
-            BrowseSession.setLocalScrollAnchor(parent.last().path, leaving.title)
-            updateStack(parent)
+            updateStack(stack.dropLast(1))
         } else {
             // Leave folder browser back to Browse hub
-            saveCurrentScroll()
             updateStack(emptyList())
             navigator.popBackStack()
         }
@@ -322,7 +261,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 actions = {
                     IconButton(
                         onClick = {
-                            saveCurrentScroll()
                             Settings.listMode.value = if (listMode == 0) 1 else 0
                         },
                         shapes = IconButtonDefaults.shapes(),
@@ -355,7 +293,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             if (fromHistory) {
                 ExtendedFloatingActionButton(
                     onClick = {
-                        saveCurrentScroll()
                         if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
                             navigator.navigate(HistoryScreenDestination) {
                                 launchSingleTop = true
@@ -409,9 +346,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     BrowseEmptyHint(stringResource(R.string.folder_empty))
                 }
                 else -> {
+                    // List only composes when this path's entries are ready. State is keyed by
+                    // path+mode so parent/child never share one LazyList scroll index.
+                    val pathKey = listedPath ?: currentPath!!
                     val dirs = entries.filterIsInstance<BrowseEntry.Directory>()
                     val galleries = entries.filter { it !is BrowseEntry.Directory }
                     if (useGrid) {
+                        val gridState = rememberBrowseGridState(pathKey, listMode)
                         FastScrollLazyVerticalGrid(
                             columns = GridCells.Fixed(3),
                             state = gridState,
@@ -459,6 +400,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             }
                         }
                     } else {
+                        val listState = rememberBrowseListState(pathKey, listMode)
                         FastScrollLazyColumn(
                             state = listState,
                             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
@@ -500,17 +442,121 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 }
 
-/** LazyColumn item count for browse lists (optional section headers). */
-internal fun browseListItemCount(dirCount: Int, galleryCount: Int): Int {
-    var n = 0
-    if (dirCount > 0) n += 1 + dirCount
-    if (galleryCount > 0) n += 1 + galleryCount
-    return n
+/**
+ * Per-directory list scroll. Keyed by [pathKey]+[listMode] so parent/child never share one
+ * LazyListState. Saved on dispose (path change unmounts the list while loading the next dir).
+ * Reader stays under the back stack so this state is kept without re-save/restore.
+ */
+@Composable
+internal fun rememberBrowseListState(pathKey: String, listMode: Int): LazyListState {
+    val state = remember(pathKey, listMode) {
+        val saved = BrowseSession.localScroll(pathKey, listMode)
+        LazyListState(saved?.index ?: 0, saved?.offset ?: 0)
+    }
+    DisposableEffect(pathKey, listMode, state) {
+        onDispose {
+            BrowseSession.saveLocalScroll(
+                pathKey,
+                state.firstVisibleItemIndex,
+                state.firstVisibleItemScrollOffset,
+                listMode,
+            )
+        }
+    }
+    // Re-apply after first layout — constructor index can be clamped when items are not ready yet.
+    LaunchedEffect(pathKey, listMode, state) {
+        val saved = BrowseSession.localScroll(pathKey, listMode) ?: return@LaunchedEffect
+        snapshotFlow { state.layoutInfo.totalItemsCount }.first { it > 0 }
+        val max = (state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+        state.scrollToItem(saved.index.coerceIn(0, max), saved.offset)
+    }
+    return state
 }
 
-/** Index of a directory row (after the directories section header). */
-internal fun browseDirectoryRowIndex(dirNames: List<String>, name: String): Int? {
-    val i = dirNames.indexOf(name)
-    if (i < 0) return null
-    return 1 + i
+@Composable
+internal fun rememberBrowseGridState(pathKey: String, listMode: Int): LazyGridState {
+    val state = remember(pathKey, listMode) {
+        val saved = BrowseSession.localScroll(pathKey, listMode)
+        LazyGridState(saved?.index ?: 0, saved?.offset ?: 0)
+    }
+    DisposableEffect(pathKey, listMode, state) {
+        onDispose {
+            BrowseSession.saveLocalScroll(
+                pathKey,
+                state.firstVisibleItemIndex,
+                state.firstVisibleItemScrollOffset,
+                listMode,
+            )
+        }
+    }
+    LaunchedEffect(pathKey, listMode, state) {
+        val saved = BrowseSession.localScroll(pathKey, listMode) ?: return@LaunchedEffect
+        snapshotFlow { state.layoutInfo.totalItemsCount }.first { it > 0 }
+        val max = (state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+        state.scrollToItem(saved.index.coerceIn(0, max), saved.offset)
+    }
+    return state
+}
+
+/** SMB variant — same mechanics, separate session map. */
+@Composable
+internal fun rememberSmbBrowseListState(
+    sourceId: Long,
+    relativeDir: String,
+    listMode: Int,
+): LazyListState {
+    val pathKey = "$sourceId|$relativeDir"
+    val state = remember(pathKey, listMode) {
+        val saved = BrowseSession.smbScroll(sourceId, relativeDir, listMode)
+        LazyListState(saved?.index ?: 0, saved?.offset ?: 0)
+    }
+    DisposableEffect(pathKey, listMode, state) {
+        onDispose {
+            BrowseSession.saveSmbScroll(
+                sourceId,
+                relativeDir,
+                state.firstVisibleItemIndex,
+                state.firstVisibleItemScrollOffset,
+                listMode,
+            )
+        }
+    }
+    LaunchedEffect(pathKey, listMode, state) {
+        val saved = BrowseSession.smbScroll(sourceId, relativeDir, listMode) ?: return@LaunchedEffect
+        snapshotFlow { state.layoutInfo.totalItemsCount }.first { it > 0 }
+        val max = (state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+        state.scrollToItem(saved.index.coerceIn(0, max), saved.offset)
+    }
+    return state
+}
+
+@Composable
+internal fun rememberSmbBrowseGridState(
+    sourceId: Long,
+    relativeDir: String,
+    listMode: Int,
+): LazyGridState {
+    val pathKey = "$sourceId|$relativeDir"
+    val state = remember(pathKey, listMode) {
+        val saved = BrowseSession.smbScroll(sourceId, relativeDir, listMode)
+        LazyGridState(saved?.index ?: 0, saved?.offset ?: 0)
+    }
+    DisposableEffect(pathKey, listMode, state) {
+        onDispose {
+            BrowseSession.saveSmbScroll(
+                sourceId,
+                relativeDir,
+                state.firstVisibleItemIndex,
+                state.firstVisibleItemScrollOffset,
+                listMode,
+            )
+        }
+    }
+    LaunchedEffect(pathKey, listMode, state) {
+        val saved = BrowseSession.smbScroll(sourceId, relativeDir, listMode) ?: return@LaunchedEffect
+        snapshotFlow { state.layoutInfo.totalItemsCount }.first { it > 0 }
+        val max = (state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+        state.scrollToItem(saved.index.coerceIn(0, max), saved.offset)
+    }
+    return state
 }
