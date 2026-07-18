@@ -47,9 +47,12 @@ object SmbRepository {
         if (password != null) {
             SmbPasswordStore.set(source.id, password)
         }
+        // Host/share/credentials may have changed — drop pooled session.
+        SmbGateway.disconnect(source.id)
     }
 
     suspend fun delete(source: SmbSourceEntity) = withIOContext {
+        SmbGateway.disconnect(source.id)
         SmbPasswordStore.remove(source.id)
         dao.delete(source)
     }

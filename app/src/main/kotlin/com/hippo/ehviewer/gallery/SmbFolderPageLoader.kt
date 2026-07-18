@@ -16,8 +16,8 @@ import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import moe.tarsin.kt.install
 import okio.Path
 
@@ -33,7 +33,8 @@ suspend inline fun <T> useSmbFolderPageLoader(
         check(imageFileNames.isNotEmpty()) { "No images in SMB folder" }
         val password = SmbPasswordStore.get(source.id)
         val size = imageFileNames.size
-        val downloadMutex = Mutex()
+        // Pipelined reads on the pooled SMB session (2 concurrent file handles).
+        val downloadSlots = Semaphore(2)
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
                 override val title by lazy {
@@ -86,10 +87,12 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 }
 
                 private suspend fun downloadToCache(index: Int) {
-                    downloadMutex.withLock {
-                        val name = imageFileNames[index]
-                        val cache = SmbCache.cachePath(source.id, remoteDir, name)
-                        if (SmbCache.isCached(cache)) return@withLock
+                    val name = imageFileNames[index]
+                    val cache = SmbCache.cachePath(source.id, remoteDir, name)
+                    if (SmbCache.isCached(cache)) return
+                    downloadSlots.withPermit {
+                        // Re-check after acquiring a slot (another job may have finished).
+                        if (SmbCache.isCached(cache)) return@withPermit
                         cache.parent?.mkdirs()
                         val rel = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
                         val tmp = File(cache.toString() + ".tmp")
