@@ -4,10 +4,12 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.plus
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
@@ -39,7 +41,6 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.i18n.R
@@ -92,6 +93,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val thumbColumns by Settings.thumbColumns.collectAsState()
     val cardHeight by collectListThumbSizeAsState()
     val marginH = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
+    val marginV = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_v)
     val listInterval = dimensionResource(com.hippo.ehviewer.R.dimen.gallery_list_interval)
     val gridInterval = dimensionResource(com.hippo.ehviewer.R.dimen.gallery_grid_interval)
 
@@ -165,10 +167,13 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             } else if (listMode == 0) {
                 val listState = rememberLazyListState()
+                // Match GalleryList: search-bar inset + list margins so top gap under the
+                // search field equals the horizontal card inset (marginH + search padding).
+                val listPadding = paddingValues + PaddingValues(marginH, marginV)
                 FastScrollLazyColumn(
                     modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
                     state = listState,
-                    contentPadding = paddingValues,
+                    contentPadding = listPadding,
                     verticalArrangement = Arrangement.spacedBy(listInterval),
                 ) {
                     items(galleries, key = { it.id }) { gallery ->
@@ -179,18 +184,18 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             showProgress = showProgress,
                             modifier = Modifier
                                 .height(cardHeight)
-                                .padding(horizontal = marginH)
                                 .fillMaxWidth(),
                         )
                     }
                 }
             } else {
                 val gridState = rememberLazyStaggeredGridState()
+                val gridPadding = paddingValues + PaddingValues(marginH, marginV)
                 FastScrollLazyVerticalStaggeredGrid(
                     columns = StaggeredGridCells.Fixed(thumbColumns),
                     modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
                     state = gridState,
-                    contentPadding = paddingValues,
+                    contentPadding = gridPadding,
                     verticalItemSpacing = gridInterval,
                     horizontalArrangement = Arrangement.spacedBy(gridInterval),
                 ) {
@@ -200,7 +205,6 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             onClick = { openGallery(gallery) },
                             showPages = showPages,
                             showProgress = showProgress,
-                            modifier = Modifier.padding(horizontal = 4.dp),
                         )
                     }
                 }

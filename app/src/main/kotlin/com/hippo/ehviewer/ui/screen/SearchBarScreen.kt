@@ -60,6 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -212,6 +213,11 @@ fun SearchBarScreen(
         }
     }
 
+    // Match gallery list side inset so the search field edges line up with cards.
+    val searchBarHorizontalPadding = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
+    // M3 SearchBar uses 8.dp above and below the field when collapsed; reserve that total.
+    val searchBarVerticalPadding = 8.dp
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
@@ -219,8 +225,12 @@ fun SearchBarScreen(
                     val scrim = MaterialTheme.colorScheme.background.scrim()
                     Box(Modifier.windowInsetsTopHeight(WindowInsets.statusBars).fillMaxWidth().background(scrim))
 
-                    // Placeholder, fill immutable SearchBar padding
-                    Spacer(modifier = Modifier.height(SearchBarDefaults.InputFieldHeight + 16.dp))
+                    // Placeholder: field height + equal top/bottom margin (same as top margin under status bar).
+                    Spacer(
+                        modifier = Modifier.height(
+                            SearchBarDefaults.InputFieldHeight + searchBarVerticalPadding * 2,
+                        ),
+                    )
                 }
             },
             floatingActionButton = floatingActionButton,
@@ -242,7 +252,7 @@ fun SearchBarScreen(
                     },
                     expanded = expanded,
                     onExpandedChange = onExpandedChange,
-                    modifier = Modifier.widthIn(max = (maxWidth - SearchBarHorizontalPadding * 2).coerceAtMost(M3SearchBarMaxWidth)).fillMaxWidth(),
+                    modifier = Modifier.widthIn(max = (maxWidth - searchBarHorizontalPadding * 2).coerceAtMost(M3SearchBarMaxWidth)).fillMaxWidth(),
                     placeholder = {
                         val contentActive by activeState.state
                         val text = title.takeUnless { expanded || contentActive } ?: searchFieldHint
@@ -332,5 +342,4 @@ fun wrapTagKeyword(keyword: String, translate: Boolean = false): String = run {
 
 private val TagTerminators = charArrayOf('"', '$')
 private val WhitespaceRegex = Regex("\\s+")
-private val SearchBarHorizontalPadding = 16.dp
 private val M3SearchBarMaxWidth = 720.dp
