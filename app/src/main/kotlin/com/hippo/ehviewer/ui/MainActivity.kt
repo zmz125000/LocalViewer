@@ -308,10 +308,22 @@ class MainActivity : AppCompatActivity() {
                                     NavigationBarItem(
                                         selected = selected,
                                         onClick = {
-                                            if (!selected) {
-                                                // Simple tab switch without deep nav-option DSL
-                                                // (keeps stack shallow for top-level destinations)
-                                                navigator.navigate(item.direction)
+                                            if (selected) return@NavigationBarItem
+                                            // Keep Library as the single root. Other main tabs
+                                            // sit above it only; back → Library → exit app.
+                                            if (item.direction == LibraryScreenDestination) {
+                                                navigator.popBackStack(
+                                                    LibraryScreenDestination,
+                                                    inclusive = false,
+                                                )
+                                            } else {
+                                                navigator.navigate(item.direction) {
+                                                    popUpTo(LibraryScreenDestination) {
+                                                        saveState = true
+                                                    }
+                                                    launchSingleTop = true
+                                                    restoreState = true
+                                                }
                                             }
                                         },
                                         icon = {
