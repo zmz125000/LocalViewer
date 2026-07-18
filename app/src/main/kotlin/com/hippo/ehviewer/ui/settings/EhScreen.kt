@@ -88,6 +88,11 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 summary = stringResource(id = R.string.settings_eh_show_reading_progress_summary),
                 state = Settings.showReadingProgress.asMutableState(),
             )
+            // Same pref as reader settings chrome — off enables double-tap prev/next gallery.
+            SwitchPreference(
+                title = stringResource(id = R.string.pref_double_tap_to_zoom),
+                state = Settings.doubleTapToZoom.asMutableState(),
+            )
         }
     }
 }
