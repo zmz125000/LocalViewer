@@ -159,22 +159,29 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             entries = emptyList()
         }
         val password = SmbPasswordStore.get(src.id)
-        runCatching {
-            withIOContext {
-                if (force) BrowseSession.invalidateSmbListing(src.id, relativeDir)
-                SmbGateway.listDirectory(src, password, relativeDir, useCache = !force)
-            }
-        }.onSuccess {
-            entries = it
+        try {
+            // Listing is process-scoped inside SmbGateway; leaving the screen only cancels
+            // this await, not the walk. Do not treat CancellationException as a list failure.
+            val result = SmbGateway.listDirectory(src, password, relativeDir, useCache = !force)
+            // Ignore stale results if the user navigated away while we awaited.
+            if (relativeDir != targetDir) return
+            entries = result
             listedDir = targetDir
             SmbRepository.markOk(src.id)
-        }.onFailure {
-            error = it.message
+            error = null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (relativeDir != targetDir) return
+            error = e.message
             entries = emptyList()
             listedDir = targetDir
-            SmbRepository.markError(src.id, it.message ?: "error")
+            SmbRepository.markError(src.id, e.message ?: "error")
+        } finally {
+            if (relativeDir == targetDir) {
+                loading = false
+            }
         }
-        loading = false
     }
 
     LaunchedEffect(sourceId, relativeDir, source?.id) {

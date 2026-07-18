@@ -30,7 +30,11 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -74,6 +78,13 @@ object SmbGateway {
 
     private val pools = ConcurrentHashMap<Long, SourcePool>()
     private val poolCreateLock = Mutex()
+
+    /**
+     * Process-scoped listings so navigating away mid-scan does not cancel the SMB walk.
+     * Re-entering the same path joins the in-flight job (or hits session cache when done).
+     */
+    private val listScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val listJobs = ConcurrentHashMap<String, Deferred<List<BrowseEntryRemote>>>()
 
     private data class LiveShare(
         val fingerprint: String,
@@ -277,21 +288,44 @@ object SmbGateway {
     /**
      * List [relativeDir] with same classification as local folder browse
      * (leaf galleries, hide empty). Results cached per session.
+     *
+     * Listing runs in [listScope] so leaving the browser composition does not cancel a long
+     * scan; concurrent callers for the same path share one job.
      */
     suspend fun listDirectory(
         source: SmbSourceEntity,
         password: String,
         relativeDir: String,
         useCache: Boolean = true,
-    ): List<BrowseEntryRemote> = withIOContext {
+    ): List<BrowseEntryRemote> {
+        val cacheKey = BrowseSession.smbListingKey(source.id, relativeDir)
         if (useCache) {
-            BrowseSession.getSmbListing(source.id, relativeDir)?.let { return@withIOContext it }
+            BrowseSession.getSmbListing(source.id, relativeDir)?.let { return it }
+        } else {
+            // Force: drop cache and any incomplete in-flight walk for this path.
+            BrowseSession.invalidateSmbListing(source.id, relativeDir)
+            listJobs.remove(cacheKey)?.cancel()
         }
-        val result = withShare(source, password) { share ->
-            listDirectoryUncached(share, source, relativeDir)
-        }
-        BrowseSession.putSmbListing(source.id, relativeDir, result)
-        result
+
+        // Fast path after another waiter finished between cache check and job join.
+        BrowseSession.getSmbListing(source.id, relativeDir)?.let { return it }
+
+        val deferred = listJobs.compute(cacheKey) { _, existing ->
+            if (existing != null && existing.isActive) {
+                existing
+            } else {
+                listScope.async {
+                    val result = withShare(source, password) { share ->
+                        listDirectoryUncached(share, source, relativeDir)
+                    }
+                    BrowseSession.putSmbListing(source.id, relativeDir, result)
+                    result
+                }.also { job ->
+                    job.invokeOnCompletion { listJobs.remove(cacheKey, job) }
+                }
+            }
+        }!!
+        return deferred.await()
     }
 
     private fun listDirectoryUncached(

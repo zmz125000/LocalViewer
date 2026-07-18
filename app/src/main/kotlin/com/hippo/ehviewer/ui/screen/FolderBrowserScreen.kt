@@ -149,20 +149,27 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         if (listedPath != targetPath) {
             entries = emptyList()
         }
-        runCatching {
-            withIOContext {
+        try {
+            val result = withIOContext {
                 if (force) BrowseSession.invalidateLocalListing(frame.path)
                 listLocalDirectory(frame.path.toPath(), useCache = !force)
             }
-        }.onSuccess {
-            entries = it
+            if (stack.lastOrNull()?.path != targetPath) return
+            entries = result
             listedPath = targetPath
-        }.onFailure {
-            error = it.message
+            error = null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (stack.lastOrNull()?.path != targetPath) return
+            error = e.message
             entries = emptyList()
             listedPath = targetPath
+        } finally {
+            if (stack.lastOrNull()?.path == targetPath) {
+                loading = false
+            }
         }
-        loading = false
     }
 
     LaunchedEffect(stack) { reload(force = false) }
