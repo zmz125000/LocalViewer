@@ -216,6 +216,9 @@ fun BrowseArchiveGridItem(
     )
 }
 
+/** Fixed caption band under square thumbs (room for 2× labelMedium + bottom pad). */
+private val BrowseGridNameHeight = 44.dp
+
 @Composable
 private fun BrowseGridCell(
     name: String,
@@ -237,16 +240,24 @@ private fun BrowseGridCell(
             ) {
                 thumb()
             }
-            Text(
-                text = name,
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Start,
+            // Fixed height so 1-line and 2-line names share the same cell size;
+            // text sits on the bottom of the band.
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 6.dp),
-            )
+                    .height(BrowseGridNameHeight)
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.BottomStart,
+            ) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                )
+            }
         }
     }
 }
