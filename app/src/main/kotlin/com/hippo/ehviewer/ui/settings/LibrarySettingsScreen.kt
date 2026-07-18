@@ -245,6 +245,15 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                                         contentDescription = stringResource(R.string.network_edit_smb),
                                     )
                                 }
+                                IconButton(
+                                    onClick = { launchIO { SmbRepository.delete(source) } },
+                                    shapes = IconButtonDefaults.shapes(),
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = stringResource(R.string.library_remove_root),
+                                    )
+                                }
                             }
                         },
                     )
