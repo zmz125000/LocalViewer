@@ -32,8 +32,8 @@
     <string name="library_no_roots">No library folders.</string>
     <string name="settings_library">Library</string>
     <string name="settings_library_summary">Local folders to scan for picture galleries</string>
-    <string name="library_gallery_folder">FOLDER</string>
-    <string name="library_gallery_archive">ARCHIVE</string>
+    <string name="library_gallery_folder">Folder</string>
+    <string name="library_gallery_archive">Archive</string>
     <string name="browse_directory">Directory</string>
     <string name="browse_folder_gallery_pages">%d pages</string>
     <string name="browse_folder_gallery_pages_many">∞ pages</string>
