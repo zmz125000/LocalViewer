@@ -182,7 +182,7 @@ fun SmbEditDialog(
         confirmButton = {
             TextButton(
                 onClick = { onSave(current(), password) },
-                enabled = host.isNotBlank(),
+                enabled = host.isNotBlank() && sharePath.isNotBlank(),
             ) {
                 Text(stringResource(R.string.network_save))
             }
@@ -191,7 +191,7 @@ fun SmbEditDialog(
             Column {
                 TextButton(
                     onClick = { onTest(current(), password) },
-                    enabled = host.isNotBlank(),
+                    enabled = host.isNotBlank() && sharePath.isNotBlank(),
                 ) {
                     Text(stringResource(R.string.network_test))
                 }

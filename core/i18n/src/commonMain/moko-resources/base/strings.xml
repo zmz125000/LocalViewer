@@ -51,8 +51,8 @@
     <string name="network_port">Port</string>
     <string name="network_share">Share</string>
     <string name="network_path">Path (optional)</string>
-    <string name="network_share_path">Share / path (optional)</string>
-    <string name="network_share_path_hint">e.g. Media or Media/Books. First segment is the share; rest is the folder path. Share only = share root.</string>
+    <string name="network_share_path">Share / path</string>
+    <string name="network_share_path_hint">e.g. Media or Media/Books. First segment is the share (required); rest is optional folder path. Share only = share root.</string>
     <string name="network_username">Username</string>
     <string name="network_password">Password</string>
     <string name="network_domain">Domain (optional)</string>
