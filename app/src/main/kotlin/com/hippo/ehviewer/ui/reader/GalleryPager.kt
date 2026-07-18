@@ -44,6 +44,7 @@ fun GalleryPager(
     onMenuRegionClick: () -> Unit,
     onPrevFolder: () -> Unit = {},
     onNextFolder: () -> Unit = {},
+    onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val isPagerType = !ReadingModeType.isWebtoon(type)
@@ -85,6 +86,7 @@ fun GalleryPager(
             onMenuRegionClick = onMenuRegionClick,
             onPrevFolder = onPrevFolder,
             onNextFolder = onNextFolder,
+            onBack = onBack,
             modifier = modifier.pointerInput(channel) {
                 awaitPointerEventScope {
                     while (true) {
@@ -105,6 +107,7 @@ fun GalleryPager(
             onMenuRegionClick = onMenuRegionClick,
             onPrevFolder = onPrevFolder,
             onNextFolder = onNextFolder,
+            onBack = onBack,
             modifier = modifier,
         )
     }

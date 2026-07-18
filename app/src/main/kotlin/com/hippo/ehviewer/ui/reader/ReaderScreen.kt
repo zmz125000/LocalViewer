@@ -407,6 +407,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 onMenuRegionClick = { appbarVisible = !appbarVisible },
                 onPrevFolder = { goFolder(next = false) },
                 onNextFolder = { goFolder(next = true) },
+                onBack = { nav.popBackStack() },
                 modifier = Modifier.background(bgColor).pointerInput(syncState) {
                     awaitEachGesture {
                         waitForUpOrCancellation()

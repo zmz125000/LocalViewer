@@ -47,6 +47,7 @@ fun WebtoonViewer(
     onMenuRegionClick: () -> Unit,
     onPrevFolder: () -> Unit = {},
     onNextFolder: () -> Unit = {},
+    onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -61,7 +62,7 @@ fun WebtoonViewer(
             }
         }
     }.collectAsState(0.dp)
-    val doubleTap = remember(navigator, onPrevFolder, onNextFolder) {
+    val doubleTap = remember(navigator, onPrevFolder, onNextFolder, onBack) {
         doubleTapAction(
             isRtl = false,
             getViewportSize = {
@@ -70,6 +71,7 @@ fun WebtoonViewer(
             getNavigator = navigator,
             onPrevFolder = onPrevFolder,
             onNextFolder = onNextFolder,
+            onBack = onBack,
         )
     }
 

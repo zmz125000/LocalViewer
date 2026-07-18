@@ -12,7 +12,7 @@ import me.saket.telephoto.zoomable.ZoomableState
 /**
  * Double-tap handler.
  * - [Settings.doubleTapToZoom] on → zoom in/out (original behavior).
- * - off → prev/next **gallery folder** using the same navigation zones as single-tap page turns.
+ * - off → prev/next **gallery folder** on edge zones; **MENU (center)** acts like system back.
  */
 fun doubleTapAction(
     isRtl: Boolean,
@@ -20,6 +20,7 @@ fun doubleTapAction(
     getNavigator: () -> NavigationRegions,
     onPrevFolder: () -> Unit,
     onNextFolder: () -> Unit,
+    onBack: () -> Unit = {},
 ): DoubleClickToZoomListener = object : DoubleClickToZoomListener {
     override suspend fun onDoubleClick(state: ZoomableState, centroid: Offset) {
         if (Settings.doubleTapToZoom.value) {
@@ -44,7 +45,8 @@ fun doubleTapAction(
             NavigationRegion.PREV -> onPrevFolder()
             NavigationRegion.RIGHT -> if (isRtl) onPrevFolder() else onNextFolder()
             NavigationRegion.LEFT -> if (isRtl) onNextFolder() else onPrevFolder()
-            NavigationRegion.MENU -> Unit
+            // Same center zone as single-tap menu / seekbar chrome.
+            NavigationRegion.MENU -> onBack()
         }
     }
 }

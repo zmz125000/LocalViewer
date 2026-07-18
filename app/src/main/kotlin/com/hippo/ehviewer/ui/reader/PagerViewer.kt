@@ -64,6 +64,7 @@ fun PagerViewer(
     onMenuRegionClick: () -> Unit,
     onPrevFolder: () -> Unit = {},
     onNextFolder: () -> Unit = {},
+    onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -77,7 +78,7 @@ fun PagerViewer(
             pagerState.layoutInfo.viewportSize.toSize()
         }
     }
-    val doubleTap = remember(isRtl, navigator, onPrevFolder, onNextFolder) {
+    val doubleTap = remember(isRtl, navigator, onPrevFolder, onNextFolder, onBack) {
         doubleTapAction(
             isRtl = isRtl,
             getViewportSize = {
@@ -88,6 +89,7 @@ fun PagerViewer(
             getNavigator = navigator,
             onPrevFolder = onPrevFolder,
             onNextFolder = onNextFolder,
+            onBack = onBack,
         )
     }
     if (isVertical) {
