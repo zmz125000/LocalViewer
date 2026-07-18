@@ -97,7 +97,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val marginH = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
     val marginV = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_v)
     val listInterval = dimensionResource(com.hippo.ehviewer.R.dimen.gallery_list_interval)
-    val gridInterval = dimensionResource(com.hippo.ehviewer.R.dimen.gallery_grid_interval)
+    // Grid cell gap matches screen-edge / search-bar inset (marginH), not the tighter 4dp list interval.
 
     fun openGallery(gallery: LocalGalleryEntity) {
         // Navigation must run on the main thread — Compose crashes if navigate() is
@@ -206,14 +206,16 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             } else {
                 val gridState = rememberLazyGridState()
-                val gridPadding = paddingValues + PaddingValues(marginH, marginV)
+                // Outer inset and inter-cell gap all use marginH so spacing matches the
+                // search bar / screen edge (same dimen as SearchBarScreen horizontal pad).
+                val gridPadding = paddingValues + PaddingValues(marginH)
                 FastScrollLazyVerticalGrid(
                     columns = GridCells.Fixed(thumbColumns),
                     modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
                     state = gridState,
                     contentPadding = gridPadding,
-                    verticalArrangement = Arrangement.spacedBy(gridInterval),
-                    horizontalArrangement = Arrangement.spacedBy(gridInterval),
+                    verticalArrangement = Arrangement.spacedBy(marginH),
+                    horizontalArrangement = Arrangement.spacedBy(marginH),
                 ) {
                     items(galleries, key = { it.id }) { gallery ->
                         LocalGalleryGridItem(
