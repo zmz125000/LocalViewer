@@ -90,14 +90,15 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     DrawerHandle(false)
     var source by remember { mutableStateOf<SmbSourceEntity?>(null) }
 
-    // Session-scoped path; seed from args only if session empty for this source.
+    // Session-scoped path. Empty list = share root and is *not* "unset":
+    // do not fall back to initialRelativePath when session is empty, or returning from
+    // the reader after climbing to root re-opens the History deep folder.
     var segments by remember {
-        val stored = BrowseSession.smbSegments(sourceId)
-        mutableStateOf(
-            stored.ifEmpty {
-                initialRelativePath.split('/').filter { it.isNotEmpty() }
-            },
-        )
+        val stored = BrowseSession.smbSegmentsOrNull(sourceId)
+        val initial = stored ?: initialRelativePath.split('/').filter { it.isNotEmpty() }.also {
+            BrowseSession.setSmbSegments(sourceId, it)
+        }
+        mutableStateOf(initial)
     }
     fun updateSegments(new: List<String>) {
         segments = new

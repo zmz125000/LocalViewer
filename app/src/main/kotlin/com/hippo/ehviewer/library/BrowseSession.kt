@@ -23,9 +23,13 @@ object BrowseSession {
     var localStack: List<LocalFrame> = emptyList()
 
     // --- SMB path segments per source ---
+    // Empty list means "at share root" and is distinct from "never opened" (null / missing key).
     private val smbSegments = ConcurrentHashMap<Long, List<String>>()
 
     fun smbSegments(sourceId: Long): List<String> = smbSegments[sourceId].orEmpty()
+
+    /** Null if this source has not been opened in this process yet. */
+    fun smbSegmentsOrNull(sourceId: Long): List<String>? = smbSegments[sourceId]
 
     fun setSmbSegments(sourceId: Long, segments: List<String>) {
         smbSegments[sourceId] = segments
