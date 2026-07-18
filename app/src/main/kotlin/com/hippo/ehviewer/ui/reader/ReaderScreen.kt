@@ -100,6 +100,7 @@ import eu.kanade.tachiyomi.ui.reader.ReaderAppBars
 import eu.kanade.tachiyomi.ui.reader.ReaderContentOverlay
 import eu.kanade.tachiyomi.ui.reader.ReaderPageSheetMeta
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
@@ -110,6 +111,13 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.Serializable
 import moe.tarsin.string
 import okio.Path.Companion.toPath
+
+/**
+ * Counts overlapping [ReaderScreen] destinations (e.g. prev/next folder replace with
+ * exit/enter animations). System bars are only restored when the last instance leaves,
+ * so a sibling switch cannot permanently exit immersive mode.
+ */
+private val activeReaderSessions = AtomicInteger(0)
 
 @Serializable
 sealed interface ReaderScreenArgs {
@@ -150,12 +158,35 @@ private fun Background(
 @Composable
 fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: DestinationsNavigator) = Screen(navigator) {
     val bgColor by collectBackgroundColorAsState()
+    val fullscreen by Settings.fullscreen.collectAsState()
     val uiController = rememberSystemUiController()
+    // Own immersive mode for the whole destination (including page-loader wait).
+    // Sibling folder nav replaces this screen; without a session refcount the exiting
+    // instance would show system bars after the new one already hid them (or while
+    // the new one is still loading), leaving the reader out of fullscreen.
     DisposableEffect(uiController) {
         val lightStatusBar = uiController.statusBarDarkContentEnabled
+        activeReaderSessions.incrementAndGet()
+        uiController.showTransientSystemBarsBySwipe = true
         uiController.statusBarDarkContentEnabled = bgColor == Color.White
+        if (Settings.fullscreen.value) {
+            uiController.isSystemBarsVisible = false
+        }
         onDispose {
             uiController.statusBarDarkContentEnabled = lightStatusBar
+            if (activeReaderSessions.decrementAndGet() == 0) {
+                uiController.isSystemBarsVisible = true
+                uiController.showTransientSystemBarsBySwipe = false
+            }
+        }
+    }
+    // Re-apply while this destination is active (covers fullscreen pref + post-nav races)
+    LaunchedEffect(fullscreen, uiController) {
+        if (fullscreen) {
+            uiController.isSystemBarsVisible = false
+            uiController.showTransientSystemBarsBySwipe = true
+        } else {
+            uiController.isSystemBarsVisible = true
         }
     }
 
@@ -239,13 +270,8 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     val cutoutShort by Settings.cutoutShort.collectAsState()
     val keepScreenOn by Settings.keepScreenOn.collectAsState()
     val uiController = rememberSystemUiController()
-    DisposableEffect(uiController) {
-        uiController.showTransientSystemBarsBySwipe = true
-        onDispose {
-            uiController.isSystemBarsVisible = true
-            uiController.showTransientSystemBarsBySwipe = false
-        }
-    }
+    // Immersive enter/exit is owned by the outer ReaderScreen destination so loading
+    // placeholders and sibling replace do not drop fullscreen. Only sync chrome here.
     val lazyListState = rememberLazyListState(LazyLayoutCacheWindow(SCROLL_FRACTION, SCROLL_FRACTION), pageLoader.startPage)
     val pagerState = rememberPagerState(pageLoader.startPage) { pageLoader.size }
     val syncState = rememberSliderPagerDoubleSyncState(lazyListState, pagerState, pageLoader)
@@ -266,10 +292,12 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
         syncState.Sync(isWebtoon) { appbarVisible = false }
         val bgColor by collectBackgroundColorAsState()
         val isDarkTheme = isSystemInDarkTheme()
-        LaunchedEffect(isDarkTheme) {
-            snapshotFlow { appbarVisible }.collect {
-                uiController.isSystemBarsVisible = it || !fullscreen
-                uiController.statusBarDarkContentEnabled = if (it) !isDarkTheme else bgColor == Color.White
+        LaunchedEffect(isDarkTheme, fullscreen, bgColor) {
+            snapshotFlow { appbarVisible }.collect { visible ->
+                // Show bars only for in-reader chrome; keep immersive otherwise.
+                uiController.isSystemBarsVisible = visible || !fullscreen
+                uiController.showTransientSystemBarsBySwipe = true
+                uiController.statusBarDarkContentEnabled = if (visible) !isDarkTheme else bgColor == Color.White
             }
         }
         var showNavigationOverlay by remember {
