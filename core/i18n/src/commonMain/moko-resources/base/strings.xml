@@ -19,12 +19,9 @@
     <string name="network">Network</string>
     <string name="folder">Folder</string>
     <string name="browse">Browse</string>
-    <string name="browse_empty">No browse sources. Tap + to add a local folder or SMB share.</string>
+    <string name="browse_empty">No browse sources. Use the top bar to add a local folder or SMB share.</string>
     <string name="browse_manage_sources">Manage Sources</string>
     <string name="browse_manage_sources_short">Sources</string>
-    <string name="browse_quick_add">Add source</string>
-    <string name="browse_quick_add_folder_hint">Pick a local folder (SAF)</string>
-    <string name="browse_quick_add_smb_hint">Connect to an SMB share</string>
     <string name="network_duplicate_smb">Duplicate</string>
     <string name="library_empty">No galleries yet. Add a library folder in Settings.</string>
     <string name="library_add_root">Add library folder</string>
@@ -32,7 +29,7 @@
     <string name="library_remove_root">Remove</string>
     <string name="library_rescan">Rescan</string>
     <string name="library_scanning">Scanning…</string>
-    <string name="library_no_roots">No library folders. Tap + to add one.</string>
+    <string name="library_no_roots">No library folders.</string>
     <string name="settings_library">Library</string>
     <string name="settings_library_summary">Local folders to scan for picture galleries</string>
     <string name="library_gallery_folder">Folder</string>
@@ -45,17 +42,21 @@
     <string name="folder_empty">This folder is empty.</string>
     <string name="folder_no_roots">No library folders. Add one in Settings → Library.</string>
     <string name="folder_open_gallery">Open gallery</string>
-    <string name="network_empty">No network sources. Tap + to add an SMB share.</string>
+    <string name="network_empty">No network sources.</string>
     <string name="network_add_smb">Add SMB share</string>
     <string name="network_edit_smb">Edit SMB share</string>
     <string name="network_display_name">Display name</string>
+    <string name="network_display_name_optional">Display name (optional)</string>
     <string name="network_host">Host</string>
     <string name="network_port">Port</string>
     <string name="network_share">Share</string>
     <string name="network_path">Path (optional)</string>
+    <string name="network_share_path">Share / path (optional)</string>
+    <string name="network_share_path_hint">e.g. Media or Media/Books. First segment is the share; rest is the folder path. Share only = share root.</string>
     <string name="network_username">Username</string>
     <string name="network_password">Password</string>
     <string name="network_domain">Domain (optional)</string>
+    <string name="network_share_required">Enter a share name in Share / path (e.g. Media).</string>
     <string name="network_test">Test connection</string>
     <string name="network_test_ok">Connection OK</string>
     <string name="network_test_fail">Connection failed: %s</string>

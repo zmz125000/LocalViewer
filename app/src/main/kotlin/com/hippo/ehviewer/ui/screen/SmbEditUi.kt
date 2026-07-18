@@ -29,20 +29,54 @@ data class SmbEditorState(
     val displayName: String = "",
     val host: String = "",
     val port: String = "445",
-    val share: String = "",
-    val path: String = "",
+    /** Combined share + optional subpath, e.g. `Media` or `Media/Books`. Empty = server/share root. */
+    val sharePath: String = "",
     val username: String = "",
     val domain: String = "",
     val password: String = "",
 )
+
+/**
+ * Parse a combined share/path string.
+ * First segment is the share name; the rest is the path within the share.
+ * Empty input → empty share and path (browse at SMB root / require share when listing).
+ */
+fun parseSharePath(input: String): Pair<String, String> {
+    val normalized = input.trim()
+        .removePrefix("\\\\")
+        .trimStart('\\', '/')
+        .replace('\\', '/')
+        .trim('/')
+    if (normalized.isEmpty()) return "" to ""
+    val parts = normalized.split('/').filter { it.isNotEmpty() }
+    if (parts.isEmpty()) return "" to ""
+    val share = parts.first()
+    val path = parts.drop(1).joinToString("/")
+    return share to path
+}
+
+fun formatSharePath(share: String, pathPrefix: String): String {
+    val s = share.trim().trim('/', '\\')
+    val p = pathPrefix.trim().trim('/', '\\').replace('\\', '/')
+    return when {
+        s.isEmpty() && p.isEmpty() -> ""
+        p.isEmpty() -> s
+        s.isEmpty() -> p
+        else -> "$s/$p"
+    }
+}
+
+fun SmbEditorState.resolvedDisplayName(): String =
+    displayName.trim().ifBlank { host.trim() }
+
+fun SmbEditorState.resolvedShareAndPath(): Pair<String, String> = parseSharePath(sharePath)
 
 fun SmbSourceEntity.toEditorState(includePassword: Boolean = true) = SmbEditorState(
     id = id,
     displayName = displayName,
     host = host,
     port = port.toString(),
-    share = share,
-    path = pathPrefix,
+    sharePath = formatSharePath(share, pathPrefix),
     username = username,
     domain = domain,
     password = if (includePassword) SmbPasswordStore.get(id) else "",
@@ -65,8 +99,7 @@ fun SmbEditDialog(
     var displayName by remember { mutableStateOf(state.displayName) }
     var host by remember { mutableStateOf(state.host) }
     var port by remember { mutableStateOf(state.port) }
-    var share by remember { mutableStateOf(state.share) }
-    var path by remember { mutableStateOf(state.path) }
+    var sharePath by remember { mutableStateOf(state.sharePath) }
     var username by remember { mutableStateOf(state.username) }
     var domain by remember { mutableStateOf(state.domain) }
     var password by remember { mutableStateOf(state.password) }
@@ -75,8 +108,7 @@ fun SmbEditDialog(
         displayName = displayName,
         host = host,
         port = port,
-        share = share,
-        path = path,
+        sharePath = sharePath,
         username = username,
         domain = domain,
         password = password,
@@ -96,7 +128,7 @@ fun SmbEditDialog(
                 OutlinedTextField(
                     value = displayName,
                     onValueChange = { displayName = it },
-                    label = { Text(stringResource(R.string.network_display_name)) },
+                    label = { Text(stringResource(R.string.network_display_name_optional)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 )
@@ -116,16 +148,10 @@ fun SmbEditDialog(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 )
                 OutlinedTextField(
-                    value = share,
-                    onValueChange = { share = it },
-                    label = { Text(stringResource(R.string.network_share)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                )
-                OutlinedTextField(
-                    value = path,
-                    onValueChange = { path = it },
-                    label = { Text(stringResource(R.string.network_path)) },
+                    value = sharePath,
+                    onValueChange = { sharePath = it },
+                    label = { Text(stringResource(R.string.network_share_path)) },
+                    supportingText = { Text(stringResource(R.string.network_share_path_hint)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 )
@@ -156,14 +182,17 @@ fun SmbEditDialog(
         confirmButton = {
             TextButton(
                 onClick = { onSave(current(), password) },
-                enabled = host.isNotBlank() && share.isNotBlank(),
+                enabled = host.isNotBlank(),
             ) {
                 Text(stringResource(R.string.network_save))
             }
         },
         dismissButton = {
             Column {
-                TextButton(onClick = { onTest(current(), password) }) {
+                TextButton(
+                    onClick = { onTest(current(), password) },
+                    enabled = host.isNotBlank(),
+                ) {
                     Text(stringResource(R.string.network_test))
                 }
                 if (state.id != 0L) {

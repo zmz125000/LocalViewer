@@ -123,9 +123,11 @@ object SmbGateway {
                 // Always use a fresh connection for test so we don't leave a bad pool entry mid-edit.
                 client.connect(source.host, source.port).use { connection ->
                     val session = connection.authenticate(auth(source, password))
-                    (session.connectShare(source.share) as DiskShare).use { share ->
-                        val path = remotePath(source, "")
-                        share.list(path.ifEmpty { "" })
+                    if (source.share.isNotBlank()) {
+                        (session.connectShare(source.share) as DiskShare).use { share ->
+                            val path = remotePath(source, "")
+                            share.list(path.ifEmpty { "" })
+                        }
                     }
                     session.close()
                 }
@@ -270,6 +272,9 @@ object SmbGateway {
     }
 
     private fun openLive(source: SmbSourceEntity, password: String, fp: String): LiveShare {
+        check(source.share.isNotBlank()) {
+            "SMB share name is required (set Share / path, e.g. Media or Media/Books)"
+        }
         val connection = client.connect(source.host, source.port)
         try {
             val session = connection.authenticate(auth(source, password))

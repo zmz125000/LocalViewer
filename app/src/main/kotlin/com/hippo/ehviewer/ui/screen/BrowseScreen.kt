@@ -11,7 +11,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,13 +19,11 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -34,7 +31,6 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -83,7 +79,7 @@ private const val URI_FLAGS = FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE
 
 /**
  * Hub for Network (SMB) and local Folder roots.
- * FAB = quick-add (SAF or SMB). Top-right = manage both source types.
+ * Top bar: add library folder, add SMB share, manage sources.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
@@ -96,7 +92,6 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     val context = LocalContext.current
     val cannotGetLocation = stringResource(id = R.string.settings_download_cant_get_download_location)
 
-    var showQuickAdd by remember { mutableStateOf(false) }
     var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }
 
     val pickRoot = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
@@ -141,8 +136,76 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     }
 
     fun openSmb(source: SmbSourceEntity) {
+        if (source.share.isBlank()) {
+            launch { snackbar(string(R.string.network_share_required)) }
+            return
+        }
         BrowseSession.setSmbSegments(source.id, emptyList())
         navigate(SmbBrowserScreenDestination(source.id, ""))
+    }
+
+    fun saveSmb(saved: SmbEditorState, password: String) {
+        val (share, pathPrefix) = saved.resolvedShareAndPath()
+        launchIO {
+            if (saved.id == 0L) {
+                SmbRepository.add(
+                    displayName = saved.resolvedDisplayName(),
+                    host = saved.host,
+                    port = saved.port.toIntOrNull() ?: 445,
+                    share = share,
+                    pathPrefix = pathPrefix,
+                    username = saved.username,
+                    domain = saved.domain,
+                    password = password,
+                )
+            } else {
+                val existing = SmbRepository.load(saved.id)
+                SmbRepository.update(
+                    SmbSourceEntity(
+                        id = saved.id,
+                        displayName = saved.resolvedDisplayName(),
+                        host = saved.host.trim(),
+                        port = saved.port.toIntOrNull() ?: 445,
+                        share = share,
+                        pathPrefix = pathPrefix,
+                        username = saved.username,
+                        domain = saved.domain,
+                        addedAt = existing?.addedAt
+                            ?: Clock.System.now().toEpochMilliseconds(),
+                        lastOkAt = existing?.lastOkAt,
+                        lastError = existing?.lastError,
+                    ),
+                    password = password,
+                )
+            }
+        }
+        smbEditor = null
+    }
+
+    fun testSmb(testState: SmbEditorState, password: String) {
+        val (share, pathPrefix) = testState.resolvedShareAndPath()
+        launch {
+            val entity = SmbSourceEntity(
+                id = testState.id,
+                displayName = testState.resolvedDisplayName(),
+                host = testState.host.trim(),
+                port = testState.port.toIntOrNull() ?: 445,
+                share = share,
+                pathPrefix = pathPrefix,
+                username = testState.username,
+                domain = testState.domain,
+                addedAt = 0L,
+            )
+            val result = SmbGateway.testConnection(entity, password)
+            if (result.isSuccess) {
+                if (testState.id != 0L) SmbRepository.markOk(testState.id)
+                snackbar(string(R.string.network_test_ok))
+            } else {
+                val msg = result.exceptionOrNull()?.message ?: "error"
+                if (testState.id != 0L) SmbRepository.markError(testState.id, msg)
+                snackbar(string(R.string.network_test_fail, msg))
+            }
+        }
     }
 
     Scaffold(
@@ -150,6 +213,24 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
             TopAppBar(
                 title = { Text(stringResource(R.string.browse)) },
                 actions = {
+                    IconButton(
+                        onClick = { launchSafPicker() },
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        Icon(
+                            Icons.Default.CreateNewFolder,
+                            contentDescription = stringResource(R.string.library_add_root),
+                        )
+                    }
+                    IconButton(
+                        onClick = { smbEditor = SmbEditorState() },
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        Icon(
+                            Icons.Default.Lan,
+                            contentDescription = stringResource(R.string.network_add_smb),
+                        )
+                    }
                     IconButton(
                         onClick = { navigate(LibrarySettingsScreenDestination) },
                         shapes = IconButtonDefaults.shapes(),
@@ -162,11 +243,6 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 },
                 scrollBehavior = scrollBehavior,
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { showQuickAdd = true }) {
-                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.browse_quick_add))
-            }
         },
     ) { padding ->
         val empty = roots.isEmpty() && smbSources.isEmpty()
@@ -193,7 +269,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     items(smbSources, key = { "s-${it.id}" }) { source ->
                         BrowseRootCard(
                             title = source.displayName,
-                            subtitle = "\\\\${source.host}\\${source.share}",
+                            subtitle = smbSubtitle(source),
                             icon = { Icon(Icons.Default.Lan, contentDescription = null) },
                             onClick = { openSmb(source) },
                         )
@@ -227,17 +303,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     items(smbSources, key = { "s-${it.id}" }) { source ->
                         ListItem(
                             headlineContent = { Text(source.displayName) },
-                            supportingContent = {
-                                Text(
-                                    buildString {
-                                        append("\\\\${source.host}\\${source.share}")
-                                        if (source.pathPrefix.isNotBlank()) {
-                                            append("\\")
-                                            append(source.pathPrefix.replace('/', '\\'))
-                                        }
-                                    },
-                                )
-                            },
+                            supportingContent = { Text(smbSubtitle(source)) },
                             leadingContent = {
                                 Icon(Icons.Default.Lan, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             },
@@ -262,120 +328,36 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         )
                     }
                 }
-                item { Spacer(Modifier.height(80.dp)) }
             }
         }
-    }
-
-    if (showQuickAdd) {
-        AlertDialog(
-            onDismissRequest = { showQuickAdd = false },
-            title = { Text(stringResource(R.string.browse_quick_add)) },
-            text = {
-                Column {
-                    ListItem(
-                        headlineContent = { Text(stringResource(R.string.library_add_root)) },
-                        supportingContent = { Text(stringResource(R.string.browse_quick_add_folder_hint)) },
-                        leadingContent = {
-                            Icon(Icons.Default.Folder, contentDescription = null)
-                        },
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            showQuickAdd = false
-                            launchSafPicker()
-                        },
-                    )
-                    ListItem(
-                        headlineContent = { Text(stringResource(R.string.network_add_smb)) },
-                        supportingContent = { Text(stringResource(R.string.browse_quick_add_smb_hint)) },
-                        leadingContent = {
-                            Icon(Icons.Default.Lan, contentDescription = null)
-                        },
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            showQuickAdd = false
-                            smbEditor = SmbEditorState()
-                        },
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showQuickAdd = false }) {
-                    Text(stringResource(android.R.string.cancel))
-                }
-            },
-        )
     }
 
     smbEditor?.let { state ->
         SmbEditDialog(
             state = state,
             onDismiss = { smbEditor = null },
-            onSave = { saved, password ->
-                launchIO {
-                    if (saved.id == 0L) {
-                        SmbRepository.add(
-                            displayName = saved.displayName,
-                            host = saved.host,
-                            port = saved.port.toIntOrNull() ?: 445,
-                            share = saved.share,
-                            pathPrefix = saved.path,
-                            username = saved.username,
-                            domain = saved.domain,
-                            password = password,
-                        )
-                    } else {
-                        val existing = SmbRepository.load(saved.id)
-                        SmbRepository.update(
-                            SmbSourceEntity(
-                                id = saved.id,
-                                displayName = saved.displayName.ifBlank { saved.host },
-                                host = saved.host.trim(),
-                                port = saved.port.toIntOrNull() ?: 445,
-                                share = saved.share.trim().trim('/'),
-                                pathPrefix = saved.path.trim().trim('/'),
-                                username = saved.username,
-                                domain = saved.domain,
-                                addedAt = existing?.addedAt
-                                    ?: Clock.System.now().toEpochMilliseconds(),
-                                lastOkAt = existing?.lastOkAt,
-                                lastError = existing?.lastError,
-                            ),
-                            password = password,
-                        )
-                    }
-                }
-                smbEditor = null
-            },
+            onSave = { saved, password -> saveSmb(saved, password) },
             onDelete = { id ->
                 launchIO {
                     SmbRepository.load(id)?.let { SmbRepository.delete(it) }
                 }
                 smbEditor = null
             },
-            onTest = { testState, password ->
-                launch {
-                    val entity = SmbSourceEntity(
-                        id = testState.id,
-                        displayName = testState.displayName,
-                        host = testState.host.trim(),
-                        port = testState.port.toIntOrNull() ?: 445,
-                        share = testState.share.trim().trim('/'),
-                        pathPrefix = testState.path.trim().trim('/'),
-                        username = testState.username,
-                        domain = testState.domain,
-                        addedAt = 0L,
-                    )
-                    val result = SmbGateway.testConnection(entity, password)
-                    if (result.isSuccess) {
-                        if (testState.id != 0L) SmbRepository.markOk(testState.id)
-                        snackbar(string(R.string.network_test_ok))
-                    } else {
-                        val msg = result.exceptionOrNull()?.message ?: "error"
-                        if (testState.id != 0L) SmbRepository.markError(testState.id, msg)
-                        snackbar(string(R.string.network_test_fail, msg))
-                    }
-                }
-            },
+            onTest = { testState, password -> testSmb(testState, password) },
         )
+    }
+}
+
+private fun smbSubtitle(source: SmbSourceEntity): String = buildString {
+    append("\\\\")
+    append(source.host)
+    if (source.share.isNotBlank()) {
+        append("\\")
+        append(source.share)
+        if (source.pathPrefix.isNotBlank()) {
+            append("\\")
+            append(source.pathPrefix.replace('/', '\\'))
+        }
     }
 }
 

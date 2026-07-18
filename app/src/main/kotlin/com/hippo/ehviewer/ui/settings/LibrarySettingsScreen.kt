@@ -1,22 +1,12 @@
 package com.hippo.ehviewer.ui.settings
 
-import android.content.ActivityNotFoundException
-import android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-import android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-import android.provider.DocumentsContract
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -25,7 +15,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -38,19 +27,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.ehviewer.core.database.model.SmbSourceEntity
-import com.ehviewer.core.files.isDirectory
-import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
-import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.LocalLibrary
-import com.hippo.ehviewer.library.displayNameForTreeUri
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.Screen
@@ -58,6 +42,8 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.NavigationIcon
 import com.hippo.ehviewer.ui.screen.SmbEditDialog
 import com.hippo.ehviewer.ui.screen.SmbEditorState
+import com.hippo.ehviewer.ui.screen.resolvedDisplayName
+import com.hippo.ehviewer.ui.screen.resolvedShareAndPath
 import com.hippo.ehviewer.ui.screen.toDuplicateEditorState
 import com.hippo.ehviewer.ui.screen.toEditorState
 import com.hippo.ehviewer.util.displayPath
@@ -68,10 +54,9 @@ import kotlin.time.Clock
 import moe.tarsin.snackbar
 import moe.tarsin.string
 
-private const val URI_FLAGS = FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE_URI_PERMISSION
-
 /**
- * Manage local library folders (SAF) and SMB network sources in one place.
+ * Manage local library folders (SAF) and SMB network sources.
+ * Adding sources is done from the Browse top bar.
  */
 @Destination<RootGraph>
 @Composable
@@ -80,37 +65,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
     val smbSources by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
     val scanning by LocalLibrary.scanning.collectAsState()
-    val context = LocalContext.current
-    val cannotGetLocation = stringResource(id = R.string.settings_download_cant_get_download_location)
     var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }
-
-    val pickRoot = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
-        treeUri ?: return@rememberLauncherForActivityResult
-        launchIO {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(treeUri, URI_FLAGS)
-                val documentUri = DocumentsContract.buildDocumentUriUsingTree(
-                    treeUri,
-                    DocumentsContract.getTreeDocumentId(treeUri),
-                )
-                val path = documentUri.toOkioPath()
-                check(path.isDirectory) { "$path is not a directory" }
-                val name = context.displayNameForTreeUri(treeUri.toString())
-                LocalLibrary.addRoot(treeUri.toString(), name)
-            }.onFailure {
-                logcat(it)
-                launch { snackbar(cannotGetLocation) }
-            }
-        }
-    }
-
-    fun launchSafPicker() {
-        try {
-            pickRoot.launch(null)
-        } catch (_: ActivityNotFoundException) {
-            launch { snackbar(string(R.string.error_cant_find_activity)) }
-        }
-    }
 
     Scaffold(
         topBar = {
@@ -139,25 +94,11 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
             item(key = "hdr-folder") {
                 BrowseSectionHeader(stringResource(R.string.folder))
             }
-            item(key = "add-folder") {
-                ListItem(
-                    headlineContent = { Text(stringResource(R.string.library_add_root)) },
-                    leadingContent = {
-                        Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                    trailingContent = {
-                        IconButton(onClick = { launchSafPicker() }, shapes = IconButtonDefaults.shapes()) {
-                            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.library_add_root))
-                        }
-                    },
-                )
-            }
             if (roots.isEmpty()) {
                 item(key = "folder-empty") {
                     Text(
                         text = stringResource(R.string.library_no_roots),
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                     )
                 }
@@ -186,27 +127,11 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
             item(key = "hdr-smb") {
                 BrowseSectionHeader(stringResource(R.string.network))
             }
-            item(key = "add-smb") {
-                ListItem(
-                    headlineContent = { Text(stringResource(R.string.network_add_smb)) },
-                    leadingContent = {
-                        Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    },
-                    trailingContent = {
-                        IconButton(
-                            onClick = { smbEditor = SmbEditorState() },
-                            shapes = IconButtonDefaults.shapes(),
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.network_add_smb))
-                        }
-                    },
-                )
-            }
             if (smbSources.isEmpty()) {
                 item(key = "smb-empty") {
                     Text(
                         text = stringResource(R.string.network_empty),
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                     )
                 }
@@ -217,10 +142,15 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                         supportingContent = {
                             Text(
                                 buildString {
-                                    append("\\\\${source.host}\\${source.share}")
-                                    if (source.pathPrefix.isNotBlank()) {
+                                    append("\\\\")
+                                    append(source.host)
+                                    if (source.share.isNotBlank()) {
                                         append("\\")
-                                        append(source.pathPrefix.replace('/', '\\'))
+                                        append(source.share)
+                                        if (source.pathPrefix.isNotBlank()) {
+                                            append("\\")
+                                            append(source.pathPrefix.replace('/', '\\'))
+                                        }
                                     }
                                 },
                             )
@@ -267,14 +197,15 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
             state = state,
             onDismiss = { smbEditor = null },
             onSave = { saved, password ->
+                val (share, pathPrefix) = saved.resolvedShareAndPath()
                 launchIO {
                     if (saved.id == 0L) {
                         SmbRepository.add(
-                            displayName = saved.displayName,
+                            displayName = saved.resolvedDisplayName(),
                             host = saved.host,
                             port = saved.port.toIntOrNull() ?: 445,
-                            share = saved.share,
-                            pathPrefix = saved.path,
+                            share = share,
+                            pathPrefix = pathPrefix,
                             username = saved.username,
                             domain = saved.domain,
                             password = password,
@@ -284,11 +215,11 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                         SmbRepository.update(
                             SmbSourceEntity(
                                 id = saved.id,
-                                displayName = saved.displayName.ifBlank { saved.host },
+                                displayName = saved.resolvedDisplayName(),
                                 host = saved.host.trim(),
                                 port = saved.port.toIntOrNull() ?: 445,
-                                share = saved.share.trim().trim('/'),
-                                pathPrefix = saved.path.trim().trim('/'),
+                                share = share,
+                                pathPrefix = pathPrefix,
                                 username = saved.username,
                                 domain = saved.domain,
                                 addedAt = existing?.addedAt
@@ -309,14 +240,15 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                 smbEditor = null
             },
             onTest = { testState, password ->
+                val (share, pathPrefix) = testState.resolvedShareAndPath()
                 launch {
                     val entity = SmbSourceEntity(
                         id = testState.id,
-                        displayName = testState.displayName,
+                        displayName = testState.resolvedDisplayName(),
                         host = testState.host.trim(),
                         port = testState.port.toIntOrNull() ?: 445,
-                        share = testState.share.trim().trim('/'),
-                        pathPrefix = testState.path.trim().trim('/'),
+                        share = share,
+                        pathPrefix = pathPrefix,
                         username = testState.username,
                         domain = testState.domain,
                         addedAt = 0L,
