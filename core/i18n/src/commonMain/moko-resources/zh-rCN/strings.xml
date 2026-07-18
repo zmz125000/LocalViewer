@@ -280,6 +280,7 @@
     <string name="image_saved">图片已保存至 %s</string>
     <!-- Settings -->
     <string name="settings_eh">EH</string>
+    <string name="settings_general">通用</string>
     <string name="settings_eh_sign_out">退出登录</string>
     <string name="settings_eh_identity_cookies_signed">身份 Cookie 可用于登录该账号。&lt;br&gt;&lt;b&gt;注意数据安全&lt;/b&gt;</string>
     <string name="settings_eh_identity_cookies_guest">游客模式</string>

@@ -5,9 +5,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Adb
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -20,6 +22,8 @@ import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.AboutScreenDestination
 import com.hippo.ehviewer.ui.destinations.AdvancedScreenDestination
+import com.hippo.ehviewer.ui.destinations.DownloadScreenDestination
+import com.hippo.ehviewer.ui.destinations.EhScreenDestination
 import com.hippo.ehviewer.ui.destinations.LibrarySettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.PrivacyScreenDestination
 import com.hippo.ehviewer.ui.main.NavigationIcon
@@ -42,6 +46,12 @@ fun AnimatedVisibilityScope.SettingsScreen(navigator: DestinationsNavigator) = S
     ) {
         Column(modifier = Modifier.padding(it).nestedScroll(scrollBehavior.nestedScrollConnection)) {
             PreferenceHeader(
+                icon = Icons.Default.Settings,
+                title = R.string.settings_general,
+                childRoute = EhScreenDestination,
+                navigator = navigator,
+            )
+            PreferenceHeader(
                 icon = Icons.Default.Folder,
                 title = R.string.browse_manage_sources_short,
                 childRoute = LibrarySettingsScreenDestination,
@@ -51,6 +61,12 @@ fun AnimatedVisibilityScope.SettingsScreen(navigator: DestinationsNavigator) = S
                 icon = Icons.Default.Security,
                 title = R.string.settings_privacy,
                 childRoute = PrivacyScreenDestination,
+                navigator = navigator,
+            )
+            PreferenceHeader(
+                icon = Icons.Default.Download,
+                title = R.string.settings_download,
+                childRoute = DownloadScreenDestination,
                 navigator = navigator,
             )
             PreferenceHeader(
