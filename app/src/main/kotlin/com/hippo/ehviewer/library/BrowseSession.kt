@@ -35,6 +35,11 @@ object BrowseSession {
         smbSegments[sourceId] = segments
     }
 
+    /** Drop path stack for a source (e.g. share/pathPrefix edited). */
+    fun clearSmbSegments(sourceId: Long) {
+        smbSegments[sourceId] = emptyList()
+    }
+
     // --- Listing cache (session) ---
     private val localListings = ConcurrentHashMap<String, List<BrowseEntry>>()
     private val smbListings = ConcurrentHashMap<String, List<BrowseEntryRemote>>()

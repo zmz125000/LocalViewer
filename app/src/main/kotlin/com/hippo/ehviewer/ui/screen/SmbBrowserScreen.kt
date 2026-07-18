@@ -27,6 +27,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +37,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
@@ -116,18 +120,29 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     val relativeDir = segments.joinToString("/")
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
-
-    LaunchedEffect(sourceId) {
-        source = withIOContext { SmbRepository.load(sourceId) }
-    }
+    /** Detect share/pathPrefix/host edits while this screen stays on the back stack. */
+    var lastConfigKey by remember { mutableStateOf<String?>(null) }
 
     suspend fun reload(force: Boolean = false) {
-        val src = source ?: SmbRepository.load(sourceId)?.also { source = it } ?: run {
+        // Always re-read DB — in-memory [source] goes stale after Manage sources edit.
+        val src = withIOContext { SmbRepository.load(sourceId) }?.also { source = it } ?: run {
             error = "Source missing"
             loading = false
             return
         }
-        val targetDir = relativeDir
+        val configKey = SmbGateway.sourceConfigKey(src)
+        val configChanged = lastConfigKey != null && lastConfigKey != configKey
+        lastConfigKey = configKey
+        if (configChanged) {
+            // Path/share changed: drop in-UI stack (session already cleared by disconnect).
+            if (segments.isNotEmpty()) {
+                segments = emptyList()
+                BrowseSession.setSmbSegments(sourceId, emptyList())
+            }
+            entries = emptyList()
+            listedDir = null
+        }
+        val targetDir = if (configChanged) "" else relativeDir
         loading = true
         error = null
         // Drop stale rows (and unmount list) so dispose saves the *leaving* dir's scroll.
@@ -138,9 +153,16 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         try {
             // Listing is process-scoped inside SmbGateway; leaving the screen only cancels
             // this await, not the walk. Do not treat CancellationException as a list failure.
-            val result = SmbGateway.listDirectory(src, password, relativeDir, useCache = !force)
+            // Force re-list after source config edit so we never use listings for old pathPrefix.
+            val result = SmbGateway.listDirectory(
+                src,
+                password,
+                targetDir,
+                useCache = !force && !configChanged,
+            )
             // Ignore stale results if the user navigated away while we awaited.
-            if (relativeDir != targetDir) return
+            val currentDir = segments.joinToString("/")
+            if (currentDir != targetDir) return
             entries = result
             listedDir = targetDir
             SmbRepository.markOk(src.id)
@@ -148,22 +170,35 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
-            if (relativeDir != targetDir) return
+            val currentDir = segments.joinToString("/")
+            if (currentDir != targetDir) return
             error = e.message
             entries = emptyList()
             listedDir = targetDir
             SmbRepository.markError(src.id, e.message ?: "error")
         } finally {
-            if (relativeDir == targetDir) {
+            val currentDir = segments.joinToString("/")
+            if (currentDir == targetDir) {
                 loading = false
             }
         }
     }
 
-    LaunchedEffect(sourceId, relativeDir, source?.id) {
-        if (source != null || SmbRepository.load(sourceId) != null) {
-            reload(force = false)
+    LaunchedEffect(sourceId, relativeDir) {
+        reload(force = false)
+    }
+
+    // After editing the source in Manage sources, this destination may still be under the
+    // back stack with an old pathPrefix — refresh on resume.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, sourceId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                launch { reload(force = false) }
+            }
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     fun enterDir(name: String) {

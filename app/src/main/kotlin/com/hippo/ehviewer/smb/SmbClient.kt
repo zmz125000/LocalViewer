@@ -256,16 +256,43 @@ object SmbGateway {
         if (parent.isEmpty()) child else "$parent/$child"
 
     /**
-     * Drop pooled sessions for [sourceId] (password change, delete source, transport error).
+     * Drop pooled sessions for [sourceId] and all session browse state tied to that source.
+     *
+     * Must run when the source is **edited** (share / pathPrefix / host / credentials) so we
+     * never keep listing cache or path segments that were resolved under the old config.
+     * (TCP pool alone is not enough: pathPrefix is applied client-side; stale UI/cache
+     * yields STATUS_OBJECT_NAME_NOT_FOUND even on a fresh connection.)
      */
     fun disconnect(sourceId: Long) {
         pools.remove(sourceId)?.closeAll()
+        // Cancel any in-flight process-scoped list walk for this source.
+        listJobs.keys.filter { it.startsWith("$sourceId|") }.forEach { key ->
+            listJobs.remove(key)?.cancel()
+        }
+        BrowseSession.invalidateSmbListing(sourceId)
+        BrowseSession.clearSmbSegments(sourceId)
     }
 
     fun disconnectAll() {
         val ids = pools.keys.toList()
         ids.forEach { disconnect(it) }
     }
+
+    /** Config identity for path/share (password separate). Used by browser to detect edits. */
+    fun sourceConfigKey(source: SmbSourceEntity): String =
+        buildString {
+            append(source.host)
+            append('|')
+            append(source.port)
+            append('|')
+            append(source.share)
+            append('|')
+            append(source.pathPrefix)
+            append('|')
+            append(source.username)
+            append('|')
+            append(source.domain)
+        }
 
     suspend fun testConnection(source: SmbSourceEntity, password: String): Result<Unit> =
         withIOContext {
