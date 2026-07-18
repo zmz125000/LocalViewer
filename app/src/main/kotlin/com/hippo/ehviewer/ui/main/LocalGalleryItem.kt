@@ -46,6 +46,22 @@ import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.ktbuilder.imageRequest
 import okio.Path.Companion.toPath
 
+/** Kind / page-count chip — text on secondaryContainer, used on list cards. */
+@Composable
+private fun LocalGalleryMetaChip(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        modifier = modifier
+            .clip(ShapeDefaults.Small)
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(vertical = 2.dp, horizontal = 8.dp),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSecondaryContainer,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
 @Composable
 private fun coverRequest(coverPath: String?): ImageRequest? {
     val context = LocalContext.current
@@ -111,36 +127,35 @@ fun LocalGalleryListItem(
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.titleSmall,
             )
+            // Push kind + page chips to bottom-left of the card body.
             Spacer(modifier = Modifier.weight(1f))
             val kindLabel = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
                 stringResource(R.string.library_gallery_archive)
             } else {
                 stringResource(R.string.library_gallery_folder)
             }
-            Text(
-                text = kindLabel,
-                modifier = Modifier
-                    .clip(ShapeDefaults.Small)
-                    .background(MaterialTheme.colorScheme.secondaryContainer)
-                    .padding(vertical = 2.dp, horizontal = 8.dp),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-            )
-            if (showPages && gallery.pageCount > 0) {
+            val pageLabel = if (showPages && gallery.pageCount > 0) {
                 val readProgress = if (showProgress) {
                     remember(gallery.id) { EhDB.getReadProgressFlow(gallery.id) }.collectAsState(0).value
                 } else {
                     0
                 }
-                Text(
-                    text = if (readProgress > 0) {
-                        "${readProgress + 1}/${gallery.pageCount}P"
-                    } else {
-                        "${gallery.pageCount}P"
-                    },
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
+                if (readProgress > 0) {
+                    "${readProgress + 1}/${gallery.pageCount}P"
+                } else {
+                    "${gallery.pageCount}P"
+                }
+            } else {
+                null
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                LocalGalleryMetaChip(text = kindLabel)
+                if (pageLabel != null) {
+                    LocalGalleryMetaChip(text = pageLabel)
+                }
             }
         }
     }
