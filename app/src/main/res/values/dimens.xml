@@ -29,6 +29,12 @@
     <dimen name="gallery_list_margin_v">4dp</dimen>
 
     <dimen name="gallery_grid_interval">4dp</dimen>
+    <!-- Library + Browse thumb grids: edge inset equals inter-cell gutter on phone. -->
+    <dimen name="gallery_grid_margin">12dp</dimen>
+    <dimen name="gallery_grid_gutter">12dp</dimen>
+    <dimen name="gallery_grid_name_height">44dp</dimen>
+    <dimen name="gallery_grid_name_padding_h">6dp</dimen>
+    <dimen name="gallery_grid_name_padding_bottom">6dp</dimen>
 
     <dimen name="gallery_list_column_width_long">480dp</dimen>
     <dimen name="gallery_list_column_width_short">320dp</dimen>

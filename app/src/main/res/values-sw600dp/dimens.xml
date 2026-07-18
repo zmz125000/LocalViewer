@@ -23,4 +23,8 @@
 
     <dimen name="gallery_list_margin_h">20dp</dimen>
 
+    <!-- Tablet grid: slightly roomier gutter; edge matches list/search inset. -->
+    <dimen name="gallery_grid_margin">20dp</dimen>
+    <dimen name="gallery_grid_gutter">16dp</dimen>
+
 </resources>

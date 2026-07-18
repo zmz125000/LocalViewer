@@ -216,9 +216,6 @@ fun BrowseArchiveGridItem(
     )
 }
 
-/** Fixed caption band under square thumbs (room for 2× labelMedium + bottom pad). */
-private val BrowseGridNameHeight = 44.dp
-
 @Composable
 private fun BrowseGridCell(
     name: String,
@@ -226,6 +223,10 @@ private fun BrowseGridCell(
     thumb: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Same caption metrics as Library grid (GalleryGridDefaults).
+    val nameHeight = GalleryGridDefaults.nameHeight()
+    val namePadH = GalleryGridDefaults.namePaddingH()
+    val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
@@ -245,8 +246,8 @@ private fun BrowseGridCell(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(BrowseGridNameHeight)
-                    .padding(horizontal = 6.dp),
+                    .height(nameHeight)
+                    .padding(horizontal = namePadH),
                 contentAlignment = Alignment.BottomStart,
             ) {
                 Text(
@@ -255,7 +256,7 @@ private fun BrowseGridCell(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Start,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = namePadBottom),
                 )
             }
         }

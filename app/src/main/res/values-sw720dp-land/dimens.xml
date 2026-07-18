@@ -18,4 +18,8 @@
 
     <dimen name="gallery_list_margin_h">76dp</dimen>
 
+    <!-- List keeps large side rails; grid stays dense (do not inherit 76dp). -->
+    <dimen name="gallery_grid_margin">24dp</dimen>
+    <dimen name="gallery_grid_gutter">16dp</dimen>
+
 </resources>

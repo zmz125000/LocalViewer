@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
-import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
@@ -57,6 +56,7 @@ import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
 import com.hippo.ehviewer.ui.navToLocalFolderReader
@@ -92,12 +92,10 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val listMode by Settings.listMode.collectAsState()
     val showPages by Settings.showGalleryPages.collectAsState()
     val showProgress by Settings.showReadingProgress.collectAsState()
-    val thumbColumns by Settings.thumbColumns.collectAsState()
     val cardHeight by collectListThumbSizeAsState()
     val marginH = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
     val marginV = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_v)
     val listInterval = dimensionResource(com.hippo.ehviewer.R.dimen.gallery_list_interval)
-    // Grid cell gap matches screen-edge / search-bar inset (marginH), not the tighter 4dp list interval.
 
     fun openGallery(gallery: LocalGalleryEntity) {
         // Navigation must run on the main thread — Compose crashes if navigate() is
@@ -206,16 +204,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             } else {
                 val gridState = rememberLazyGridState()
-                // Outer inset and inter-cell gap all use marginH so spacing matches the
-                // search bar / screen edge (same dimen as SearchBarScreen horizontal pad).
-                val gridPadding = paddingValues + PaddingValues(marginH)
+                val gridSpacing = GalleryGridDefaults.spacedBy()
                 FastScrollLazyVerticalGrid(
-                    columns = GridCells.Fixed(thumbColumns),
+                    columns = GalleryGridDefaults.columns(),
                     modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
                     state = gridState,
-                    contentPadding = gridPadding,
-                    verticalArrangement = Arrangement.spacedBy(marginH),
-                    horizontalArrangement = Arrangement.spacedBy(marginH),
+                    contentPadding = GalleryGridDefaults.contentPadding(paddingValues),
+                    verticalArrangement = gridSpacing,
+                    horizontalArrangement = gridSpacing,
                 ) {
                     items(galleries, key = { it.id }) { gallery ->
                         LocalGalleryGridItem(

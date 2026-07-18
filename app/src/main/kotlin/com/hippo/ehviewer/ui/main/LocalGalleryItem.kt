@@ -275,9 +275,6 @@ fun HistoryListItem(
     }
 }
 
-/** Match browse grid: fixed 2-line caption under square cover. */
-private val LocalGridNameHeight = 44.dp
-
 @Composable
 fun LocalGalleryGridItem(
     gallery: LocalGalleryEntity,
@@ -287,6 +284,9 @@ fun LocalGalleryGridItem(
     showProgress: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val nameHeight = GalleryGridDefaults.nameHeight()
+    val namePadH = GalleryGridDefaults.namePaddingH()
+    val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
@@ -349,8 +349,8 @@ fun LocalGalleryGridItem(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(LocalGridNameHeight)
-                    .padding(horizontal = 6.dp),
+                    .height(nameHeight)
+                    .padding(horizontal = namePadH),
                 contentAlignment = Alignment.BottomStart,
             ) {
                 Text(
@@ -359,7 +359,7 @@ fun LocalGalleryGridItem(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Start,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = namePadBottom),
                 )
             }
         }
