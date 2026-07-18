@@ -303,7 +303,18 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             item(key = "hdr-gal") {
                                 BrowseSectionHeader(stringResource(R.string.browse_galleries))
                             }
-                            items(galleries, key = { "g-${it.name}-${it.hashCode()}" }) { entry ->
+                            items(
+                                galleries,
+                                key = {
+                                    when (it) {
+                                        is BrowseEntryRemote.FolderGallery ->
+                                            "g-${it.relativeName.ifEmpty { it.name }}"
+                                        is BrowseEntryRemote.ArchiveGallery ->
+                                            "a-${it.parentRelativeName}/${it.fileName}"
+                                        is BrowseEntryRemote.Directory -> "d-${it.name}"
+                                    }
+                                },
+                            ) { entry ->
                                 when (entry) {
                                     is BrowseEntryRemote.FolderGallery -> {
                                         val coverRemote = entry.coverFileName?.let { fileName ->

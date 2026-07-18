@@ -103,11 +103,7 @@ private fun BrowseCoverThumb(cover: BrowseCover?) {
             when (cover) {
                 is BrowseCover.Local -> cover.path
                 is BrowseCover.Smb -> {
-                    val name = cover.remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-                    val parent = cover.remoteRelativeFile.substringBeforeLast('/', "")
-                        .substringBeforeLast('\\', "")
-                        .replace('\\', '/')
-                    val cache = SmbCache.cachePath(cover.sourceId, parent, name)
+                    val cache = SmbCache.cachePathForRemoteFile(cover.sourceId, cover.remoteRelativeFile)
                     cache.takeIf { SmbCache.isCached(it) }
                 }
                 null -> null
@@ -122,11 +118,7 @@ private fun BrowseCoverThumb(cover: BrowseCover?) {
     LaunchedEffect(cover) {
         val smb = cover as? BrowseCover.Smb ?: return@LaunchedEffect
         if (localPath != null || fetchFailed) return@LaunchedEffect
-        val name = smb.remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        val parent = smb.remoteRelativeFile.substringBeforeLast('/', missingDelimiterValue = "")
-            .substringBeforeLast('\\', missingDelimiterValue = "")
-            .replace('\\', '/')
-        val cache = SmbCache.cachePath(smb.sourceId, parent, name)
+        val cache = SmbCache.cachePathForRemoteFile(smb.sourceId, smb.remoteRelativeFile)
         if (SmbCache.isCached(cache)) {
             localPath = cache
             return@LaunchedEffect
@@ -154,13 +146,20 @@ private fun BrowseCoverThumb(cover: BrowseCover?) {
         fetchFailed = true
     }
 
-    val request = remember(localPath) {
+    // Memory/disk keys must include the remote identity (not only local cache path) so
+    // LazyColumn recycling never paints another comic's 001.jpg.
+    val request = remember(cover, localPath) {
         localPath?.let { path ->
+            val cacheKey = when (cover) {
+                is BrowseCover.Smb -> "smb:${cover.sourceId}:${cover.remoteRelativeFile}"
+                is BrowseCover.Local -> cover.path.toString()
+                null -> path.toString()
+            }
             with(context) {
                 imageRequest {
                     data(path.toUri())
-                    memoryCacheKey(path.toString())
-                    diskCacheKey(path.toString())
+                    memoryCacheKey(cacheKey)
+                    diskCacheKey(cacheKey)
                 }
             }
         }

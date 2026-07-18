@@ -36,10 +36,24 @@ object SmbCache {
     private val trimScheduled = AtomicBoolean(false)
 
     fun cachePath(sourceId: Long, remoteRelativePath: String, fileName: String): Path {
-        val key = "$sourceId:$remoteRelativePath/$fileName"
+        val dir = remoteRelativePath.replace('\\', '/').trim('/')
+        val name = fileName.replace('\\', '/').substringAfterLast('/')
+        // Full remote path in the key so same basenames (001.jpg) in different folders never collide.
+        val key = if (dir.isEmpty()) "$sourceId:$name" else "$sourceId:$dir/$name"
         val hash = sha256Hex(key)
-        val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase() ?: "bin"
+        val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: "bin"
         return root / "$hash.$ext"
+    }
+
+    /**
+     * Cache path for a full share-relative file path (`Comics/Title/001.jpg`).
+     * Prefer this over splitting parent/name at call sites — easy to drop the parent by accident.
+     */
+    fun cachePathForRemoteFile(sourceId: Long, remoteRelativeFile: String): Path {
+        val normalized = remoteRelativeFile.replace('\\', '/').trimStart('/')
+        val name = normalized.substringAfterLast('/')
+        val parent = normalized.substringBeforeLast('/', missingDelimiterValue = "")
+        return cachePath(sourceId, parent, name)
     }
 
     fun isCached(path: Path) = path.exists()
