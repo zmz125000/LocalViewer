@@ -20,7 +20,8 @@
     <string name="folder">Folder</string>
     <string name="browse">Browse</string>
     <string name="browse_empty">No browse sources. Tap + to add a local folder or SMB share.</string>
-    <string name="browse_manage_sources">Manage sources</string>
+    <string name="browse_manage_sources">Manage Sources</string>
+    <string name="browse_manage_sources_short">Sources</string>
     <string name="browse_quick_add">Add source</string>
     <string name="browse_quick_add_folder_hint">Pick a local folder (SAF)</string>
     <string name="browse_quick_add_smb_hint">Connect to an SMB share</string>
