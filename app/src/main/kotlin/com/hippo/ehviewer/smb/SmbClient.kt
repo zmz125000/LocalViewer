@@ -4,10 +4,12 @@ import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hierynomus.msdtyp.AccessMask
+import com.hierynomus.mserref.NtStatus
 import com.hierynomus.msfscc.FileAttributes
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2Dialect
 import com.hierynomus.mssmb2.SMB2ShareAccess
+import com.hierynomus.mssmb2.SMBApiException
 import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.SmbConfig
 import com.hierynomus.smbj.auth.AuthenticationContext
@@ -22,6 +24,7 @@ import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.naturalCompare
 import java.io.OutputStream
 import java.util.EnumSet
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -161,12 +164,14 @@ object SmbGateway {
         relativeDir: String,
     ): List<BrowseEntryRemote> {
         val path = remotePath(source, relativeDir)
-        val children = listChildren(share, path)
+        // Parent must be listable; filter out protected system dirs so we never show them.
+        val children = listChildren(share, path).filterNot { isProtectedSystemName(it.name) }
         val peeks = HashMap<String, List<RemoteChild>>()
         for (c in children) {
             if (!c.isDirectory || c.name.startsWith('.')) continue
             val childPath = if (path.isEmpty()) c.name else "$path\\${c.name}"
-            peeks[c.name] = listChildren(share, childPath)
+            // Peek must not fail the whole scan: protected subdirs (or any ACL deny) → empty.
+            peeks[c.name] = listChildrenLenient(share, childPath)
         }
         val dirName = relativeDir.substringAfterLast('/').substringAfterLast('\\')
             .ifEmpty { source.displayName }
@@ -179,6 +184,21 @@ object SmbGateway {
             if (name == "." || name == "..") return@mapNotNull null
             val isDir = (info.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
             RemoteChild(name, isDir)
+        }
+
+    /**
+     * List a directory; on access-denied / not-found treat as empty so parent browse continues.
+     * Used when peeking child folders (e.g. `$RECYCLE.BIN`, `System Volume Information`).
+     */
+    private fun listChildrenLenient(share: DiskShare, path: String): List<RemoteChild> =
+        try {
+            listChildren(share, path)
+        } catch (e: SMBApiException) {
+            if (isIgnorableListError(e)) {
+                emptyList()
+            } else {
+                throw e
+            }
         }
 
     suspend fun listImageFileNames(
@@ -236,6 +256,10 @@ object SmbGateway {
                 live[id]?.lastUsedMs?.set(System.currentTimeMillis())
             }
         } catch (first: Throwable) {
+            // Permission / path errors are not fixed by reconnecting.
+            if (first is SMBApiException && isIgnorableListError(first)) {
+                throw first
+            }
             // One reconnect attempt on failure (stale session / dropped TCP).
             logcat(first)
             disconnect(id)
@@ -292,3 +316,29 @@ object SmbGateway {
         runCatching { connection.close() }
     }
 }
+
+/** NTFS / Windows system dirs that often return STATUS_ACCESS_DENIED over SMB. */
+private fun isProtectedSystemName(name: String): Boolean {
+    if (name.startsWith('$')) return true
+    return when (name.uppercase(Locale.ROOT)) {
+        "\$RECYCLE.BIN",
+        "RECYCLER",
+        "RECYCLED",
+        "SYSTEM VOLUME INFORMATION",
+        "RECOVERY",
+        "CONFIG.MSI",
+        -> true
+        else -> false
+    }
+}
+
+/** Errors that mean “cannot list this path”, not a dead session. */
+private fun isIgnorableListError(e: SMBApiException): Boolean {
+    val status = e.status
+    return status == NtStatus.STATUS_ACCESS_DENIED ||
+        status == NtStatus.STATUS_PRIVILEGE_NOT_HELD ||
+        status == NtStatus.STATUS_OBJECT_NAME_NOT_FOUND ||
+        status == NtStatus.STATUS_OBJECT_PATH_NOT_FOUND ||
+        status == NtStatus.STATUS_OBJECT_NAME_INVALID
+}
+
