@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
@@ -74,6 +75,7 @@ import com.hippo.ehviewer.ui.main.BrowseEmptyHint
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
@@ -303,6 +305,20 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         Icon(Icons.Default.History, contentDescription = null)
                     },
                     text = { Text(stringResource(R.string.back_to_history)) },
+                )
+            } else {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
+                            navigator.navigate(BrowseScreenDestination) {
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                    icon = {
+                        Icon(Icons.Default.Explore, contentDescription = null)
+                    },
+                    text = { Text(stringResource(R.string.back_to_browse)) },
                 )
             }
         },

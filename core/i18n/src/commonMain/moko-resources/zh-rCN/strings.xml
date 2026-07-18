@@ -256,6 +256,7 @@
     <string name="clear_all">全部清除</string>
     <string name="clear_all_history">清除所有阅读历史？</string>
     <string name="back_to_history">返回历史</string>
+    <string name="back_to_browse">返回浏览</string>
     <string name="settings_privacy_save_history">保存历史</string>
     <string name="settings_privacy_save_history_summary">记录最近打开的图库与浏览文件夹。关闭后会清除已有历史。</string>
     <string name="history_disabled">历史记录已在隐私设置中关闭</string>

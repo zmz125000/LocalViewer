@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
@@ -61,6 +62,7 @@ import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseArchiveGridItem
@@ -273,6 +275,20 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         Icon(Icons.Default.History, contentDescription = null)
                     },
                     text = { Text(stringResource(R.string.back_to_history)) },
+                )
+            } else {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
+                            navigator.navigate(BrowseScreenDestination) {
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                    icon = {
+                        Icon(Icons.Default.Explore, contentDescription = null)
+                    },
+                    text = { Text(stringResource(R.string.back_to_browse)) },
                 )
             }
         },
