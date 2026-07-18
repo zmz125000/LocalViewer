@@ -1,5 +1,11 @@
 package com.hippo.ehviewer.ui.screen
 
+import android.content.ActivityNotFoundException
+import android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+import android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+import android.provider.DocumentsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +24,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -27,6 +34,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -37,33 +45,45 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.SmbSourceEntity
+import com.ehviewer.core.files.isDirectory
+import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
+import com.ehviewer.core.util.launch
+import com.ehviewer.core.util.launchIO
+import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.displayNameForTreeUri
+import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.LibrarySettingsScreenDestination
-import com.hippo.ehviewer.ui.destinations.NetworkScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import kotlin.time.Clock
 import moe.tarsin.navigate
+import moe.tarsin.snackbar
+import moe.tarsin.string
+
+private const val URI_FLAGS = FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE_URI_PERMISSION
 
 /**
  * Hub for Network (SMB) and local Folder roots.
- * Tapping a root opens the existing hierarchical dir browser for that source.
+ * FAB = quick-add (SAF or SMB). Top-right = manage both source types.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
@@ -73,6 +93,39 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     val smbSources by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
     val gridView by Settings.gridView.collectAsState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    val context = LocalContext.current
+    val cannotGetLocation = stringResource(id = R.string.settings_download_cant_get_download_location)
+
+    var showQuickAdd by remember { mutableStateOf(false) }
+    var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }
+
+    val pickRoot = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
+        treeUri ?: return@rememberLauncherForActivityResult
+        launchIO {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(treeUri, URI_FLAGS)
+                val documentUri = DocumentsContract.buildDocumentUriUsingTree(
+                    treeUri,
+                    DocumentsContract.getTreeDocumentId(treeUri),
+                )
+                val path = documentUri.toOkioPath()
+                check(path.isDirectory) { "$path is not a directory" }
+                val name = context.displayNameForTreeUri(treeUri.toString())
+                LocalLibrary.addRoot(treeUri.toString(), name)
+            }.onFailure {
+                logcat(it)
+                launch { snackbar(cannotGetLocation) }
+            }
+        }
+    }
+
+    fun launchSafPicker() {
+        try {
+            pickRoot.launch(null)
+        } catch (_: ActivityNotFoundException) {
+            launch { snackbar(string(R.string.error_cant_find_activity)) }
+        }
+    }
 
     fun openLocalRoot(root: LibraryRootEntity) {
         val path = LocalLibrary.rootPath(root) ?: return
@@ -101,15 +154,18 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         onClick = { navigate(LibrarySettingsScreenDestination) },
                         shapes = IconButtonDefaults.shapes(),
                     ) {
-                        Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings_library))
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = stringResource(R.string.browse_manage_sources),
+                        )
                     }
                 },
                 scrollBehavior = scrollBehavior,
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { navigate(NetworkScreenDestination) }) {
-                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.network_add_smb))
+            FloatingActionButton(onClick = { showQuickAdd = true }) {
+                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.browse_quick_add))
             }
         },
     ) { padding ->
@@ -209,6 +265,117 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 item { Spacer(Modifier.height(80.dp)) }
             }
         }
+    }
+
+    if (showQuickAdd) {
+        AlertDialog(
+            onDismissRequest = { showQuickAdd = false },
+            title = { Text(stringResource(R.string.browse_quick_add)) },
+            text = {
+                Column {
+                    ListItem(
+                        headlineContent = { Text(stringResource(R.string.library_add_root)) },
+                        supportingContent = { Text(stringResource(R.string.browse_quick_add_folder_hint)) },
+                        leadingContent = {
+                            Icon(Icons.Default.Folder, contentDescription = null)
+                        },
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            showQuickAdd = false
+                            launchSafPicker()
+                        },
+                    )
+                    ListItem(
+                        headlineContent = { Text(stringResource(R.string.network_add_smb)) },
+                        supportingContent = { Text(stringResource(R.string.browse_quick_add_smb_hint)) },
+                        leadingContent = {
+                            Icon(Icons.Default.Lan, contentDescription = null)
+                        },
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            showQuickAdd = false
+                            smbEditor = SmbEditorState()
+                        },
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showQuickAdd = false }) {
+                    Text(stringResource(android.R.string.cancel))
+                }
+            },
+        )
+    }
+
+    smbEditor?.let { state ->
+        SmbEditDialog(
+            state = state,
+            onDismiss = { smbEditor = null },
+            onSave = { saved, password ->
+                launchIO {
+                    if (saved.id == 0L) {
+                        SmbRepository.add(
+                            displayName = saved.displayName,
+                            host = saved.host,
+                            port = saved.port.toIntOrNull() ?: 445,
+                            share = saved.share,
+                            pathPrefix = saved.path,
+                            username = saved.username,
+                            domain = saved.domain,
+                            password = password,
+                        )
+                    } else {
+                        val existing = SmbRepository.load(saved.id)
+                        SmbRepository.update(
+                            SmbSourceEntity(
+                                id = saved.id,
+                                displayName = saved.displayName.ifBlank { saved.host },
+                                host = saved.host.trim(),
+                                port = saved.port.toIntOrNull() ?: 445,
+                                share = saved.share.trim().trim('/'),
+                                pathPrefix = saved.path.trim().trim('/'),
+                                username = saved.username,
+                                domain = saved.domain,
+                                addedAt = existing?.addedAt
+                                    ?: Clock.System.now().toEpochMilliseconds(),
+                                lastOkAt = existing?.lastOkAt,
+                                lastError = existing?.lastError,
+                            ),
+                            password = password,
+                        )
+                    }
+                }
+                smbEditor = null
+            },
+            onDelete = { id ->
+                launchIO {
+                    SmbRepository.load(id)?.let { SmbRepository.delete(it) }
+                }
+                smbEditor = null
+            },
+            onTest = { testState, password ->
+                launch {
+                    val entity = SmbSourceEntity(
+                        id = testState.id,
+                        displayName = testState.displayName,
+                        host = testState.host.trim(),
+                        port = testState.port.toIntOrNull() ?: 445,
+                        share = testState.share.trim().trim('/'),
+                        pathPrefix = testState.path.trim().trim('/'),
+                        username = testState.username,
+                        domain = testState.domain,
+                        addedAt = 0L,
+                    )
+                    val result = SmbGateway.testConnection(entity, password)
+                    if (result.isSuccess) {
+                        if (testState.id != 0L) SmbRepository.markOk(testState.id)
+                        snackbar(string(R.string.network_test_ok))
+                    } else {
+                        val msg = result.exceptionOrNull()?.message ?: "error"
+                        if (testState.id != 0L) SmbRepository.markError(testState.id, msg)
+                        snackbar(string(R.string.network_test_fail, msg))
+                    }
+                }
+            },
+        )
     }
 }
 

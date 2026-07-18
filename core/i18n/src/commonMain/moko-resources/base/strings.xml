@@ -19,7 +19,12 @@
     <string name="network">Network</string>
     <string name="folder">Folder</string>
     <string name="browse">Browse</string>
-    <string name="browse_empty">No browse sources. Add a library folder in Settings, or add an SMB share with +.</string>
+    <string name="browse_empty">No browse sources. Tap + to add a local folder or SMB share.</string>
+    <string name="browse_manage_sources">Manage sources</string>
+    <string name="browse_quick_add">Add source</string>
+    <string name="browse_quick_add_folder_hint">Pick a local folder (SAF)</string>
+    <string name="browse_quick_add_smb_hint">Connect to an SMB share</string>
+    <string name="network_duplicate_smb">Duplicate</string>
     <string name="library_empty">No galleries yet. Add a library folder in Settings.</string>
     <string name="library_add_root">Add library folder</string>
     <string name="library_roots">Library folders</string>

@@ -43,7 +43,7 @@ fun AnimatedVisibilityScope.SettingsScreen(navigator: DestinationsNavigator) = S
         Column(modifier = Modifier.padding(it).nestedScroll(scrollBehavior.nestedScrollConnection)) {
             PreferenceHeader(
                 icon = Icons.Default.Folder,
-                title = R.string.settings_library,
+                title = R.string.browse_manage_sources,
                 childRoute = LibrarySettingsScreenDestination,
                 navigator = navigator,
             )
