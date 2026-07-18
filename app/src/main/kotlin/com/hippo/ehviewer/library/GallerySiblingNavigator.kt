@@ -9,31 +9,42 @@ import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import okio.Path.Companion.toPath
 
 /**
- * Resolve prev/next sibling gallery for folder/SMB readers using the parent
- * directory's browse listing (session cache preferred).
+ * Resolve prev/next gallery for folder/SMB/archive readers.
+ *
+ * Prefer [ReaderGalleryPlaylist] (the Library/Browse list the user opened from).
+ * Fall back to filesystem parent siblings when no playlist is set (e.g. History).
  */
 object GallerySiblingNavigator {
     /**
      * @param next true → next gallery in listing order; false → previous.
      */
-    suspend fun sibling(args: ReaderScreenArgs, next: Boolean): ReaderScreenArgs? = when (args) {
-        is ReaderScreenArgs.LocalFolder -> localSibling(args, next)
-        is ReaderScreenArgs.SmbFolder -> smbSibling(args, next)
-        else -> null
+    suspend fun sibling(args: ReaderScreenArgs, next: Boolean): ReaderScreenArgs? {
+        ReaderGalleryPlaylist.sibling(args, next)?.let { return it }
+        return when (args) {
+            is ReaderScreenArgs.LocalFolder -> localSibling(args, next)
+            is ReaderScreenArgs.SmbFolder -> smbSibling(args, next)
+            else -> null
+        }
     }
 
     private fun localSibling(args: ReaderScreenArgs.LocalFolder, next: Boolean): ReaderScreenArgs.LocalFolder? {
         val path = args.path.toPath()
         val parent = path.parent ?: return null
-        val listing = listLocalDirectory(parent, useCache = true)
+        // Prefer the browse listing for the current stack frame when it matches this parent
+        // (includes dual gallery rows the user saw), else list the parent path.
+        val frame = BrowseSession.localStack.lastOrNull()
+        val listing = when {
+            frame != null && frame.path == parent.toString() ->
+                BrowseSession.getLocalListing(BrowseSession.pathKey(parent))
+                    ?: listLocalDirectory(parent, useCache = true)
+            else -> listLocalDirectory(parent, useCache = true)
+        }
         val galleries = listing.filterIsInstance<BrowseEntry.FolderGallery>()
         if (galleries.isEmpty()) return null
         val idx = galleries.indexOfFirst { it.path.toString() == args.path }
         if (idx < 0) return null
         val target = galleries.getOrNull(if (next) idx + 1 else idx - 1) ?: return null
-        val frame = BrowseSession.localStack.lastOrNull()
         val rootId = frame?.rootId ?: 0L
-        // Sibling shares the same parent relative path prefix as the current gallery
         val currentRel = frame?.relativePath.orEmpty()
         val parentRel = currentRel.substringBeforeLast('/', missingDelimiterValue = "")
         val rel = when {

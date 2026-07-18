@@ -51,6 +51,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
@@ -99,6 +100,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     fun openGallery(gallery: LocalGalleryEntity) {
         // Navigation must run on the main thread — Compose crashes if navigate() is
         // called from Dispatchers.IO ("Cannot start a writer when a reader is pending").
+        // Playlist = visible library list so double-tap prev/next walks that order,
+        // not filesystem parent siblings (often only one folder under a path).
+        ReaderGalleryPlaylist.setFromLibrary(galleries)
         val info = gallery.toBaseGalleryInfo()
         launchIO { LocalHistory.recordLibraryGallery(gallery) }
         if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {

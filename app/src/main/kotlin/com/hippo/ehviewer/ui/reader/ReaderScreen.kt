@@ -360,7 +360,9 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                                 when (s) {
                                     is ReaderScreenArgs.LocalFolder -> {
                                         s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                                        val frame = BrowseSession.localStack.lastOrNull() ?: return@withIOContext
+                                        // Browse stack only — library playlist siblings skip path history.
+                                        val frame = BrowseSession.localStack.lastOrNull()
+                                            ?: return@withIOContext
                                         val rel = if (s.path == frame.path) {
                                             frame.relativePath
                                         } else {
@@ -384,6 +386,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                                             pages = s.info?.pages ?: 0,
                                         )
                                     }
+                                    is ReaderScreenArgs.Archive -> Unit
                                     else -> Unit
                                 }
                             }

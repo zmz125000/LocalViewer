@@ -40,6 +40,7 @@ import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.library.BrowseEntry
+import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
@@ -152,6 +153,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
 
     fun openFolderGallery(entry: BrowseEntry.FolderGallery) {
         val frame = stack.lastOrNull() ?: return
+        // Playlist = gallery/archive rows in this browse list (lazy galleries), not only
+        // path-parent siblings.
+        ReaderGalleryPlaylist.setFromLocalBrowse(
+            rootId = frame.rootId,
+            parentPath = frame.path,
+            parentRelative = frame.relativePath,
+            entries = entries,
+        )
         val rel = when {
             frame.relativePath.isEmpty() && entry.path.toString() == frame.path -> ""
             frame.relativePath.isEmpty() -> entry.name
@@ -183,6 +192,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
     }
 
     fun openArchive(entry: BrowseEntry.ArchiveGallery) {
+        val frame = stack.lastOrNull()
+        if (frame != null) {
+            ReaderGalleryPlaylist.setFromLocalBrowse(
+                rootId = frame.rootId,
+                parentPath = frame.path,
+                parentRelative = frame.relativePath,
+                entries = entries,
+            )
+        }
         navToReader(entry.path.toString())
     }
 

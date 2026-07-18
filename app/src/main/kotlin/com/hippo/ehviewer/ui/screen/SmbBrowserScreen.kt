@@ -42,6 +42,7 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
@@ -148,6 +149,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun openFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
         val src = source ?: return
+        ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
         val remote = if (entry.relativeName.isEmpty()) {
             relativeDir
         } else {
