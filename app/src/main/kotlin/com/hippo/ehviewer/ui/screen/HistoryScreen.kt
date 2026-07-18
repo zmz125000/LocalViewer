@@ -41,7 +41,8 @@ import androidx.paging.cachedIn
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemContentType
 import androidx.paging.compose.itemKey
-import androidx.paging.map
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.database.model.GalleryEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.icons.EhIcons
@@ -49,29 +50,34 @@ import com.ehviewer.core.ui.icons.big.History
 import com.ehviewer.core.ui.util.Await
 import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.ui.util.thenIf
-import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
-import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
+import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.buildLocalBrowseStack
+import com.hippo.ehviewer.library.toBaseGalleryInfo
+import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
-import com.hippo.ehviewer.ui.doGalleryInfoAction
-import com.hippo.ehviewer.ui.main.GalleryInfoListItem
+import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
+import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
+import com.hippo.ehviewer.ui.main.HistoryListItem
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
-import com.hippo.ehviewer.util.FavouriteStatusRouter
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.map
 import moe.tarsin.navigate
+import moe.tarsin.snackbar
+import moe.tarsin.string
 
 @Destination<RootGraph>
 @Composable
@@ -87,21 +93,81 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     DrawerHandle(!searchBarExpanded)
 
     val density = LocalDensity.current
-    val historyData = rememberInVM {
+    val historyData = rememberInVM(keyword) {
         Pager(config = PagingConfig(pageSize = 20, jumpThreshold = 40)) {
             if (keyword.isNotEmpty()) {
                 EhDB.searchHistory(keyword)
             } else {
                 EhDB.historyLazyList
             }
-        }.flow.map { data ->
-            val favCat = Settings.favCat
-            data.map {
-                it.apply { favoriteName = favCat.getOrNull(favoriteSlot) }
-            }
-        }.cachedIn(viewModelScope)
+        }.flow.cachedIn(viewModelScope)
     }.collectAsLazyPagingItems()
-    FavouriteStatusRouter.Observe(historyData)
+
+    fun openEntry(info: GalleryEntity) {
+        launch {
+            when (val target = LocalHistory.parse(info)) {
+                is LocalHistoryTarget.LibraryGallery -> {
+                    val local = withIOContext { LocalLibrary.loadGallery(target.galleryId) }
+                    if (local == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                        historyData.refresh()
+                        return@launch
+                    }
+                    if (local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                        navToReader(local.contentPath)
+                    } else {
+                        navToLocalFolderReader(local.contentPath, local.toBaseGalleryInfo())
+                    }
+                }
+                is LocalHistoryTarget.LocalBrowseFolder -> {
+                    val root = withIOContext { LocalLibrary.loadRoot(target.rootId) }
+                    val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                    if (root == null || rootPath == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                        historyData.refresh()
+                        return@launch
+                    }
+                    BrowseSession.localStack = buildLocalBrowseStack(
+                        rootId = root.id,
+                        rootDisplayName = root.displayName,
+                        rootPath = rootPath,
+                        relativePath = target.relativePath,
+                    )
+                    navigate(FolderBrowserScreenDestination)
+                }
+                is LocalHistoryTarget.SmbBrowseFolder -> {
+                    val source = withIOContext { SmbRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                        historyData.refresh()
+                        return@launch
+                    }
+                    val segments = target.relativePath.split('/').filter { it.isNotEmpty() }
+                    BrowseSession.setSmbSegments(source.id, segments)
+                    navigate(SmbBrowserScreenDestination(source.id, target.relativePath))
+                }
+                is LocalHistoryTarget.Orphan -> {
+                    // Legacy "local" browse rows without path metadata, or foreign EH history.
+                    val local = withIOContext { LocalLibrary.loadGallery(target.gid) }
+                    if (local != null) {
+                        if (local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                            navToReader(local.contentPath)
+                        } else {
+                            navToLocalFolderReader(local.contentPath, local.toBaseGalleryInfo())
+                        }
+                    } else {
+                        snackbar(string(R.string.history_unavailable))
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                        historyData.refresh()
+                    }
+                }
+            }
+        }
+    }
+
     SearchBarScreen(
         onApplySearch = {
             keyword = it
@@ -121,6 +187,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             text = { Text(text = stringResource(id = R.string.clear_all_history)) },
                         )
                         EhDB.clearHistoryInfo()
+                        historyData.refresh()
                     }
                 },
                 shapes = IconButtonDefaults.shapes(),
@@ -135,7 +202,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                 override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
                     val dy = -consumed.y
                     searchBarOffsetY = (searchBarOffsetY - dy).roundToInt().coerceIn(-topPaddingPx, 0)
-                    return Offset.Zero // We never consume it
+                    return Offset.Zero
                 }
             }
         }
@@ -161,27 +228,21 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         backgroundContent = {},
                         modifier = Modifier.thenIf(animateItems) { animateItem() },
                         enableDismissFromStartToEnd = false,
-                        onDismiss = { EhDB.deleteHistoryInfo(info) },
+                        onDismiss = {
+                            launch {
+                                EhDB.deleteHistoryInfo(info)
+                                historyData.refresh()
+                            }
+                        },
                     ) {
-                        GalleryInfoListItem(
-                            onClick = {
-                                // Local library entries skip the EH detail page
-                                if (info.token == LOCAL_GALLERY_TOKEN) {
-                                    launch {
-                                        val local = withIOContext { LocalLibrary.loadGallery(info.gid) }
-                                        if (local != null) {
-                                            if (local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                                                navToReader(local.contentPath)
-                                            } else {
-                                                navToLocalFolderReader(local.contentPath, info)
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    navigate(info.asDst())
+                        HistoryListItem(
+                            onClick = { openEntry(info) },
+                            onLongClick = {
+                                launch {
+                                    EhDB.deleteHistoryInfo(info)
+                                    historyData.refresh()
                                 }
                             },
-                            onLongClick = { launch { doGalleryInfoAction(info) } },
                             info = info,
                             showPages = showPages,
                             showProgress = showProgress,

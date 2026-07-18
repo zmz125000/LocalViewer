@@ -5,8 +5,7 @@ import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 
-/** Synthetic token marking galleries that come from the local library. */
-const val LOCAL_GALLERY_TOKEN = "local"
+// LOCAL_GALLERY_TOKEN defined in LocalHistory.kt
 
 fun LocalGalleryEntity.toBaseGalleryInfo() = BaseGalleryInfo(
     gid = id,

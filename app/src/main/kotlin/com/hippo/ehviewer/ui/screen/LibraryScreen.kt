@@ -47,9 +47,9 @@ import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalStaggeredGrid
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
-import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.ui.DrawerHandle
@@ -99,7 +99,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         // Navigation must run on the main thread — Compose crashes if navigate() is
         // called from Dispatchers.IO ("Cannot start a writer when a reader is pending").
         val info = gallery.toBaseGalleryInfo()
-        launchIO { EhDB.putHistoryInfo(info) }
+        launchIO { LocalHistory.recordLibraryGallery(gallery) }
         if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
             navToReader(gallery.contentPath)
         } else {

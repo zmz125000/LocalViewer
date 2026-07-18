@@ -78,7 +78,10 @@ import com.hippo.ehviewer.gallery.useArchivePageLoader
 import com.hippo.ehviewer.gallery.useEhPageLoader
 import com.hippo.ehviewer.gallery.useFolderPageLoader
 import com.hippo.ehviewer.gallery.useSmbFolderPageLoader
+import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.GallerySiblingNavigator
+import com.hippo.ehviewer.library.LocalHistory
+import okio.Path.Companion.toPath
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.MainActivity
 import com.hippo.ehviewer.ui.Screen
@@ -323,14 +326,39 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                         val sibling = withIOContext {
                             GallerySiblingNavigator.sibling(args, next)
                         } ?: return@launch
-                        // Write gallery row before opening so progress/history FKs succeed
+                        // Progress FK for sibling gallery + bump browse folder history
                         sibling.let { s ->
-                            val info = when (s) {
-                                is ReaderScreenArgs.LocalFolder -> s.info
-                                is ReaderScreenArgs.SmbFolder -> s.info
-                                else -> null
+                            withIOContext {
+                                when (s) {
+                                    is ReaderScreenArgs.LocalFolder -> {
+                                        s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                                        val frame = BrowseSession.localStack.lastOrNull() ?: return@withIOContext
+                                        val rel = if (s.path == frame.path) {
+                                            frame.relativePath
+                                        } else {
+                                            val name = s.path.toPath().name
+                                            if (frame.relativePath.isEmpty()) name else "${frame.relativePath}/$name"
+                                        }
+                                        LocalHistory.recordLocalBrowseFolder(
+                                            rootId = frame.rootId,
+                                            relativePath = rel,
+                                            title = s.info?.title ?: s.path.toPath().name,
+                                            pages = s.info?.pages ?: 0,
+                                        )
+                                    }
+                                    is ReaderScreenArgs.SmbFolder -> {
+                                        s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                                        LocalHistory.recordSmbBrowseFolder(
+                                            sourceId = s.sourceId,
+                                            relativePath = s.remoteDir,
+                                            title = s.info?.title
+                                                ?: s.remoteDir.substringAfterLast('/').ifEmpty { "Share" },
+                                            pages = s.info?.pages ?: 0,
+                                        )
+                                    }
+                                    else -> Unit
+                                }
                             }
-                            info?.let { withIOContext { EhDB.putHistoryInfo(it) } }
                         }
                         // Replace current reader so back still returns to folder browser once
                         nav.navigate(ReaderScreenDestination(sibling)) {

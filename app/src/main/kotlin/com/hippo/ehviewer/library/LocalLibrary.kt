@@ -45,6 +45,8 @@ object LocalLibrary {
 
     suspend fun loadGallery(id: Long): LocalGalleryEntity? = db.localGalleryDao().load(id)
 
+    suspend fun loadRoot(id: Long): LibraryRootEntity? = db.libraryRootDao().load(id)
+
     suspend fun addRoot(treeUri: String, displayName: String): Long = withIOContext {
         val ctx = appCtx
         runCatching {

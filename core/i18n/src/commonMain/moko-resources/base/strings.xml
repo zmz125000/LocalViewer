@@ -319,9 +319,10 @@
     <string name="rename_label_title">Rename label</string>
     <string name="delete_label">Delete label \"%s\"?</string>
     <!-- History -->
-    <string name="no_history">Viewed galleries will be shown here</string>
+    <string name="no_history">Recently opened library galleries and browse folders will show here</string>
     <string name="clear_all">Clear all</string>
     <string name="clear_all_history">Clear all history?</string>
+    <string name="history_unavailable">This item is no longer available</string>
     <!-- Filter -->
     <string name="filter">Blockers</string>
     <string name="filter_title">Title</string>

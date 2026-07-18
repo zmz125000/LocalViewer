@@ -38,10 +38,10 @@ import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
-import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
+import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
@@ -162,7 +162,16 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             favoriteSlot = NOT_FAVORITED,
             rating = -1f,
         )
-        launchIO { EhDB.putHistoryInfo(info) }
+        launchIO {
+            // Progress FK for reader; History stores the SMB folder path link.
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordSmbBrowseFolder(
+                sourceId = src.id,
+                relativePath = remote,
+                title = entry.name,
+                pages = if (entry.pageCountCapped) 0 else entry.pageCount,
+            )
+        }
         // When capped or partial, pass empty names so reader re-lists full set
         val names = if (entry.pageCountCapped) emptyList() else entry.imageFileNames
         navToSmbFolderReader(src.id, remote, names, info)

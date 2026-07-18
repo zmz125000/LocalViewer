@@ -71,8 +71,19 @@ fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
 
     for (sub in childDirs) {
         when (val kind = classifyChildDirectory(sub.path)) {
-            is ChildDirKind.Navigable ->
+            is ChildDirKind.Navigable -> {
                 dirs += BrowseEntry.Directory(sub.name, sub.path)
+                // Mixed folder: also list as a gallery so direct images are openable.
+                kind.gallery?.let { g ->
+                    leafGalleries += BrowseEntry.FolderGallery(
+                        name = sub.name,
+                        path = sub.path,
+                        pageCount = g.pageCount,
+                        pageCountCapped = g.pageCountCapped,
+                        coverPath = g.coverPath,
+                    )
+                }
+            }
             is ChildDirKind.LeafGallery ->
                 leafGalleries += BrowseEntry.FolderGallery(
                     name = sub.name,
@@ -112,7 +123,11 @@ fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
 }
 
 private sealed interface ChildDirKind {
-    data object Navigable : ChildDirKind
+    /**
+     * Has child directories (enter-able). [gallery] is set when this folder also has
+     * direct image files — parent lists it as both Directory and FolderGallery.
+     */
+    data class Navigable(val gallery: LeafGallery? = null) : ChildDirKind
     data class LeafGallery(
         val pageCount: Int,
         val pageCountCapped: Boolean,
@@ -124,8 +139,8 @@ private sealed interface ChildDirKind {
 
 /**
  * Peek one level with streaming visit (one SAF cursor / one File.listFiles):
- * - First subdirectory ⇒ Navigable (stop cursor immediately)
- * - Cover = first image; after CAP only scan remaining for more subdirs
+ * - Track subdirs + direct images (capped).
+ * - Early-exit once we know navigable **and** have image cover/cap (or no need for images).
  */
 private fun classifyChildDirectory(sub: Path): ChildDirKind {
     var coverPath: Path? = null
@@ -137,10 +152,15 @@ private fun classifyChildDirectory(sub: Path): ChildDirKind {
     sub.forEachBrowseChild { child ->
         if (child.isDirectory) {
             sawSubdir = true
-            return@forEachBrowseChild false
+            // Keep scanning for direct images so mixed folders can be dual-listed.
+            // Stop once we already have a gallery snapshot (cover + optional cap).
+            if (coverPath != null || imagesCapped) {
+                return@forEachBrowseChild false
+            }
+            return@forEachBrowseChild true
         }
         if (imagesCapped) {
-            // Only looking for subdirs now (checked above).
+            // Looking for any remaining subdir only.
             return@forEachBrowseChild true
         }
         when {
@@ -151,6 +171,8 @@ private fun classifyChildDirectory(sub: Path): ChildDirKind {
                     imageCount = BROWSE_IMAGE_SCAN_CAP
                     imagesCapped = true
                 }
+                // Have both signals → done.
+                if (sawSubdir) return@forEachBrowseChild false
             }
             isArchiveFileName(child.name) ->
                 archives += BrowseEntry.ArchiveGallery(
@@ -161,15 +183,19 @@ private fun classifyChildDirectory(sub: Path): ChildDirKind {
         true
     }
 
-    if (sawSubdir) return ChildDirKind.Navigable
-
-    if (coverPath != null || imagesCapped) {
-        return ChildDirKind.LeafGallery(
+    val gallery = if (coverPath != null || imagesCapped) {
+        ChildDirKind.LeafGallery(
             pageCount = imageCount,
             pageCountCapped = imagesCapped,
             coverPath = coverPath,
         )
+    } else {
+        null
     }
+
+    if (sawSubdir) return ChildDirKind.Navigable(gallery = gallery)
+
+    if (gallery != null) return gallery
 
     if (archives.isNotEmpty()) {
         archives.sortWith { a, b -> naturalCompare(a.name, b.name) }
@@ -230,8 +256,20 @@ fun classifyRemoteListingWithPeeks(
             e.isDirectory -> {
                 val peek = childPeeks[e.name].orEmpty()
                 when (val kind = classifyRemoteChild(e.name, peek)) {
-                    is RemoteChildKind.Navigable ->
+                    is RemoteChildKind.Navigable -> {
                         dirs += BrowseEntryRemote.Directory(e.name)
+                        // Mixed folder: also list as gallery for direct images.
+                        kind.gallery?.let { g ->
+                            leafGalleries += BrowseEntryRemote.FolderGallery(
+                                name = e.name,
+                                relativeName = e.name,
+                                pageCount = g.pageCount,
+                                pageCountCapped = false,
+                                coverFileName = g.coverFileName,
+                                imageFileNames = g.imageFileNames,
+                            )
+                        }
+                    }
                     is RemoteChildKind.LeafGallery ->
                         leafGalleries += BrowseEntryRemote.FolderGallery(
                             name = e.name,
@@ -281,7 +319,7 @@ fun classifyRemoteListingWithPeeks(
 }
 
 private sealed interface RemoteChildKind {
-    data object Navigable : RemoteChildKind
+    data class Navigable(val gallery: LeafGallery? = null) : RemoteChildKind
     data class LeafGallery(
         val pageCount: Int,
         val coverFileName: String?,
@@ -295,10 +333,14 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
     var coverFileName: String? = null
     val imageNames = ArrayList<String>()
     val archives = ArrayList<BrowseEntryRemote.ArchiveGallery>()
+    var sawSubdir = false
 
     for (e in peek) {
         if (e.name.startsWith('.')) continue
-        if (e.isDirectory) return RemoteChildKind.Navigable
+        if (e.isDirectory) {
+            sawSubdir = true
+            continue
+        }
         when {
             isImageFileName(e.name) -> {
                 if (coverFileName == null) coverFileName = e.name
@@ -313,14 +355,19 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
         }
     }
 
-    if (imageNames.isNotEmpty()) {
+    val gallery = if (imageNames.isNotEmpty()) {
         imageNames.sortWith { a, b -> naturalCompare(a, b) }
-        return RemoteChildKind.LeafGallery(
+        RemoteChildKind.LeafGallery(
             pageCount = imageNames.size,
             coverFileName = coverFileName,
             imageFileNames = imageNames,
         )
+    } else {
+        null
     }
+
+    if (sawSubdir) return RemoteChildKind.Navigable(gallery = gallery)
+    if (gallery != null) return gallery
     if (archives.isNotEmpty()) {
         archives.sortWith { a, b -> naturalCompare(a.name, b.name) }
         return RemoteChildKind.LeafArchivesOnly(archives)

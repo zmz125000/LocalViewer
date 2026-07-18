@@ -39,10 +39,10 @@ import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
-import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.library.BrowseEntry
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
+import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.listLocalDirectory
 import com.hippo.ehviewer.library.stableGalleryId
@@ -153,12 +153,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
     fun openFolderGallery(entry: BrowseEntry.FolderGallery) {
         val frame = stack.lastOrNull() ?: return
         val rel = when {
-            frame.relativePath.isEmpty() && entry.path.toString() == frame.path -> "."
+            frame.relativePath.isEmpty() && entry.path.toString() == frame.path -> ""
             frame.relativePath.isEmpty() -> entry.name
-            entry.path.toString() == frame.path -> frame.relativePath.ifEmpty { "." }
+            entry.path.toString() == frame.path -> frame.relativePath
             else -> "${frame.relativePath}/${entry.name}"
         }
-        val gid = stableGalleryId(frame.rootId, rel)
+        val gid = stableGalleryId(frame.rootId, rel.ifEmpty { "." })
         val info = BaseGalleryInfo(
             gid = gid,
             token = LOCAL_GALLERY_TOKEN,
@@ -166,8 +166,19 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
             pages = if (entry.pageCountCapped) 0 else entry.pageCount,
             favoriteSlot = NOT_FAVORITED,
             rating = -1f,
+            thumbKey = entry.coverPath?.toString(),
         )
-        launchIO { EhDB.putHistoryInfo(info) }
+        launchIO {
+            // Progress FK for reader; History lists the browse folder path, not the leaf gallery.
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordLocalBrowseFolder(
+                rootId = frame.rootId,
+                relativePath = rel,
+                title = entry.name,
+                coverPath = entry.coverPath?.toString(),
+                pages = if (entry.pageCountCapped) 0 else entry.pageCount,
+            )
+        }
         navToLocalFolderReader(entry.path.toString(), info)
     }
 

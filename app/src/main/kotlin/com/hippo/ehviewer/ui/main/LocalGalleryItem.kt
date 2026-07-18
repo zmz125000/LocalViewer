@@ -14,8 +14,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -28,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -40,10 +43,12 @@ import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.ui.component.CrystalCard
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.ktbuilder.imageRequest
+import com.hippo.ehviewer.library.LocalHistory
 import okio.Path.Companion.toPath
 
 /** Kind / page-count chip — text on secondaryContainer, used on list cards. */
@@ -144,6 +149,107 @@ fun LocalGalleryListItem(
                     "${readProgress + 1}/${gallery.pageCount}P"
                 } else {
                     "${gallery.pageCount}P"
+                }
+            } else {
+                null
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                LocalGalleryMetaChip(text = kindLabel)
+                if (pageLabel != null) {
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = pageLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * History list row for library galleries and browse folder path links.
+ * Does not use EH thumb CDN / shared-element transitions.
+ */
+@Composable
+fun HistoryListItem(
+    info: GalleryInfo,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = onClick,
+    showPages: Boolean,
+    showProgress: Boolean,
+    modifier: Modifier = Modifier,
+) = CrystalCard(
+    modifier = modifier,
+    onClick = onClick,
+    onLongClick = onLongClick,
+) {
+    val kind = LocalHistory.kindLabelKey(info)
+    val kindLabel = when (kind) {
+        LocalHistory.KindLabel.Library -> stringResource(R.string.library)
+        LocalHistory.KindLabel.Archive -> stringResource(R.string.library_gallery_archive)
+        LocalHistory.KindLabel.Folder -> stringResource(R.string.folder)
+        LocalHistory.KindLabel.Smb -> stringResource(R.string.network)
+        LocalHistory.KindLabel.Unknown -> stringResource(R.string.history)
+    }
+    val placeholderIcon: ImageVector = when (kind) {
+        LocalHistory.KindLabel.Archive -> Icons.Default.Inventory2
+        LocalHistory.KindLabel.Smb -> Icons.Default.Lan
+        LocalHistory.KindLabel.Library -> Icons.AutoMirrored.Filled.InsertDriveFile
+        else -> Icons.Default.Folder
+    }
+    Row {
+        Box(
+            modifier = Modifier
+                .aspectRatio(1f, matchHeightConstraintsFirst = true)
+                .clip(ShapeDefaults.Medium),
+            contentAlignment = Alignment.Center,
+        ) {
+            val request = coverRequest(info.thumbKey)
+            if (request != null) {
+                Image(
+                    painter = rememberAsyncImagePainter(model = request),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Icon(
+                    imageVector = placeholderIcon,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+        Column(modifier = Modifier.padding(start = 8.dp, top = 2.dp, end = 4.dp, bottom = 4.dp)) {
+            Text(
+                text = info.title.orEmpty(),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            val pageLabel = if (
+                showPages &&
+                info.pages > 0 &&
+                (kind == LocalHistory.KindLabel.Library || kind == LocalHistory.KindLabel.Archive)
+            ) {
+                val readProgress = if (showProgress) {
+                    remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
+                } else {
+                    0
+                }
+                if (readProgress > 0) {
+                    "${readProgress + 1}/${info.pages}P"
+                } else {
+                    "${info.pages}P"
                 }
             } else {
                 null
