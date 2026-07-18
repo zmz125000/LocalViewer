@@ -33,7 +33,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImagePainter
 import coil3.compose.rememberAsyncImagePainter
-import com.ehviewer.core.files.mkdirs
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.logcat
@@ -42,8 +41,6 @@ import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
-import java.io.File
-import java.io.FileOutputStream
 import okio.Path
 
 /** Cover source for browse list rows (local path or lazy SMB download). */
@@ -135,18 +132,10 @@ private fun BrowseCoverThumb(cover: BrowseCover?) {
             }
             val source = SmbRepository.load(smb.sourceId) ?: error("SMB source missing")
             val password = SmbPasswordStore.get(smb.sourceId)
-            cache.parent?.mkdirs()
-            val tmp = File(cache.toString() + ".tmp")
-            try {
-                FileOutputStream(tmp).use { out ->
-                    SmbGateway.downloadFile(source, password, smb.remoteRelativeFile, out)
-                }
-                check(tmp.renameTo(File(cache.toString()))) { "commit cover cache failed" }
-                localPath = cache
-            } catch (e: Throwable) {
-                tmp.delete()
-                throw e
+            SmbCache.downloadIfNeeded(cache) { out ->
+                SmbGateway.downloadFile(source, password, smb.remoteRelativeFile, out)
             }
+            localPath = cache
         }.onFailure {
             logcat(it)
             fetchFailed = true

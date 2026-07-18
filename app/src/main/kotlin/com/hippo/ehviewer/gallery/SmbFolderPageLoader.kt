@@ -2,7 +2,6 @@ package com.hippo.ehviewer.gallery
 
 import arrow.autoCloseScope
 import com.ehviewer.core.database.model.SmbSourceEntity
-import com.ehviewer.core.files.mkdirs
 import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.image.ImageSource
@@ -11,8 +10,6 @@ import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.util.FileUtils
-import java.io.File
-import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -33,7 +30,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
         check(imageFileNames.isNotEmpty()) { "No images in SMB folder" }
         val password = SmbPasswordStore.get(source.id)
         val size = imageFileNames.size
-        // Pipelined reads on the pooled SMB session (2 concurrent file handles).
+        // Pipelined reads on the pooled SMB session (2 concurrent *different* files).
         val downloadSlots = Semaphore(2)
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
@@ -91,21 +88,9 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
                     if (SmbCache.isCached(cache)) return
                     downloadSlots.withPermit {
-                        // Re-check after acquiring a slot (another job may have finished).
-                        if (SmbCache.isCached(cache)) return@withPermit
-                        cache.parent?.mkdirs()
                         val rel = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
-                        val tmp = File(cache.toString() + ".tmp")
-                        try {
-                            FileOutputStream(tmp).use { out ->
-                                SmbGateway.downloadFile(source, password, rel, out)
-                            }
-                            check(tmp.renameTo(File(cache.toString()))) {
-                                "Failed to commit SMB cache for $name"
-                            }
-                        } catch (e: Throwable) {
-                            tmp.delete()
-                            throw e
+                        SmbCache.downloadIfNeeded(cache) { out ->
+                            SmbGateway.downloadFile(source, password, rel, out)
                         }
                     }
                 }
