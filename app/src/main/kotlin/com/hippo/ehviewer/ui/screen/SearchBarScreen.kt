@@ -35,7 +35,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ImageSearch
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,10 +74,8 @@ import com.ehviewer.core.ui.util.ifTrueThen
 import com.ehviewer.core.ui.util.thenIf
 import com.hippo.ehviewer.EhApplication.Companion.searchDatabase
 import com.hippo.ehviewer.Settings
-import com.hippo.ehviewer.client.EhTagDatabase
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.ui.LocalNavDrawerState
-import com.hippo.ehviewer.ui.destinations.ImageSearchScreenDestination
 import com.hippo.ehviewer.ui.theme.scrim
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
@@ -169,10 +166,6 @@ fun SearchBarScreen(
             mSearchDatabase.suggestions(query, 128).forEach { emit(KeywordSuggestion(it)) }
             val index = if (localSearch) query.lastIndexOf(' ') else query.lastIndexOfAny(TagTerminators)
             val keyword = query.substring(index + 1).trimStart()
-            if (keyword.isNotEmpty()) {
-                EhTagDatabase.suggestion(keyword, Settings.showTagTranslations.value).take(50)
-                    .forEach { emit(TagSuggestion(it.hint, it.tag)) }
-            }
         }
     }
 
@@ -271,15 +264,9 @@ fun SearchBarScreen(
                     },
                     trailingIcon = {
                         if (expanded) {
-                            AnimatedContent(targetState = searchFieldState.text.isNotEmpty()) { hasText ->
-                                if (hasText) {
-                                    IconButton(onClick = { searchFieldState.clearText() }, shapes = IconButtonDefaults.shapes()) {
-                                        Icon(Icons.Default.Close, contentDescription = null)
-                                    }
-                                } else {
-                                    IconButton(onClick = { navigate(ImageSearchScreenDestination) }, shapes = IconButtonDefaults.shapes()) {
-                                        Icon(Icons.Default.ImageSearch, contentDescription = null)
-                                    }
+                            if (searchFieldState.text.isNotEmpty()) {
+                                IconButton(onClick = { searchFieldState.clearText() }, shapes = IconButtonDefaults.shapes()) {
+                                    Icon(Icons.Default.Close, contentDescription = null)
                                 }
                             }
                         } else {
@@ -328,20 +315,7 @@ fun SearchBarScreen(
     }
 }
 
-fun wrapTagKeyword(keyword: String, translate: Boolean = false): String = run {
-    val tag = keyword.substringAfter(':')
-    val prefix = keyword.dropLast(tag.length + 1)
-    if (translate) {
-        val namespacePrefix = TagNamespace.from(prefix)?.prefix
-        val newPrefix = EhTagDatabase.getTranslation(tag = prefix) ?: prefix
-        val newTag = EhTagDatabase.getTranslation(namespacePrefix, tag) ?: tag
-        "$newPrefix：$newTag"
-    } else if (keyword.contains(' ')) {
-        "$prefix:\"$tag$\""
-    } else {
-        "$keyword$"
-    }
-}
+fun wrapTagKeyword(keyword: String, translate: Boolean = false): String = keyword
 
 private val TagTerminators = charArrayOf('"', '$')
 private val WhitespaceRegex = Regex("\\s+")

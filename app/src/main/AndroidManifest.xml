@@ -59,17 +59,6 @@
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
 
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-                <data android:host="exhentai.org" />
-                <data android:host="e-hentai.org" />
-            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
 
@@ -133,11 +122,6 @@
                 android:name="autoStoreLocales"
                 android:value="true" />
         </service>
-        <service
-            android:name=".download.DownloadService"
-            android:foregroundServiceType="dataSync"
-            android:label="@string/download_service_label" />
-
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

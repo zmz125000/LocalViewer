@@ -4,9 +4,8 @@ import com.ehviewer.core.files.write
 import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.EhApplication.Companion.ktorClient
 import com.hippo.ehviewer.Settings
-import com.hippo.ehviewer.client.executeAndParseAs
-import com.hippo.ehviewer.spider.timeoutBySpeed
 import com.hippo.ehviewer.util.copyTo
+import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.accept
 import io.ktor.client.request.bearerAuth
@@ -39,16 +38,16 @@ object AppUpdater {
             Settings.lastUpdateTime = now.epochSeconds
             if (Settings.useCIUpdateChannel.value) {
                 val curSha = BuildConfig.COMMIT_SHA
-                val branch = ghStatement(API_URL).executeAndParseAs<GithubRepo>().defaultBranch
+                val branch = ghStatement(API_URL).execute().body<GithubRepo>().defaultBranch
                 val workflowRunsUrl = "$API_URL/actions/workflows/ci.yml/runs?branch=$branch&event=push&status=success&per_page=1"
-                val workflowRun = ghStatement(workflowRunsUrl).executeAndParseAs<GithubWorkflowRuns>().workflowRuns[0]
+                val workflowRun = ghStatement(workflowRunsUrl).execute().body<GithubWorkflowRuns>().workflowRuns[0]
                 val shortSha = workflowRun.headSha.take(7)
                 if (shortSha != curSha) {
-                    val artifacts = ghStatement(workflowRun.artifactsUrl).executeAndParseAs<GithubArtifacts>()
+                    val artifacts = ghStatement(workflowRun.artifactsUrl).execute().body<GithubArtifacts>()
                     val archiveUrl = artifacts.getDownloadLink()
                     val changelog = runSuspendCatching {
                         val commitComparisonUrl = "$API_URL/compare/$curSha...$shortSha"
-                        val result = ghStatement(commitComparisonUrl).executeAndParseAs<GithubCommitComparison>()
+                        val result = ghStatement(commitComparisonUrl).execute().body<GithubCommitComparison>()
                         // TODO: Prettier format, Markdown?
                         result.commits.joinToString("\n") { commit ->
                             "${commit.commit.message.takeWhile { it != '\n' }} (@${commit.commit.author.name})"
@@ -58,7 +57,7 @@ object AppUpdater {
                 }
             } else {
                 val curVersion = BuildConfig.RAW_VERSION_NAME
-                val release = ghStatement(LATEST_RELEASE_URL).executeAndParseAs<GithubRelease>()
+                val release = ghStatement(LATEST_RELEASE_URL).execute().body<GithubRelease>()
                 val latestVersion = release.version
                 val description = release.info
                 val downloadUrl = release.getDownloadLink()
@@ -72,29 +71,21 @@ object AppUpdater {
 
     suspend fun downloadUpdate(url: String, path: Path) {
         val isZip = url.endsWith("zip")
-        timeoutBySpeed(
-            url,
-            {
-                ghStatement(url) {
-                    // https://docs.github.com/en/rest/releases/assets?apiVersion=2022-11-28#get-a-release-asset
-                    if (!isZip) accept(ContentType.Application.OctetStream)
-                    it()
-                }
-            },
-            { _, _, _ -> },
-            { response ->
-                if (isZip) {
-                    response.bodyAsChannel().toInputStream().use { stream ->
-                        ZipInputStream(stream).use { zip ->
-                            zip.nextEntry
-                            path.write { transferFrom(zip.asSource()) }
-                        }
+        ghStatement(url) {
+            // https://docs.github.com/en/rest/releases/assets?apiVersion=2022-11-28#get-a-release-asset
+            if (!isZip) accept(ContentType.Application.OctetStream)
+        }.execute { response ->
+            if (isZip) {
+                response.bodyAsChannel().toInputStream().use { stream ->
+                    ZipInputStream(stream).use { zip ->
+                        zip.nextEntry
+                        path.write { transferFrom(zip.asSource()) }
                     }
-                } else {
-                    response.bodyAsChannel().copyTo(path)
                 }
-            },
-        )
+            } else {
+                response.bodyAsChannel().copyTo(path)
+            }
+        }
     }
 }
 

@@ -6,40 +6,7 @@ import androidx.paging.compose.LazyPagingItems
 import coil3.decode.BlackholeDecoder
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
-import coil3.size.SizeResolver
-import com.ehviewer.core.database.model.DownloadInfo
-import com.ehviewer.core.model.GalleryInfo
-import com.ehviewer.core.model.GalleryPreview
-import com.ehviewer.core.model.V2GalleryPreview
-import com.hippo.ehviewer.client.getThumbKey
-import com.hippo.ehviewer.client.getV2PreviewKey
-import com.hippo.ehviewer.client.thumbUrl
-import com.hippo.ehviewer.download.DownloadManager
 import com.hippo.ehviewer.ktbuilder.execute
-
-// Load in original size so the memory cache can be reused for preload requests
-fun ImageRequest.Builder.ehUrl(info: GalleryInfo) = apply {
-    val key = info.thumbKey!!
-    data(info.thumbUrl)
-    size(SizeResolver.ORIGINAL)
-    val downloadInfo = (info as? DownloadInfo) ?: DownloadManager.getDownloadInfo(info.gid)
-    if (downloadInfo != null) {
-        downloadInfo(downloadInfo)
-    }
-    memoryCacheKey(key)
-    diskCacheKey(key)
-}
-
-// Load in original size so the memory cache can be reused for preload requests
-fun ImageRequest.Builder.ehPreview(preview: GalleryPreview) = apply {
-    with(preview) {
-        val key = if (this is V2GalleryPreview) getV2PreviewKey(url) else getThumbKey(url)
-        data(url)
-        size(SizeResolver.ORIGINAL)
-        memoryCacheKey(key)
-        diskCacheKey(key)
-    }
-}
 
 fun ImageRequest.Builder.justDownload() = apply {
     memoryCachePolicy(CachePolicy.DISABLED)

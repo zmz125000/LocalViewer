@@ -98,8 +98,6 @@ import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.LabeledCheckbox
 import com.ehviewer.core.ui.util.ifNotNullThen
 import com.ehviewer.core.ui.util.ifTrueThen
-import com.hippo.ehviewer.client.EhTagDatabase
-import com.hippo.ehviewer.client.EhTagDatabase.suggestion
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellableContinuation
@@ -207,7 +205,7 @@ suspend fun awaitSelectTags(): List<String> = dialog { cont ->
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(text = stringResource(id = R.string.action_add_tag))
-                if (EhTagDatabase.translatable) {
+                if (false) {
                     Spacer(modifier = Modifier.weight(1f))
                     Text(
                         text = stringResource(id = R.string.translate_tag_for_tagger),
@@ -267,9 +265,9 @@ suspend fun awaitSelectTags(): List<String> = dialog { cont ->
                         },
                     )
                     val query = state.text.toString().trim().takeIf { s -> s.isNotEmpty() }
-                    var items by remember { mutableStateOf(emptyList<EhTagDatabase.Tag>()) }
+                    var items by remember { mutableStateOf(emptyList<Pair<String, String>>()) }
                     LaunchedEffect(suggestionTranslate, query) {
-                        items = query?.let { suggestion(query, suggestionTranslate).take(15) }.orEmpty()
+                        items = emptyList()
                         expanded = items.isNotEmpty()
                     }
                     ExposedDropdownMenu(

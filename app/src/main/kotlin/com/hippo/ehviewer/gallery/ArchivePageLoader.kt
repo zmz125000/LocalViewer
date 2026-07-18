@@ -20,7 +20,6 @@ import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings.archivePasswds
-import com.hippo.ehviewer.client.EhUtils
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.jni.closeArchive
@@ -62,7 +61,7 @@ suspend inline fun <T> useArchivePageLoader(
             object : PageLoader(this, info, startPage, size, hasAds) {
                 override val title by lazy {
                     if (info != null) {
-                        EhUtils.getSuitableTitle(info)
+                        info.title ?: ""
                     } else {
                         FileUtils.getNameFromFilename(file.displayName)!!
                     }

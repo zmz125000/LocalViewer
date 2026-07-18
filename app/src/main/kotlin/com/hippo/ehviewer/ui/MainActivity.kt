@@ -99,21 +99,12 @@ import com.ehviewer.core.util.isAtLeastS
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhApplication.Companion.initialized
 import com.hippo.ehviewer.Settings
-import com.hippo.ehviewer.client.data.ListUrlBuilder
-import com.hippo.ehviewer.client.parser.GalleryDetailUrlParser
-import com.hippo.ehviewer.client.parser.GalleryPageUrlParser
 import com.hippo.ehviewer.collectAsState
-import com.hippo.ehviewer.download.DownloadService
-import com.hippo.ehviewer.download.downloadLocation
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
-import com.hippo.ehviewer.ui.destinations.ProgressScreenDestination
+import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.destinations.SettingsScreenDestination
-import com.hippo.ehviewer.ui.destinations.SignInScreenDestination
-import com.hippo.ehviewer.ui.screen.asDst
-import com.hippo.ehviewer.ui.screen.asDstWith
-import com.hippo.ehviewer.ui.screen.navWithUrl
 import com.hippo.ehviewer.ui.settings.showNewVersion
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
@@ -240,40 +231,17 @@ class MainActivity : AppCompatActivity() {
                                 SCHEME_FILE -> navToReader(uri.path!!)
                                 SCHEME_CONTENT -> navToReader(uri.toString())
                                 else -> {
-                                    val url = uri.toString()
-                                    if (!navWithUrl(url)) {
-                                        val new = awaitInputText(initial = url, title = cannotParse)
-                                        addTextToClipboard(new)
-                                    }
+                                    // Non file/content schemes unsupported after EH purge
+                                    snackbarState.showSnackbar(cannotParse)
                                 }
                             }
                         }
-                        Intent.ACTION_SEND -> with(navigator) {
-                            val type = intent.type
-                            if ("text/plain" == type) {
-                                val keyword = intent.getStringExtra(Intent.EXTRA_TEXT)
-                                if (keyword != null && !navWithUrl(keyword)) {
-                                    navigate(ListUrlBuilder(keyword = keyword).asDst())
-                                }
-                            } else if (type != null && type.startsWith("image/")) {
-                                val uri = intent.getParcelableExtraCompat<Uri>(Intent.EXTRA_STREAM)
-                                if (null != uri) {
-                                    val hash = withIOContext { uri.toOkioPath().sha1() }
-                                    navigate(
-                                        ListUrlBuilder(
-                                            mode = ListUrlBuilder.MODE_IMAGE_SEARCH,
-                                            hash = hash,
-                                        ).asDst(),
-                                    )
-                                }
+                        Intent.ACTION_SEND -> {
+                            // Local viewer: only open shared files/archives if content URI present
+                            val uri = intent.getParcelableExtraCompat<Uri>(Intent.EXTRA_STREAM)
+                            if (uri != null) {
+                                with(navigator) { navToReader(uri.toString()) }
                             }
-                        }
-                        DownloadService.ACTION_START_DOWNLOADSCENE -> {
-                            val args = intent.getBundleExtra(DownloadService.ACTION_START_DOWNLOADSCENE_ARGS)!!
-                            if (args.getString(DownloadService.KEY_ACTION) == DownloadService.ACTION_CLEAR_DOWNLOAD_SERVICE) {
-                                DownloadService.clear()
-                            }
-                            navigator.navigate(LibraryScreenDestination)
                         }
                     }
                 }
@@ -302,40 +270,12 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            val snackMessage = stringResource(R.string.clipboard_gallery_url_snack_message)
-            val snackAction = stringResource(R.string.clipboard_gallery_url_snack_action)
-            LifecycleResumeEffect(scope) {
-                val job = scope.launch {
-                    delay(300)
-                    val text = clipboardManager.getUrlFromClipboard(applicationContext)
-                    val hashCode = text?.hashCode() ?: 0
-                    if (text != null && hashCode != 0 && Settings.clipboardTextHashCode != hashCode) {
-                        val result1 = GalleryDetailUrlParser.parse(text, false)
-                        var launch: (() -> Unit)? = null
-                        if (result1 != null) {
-                            launch = { navigator.navigate(result1.gid asDstWith result1.token) }
-                        }
-                        val result2 = GalleryPageUrlParser.parse(text, false)
-                        if (result2 != null) {
-                            launch = { navigator.navigate(ProgressScreenDestination(result2.gid, result2.pToken, result2.page)) }
-                        }
-                        launch?.let {
-                            val ret = snackbarState.showSnackbar(snackMessage, snackAction, true)
-                            if (ret == SnackbarResult.ActionPerformed) it()
-                        }
-                    }
-                    Settings.clipboardTextHashCode = hashCode
-                }
-                onPauseOrDispose { job.cancel() }
-            }
             val currentDestination by navController.currentDestinationAsState()
             val drawerHandle = remember { mutableStateListOf<Long>() }
             var snackbarFabPadding by remember { mutableStateOf(0.dp) }
             val drawerEnabled = drawerHandle.isNotEmpty()
             val density = LocalDensity.current
             val adaptiveInfo = currentWindowAdaptiveInfoV2()
-            val needSignIn by Settings.needSignIn.collectAsState()
-            val launchPage by Settings.launchPage.collectAsState()
             val showBottomBar = bottomNavItems.any { it.direction == currentDestination } ||
                 currentDestination == null
             CompositionLocalProvider(
@@ -361,7 +301,7 @@ class MainActivity : AppCompatActivity() {
                         )
                     },
                     bottomBar = {
-                        if (showBottomBar && !needSignIn) {
+                        if (showBottomBar) {
                             NavigationBar {
                                 bottomNavItems.forEach { item ->
                                     val selected = currentDestination == item.direction
@@ -394,12 +334,7 @@ class MainActivity : AppCompatActivity() {
                     ) {
                         SharedTransitionLayout {
                             CompositionLocalProvider(LocalSharedTransitionScope provides this) {
-                                val start = when {
-                                    needSignIn -> SignInScreenDestination
-                                    else -> bottomNavItems.getOrElse(launchPage.coerceIn(0, bottomNavItems.lastIndex)) {
-                                        bottomNavItems[0]
-                                    }.direction
-                                }
+                                val start = LibraryScreenDestination
                                 DestinationsNavHost(
                                     navGraph = NavGraphs.root,
                                     start = start,

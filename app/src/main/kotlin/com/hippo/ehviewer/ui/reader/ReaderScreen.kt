@@ -67,15 +67,12 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
-import com.hippo.ehviewer.download.DownloadManager
-import com.hippo.ehviewer.download.archiveFile
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PageLoader
 import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.status
 import com.hippo.ehviewer.gallery.unblock
 import com.hippo.ehviewer.gallery.useArchivePageLoader
-import com.hippo.ehviewer.gallery.useEhPageLoader
 import com.hippo.ehviewer.gallery.useFolderPageLoader
 import com.hippo.ehviewer.gallery.useSmbFolderPageLoader
 import com.hippo.ehviewer.library.BrowseSession
@@ -121,9 +118,6 @@ private val activeReaderSessions = AtomicInteger(0)
 
 @Serializable
 sealed interface ReaderScreenArgs {
-    @Serializable
-    data class Gallery(val info: BaseGalleryInfo, val page: Int) : ReaderScreenArgs
-
     @Serializable
     data class Archive(val path: String) : ReaderScreenArgs
 
@@ -224,7 +218,6 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
             is Either.Right -> {
                 val loader = result.value
                 val info = when (args) {
-                    is ReaderScreenArgs.Gallery -> args.info
                     is ReaderScreenArgs.LocalFolder -> args.info
                     is ReaderScreenArgs.SmbFolder -> args.info
                     is ReaderScreenArgs.Archive -> null
@@ -499,16 +492,6 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
 
 context(_: Context, _: DialogState, nav: DestinationsNavigator)
 suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: suspend (PageLoader) -> T) = when (args) {
-    is ReaderScreenArgs.Gallery -> {
-        val info = args.info
-        val page = args.page.takeUnless { it == -1 } ?: EhDB.getReadProgress(info.gid)
-        val archive = DownloadManager.getDownloadInfo(info.gid)?.archiveFile
-        if (archive != null) {
-            useArchivePageLoader(archive, info, page, info.hasAds, { error("Managed Archive have password???") }, block)
-        } else {
-            useEhPageLoader(info, page, block)
-        }
-    }
     is ReaderScreenArgs.LocalFolder -> {
         val info = args.info
         val page = when {

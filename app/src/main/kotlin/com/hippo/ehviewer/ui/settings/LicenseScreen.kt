@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
@@ -37,6 +38,7 @@ fun AnimatedVisibilityScope.LicenseScreen(navigator: DestinationsNavigator) = Sc
             )
         },
     ) { paddingValues ->
+        val context = LocalContext.current
         val libraries by produceLibraries(com.hippo.ehviewer.R.raw.aboutlibraries)
         LibrariesContainer(
             libraries = libraries,
@@ -45,7 +47,7 @@ fun AnimatedVisibilityScope.LicenseScreen(navigator: DestinationsNavigator) = Sc
             padding = LibraryDefaults.libraryPadding(licensePadding = LibraryDefaults.chipPadding(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp))),
             textStyles = LibraryDefaults.libraryTextStyles(licensesTextStyle = MaterialTheme.typography.labelSmall),
             onLibraryClick = { library ->
-                library.website?.let { openBrowser(it) }
+                library.website?.let { context.openBrowser(it) }
             },
         )
     }

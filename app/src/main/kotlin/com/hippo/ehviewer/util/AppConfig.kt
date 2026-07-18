@@ -21,7 +21,6 @@ import com.ehviewer.core.files.exists
 import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.BuildConfig
-import com.hippo.ehviewer.client.parser.ParserUtils
 import java.io.File
 import okio.Path
 import okio.Path.Companion.toOkioPath
@@ -47,7 +46,7 @@ object AppConfig {
 
     fun matchVariant(name: String) = name.contains(BuildConfig.FLAVOR) && name.contains(abi)
 
-    val commitTime = ParserUtils.formatDate(BuildConfig.COMMIT_TIME * 1000)
+    val commitTime = BuildConfig.COMMIT_TIME.toString()
 
     private val externalAppDir: File?
         get() {

@@ -38,7 +38,6 @@ import com.ehviewer.core.files.delete
 import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
-import com.hippo.ehviewer.download.DownloadManager
 import kotlinx.coroutines.flow.Flow
 import okio.Path
 
@@ -322,14 +321,12 @@ object EhDB {
         db.progressDao().insertOrIgnore(oldDB.progressDao().list())
 
         val downloadLabelList = oldDB.downloadLabelDao().list()
-        DownloadManager.addDownloadLabel(downloadLabelList)
 
         oldDB.downloadDirnameDao().list().let {
             importDownloadDirname(it)
         }
 
         val downloadInfoList = oldDB.downloadsDao().joinList().asReversed()
-        DownloadManager.addDownload(downloadInfoList)
 
         val historyInfoList = oldDB.historyDao().list()
         importHistoryInfo(historyInfoList)

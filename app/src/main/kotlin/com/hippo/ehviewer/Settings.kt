@@ -9,13 +9,9 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
-import com.ehviewer.core.network.EhCookieStore
 import com.ehviewer.core.preferences.DataStorePreferences
 import com.ehviewer.core.preferences.PrefDelegate
 import com.ehviewer.core.preferences.edit
-import com.hippo.ehviewer.client.data.FavListUrlBuilder
-import com.hippo.ehviewer.download.DownloadsFilterMode
-import com.hippo.ehviewer.download.SortMode
 import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import java.util.Locale
@@ -124,9 +120,9 @@ object Settings : DataStorePreferences(null) {
 
     // Misc
     val languageFilter = intPref("language_filter", -1)
-    val downloadSortMode = intPref("download_sort_mode", SortMode.Default.flag)
-    val downloadFilterMode = intPref("download_filter_mode", DownloadsFilterMode.Default.flag)
-    val hasSignedIn = boolPref("has_signed_in", EhCookieStore.hasSignedIn())
+    val downloadSortMode = intPref("download_sort_mode", 0)
+    val downloadFilterMode = intPref("download_filter_mode", 0)
+    val hasSignedIn = boolPref("has_signed_in", false)
     // Local viewer: never force EH sign-in
     val needSignIn = boolPref("need_sign_in", false)
     val gridView = boolPref("grid_view", false)
@@ -144,7 +140,7 @@ object Settings : DataStorePreferences(null) {
     var appLinkVerifyTip by boolPref("app_link_verify_tip", false)
     var hasDefaultDownloadLabel by boolPref("has_default_download_label", false)
     var removeImageFiles by boolPref("include_pic", true)
-    var recentFavCat by intPref("recent_fav_cat", FavListUrlBuilder.FAV_CAT_LOCAL)
+    var recentFavCat by intPref("recent_fav_cat", -2)
     var clipboardTextHashCode by intPref("clipboard_text_hash_code", 0)
     var requestNewsTime by intPref("request_news_time", 0).observed { updateWhenRequestNewsChanges() }
     var lastDawnDays by intPref("last_dawn_days", 0)
@@ -191,9 +187,6 @@ object Settings : DataStorePreferences(null) {
         edit { pref ->
             if ("CN" == Locale.getDefault().country) {
                 if (showTagTranslations !in pref) pref[showTagTranslations] = true
-            }
-            if (pref[downloadFilterMode] == DownloadsFilterMode.ARTIST.flag && pref[recentDownloadLabel] == null) {
-                pref[recentDownloadLabel] = ""
             }
             val orientation = pref[orientationMode]
             if (OrientationType.entries.none { it.prefValue == orientation }) {

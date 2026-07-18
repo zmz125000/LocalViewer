@@ -48,18 +48,12 @@ import com.ehviewer.core.util.isAtLeastS
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withUIContext
-import com.hippo.ehviewer.client.EhTagDatabase
 import com.hippo.ehviewer.coil.AnimatedWebPDecoder
 import com.hippo.ehviewer.coil.CropBorderInterceptor
 import com.hippo.ehviewer.coil.DetectBorderInterceptor
-import com.hippo.ehviewer.coil.DownloadThumbInterceptor
 import com.hippo.ehviewer.coil.HardwareBitmapInterceptor
 import com.hippo.ehviewer.coil.MapExtraInfoInterceptor
-import com.hippo.ehviewer.coil.MergeInterceptor
 import com.hippo.ehviewer.coil.QrCodeInterceptor
-import com.hippo.ehviewer.dailycheck.checkDawn
-import com.hippo.ehviewer.download.DownloadManager
-import com.hippo.ehviewer.download.DownloadsFilterMode
 import com.hippo.ehviewer.ktbuilder.diskCache
 import com.hippo.ehviewer.ktbuilder.imageLoader
 import com.hippo.ehviewer.ktor.Cronet
@@ -67,11 +61,9 @@ import com.hippo.ehviewer.ktor.configureClient
 import com.hippo.ehviewer.ktor.configureCommon
 import com.hippo.ehviewer.ktor.isCronetAvailable
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
-import com.hippo.ehviewer.ui.screen.detailCache
 import com.hippo.ehviewer.ui.tools.dataStateFlow
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.CrashHandler
-import com.hippo.ehviewer.util.FavouriteStatusRouter
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
 import io.ktor.client.HttpClient
@@ -111,36 +103,19 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         CrashHandler.install()
         super.onCreate()
         System.loadLibrary("ehviewer")
-        launch {
-            FavouriteStatusRouter.collect { info ->
-                detailCache[info.gid]?.apply {
-                    favoriteSlot = info.favoriteSlot
-                    favoriteName = info.favoriteName
-                    favoriteNote = info.favoriteNote
-                }
-            }
-        }
         launchIO {
-            EhTagDatabase.launchUpdate()
             @Suppress("UNUSED_EXPRESSION")
             launch { EhDB }
             launch { dataStateFlow.value }
             launch { OSUtils.totalMemory }
             launch {
-                if (DownloadManager.labelList.isNotEmpty() && Settings.downloadFilterMode !in Settings.snapshot()) {
-                    Settings.downloadFilterMode.value = DownloadsFilterMode.CUSTOM.flag
-                }
                 initialized = true
-                DownloadManager.readMetadataFromLocal()
             }
             launch {
                 FileUtils.cleanupDirectory(AppConfig.externalCrashDir)
                 FileUtils.cleanupDirectory(AppConfig.externalParseErrorDir)
             }
             launch { cleanupDownload() }
-            if (Settings.requestNews.value) {
-                launch { checkDawn() }
-            }
         }
         if (BuildConfig.DEBUG) {
             StrictMode.enableDefaults()
@@ -178,17 +153,15 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                     connectivityChecker = { ConnectivityChecker.ONLINE },
                 ),
             )
-            add(MergeInterceptor)
-            add(DownloadThumbInterceptor)
             if (isAtLeastO) {
                 add(HardwareBitmapInterceptor)
             } else {
                 allowRgb565(true)
             }
+            add(MapExtraInfoInterceptor)
             add(CropBorderInterceptor)
             add(DetectBorderInterceptor)
             add(QrCodeInterceptor)
-            add(MapExtraInfoInterceptor)
             add(AnimatedWebPDecoder.Factory)
             if (isAtLeastP) {
                 add(AnimatedImageDecoder.Factory(false))

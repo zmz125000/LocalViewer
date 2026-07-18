@@ -17,11 +17,7 @@ fun CronetConfig.configureClient(enableQuic: Boolean) {
         setEnableHttpCache(HttpEngine.Builder.HTTP_CACHE_DISK_NO_HTTP, 4096)
 
         setEnableQuic(enableQuic)
-        if (enableQuic) {
-            addQuicHint("e-hentai.org", 443, 443)
-            addQuicHint("forums.e-hentai.org", 443, 443)
-            addQuicHint("exhentai.org", 443, 443)
-        }
+        // QUIC host hints for future remote sources (WebDAV etc.) can be added here.
     }
 }
 

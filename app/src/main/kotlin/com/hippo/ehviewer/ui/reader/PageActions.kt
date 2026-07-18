@@ -20,7 +20,6 @@ import com.ehviewer.core.util.isAtLeastQ
 import com.ehviewer.core.util.isAtLeastT
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.BuildConfig.APPLICATION_ID
-import com.hippo.ehviewer.client.EhUrl
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PageLoader
 import com.hippo.ehviewer.util.AppConfig
@@ -56,7 +55,7 @@ suspend fun shareImage(page: Page, info: GalleryInfo? = null) {
     val intent = Intent(Intent.ACTION_SEND).apply {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         putExtra(Intent.EXTRA_STREAM, uri)
-        info?.apply { putExtra(Intent.EXTRA_TEXT, EhUrl.getGalleryDetailUrl(gid, token)) }
+        info?.apply { putExtra(Intent.EXTRA_TEXT, "") }
         val extension = FileUtils.getExtensionFromFilename(uri.path)
         val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "image/jpeg"
         setDataAndType(uri, mimeType)

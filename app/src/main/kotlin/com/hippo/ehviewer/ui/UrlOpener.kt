@@ -1,49 +1,22 @@
-/*
- * Copyright 2016 Hippo Seven
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package com.hippo.ehviewer.ui
 
 import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
 import android.widget.Toast
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.net.toUri
-import com.ehviewer.core.i18n.R
-import com.ehviewer.core.model.GalleryDetail
-import com.hippo.ehviewer.client.parser.GalleryPageUrlParser
-import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 
-private val intent = CustomTabsIntent.Builder().apply { setShowTitle(true) }.build()
-
-context(ctx: Context)
-fun openBrowser(url: String) {
-    if (url.isEmpty()) return
+/** Open arbitrary http(s) links in a custom tab / browser. EH deep links removed. */
+fun Context.openBrowser(url: String) {
+    if (url.isBlank()) return
     try {
-        intent.launchUrl(ctx, url.toUri())
+        CustomTabsIntent.Builder().build().launchUrl(this, url.toUri())
     } catch (_: ActivityNotFoundException) {
-        Toast.makeText(ctx, R.string.no_browser_installed, Toast.LENGTH_LONG).show()
-    }
-}
-
-context(_: DestinationsNavigator)
-fun jumpToReaderByPage(url: String, detail: GalleryDetail): Boolean {
-    GalleryPageUrlParser.parse(url)?.let {
-        if (it.gid == detail.gid) {
-            navToReader(detail.galleryInfo, it.page)
-            return true
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+        } catch (_: Throwable) {
+            Toast.makeText(this, "Cannot open link", Toast.LENGTH_SHORT).show()
         }
     }
-    return false
 }
