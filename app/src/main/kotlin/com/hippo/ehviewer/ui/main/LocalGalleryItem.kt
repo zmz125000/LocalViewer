@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -274,6 +275,9 @@ fun HistoryListItem(
     }
 }
 
+/** Match browse grid: fixed 2-line caption under square cover. */
+private val LocalGridNameHeight = 44.dp
+
 @Composable
 fun LocalGalleryGridItem(
     gallery: LocalGalleryEntity,
@@ -282,52 +286,80 @@ fun LocalGalleryGridItem(
     showPages: Boolean,
     showProgress: Boolean,
     modifier: Modifier = Modifier,
-) = ElevatedCard(
-    modifier = modifier,
-    onClick = onClick,
-    onLongClick = onLongClick,
 ) {
-    Box {
-        val request = coverRequest(gallery.coverPath)
-        if (request != null) {
-            AsyncImage(
-                model = request,
-                contentDescription = null,
-                modifier = Modifier.aspectRatio(1f),
-                contentScale = ContentScale.Crop,
-            )
-        } else {
+    ElevatedCard(
+        modifier = modifier.fillMaxWidth(),
+        onClick = onClick,
+        onLongClick = onLongClick,
+    ) {
+        Column(Modifier.fillMaxWidth()) {
             Box(
-                modifier = Modifier.aspectRatio(1f).fillMaxSize(),
-                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(ShapeDefaults.Medium),
             ) {
-                Icon(
-                    imageVector = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                        Icons.Default.Inventory2
-                    } else {
-                        Icons.Default.Folder
-                    },
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-        }
-        if (showPages && gallery.pageCount > 0) {
-            Badge(
-                modifier = Modifier.align(Alignment.TopEnd).widthIn(min = 32.dp).height(24.dp),
-            ) {
-                val readProgress = if (showProgress) {
-                    remember(gallery.id) { EhDB.getReadProgressFlow(gallery.id) }.collectAsState(0).value
+                val request = coverRequest(gallery.coverPath)
+                if (request != null) {
+                    AsyncImage(
+                        model = request,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
                 } else {
-                    0
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                                Icons.Default.Inventory2
+                            } else {
+                                Icons.Default.Folder
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
+                if (showPages && gallery.pageCount > 0) {
+                    Badge(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .widthIn(min = 32.dp)
+                            .height(24.dp),
+                    ) {
+                        val readProgress = if (showProgress) {
+                            remember(gallery.id) { EhDB.getReadProgressFlow(gallery.id) }.collectAsState(0).value
+                        } else {
+                            0
+                        }
+                        Text(
+                            text = if (readProgress > 0) {
+                                "${readProgress + 1}/${gallery.pageCount}"
+                            } else {
+                                "${gallery.pageCount}"
+                            },
+                        )
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(LocalGridNameHeight)
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.BottomStart,
+            ) {
                 Text(
-                    text = if (readProgress > 0) {
-                        "${readProgress + 1}/${gallery.pageCount}"
-                    } else {
-                        "${gallery.pageCount}"
-                    },
+                    text = gallery.title,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                 )
             }
         }

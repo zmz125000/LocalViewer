@@ -10,11 +10,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
-import androidx.compose.foundation.lazy.staggeredgrid.items
-import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.GridView
@@ -46,7 +46,7 @@ import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.FastScrollLazyColumn
-import com.ehviewer.core.ui.component.FastScrollLazyVerticalStaggeredGrid
+import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.hippo.ehviewer.Settings
@@ -205,14 +205,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     }
                 }
             } else {
-                val gridState = rememberLazyStaggeredGridState()
+                val gridState = rememberLazyGridState()
                 val gridPadding = paddingValues + PaddingValues(marginH, marginV)
-                FastScrollLazyVerticalStaggeredGrid(
-                    columns = StaggeredGridCells.Fixed(thumbColumns),
+                FastScrollLazyVerticalGrid(
+                    columns = GridCells.Fixed(thumbColumns),
                     modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
                     state = gridState,
                     contentPadding = gridPadding,
-                    verticalItemSpacing = gridInterval,
+                    verticalArrangement = Arrangement.spacedBy(gridInterval),
                     horizontalArrangement = Arrangement.spacedBy(gridInterval),
                 ) {
                     items(galleries, key = { it.id }) { gallery ->
