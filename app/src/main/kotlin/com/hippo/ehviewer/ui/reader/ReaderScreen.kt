@@ -407,7 +407,8 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 onMenuRegionClick = { appbarVisible = !appbarVisible },
                 onPrevFolder = { goFolder(next = false) },
                 onNextFolder = { goFolder(next = true) },
-                onBack = { nav.popBackStack() },
+                // Same path as edge-swipe / system back (OnBackPressedDispatcher callbacks).
+                onBack = { activity.onBackPressedDispatcher.onBackPressed() },
                 modifier = Modifier.background(bgColor).pointerInput(syncState) {
                     awaitEachGesture {
                         waitForUpOrCancellation()
