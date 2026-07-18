@@ -23,6 +23,8 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.compose.runtime.Composer
 import androidx.compose.runtime.tooling.ComposeStackTraceMode
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.coroutineScope
 import coil3.EventListener
@@ -60,6 +62,7 @@ import com.hippo.ehviewer.ktor.Cronet
 import com.hippo.ehviewer.ktor.configureClient
 import com.hippo.ehviewer.ktor.configureCommon
 import com.hippo.ehviewer.ktor.isCronetAvailable
+import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
 import com.hippo.ehviewer.ui.tools.dataStateFlow
 import com.hippo.ehviewer.util.AppConfig
@@ -103,6 +106,15 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         CrashHandler.install()
         super.onCreate()
         System.loadLibrary("ehviewer")
+        // SMB: drop half-open sockets when app is backgrounded (power button / switch apps).
+        // smbj used to keep a host-level dead Connection that broke every share until restart.
+        lifecycle.addObserver(
+            LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_STOP) {
+                    SmbGateway.onAppBackgrounded()
+                }
+            },
+        )
         launchIO {
             @Suppress("UNUSED_EXPRESSION")
             launch { EhDB }

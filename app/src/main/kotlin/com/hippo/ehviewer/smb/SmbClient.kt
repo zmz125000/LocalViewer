@@ -51,11 +51,23 @@ import kotlinx.coroutines.withContext
  * - Failed sockets that were not returned used to leak [SourcePool] size → pool full but free
  *   empty → permanent wait on [Channel.receive] (thumbnails/reader hang).
  *
+ * **smbj host cache:** [SMBClient] reuses **one** [Connection] per host:port for the client
+ * instance. Sharing one process-wide [SMBClient] meant every share on that host used the same
+ * TCP session; after background/sleep the socket went half-open, `isConnected` stayed true, and
+ * **all** sources on that host (including newly added ones) failed with Broken pipe until
+ * process restart. Each pooled session therefore owns a **dedicated** [SMBClient].
+ *
  * Pool size follows [Settings.multiThreadDownload] (SMB concurrency in Advanced).
  */
 object SmbGateway {
     /** Absolute max free-list capacity (matches multi-thread menu upper bound). */
     private const val POOL_CAPACITY = 7
+
+    /**
+     * Do not reuse free sessions idle longer than this — Android / NAS often drop sockets while
+     * the process is backgrounded without clearing [Connection.isConnected] immediately.
+     */
+    private const val MAX_IDLE_MS = 45_000L
 
     /** Parallel TCP sessions per SMB source (reader seek + prefetch). */
     fun maxConnectionsPerSource(): Int =
@@ -74,10 +86,14 @@ object SmbGateway {
         .withSoTimeout(120, TimeUnit.SECONDS)
         .build()
 
-    private val client = SMBClient(config)
-
     private val pools = ConcurrentHashMap<Long, SourcePool>()
     private val poolCreateLock = Mutex()
+    private val hostKeyToSourceIds = ConcurrentHashMap<String, MutableSet<Long>>()
+
+    private fun sourceIdsForHost(host: String, port: Int): MutableSet<Long> =
+        hostKeyToSourceIds.getOrPut(hostKey(host, port)) {
+            java.util.concurrent.ConcurrentHashMap.newKeySet()
+        }
 
     /**
      * Process-scoped listings so navigating away mid-scan does not cancel the SMB walk.
@@ -88,6 +104,8 @@ object SmbGateway {
 
     private data class LiveShare(
         val fingerprint: String,
+        /** Dedicated client so this session is never the smbj host-wide cached connection. */
+        val client: SMBClient,
         val connection: Connection,
         val session: Session,
         val share: DiskShare,
@@ -97,10 +115,15 @@ object SmbGateway {
             runCatching { share.close() }
             runCatching { session.close() }
             runCatching { connection.close() }
+            runCatching { client.close() }
         }
 
         val isUsable: Boolean
-            get() = connection.isConnected
+            get() {
+                if (!connection.isConnected) return false
+                val idle = System.currentTimeMillis() - lastUsedMs.get()
+                return idle <= MAX_IDLE_MS
+            }
     }
 
     /**
@@ -265,6 +288,7 @@ object SmbGateway {
      */
     fun disconnect(sourceId: Long) {
         pools.remove(sourceId)?.closeAll()
+        hostKeyToSourceIds.values.forEach { it.remove(sourceId) }
         // Cancel any in-flight process-scoped list walk for this source.
         listJobs.keys.filter { it.startsWith("$sourceId|") }.forEach { key ->
             listJobs.remove(key)?.cancel()
@@ -276,6 +300,37 @@ object SmbGateway {
     fun disconnectAll() {
         val ids = pools.keys.toList()
         ids.forEach { disconnect(it) }
+    }
+
+    /**
+     * Drop every pooled session for [host]:[port] (all shares on that server).
+     * Used after transport errors that typically kill every socket to the host.
+     */
+    fun disconnectHost(host: String, port: Int) {
+        hostKeyToSourceIds.remove(hostKey(host, port))
+        val h = host.trim()
+        val toDrop = pools.mapNotNull { (id, pool) ->
+            val parts = pool.fingerprint.split('|')
+            val match = parts.size >= 2 &&
+                parts[0].equals(h, ignoreCase = true) &&
+                parts[1] == port.toString()
+            id.takeIf { match }
+        }
+        toDrop.forEach { disconnect(it) }
+    }
+
+    /**
+     * App moved to background (ProcessLifecycle ON_STOP): close all SMB sockets so we do not
+     * resume with half-open connections that smbj still reports as connected.
+     *
+     * Keeps path segments / listing cache so the user stays in the same folder on resume;
+     * only the TCP sessions are dropped (reopened on next list/download).
+     */
+    fun onAppBackgrounded() {
+        logcat { "SmbGateway: app background — closing all SMB sessions" }
+        listJobs.keys.toList().forEach { key -> listJobs.remove(key)?.cancel() }
+        pools.keys.toList().forEach { id -> pools.remove(id)?.closeAll() }
+        hostKeyToSourceIds.clear()
     }
 
     /** Config identity for path/share (password separate). Used by browser to detect edits. */
@@ -294,19 +349,33 @@ object SmbGateway {
             append(source.domain)
         }
 
+    private fun hostKey(host: String, port: Int) = "${host.trim().lowercase(Locale.US)}:$port"
+
+    private fun trackHost(source: SmbSourceEntity) {
+        sourceIdsForHost(source.host, source.port).add(source.id)
+    }
+
     suspend fun testConnection(source: SmbSourceEntity, password: String): Result<Unit> =
         withIOContext {
             runCatching {
-                // Always use a fresh connection for test so we don't leave a bad pool entry mid-edit.
-                client.connect(source.host, source.port).use { connection ->
-                    val session = connection.authenticate(auth(source, password))
-                    if (source.share.isNotBlank()) {
-                        (session.connectShare(source.share) as DiskShare).use { share ->
-                            val path = remotePath(source, "")
-                            share.list(path.ifEmpty { "" })
+                // Fresh client — never touch the process pool or a shared host cache.
+                val smbClient = SMBClient(config)
+                try {
+                    smbClient.connect(source.host, source.port).use { connection ->
+                        val session = connection.authenticate(auth(source, password))
+                        try {
+                            if (source.share.isNotBlank()) {
+                                (session.connectShare(source.share) as DiskShare).use { share ->
+                                    val path = remotePath(source, "")
+                                    share.list(path.ifEmpty { "" })
+                                }
+                            }
+                        } finally {
+                            runCatching { session.close() }
                         }
                     }
-                    session.close()
+                } finally {
+                    runCatching { smbClient.close() }
                 }
                 Unit
             }
@@ -441,8 +510,8 @@ object SmbGateway {
      * so seekbar jumps can start a download without waiting on an in-flight page.
      *
      * On failure the **single** borrowed connection is retired inside [SourcePool.borrow].
-     * We retry once with a new borrow — never close the whole pool (would break other
-     * concurrent thumbnail/reader transfers with Broken pipe).
+     * Transport errors (Broken pipe) after background often kill every socket to that host —
+     * we then drop **all** pools for the host and retry with a brand-new TCP session.
      */
     private suspend fun <T> withShare(
         source: SmbSourceEntity,
@@ -451,10 +520,10 @@ object SmbGateway {
     ): T = withContext(Dispatchers.IO) {
         val id = source.id
         val fp = fingerprint(source, password)
-        val active = poolFor(id, fp)
+        trackHost(source)
 
         try {
-            active.borrow(open = { openLive(source, password, fp) }, block = block)
+            poolFor(id, fp).borrow(open = { openLive(source, password, fp) }, block = block)
         } catch (first: Throwable) {
             // Permission / path errors are not fixed by reconnecting.
             if (first is SMBApiException && isIgnorableListError(first)) {
@@ -463,12 +532,32 @@ object SmbGateway {
             // Cancellation must not retry or log as failure.
             if (first is kotlinx.coroutines.CancellationException) throw first
             logcat(first)
-            // Failed connection already retired. Retry once on a (likely new) connection.
+            if (isTransportError(first)) {
+                // Host-level dead sockets (common after app background / Wi‑Fi sleep).
+                disconnectHost(source.host, source.port)
+            }
+            // Failed connection already retired. Retry once on a fresh connection.
             try {
+                trackHost(source)
                 poolFor(id, fp).borrow(open = { openLive(source, password, fp) }, block = block)
             } catch (second: Throwable) {
                 if (second is kotlinx.coroutines.CancellationException) throw second
                 logcat(second)
+                if (isTransportError(second)) {
+                    // Last resort: wipe every SMB session in the process and try once more.
+                    disconnectAll()
+                    trackHost(source)
+                    try {
+                        return@withContext poolFor(id, fp).borrow(
+                            open = { openLive(source, password, fp) },
+                            block = block,
+                        )
+                    } catch (third: Throwable) {
+                        if (third is kotlinx.coroutines.CancellationException) throw third
+                        logcat(third)
+                        throw third
+                    }
+                }
                 throw second
             }
         }
@@ -490,16 +579,48 @@ object SmbGateway {
         check(source.share.isNotBlank()) {
             "SMB share name is required (set Share / path, e.g. Media or Media/Books)"
         }
-        val connection = client.connect(source.host, source.port)
+        // New SMBClient per session: smbj caches one Connection per host inside a client;
+        // sharing one client made Broken pipe unrecoverable for every share on that host.
+        val smbClient = SMBClient(config)
         try {
-            val session = connection.authenticate(auth(source, password))
-            val share = session.connectShare(source.share) as DiskShare
-            return LiveShare(fp, connection, session, share)
+            val connection = smbClient.connect(source.host, source.port)
+            try {
+                val session = connection.authenticate(auth(source, password))
+                val share = session.connectShare(source.share) as DiskShare
+                return LiveShare(fp, smbClient, connection, session, share)
+            } catch (e: Throwable) {
+                runCatching { connection.close() }
+                throw e
+            }
         } catch (e: Throwable) {
-            runCatching { connection.close() }
+            runCatching { smbClient.close() }
             throw e
         }
     }
+}
+
+/** Socket / transport failures that warrant dropping host sessions and retrying. */
+private fun isTransportError(t: Throwable): Boolean {
+    var cur: Throwable? = t
+    while (cur != null) {
+        when (cur) {
+            is java.net.SocketException,
+            is java.net.SocketTimeoutException,
+            is java.io.EOFException,
+            is java.io.InterruptedIOException,
+            is com.hierynomus.protocol.transport.TransportException,
+            -> return true
+        }
+        val msg = cur.message.orEmpty()
+        if (msg.contains("Broken pipe", ignoreCase = true) ||
+            msg.contains("Connection reset", ignoreCase = true) ||
+            msg.contains("Connection closed", ignoreCase = true)
+        ) {
+            return true
+        }
+        cur = cur.cause
+    }
+    return false
 }
 
 /** NTFS / Windows system dirs that often return STATUS_ACCESS_DENIED over SMB. */
