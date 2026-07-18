@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lan
@@ -36,6 +37,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,6 +46,8 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_FOLDER
+import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.files.isDirectory
@@ -56,6 +60,7 @@ import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.AddRootResult
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.displayNameForTreeUri
@@ -78,8 +83,8 @@ import moe.tarsin.string
 private const val URI_FLAGS = FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE_URI_PERMISSION
 
 /**
- * Hub for Network (SMB) and local Folder roots.
- * Top bar: add library folder, add SMB share, manage sources.
+ * Hub for library/folder SAF roots and SMB network sources.
+ * Top bar: add library, add browse folder, add SMB, manage sources.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
@@ -91,11 +96,15 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val context = LocalContext.current
     val cannotGetLocation = stringResource(id = R.string.settings_download_cant_get_download_location)
+    val alreadyAdded = stringResource(id = R.string.library_root_already_added)
 
     var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }
+    // Pending role for the next OpenDocumentTree result.
+    var pendingSafRole by remember { mutableIntStateOf(LIBRARY_ROOT_ROLE_LIBRARY) }
 
     val pickRoot = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
         treeUri ?: return@rememberLauncherForActivityResult
+        val role = pendingSafRole
         launchIO {
             runCatching {
                 context.contentResolver.takePersistableUriPermission(treeUri, URI_FLAGS)
@@ -106,7 +115,10 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 val path = documentUri.toOkioPath()
                 check(path.isDirectory) { "$path is not a directory" }
                 val name = context.displayNameForTreeUri(treeUri.toString())
-                LocalLibrary.addRoot(treeUri.toString(), name)
+                when (LocalLibrary.addRoot(treeUri.toString(), name, role)) {
+                    is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
+                    is AddRootResult.AlreadyExists -> launch { snackbar(alreadyAdded) }
+                }
             }.onFailure {
                 logcat(it)
                 launch { snackbar(cannotGetLocation) }
@@ -114,7 +126,8 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         }
     }
 
-    fun launchSafPicker() {
+    fun launchSafPicker(role: Int) {
+        pendingSafRole = role
         try {
             pickRoot.launch(null)
         } catch (_: ActivityNotFoundException) {
@@ -214,12 +227,21 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 title = { Text(stringResource(R.string.browse)) },
                 actions = {
                     IconButton(
-                        onClick = { launchSafPicker() },
+                        onClick = { launchSafPicker(LIBRARY_ROOT_ROLE_LIBRARY) },
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.LibraryBooks,
+                            contentDescription = stringResource(R.string.library_add_library_source),
+                        )
+                    }
+                    IconButton(
+                        onClick = { launchSafPicker(LIBRARY_ROOT_ROLE_FOLDER) },
                         shapes = IconButtonDefaults.shapes(),
                     ) {
                         Icon(
                             Icons.Default.CreateNewFolder,
-                            contentDescription = stringResource(R.string.library_add_root),
+                            contentDescription = stringResource(R.string.library_add_folder_source),
                         )
                     }
                     IconButton(
@@ -282,8 +304,23 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     items(roots, key = { "r-${it.id}" }) { root ->
                         BrowseRootCard(
                             title = root.displayName,
-                            subtitle = stringResource(R.string.library_gallery_folder),
-                            icon = { Icon(Icons.Default.Folder, contentDescription = null) },
+                            subtitle = stringResource(
+                                if (root.isLibraryRole) {
+                                    R.string.library
+                                } else {
+                                    R.string.folder
+                                },
+                            ),
+                            icon = {
+                                Icon(
+                                    if (root.isLibraryRole) {
+                                        Icons.AutoMirrored.Filled.LibraryBooks
+                                    } else {
+                                        Icons.Default.Folder
+                                    },
+                                    contentDescription = null,
+                                )
+                            },
                             onClick = { openLocalRoot(root) },
                         )
                     }
@@ -319,10 +356,22 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         ListItem(
                             headlineContent = { Text(root.displayName) },
                             supportingContent = {
-                                Text(stringResource(R.string.library_gallery_folder))
+                                Text(
+                                    stringResource(
+                                        if (root.isLibraryRole) R.string.library else R.string.folder,
+                                    ),
+                                )
                             },
                             leadingContent = {
-                                Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Icon(
+                                    if (root.isLibraryRole) {
+                                        Icons.AutoMirrored.Filled.LibraryBooks
+                                    } else {
+                                        Icons.Default.Folder
+                                    },
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
                             },
                             modifier = Modifier.fillMaxWidth().clickable { openLocalRoot(root) },
                         )

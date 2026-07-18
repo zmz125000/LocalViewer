@@ -55,14 +55,15 @@ import moe.tarsin.snackbar
 import moe.tarsin.string
 
 /**
- * Manage local library folders (SAF) and SMB network sources.
+ * Manage library (scanned), browse-only folders, and SMB network sources.
  * Adding sources is done from the Browse top bar.
  */
 @Destination<RootGraph>
 @Composable
 fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigator) = Screen(navigator) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-    val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
+    val libraryRoots by LocalLibrary.libraryRootsFlow().collectAsState(initial = emptyList())
+    val folderRoots by LocalLibrary.folderOnlyRootsFlow().collectAsState(initial = emptyList())
     val smbSources by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
     val scanning by LocalLibrary.scanning.collectAsState()
     var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }
@@ -75,7 +76,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                 actions = {
                     IconButton(
                         onClick = { launchIO { LocalLibrary.rescanAll() } },
-                        enabled = !scanning && roots.isNotEmpty(),
+                        enabled = !scanning && libraryRoots.isNotEmpty(),
                         shapes = IconButtonDefaults.shapes(),
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.library_rescan))
@@ -91,11 +92,11 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                 .nestedScroll(scrollBehavior.nestedScrollConnection)
                 .fillMaxSize(),
         ) {
-            item(key = "hdr-folder") {
-                BrowseSectionHeader(stringResource(R.string.folder))
+            item(key = "hdr-library") {
+                BrowseSectionHeader(stringResource(R.string.library))
             }
-            if (roots.isEmpty()) {
-                item(key = "folder-empty") {
+            if (libraryRoots.isEmpty()) {
+                item(key = "library-empty") {
                     Text(
                         text = stringResource(R.string.library_no_roots),
                         style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
@@ -103,7 +104,40 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                     )
                 }
             } else {
-                items(roots, key = { "r-${it.id}" }) { root ->
+                items(libraryRoots, key = { "lib-${it.id}" }) { root ->
+                    ListItem(
+                        headlineContent = { Text(root.displayName) },
+                        supportingContent = {
+                            Text(text = root.treeUri.toUri().displayPath ?: root.treeUri)
+                        },
+                        trailingContent = {
+                            IconButton(
+                                onClick = { launchIO { LocalLibrary.removeRoot(root) } },
+                                shapes = IconButtonDefaults.shapes(),
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = stringResource(R.string.library_remove_root),
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+
+            item(key = "hdr-folder") {
+                BrowseSectionHeader(stringResource(R.string.folder))
+            }
+            if (folderRoots.isEmpty()) {
+                item(key = "folder-empty") {
+                    Text(
+                        text = stringResource(R.string.folder_no_browse_roots),
+                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                    )
+                }
+            } else {
+                items(folderRoots, key = { "fol-${it.id}" }) { root ->
                     ListItem(
                         headlineContent = { Text(root.displayName) },
                         supportingContent = {
