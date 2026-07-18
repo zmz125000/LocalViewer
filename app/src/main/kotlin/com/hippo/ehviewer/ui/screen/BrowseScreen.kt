@@ -132,7 +132,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 relativePath = "",
             ),
         )
-        navigate(FolderBrowserScreenDestination)
+        navigate(FolderBrowserScreenDestination())
     }
 
     fun openSmb(source: SmbSourceEntity) {

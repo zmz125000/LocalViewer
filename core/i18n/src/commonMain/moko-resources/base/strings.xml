@@ -323,6 +323,7 @@
     <string name="clear_all">Clear all</string>
     <string name="clear_all_history">Clear all history?</string>
     <string name="history_unavailable">This item is no longer available</string>
+    <string name="back_to_history">Back to history</string>
     <!-- Filter -->
     <string name="filter">Blockers</string>
     <string name="filter_title">Title</string>

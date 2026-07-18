@@ -9,9 +9,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -55,6 +57,7 @@ import com.hippo.ehviewer.ui.main.BrowseDirectoryRow
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.ramcosta.composedestinations.annotation.Destination
@@ -65,7 +68,11 @@ import okio.Path.Companion.toPath
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
-fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator) = Screen(navigator) {
+fun AnimatedVisibilityScope.FolderBrowserScreen(
+    navigator: DestinationsNavigator,
+    /** When opened from History, show a FAB to jump straight back (skip path climb). */
+    fromHistory: Boolean = false,
+) = Screen(navigator) {
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
     // Session-scoped stack survives reader navigation (unlike remember {}).
     // When opened from Browse with a pre-set stack, start inside that root (no root picker).
@@ -284,6 +291,24 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(navigator: DestinationsNavigator
                 },
                 scrollBehavior = scrollBehavior,
             )
+        },
+        floatingActionButton = {
+            if (fromHistory) {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        saveCurrentScroll()
+                        if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
+                            navigator.navigate(HistoryScreenDestination) {
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                    icon = {
+                        Icon(Icons.Default.History, contentDescription = null)
+                    },
+                    text = { Text(stringResource(R.string.back_to_history)) },
+                )
+            }
         },
     ) { padding ->
         PullToRefreshBox(

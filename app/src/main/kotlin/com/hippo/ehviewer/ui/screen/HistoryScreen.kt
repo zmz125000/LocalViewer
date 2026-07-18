@@ -137,7 +137,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         rootPath = rootPath,
                         relativePath = target.relativePath,
                     )
-                    navigate(FolderBrowserScreenDestination)
+                    navigate(FolderBrowserScreenDestination(fromHistory = true))
                 }
                 is LocalHistoryTarget.SmbBrowseFolder -> {
                     val source = withIOContext { SmbRepository.load(target.sourceId) }
@@ -149,7 +149,13 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     }
                     val segments = target.relativePath.split('/').filter { it.isNotEmpty() }
                     BrowseSession.setSmbSegments(source.id, segments)
-                    navigate(SmbBrowserScreenDestination(source.id, target.relativePath))
+                    navigate(
+                        SmbBrowserScreenDestination(
+                            sourceId = source.id,
+                            initialRelativePath = target.relativePath,
+                            fromHistory = true,
+                        ),
+                    )
                 }
                 is LocalHistoryTarget.Orphan -> {
                     // Legacy "local" browse rows without path metadata, or foreign EH history.

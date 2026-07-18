@@ -9,9 +9,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -50,6 +52,7 @@ import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseCover
 import com.hippo.ehviewer.ui.main.BrowseDirectoryRow
@@ -69,6 +72,7 @@ import moe.tarsin.string
 fun AnimatedVisibilityScope.SmbBrowserScreen(
     sourceId: Long,
     initialRelativePath: String = "",
+    fromHistory: Boolean = false,
     navigator: DestinationsNavigator,
 ) = Screen(navigator) {
     DrawerHandle(false)
@@ -259,6 +263,24 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 },
                 scrollBehavior = scrollBehavior,
             )
+        },
+        floatingActionButton = {
+            if (fromHistory) {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        saveCurrentScroll()
+                        if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
+                            navigator.navigate(HistoryScreenDestination) {
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                    icon = {
+                        Icon(Icons.Default.History, contentDescription = null)
+                    },
+                    text = { Text(stringResource(R.string.back_to_history)) },
+                )
+            }
         },
     ) { padding ->
         PullToRefreshBox(
