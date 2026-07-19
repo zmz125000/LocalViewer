@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.CircularWavyProgressIndicator
@@ -339,6 +340,66 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 }
             }
         }
+        // Same path as double-tap prev/next gallery (folder mode); shared by gesture + FABs.
+        val folderNavBusy = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+        fun goFolder(next: Boolean) {
+            if (!folderNavBusy.compareAndSet(false, true)) return
+            // Navigate on Main after the gesture/input frame finishes — avoids
+            // Compose "Cannot start a writer when a reader is pending" crashes.
+            launch {
+                try {
+                    val sibling = withIOContext {
+                        GallerySiblingNavigator.sibling(args, next)
+                    } ?: return@launch
+                    // Progress FK for sibling gallery + bump browse folder history
+                    sibling.let { s ->
+                        withIOContext {
+                            when (s) {
+                                is ReaderScreenArgs.LocalFolder -> {
+                                    s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                                    // Browse stack only — library playlist siblings skip path history.
+                                    val frame = BrowseSession.localStack.lastOrNull()
+                                        ?: return@withIOContext
+                                    val rel = if (s.path == frame.path) {
+                                        frame.relativePath
+                                    } else {
+                                        val name = s.path.toPath().name
+                                        if (frame.relativePath.isEmpty()) name else "${frame.relativePath}/$name"
+                                    }
+                                    LocalHistory.recordLocalBrowseFolder(
+                                        rootId = frame.rootId,
+                                        relativePath = rel,
+                                        title = s.info?.title ?: s.path.toPath().name,
+                                        pages = s.info?.pages ?: 0,
+                                    )
+                                }
+                                is ReaderScreenArgs.SmbFolder -> {
+                                    s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                                    LocalHistory.recordSmbBrowseFolder(
+                                        sourceId = s.sourceId,
+                                        relativePath = s.remoteDir,
+                                        title = s.info?.title
+                                            ?: s.remoteDir.substringAfterLast('/').ifEmpty { "Share" },
+                                        pages = s.info?.pages ?: 0,
+                                    )
+                                }
+                                is ReaderScreenArgs.Archive -> Unit
+                                else -> Unit
+                            }
+                        }
+                    }
+                    // Replace current reader so back still returns to folder browser once
+                    nav.navigate(ReaderScreenDestination(sibling)) {
+                        launchSingleTop = true
+                        popUpTo(ReaderScreenDestination) {
+                            inclusive = true
+                        }
+                    }
+                } finally {
+                    folderNavBusy.set(false)
+                }
+            }
+        }
         EhTheme(useDarkTheme = bgColor != Color.White) {
             val insets = if (fullscreen) {
                 if (cutoutShort) {
@@ -348,66 +409,6 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 }
             } else {
                 WindowInsets.systemBars
-            }
-            // Guard against re-entrant double-taps while a folder switch is in flight
-            val folderNavBusy = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
-            fun goFolder(next: Boolean) {
-                if (!folderNavBusy.compareAndSet(false, true)) return
-                // Navigate on Main after the gesture/input frame finishes — avoids
-                // Compose "Cannot start a writer when a reader is pending" crashes.
-                launch {
-                    try {
-                        val sibling = withIOContext {
-                            GallerySiblingNavigator.sibling(args, next)
-                        } ?: return@launch
-                        // Progress FK for sibling gallery + bump browse folder history
-                        sibling.let { s ->
-                            withIOContext {
-                                when (s) {
-                                    is ReaderScreenArgs.LocalFolder -> {
-                                        s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                                        // Browse stack only — library playlist siblings skip path history.
-                                        val frame = BrowseSession.localStack.lastOrNull()
-                                            ?: return@withIOContext
-                                        val rel = if (s.path == frame.path) {
-                                            frame.relativePath
-                                        } else {
-                                            val name = s.path.toPath().name
-                                            if (frame.relativePath.isEmpty()) name else "${frame.relativePath}/$name"
-                                        }
-                                        LocalHistory.recordLocalBrowseFolder(
-                                            rootId = frame.rootId,
-                                            relativePath = rel,
-                                            title = s.info?.title ?: s.path.toPath().name,
-                                            pages = s.info?.pages ?: 0,
-                                        )
-                                    }
-                                    is ReaderScreenArgs.SmbFolder -> {
-                                        s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                                        LocalHistory.recordSmbBrowseFolder(
-                                            sourceId = s.sourceId,
-                                            relativePath = s.remoteDir,
-                                            title = s.info?.title
-                                                ?: s.remoteDir.substringAfterLast('/').ifEmpty { "Share" },
-                                            pages = s.info?.pages ?: 0,
-                                        )
-                                    }
-                                    is ReaderScreenArgs.Archive -> Unit
-                                    else -> Unit
-                                }
-                            }
-                        }
-                        // Replace current reader so back still returns to folder browser once
-                        nav.navigate(ReaderScreenDestination(sibling)) {
-                            launchSingleTop = true
-                            popUpTo(ReaderScreenDestination) {
-                                inclusive = true
-                            }
-                        }
-                    } finally {
-                        folderNavBusy.set(false)
-                    }
-                }
             }
             GalleryPager(
                 type = readingMode,
@@ -470,13 +471,31 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
         }
         // Go-to-first FAB: hidden by default; show after scrolling toward earlier pages
         // quickly (jump ≥2) or by more than 3 pages; hide again when scrolling forward.
+        // Next-gallery FAB: show on last page (if a sibling exists); hide on page-up.
         var showGoFirstFab by remember { mutableStateOf(false) }
+        var showNextGalleryFab by remember { mutableStateOf(false) }
+        var hasNextGallery by remember { mutableStateOf(false) }
         var lastTrackedPage by remember { mutableIntStateOf(syncState.sliderValue) }
         var peakPageSinceScrollDown by remember { mutableIntStateOf(syncState.sliderValue) }
+        LaunchedEffect(args) {
+            hasNextGallery = withIOContext {
+                GallerySiblingNavigator.sibling(args, next = true) != null
+            }
+        }
         LaunchedEffect(Unit) {
-            snapshotFlow { syncState.sliderValue }.collect { page ->
+            snapshotFlow {
+                Triple(syncState.sliderValue, pageLoader.size, hasNextGallery)
+            }.collect { (page, total, canNext) ->
                 val prev = lastTrackedPage
                 lastTrackedPage = page
+                val onLast = total > 0 && page >= total
+                // Page-up always dismisses next-gallery FAB; landing on last (or sibling
+                // check finishing while already there) shows it.
+                showNextGalleryFab = when {
+                    page < prev -> false
+                    onLast && canNext -> true
+                    else -> false
+                }
                 if (page <= 1) {
                     showGoFirstFab = false
                     peakPageSinceScrollDown = 1
@@ -497,12 +516,28 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 }
             }
         }
+        val fabPad = Modifier
+            .align(Alignment.BottomEnd)
+            .navigationBarsPadding()
+            .padding(end = 16.dp, bottom = 16.dp)
         AnimatedVisibility(
-            visible = showGoFirstFab && syncState.sliderValue > 1,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .navigationBarsPadding()
-                .padding(end = 16.dp, bottom = 16.dp),
+            visible = showNextGalleryFab &&
+                pageLoader.size > 0 &&
+                syncState.sliderValue >= pageLoader.size,
+            modifier = fabPad,
+            enter = fadeIn() + scaleIn(),
+            exit = fadeOut() + scaleOut(),
+        ) {
+            FloatingActionButton(onClick = { goFolder(next = true) }) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.NavigateNext,
+                    contentDescription = stringResource(R.string.go_to_next_gallery),
+                )
+            }
+        }
+        AnimatedVisibility(
+            visible = showGoFirstFab && syncState.sliderValue > 1 && !showNextGalleryFab,
+            modifier = fabPad,
             enter = fadeIn() + scaleIn(),
             exit = fadeOut() + scaleOut(),
         ) {

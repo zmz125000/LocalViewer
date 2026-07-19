@@ -330,6 +330,7 @@
     <string name="back_to_history">Back to history</string>
     <string name="back_to_browse">Back to browse</string>
     <string name="go_to_first_page">Go to first page</string>
+    <string name="go_to_next_gallery">Next gallery</string>
     <!-- Filter -->
     <string name="filter">Blockers</string>
     <string name="filter_title">Title</string>
