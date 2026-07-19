@@ -122,6 +122,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
     /** Detect share/pathPrefix/host edits while this screen stays on the back stack. */
     var lastConfigKey by remember { mutableStateOf<String?>(null) }
+    /**
+     * Monotonic reload id so a stale concurrent reload (e.g. ON_RESUME observer installed at
+     * root while the user is now in a subfolder) cannot leave [loading] stuck true forever.
+     */
+    var reloadEpoch by remember { mutableStateOf(0) }
 
     suspend fun reload(force: Boolean = false) {
         // Always re-read DB — in-memory [source] goes stale after Manage sources edit.
@@ -142,8 +147,18 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             entries = emptyList()
             listedDir = null
         }
-        val targetDir = if (configChanged) "" else relativeDir
-        loading = true
+        // CRITICAL: read path from live [segments] state — never close over composition-time
+        // [relativeDir]. DisposableEffect(ON_RESUME) is keyed only on sourceId, so a captured
+        // relativeDir stays at the path from first open (usually root). That cleared the
+        // subfolder list, listed root, then bailed with currentDir != targetDir and left
+        // loading=true (empty view + infinite refresh). Manual refresh worked because the
+        // button lambda is recreated each frame with the current path.
+        val targetDir = if (configChanged) "" else segments.joinToString("/")
+        val epoch = ++reloadEpoch
+        // Keep showing current rows on soft resume (same dir already listed); only spin when
+        // we have nothing for this path or the user forced a refresh.
+        val needSpinner = force || configChanged || listedDir != targetDir || entries.isEmpty()
+        if (needSpinner) loading = true
         error = null
         // Drop stale rows (and unmount list) so dispose saves the *leaving* dir's scroll.
         if (listedDir != targetDir) {
@@ -160,7 +175,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 targetDir,
                 useCache = !force && !configChanged,
             )
-            // Ignore stale results if the user navigated away while we awaited.
+            // Ignore stale results if the user navigated away or a newer reload started.
+            if (epoch != reloadEpoch) return
             val currentDir = segments.joinToString("/")
             if (currentDir != targetDir) return
             entries = result
@@ -170,6 +186,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
+            if (epoch != reloadEpoch) return
             val currentDir = segments.joinToString("/")
             if (currentDir != targetDir) return
             error = e.message
@@ -177,8 +194,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             listedDir = targetDir
             SmbRepository.markError(src.id, e.message ?: "error")
         } finally {
-            val currentDir = segments.joinToString("/")
-            if (currentDir == targetDir) {
+            // Clear spinner only for the latest reload that still matches this path.
+            if (epoch == reloadEpoch && segments.joinToString("/") == targetDir) {
                 loading = false
             }
         }
@@ -189,7 +206,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     // After editing the source in Manage sources, this destination may still be under the
-    // back stack with an old pathPrefix — refresh on resume.
+    // back stack with an old pathPrefix — refresh on resume. Also reconnects after app
+    // background closes SMB sockets (path must be read live inside [reload], not captured).
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, sourceId) {
         val observer = LifecycleEventObserver { _, event ->
