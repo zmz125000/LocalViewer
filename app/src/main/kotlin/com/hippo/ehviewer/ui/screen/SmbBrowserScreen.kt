@@ -123,96 +123,124 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     /** Detect share/pathPrefix/host edits while this screen stays on the back stack. */
     var lastConfigKey by remember { mutableStateOf<String?>(null) }
     /**
-     * Monotonic reload id so a stale concurrent reload (e.g. ON_RESUME observer installed at
-     * root while the user is now in a subfolder) cannot leave [loading] stuck true forever.
+     * Bumped for pull-to-refresh / toolbar refresh / ON_RESUME soft refresh.
+     * Path changes are driven solely by [relativeDir] in [LaunchedEffect] — no parallel
+     * `launch { reload() }` that can race and leave [loading] stuck true.
      */
-    var reloadEpoch by remember { mutableStateOf(0) }
+    var refreshToken by remember { mutableStateOf(0) }
+    var forceNextLoad by remember { mutableStateOf(false) }
 
-    suspend fun reload(force: Boolean = false) {
-        // Always re-read DB — in-memory [source] goes stale after Manage sources edit.
+    /**
+     * Paint session-cache listing immediately when changing path (go up / enter).
+     * History → deep folder often has parent listings cached from the original browse;
+     * applying them here avoids empty+spinner while the path-keyed effect starts.
+     */
+    fun applyCachedListing(dir: String): Boolean {
+        val cached = BrowseSession.getSmbListing(sourceId, dir) ?: return false
+        entries = cached
+        listedDir = dir
+        loading = false
+        error = null
+        return true
+    }
+
+    fun requestForceReload() {
+        forceNextLoad = true
+        refreshToken++
+    }
+
+    // Single loader for the current path. When [relativeDir] changes, Compose cancels this
+    // effect and starts a new one — that is the only concurrency control we need.
+    // Previous epoch/ON_RESUME races could ++epoch, early-return without clearing loading,
+    // and leave History→up→up stuck on an empty infinite spinner (manual refresh worked).
+    LaunchedEffect(sourceId, relativeDir, refreshToken) {
+        val targetDir = relativeDir
+        val force = forceNextLoad
+        forceNextLoad = false
+
         val src = withIOContext { SmbRepository.load(sourceId) }?.also { source = it } ?: run {
             error = "Source missing"
+            entries = emptyList()
+            listedDir = targetDir
             loading = false
-            return
+            return@LaunchedEffect
         }
         val configKey = SmbGateway.sourceConfigKey(src)
         val configChanged = lastConfigKey != null && lastConfigKey != configKey
         lastConfigKey = configKey
         if (configChanged) {
-            // Path/share changed: drop in-UI stack (session already cleared by disconnect).
+            // Path/share changed: drop stack (session already cleared by disconnect).
             if (segments.isNotEmpty()) {
                 segments = emptyList()
                 BrowseSession.setSmbSegments(sourceId, emptyList())
             }
             entries = emptyList()
             listedDir = null
+            // relativeDir will change → this effect is cancelled and restarted at root.
+            if (targetDir.isNotEmpty()) {
+                loading = false
+                refreshing = false
+                return@LaunchedEffect
+            }
         }
-        // CRITICAL: read path from live [segments] state — never close over composition-time
-        // [relativeDir]. DisposableEffect(ON_RESUME) is keyed only on sourceId, so a captured
-        // relativeDir stays at the path from first open (usually root). That cleared the
-        // subfolder list, listed root, then bailed with currentDir != targetDir and left
-        // loading=true (empty view + infinite refresh). Manual refresh worked because the
-        // button lambda is recreated each frame with the current path.
-        val targetDir = if (configChanged) "" else segments.joinToString("/")
-        val epoch = ++reloadEpoch
-        // Keep showing current rows on soft resume (same dir already listed); only spin when
-        // we have nothing for this path or the user forced a refresh.
-        val needSpinner = force || configChanged || listedDir != targetDir || entries.isEmpty()
-        if (needSpinner) loading = true
+
+        val loadDir = if (configChanged) "" else targetDir
+        val haveListing = listedDir == loadDir && entries.isNotEmpty()
+        // Soft resume (same path, already shown): no full-screen spinner.
+        val needSpinner = force || configChanged || !haveListing
+        if (needSpinner) {
+            loading = true
+            if (listedDir != loadDir) {
+                // Prefer instant cache paint before network (especially go-up from History).
+                if (!force && !configChanged && applyCachedListing(loadDir)) {
+                    loading = false
+                } else {
+                    entries = emptyList()
+                }
+            }
+        }
         error = null
-        // Drop stale rows (and unmount list) so dispose saves the *leaving* dir's scroll.
-        if (listedDir != targetDir) {
-            entries = emptyList()
-        }
+
         val password = SmbPasswordStore.get(src.id)
+        // On cancel (path change / new refreshToken), do NOT clear loading — goUp/enterDir or
+        // the replacement effect already owns that flag. Clearing here caused empty+spinner
+        // races and could leave a superseded load stuck spinning forever.
         try {
-            // Listing is process-scoped inside SmbGateway; leaving the screen only cancels
-            // this await, not the walk. Do not treat CancellationException as a list failure.
-            // Force re-list after source config edit so we never use listings for old pathPrefix.
+            // Process-scoped list job inside gateway; effect cancel only drops this await.
             val result = SmbGateway.listDirectory(
                 src,
                 password,
-                targetDir,
+                loadDir,
                 useCache = !force && !configChanged,
             )
-            // Ignore stale results if the user navigated away or a newer reload started.
-            if (epoch != reloadEpoch) return
-            val currentDir = segments.joinToString("/")
-            if (currentDir != targetDir) return
+            // Still the active effect for this path (not cancelled) → safe to commit.
             entries = result
-            listedDir = targetDir
+            listedDir = loadDir
             SmbRepository.markOk(src.id)
             error = null
+            loading = false
+            refreshing = false
         } catch (e: kotlinx.coroutines.CancellationException) {
+            // Path changed or refreshToken bumped — new effect owns loading state.
             throw e
         } catch (e: Throwable) {
-            if (epoch != reloadEpoch) return
-            val currentDir = segments.joinToString("/")
-            if (currentDir != targetDir) return
             error = e.message
             entries = emptyList()
-            listedDir = targetDir
+            listedDir = loadDir
             SmbRepository.markError(src.id, e.message ?: "error")
-        } finally {
-            // Clear spinner only for the latest reload that still matches this path.
-            if (epoch == reloadEpoch && segments.joinToString("/") == targetDir) {
-                loading = false
-            }
+            loading = false
+            refreshing = false
         }
     }
 
-    LaunchedEffect(sourceId, relativeDir) {
-        reload(force = false)
-    }
-
-    // After editing the source in Manage sources, this destination may still be under the
-    // back stack with an old pathPrefix — refresh on resume. Also reconnects after app
-    // background closes SMB sockets (path must be read live inside [reload], not captured).
+    // Resume after Manage-sources edit or app background: soft refresh current path only.
+    // Must not call a free-floating reload that races path changes (see LaunchedEffect above).
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, sourceId) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                launch { reload(force = false) }
+                // Soft: keep rows if listed; token bump re-runs effect for current relativeDir.
+                refreshToken++
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -220,12 +248,29 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     fun enterDir(name: String) {
-        updateSegments(segments + name)
+        val next = segments + name
+        val nextDir = next.joinToString("/")
+        updateSegments(next)
+        if (!applyCachedListing(nextDir)) {
+            // Show spinner for uncached child; effect will load.
+            entries = emptyList()
+            listedDir = null
+            loading = true
+        }
     }
 
     fun goUp() {
         if (segments.isNotEmpty()) {
-            updateSegments(segments.dropLast(1))
+            val next = segments.dropLast(1)
+            val nextDir = next.joinToString("/")
+            updateSegments(next)
+            // History deep-link parents are often already in session cache — paint now so
+            // the second/third go-up never flashes empty+infinite refresh while effect starts.
+            if (!applyCachedListing(nextDir)) {
+                entries = emptyList()
+                listedDir = null
+                loading = true
+            }
         } else {
             navigator.popBackStack()
         }
@@ -297,11 +342,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     }
                     IconButton(
                         onClick = {
-                            launch {
-                                refreshing = true
-                                reload(force = true)
-                                refreshing = false
-                            }
+                            refreshing = true
+                            requestForceReload()
                         },
                         shapes = IconButtonDefaults.shapes(),
                     ) {
@@ -346,11 +388,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         PullToRefreshBox(
             isRefreshing = refreshing || loading,
             onRefresh = {
-                launch {
-                    refreshing = true
-                    reload(force = true)
-                    refreshing = false
-                }
+                refreshing = true
+                requestForceReload()
             },
             modifier = Modifier.padding(padding).fillMaxSize(),
         ) {
