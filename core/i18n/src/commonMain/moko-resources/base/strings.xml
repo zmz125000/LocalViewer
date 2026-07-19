@@ -329,6 +329,7 @@
     <string name="history_unavailable">This item is no longer available</string>
     <string name="back_to_history">Back to history</string>
     <string name="back_to_browse">Back to browse</string>
+    <string name="go_to_first_page">Go to first page</string>
     <!-- Filter -->
     <string name="filter">Blockers</string>
     <string name="filter_title">Title</string>

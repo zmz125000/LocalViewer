@@ -1,8 +1,13 @@
 package com.hippo.ehviewer.ui.reader
 
 import android.content.Context
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -15,14 +20,19 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -36,6 +46,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -50,6 +61,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import arrow.core.Either
 import arrow.core.Either.Companion.catch
 import arrow.core.raise.ensure
@@ -452,6 +465,58 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                     currentPage = syncState.sliderValue,
                     totalPages = pageLoader.size,
                     modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding(),
+                )
+            }
+        }
+        // Go-to-first FAB: hidden by default; show after scrolling toward earlier pages
+        // quickly (jump ≥2) or by more than 3 pages; hide again when scrolling forward.
+        var showGoFirstFab by remember { mutableStateOf(false) }
+        var lastTrackedPage by remember { mutableIntStateOf(syncState.sliderValue) }
+        var peakPageSinceScrollDown by remember { mutableIntStateOf(syncState.sliderValue) }
+        LaunchedEffect(Unit) {
+            snapshotFlow { syncState.sliderValue }.collect { page ->
+                val prev = lastTrackedPage
+                lastTrackedPage = page
+                if (page <= 1) {
+                    showGoFirstFab = false
+                    peakPageSinceScrollDown = 1
+                    return@collect
+                }
+                when {
+                    page > prev -> {
+                        showGoFirstFab = false
+                        peakPageSinceScrollDown = page
+                    }
+                    page < prev -> {
+                        val stepUp = prev - page
+                        val climbed = peakPageSinceScrollDown - page
+                        if (stepUp >= 2 || climbed > 3) {
+                            showGoFirstFab = true
+                        }
+                    }
+                }
+            }
+        }
+        AnimatedVisibility(
+            visible = showGoFirstFab && syncState.sliderValue > 1,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(end = 16.dp, bottom = 16.dp),
+            enter = fadeIn() + scaleIn(),
+            exit = fadeOut() + scaleOut(),
+        ) {
+            FloatingActionButton(
+                onClick = {
+                    syncState.sliderScrollTo(1)
+                    showGoFirstFab = false
+                    peakPageSinceScrollDown = 1
+                    lastTrackedPage = 1
+                },
+            ) {
+                Icon(
+                    imageVector = Icons.Default.VerticalAlignTop,
+                    contentDescription = stringResource(R.string.go_to_first_page),
                 )
             }
         }
