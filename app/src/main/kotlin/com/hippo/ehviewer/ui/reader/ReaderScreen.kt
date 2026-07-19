@@ -490,7 +490,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                     page < prev -> {
                         val stepUp = prev - page
                         val climbed = peakPageSinceScrollDown - page
-                        if (stepUp >= 2 || climbed > 3) {
+                        if (stepUp >= 2 || climbed > 2) {
                             showGoFirstFab = true
                         }
                     }
