@@ -1,6 +1,5 @@
 package com.hippo.ehviewer.ui.main
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,13 +31,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
-import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LocalGalleryEntity
@@ -48,8 +47,10 @@ import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.ui.component.CrystalCard
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.hippo.ehviewer.EhDB
-import com.hippo.ehviewer.ktbuilder.imageRequest
+import com.hippo.ehviewer.coil.CoverThumb
+import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.ui.screen.collectListThumbSizeAsState
 import okio.Path.Companion.toPath
 
 /** Kind / page-count chip — text on secondaryContainer, used on list cards. */
@@ -69,17 +70,43 @@ private fun LocalGalleryMetaChip(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun coverRequest(coverPath: String?): ImageRequest? {
+private fun coverRequest(coverPath: String?, sizePx: Int): ImageRequest? {
     val context = LocalContext.current
-    return remember(coverPath) {
+    return remember(coverPath, sizePx) {
         coverPath?.let { path ->
             with(context) {
-                imageRequest {
-                    data(path.toPath().toUri())
-                    memoryCacheKey(path)
-                    diskCacheKey(path)
-                }
+                coverThumbRequest(
+                    data = path.toPath().toUri(),
+                    sizePx = sizePx,
+                    memoryKey = path,
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun CoverImage(
+    coverPath: String?,
+    sizePx: Int,
+    placeholder: ImageVector,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Icon(
+            imageVector = placeholder,
+            contentDescription = null,
+            modifier = Modifier.size(48.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        val request = coverRequest(coverPath, sizePx)
+        if (request != null) {
+            AsyncImage(
+                model = request,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
         }
     }
 }
@@ -97,35 +124,21 @@ fun LocalGalleryListItem(
     onClick = onClick,
     onLongClick = onLongClick,
 ) {
+    val cardHeight by collectListThumbSizeAsState()
+    val listDecodePx = CoverThumb.libraryListDecodePx(cardHeight)
     Row {
-        Box(
-            // Square cover (matchHeight so fixed list row height defines the square size)
+        CoverImage(
+            coverPath = gallery.coverPath,
+            sizePx = listDecodePx,
+            placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                Icons.Default.Inventory2
+            } else {
+                Icons.Default.Folder
+            },
             modifier = Modifier
                 .aspectRatio(1f, matchHeightConstraintsFirst = true)
                 .clip(ShapeDefaults.Medium),
-            contentAlignment = Alignment.Center,
-        ) {
-            val request = coverRequest(gallery.coverPath)
-            if (request != null) {
-                Image(
-                    painter = rememberAsyncImagePainter(model = request),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                )
-            } else {
-                Icon(
-                    imageVector = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                        Icons.Default.Inventory2
-                    } else {
-                        Icons.Default.Folder
-                    },
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-        }
+        )
         Column(modifier = Modifier.padding(start = 8.dp, top = 2.dp, end = 4.dp, bottom = 4.dp)) {
             Text(
                 text = gallery.title,
@@ -205,30 +218,17 @@ fun HistoryListItem(
         LocalHistory.KindLabel.Library -> Icons.AutoMirrored.Filled.InsertDriveFile
         else -> Icons.Default.Folder
     }
+    val cardHeight by collectListThumbSizeAsState()
+    val listDecodePx = CoverThumb.libraryListDecodePx(cardHeight)
     Row {
-        Box(
+        CoverImage(
+            coverPath = info.thumbKey,
+            sizePx = listDecodePx,
+            placeholder = placeholderIcon,
             modifier = Modifier
                 .aspectRatio(1f, matchHeightConstraintsFirst = true)
                 .clip(ShapeDefaults.Medium),
-            contentAlignment = Alignment.Center,
-        ) {
-            val request = coverRequest(info.thumbKey)
-            if (request != null) {
-                Image(
-                    painter = rememberAsyncImagePainter(model = request),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                )
-            } else {
-                Icon(
-                    imageVector = placeholderIcon,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-        }
+        )
         Column(modifier = Modifier.padding(start = 8.dp, top = 2.dp, end = 4.dp, bottom = 4.dp)) {
             Text(
                 text = info.title.orEmpty(),
@@ -287,6 +287,12 @@ fun LocalGalleryGridItem(
     val nameHeight = GalleryGridDefaults.nameHeight()
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val gridDecodePx = CoverThumb.gridDecodePx(
+        screenWidthDp = LocalConfiguration.current.screenWidthDp,
+        columns = GalleryGridDefaults.columnCount(),
+        margin = GalleryGridDefaults.margin(),
+        gutter = GalleryGridDefaults.gutter(),
+    )
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
@@ -299,31 +305,16 @@ fun LocalGalleryGridItem(
                     .aspectRatio(1f)
                     .clip(ShapeDefaults.Medium),
             ) {
-                val request = coverRequest(gallery.coverPath)
-                if (request != null) {
-                    AsyncImage(
-                        model = request,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                                Icons.Default.Inventory2
-                            } else {
-                                Icons.Default.Folder
-                            },
-                            contentDescription = null,
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                }
+                CoverImage(
+                    coverPath = gallery.coverPath,
+                    sizePx = gridDecodePx,
+                    placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                        Icons.Default.Inventory2
+                    } else {
+                        Icons.Default.Folder
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
                 if (showPages && gallery.pageCount > 0) {
                     Badge(
                         modifier = Modifier

@@ -32,6 +32,7 @@ import coil3.SingletonImageLoader
 import coil3.asImage
 import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
+import coil3.memory.MemoryCache
 import coil3.network.ConnectivityChecker
 import coil3.network.ktor3.KtorNetworkFetcherFactory
 import coil3.request.ErrorResult
@@ -181,8 +182,11 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                 add(GifDecoder.Factory())
             }
         }
+        // Dedicated budgets for library/browse covers (reader pages use their own path).
+        memoryCache { thumbMemoryCache }
         diskCache { thumbCache }
-        crossfade(300)
+        // Short crossfade only on first paint; recycle hits are size-decoded and usually instant.
+        crossfade(120)
         val drawable = AppCompatResources.getDrawable(appCtx, R.drawable.image_failed)
         if (drawable != null) error(drawable.asImage(true))
         if (BuildConfig.DEBUG) {
@@ -223,10 +227,24 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             }
         }
 
+        /**
+         * Coil memory cache for cover thumbs only (reader disables memory cache on decode).
+         * Sized bitmaps (~list/grid) fit many more cells than full-page originals.
+         */
+        val thumbMemoryCache by lazy {
+            MemoryCache.Builder()
+                .maxSizePercent(appCtx, 0.20)
+                .build()
+        }
+
+        /**
+         * Coil disk cache for decoded cover thumbs (separate from SMB full-file `smb_cache`).
+         * 256 MiB holds a large browse/library scroll history of resized covers.
+         */
         val thumbCache by lazy {
             diskCache {
                 directory(appCtx.cacheDir.toOkioPath() / "thumb")
-                maxSizeBytes(80L * 1024 * 1024)
+                maxSizeBytes(256L * 1024 * 1024)
             }
         }
 

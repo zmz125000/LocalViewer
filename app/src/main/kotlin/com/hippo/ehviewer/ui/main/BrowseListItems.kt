@@ -1,6 +1,5 @@
 package com.hippo.ehviewer.ui.main
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,7 +22,6 @@ import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,18 +30,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImagePainter
-import coil3.compose.rememberAsyncImagePainter
+import coil3.compose.AsyncImage
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.util.logcat
-import com.hippo.ehviewer.ktbuilder.imageRequest
+import com.hippo.ehviewer.coil.CoverThumb
+import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
@@ -96,7 +96,10 @@ fun BrowseFolderGalleryRow(
             )
         },
         leadingContent = {
-            BrowseCoverThumb(cover = resolvedCover)
+            BrowseCoverThumb(
+                cover = resolvedCover,
+                decodeSizePx = CoverThumb.listDecodePx(),
+            )
         },
         modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
     )
@@ -169,6 +172,12 @@ fun BrowseFolderGalleryGridItem(
                     cover = cover,
                     modifier = Modifier.fillMaxSize().clip(ShapeDefaults.Medium),
                     placeholderSize = 40.dp,
+                    decodeSizePx = CoverThumb.gridDecodePx(
+                        screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                        columns = GalleryGridDefaults.columnCount(),
+                        margin = GalleryGridDefaults.margin(),
+                        gutter = GalleryGridDefaults.gutter(),
+                    ),
                 )
                 if (pageCount > 0 || pageCountCapped) {
                     Badge(
@@ -267,8 +276,10 @@ private fun BrowseGridCell(
 fun BrowseCoverThumb(
     cover: BrowseCover?,
     modifier: Modifier = Modifier.size(56.dp),
-    placeholderSize: androidx.compose.ui.unit.Dp = 24.dp,
+    placeholderSize: Dp = 24.dp,
+    decodeSizePx: Int? = null,
 ) {
+    val resolvedDecodePx = decodeSizePx ?: CoverThumb.listDecodePx()
     val context = LocalContext.current
     var localPath by remember(cover) {
         mutableStateOf(
@@ -318,9 +329,9 @@ fun BrowseCoverThumb(
         fetchFailed = true
     }
 
-    // Memory/disk keys must include the remote identity (not only local cache path) so
-    // LazyColumn recycling never paints another comic's 001.jpg.
-    val request = remember(cover, localPath) {
+    // Memory/disk keys include remote identity + decode size so list/grid recycle
+    // never paints another comic's 001.jpg at full resolution.
+    val request = remember(cover, localPath, resolvedDecodePx) {
         localPath?.let { path ->
             val cacheKey = when (cover) {
                 is BrowseCover.Smb -> "smb:${cover.sourceId}:${cover.remoteRelativeFile}"
@@ -328,43 +339,33 @@ fun BrowseCoverThumb(
                 null -> path.toString()
             }
             with(context) {
-                imageRequest {
-                    data(path.toUri())
-                    memoryCacheKey(cacheKey)
-                    diskCacheKey(cacheKey)
-                }
+                coverThumbRequest(
+                    data = path.toUri(),
+                    sizePx = resolvedDecodePx,
+                    memoryKey = cacheKey,
+                )
             }
         }
     }
 
+    // Icon under AsyncImage: first load shows placeholder; cache hits paint immediately
+    // without Success-only gating (which flashed on every LazyList recycle).
     Box(
         modifier = modifier,
         contentAlignment = Alignment.Center,
     ) {
+        Icon(
+            Icons.Default.PhotoLibrary,
+            contentDescription = null,
+            modifier = Modifier.size(placeholderSize),
+            tint = MaterialTheme.colorScheme.secondary,
+        )
         if (request != null) {
-            val painter = rememberAsyncImagePainter(model = request)
-            val state by painter.state.collectAsState()
-            if (state is AsyncImagePainter.State.Success) {
-                Image(
-                    painter = painter,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                )
-            } else {
-                Icon(
-                    Icons.Default.PhotoLibrary,
-                    contentDescription = null,
-                    modifier = Modifier.size(placeholderSize),
-                    tint = MaterialTheme.colorScheme.secondary,
-                )
-            }
-        } else {
-            Icon(
-                Icons.Default.PhotoLibrary,
+            AsyncImage(
+                model = request,
                 contentDescription = null,
-                modifier = Modifier.size(placeholderSize),
-                tint = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
             )
         }
     }
