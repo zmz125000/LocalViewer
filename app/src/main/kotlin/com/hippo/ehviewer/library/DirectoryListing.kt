@@ -1,5 +1,8 @@
 package com.hippo.ehviewer.library
 
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import okio.Path
 
 /**
@@ -69,8 +72,9 @@ fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
     val dirs = ArrayList<BrowseEntry.Directory>()
     val leafGalleries = ArrayList<BrowseEntry.FolderGallery>()
 
-    for (sub in childDirs) {
-        when (val kind = classifyChildDirectory(sub.path)) {
+    // SAF peeks are one ContentResolver query each — run them in parallel.
+    for ((sub, kind) in classifyChildrenParallel(childDirs)) {
+        when (kind) {
             is ChildDirKind.Navigable -> {
                 dirs += BrowseEntry.Directory(sub.name, sub.path)
                 // Mixed folder: also list as a gallery so direct images are openable.
@@ -137,42 +141,96 @@ private sealed interface ChildDirKind {
     data object Hidden : ChildDirKind
 }
 
+/** Concurrent SAF/MediaStore child peeks (one query per subfolder). */
+private val peekPool = Executors.newFixedThreadPool(8) { r ->
+    Thread(r, "browse-peek-${peekThreadSeq.getAndIncrement()}").apply { isDaemon = true }
+}
+private val peekThreadSeq = AtomicInteger(0)
+
+private fun classifyChildrenParallel(
+    childDirs: List<BrowseChild>,
+): List<Pair<BrowseChild, ChildDirKind>> {
+    if (childDirs.isEmpty()) return emptyList()
+    if (childDirs.size == 1) {
+        return listOf(childDirs[0] to classifyChildDirectory(childDirs[0].path))
+    }
+    val futures = childDirs.map { sub ->
+        peekPool.submit(Callable { sub to classifyChildDirectory(sub.path) })
+    }
+    return futures.map { it.get() }
+}
+
+/**
+ * After image sample is enough for a leaf gallery, still look a little further for a
+ * subdirectory (mixed folder) — but never walk the whole comic folder.
+ */
+private const val PEEK_AFTER_IMAGE_CAP_BUDGET = 40
+
+/**
+ * After we know the folder is navigable, only look this many more entries for a dual-list cover.
+ */
+private const val PEEK_AFTER_SUBDIR_IMAGE_BUDGET = 48
+
+/**
+ * Hard cap on entries visited in a single child peek (SAF cursor rows).
+ */
+private const val PEEK_MAX_ENTRIES = 128
+
 /**
  * Peek one level with streaming visit (one SAF cursor / one File.listFiles):
  * - Track subdirs + direct images (capped).
- * - Early-exit once we know navigable **and** have image cover/cap (or no need for images).
+ * - Early-exit once classification is known — **must not** scan whole leaf galleries
+ *   (old bug: after 20 images kept reading every remaining page looking for subdirs).
  */
 private fun classifyChildDirectory(sub: Path): ChildDirKind {
     var coverPath: Path? = null
     var imageCount = 0
     var imagesCapped = false
     var sawSubdir = false
+    var entriesSeen = 0
+    var afterImageCapBudget = 0
+    var afterSubdirBudget = 0
     val archives = ArrayList<BrowseEntry.ArchiveGallery>()
 
     sub.forEachBrowseChild { child ->
+        entriesSeen++
+        if (entriesSeen > PEEK_MAX_ENTRIES) return@forEachBrowseChild false
+
         if (child.isDirectory) {
             sawSubdir = true
-            // Keep scanning for direct images so mixed folders can be dual-listed.
-            // Stop once we already have a gallery snapshot (cover + optional cap).
+            // Have dir + cover (or image sample) → dual-list complete.
             if (coverPath != null || imagesCapped) {
                 return@forEachBrowseChild false
             }
             return@forEachBrowseChild true
         }
-        if (imagesCapped) {
-            // Looking for any remaining subdir only.
-            return@forEachBrowseChild true
+
+        // Already navigable: only hunt briefly for a dual-list cover image.
+        if (sawSubdir) {
+            afterSubdirBudget++
+            if (coverPath == null && isImageFileName(child.name)) {
+                coverPath = child.path
+                imageCount = 1
+                imagesCapped = true
+                return@forEachBrowseChild false
+            }
+            return@forEachBrowseChild afterSubdirBudget < PEEK_AFTER_SUBDIR_IMAGE_BUDGET
         }
+
+        // Image sample already enough for leaf gallery: only hunt briefly for a subdir.
+        if (imagesCapped) {
+            afterImageCapBudget++
+            return@forEachBrowseChild afterImageCapBudget < PEEK_AFTER_IMAGE_CAP_BUDGET
+        }
+
         when {
             isImageFileName(child.name) -> {
                 if (coverPath == null) coverPath = child.path
                 imageCount++
-                if (imageCount > BROWSE_IMAGE_SCAN_CAP) {
+                if (imageCount >= BROWSE_IMAGE_SCAN_CAP) {
                     imageCount = BROWSE_IMAGE_SCAN_CAP
                     imagesCapped = true
                 }
-                // Have both signals → done.
-                if (sawSubdir) return@forEachBrowseChild false
             }
             isArchiveFileName(child.name) ->
                 archives += BrowseEntry.ArchiveGallery(

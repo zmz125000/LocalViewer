@@ -154,11 +154,30 @@ object MediaStoreFs {
         )
         val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
 
+        // Root needs a full index walk to discover top-level folders. Nested dirs filter
+        // by RELATIVE_PATH so peeks don't re-scan every image on the device.
+        val selection: String?
+        val selectionArgs: Array<String>?
+        if (relativeDir.isEmpty()) {
+            selection = null
+            selectionArgs = null
+        } else {
+            selection =
+                "${MediaStore.Images.Media.RELATIVE_PATH} = ? OR " +
+                    "${MediaStore.Images.Media.RELATIVE_PATH} = ? OR " +
+                    "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+            selectionArgs = arrayOf(
+                "$relativeDir/",
+                relativeDir,
+                "$relativeDir/%",
+            )
+        }
+
         appCtx.contentResolver.query(
             collection,
             projection,
-            null,
-            null,
+            selection,
+            selectionArgs,
             "${MediaStore.Images.Media.DISPLAY_NAME} ASC",
         )?.use { c ->
             val nameIdx = c.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
