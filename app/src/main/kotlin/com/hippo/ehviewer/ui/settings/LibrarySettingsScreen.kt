@@ -151,10 +151,17 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
     }
 
     fun launchAddLocalSource(role: Int) {
-        // Device media is a single global root — if already present, skip chooser → SAF only.
-        val hasDeviceMedia = libraryRoots.any { isMediaStoreRootUri(it.treeUri) } ||
-            folderRoots.any { isMediaStoreRootUri(it.treeUri) }
-        if (hasDeviceMedia) {
+        // Device media is one root:
+        // - as Library → skip chooser for library and folder add → SAF only
+        // - as Folder only → skip chooser only for folder add; library add still shows chooser
+        val mediaAsLibrary = libraryRoots.any { isMediaStoreRootUri(it.treeUri) }
+        val mediaAsFolder = folderRoots.any { isMediaStoreRootUri(it.treeUri) }
+        val skipChooser = when {
+            mediaAsLibrary -> true
+            mediaAsFolder && role == LIBRARY_ROOT_ROLE_FOLDER -> true
+            else -> false
+        }
+        if (skipChooser) {
             launchSafPicker(role)
         } else {
             accessChooserRole = role

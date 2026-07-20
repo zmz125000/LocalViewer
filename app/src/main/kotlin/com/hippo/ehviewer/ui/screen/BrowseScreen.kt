@@ -162,8 +162,18 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     }
 
     fun launchAddLocalSource(role: Int) {
-        // Device media is a single global root — if already present, skip chooser → SAF only.
-        if (roots.any { isMediaStoreRootUri(it.treeUri) }) {
+        // Device media is one root:
+        // - as Library → no need to offer it again for library or folder add → SAF only
+        // - as Folder only → skip chooser for folder add; library add still shows chooser
+        //   (device media can upgrade folder → library)
+        val mediaRoot = roots.firstOrNull { isMediaStoreRootUri(it.treeUri) }
+        val skipChooser = when {
+            mediaRoot == null -> false
+            mediaRoot.isLibraryRole -> true
+            role == LIBRARY_ROOT_ROLE_FOLDER -> true
+            else -> false
+        }
+        if (skipChooser) {
             launchSafPicker(role)
         } else {
             accessChooserRole = role
