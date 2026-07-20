@@ -3,9 +3,6 @@ package com.hippo.ehviewer.library
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_FOLDER
 import com.ehviewer.core.database.model.LocalGalleryEntity
-import com.ehviewer.core.files.isDirectory
-import com.ehviewer.core.files.isFile
-import com.ehviewer.core.files.list
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.util.logcat
 import okio.Path
@@ -18,6 +15,10 @@ object LibraryScanner {
      * - Any directory (including root) whose **direct** children include image files is a gallery.
      * - Images in subfolders are **not** part of the parent gallery; subfolders are scanned recursively.
      * - zip/cbz (and other archive types) in a directory are each a separate gallery.
+     *
+     * Directory vs file uses the same listing as browse ([listBrowseChildren] / SAF MIME),
+     * not Okio [isFile]/[isDirectory] metadata — providers often mislabel folders whose
+     * names end in `.7z` / `.zip` as regular files by extension.
      */
     fun scan(rootId: Long, rootPath: Path, rootDisplayName: String = ""): List<LocalGalleryEntity> {
         val results = ArrayList<LocalGalleryEntity>()
@@ -32,21 +33,19 @@ object LibraryScanner {
         rootDisplayName: String,
         out: MutableList<LocalGalleryEntity>,
     ) {
-        val children = runCatching { dir.list() }.getOrElse {
+        val children = runCatching { dir.listBrowseChildren() }.getOrElse {
             logcat(it)
             return
         }
         val images = ArrayList<Path>()
-        val subdirs = ArrayList<Path>()
-        val archives = ArrayList<Path>()
+        val subdirs = ArrayList<BrowseChild>()
+        val archives = ArrayList<BrowseChild>()
 
         for (child in children) {
-            val name = child.name
-            if (name.startsWith('.')) continue
             when {
                 child.isDirectory -> subdirs += child
-                child.isFile && isImageFileName(name) -> images += child
-                child.isFile && isArchiveFileName(name) -> archives += child
+                isImageFileName(child.name) -> images += child.path
+                isArchiveFileName(child.name) -> archives += child
             }
         }
 
@@ -80,7 +79,7 @@ object LibraryScanner {
             } else {
                 "$relativePath/${archive.name}"
             }
-            val mtime = archive.metadataOrNull()?.lastModifiedAtMillis ?: 0L
+            val mtime = archive.path.metadataOrNull()?.lastModifiedAtMillis ?: 0L
             out += LocalGalleryEntity(
                 id = stableGalleryId(rootId, rel),
                 rootId = rootId,
@@ -89,7 +88,7 @@ object LibraryScanner {
                 kind = LOCAL_GALLERY_KIND_ARCHIVE,
                 pageCount = 0, // unknown until open
                 coverPath = null,
-                contentPath = archive.toString(),
+                contentPath = archive.path.toString(),
                 mtime = mtime,
             )
         }
@@ -100,7 +99,7 @@ object LibraryScanner {
             } else {
                 "$relativePath/${sub.name}"
             }
-            scanDir(rootId, sub, rel, rootDisplayName, out)
+            scanDir(rootId, sub.path, rel, rootDisplayName, out)
         }
     }
 }
