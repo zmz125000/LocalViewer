@@ -101,6 +101,31 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }
     // Pending role for the next OpenDocumentTree result.
     var pendingSafRole by remember { mutableIntStateOf(LIBRARY_ROOT_ROLE_LIBRARY) }
+    var accessChooserRole by remember { mutableStateOf<Int?>(null) }
+    var pendingMediaRole by remember { mutableStateOf<Int?>(null) }
+    var mediaDenied by remember { mutableStateOf(false) }
+    val permissionDenied = stringResource(id = R.string.source_media_permission_denied)
+    val deviceMediaName = stringResource(id = R.string.source_device_media_name)
+
+    // Permission callbacks are outside Screen context receivers — apply results here.
+    androidx.compose.runtime.LaunchedEffect(pendingMediaRole) {
+        val role = pendingMediaRole ?: return@LaunchedEffect
+        pendingMediaRole = null
+        when (LocalLibrary.addMediaStoreRoot(deviceMediaName, role)) {
+            is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
+            is AddRootResult.AlreadyExists -> snackbar(alreadyAdded)
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(mediaDenied) {
+        if (!mediaDenied) return@LaunchedEffect
+        mediaDenied = false
+        snackbar(permissionDenied)
+    }
+
+    val mediaPermission = rememberMediaPermissionLauncher(
+        onGranted = { role -> pendingMediaRole = role },
+        onDenied = { mediaDenied = true },
+    )
 
     val pickRoot = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
         treeUri ?: return@rememberLauncherForActivityResult
@@ -133,6 +158,10 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         } catch (_: ActivityNotFoundException) {
             launch { snackbar(string(R.string.error_cant_find_activity)) }
         }
+    }
+
+    fun launchAddLocalSource(role: Int) {
+        accessChooserRole = role
     }
 
     fun openLocalRoot(root: LibraryRootEntity) {
@@ -221,13 +250,22 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         }
     }
 
+    accessChooserRole?.let { role ->
+        LocalSourceAccessDialog(
+            role = role,
+            onDismiss = { accessChooserRole = null },
+            onChooseSaf = { launchSafPicker(it) },
+            onChooseDeviceMedia = { mediaPermission.request(it) },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.browse)) },
                 actions = {
                     IconButton(
-                        onClick = { launchSafPicker(LIBRARY_ROOT_ROLE_LIBRARY) },
+                        onClick = { launchAddLocalSource(LIBRARY_ROOT_ROLE_LIBRARY) },
                         shapes = IconButtonDefaults.shapes(),
                     ) {
                         Icon(
@@ -236,7 +274,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         )
                     }
                     IconButton(
-                        onClick = { launchSafPicker(LIBRARY_ROOT_ROLE_FOLDER) },
+                        onClick = { launchAddLocalSource(LIBRARY_ROOT_ROLE_FOLDER) },
                         shapes = IconButtonDefaults.shapes(),
                     ) {
                         Icon(

@@ -90,7 +90,31 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
     val context = LocalContext.current
     val cannotGetLocation = stringResource(id = R.string.settings_download_cant_get_download_location)
     val alreadyAdded = stringResource(id = R.string.library_root_already_added)
+    val permissionDenied = stringResource(id = R.string.source_media_permission_denied)
+    val deviceMediaName = stringResource(id = R.string.source_device_media_name)
     var pendingSafRole by remember { mutableIntStateOf(LIBRARY_ROOT_ROLE_LIBRARY) }
+    var accessChooserRole by remember { mutableStateOf<Int?>(null) }
+    var pendingMediaRole by remember { mutableStateOf<Int?>(null) }
+    var mediaDenied by remember { mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(pendingMediaRole) {
+        val role = pendingMediaRole ?: return@LaunchedEffect
+        pendingMediaRole = null
+        when (LocalLibrary.addMediaStoreRoot(deviceMediaName, role)) {
+            is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
+            is AddRootResult.AlreadyExists -> snackbar(alreadyAdded)
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(mediaDenied) {
+        if (!mediaDenied) return@LaunchedEffect
+        mediaDenied = false
+        snackbar(permissionDenied)
+    }
+
+    val mediaPermission = com.hippo.ehviewer.ui.screen.rememberMediaPermissionLauncher(
+        onGranted = { role -> pendingMediaRole = role },
+        onDenied = { mediaDenied = true },
+    )
 
     val pickRoot = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
         treeUri ?: return@rememberLauncherForActivityResult
@@ -125,6 +149,19 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
         }
     }
 
+    fun launchAddLocalSource(role: Int) {
+        accessChooserRole = role
+    }
+
+    accessChooserRole?.let { role ->
+        com.hippo.ehviewer.ui.screen.LocalSourceAccessDialog(
+            role = role,
+            onDismiss = { accessChooserRole = null },
+            onChooseSaf = { launchSafPicker(it) },
+            onChooseDeviceMedia = { mediaPermission.request(it) },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -156,7 +193,13 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                 ListItem(
                     headlineContent = { Text(root.displayName) },
                     supportingContent = {
-                        Text(text = root.treeUri.toUri().displayPath ?: root.treeUri)
+                        Text(
+                            text = if (com.hippo.ehviewer.library.isMediaStoreRootUri(root.treeUri)) {
+                                stringResource(R.string.source_access_device_media)
+                            } else {
+                                root.treeUri.toUri().displayPath ?: root.treeUri
+                            },
+                        )
                     },
                     trailingContent = {
                         IconButton(
@@ -174,7 +217,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
             item(key = "add-library") {
                 AddSourceRow(
                     title = stringResource(R.string.library_add_library_source),
-                    onClick = { launchSafPicker(LIBRARY_ROOT_ROLE_LIBRARY) },
+                    onClick = { launchAddLocalSource(LIBRARY_ROOT_ROLE_LIBRARY) },
                 )
             }
 
@@ -185,7 +228,13 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                 ListItem(
                     headlineContent = { Text(root.displayName) },
                     supportingContent = {
-                        Text(text = root.treeUri.toUri().displayPath ?: root.treeUri)
+                        Text(
+                            text = if (com.hippo.ehviewer.library.isMediaStoreRootUri(root.treeUri)) {
+                                stringResource(R.string.source_access_device_media)
+                            } else {
+                                root.treeUri.toUri().displayPath ?: root.treeUri
+                            },
+                        )
                     },
                     trailingContent = {
                         IconButton(
@@ -203,7 +252,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
             item(key = "add-folder") {
                 AddSourceRow(
                     title = stringResource(R.string.library_add_folder_source),
-                    onClick = { launchSafPicker(LIBRARY_ROOT_ROLE_FOLDER) },
+                    onClick = { launchAddLocalSource(LIBRARY_ROOT_ROLE_FOLDER) },
                 )
             }
 

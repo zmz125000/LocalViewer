@@ -70,9 +70,12 @@ object LocalLibrary {
         role: Int = LIBRARY_ROOT_ROLE_LIBRARY,
     ): AddRootResult = withIOContext {
         val ctx = appCtx
-        runCatching {
-            ctx.contentResolver.takePersistableUriPermission(treeUri.toUri(), URI_FLAGS)
-        }.onFailure { logcat(it) }
+        val media = isMediaStoreRootUri(treeUri)
+        if (!media) {
+            runCatching {
+                ctx.contentResolver.takePersistableUriPermission(treeUri.toUri(), URI_FLAGS)
+            }.onFailure { logcat(it) }
+        }
 
         val existing = db.libraryRootDao().loadByTreeUri(treeUri)
         if (existing != null) {
@@ -103,10 +106,21 @@ object LocalLibrary {
         AddRootResult.Created(id)
     }
 
+    /**
+     * Add the whole device image library via [READ_MEDIA_IMAGES] (Aves-style), not SAF.
+     * One root per role; reuses [MEDIASTORE_ROOT_URI] as the tree identity.
+     */
+    suspend fun addMediaStoreRoot(
+        displayName: String,
+        role: Int = LIBRARY_ROOT_ROLE_LIBRARY,
+    ): AddRootResult = addRoot(MEDIASTORE_ROOT_URI, displayName, role)
+
     suspend fun removeRoot(root: LibraryRootEntity) = withIOContext {
-        runCatching {
-            appCtx.contentResolver.releasePersistableUriPermission(root.treeUri.toUri(), URI_FLAGS)
-        }.onFailure { logcat(it) }
+        if (!isMediaStoreRootUri(root.treeUri)) {
+            runCatching {
+                appCtx.contentResolver.releasePersistableUriPermission(root.treeUri.toUri(), URI_FLAGS)
+            }.onFailure { logcat(it) }
+        }
         // CASCADE also clears galleries; explicit delete keeps behavior obvious if FK is off.
         db.localGalleryDao().deleteByRootId(root.id)
         db.libraryRootDao().delete(root)
@@ -162,21 +176,27 @@ object LocalLibrary {
         db.localGalleryDao().replaceForRoot(root.id, galleries)
     }
 
-    fun rootPath(root: LibraryRootEntity): Path? = runCatching {
-        val treeUri = root.treeUri.toUri()
-        DocumentsContract.buildDocumentUriUsingTree(
-            treeUri,
-            DocumentsContract.getTreeDocumentId(treeUri),
-        ).toOkioPath()
-    }.getOrElse {
-        logcat(it)
-        null
+    fun rootPath(root: LibraryRootEntity): Path? {
+        if (isMediaStoreRootUri(root.treeUri)) {
+            return MEDIASTORE_PATH_ROOT.toPath()
+        }
+        return runCatching {
+            val treeUri = root.treeUri.toUri()
+            DocumentsContract.buildDocumentUriUsingTree(
+                treeUri,
+                DocumentsContract.getTreeDocumentId(treeUri),
+            ).toOkioPath()
+        }.getOrElse {
+            logcat(it)
+            null
+        }
     }
 
     fun contentPath(gallery: LocalGalleryEntity): Path = gallery.contentPath.toPath()
 }
 
 fun Context.displayNameForTreeUri(treeUri: String): String {
+    if (isMediaStoreRootUri(treeUri)) return "Device media"
     val uri = treeUri.toUri()
     return runCatching {
         contentResolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)

@@ -28,6 +28,12 @@
     <string name="library_add_library_source">Add Library Source</string>
     <string name="library_add_folder_source">Add Folder Source</string>
     <string name="library_root_already_added">This folder is already added</string>
+    <string name="source_access_saf">Folder picker (SAF)</string>
+    <string name="source_access_saf_summary">Pick any folder (including archives). Persistable access.</string>
+    <string name="source_access_device_media">Device media</string>
+    <string name="source_access_device_media_summary">Read images via system media permission (like Aves). Archives not included.</string>
+    <string name="source_device_media_name">Device media</string>
+    <string name="source_media_permission_denied">Media permission denied</string>
     <string name="library_roots">Library folders</string>
     <string name="folder_no_browse_roots">No browse-only folders.</string>
     <string name="library_remove_root">Remove</string>

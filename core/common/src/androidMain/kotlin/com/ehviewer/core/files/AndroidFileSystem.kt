@@ -20,6 +20,7 @@ import okio.FileNotFoundException
 import okio.FileSystem
 import okio.IOException
 import okio.Path
+import okio.Path.Companion.toPath
 import okio.Sink
 import okio.Source
 
@@ -143,6 +144,13 @@ class AndroidFileSystem(context: Context) : FileSystem() {
             }
         }
 
+        // Virtual MediaStore folder tree (READ_MEDIA_IMAGES) — not a DocumentsProvider path.
+        if (dir.isMediaStoreVirtualDir()) {
+            return runCatching {
+                listMediaStoreVirtualChildren(dir)
+            }.getOrElse { if (throwOnFailure) throw FileNotFoundException("Failed to list $dir") else null }
+        }
+
         return runCatching {
             val uri = dir.toUri()
             var documentId = DocumentsContract.getDocumentId(uri)
@@ -164,6 +172,18 @@ class AndroidFileSystem(context: Context) : FileSystem() {
     override fun metadataOrNull(path: Path): FileMetadata? {
         if (path.isPhysicalFile()) {
             return physicalFileSystem.metadataOrNull(path)
+        }
+
+        // Synthetic MediaStore paths (mediastore:/Pictures/… or …/001.jpg)
+        if (path.isMediaStoreVirtualDir()) {
+            val name = path.name
+            val looksLikeFile = name.contains('.') && !name.startsWith('.')
+            // Heuristic: last segment with an extension is a file; otherwise directory.
+            return if (looksLikeFile) {
+                FileMetadata(isRegularFile = true, isDirectory = false)
+            } else {
+                FileMetadata(isRegularFile = false, isDirectory = true)
+            }
         }
 
         return runCatching {
@@ -189,6 +209,64 @@ class AndroidFileSystem(context: Context) : FileSystem() {
                 )
             }
         }.getOrNull()
+    }
+
+    /**
+     * List virtual folder children via MediaStore RELATIVE_PATH.
+     * Files use `mediastore:/…/name.jpg` so natural sort keeps real filenames.
+     */
+    private fun listMediaStoreVirtualChildren(dir: Path): List<Path> {
+        val relativeDir = dir.toString()
+            .removePrefix("mediastore:")
+            .trimStart('/')
+            .trimEnd('/')
+        val dirs = linkedMapOf<String, Path>()
+        val images = ArrayList<Path>()
+        val prefix = if (relativeDir.isEmpty()) "" else "$relativeDir/"
+        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        val projection = arrayOf(
+            MediaStore.Images.Media.DISPLAY_NAME,
+            MediaStore.Images.Media.RELATIVE_PATH,
+        )
+        contentResolver.query(
+            collection,
+            projection,
+            null,
+            null,
+            "${MediaStore.Images.Media.DISPLAY_NAME} ASC",
+        )?.use { c ->
+            val nameIdx = c.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+            val pathIdx = c.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH)
+            while (c.moveToNext()) {
+                val displayName = c.getString(nameIdx) ?: continue
+                if (displayName.startsWith('.')) continue
+                val relPath = (c.getString(pathIdx) ?: "").trim('/').trimEnd('/')
+                if (relativeDir.isEmpty()) {
+                    if (relPath.isEmpty()) {
+                        images += "mediastore:/$displayName".toPath()
+                    } else {
+                        val top = relPath.substringBefore('/')
+                        if (top.isNotEmpty()) {
+                            dirs.putIfAbsent(top, "mediastore:/$top".toPath())
+                        }
+                    }
+                    continue
+                }
+                if (relPath == relativeDir) {
+                    images += "mediastore:/$relativeDir/$displayName".toPath()
+                    continue
+                }
+                if (relPath.startsWith(prefix)) {
+                    val rest = relPath.removePrefix(prefix)
+                    if (rest.isEmpty()) continue
+                    val childName = rest.substringBefore('/')
+                    if (childName.isNotEmpty()) {
+                        dirs.putIfAbsent(childName, "mediastore:/$relativeDir/$childName".toPath())
+                    }
+                }
+            }
+        }
+        return dirs.values.toList() + images
     }
 
     override fun openReadOnly(file: Path): FileHandle {
@@ -217,6 +295,12 @@ class AndroidFileSystem(context: Context) : FileSystem() {
         }
 
         return runCatching {
+            // Resolve virtual MediaStore file path → content:// then open.
+            if (path.isMediaStoreVirtualDir()) {
+                val contentUri = resolveMediaStoreFileUri(path)
+                    ?: throw FileNotFoundException("MediaStore file not found: $path")
+                return@runCatching contentResolver.openFileDescriptor(contentUri, mode)
+            }
             if ('w' in mode && !exists(path)) {
                 val parent = path.parent ?: return@runCatching null
                 val displayName = path.name
@@ -228,11 +312,49 @@ class AndroidFileSystem(context: Context) : FileSystem() {
         }.getOrNull() ?: throw FileNotFoundException("Failed to open file: $path")
     }
 
+    private fun resolveMediaStoreFileUri(path: Path): Uri? {
+        val s = path.toString().removePrefix("mediastore:").trimStart('/')
+        if (s.isEmpty()) return null
+        val fileName = s.substringAfterLast('/')
+        val relativeDir = s.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
+        if (fileName.isEmpty() || !fileName.contains('.')) return null
+        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        val projection = arrayOf(MediaStore.Images.Media._ID)
+        val relWithSlash = if (relativeDir.isEmpty()) "" else "$relativeDir/"
+        val selection: String
+        val args: Array<String>
+        if (relativeDir.isEmpty()) {
+            selection = "(${MediaStore.Images.Media.RELATIVE_PATH} IS NULL OR " +
+                "${MediaStore.Images.Media.RELATIVE_PATH} = '' OR " +
+                "${MediaStore.Images.Media.RELATIVE_PATH} = '/') AND " +
+                "${MediaStore.Images.Media.DISPLAY_NAME} = ?"
+            args = arrayOf(fileName)
+        } else {
+            selection = "(${MediaStore.Images.Media.RELATIVE_PATH} = ? OR " +
+                "${MediaStore.Images.Media.RELATIVE_PATH} = ?) AND " +
+                "${MediaStore.Images.Media.DISPLAY_NAME} = ?"
+            args = arrayOf(relWithSlash, relativeDir, fileName)
+        }
+        contentResolver.query(collection, projection, selection, args, null)?.use { c ->
+            if (c.moveToFirst()) {
+                return MediaStore.Images.Media
+                    .getContentUri(MediaStore.VOLUME_EXTERNAL)
+                    .buildUpon()
+                    .appendPath(c.getLong(0).toString())
+                    .build()
+            }
+        }
+        return null
+    }
+
     private fun Path.inputStream() = ParcelFileDescriptor.AutoCloseInputStream(openFileDescriptor(this, "r"))
 
     private fun Path.outputStream() = ParcelFileDescriptor.AutoCloseOutputStream(openFileDescriptor(this, "wt"))
 }
 
 private fun Path.isPhysicalFile() = toString().startsWith('/')
+
+/** Virtual directory from READ_MEDIA_IMAGES / MediaStore RELATIVE_PATH tree. */
+private fun Path.isMediaStoreVirtualDir() = toString().startsWith("mediastore:")
 
 private fun Uri.isCifsDocument() = authority == "com.wa2c.android.cifsdocumentsprovider.documents"

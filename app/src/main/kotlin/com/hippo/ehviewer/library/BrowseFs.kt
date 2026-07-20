@@ -27,10 +27,18 @@ data class BrowseChild(
  */
 inline fun Path.forEachBrowseChild(visitor: (BrowseChild) -> Boolean) {
     val str = toString()
-    if (str.startsWith('/')) {
-        forEachPhysicalChild(visitor)
-    } else {
-        forEachSafChild(visitor)
+    when {
+        str.startsWith('/') -> forEachPhysicalChild(visitor)
+        isMediaStorePath() -> forEachMediaStoreChild(visitor)
+        else -> forEachSafChild(visitor)
+    }
+}
+
+@PublishedApi
+internal inline fun Path.forEachMediaStoreChild(visitor: (BrowseChild) -> Boolean) {
+    for (child in MediaStoreFs.listChildren(this)) {
+        val cont = visitor(BrowseChild(child.name, child.isDirectory, child.path))
+        if (!cont) return
     }
 }
 
