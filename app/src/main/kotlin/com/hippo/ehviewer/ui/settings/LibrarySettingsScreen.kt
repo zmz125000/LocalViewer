@@ -53,6 +53,7 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.AddRootResult
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.displayNameForTreeUri
+import com.hippo.ehviewer.library.isMediaStoreRootUri
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.Screen
@@ -150,7 +151,14 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
     }
 
     fun launchAddLocalSource(role: Int) {
-        accessChooserRole = role
+        // Device media is a single global root — if already present, skip chooser → SAF only.
+        val hasDeviceMedia = libraryRoots.any { isMediaStoreRootUri(it.treeUri) } ||
+            folderRoots.any { isMediaStoreRootUri(it.treeUri) }
+        if (hasDeviceMedia) {
+            launchSafPicker(role)
+        } else {
+            accessChooserRole = role
+        }
     }
 
     accessChooserRole?.let { role ->
