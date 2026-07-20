@@ -16,7 +16,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BasicAlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -43,6 +44,7 @@ import com.hippo.ehviewer.library.MediaPermissions
  * - SAF tree picker (full folder incl. archives)
  * - Device media via [READ_MEDIA_IMAGES] (Aves-style; images only)
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LocalSourceAccessDialog(
     role: Int,
@@ -51,51 +53,70 @@ fun LocalSourceAccessDialog(
     onChooseDeviceMedia: (role: Int) -> Unit,
 ) {
     val isLibrary = role == LIBRARY_ROOT_ROLE_LIBRARY
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(28.dp),
-        title = {
-            Text(
-                stringResource(
-                    if (isLibrary) {
-                        R.string.library_add_library_source
-                    } else {
-                        R.string.library_add_folder_source
-                    },
-                ),
-            )
-        },
-        text = {
+    // Custom layout: one padding column so title aligns with option cards (default
+    // AlertDialog title/text slots use different horizontal insets).
+    BasicAlertDialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 3.dp,
+        ) {
             Column(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
             ) {
-                SourceAccessOption(
-                    icon = Icons.Default.FolderOpen,
-                    title = stringResource(R.string.source_access_saf),
-                    summary = stringResource(R.string.source_access_saf_summary),
-                    onClick = {
-                        onDismiss()
-                        onChooseSaf(role)
-                    },
+                Text(
+                    text = stringResource(
+                        if (isLibrary) {
+                            R.string.library_add_library_source
+                        } else {
+                            R.string.library_add_folder_source
+                        },
+                    ),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
                 )
-                SourceAccessOption(
-                    icon = Icons.Default.PhotoLibrary,
-                    title = stringResource(R.string.source_access_device_media),
-                    summary = stringResource(R.string.source_access_device_media_summary),
-                    onClick = {
-                        onDismiss()
-                        onChooseDeviceMedia(role)
-                    },
-                )
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
+                ) {
+                    SourceAccessOption(
+                        icon = Icons.Default.FolderOpen,
+                        title = stringResource(R.string.source_access_saf),
+                        summary = stringResource(R.string.source_access_saf_summary),
+                        onClick = {
+                            onDismiss()
+                            onChooseSaf(role)
+                        },
+                    )
+                    SourceAccessOption(
+                        icon = Icons.Default.PhotoLibrary,
+                        title = stringResource(R.string.source_access_device_media),
+                        summary = stringResource(R.string.source_access_device_media_summary),
+                        onClick = {
+                            onDismiss()
+                            onChooseDeviceMedia(role)
+                        },
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(android.R.string.cancel))
+                    }
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(android.R.string.cancel))
-            }
-        },
-    )
+        }
+    }
 }
 
 @Composable
@@ -105,32 +126,33 @@ private fun SourceAccessOption(
     summary: String,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(14.dp)
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clip(shape)
             .clickable(onClick = onClick),
         shape = shape,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        // Slightly different from dialog surface so options read as cards.
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
         tonalElevation = 0.dp,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 14.dp),
+                .padding(horizontal = 12.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Surface(
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.size(36.dp),
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.secondaryContainer,
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    modifier = Modifier.padding(8.dp),
+                    modifier = Modifier.padding(7.dp),
                     tint = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
             }
