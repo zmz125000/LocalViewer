@@ -109,18 +109,26 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     val deviceMediaName = stringResource(id = R.string.source_device_media_name)
 
     // Permission callbacks are outside Screen context receivers — apply results here.
+    // Clear state only AFTER work finishes: clearing the LaunchedEffect key first would
+    // cancel addMediaStoreRoot mid-scan (SAF uses launchIO and does not hit this bug).
     androidx.compose.runtime.LaunchedEffect(pendingMediaRole) {
         val role = pendingMediaRole ?: return@LaunchedEffect
-        pendingMediaRole = null
-        when (LocalLibrary.addMediaStoreRoot(deviceMediaName, role)) {
-            is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
-            is AddRootResult.AlreadyExists -> snackbar(alreadyAdded)
+        try {
+            when (LocalLibrary.addMediaStoreRoot(deviceMediaName, role)) {
+                is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
+                is AddRootResult.AlreadyExists -> snackbar(alreadyAdded)
+            }
+        } finally {
+            pendingMediaRole = null
         }
     }
     androidx.compose.runtime.LaunchedEffect(mediaDenied) {
         if (!mediaDenied) return@LaunchedEffect
-        mediaDenied = false
-        snackbar(permissionDenied)
+        try {
+            snackbar(permissionDenied)
+        } finally {
+            mediaDenied = false
+        }
     }
 
     val mediaPermission = rememberMediaPermissionLauncher(

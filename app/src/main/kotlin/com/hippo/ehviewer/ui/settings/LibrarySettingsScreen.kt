@@ -98,18 +98,25 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
     var pendingMediaRole by remember { mutableStateOf<Int?>(null) }
     var mediaDenied by remember { mutableStateOf(false) }
 
+    // Clear state only AFTER work finishes — clearing the key first cancels the scan.
     androidx.compose.runtime.LaunchedEffect(pendingMediaRole) {
         val role = pendingMediaRole ?: return@LaunchedEffect
-        pendingMediaRole = null
-        when (LocalLibrary.addMediaStoreRoot(deviceMediaName, role)) {
-            is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
-            is AddRootResult.AlreadyExists -> snackbar(alreadyAdded)
+        try {
+            when (LocalLibrary.addMediaStoreRoot(deviceMediaName, role)) {
+                is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
+                is AddRootResult.AlreadyExists -> snackbar(alreadyAdded)
+            }
+        } finally {
+            pendingMediaRole = null
         }
     }
     androidx.compose.runtime.LaunchedEffect(mediaDenied) {
         if (!mediaDenied) return@LaunchedEffect
-        mediaDenied = false
-        snackbar(permissionDenied)
+        try {
+            snackbar(permissionDenied)
+        } finally {
+            mediaDenied = false
+        }
     }
 
     val mediaPermission = com.hippo.ehviewer.ui.screen.rememberMediaPermissionLauncher(

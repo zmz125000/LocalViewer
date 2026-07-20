@@ -167,12 +167,20 @@ object LocalLibrary {
             db.localGalleryDao().deleteByRootId(root.id)
             return
         }
-        if (!path.isDirectory) {
+        // MediaStore virtual root is always a directory tree; skip FileSystem metadata check
+        // which can mis-classify synthetic paths.
+        if (!isMediaStoreRootUri(root.treeUri) && !path.isDirectory) {
             logcat("LocalLibrary") { "Library root is not a directory: $path" }
             db.localGalleryDao().deleteByRootId(root.id)
             return
         }
+        if (isMediaStoreRootUri(root.treeUri) && !MediaPermissions.hasImageAccess()) {
+            logcat("LocalLibrary") { "Device media library root without READ_MEDIA_IMAGES" }
+            db.localGalleryDao().deleteByRootId(root.id)
+            return
+        }
         val galleries = LibraryScanner.scan(root.id, path, rootDisplayName = root.displayName)
+        logcat("LocalLibrary") { "Scanned root ${root.id} (${root.displayName}): ${galleries.size} galleries" }
         db.localGalleryDao().replaceForRoot(root.id, galleries)
     }
 
