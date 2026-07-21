@@ -72,7 +72,8 @@ object Settings : DataStorePreferences(null) {
     val blackDarkTheme = boolPref("black_dark_theme", false)
     val harmonizeCategoryColor = boolPref("harmonize_category_color", true)
     val launchPage = intPref("launch_page_2", 0)
-    val listMode = intPref("list_mode_2", 0)
+    /** 0 = detail (list), 1 = thumb (grid). Default: thumb. */
+    val listMode = intPref("list_mode_2", 1)
     val listThumbSize = intPref("list_tile_size", 40)
     val detailSize = intPref("detail_size_2", 0)
     val thumbColumns = intPref("thumb_columns", 3)
@@ -89,7 +90,8 @@ object Settings : DataStorePreferences(null) {
 
     // Download
     val mediaScan = boolPref("media_scan", false).observed(::updateWhenKeepMediaStatusChanges)
-    val multiThreadDownload = intPref("download_thread_2", 3)
+    /** SMB concurrent connections (Advanced). Default: 5. */
+    val multiThreadDownload = intPref("download_thread_2", 5)
     val downloadDelay = intPref("download_delay_3", 1000)
     val timeoutSpeed = intPref("timeout_speed_level", 6)
     val preloadImage = intPref("preload_image_2", 5)
@@ -157,12 +159,13 @@ object Settings : DataStorePreferences(null) {
     val colorFilterMode = intPref("color_filter_mode", 0)
     val customBrightness = boolPref("pref_custom_brightness_key", false)
     val customBrightnessValue = intPref("custom_brightness_value", 0)
-    val readingMode = intPref("pref_default_reading_mode_key", ReadingModeType.DEFAULT.prefValue)
+    val readingMode = intPref("pref_default_reading_mode_key", ReadingModeType.WEBTOON.prefValue)
     val orientationMode = intPref("pref_default_orientation_type_key", OrientationType.DEFAULT.prefValue)
     val showReaderSeekbar = boolPref("pref_show_reader_seekbar", true)
     val showPageNumber = boolPref("pref_show_page_number_key", true)
     val readerTheme = intPref("pref_reader_theme_key", 1)
-    val doubleTapToZoom = boolPref("pref_double_tap_to_zoom", true)
+    /** Off = double-tap prev/next gallery (folder mode). Default: off. */
+    val doubleTapToZoom = boolPref("pref_double_tap_to_zoom", false)
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)
