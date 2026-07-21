@@ -35,9 +35,13 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 /**
@@ -411,9 +415,7 @@ object SmbGateway {
                 existing
             } else {
                 listScope.async {
-                    val result = withShare(source, password) { share ->
-                        listDirectoryUncached(share, source, relativeDir)
-                    }
+                    val result = listDirectoryUncached(source, password, relativeDir)
                     BrowseSession.putSmbListing(source.id, relativeDir, result)
                     result
                 }.also { job ->
@@ -424,21 +426,42 @@ object SmbGateway {
         return deferred.await()
     }
 
-    private fun listDirectoryUncached(
-        share: DiskShare,
+    /**
+     * Parent list on one connection, then **parallel peeks** of each subfolder using the
+     * connection pool (same idea as SAF browse peeks). Parallelism follows
+     * [maxConnectionsPerSource] so we don't oversubscribe the pool.
+     */
+    private suspend fun listDirectoryUncached(
         source: SmbSourceEntity,
+        password: String,
         relativeDir: String,
     ): List<BrowseEntryRemote> {
         val path = remotePath(source, relativeDir)
         // Parent must be listable; filter out protected system dirs so we never show them.
-        val children = listChildren(share, path).filterNot { isProtectedSystemName(it.name) }
-        val peeks = HashMap<String, List<RemoteChild>>()
-        for (c in children) {
-            if (!c.isDirectory || c.name.startsWith('.')) continue
-            val childPath = if (path.isEmpty()) c.name else "$path\\${c.name}"
-            // Peek must not fail the whole scan: protected subdirs (or any ACL deny) → empty.
-            peeks[c.name] = listChildrenLenient(share, childPath)
+        val children = withShare(source, password) { share ->
+            listChildren(share, path).filterNot { isProtectedSystemName(it.name) }
         }
+
+        val dirsToPeek = children.filter { it.isDirectory && !it.name.startsWith('.') }
+        val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
+        if (dirsToPeek.isNotEmpty()) {
+            val parallelism = maxConnectionsPerSource().coerceAtLeast(1)
+            val gate = Semaphore(parallelism)
+            coroutineScope {
+                dirsToPeek.map { c ->
+                    async {
+                        gate.withPermit {
+                            val childPath = if (path.isEmpty()) c.name else "$path\\${c.name}"
+                            // Peek must not fail the whole scan: ACL deny → empty.
+                            peeks[c.name] = withShare(source, password) { share ->
+                                listChildrenLenient(share, childPath)
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+        }
+
         val dirName = relativeDir.substringAfterLast('/').substringAfterLast('\\')
             .ifEmpty { source.displayName }
         return classifyRemoteListingWithPeeks(dirName, children, peeks)
