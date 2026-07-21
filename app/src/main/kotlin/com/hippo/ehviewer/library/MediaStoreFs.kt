@@ -60,7 +60,7 @@ fun mediaStoreTreeUriToPath(treeUri: String): Path {
  * ExternalStorageProvider document ids look like `primary:Pictures/Comics`.
  */
 fun tryMediaStoreTreeUriFromSaf(treeUri: Uri): String? {
-    if (!MediaPermissions.hasImageAccess()) return null
+    if (!MediaPermissions.canUpgradeSafToMediaStore()) return null
     val authority = treeUri.authority
     if (authority != null && authority != "com.android.externalstorage.documents") {
         return null
@@ -75,11 +75,9 @@ fun tryMediaStoreTreeUriFromSaf(treeUri: Uri): String? {
 }
 
 /**
- * Prefer a MediaStore virtual path when media permission is granted and the path
- * maps to external storage. Otherwise returns the original path (SAF backup).
- *
- * Used at browse/list/open time so stored SAF roots upgrade dynamically without
- * rewriting the database.
+ * Prefer a MediaStore virtual path when [Settings.upgradeSafToMediaStore] is on,
+ * media permission is granted, and the path maps to external storage.
+ * Otherwise returns the original path (SAF backup).
  */
 fun resolveBrowsePath(path: Path): Path {
     if (path.isMediaStorePath()) return path
@@ -91,7 +89,7 @@ fun resolveBrowsePath(path: Path): Path {
  * Keeps non-external or unmappable paths as-is (caller falls back to SAF).
  */
 fun tryConvertSafPathToMediaStore(path: Path): Path? {
-    if (!MediaPermissions.hasImageAccess()) return null
+    if (!MediaPermissions.canUpgradeSafToMediaStore()) return null
     val str = path.toString()
     if (!str.contains("content:")) return null
     return runCatching {
@@ -166,6 +164,21 @@ object MediaPermissions {
             Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
         ) == PackageManager.PERMISSION_GRANTED
     }
+
+    /** Setting on + user wants fast SAF listing via MediaStore. */
+    fun prefersSafMediaUpgrade(): Boolean =
+        com.hippo.ehviewer.Settings.upgradeSafToMediaStore.value
+
+    /** Setting on and media permission granted — safe to rewrite SAF paths. */
+    fun canUpgradeSafToMediaStore(context: Context = appCtx): Boolean =
+        prefersSafMediaUpgrade() && hasImageAccess(context)
+
+    /**
+     * Whether to show the media-permission dialog before opening the SAF picker.
+     * Muted when [prefersSafMediaUpgrade] is off (privacy / pure SAF).
+     */
+    fun shouldRequestMediaPermissionForSafAdd(context: Context = appCtx): Boolean =
+        prefersSafMediaUpgrade() && !hasImageAccess(context)
 }
 
 /**

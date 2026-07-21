@@ -52,6 +52,7 @@ import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.AddRootResult
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.MediaPermissions
 import com.hippo.ehviewer.library.displayNameForTreeUri
 import com.hippo.ehviewer.library.isMediaStoreRootUri
 import com.hippo.ehviewer.smb.SmbGateway
@@ -97,6 +98,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
     var accessChooserRole by remember { mutableStateOf<Int?>(null) }
     var pendingMediaRole by remember { mutableStateOf<Int?>(null) }
     var mediaDenied by remember { mutableStateOf(false) }
+    var openSafAfterMediaPerm by remember { mutableStateOf(false) }
 
     // Clear state only AFTER work finishes — clearing the key first cancels the scan.
     androidx.compose.runtime.LaunchedEffect(pendingMediaRole) {
@@ -118,11 +120,6 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
             mediaDenied = false
         }
     }
-
-    val mediaPermission = com.hippo.ehviewer.ui.screen.rememberMediaPermissionLauncher(
-        onGranted = { role -> pendingMediaRole = role },
-        onDenied = { mediaDenied = true },
-    )
 
     val pickRoot = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
         treeUri ?: return@rememberLauncherForActivityResult
@@ -148,12 +145,40 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
         }
     }
 
-    fun launchSafPicker(role: Int) {
-        pendingSafRole = role
+    fun openSafPicker() {
         try {
             pickRoot.launch(null)
         } catch (_: ActivityNotFoundException) {
             launch { snackbar(string(R.string.error_cant_find_activity)) }
+        }
+    }
+
+    val mediaPermission = com.hippo.ehviewer.ui.screen.rememberMediaPermissionLauncher(
+        onGranted = { role ->
+            if (openSafAfterMediaPerm) {
+                openSafAfterMediaPerm = false
+                openSafPicker()
+            } else {
+                pendingMediaRole = role
+            }
+        },
+        onDenied = {
+            if (openSafAfterMediaPerm) {
+                openSafAfterMediaPerm = false
+                openSafPicker()
+            } else {
+                mediaDenied = true
+            }
+        },
+    )
+
+    fun launchSafPicker(role: Int) {
+        pendingSafRole = role
+        if (MediaPermissions.shouldRequestMediaPermissionForSafAdd(context)) {
+            openSafAfterMediaPerm = true
+            mediaPermission.request(role)
+        } else {
+            openSafPicker()
         }
     }
 

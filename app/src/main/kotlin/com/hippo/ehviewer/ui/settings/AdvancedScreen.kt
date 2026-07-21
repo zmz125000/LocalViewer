@@ -173,6 +173,11 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 entryValueRes = com.hippo.ehviewer.R.array.multi_thread_download_entry_values,
                 state = smbConnections,
             )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_upgrade_saf_to_media),
+                summary = stringResource(id = R.string.settings_upgrade_saf_to_media_summary),
+                state = Settings.upgradeSafToMediaStore.asMutableState(),
+            )
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_advanced_read_cache_size),
                 summary = stringResource(id = R.string.settings_advanced_read_cache_size_summary),

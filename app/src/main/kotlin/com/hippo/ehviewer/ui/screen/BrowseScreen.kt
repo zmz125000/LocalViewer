@@ -63,6 +63,7 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.AddRootResult
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.MediaPermissions
 import com.hippo.ehviewer.library.displayNameForTreeUri
 import com.hippo.ehviewer.library.isMediaStoreRootUri
 import com.hippo.ehviewer.smb.SmbGateway
@@ -105,6 +106,8 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     var accessChooserRole by remember { mutableStateOf<Int?>(null) }
     var pendingMediaRole by remember { mutableStateOf<Int?>(null) }
     var mediaDenied by remember { mutableStateOf(false) }
+    /** After media-permission dialog for SAF add: open picker whether granted or denied. */
+    var openSafAfterMediaPerm by remember { mutableStateOf(false) }
     val permissionDenied = stringResource(id = R.string.source_media_permission_denied)
     val deviceMediaName = stringResource(id = R.string.source_device_media_name)
 
@@ -131,11 +134,6 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         }
     }
 
-    val mediaPermission = rememberMediaPermissionLauncher(
-        onGranted = { role -> pendingMediaRole = role },
-        onDenied = { mediaDenied = true },
-    )
-
     val pickRoot = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
         treeUri ?: return@rememberLauncherForActivityResult
         val role = pendingSafRole
@@ -149,6 +147,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 val path = documentUri.toOkioPath()
                 check(path.isDirectory) { "$path is not a directory" }
                 val name = context.displayNameForTreeUri(treeUri.toString())
+                // Always store SAF tree (backup). Runtime upgrade to MediaStore is gated by setting.
                 when (LocalLibrary.addRoot(treeUri.toString(), name, role)) {
                     is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
                     is AddRootResult.AlreadyExists -> launch { snackbar(alreadyAdded) }
@@ -160,12 +159,43 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         }
     }
 
-    fun launchSafPicker(role: Int) {
-        pendingSafRole = role
+    fun openSafPicker() {
         try {
             pickRoot.launch(null)
         } catch (_: ActivityNotFoundException) {
             launch { snackbar(string(R.string.error_cant_find_activity)) }
+        }
+    }
+
+    val mediaPermission = rememberMediaPermissionLauncher(
+        onGranted = { role ->
+            if (openSafAfterMediaPerm) {
+                openSafAfterMediaPerm = false
+                openSafPicker()
+            } else {
+                pendingMediaRole = role
+            }
+        },
+        onDenied = {
+            if (openSafAfterMediaPerm) {
+                // Still open SAF — upgrade stays off without permission.
+                openSafAfterMediaPerm = false
+                openSafPicker()
+            } else {
+                mediaDenied = true
+            }
+        },
+    )
+
+    fun launchSafPicker(role: Int) {
+        pendingSafRole = role
+        // When "Prefer device media" is on, ask media permission so SAF trees can upgrade.
+        // Off = pure SAF (privacy), skip the prompt.
+        if (MediaPermissions.shouldRequestMediaPermissionForSafAdd(context)) {
+            openSafAfterMediaPerm = true
+            mediaPermission.request(role)
+        } else {
+            openSafPicker()
         }
     }
 

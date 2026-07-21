@@ -116,6 +116,11 @@ object Settings : DataStorePreferences(null) {
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
     val animateItems = boolPref("animate_items", true)
     val desktopSite = boolPref("desktop_site", true)
+    /**
+     * When true: SAF folders may be listed via MediaStore (fast) and adding SAF may
+     * request media permission. When false: pure SAF only (privacy / no media prompts).
+     */
+    val upgradeSafToMediaStore = boolPref("upgrade_saf_to_media_store", true)
 
     // About
     val backupBeforeUpdate = boolPref("backup_before_update", false)
