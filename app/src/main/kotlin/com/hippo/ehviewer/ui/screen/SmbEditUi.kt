@@ -66,8 +66,7 @@ fun formatSharePath(share: String, pathPrefix: String): String {
     }
 }
 
-fun SmbEditorState.resolvedDisplayName(): String =
-    displayName.trim().ifBlank { host.trim() }
+fun SmbEditorState.resolvedDisplayName(): String = displayName.trim().ifBlank { host.trim() }
 
 fun SmbEditorState.resolvedShareAndPath(): Pair<String, String> = parseSharePath(sharePath)
 

@@ -109,6 +109,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     var entries by remember { mutableStateOf<List<BrowseEntryRemote>>(emptyList()) }
+
     /** Relative dir the current [entries] belong to. */
     var listedDir by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -120,8 +121,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     val relativeDir = segments.joinToString("/")
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
+
     /** Detect share/pathPrefix/host edits while this screen stays on the back stack. */
     var lastConfigKey by remember { mutableStateOf<String?>(null) }
+
     /**
      * Bumped for pull-to-refresh / toolbar refresh / ON_RESUME soft refresh.
      * Path changes are driven solely by [relativeDir] in [LaunchedEffect] — no parallel
@@ -416,18 +419,17 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             "a-${it.parentRelativeName}/${it.fileName}"
                         is BrowseEntryRemote.Directory -> "d-${it.name}"
                     }
-                    fun coverFor(entry: BrowseEntryRemote.FolderGallery): BrowseCover.Smb? =
-                        entry.coverFileName?.let { fileName ->
-                            val remote = if (entry.relativeName.isEmpty()) {
-                                SmbGateway.joinRelativePath(relativeDir, fileName)
-                            } else {
-                                SmbGateway.joinRelativePath(
-                                    SmbGateway.joinRelativePath(relativeDir, entry.relativeName),
-                                    fileName,
-                                )
-                            }
-                            BrowseCover.Smb(sourceId, remote)
+                    fun coverFor(entry: BrowseEntryRemote.FolderGallery): BrowseCover.Smb? = entry.coverFileName?.let { fileName ->
+                        val remote = if (entry.relativeName.isEmpty()) {
+                            SmbGateway.joinRelativePath(relativeDir, fileName)
+                        } else {
+                            SmbGateway.joinRelativePath(
+                                SmbGateway.joinRelativePath(relativeDir, entry.relativeName),
+                                fileName,
+                            )
                         }
+                        BrowseCover.Smb(sourceId, remote)
+                    }
                     if (useGrid) {
                         val gridState = rememberSmbBrowseGridState(sourceId, dirKey, listMode)
                         val gridSpacing = GalleryGridDefaults.spacedBy()

@@ -103,8 +103,8 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
-import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.destinations.SettingsScreenDestination
+import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.settings.showNewVersion
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel

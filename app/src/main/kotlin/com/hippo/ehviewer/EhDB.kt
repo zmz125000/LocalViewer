@@ -61,6 +61,7 @@ object EhDB {
 
     fun getReadProgressFlow(gid: Long) = db.progressDao().getPageFlow(gid)
     suspend fun getReadProgress(gid: Long) = db.progressDao().getPage(gid)
+
     /**
      * Progress rows have a FK to GALLERIES. Upsert is a no-op (logged) if the gallery
      * entity is missing — can happen when local/SMB galleries were never written to history.

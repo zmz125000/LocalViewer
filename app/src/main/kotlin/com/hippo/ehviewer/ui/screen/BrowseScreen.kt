@@ -106,6 +106,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     var accessChooserRole by remember { mutableStateOf<Int?>(null) }
     var pendingMediaRole by remember { mutableStateOf<Int?>(null) }
     var mediaDenied by remember { mutableStateOf(false) }
+
     /** After media-permission dialog for SAF add: open picker whether granted or denied. */
     var openSafAfterMediaPerm by remember { mutableStateOf(false) }
     val permissionDenied = stringResource(id = R.string.source_media_permission_denied)

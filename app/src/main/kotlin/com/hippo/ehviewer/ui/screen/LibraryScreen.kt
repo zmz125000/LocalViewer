@@ -133,7 +133,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 onClick = { Settings.listMode.value = if (listMode == 0) 1 else 0 },
                 shapes = IconButtonDefaults.shapes(),
             ) {
-                val icon = if (listMode == 0) Icons.AutoMirrored.Default.ViewList else Icons.Default.GridView 
+                val icon = if (listMode == 0) Icons.AutoMirrored.Default.ViewList else Icons.Default.GridView
                 val desc = if (listMode == 0) {
                     stringResource(R.string.settings_eh_list_mode_thumb)
                 } else {

@@ -92,7 +92,6 @@ import com.hippo.ehviewer.gallery.useSmbFolderPageLoader
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
-import okio.Path.Companion.toPath
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.MainActivity
 import com.hippo.ehviewer.ui.Screen

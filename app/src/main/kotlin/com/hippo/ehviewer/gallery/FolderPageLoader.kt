@@ -33,8 +33,7 @@ suspend inline fun <T> useFolderPageLoader(
                     info?.title ?: FileUtils.getNameFromFilename(dir.displayName) ?: dir.name
                 }
 
-                override fun getImageExtension(index: Int) =
-                    FileUtils.getExtensionFromFilename(files[index].name)
+                override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(files[index].name)
 
                 override fun save(index: Int, file: Path): Boolean = runCatching {
                     files[index] sendTo file
@@ -55,8 +54,7 @@ suspend inline fun <T> useFolderPageLoader(
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) = Unit
 
-                override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) =
-                    notifySourceReady(index)
+                override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) = notifySourceReady(index)
             },
         )
         block(loader)

@@ -45,16 +45,13 @@ object LocalLibrary {
 
     fun rootsFlow(): Flow<List<LibraryRootEntity>> = db.libraryRootDao().listFlow()
 
-    fun libraryRootsFlow(): Flow<List<LibraryRootEntity>> =
-        db.libraryRootDao().listByRoleFlow(LIBRARY_ROOT_ROLE_LIBRARY)
+    fun libraryRootsFlow(): Flow<List<LibraryRootEntity>> = db.libraryRootDao().listByRoleFlow(LIBRARY_ROOT_ROLE_LIBRARY)
 
-    fun folderOnlyRootsFlow(): Flow<List<LibraryRootEntity>> =
-        db.libraryRootDao().listByRoleFlow(LIBRARY_ROOT_ROLE_FOLDER)
+    fun folderOnlyRootsFlow(): Flow<List<LibraryRootEntity>> = db.libraryRootDao().listByRoleFlow(LIBRARY_ROOT_ROLE_FOLDER)
 
     fun galleriesFlow(): Flow<List<LocalGalleryEntity>> = db.localGalleryDao().listFlow()
 
-    fun searchGalleriesFlow(keyword: String): Flow<List<LocalGalleryEntity>> =
-        db.localGalleryDao().searchFlow(keyword)
+    fun searchGalleriesFlow(keyword: String): Flow<List<LocalGalleryEntity>> = db.localGalleryDao().searchFlow(keyword)
 
     suspend fun loadGallery(id: Long): LocalGalleryEntity? = db.localGalleryDao().load(id)
 
@@ -208,8 +205,7 @@ object LocalLibrary {
     }
 
     /** Prefer MediaStore for gallery open when permission allows; SAF content path is backup. */
-    fun contentPath(gallery: LocalGalleryEntity): Path =
-        resolveBrowsePath(gallery.contentPath.toPath())
+    fun contentPath(gallery: LocalGalleryEntity): Path = resolveBrowsePath(gallery.contentPath.toPath())
 }
 
 fun Context.displayNameForTreeUri(treeUri: String): String {

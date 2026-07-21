@@ -23,10 +23,9 @@ const val MEDIASTORE_ROOT_URI = "mediastore://external"
 /** Okio path root for MediaStore-backed virtual folders. */
 const val MEDIASTORE_PATH_ROOT = "mediastore:/"
 
-fun isMediaStoreRootUri(treeUri: String): Boolean =
-    treeUri == MEDIASTORE_ROOT_URI ||
-        treeUri.startsWith("mediastore://") ||
-        treeUri.startsWith("mediastore:/")
+fun isMediaStoreRootUri(treeUri: String): Boolean = treeUri == MEDIASTORE_ROOT_URI ||
+    treeUri.startsWith("mediastore://") ||
+    treeUri.startsWith("mediastore:/")
 
 fun Path.isMediaStorePath(): Boolean = toString().startsWith("mediastore:")
 
@@ -166,19 +165,16 @@ object MediaPermissions {
     }
 
     /** Setting on + user wants fast SAF listing via MediaStore. */
-    fun prefersSafMediaUpgrade(): Boolean =
-        com.hippo.ehviewer.Settings.upgradeSafToMediaStore.value
+    fun prefersSafMediaUpgrade(): Boolean = com.hippo.ehviewer.Settings.upgradeSafToMediaStore.value
 
     /** Setting on and media permission granted — safe to rewrite SAF paths. */
-    fun canUpgradeSafToMediaStore(context: Context = appCtx): Boolean =
-        prefersSafMediaUpgrade() && hasImageAccess(context)
+    fun canUpgradeSafToMediaStore(context: Context = appCtx): Boolean = prefersSafMediaUpgrade() && hasImageAccess(context)
 
     /**
      * Whether to show the media-permission dialog before opening the SAF picker.
      * Muted when [prefersSafMediaUpgrade] is off (privacy / pure SAF).
      */
-    fun shouldRequestMediaPermissionForSafAdd(context: Context = appCtx): Boolean =
-        prefersSafMediaUpgrade() && !hasImageAccess(context)
+    fun shouldRequestMediaPermissionForSafAdd(context: Context = appCtx): Boolean = prefersSafMediaUpgrade() && !hasImageAccess(context)
 }
 
 /**
@@ -203,8 +199,7 @@ object MediaStoreFs {
         return listChildrenRelative(dir.mediaStoreRelativeDir())
     }
 
-    fun listImagePaths(dir: Path): List<Path> =
-        listChildren(dir).filter { !it.isDirectory }.map { it.path }
+    fun listImagePaths(dir: Path): List<Path> = listChildren(dir).filter { !it.isDirectory }.map { it.path }
 
     /**
      * Resolve a virtual file path to a MediaStore content URI for open/decode.
@@ -270,8 +265,8 @@ object MediaStoreFs {
         } else {
             selection =
                 "${MediaStore.Images.Media.RELATIVE_PATH} = ? OR " +
-                    "${MediaStore.Images.Media.RELATIVE_PATH} = ? OR " +
-                    "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+                "${MediaStore.Images.Media.RELATIVE_PATH} = ? OR " +
+                "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
             selectionArgs = arrayOf(
                 "$relativeDir/",
                 relativeDir,

@@ -72,6 +72,7 @@ object Settings : DataStorePreferences(null) {
     val blackDarkTheme = boolPref("black_dark_theme", false)
     val harmonizeCategoryColor = boolPref("harmonize_category_color", true)
     val launchPage = intPref("launch_page_2", 0)
+
     /** 0 = detail (list), 1 = thumb (grid). Default: thumb. */
     val listMode = intPref("list_mode_2", 1)
     val listThumbSize = intPref("list_tile_size", 40)
@@ -90,6 +91,7 @@ object Settings : DataStorePreferences(null) {
 
     // Download
     val mediaScan = boolPref("media_scan", false).observed(::updateWhenKeepMediaStatusChanges)
+
     /** SMB concurrent connections (Advanced). Default: 5. */
     val multiThreadDownload = intPref("download_thread_2", 5)
     val downloadDelay = intPref("download_delay_3", 1000)
@@ -103,6 +105,7 @@ object Settings : DataStorePreferences(null) {
     val security = boolPref("require_unlock", false)
     val securityDelay = intPref("require_unlock_delay", 0)
     val enabledSecurity = boolPref("enable_secure", false)
+
     /** When false, history is not written and Privacy toggle clears existing rows. */
     val saveHistory = boolPref("save_history", true)
 
@@ -116,6 +119,7 @@ object Settings : DataStorePreferences(null) {
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
     val animateItems = boolPref("animate_items", true)
     val desktopSite = boolPref("desktop_site", true)
+
     /**
      * When true: SAF folders may be listed via MediaStore (fast) and adding SAF may
      * request media permission. When false: pure SAF only (privacy / no media prompts).
@@ -132,6 +136,7 @@ object Settings : DataStorePreferences(null) {
     val downloadSortMode = intPref("download_sort_mode", 0)
     val downloadFilterMode = intPref("download_filter_mode", 0)
     val hasSignedIn = boolPref("has_signed_in", false)
+
     // Local viewer: never force EH sign-in
     val needSignIn = boolPref("need_sign_in", false)
     val gridView = boolPref("grid_view", false)
@@ -169,6 +174,7 @@ object Settings : DataStorePreferences(null) {
     val showReaderSeekbar = boolPref("pref_show_reader_seekbar", true)
     val showPageNumber = boolPref("pref_show_page_number_key", true)
     val readerTheme = intPref("pref_reader_theme_key", 1)
+
     /** Off = double-tap prev/next gallery (folder mode). Default: off. */
     val doubleTapToZoom = boolPref("pref_double_tap_to_zoom", false)
     val fullscreen = boolPref("fullscreen", true)

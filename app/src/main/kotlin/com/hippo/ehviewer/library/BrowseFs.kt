@@ -47,7 +47,10 @@ internal inline fun Path.forEachMediaStoreChild(visitor: (BrowseChild) -> Boolea
  * Prefer [forEachBrowseChild] when early exit is possible.
  */
 fun Path.listBrowseChildren(): List<BrowseChild> = buildList {
-    forEachBrowseChild { add(it); true }
+    forEachBrowseChild {
+        add(it)
+        true
+    }
 }
 
 @PublishedApi

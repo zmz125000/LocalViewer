@@ -62,8 +62,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             .ifEmpty { source.displayName }
                 }
 
-                override fun getImageExtension(index: Int) =
-                    FileUtils.getExtensionFromFilename(imageFileNames[index])
+                override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(imageFileNames[index])
 
                 override fun save(index: Int, file: Path): Boolean = runCatching {
                     val cached = SmbCache.cachePath(source.id, remoteDir, imageFileNames[index])
@@ -133,8 +132,9 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             if (onReady != null) {
                                 scope.launch(Dispatchers.IO) {
                                     existing.join()
-                                    if (SmbCache.isCached(cache)) onReady()
-                                    else {
+                                    if (SmbCache.isCached(cache)) {
+                                        onReady()
+                                    } else {
                                         // Previous job failed/cancelled — retry as interactive.
                                         ensureDownload(index, interactive = true, onReady = onReady)
                                     }

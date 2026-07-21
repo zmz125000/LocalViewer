@@ -41,7 +41,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
-import kotlinx.coroutines.flow.first
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
@@ -54,14 +53,16 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseEntry
-import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.listLocalDirectory
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
+import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseArchiveGridItem
 import com.hippo.ehviewer.ui.main.BrowseCover
@@ -72,13 +73,12 @@ import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
-import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
-import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import kotlinx.coroutines.flow.first
 import okio.Path.Companion.toPath
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -101,6 +101,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     var entries by remember { mutableStateOf<List<BrowseEntry>>(emptyList()) }
+
     /** Path the current [entries] belong to — avoids showing the wrong dir during reload. */
     var listedPath by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }

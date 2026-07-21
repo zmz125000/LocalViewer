@@ -60,8 +60,7 @@ object BrowseSession {
 
     fun smbListingKey(sourceId: Long, relativeDir: String) = "$sourceId|$relativeDir"
 
-    fun getSmbListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? =
-        smbListings[smbListingKey(sourceId, relativeDir)]
+    fun getSmbListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? = smbListings[smbListingKey(sourceId, relativeDir)]
 
     fun putSmbListing(sourceId: Long, relativeDir: String, entries: List<BrowseEntryRemote>) {
         smbListings[smbListingKey(sourceId, relativeDir)] = entries
@@ -97,8 +96,7 @@ object BrowseSession {
             ListScrollPosition(index, offset.coerceAtLeast(0))
     }
 
-    fun localScroll(pathKey: String, listMode: Int = 0): ListScrollPosition? =
-        localScroll[scrollModeKey(pathKey, listMode)]
+    fun localScroll(pathKey: String, listMode: Int = 0): ListScrollPosition? = localScroll[scrollModeKey(pathKey, listMode)]
 
     fun setLocalScrollAnchor(pathKey: String, childName: String) {
         if (pathKey.isEmpty() || childName.isEmpty()) return
@@ -112,14 +110,12 @@ object BrowseSession {
             ListScrollPosition(index, offset.coerceAtLeast(0))
     }
 
-    fun smbScroll(sourceId: Long, relativeDir: String, listMode: Int = 0): ListScrollPosition? =
-        smbScroll[scrollModeKey(smbListingKey(sourceId, relativeDir), listMode)]
+    fun smbScroll(sourceId: Long, relativeDir: String, listMode: Int = 0): ListScrollPosition? = smbScroll[scrollModeKey(smbListingKey(sourceId, relativeDir), listMode)]
 
     fun setSmbScrollAnchor(sourceId: Long, relativeDir: String, childName: String) {
         if (childName.isEmpty()) return
         smbAnchor[smbListingKey(sourceId, relativeDir)] = childName
     }
 
-    fun takeSmbScrollAnchor(sourceId: Long, relativeDir: String): String? =
-        smbAnchor.remove(smbListingKey(sourceId, relativeDir))
+    fun takeSmbScrollAnchor(sourceId: Long, relativeDir: String): String? = smbAnchor.remove(smbListingKey(sourceId, relativeDir))
 }

@@ -22,6 +22,7 @@ sealed interface LocalHistoryTarget {
     data class LibraryGallery(val galleryId: Long) : LocalHistoryTarget
     data class LocalBrowseFolder(val rootId: Long, val relativePath: String) : LocalHistoryTarget
     data class SmbBrowseFolder(val sourceId: Long, val relativePath: String) : LocalHistoryTarget
+
     /** Old/unknown row — try library id or drop. */
     data class Orphan(val gid: Long) : LocalHistoryTarget
 }
@@ -103,14 +104,11 @@ object LocalHistory {
         EhDB.putGalleryInfo(info.asEntity())
     }
 
-    private fun normalizeRel(relativePath: String): String =
-        relativePath.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
+    private fun normalizeRel(relativePath: String): String = relativePath.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
 
-    private fun encodeLocalBrowse(rootId: Long, relativePath: String): String =
-        "$rootId$PATH_SEP$relativePath"
+    private fun encodeLocalBrowse(rootId: Long, relativePath: String): String = "$rootId$PATH_SEP$relativePath"
 
-    private fun encodeSmbBrowse(sourceId: Long, relativePath: String): String =
-        "$sourceId$PATH_SEP$relativePath"
+    private fun encodeSmbBrowse(sourceId: Long, relativePath: String): String = "$sourceId$PATH_SEP$relativePath"
 
     private fun decodeLocalBrowse(encoded: String?): LocalHistoryTarget.LocalBrowseFolder? {
         if (encoded.isNullOrEmpty()) return null

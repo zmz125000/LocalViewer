@@ -50,8 +50,7 @@ context(_: DestinationsNavigator)
 fun navToReader(path: String) = navToReader(ReaderScreenArgs.Archive(path))
 
 context(_: DestinationsNavigator)
-fun navToLocalFolderReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1) =
-    navToReader(ReaderScreenArgs.LocalFolder(path, page, info))
+fun navToLocalFolderReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1) = navToReader(ReaderScreenArgs.LocalFolder(path, page, info))
 
 context(_: DestinationsNavigator)
 fun navToSmbFolderReader(
@@ -63,8 +62,7 @@ fun navToSmbFolderReader(
 ) = navToReader(ReaderScreenArgs.SmbFolder(sourceId, remoteDir, imageNames, page, info))
 
 context(nav: DestinationsNavigator)
-private fun navToReader(args: ReaderScreenArgs) =
-    nav.navigate(ReaderScreenDestination(args)) { launchSingleTop = true }
+private fun navToReader(args: ReaderScreenArgs) = nav.navigate(ReaderScreenDestination(args)) { launchSingleTop = true }
 
 context(_: Context, _: DialogState)
 suspend fun showRestartDialog() {

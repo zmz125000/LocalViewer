@@ -7,7 +7,11 @@ val IMAGE_EXTENSIONS = setOf(
 )
 
 val ARCHIVE_EXTENSIONS = setOf(
-    "zip", "cbz", "rar", "cbr", "7z",
+    "zip",
+    "cbz",
+    "rar",
+    "cbr",
+    "7z",
 )
 
 fun isImageFileName(name: String): Boolean {

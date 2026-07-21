@@ -73,12 +73,11 @@ object GallerySiblingNavigator {
         val galleries = listing.filterIsInstance<BrowseEntryRemote.FolderGallery>()
         if (galleries.isEmpty()) return null
 
-        fun remoteOf(g: BrowseEntryRemote.FolderGallery): String =
-            if (g.relativeName.isEmpty()) {
-                parentRel
-            } else {
-                SmbGateway.joinRelativePath(parentRel, g.relativeName)
-            }
+        fun remoteOf(g: BrowseEntryRemote.FolderGallery): String = if (g.relativeName.isEmpty()) {
+            parentRel
+        } else {
+            SmbGateway.joinRelativePath(parentRel, g.relativeName)
+        }
 
         val idx = galleries.indexOfFirst { remoteOf(it).trim('/') == galleryPath }
         if (idx < 0) return null
