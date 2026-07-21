@@ -79,7 +79,7 @@ android {
 
     productFlavors {
         create("default") {
-            minSdk = 36
+            minSdk = 32
         }
     }
 
