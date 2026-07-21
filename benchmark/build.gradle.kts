@@ -18,9 +18,9 @@ android {
     }
 
     testOptions.managedDevices.localDevices {
-        create("pixel6Api36") {
+        create("pixel6Api35") {
             device = "Pixel 6"
-            apiLevel = 36
+            apiLevel = 35
             testedAbi = "x86_64"
             systemImageSource = "aosp-atd"
         }
@@ -33,7 +33,7 @@ kotlin {
 }
 
 baselineProfile {
-    managedDevices += "pixel6Api36"
+    managedDevices += "pixel6Api35"
     useConnectedDevices = false
 }
 
