@@ -30,11 +30,13 @@ sealed interface BrowseEntry {
 }
 
 fun listLocalDirectory(dir: Path, useCache: Boolean = true): List<BrowseEntry> {
-    val key = BrowseSession.pathKey(dir)
+    // Dynamic SAF → MediaStore upgrade when media permission is available.
+    val effective = resolveBrowsePath(dir)
+    val key = BrowseSession.pathKey(effective)
     if (useCache) {
         BrowseSession.getLocalListing(key)?.let { return it }
     }
-    val result = listLocalDirectoryUncached(dir)
+    val result = listLocalDirectoryUncached(effective)
     BrowseSession.putLocalListing(key, result)
     return result
 }
@@ -45,16 +47,18 @@ fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
     var imageCount = 0
     var imagesCapped = false
     val archives = ArrayList<BrowseEntry.ArchiveGallery>()
+    // MediaStore index is cheap — exact counts, no 20/128 image cap.
+    val uncapped = dir.isMediaStorePath()
 
-    // Parent listing: need every subdirectory; image count capped; cover = first image.
+    // Parent listing: need every subdirectory; SAF image count capped; cover = first image.
     dir.forEachBrowseChild { child ->
         when {
             child.isDirectory -> childDirs += child
             isImageFileName(child.name) -> {
                 if (coverPath == null) coverPath = child.path
-                if (!imagesCapped) {
+                if (uncapped || !imagesCapped) {
                     imageCount++
-                    if (imageCount > BROWSE_IMAGE_SCAN_CAP) {
+                    if (!uncapped && imageCount >= BROWSE_IMAGE_SCAN_CAP) {
                         imageCount = BROWSE_IMAGE_SCAN_CAP
                         imagesCapped = true
                     }
@@ -164,7 +168,7 @@ private fun classifyChildrenParallel(
  * After image sample is enough for a leaf gallery, still look a little further for a
  * subdirectory (mixed folder) — but never walk the whole comic folder.
  */
-private const val PEEK_AFTER_IMAGE_CAP_BUDGET = 40
+private const val PEEK_AFTER_IMAGE_CAP_BUDGET = 0
 
 /**
  * After we know the folder is navigable, only look this many more entries for a dual-list cover.
@@ -172,17 +176,21 @@ private const val PEEK_AFTER_IMAGE_CAP_BUDGET = 40
 private const val PEEK_AFTER_SUBDIR_IMAGE_BUDGET = 48
 
 /**
- * Hard cap on entries visited in a single child peek (SAF cursor rows).
+ * Hard cap on entries visited in a single SAF child peek (cursor rows).
+ * Same budget as [BROWSE_IMAGE_SCAN_CAP] — counting up to 128 images uses the walk
+ * we already allow, without scanning thousands of comic pages.
  */
-private const val PEEK_MAX_ENTRIES = 128
+private const val PEEK_MAX_ENTRIES = BROWSE_IMAGE_SCAN_CAP
 
 /**
  * Peek one level with streaming visit (one SAF cursor / one File.listFiles):
- * - Track subdirs + direct images (capped).
- * - Early-exit once classification is known — **must not** scan whole leaf galleries
- *   (old bug: after 20 images kept reading every remaining page looking for subdirs).
+ * - Track subdirs + direct images (capped at [BROWSE_IMAGE_SCAN_CAP] for SAF).
+ * - MediaStore paths: full exact counts (no cap / no early row budget).
+ * - Early-exit once classification is known — never scan whole leaf galleries.
  */
 private fun classifyChildDirectory(sub: Path): ChildDirKind {
+    // Prefer MediaStore for this subfolder when permission allows (SAF stays as fallback).
+    val path = resolveBrowsePath(sub)
     var coverPath: Path? = null
     var imageCount = 0
     var imagesCapped = false
@@ -191,22 +199,24 @@ private fun classifyChildDirectory(sub: Path): ChildDirKind {
     var afterImageCapBudget = 0
     var afterSubdirBudget = 0
     val archives = ArrayList<BrowseEntry.ArchiveGallery>()
+    val uncapped = path.isMediaStorePath()
 
-    sub.forEachBrowseChild { child ->
+    path.forEachBrowseChild { child ->
         entriesSeen++
-        if (entriesSeen > PEEK_MAX_ENTRIES) return@forEachBrowseChild false
+        if (!uncapped && entriesSeen > PEEK_MAX_ENTRIES) return@forEachBrowseChild false
 
         if (child.isDirectory) {
             sawSubdir = true
-            // Have dir + cover (or image sample) → dual-list complete.
-            if (coverPath != null || imagesCapped) {
+            // Have dir + cover (or image sample) → dual-list complete (SAF).
+            // MediaStore: keep walking images for exact dual-list counts when mixed.
+            if (!uncapped && (coverPath != null || imagesCapped)) {
                 return@forEachBrowseChild false
             }
             return@forEachBrowseChild true
         }
 
-        // Already navigable: only hunt briefly for a dual-list cover image.
-        if (sawSubdir) {
+        // Already navigable (SAF): only hunt briefly for a dual-list cover image.
+        if (sawSubdir && !uncapped) {
             afterSubdirBudget++
             if (coverPath == null && isImageFileName(child.name)) {
                 coverPath = child.path
@@ -217,8 +227,9 @@ private fun classifyChildDirectory(sub: Path): ChildDirKind {
             return@forEachBrowseChild afterSubdirBudget < PEEK_AFTER_SUBDIR_IMAGE_BUDGET
         }
 
-        // Image sample already enough for leaf gallery: only hunt briefly for a subdir.
-        if (imagesCapped) {
+        // Image sample already enough for leaf gallery (SAF): stop — no extra walk.
+        // (PEEK_AFTER_IMAGE_CAP_BUDGET is 0; PEEK_MAX_ENTRIES already bounds the sample.)
+        if (!uncapped && imagesCapped) {
             afterImageCapBudget++
             return@forEachBrowseChild afterImageCapBudget < PEEK_AFTER_IMAGE_CAP_BUDGET
         }
@@ -227,7 +238,7 @@ private fun classifyChildDirectory(sub: Path): ChildDirKind {
             isImageFileName(child.name) -> {
                 if (coverPath == null) coverPath = child.path
                 imageCount++
-                if (imageCount >= BROWSE_IMAGE_SCAN_CAP) {
+                if (!uncapped && imageCount >= BROWSE_IMAGE_SCAN_CAP) {
                     imageCount = BROWSE_IMAGE_SCAN_CAP
                     imagesCapped = true
                 }

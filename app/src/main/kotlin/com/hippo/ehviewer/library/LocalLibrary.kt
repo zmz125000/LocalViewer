@@ -184,11 +184,17 @@ object LocalLibrary {
         db.localGalleryDao().replaceForRoot(root.id, galleries)
     }
 
+    /**
+     * Resolve the browse/scan root path.
+     * SAF trees are **dynamically upgraded** to MediaStore when media permission is
+     * granted and the path maps to external storage; the stored [LibraryRootEntity.treeUri]
+     * stays as the SAF backup when permission is missing or conversion fails.
+     */
     fun rootPath(root: LibraryRootEntity): Path? {
         if (isMediaStoreRootUri(root.treeUri)) {
-            return MEDIASTORE_PATH_ROOT.toPath()
+            return mediaStoreTreeUriToPath(root.treeUri)
         }
-        return runCatching {
+        val safPath = runCatching {
             val treeUri = root.treeUri.toUri()
             DocumentsContract.buildDocumentUriUsingTree(
                 treeUri,
@@ -197,21 +203,26 @@ object LocalLibrary {
         }.getOrElse {
             logcat(it)
             null
-        }
+        } ?: return null
+        return resolveBrowsePath(safPath)
     }
 
-    fun contentPath(gallery: LocalGalleryEntity): Path = gallery.contentPath.toPath()
+    /** Prefer MediaStore for gallery open when permission allows; SAF content path is backup. */
+    fun contentPath(gallery: LocalGalleryEntity): Path =
+        resolveBrowsePath(gallery.contentPath.toPath())
 }
 
 fun Context.displayNameForTreeUri(treeUri: String): String {
-    if (isMediaStoreRootUri(treeUri)) return "Device media"
+    if (isMediaStoreRootUri(treeUri)) return displayNameForMediaStoreTree(treeUri)
     val uri = treeUri.toUri()
     return runCatching {
         contentResolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
             ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
     }.getOrNull()
         ?: runCatching {
-            DocumentsContract.getTreeDocumentId(uri).substringAfterLast(':').ifEmpty { null }
+            DocumentsContract.getTreeDocumentId(uri).substringAfterLast(':')
+                .substringAfterLast('/')
+                .ifEmpty { null }
         }.getOrNull()
         ?: uri.lastPathSegment
         ?: "Library"

@@ -4,8 +4,10 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
+import com.ehviewer.core.files.toUri
 import okio.Path
 import okio.Path.Companion.toPath
 import splitties.init.appCtx
@@ -13,6 +15,8 @@ import splitties.init.appCtx
 /**
  * Synthetic root for “all device images” via [READ_MEDIA_IMAGES].
  * Stored as [LibraryRootEntity.treeUri]; not a SAF tree.
+ *
+ * Subfolder roots: `mediastore://external/Pictures/Comics`
  */
 const val MEDIASTORE_ROOT_URI = "mediastore://external"
 
@@ -20,9 +24,98 @@ const val MEDIASTORE_ROOT_URI = "mediastore://external"
 const val MEDIASTORE_PATH_ROOT = "mediastore:/"
 
 fun isMediaStoreRootUri(treeUri: String): Boolean =
-    treeUri == MEDIASTORE_ROOT_URI || treeUri.startsWith("mediastore://")
+    treeUri == MEDIASTORE_ROOT_URI ||
+        treeUri.startsWith("mediastore://") ||
+        treeUri.startsWith("mediastore:/")
 
 fun Path.isMediaStorePath(): Boolean = toString().startsWith("mediastore:")
+
+/**
+ * Build a stored tree identity for a MediaStore-relative folder.
+ * Empty [relativeDir] → whole device media root.
+ */
+fun mediaStoreTreeUriFromRelative(relativeDir: String): String {
+    val rel = relativeDir.replace('\\', '/').trim('/')
+    return if (rel.isEmpty()) MEDIASTORE_ROOT_URI else "$MEDIASTORE_ROOT_URI/$rel"
+}
+
+/** Okio path for a stored MediaStore treeUri (root or subfolder). */
+fun mediaStoreTreeUriToPath(treeUri: String): Path {
+    val rel = when {
+        treeUri == MEDIASTORE_ROOT_URI || treeUri == "mediastore://" || treeUri == "mediastore:/" ->
+            ""
+        treeUri.startsWith("$MEDIASTORE_ROOT_URI/") ->
+            treeUri.removePrefix("$MEDIASTORE_ROOT_URI/").trim('/')
+        treeUri.startsWith("mediastore://") ->
+            treeUri.removePrefix("mediastore://").removePrefix("external/").trim('/')
+        treeUri.startsWith("mediastore:/") ->
+            treeUri.removePrefix("mediastore:/").trim('/')
+        else -> ""
+    }
+    return mediaStoreDirPath(rel)
+}
+
+/**
+ * Map a SAF tree URI to a MediaStore tree identity when possible.
+ * ExternalStorageProvider document ids look like `primary:Pictures/Comics`.
+ */
+fun tryMediaStoreTreeUriFromSaf(treeUri: Uri): String? {
+    if (!MediaPermissions.hasImageAccess()) return null
+    val authority = treeUri.authority
+    if (authority != null && authority != "com.android.externalstorage.documents") {
+        return null
+    }
+    val docId = runCatching {
+        DocumentsContract.getTreeDocumentId(treeUri)
+    }.getOrNull() ?: return null
+    val colon = docId.indexOf(':')
+    if (colon <= 0) return null
+    val relative = docId.substring(colon + 1).replace('\\', '/').trim('/')
+    return mediaStoreTreeUriFromRelative(relative)
+}
+
+/**
+ * Prefer a MediaStore virtual path when media permission is granted and the path
+ * maps to external storage. Otherwise returns the original path (SAF backup).
+ *
+ * Used at browse/list/open time so stored SAF roots upgrade dynamically without
+ * rewriting the database.
+ */
+fun resolveBrowsePath(path: Path): Path {
+    if (path.isMediaStorePath()) return path
+    return tryConvertSafPathToMediaStore(path) ?: path
+}
+
+/**
+ * Convert a SAF / DocumentsProvider [Path] to `mediastore:/…` when possible.
+ * Keeps non-external or unmappable paths as-is (caller falls back to SAF).
+ */
+fun tryConvertSafPathToMediaStore(path: Path): Path? {
+    if (!MediaPermissions.hasImageAccess()) return null
+    val str = path.toString()
+    if (!str.contains("content:")) return null
+    return runCatching {
+        val uri = path.toUri()
+        if (uri.authority != null && uri.authority != "com.android.externalstorage.documents") {
+            return null
+        }
+        val docId = runCatching {
+            DocumentsContract.getDocumentId(uri)
+        }.getOrNull() ?: runCatching {
+            DocumentsContract.getTreeDocumentId(uri)
+        }.getOrNull() ?: return null
+        val colon = docId.indexOf(':')
+        if (colon <= 0) return null
+        val relative = docId.substring(colon + 1).replace('\\', '/').trim('/')
+        mediaStoreDirPath(relative)
+    }.getOrNull()
+}
+
+fun displayNameForMediaStoreTree(treeUri: String): String {
+    val rel = mediaStoreTreeUriToPath(treeUri).mediaStoreRelativeDir()
+    if (rel.isEmpty()) return "Device media"
+    return rel.substringAfterLast('/').ifEmpty { rel }
+}
 
 /**
  * Relative folder under the MediaStore virtual root.

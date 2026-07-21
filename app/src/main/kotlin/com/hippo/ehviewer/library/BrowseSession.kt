@@ -3,8 +3,12 @@ package com.hippo.ehviewer.library
 import java.util.concurrent.ConcurrentHashMap
 import okio.Path
 
-/** Cap for browse-time image counting / leaf peek (reader still loads all pages). */
-const val BROWSE_IMAGE_SCAN_CAP = 20
+/**
+ * Cap for SAF browse-time image counting / leaf peek (reader still loads all pages).
+ * Aligned with [PEEK_MAX_ENTRIES] so we use the same cursor budget with better counts.
+ * MediaStore paths are **uncapped** (index is cheap).
+ */
+const val BROWSE_IMAGE_SCAN_CAP = 128
 
 /**
  * In-memory browse state for the app process.
