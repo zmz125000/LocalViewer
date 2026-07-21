@@ -48,9 +48,6 @@ jobs:
       - name: Spotless Check
         run: ./gradlew spotlessCheck
 
-      - name: Lint Check
-        run: ./gradlew lintMarshmallowRelease
-
   default:
     runs-on: ubuntu-latest
     steps:
@@ -118,71 +115,3 @@ jobs:
         with:
           name: default-native-debug-symbols-${{ github.sha }}
           path: app/build/outputs/native-debug-symbols/defaultRelease/native-debug-symbols.zip
-
-  marshmallow:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version-file: .java-version
-
-      - name: Install Rust Toolchain
-        run: rustup target add thumbv7neon-linux-androideabi
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "./app/src/main/rust"
-          shared-key: ${{ runner.os }}
-          save-if: "false"
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          cache-encryption-key: ${{ secrets.GradleEncryptionKey }}
-
-      - name: CMake Cache
-        uses: actions/cache@v5
-        with:
-          path: app/.cxx
-          key: cmake-marshmallow-${{ hashFiles('rust-toolchain.toml', 'settings.gradle.kts', 'app/src/main/cpp/CMakeLists.txt', 'app/src/main/rust/Cargo.lock') }}
-          restore-keys: cmake-marshmallow-
-
-      - name: Build
-        run: ./gradlew assembleMarshmallowRelease
-
-      - name: Upload ARM64
-        uses: actions/upload-artifact@v7
-        with:
-          name: marshmallow-arm64-v8a-${{ github.sha }}
-          path: app/build/outputs/apk/marshmallow/release/app-marshmallow-arm64-v8a-release.apk
-
-      - name: Upload x86_64
-        uses: actions/upload-artifact@v7
-        with:
-          name: marshmallow-x86_64-${{ github.sha }}
-          path: app/build/outputs/apk/marshmallow/release/app-marshmallow-x86_64-release.apk
-
-      - name: Upload ARM32
-        uses: actions/upload-artifact@v7
-        with:
-          name: marshmallow-armeabi-v7a-${{ github.sha }}
-          path: app/build/outputs/apk/marshmallow/release/app-marshmallow-armeabi-v7a-release.apk
-
-      - name: Upload mapping
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: marshmallow-mapping-${{ github.sha }}
-          path: app/build/outputs/mapping/marshmallowRelease/*.txt
-
-      - name: Upload native debug symbols
-        uses: actions/upload-artifact@v7
-        with:
-          name: marshmallow-native-debug-symbols-${{ github.sha }}
-          path: app/build/outputs/native-debug-symbols/marshmallowRelease/native-debug-symbols.zip
