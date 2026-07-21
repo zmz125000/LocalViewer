@@ -74,8 +74,7 @@ object SmbGateway {
     private const val MAX_IDLE_MS = 45_000L
 
     /** Parallel TCP sessions per SMB source (reader seek + prefetch). */
-    fun maxConnectionsPerSource(): Int =
-        Settings.multiThreadDownload.value.coerceIn(1, POOL_CAPACITY)
+    fun maxConnectionsPerSource(): Int = Settings.multiThreadDownload.value.coerceIn(1, POOL_CAPACITY)
 
     private val config: SmbConfig = SmbConfig.builder()
         // Prefer modern dialects for Win11 / current Samba; still includes 3.0 for older appliances.
@@ -94,10 +93,9 @@ object SmbGateway {
     private val poolCreateLock = Mutex()
     private val hostKeyToSourceIds = ConcurrentHashMap<String, MutableSet<Long>>()
 
-    private fun sourceIdsForHost(host: String, port: Int): MutableSet<Long> =
-        hostKeyToSourceIds.getOrPut(hostKey(host, port)) {
-            java.util.concurrent.ConcurrentHashMap.newKeySet()
-        }
+    private fun sourceIdsForHost(host: String, port: Int): MutableSet<Long> = hostKeyToSourceIds.getOrPut(hostKey(host, port)) {
+        java.util.concurrent.ConcurrentHashMap.newKeySet()
+    }
 
     /**
      * Process-scoped listings so navigating away mid-scan does not cancel the SMB walk.
@@ -248,22 +246,21 @@ object SmbGateway {
         return AuthenticationContext(user, password.toCharArray(), source.domain)
     }
 
-    private fun fingerprint(source: SmbSourceEntity, password: String): String =
-        buildString {
-            append(source.host)
-            append('|')
-            append(source.port)
-            append('|')
-            append(source.share)
-            append('|')
-            append(source.pathPrefix)
-            append('|')
-            append(source.username)
-            append('|')
-            append(source.domain)
-            append('|')
-            append(password)
-        }
+    private fun fingerprint(source: SmbSourceEntity, password: String): String = buildString {
+        append(source.host)
+        append('|')
+        append(source.port)
+        append('|')
+        append(source.share)
+        append('|')
+        append(source.pathPrefix)
+        append('|')
+        append(source.username)
+        append('|')
+        append(source.domain)
+        append('|')
+        append(password)
+    }
 
     private fun joinPath(prefix: String, vararg parts: String): String {
         val segments = buildList {
@@ -276,11 +273,9 @@ object SmbGateway {
         return segments.joinToString("\\")
     }
 
-    private fun remotePath(source: SmbSourceEntity, relative: String): String =
-        joinPath(source.pathPrefix, relative)
+    private fun remotePath(source: SmbSourceEntity, relative: String): String = joinPath(source.pathPrefix, relative)
 
-    private fun joinRelative(parent: String, child: String): String =
-        if (parent.isEmpty()) child else "$parent/$child"
+    private fun joinRelative(parent: String, child: String): String = if (parent.isEmpty()) child else "$parent/$child"
 
     /**
      * Drop pooled sessions for [sourceId] and all session browse state tied to that source.
@@ -338,20 +333,19 @@ object SmbGateway {
     }
 
     /** Config identity for path/share (password separate). Used by browser to detect edits. */
-    fun sourceConfigKey(source: SmbSourceEntity): String =
-        buildString {
-            append(source.host)
-            append('|')
-            append(source.port)
-            append('|')
-            append(source.share)
-            append('|')
-            append(source.pathPrefix)
-            append('|')
-            append(source.username)
-            append('|')
-            append(source.domain)
-        }
+    fun sourceConfigKey(source: SmbSourceEntity): String = buildString {
+        append(source.host)
+        append('|')
+        append(source.port)
+        append('|')
+        append(source.share)
+        append('|')
+        append(source.pathPrefix)
+        append('|')
+        append(source.username)
+        append('|')
+        append(source.domain)
+    }
 
     private fun hostKey(host: String, port: Int) = "${host.trim().lowercase(Locale.US)}:$port"
 
@@ -359,31 +353,30 @@ object SmbGateway {
         sourceIdsForHost(source.host, source.port).add(source.id)
     }
 
-    suspend fun testConnection(source: SmbSourceEntity, password: String): Result<Unit> =
-        withIOContext {
-            runCatching {
-                // Fresh client — never touch the process pool or a shared host cache.
-                val smbClient = SMBClient(config)
-                try {
-                    smbClient.connect(source.host, source.port).use { connection ->
-                        val session = connection.authenticate(auth(source, password))
-                        try {
-                            if (source.share.isNotBlank()) {
-                                (session.connectShare(source.share) as DiskShare).use { share ->
-                                    val path = remotePath(source, "")
-                                    share.list(path.ifEmpty { "" })
-                                }
+    suspend fun testConnection(source: SmbSourceEntity, password: String): Result<Unit> = withIOContext {
+        runCatching {
+            // Fresh client — never touch the process pool or a shared host cache.
+            val smbClient = SMBClient(config)
+            try {
+                smbClient.connect(source.host, source.port).use { connection ->
+                    val session = connection.authenticate(auth(source, password))
+                    try {
+                        if (source.share.isNotBlank()) {
+                            (session.connectShare(source.share) as DiskShare).use { share ->
+                                val path = remotePath(source, "")
+                                share.list(path.ifEmpty { "" })
                             }
-                        } finally {
-                            runCatching { session.close() }
                         }
+                    } finally {
+                        runCatching { session.close() }
                     }
-                } finally {
-                    runCatching { smbClient.close() }
                 }
-                Unit
+            } finally {
+                runCatching { smbClient.close() }
             }
+            Unit
         }
+    }
 
     /**
      * List [relativeDir] with same classification as local folder browse
@@ -467,28 +460,26 @@ object SmbGateway {
         return classifyRemoteListingWithPeeks(dirName, children, peeks)
     }
 
-    private fun listChildren(share: DiskShare, path: String): List<RemoteChild> =
-        share.list(path.ifEmpty { "" }).mapNotNull { info ->
-            val name = info.fileName
-            if (name == "." || name == "..") return@mapNotNull null
-            val isDir = (info.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
-            RemoteChild(name, isDir)
-        }
+    private fun listChildren(share: DiskShare, path: String): List<RemoteChild> = share.list(path.ifEmpty { "" }).mapNotNull { info ->
+        val name = info.fileName
+        if (name == "." || name == "..") return@mapNotNull null
+        val isDir = (info.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
+        RemoteChild(name, isDir)
+    }
 
     /**
      * List a directory; on access-denied / not-found treat as empty so parent browse continues.
      * Used when peeking child folders (e.g. `$RECYCLE.BIN`, `System Volume Information`).
      */
-    private fun listChildrenLenient(share: DiskShare, path: String): List<RemoteChild> =
-        try {
-            listChildren(share, path)
-        } catch (e: SMBApiException) {
-            if (isIgnorableListError(e)) {
-                emptyList()
-            } else {
-                throw e
-            }
+    private fun listChildrenLenient(share: DiskShare, path: String): List<RemoteChild> = try {
+        listChildren(share, path)
+    } catch (e: SMBApiException) {
+        if (isIgnorableListError(e)) {
+            emptyList()
+        } else {
+            throw e
         }
+    }
 
     suspend fun listImageFileNames(
         source: SmbSourceEntity,
