@@ -20,8 +20,8 @@
 </h1>
 
 <p align="center">
-  <a href="https://github.com/FooIbar/EhViewer/actions/workflows/ci.yml">
-    <img src="https://github.com/FooIbar/EhViewer/actions/workflows/ci.yml/badge.svg" alt="Github Actions">
+  <a href="https://github.com/zmz125000/LocalViewer/actions/workflows/ci.yml">
+    <img src="https://github.com/zmz125000/LocalViewer/actions/workflows/ci.yml/badge.svg" alt="Github Actions">
   </a>
   <a href="/LICENSE">
     <img src="https://img.shields.io/github/license/FooIbar/EhViewer" alt="LICENSE">
@@ -29,10 +29,10 @@
   <a href="https://www.codefactor.io/repository/github/FooIbar/EhViewer">
     <img src="https://www.codefactor.io/repository/github/FooIbar/EhViewer/badge" alt="CodeFactor">
   </a>
-  <a href="https://github.com/FooIbar/EhViewer/releases">
+  <a href="https://github.com/zmz125000/LocalViewer/releases">
     <img src="https://img.shields.io/github/v/release/FooIbar/EhViewer" alt="Release">
   </a>
-  <a href="https://github.com/FooIbar/EhViewer/issues">
+  <a href="https://github.com/zmz125000/LocalViewer/issues">
     <img src="https://img.shields.io/github/issues/FooIbar/EhViewer" alt="Issues">
   </a>
 </p>
@@ -82,8 +82,8 @@
 
 # 截图
 
-![screenshots-01](https://github.com/FooIbar/EhViewer-art/blob/master/screenshots-01.webp)
-![screenshots-02](https://github.com/FooIbar/EhViewer-art/blob/master/screenshots-02.webp)
+![screenshots-01](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
+![screenshots-02](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
 
 # 感谢
 
