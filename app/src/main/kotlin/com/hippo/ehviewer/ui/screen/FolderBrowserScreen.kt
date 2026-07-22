@@ -1,7 +1,12 @@
 package com.hippo.ehviewer.ui.screen
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -32,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -116,6 +122,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val title = current?.title ?: stringResource(R.string.folder)
     // Scroll down hides the top bar; scroll up brings it back (enterAlways).
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    // FAB tracks the same enterAlways state (hide when bar collapses, show when it reappears).
+    val showScrollFab by remember {
+        derivedStateOf { scrollBehavior.state.collapsedFraction < 0.5f }
+    }
 
     // Show the bar again when entering a different folder.
     LaunchedEffect(currentPath) {
@@ -299,35 +309,42 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         floatingActionButton = {
             // Compact phones without persistent main nav: shortcut FAB.
             // Tablets (rail) and Settings → Keep main navigation: re-tap tab instead.
+            // Visibility follows enterAlways top-bar scroll (same collapsedFraction).
             if (LocalShowNavShortcutFab.current) {
-                if (fromHistory) {
-                    ExtendedFloatingActionButton(
-                        onClick = {
-                            if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
-                                navigator.navigate(HistoryScreenDestination) {
-                                    launchSingleTop = true
+                AnimatedVisibility(
+                    visible = showScrollFab,
+                    enter = fadeIn() + scaleIn(),
+                    exit = fadeOut() + scaleOut(),
+                ) {
+                    if (fromHistory) {
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
+                                    navigator.navigate(HistoryScreenDestination) {
+                                        launchSingleTop = true
+                                    }
                                 }
-                            }
-                        },
-                        icon = {
-                            Icon(Icons.Default.History, contentDescription = null)
-                        },
-                        text = { Text(stringResource(R.string.back_to_history)) },
-                    )
-                } else {
-                    ExtendedFloatingActionButton(
-                        onClick = {
-                            if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
-                                navigator.navigate(BrowseScreenDestination) {
-                                    launchSingleTop = true
+                            },
+                            icon = {
+                                Icon(Icons.Default.History, contentDescription = null)
+                            },
+                            text = { Text(stringResource(R.string.back_to_history)) },
+                        )
+                    } else {
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
+                                    navigator.navigate(BrowseScreenDestination) {
+                                        launchSingleTop = true
+                                    }
                                 }
-                            }
-                        },
-                        icon = {
-                            Icon(Icons.Default.Explore, contentDescription = null)
-                        },
-                        text = { Text(stringResource(R.string.back_to_browse)) },
-                    )
+                            },
+                            icon = {
+                                Icon(Icons.Default.Explore, contentDescription = null)
+                            },
+                            text = { Text(stringResource(R.string.back_to_browse)) },
+                        )
+                    }
                 }
             }
         },
