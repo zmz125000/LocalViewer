@@ -52,6 +52,8 @@ import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.coil.AnimatedWebPDecoder
+import com.hippo.ehviewer.coil.CoverPathFetcher
+import com.hippo.ehviewer.coil.CoverPathKeyer
 import com.hippo.ehviewer.coil.CropBorderInterceptor
 import com.hippo.ehviewer.coil.DetectBorderInterceptor
 import com.hippo.ehviewer.coil.HardwareBitmapInterceptor
@@ -166,6 +168,9 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                     connectivityChecker = { ConnectivityChecker.ONLINE },
                 ),
             )
+            // Local covers (library/history/browse): resolve MediaStore off-main.
+            add(CoverPathFetcher.Factory())
+            add(CoverPathKeyer)
             if (isAtLeastO) {
                 add(HardwareBitmapInterceptor)
             } else {

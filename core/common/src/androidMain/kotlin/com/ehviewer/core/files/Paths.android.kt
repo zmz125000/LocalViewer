@@ -24,6 +24,7 @@ fun Path.toUri(): Uri {
     }
 
     // Virtual MediaStore file → real content:// for Coil / openers.
+    // May hit ContentResolver; prefer calling from a background thread (e.g. Coil fetcher).
     if (str.startsWith("mediastore:")) {
         return resolveMediaStorePathToContentUri(str)
             ?: str.replaceFirst("mediastore:", "content://mediastore").toUri()
@@ -48,7 +49,11 @@ fun Path.toUri(): Uri {
     }
 }
 
+/** Avoid re-querying MediaStore for the same virtual path (covers on tab switch / scroll). */
+private val mediaStoreContentUriCache = java.util.concurrent.ConcurrentHashMap<String, Uri>()
+
 private fun resolveMediaStorePathToContentUri(pathStr: String): Uri? {
+    mediaStoreContentUriCache[pathStr]?.let { return it }
     val s = pathStr.removePrefix("mediastore:").trimStart('/')
     if (s.isEmpty()) return null
     val fileName = s.substringAfterLast('/')
@@ -71,16 +76,25 @@ private fun resolveMediaStorePathToContentUri(pathStr: String): Uri? {
             "${MediaStore.Images.Media.DISPLAY_NAME} = ?"
         args = arrayOf(relWithSlash, relativeDir, fileName)
     }
-    appCtx.contentResolver.query(collection, projection, selection, args, null)?.use { c ->
+    val resolved = appCtx.contentResolver.query(collection, projection, selection, args, null)?.use { c ->
         if (c.moveToFirst()) {
-            return MediaStore.Images.Media
+            MediaStore.Images.Media
                 .getContentUri(MediaStore.VOLUME_EXTERNAL)
                 .buildUpon()
                 .appendPath(c.getLong(0).toString())
                 .build()
+        } else {
+            null
         }
     }
-    return null
+    if (resolved != null) {
+        // Bound growth: drop oldest-ish entries if huge (simple size cap).
+        if (mediaStoreContentUriCache.size > 4000) {
+            mediaStoreContentUriCache.clear()
+        }
+        mediaStoreContentUriCache[pathStr] = resolved
+    }
+    return resolved
 }
 
 fun Uri.toOkioPath() = if (scheme == ContentResolver.SCHEME_FILE) {

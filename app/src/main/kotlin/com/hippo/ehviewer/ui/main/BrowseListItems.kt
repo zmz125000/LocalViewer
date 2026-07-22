@@ -38,7 +38,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
-import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.util.logcat
@@ -339,8 +338,9 @@ fun BrowseCoverThumb(
                 null -> path.toString()
             }
             with(context) {
+                // Path string only — MediaStore/SAF URI resolve happens in CoverPathFetcher (off-main).
                 coverThumbRequest(
-                    data = path.toUri(),
+                    path = path.toString(),
                     sizePx = resolvedDecodePx,
                     memoryKey = cacheKey,
                 )

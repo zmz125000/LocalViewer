@@ -41,7 +41,6 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LocalGalleryEntity
-import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.ui.component.CrystalCard
@@ -51,7 +50,6 @@ import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.ui.screen.collectListThumbSizeAsState
-import okio.Path.Companion.toPath
 
 /** Kind / page-count chip — text on secondaryContainer, used on list cards. */
 @Composable
@@ -72,11 +70,13 @@ private fun LocalGalleryMetaChip(text: String, modifier: Modifier = Modifier) {
 @Composable
 private fun coverRequest(coverPath: String?, sizePx: Int): ImageRequest? {
     val context = LocalContext.current
+    // Pass path string only — CoverPathFetcher resolves MediaStore/SAF URI off-main.
+    // Do not call path.toUri() here (sync ContentResolver.query freezes tab switches).
     return remember(coverPath, sizePx) {
         coverPath?.let { path ->
             with(context) {
                 coverThumbRequest(
-                    data = path.toPath().toUri(),
+                    path = path,
                     sizePx = sizePx,
                     memoryKey = path,
                 )

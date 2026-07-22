@@ -7,6 +7,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.request.ImageRequest
+import coil3.request.crossfade
 import coil3.size.Precision
 import coil3.size.Scale
 import com.hippo.ehviewer.ktbuilder.imageRequest
@@ -59,6 +60,9 @@ object CoverThumb {
 /**
  * Configure a cover request for thumbnail use: fixed square decode, FILL crop,
  * INEXACT precision, and size-scoped cache keys (list vs grid do not thrash).
+ *
+ * Do **not** call [com.ehviewer.core.files.toUri] on the main thread for MediaStore
+ * paths — pass a [CoverPath] so [CoverPathFetcher] resolves off-main.
  */
 fun ImageRequest.Builder.coverThumb(
     sizePx: Int,
@@ -71,7 +75,20 @@ fun ImageRequest.Builder.coverThumb(
     precision(Precision.INEXACT)
     memoryCacheKey("$memoryKey@$edge")
     diskCacheKey("$diskKey@$edge")
+    // Instant paint on tab switch / recycle (global ImageLoader still has 120ms for other loads).
+    crossfade(false)
     return this
+}
+
+context(ctx: Context)
+fun coverThumbRequest(
+    path: String,
+    sizePx: Int,
+    memoryKey: String = path,
+    diskKey: String = memoryKey,
+): ImageRequest = imageRequest {
+    data(CoverPath(path))
+    coverThumb(sizePx, memoryKey, diskKey)
 }
 
 context(ctx: Context)
@@ -81,6 +98,13 @@ fun coverThumbRequest(
     memoryKey: String,
     diskKey: String = memoryKey,
 ): ImageRequest = imageRequest {
-    data(data)
+    // Prefer CoverPath for local path strings so MediaStore lookup is not on main.
+    data(
+        when (data) {
+            is CoverPath -> data
+            is String -> CoverPath(data)
+            else -> data
+        },
+    )
     coverThumb(sizePx, memoryKey, diskKey)
 }
