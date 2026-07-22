@@ -18,6 +18,10 @@ package com.hippo.ehviewer
 
 import android.app.Application
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.StrictMode
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.content.res.AppCompatResources
@@ -82,6 +86,7 @@ import logcat.LogcatLogger
 import logcat.asLog
 import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
+import splitties.systemservices.connectivityManager
 
 private val lifecycle = ProcessLifecycleOwner.get().lifecycle
 private val lifecycleScope = lifecycle.coroutineScope
@@ -118,6 +123,9 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                 }
             },
         )
+        // SMB: Wi‑Fi / LAN bounce — kill half-open pools immediately and cool down reconnects
+        // so folder list does not hang on soTimeout and Win11 is not auth-stormed.
+        registerSmbNetworkCallback()
         launchIO {
             @Suppress("UNUSED_EXPRESSION")
             launch { EhDB }
@@ -156,6 +164,31 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
     private fun clearTempDir() {
         AppConfig.tempDir.deleteContent()
         AppConfig.externalTempDir?.deleteContent()
+    }
+
+    /**
+     * Watch Wi‑Fi / Ethernet for drops so SMB pools are torn down before half-open sockets
+     * hang folder list / reader for full soTimeout. Cellular-only is ignored (LAN shares).
+     */
+    private fun registerSmbNetworkCallback() {
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
+            .build()
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onLost(network: Network) {
+                SmbGateway.onNetworkLost()
+            }
+
+            override fun onAvailable(network: Network) {
+                SmbGateway.onNetworkAvailable()
+            }
+        }
+        runCatching {
+            connectivityManager.registerNetworkCallback(request, callback)
+        }.onFailure {
+            logcat(it)
+        }
     }
 
     override fun newImageLoader(context: Context) = context.imageLoader {
