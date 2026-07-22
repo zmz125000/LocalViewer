@@ -396,7 +396,17 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(stringResource(R.string.browse_galleries))
                                 }
-                                items(galleries, key = { "g-${it.name}-${it.hashCode()}" }) { entry ->
+                                items(
+                                    galleries,
+                                    key = { entry ->
+                                        when (entry) {
+                                            // path distinguishes self-as-gallery vs child gallery with same name
+                                            is BrowseEntry.FolderGallery -> "g-${entry.path}"
+                                            is BrowseEntry.ArchiveGallery -> "a-${entry.path}"
+                                            is BrowseEntry.Directory -> "d-${entry.path}"
+                                        }
+                                    },
+                                ) { entry ->
                                     when (entry) {
                                         is BrowseEntry.FolderGallery -> BrowseFolderGalleryGridItem(
                                             name = entry.name,
@@ -432,7 +442,16 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 item(key = "hdr-gal") {
                                     BrowseSectionHeader(stringResource(R.string.browse_galleries))
                                 }
-                                items(galleries, key = { "g-${it.name}-${it.hashCode()}" }) { entry ->
+                                items(
+                                    galleries,
+                                    key = { entry ->
+                                        when (entry) {
+                                            is BrowseEntry.FolderGallery -> "g-${entry.path}"
+                                            is BrowseEntry.ArchiveGallery -> "a-${entry.path}"
+                                            is BrowseEntry.Directory -> "d-${entry.path}"
+                                        }
+                                    },
+                                ) { entry ->
                                     when (entry) {
                                         is BrowseEntry.FolderGallery -> BrowseFolderGalleryRow(
                                             name = entry.name,
