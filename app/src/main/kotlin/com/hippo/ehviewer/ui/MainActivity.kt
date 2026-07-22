@@ -38,6 +38,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -87,6 +88,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -111,6 +113,7 @@ import com.ehviewer.core.ui.icons.EhIcons
 import com.ehviewer.core.ui.icons.filled.Subscriptions
 import com.ehviewer.core.ui.util.LocalSnackBarFabPadding
 import com.ehviewer.core.ui.util.LocalWindowSizeClass
+import com.ehviewer.core.ui.util.isExpanded
 import com.ehviewer.core.ui.util.isMediumWidthOrWider
 import com.ehviewer.core.util.isAtLeastQ
 import com.ehviewer.core.util.isAtLeastR
@@ -502,30 +505,43 @@ class MainActivity : AppCompatActivity() {
                             enter = slideInHorizontally { -it } + fadeIn(),
                             // exit = slideOutHorizontally { -it } + fadeOut(),
                         ) {
+                            // M3 NavigationRail is top-aligned with 4.dp item spacing
+                            // (NavigationRailVerticalPadding). No header/FAB → center the
+                            // destination cluster for reachability on tall tablet rails.
+                            // Medium (phone landscape): keep MD3 4.dp. Expanded (tablet):
+                            // open to 12.dp so four labeled destinations aren't a tight stick.
                             NavigationRail(modifier = Modifier.fillMaxHeight()) {
-                                Spacer(Modifier.height(8.dp))
-                                mainNavItems.forEach { item ->
-                                    val selected = selectedTab == item.direction
-                                    NavigationRailItem(
-                                        selected = selected,
-                                        onClick = {
-                                            navigateMainTab(navigator, item, selectedTab)
-                                        },
-                                        icon = {
-                                            Icon(
-                                                imageVector = if (selected) {
-                                                    item.selectedIcon
-                                                } else {
-                                                    item.unselectedIcon
-                                                },
-                                                contentDescription = null,
-                                            )
-                                        },
-                                        label = {
-                                            Text(text = stringResource(id = item.labelRes))
-                                        },
-                                    )
+                                Spacer(Modifier.weight(1f))
+                                val itemSpacing =
+                                    if (windowSizeClass.isExpanded) 12.dp else 4.dp
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(itemSpacing),
+                                ) {
+                                    mainNavItems.forEach { item ->
+                                        val selected = selectedTab == item.direction
+                                        NavigationRailItem(
+                                            selected = selected,
+                                            onClick = {
+                                                navigateMainTab(navigator, item, selectedTab)
+                                            },
+                                            icon = {
+                                                Icon(
+                                                    imageVector = if (selected) {
+                                                        item.selectedIcon
+                                                    } else {
+                                                        item.unselectedIcon
+                                                    },
+                                                    contentDescription = null,
+                                                )
+                                            },
+                                            label = {
+                                                Text(text = stringResource(id = item.labelRes))
+                                            },
+                                        )
+                                    }
                                 }
+                                Spacer(Modifier.weight(1f))
                             }
                         }
                         MutableSideSheet(
