@@ -11,10 +11,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -314,10 +318,16 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         )
     }
 
+    // Zero content insets: NavigationRail already sits in a sibling Row, so default
+    // Scaffold safeDrawing would re-apply the start system inset as a huge left gap.
+    // Library/History (SearchBarScreen) already use contentWindowInsets = 0.
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.browse)) },
+                // Only status-bar top; start/end are handled by the rail / content edge.
+                windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 actions = {
                     IconButton(
                         onClick = { launchAddLocalSource(LIBRARY_ROOT_ROLE_LIBRARY) },
