@@ -16,7 +16,7 @@
 
 <h1 align="center">
   <img src="https://github.com/zmz125000/LocalViewer-art/blob/master/launcher_icon-web.svg" width="200" alt="EhViewer">
-  <br>EhViewer<br>
+  <br>LocalViewer<br>
 </h1>
 
 <p align="center">
@@ -63,19 +63,24 @@
 
 # Description
 
-A modern EhViewer fork dedicated to high-performance
+A High performance Android SMB image viewer/comic reader with network gallery folder support.
 
 with [Material Design 3](https://m3.material.io/)
 and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) Support
+
+## Features
+* Webtoon gallery reader.
+* Double tap to go to next folder.
+* Optimized app navigation flow for deep folder path.
+* High performance smbj client with concurrent connections support.
+* Network gallery folders recognition with fast cover loading.
+* High performance reader with cache from EhViewer. 
 
 # Download
 
 | Flavor      | Minimum Android Version | Notes                          |
 |-------------|-------------------------|--------------------------------|
-| Default     | 8.0                     | Full support                   |
-| Marshmallow | 6.0*                    | Limited support, no guarantees |
-
-*Devices running Android 6 need to have the [ISRG Root X1](https://letsencrypt.org/certs/isrgrootx1.pem) certificate installed
+| Default     | 12L                     | Full support                   |
 
 <a href="https://github.com/zmz125000/LocalViewer/releases">
 <img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
@@ -106,8 +111,8 @@ Here is the libraries
     Copyright 2022-2023 Tarsin Norbin
     Copyright 2023-2024 Foolbar
 
-    EhViewer is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+    LocalViewer is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
-    EhViewer is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+    LocalViewer is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License along with EhViewer. If not, see <https://www.gnu.org/licenses/>.
