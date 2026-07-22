@@ -414,7 +414,7 @@
     <string name="settings_download_concurrency">Concurrency download</string>
     <string name="settings_download_concurrency_summary">Up to %s images</string>
     <string name="settings_smb_concurrency">SMB concurrent connections</string>
-    <string name="settings_smb_concurrency_summary">Up to %s parallel transfers (seek + prefetch)</string>
+    <string name="settings_smb_concurrency_summary">Up to %s sessions per host (shared by all shares on that server; seek + prefetch)</string>
     <string name="settings_upgrade_saf_to_media">Prefer MediaStore for folder access</string>
     <string name="settings_upgrade_saf_to_media_summary">Use MediaStore for instant media scans. Off for local archive support and skips media permission prompts (better privacy).</string>
     <string name="settings_reader_preload_image">Reader preload</string>

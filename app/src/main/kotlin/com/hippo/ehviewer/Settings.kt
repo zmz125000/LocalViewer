@@ -100,8 +100,11 @@ object Settings : DataStorePreferences(null) {
     // Download
     val mediaScan = boolPref("media_scan", false).observed(::updateWhenKeepMediaStatusChanges)
 
-    /** SMB concurrent connections (Advanced). Default: 5. */
-    val multiThreadDownload = intPref("download_thread_2", 5)
+    /**
+     * SMB concurrent connections **per host** (Advanced). Default: 3.
+     * Shared by all sources on the same host:port; stays well under Win11 Pro’s ~20 inbound cap.
+     */
+    val multiThreadDownload = intPref("download_thread_2", 3)
     val downloadDelay = intPref("download_delay_3", 1000)
     val timeoutSpeed = intPref("timeout_speed_level", 6)
     val preloadImage = intPref("preload_image_2", 5)

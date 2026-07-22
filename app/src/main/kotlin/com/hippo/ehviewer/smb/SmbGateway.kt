@@ -57,43 +57,40 @@ import kotlin.coroutines.coroutineContext
 import kotlin.math.min
 
 /**
- * smbj helper with a **per-source exclusive connection pool** + **foreground keep-alive**.
+ * smbj helper with a **per-host connection pool** (shared by all sources on that host:port).
  *
- * ## Network path changes + keep-alive
- * - [onNetworkPathChanged] drops sessions only on **real** default-network switch/loss or
- *   VPN up/down — **not** on [onLinkPropertiesChanged] spam (IPv6/DNS/DHCP), which previously
- *   closed every free session within seconds on a stable LAN (looked like keep-alive failure
- *   in Windows logs).
- * - Free sessions are kept warm with a periodic share probe (~45s). In-use sessions rely on I/O.
- * - Per-host **circuit breaker** on real open failures only (not keep-alive probe noise).
- * - New connects are **serialized per host** after recovery.
+ * ## Pool model
+ * - **One pool per `host:port`** — all SMB sources on that server share the same budget
+ *   ([maxConnectionsPerHost], default 3) so we stay well under Win11 Pro’s ~20 inbound cap
+ *   even with several share entries.
+ * - Sessions are **credential + share aware**: a free session is only reused when its
+ *   [LiveShare.fingerprint] matches (host, port, share, pathPrefix, user, domain, password).
+ *   Different users/passwords never share a TCP session; they only share the host slot count.
+ * - **Host full** (our cap or Win11 `STATUS_REQUEST_NOT_ACCEPTED`): do **not** wipe good
+ *   sessions. Wait for a free matching session, or free an idle *other* fingerprint slot to
+ *   open the one we need. Never [disconnectHost] just because open was rejected as full.
  *
- * Pool size follows [Settings.multiThreadDownload] (SMB concurrency in Advanced).
+ * ## Keep-alive / network path
+ * - Free sessions ping ~45s; path-change drops only on real default/VPN identity changes.
+ *
+ * Concurrency setting: [Settings.multiThreadDownload] (Advanced → SMB concurrent connections).
  */
 object SmbGateway {
+    /** Absolute max sessions per host (matches Advanced menu upper bound). */
     private const val POOL_CAPACITY = 7
 
-    /**
-     * Application keep-alive interval for **free** pooled sessions.
-     * Win11 session idle is typically many minutes; ~45s keeps NAT/middleboxes happy without
-     * spamming CREATE (folderExists) traffic. In-use sessions are kept alive by real I/O.
-     */
     private const val KEEPALIVE_INTERVAL_MS = 45_000L
-
     private const val ACQUIRE_WAIT_MS = 8_000L
-    private const val POOL_HARD_CAP = POOL_CAPACITY + 2
-
-    /**
-     * Fail-fast on dead radio. Bulk reads still progress while data flows; a black-holed peer
-     * must not sit for minutes × retries × pool size.
-     */
     private const val SMB_IO_TIMEOUT_SEC = 20L
-
-    /** Initial cooldown after network-unreachable (grows exponentially). */
     private const val COOLDOWN_BASE_MS = 3_000L
     private const val COOLDOWN_MAX_MS = 60_000L
+    private const val PATH_CHANGE_DEBOUNCE_MS = 1_000L
 
-    fun maxConnectionsPerSource(): Int = Settings.multiThreadDownload.value.coerceIn(1, POOL_CAPACITY)
+    /** Max concurrent SMB sessions **per host:port** (shared by all sources on that host). */
+    fun maxConnectionsPerHost(): Int = Settings.multiThreadDownload.value.coerceIn(1, POOL_CAPACITY)
+
+    /** @deprecated Use [maxConnectionsPerHost] — pool is host-scoped, not per-source. */
+    fun maxConnectionsPerSource(): Int = maxConnectionsPerHost()
 
     private val config: SmbConfig = SmbConfig.builder()
         .withNegotiatedBufferSize()
@@ -102,20 +99,17 @@ object SmbGateway {
         .withSocketFactory(KeepAliveSocketFactory)
         .build()
 
-    private val pools = ConcurrentHashMap<Long, SourcePool>()
+    /** host:port → pool */
+    private val hostPools = ConcurrentHashMap<String, HostPool>()
     private val poolCreateLock = Mutex()
+
+    /** sourceId → hostKey (for disconnect / bookkeeping). */
+    private val sourceIdToHostKey = ConcurrentHashMap<Long, String>()
     private val hostKeyToSourceIds = ConcurrentHashMap<String, MutableSet<Long>>()
 
-    /** Serialize TCP+auth per host to avoid Win11 STATUS_REQUEST_NOT_ACCEPTED storms. */
     private val hostConnectLocks = ConcurrentHashMap<String, Mutex>()
-
-    /** Circuit breaker / cooldown per host:port. */
     private val hostCircuits = ConcurrentHashMap<String, HostCircuit>()
-
-    private fun sourceIdsForHost(host: String, port: Int): MutableSet<Long> =
-        hostKeyToSourceIds.getOrPut(hostKey(host, port)) {
-            java.util.concurrent.ConcurrentHashMap.newKeySet()
-        }
+    private val lastPathChangeMs = AtomicLong(0L)
 
     private val gatewayScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val listJobs = ConcurrentHashMap<String, Deferred<List<BrowseEntryRemote>>>()
@@ -143,11 +137,6 @@ object SmbGateway {
         val isConnected: Boolean
             get() = connection.isConnected
 
-        /**
-         * Cheap SMB-level keep-alive. Prefer [DiskShare.folderExists] on share root; on
-         * failure fall back to [Connection.isConnected] only if the failure is a path/ACL
-         * quirk (not transport) so a bad probe does not massacre a healthy pool.
-         */
         fun ping(): Boolean {
             if (!connection.isConnected) return false
             return try {
@@ -155,7 +144,6 @@ object SmbGateway {
                 lastUsedMs.set(System.currentTimeMillis())
                 true
             } catch (e: SMBApiException) {
-                // Share root oddities should not kill the session; transport errors should.
                 if (isIgnorableListError(e)) {
                     lastUsedMs.set(System.currentTimeMillis())
                     true
@@ -167,7 +155,6 @@ object SmbGateway {
                 if (isTransportError(e) || isNetworkUnreachable(e) || isSessionRejectError(e)) {
                     false
                 } else {
-                    // Unknown non-transport: keep session, avoid false-positive retire.
                     logcat(e)
                     lastUsedMs.set(System.currentTimeMillis())
                     true
@@ -176,11 +163,15 @@ object SmbGateway {
         }
     }
 
-    private class SourcePool(
-        var fingerprint: String,
-        private val hostPortKey: String,
-    ) {
-        private val free = Channel<LiveShare>(capacity = POOL_CAPACITY)
+    /**
+     * Shared pool for one host:port. Free list is mutex-based so we can pick by fingerprint
+     * without Channel put-back livelocks.
+     */
+    private class HostPool(val hostPortKey: String) {
+        private val free = ArrayList<LiveShare>(POOL_CAPACITY)
+        private val freeLock = Any()
+        /** Signals that something was returned to [free] (or pool changed). */
+        private val freeSignal = Channel<Unit>(Channel.CONFLATED)
         private val all = mutableListOf<LiveShare>()
         private val size = AtomicInteger(0)
         private val growLock = Mutex()
@@ -193,7 +184,6 @@ object SmbGateway {
                 while (isActive && !closed.get()) {
                     delay(KEEPALIVE_INTERVAL_MS)
                     if (closed.get()) break
-                    // Do not ping while host is cooling down (unreachable / auth storm).
                     if (isHostCoolingDown(hostPortKey)) continue
                     pingFreeSessions()
                 }
@@ -205,11 +195,15 @@ object SmbGateway {
             keepAliveJob = null
         }
 
+        private fun signalFree() {
+            freeSignal.trySend(Unit)
+        }
+
         private fun pingFreeSessions() {
-            val batch = ArrayList<LiveShare>(POOL_CAPACITY)
-            while (true) {
-                val s = free.tryReceive().getOrNull() ?: break
-                batch.add(s)
+            val batch = synchronized(freeLock) {
+                val copy = free.toList()
+                free.clear()
+                copy
             }
             if (batch.isEmpty()) return
             var kept = 0
@@ -220,29 +214,22 @@ object SmbGateway {
                     continue
                 }
                 if (live.isConnected && live.ping()) {
-                    if (!free.trySend(live).isSuccess) {
-                        // Free channel full — another producer raced; keep the live session
-                        // by force-retire only if we cannot return it (should be rare).
-                        retire(live)
-                        dropped++
-                    } else {
-                        kept++
-                    }
+                    synchronized(freeLock) { free.add(live) }
+                    kept++
                 } else {
                     retire(live)
                     dropped++
                 }
             }
+            if (kept > 0) signalFree()
             if (dropped > 0 || kept > 0) {
-                logcat { "SmbGateway: keep-alive ping done kept=$kept dropped=$dropped" }
+                logcat { "SmbGateway: keep-alive $hostPortKey kept=$kept dropped=$dropped size=${size.get()}" }
             }
-            // Do NOT trip the host circuit from keep-alive alone: a single flaky probe must
-            // not block the whole source. Circuit opens only on real withShare open failures.
         }
 
-        suspend fun <T> borrow(open: suspend () -> LiveShare, block: (DiskShare) -> T): T {
-            check(!closed.get()) { "SMB pool closed" }
-            val live = acquire(open)
+        suspend fun <T> borrow(fp: String, open: suspend () -> LiveShare, block: (DiskShare) -> T): T {
+            check(!closed.get()) { "SMB host pool closed" }
+            val live = acquire(fp, open)
             var reusable = false
             try {
                 val result = block(live.share)
@@ -251,77 +238,105 @@ object SmbGateway {
                 return result
             } finally {
                 if (reusable && !closed.get()) {
-                    if (!free.trySend(live).isSuccess) {
-                        retire(live)
-                    }
+                    putFree(live)
                 } else {
                     retire(live)
+                    signalFree()
                 }
             }
         }
 
-        private suspend fun acquire(open: suspend () -> LiveShare): LiveShare {
-            while (true) {
-                val candidate = free.tryReceive().getOrNull() ?: break
-                if (candidate.isConnected) return candidate
-                retire(candidate)
+        private fun putFree(live: LiveShare) {
+            synchronized(freeLock) { free.add(live) }
+            signalFree()
+        }
+
+        /** Non-blocking: take a free session matching [fp], purge dead entries. */
+        private fun pollFreeMatching(fp: String): LiveShare? = synchronized(freeLock) {
+            val dead = free.filter { !it.isConnected }
+            if (dead.isNotEmpty()) {
+                free.removeAll(dead.toSet())
+                dead.forEach { retire(it) }
             }
-            tryGrow(open)?.let { return it }
+            val idx = free.indexOfFirst { it.fingerprint == fp }
+            if (idx < 0) return null
+            free.removeAt(idx)
+        }
+
+        /**
+         * Free one idle session with a **different** fingerprint so we can open [fp]
+         * without exceeding the host cap (e.g. need share B while 3 free sessions are share A).
+         */
+        private fun retireOneFreeOther(fp: String): Boolean = synchronized(freeLock) {
+            val idx = free.indexOfFirst { it.fingerprint != fp }
+            if (idx < 0) return false
+            val victim = free.removeAt(idx)
+            retire(victim)
+            true
+        }
+
+        private suspend fun acquire(fp: String, open: suspend () -> LiveShare): LiveShare {
+            pollFreeMatching(fp)?.let { return it }
+            tryGrow(fp, open)?.let { return it }
 
             var waits = 0
             while (true) {
-                val candidate = withTimeoutOrNull(ACQUIRE_WAIT_MS) { free.receive() }
-                if (candidate == null) {
+                pollFreeMatching(fp)?.let { return it }
+                tryGrow(fp, open)?.let { return it }
+
+                val got = withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
+                pollFreeMatching(fp)?.let { return it }
+                if (got == null) {
                     waits++
-                    tryGrow(open)?.let { return it }
-                    if (waits >= 1) return forceOpen(open)
-                    continue
+                    if (size.get() >= maxConnectionsPerHost()) {
+                        if (retireOneFreeOther(fp)) {
+                            tryGrow(fp, open)?.let { return it }
+                        }
+                    } else {
+                        tryGrow(fp, open)?.let { return it }
+                    }
+                    if (waits >= 3) {
+                        tryGrow(fp, open)?.let { return it }
+                        error(
+                            "SMB host $hostPortKey busy: no free session for this share/user " +
+                                "(cap=${maxConnectionsPerHost()}, inUse=${size.get()})",
+                        )
+                    }
                 }
-                if (candidate.isConnected) return candidate
-                retire(candidate)
-                tryGrow(open)?.let { return it }
-                waits++
-                if (waits > POOL_CAPACITY * 2) return forceOpen(open)
             }
         }
 
-        private suspend fun tryGrow(open: suspend () -> LiveShare): LiveShare? {
-            val max = maxConnectionsPerSource()
-            if (size.get() >= max) return null
+        /**
+         * Open a new session for [fp] if under host cap.
+         * On Win11 host-full / capacity reject: return null (caller waits for free) — never wipe pool.
+         */
+        private suspend fun tryGrow(fp: String, open: suspend () -> LiveShare): LiveShare? {
+            val max = maxConnectionsPerHost()
+            if (size.get() >= max) {
+                if (!retireOneFreeOther(fp)) return null
+            }
             return growLock.withLock {
-                if (closed.get() || size.get() >= max) return@withLock null
-                val opened = open()
+                if (closed.get()) return@withLock null
+                if (size.get() >= maxConnectionsPerHost()) {
+                    if (!retireOneFreeOther(fp)) return@withLock null
+                    if (size.get() >= maxConnectionsPerHost()) return@withLock null
+                }
+                val opened = try {
+                    open()
+                } catch (e: Throwable) {
+                    if (isHostCapacityError(e)) {
+                        logcat {
+                            "SmbGateway: host $hostPortKey at capacity on open — keeping existing sessions"
+                        }
+                        return@withLock null
+                    }
+                    throw e
+                }
                 synchronized(all) { all.add(opened) }
                 size.incrementAndGet()
                 startKeepAlive()
                 opened
             }
-        }
-
-        private suspend fun forceOpen(open: suspend () -> LiveShare): LiveShare = growLock.withLock {
-            check(!closed.get()) { "SMB pool closed" }
-            if (size.get() >= maxConnectionsPerSource()) {
-                val dead = synchronized(all) { all.firstOrNull { !it.isConnected } }
-                if (dead != null) retire(dead)
-            }
-            if (size.get() >= POOL_HARD_CAP) {
-                val dead = synchronized(all) { all.firstOrNull { !it.isConnected } }
-                if (dead != null) {
-                    retire(dead)
-                } else {
-                    val freeVictim = free.tryReceive().getOrNull()
-                    if (freeVictim != null) {
-                        retire(freeVictim)
-                    } else {
-                        error("SMB connection pool exhausted (all sessions busy)")
-                    }
-                }
-            }
-            val opened = open()
-            synchronized(all) { all.add(opened) }
-            size.incrementAndGet()
-            startKeepAlive()
-            opened
         }
 
         fun retire(live: LiveShare) {
@@ -332,12 +347,26 @@ object SmbGateway {
             live.closeQuietly()
         }
 
+        fun retireMatchingFingerprint(fp: String) {
+            synchronized(freeLock) {
+                free.removeAll { it.fingerprint == fp }
+            }
+            val doomed = synchronized(all) {
+                all.filter { it.fingerprint == fp }.also { list ->
+                    all.removeAll(list.toSet())
+                }
+            }
+            doomed.forEach { live ->
+                size.updateAndGet { (it - 1).coerceAtLeast(0) }
+                live.closeQuietly()
+            }
+            signalFree()
+        }
+
         fun closeAll() {
             closed.set(true)
             stopKeepAlive()
-            while (true) {
-                free.tryReceive().getOrNull() ?: break
-            }
+            synchronized(freeLock) { free.clear() }
             val snapshot = synchronized(all) {
                 val copy = all.toList()
                 all.clear()
@@ -345,9 +374,8 @@ object SmbGateway {
             }
             size.set(0)
             snapshot.forEach { it.closeQuietly() }
+            signalFree()
         }
-
-        fun fingerprintMatches(fp: String) = fingerprint == fp
     }
 
     private fun auth(source: SmbSourceEntity, password: String): AuthenticationContext {
@@ -355,8 +383,12 @@ object SmbGateway {
         return AuthenticationContext(user, password.toCharArray(), source.domain)
     }
 
+    /**
+     * Identity of a reusable session: same host/share/user/password can share a LiveShare
+     * across source rows; different passwords never mix.
+     */
     private fun fingerprint(source: SmbSourceEntity, password: String): String = buildString {
-        append(source.host)
+        append(source.host.trim().lowercase(Locale.US))
         append('|')
         append(source.port)
         append('|')
@@ -390,8 +422,12 @@ object SmbGateway {
 
     private fun hostKey(host: String, port: Int) = "${host.trim().lowercase(Locale.US)}:$port"
 
-    private fun trackHost(source: SmbSourceEntity) {
-        sourceIdsForHost(source.host, source.port).add(source.id)
+    private fun trackSource(source: SmbSourceEntity) {
+        val key = hostKey(source.host, source.port)
+        sourceIdToHostKey[source.id] = key
+        hostKeyToSourceIds.getOrPut(key) {
+            java.util.concurrent.ConcurrentHashMap.newKeySet()
+        }.add(source.id)
     }
 
     private fun isHostCoolingDown(key: String): Boolean {
@@ -420,7 +456,6 @@ object SmbGateway {
     private fun tripHostCircuit(key: String, networkUnreachable: Boolean) {
         val circuit = hostCircuits.getOrPut(key) { HostCircuit() }
         val n = circuit.failures.incrementAndGet().coerceAtMost(8)
-        // Unreachable: longer backoff (battery). Session reject: shorter but still serialize recovery.
         val base = if (networkUnreachable) COOLDOWN_BASE_MS * 2 else COOLDOWN_BASE_MS
         val cooldown = min(base * (1L shl (n - 1).coerceAtMost(5)), COOLDOWN_MAX_MS)
         circuit.cooldownUntilMs.set(System.currentTimeMillis() + cooldown)
@@ -434,71 +469,63 @@ object SmbGateway {
     }
 
     /**
-     * Drop pooled sessions for [sourceId] and session browse state for that source.
-     * Required when the source is edited (share / path / host / credentials).
+     * Source removed or credentials/path edited: drop browse cache for that source and
+     * sessions that match the old identity. Other sources on the same host keep their sessions.
      */
     fun disconnect(sourceId: Long) {
-        pools.remove(sourceId)?.closeAll()
-        hostKeyToSourceIds.values.forEach { it.remove(sourceId) }
         listJobs.keys.filter { it.startsWith("$sourceId|") }.forEach { key ->
             listJobs.remove(key)?.cancel()
         }
         BrowseSession.invalidateSmbListing(sourceId)
         BrowseSession.clearSmbSegments(sourceId)
-    }
-
-    fun disconnectAll() {
-        pools.keys.toList().forEach { disconnect(it) }
-    }
-
-    fun disconnectHost(host: String, port: Int) {
-        hostKeyToSourceIds.remove(hostKey(host, port))
-        val h = host.trim()
-        val toDrop = pools.mapNotNull { (id, pool) ->
-            val parts = pool.fingerprint.split('|')
-            val match = parts.size >= 2 &&
-                parts[0].equals(h, ignoreCase = true) &&
-                parts[1] == port.toString()
-            id.takeIf { match }
-        }
-        toDrop.forEach { id ->
-            pools.remove(id)?.closeAll()
-            listJobs.keys.filter { it.startsWith("$id|") }.forEach { key ->
-                listJobs.remove(key)?.cancel()
+        val key = sourceIdToHostKey.remove(sourceId)
+        if (key != null) {
+            hostKeyToSourceIds[key]?.remove(sourceId)
+            val remaining = hostKeyToSourceIds[key]
+            if (remaining.isNullOrEmpty()) {
+                hostKeyToSourceIds.remove(key)
+                hostPools.remove(key)?.closeAll()
             }
-            // Keep browse path cache — only sockets die.
         }
     }
 
     /**
-     * App moved to background: close SMB sockets (radio sleep → half-open).
-     * Listing cache / path segments kept.
+     * Retire sessions for a specific share/user identity (e.g. after edit before reconnect).
+     * Prefer calling after password/share change with the **old** fingerprint when known.
      */
+    fun disconnectFingerprint(host: String, port: Int, fingerprint: String) {
+        hostPools[hostKey(host, port)]?.retireMatchingFingerprint(fingerprint)
+    }
+
+    fun disconnectAll() {
+        sourceIdToHostKey.keys.toList().forEach { disconnect(it) }
+        hostPools.keys.toList().forEach { hostPools.remove(it)?.closeAll() }
+        hostKeyToSourceIds.clear()
+        sourceIdToHostKey.clear()
+    }
+
+    fun disconnectHost(host: String, port: Int) {
+        val key = hostKey(host, port)
+        hostPools.remove(key)?.closeAll()
+        hostKeyToSourceIds.remove(key)?.forEach { sid ->
+            sourceIdToHostKey.remove(sid)
+            listJobs.keys.filter { it.startsWith("$sid|") }.forEach { k ->
+                listJobs.remove(k)?.cancel()
+            }
+        }
+    }
+
     fun onAppBackgrounded() {
         logcat { "SmbGateway: app background — closing all SMB sessions" }
         dropAllSessions(cancelLists = true, clearCircuits = false)
     }
 
-    /**
-     * Debounce for bursty default-switch / VPN events (not for link-properties spam — those
-     * are filtered at the callback site).
-     */
-    private const val PATH_CHANGE_DEBOUNCE_MS = 1_000L
-    private val lastPathChangeMs = AtomicLong(0L)
-
-    /**
-     * Real connectivity identity change (default network switch/loss, VPN up/down).
-     *
-     * Drops pooled sessions that would otherwise be half-open. Does **not** run on routine
-     * LAN link-property noise (that was killing keep-alive sessions every few seconds).
-     */
     fun onNetworkPathChanged(reason: String) {
         val now = System.currentTimeMillis()
         val prev = lastPathChangeMs.getAndSet(now)
         if (prev != 0L && now - prev < PATH_CHANGE_DEBOUNCE_MS) return
 
-        val hadWork = pools.isNotEmpty() || listJobs.isNotEmpty()
-        // Clear cooldowns so VPN/5G recovery can reconnect immediately on next action.
+        val hadWork = hostPools.isNotEmpty() || listJobs.isNotEmpty()
         hostCircuits.clear()
         if (!hadWork) {
             logcat { "SmbGateway: network path changed ($reason) — idle, cooldowns cleared" }
@@ -512,8 +539,10 @@ object SmbGateway {
         if (cancelLists) {
             listJobs.keys.toList().forEach { key -> listJobs.remove(key)?.cancel() }
         }
-        pools.keys.toList().forEach { id -> pools.remove(id)?.closeAll() }
+        hostPools.keys.toList().forEach { k -> hostPools.remove(k)?.closeAll() }
         hostKeyToSourceIds.clear()
+        // Keep sourceIdToHostKey for bookkeeping? Clear — sessions are gone.
+        sourceIdToHostKey.clear()
         if (clearCircuits) hostCircuits.clear()
     }
 
@@ -557,10 +586,6 @@ object SmbGateway {
         }
     }
 
-    /**
-     * List [relativeDir] with leaf-gallery classification. Process-scoped job so composition
-     * leave does not cancel a long scan; concurrent callers share one job.
-     */
     suspend fun listDirectory(
         source: SmbSourceEntity,
         password: String,
@@ -576,8 +601,6 @@ object SmbGateway {
         }
 
         BrowseSession.getSmbListing(source.id, relativeDir)?.let { return it }
-
-        // Fail fast while circuit open (before spawning a long list job).
         ensureHostNotCoolingDown(source.host, source.port)
 
         val deferred = listJobs.compute(cacheKey) { _, existing ->
@@ -597,9 +620,6 @@ object SmbGateway {
         return try {
             deferred.await()
         } catch (e: kotlinx.coroutines.CancellationException) {
-            // If *this* caller was cancelled (nav away), propagate.
-            // If the list job was cancelled under us (network lost / force refresh), surface
-            // a normal error so SmbBrowserScreen clears the spinner instead of hanging.
             coroutineContext.ensureActive()
             throw IOException("SMB list cancelled (network lost or refresh)", e)
         }
@@ -618,7 +638,7 @@ object SmbGateway {
         val dirsToPeek = children.filter { it.isDirectory && !it.name.startsWith('.') }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
         if (dirsToPeek.isNotEmpty()) {
-            val parallelism = maxConnectionsPerSource().coerceAtLeast(1)
+            val parallelism = maxConnectionsPerHost().coerceAtLeast(1)
             val gate = Semaphore(parallelism)
             coroutineScope {
                 dirsToPeek.map { c ->
@@ -691,49 +711,53 @@ object SmbGateway {
     fun joinRelativePath(parent: String, child: String) = joinRelative(parent, child)
 
     /**
-     * Borrow one pooled connection.
+     * Borrow a host-pooled session matching this source’s credentials/share.
      *
-     * Retry policy (battery-aware after Wi‑Fi bounce):
-     * 1. Fail immediately if host circuit is open.
-     * 2. One soft retry on transient transport (stale free session).
-     * 3. On network-unreachable / session-reject: wipe host pool, trip circuit, **no** third
-     *    hammer attempt (old path opened 5× auth until STATUS_REQUEST_NOT_ACCEPTED).
+     * - Prefer free matching session (no new TCP).
+     * - Grow only under per-host cap.
+     * - Host capacity / REQUEST_NOT_ACCEPTED: keep good sessions, wait/retry free — no wipe.
+     * - True network loss: drop this host’s pool only after soft retry fails.
      */
     private suspend fun <T> withShare(
         source: SmbSourceEntity,
         password: String,
         block: (DiskShare) -> T,
     ): T = withContext(Dispatchers.IO) {
-        val id = source.id
         val fp = fingerprint(source, password)
-        trackHost(source)
+        trackSource(source)
         ensureHostNotCoolingDown(source.host, source.port)
+        val pool = hostPoolFor(source.host, source.port)
 
         try {
-            val result = poolFor(id, fp).borrow(
-                open = { openLive(source, password, fp) },
-                block = block,
-            )
+            val result = pool.borrow(fp, open = { openLive(source, password, fp) }, block = block)
             clearHostCircuit(source.host, source.port)
             result
         } catch (first: Throwable) {
             if (first is SMBApiException && isIgnorableListError(first)) throw first
             if (first is kotlinx.coroutines.CancellationException) throw first
-            // Circuit already open / explicit cooldown message — do not retry.
             if (first is IOException && first.message?.contains("recovering") == true) throw first
+            // Host busy / our cap — surface error; good sessions remain.
+            if (first is IOException && first.message?.contains("busy:") == true) throw first
             logcat(first)
 
-            val hardFail = isNetworkUnreachable(first) || isSessionRejectError(first)
-            if (hardFail) {
+            if (isHostCapacityError(first)) {
+                // Win11 rejected a *new* session; do not kill free good ones — one more borrow wait.
+                logcat { "SmbGateway: capacity reject — retry borrow without wiping host pool" }
+                return@withContext pool.borrow(fp, open = { openLive(source, password, fp) }, block = block)
+            }
+
+            if (isNetworkUnreachable(first)) {
+                // Radio/host dead: drop this host only, trip circuit (battery).
                 disconnectHost(source.host, source.port)
                 tripHostCircuit(source.host, source.port, first)
                 throw first
             }
 
-            // Soft: one more try on a fresh session (half-open free member).
+            // Soft: one retry (stale free member). Do not disconnectHost on session reject alone.
             try {
-                trackHost(source)
-                val result = poolFor(id, fp).borrow(
+                trackSource(source)
+                val result = hostPoolFor(source.host, source.port).borrow(
+                    fp,
                     open = { openLive(source, password, fp) },
                     block = block,
                 )
@@ -742,8 +766,9 @@ object SmbGateway {
             } catch (second: Throwable) {
                 if (second is kotlinx.coroutines.CancellationException) throw second
                 logcat(second)
-                disconnectHost(source.host, source.port)
-                if (isTransportError(second) || isNetworkUnreachable(second) || isSessionRejectError(second)) {
+                if (isHostCapacityError(second)) throw second
+                if (isNetworkUnreachable(second) || isTransportError(second)) {
+                    disconnectHost(source.host, source.port)
                     tripHostCircuit(source.host, source.port, second)
                 }
                 throw second
@@ -751,21 +776,11 @@ object SmbGateway {
         }
     }
 
-    private suspend fun poolFor(id: Long, fp: String): SourcePool {
-        pools[id]?.let { existing ->
-            if (existing.fingerprintMatches(fp)) return existing
-        }
+    private suspend fun hostPoolFor(host: String, port: Int): HostPool {
+        val key = hostKey(host, port)
+        hostPools[key]?.let { return it }
         return poolCreateLock.withLock {
-            val existing = pools[id]
-            if (existing != null && existing.fingerprintMatches(fp)) return@withLock existing
-            existing?.closeAll()
-            val parts = fp.split('|')
-            val key = if (parts.size >= 2) {
-                hostKey(parts[0], parts[1].toIntOrNull() ?: 445)
-            } else {
-                "unknown:445"
-            }
-            SourcePool(fp, key).also { pools[id] = it }
+            hostPools.getOrPut(key) { HostPool(key) }
         }
     }
 
@@ -832,9 +847,6 @@ private fun isTransportError(t: Throwable): Boolean {
     return false
 }
 
-/**
- * Radio down / host not reachable — must not retry hard (battery + STATUS_REQUEST_NOT_ACCEPTED).
- */
 private fun isNetworkUnreachable(t: Throwable): Boolean {
     var cur: Throwable? = t
     while (cur != null) {
@@ -862,22 +874,18 @@ private fun isNetworkUnreachable(t: Throwable): Boolean {
 }
 
 /**
- * Win11 rejecting more sessions / NTLM after reconnect storm
- * (`STATUS_REQUEST_NOT_ACCEPTED` 0xC00000D0 / “Authentication failed for …”).
+ * Server refused *another* session (Win11 Pro ~20 cap, or our reconnect storm).
+ * Must NOT wipe existing good pooled sessions.
  */
-private fun isSessionRejectError(t: Throwable): Boolean {
+private fun isHostCapacityError(t: Throwable): Boolean {
     var cur: Throwable? = t
     while (cur != null) {
         if (cur is SMBApiException) {
-            // Compare by name so we do not depend on every NtStatus constant existing.
             val statusName = cur.status.name
             if (statusName.contains("REQUEST_NOT_ACCEPTED") ||
-                statusName.contains("NETWORK_SESSION_EXPIRED") ||
-                statusName.contains("USER_SESSION_DELETED") ||
-                statusName.contains("CONNECTION_DISCONNECTED") ||
-                statusName.contains("CONNECTION_RESET") ||
-                statusName.contains("LOGON_FAILURE") ||
-                statusName.contains("PASSWORD_EXPIRED")
+                statusName.contains("TOO_MANY_SESSIONS") ||
+                statusName.contains("INSUFF_SERVER_RESOURCES") ||
+                statusName.contains("REQUEST_NOT_ACCEPTED")
             ) {
                 return true
             }
@@ -887,7 +895,35 @@ private fun isSessionRejectError(t: Throwable): Boolean {
         val msg = cur.message.orEmpty()
         if (msg.contains("STATUS_REQUEST_NOT_ACCEPTED", ignoreCase = true) ||
             msg.contains("0xc00000d0", ignoreCase = true) ||
-            msg.contains("Authentication failed", ignoreCase = true) ||
+            msg.contains("too many", ignoreCase = true) ||
+            msg.contains("connection limit", ignoreCase = true)
+        ) {
+            return true
+        }
+        cur = cur.cause
+    }
+    return false
+}
+
+/** Session dead / auth expired — not necessarily “host full”. */
+private fun isSessionRejectError(t: Throwable): Boolean {
+    if (isHostCapacityError(t)) return true
+    var cur: Throwable? = t
+    while (cur != null) {
+        if (cur is SMBApiException) {
+            val statusName = cur.status.name
+            if (statusName.contains("NETWORK_SESSION_EXPIRED") ||
+                statusName.contains("USER_SESSION_DELETED") ||
+                statusName.contains("CONNECTION_DISCONNECTED") ||
+                statusName.contains("CONNECTION_RESET") ||
+                statusName.contains("LOGON_FAILURE") ||
+                statusName.contains("PASSWORD_EXPIRED")
+            ) {
+                return true
+            }
+        }
+        val msg = cur.message.orEmpty()
+        if (msg.contains("Authentication failed", ignoreCase = true) ||
             msg.contains("STATUS_NETWORK_SESSION_EXPIRED", ignoreCase = true) ||
             msg.contains("STATUS_USER_SESSION_DELETED", ignoreCase = true)
         ) {

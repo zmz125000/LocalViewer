@@ -22,7 +22,7 @@ import okio.Path
 
 /**
  * SMB folder reader with seek-friendly downloads:
- * - Connection pool ([SmbGateway.maxConnectionsPerSource]) so a seekbar jump can start
+ * - Host connection pool ([SmbGateway.maxConnectionsPerHost]) so a seekbar jump can start
  *   on a free TCP session without waiting for the current page transfer to finish.
  * - One reserved interactive slot for [onRequest]; prefetch uses the remaining slots
  *   (when pool size is 1, both share the same slot).
@@ -41,7 +41,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
         check(imageFileNames.isNotEmpty()) { "No images in SMB folder" }
         val password = SmbPasswordStore.get(source.id)
         val size = imageFileNames.size
-        val poolSize = SmbGateway.maxConnectionsPerSource()
+        val poolSize = SmbGateway.maxConnectionsPerHost()
         // Reserve 1 connection for the page the user is looking at / just seeked to.
         val interactiveSlots = Semaphore(1)
         val prefetchSlots = if (poolSize <= 1) {
