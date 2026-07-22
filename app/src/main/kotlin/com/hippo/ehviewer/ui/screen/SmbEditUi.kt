@@ -219,11 +219,6 @@ fun SmbEditDialog(
                 ) {
                     Column(Modifier.weight(1f).padding(end = 12.dp)) {
                         Text(stringResource(R.string.network_anonymous_login))
-                        Text(
-                            text = stringResource(R.string.network_anonymous_login_summary),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
                     Switch(
                         checked = anonymous,
