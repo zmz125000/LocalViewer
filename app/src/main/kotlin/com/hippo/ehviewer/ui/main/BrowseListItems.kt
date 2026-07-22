@@ -21,8 +21,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -37,6 +39,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil3.compose.AsyncImage
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.ElevatedCard
@@ -81,6 +86,8 @@ fun BrowseFolderGalleryRow(
     /** @deprecated Prefer [cover]. */
     coverPath: Path? = null,
     pageCountCapped: Boolean = false,
+    /** See [BrowseCoverThumb.retryKey] (SMB pull-to-refresh / parent bump). */
+    thumbRetryKey: Any? = null,
 ) {
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
     ListItem(
@@ -98,6 +105,7 @@ fun BrowseFolderGalleryRow(
             BrowseCoverThumb(
                 cover = resolvedCover,
                 decodeSizePx = CoverThumb.listDecodePx(),
+                retryKey = thumbRetryKey,
             )
         },
         modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -160,6 +168,7 @@ fun BrowseFolderGalleryGridItem(
     modifier: Modifier = Modifier,
     cover: BrowseCover? = null,
     pageCountCapped: Boolean = false,
+    thumbRetryKey: Any? = null,
 ) {
     BrowseGridCell(
         name = name,
@@ -177,6 +186,7 @@ fun BrowseFolderGalleryGridItem(
                         margin = GalleryGridDefaults.margin(),
                         gutter = GalleryGridDefaults.gutter(),
                     ),
+                    retryKey = thumbRetryKey,
                 )
                 if (pageCount > 0 || pageCountCapped) {
                     Badge(
@@ -277,6 +287,11 @@ fun BrowseCoverThumb(
     modifier: Modifier = Modifier.size(56.dp),
     placeholderSize: Dp = 24.dp,
     decodeSizePx: Int? = null,
+    /**
+     * Bumped by parent (e.g. SMB browse [refreshToken]) to clear sticky fail and re-fetch.
+     * ON_RESUME also bumps an internal epoch for the same purpose.
+     */
+    retryKey: Any? = null,
 ) {
     val resolvedDecodePx = decodeSizePx ?: CoverThumb.listDecodePx()
     val context = LocalContext.current
@@ -293,13 +308,39 @@ fun BrowseCoverThumb(
         )
     }
     var fetchFailed by remember(cover) { mutableStateOf(false) }
+    // Internal resume counter + external retryKey both re-run the download effect.
+    var resumeEpoch by remember(cover) { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, cover) {
+        if (cover !is BrowseCover.Smb) {
+            return@DisposableEffect onDispose { }
+        }
+        val smb = cover
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val cache = SmbCache.cachePathForRemoteFile(smb.sourceId, smb.remoteRelativeFile)
+                if (SmbCache.isCached(cache)) {
+                    localPath = cache
+                    fetchFailed = false
+                } else if (localPath == null) {
+                    // Pool sockets were closed on background; allow another 3-attempt cycle.
+                    fetchFailed = false
+                    resumeEpoch++
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // Lazy: only runs when this row is composed (in LazyColumn viewport).
     // Retry a few times — a single broken-pipe on a pooled connection must not
     // permanently blank gallery thumbs while scrolling the browse list.
-    LaunchedEffect(cover) {
+    LaunchedEffect(cover, retryKey, resumeEpoch) {
         val smb = cover as? BrowseCover.Smb ?: return@LaunchedEffect
-        if (localPath != null || fetchFailed) return@LaunchedEffect
+        if (localPath != null) return@LaunchedEffect
+        // Parent refresh / resume clears sticky fail for a new attempt cycle.
+        fetchFailed = false
         val cache = SmbCache.cachePathForRemoteFile(smb.sourceId, smb.remoteRelativeFile)
         if (SmbCache.isCached(cache)) {
             localPath = cache
@@ -317,6 +358,7 @@ fun BrowseCoverThumb(
             }
             if (result.isSuccess) {
                 localPath = result.getOrNull()
+                fetchFailed = false
                 return@LaunchedEffect
             }
             lastError = result.exceptionOrNull()

@@ -64,6 +64,9 @@ import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import arrow.core.Either
 import arrow.core.Either.Companion.catch
 import arrow.core.raise.ensure
@@ -284,6 +287,32 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     var appbarVisible by remember { mutableStateOf(false) }
     val isWebtoon by rememberUpdatedState(ReadingModeType.isWebtoon(readingMode))
     val focusRequester = remember { FocusRequester() }
+
+    // SMB: after app background, pool sockets are closed (ON_STOP). Re-request the
+    // current page (and nearby errors) so the reader recovers without a manual retry.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val currentArgs by rememberUpdatedState(args)
+    val currentLoader by rememberUpdatedState(pageLoader)
+    val currentPage1 by rememberUpdatedState(syncState.sliderValue)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
+            if (currentArgs !is ReaderScreenArgs.SmbFolder) return@LifecycleEventObserver
+            val loader = currentLoader
+            if (loader.size <= 0) return@LifecycleEventObserver
+            val center = (currentPage1 - 1).coerceIn(0, loader.size - 1)
+            val from = (center - 2).coerceAtLeast(0)
+            val to = (center + 2).coerceAtMost(loader.size - 1)
+            for (i in from..to) {
+                when (loader.pages[i].status) {
+                    is PageStatus.Ready, is PageStatus.Blocked -> Unit
+                    else -> loader.retryPage(i)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     Box(
         Modifier.keyEventHandler(
             volumeKeysEnabled = { volumeKeysEnabled && !appbarVisible },

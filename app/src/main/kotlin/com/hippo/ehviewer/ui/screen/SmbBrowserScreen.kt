@@ -478,6 +478,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 pageCount = entry.pageCount,
                                                 pageCountCapped = entry.pageCountCapped,
                                                 cover = coverFor(entry),
+                                                thumbRetryKey = refreshToken,
                                                 onClick = { openFolderGallery(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
@@ -516,6 +517,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 pageCount = entry.pageCount,
                                                 pageCountCapped = entry.pageCountCapped,
                                                 cover = coverFor(entry),
+                                                thumbRetryKey = refreshToken,
                                                 onClick = { openFolderGallery(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
