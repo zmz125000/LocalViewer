@@ -123,8 +123,8 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                 }
             },
         )
-        // SMB: Wi‑Fi / LAN bounce — kill half-open pools immediately and cool down reconnects
-        // so folder list does not hang on soTimeout and Win11 is not auth-stormed.
+        // SMB: any path change (Wi‑Fi, 5G, Ethernet, VPN up/down) can half-open pooled
+        // sockets — drop them before list/reader hangs on soTimeout.
         registerSmbNetworkCallback()
         launchIO {
             @Suppress("UNUSED_EXPRESSION")
@@ -167,25 +167,54 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
     }
 
     /**
-     * Watch Wi‑Fi / Ethernet for drops so SMB pools are torn down before half-open sockets
-     * hang folder list / reader for full soTimeout. Cellular-only is ignored (LAN shares).
+     * Generic connectivity watch for SMB — not LAN/Wi‑Fi only.
+     *
+     * Covers: Wi‑Fi, Ethernet, cellular (5G/LTE), VPN (TRANSPORT_VPN / tunnel as default),
+     * and public hosts over any of the above. Any of these changing can leave smbj TCP
+     * sessions half-open while [Connection.isConnected] still looks fine.
+     *
+     * Uses [ConnectivityManager.registerDefaultNetworkCallback] for the system default
+     * route (common Wi‑Fi↔cell and VPN-as-default cases) **and** a broad INTERNET request
+     * so split-tunnel VPN networks that are not the default still fire on up/down.
      */
     private fun registerSmbNetworkCallback() {
-        val request = NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
-            .build()
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onLost(network: Network) {
-                SmbGateway.onNetworkLost()
+        val pathCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                SmbGateway.onNetworkPathChanged("available")
             }
 
-            override fun onAvailable(network: Network) {
-                SmbGateway.onNetworkAvailable()
+            override fun onLost(network: Network) {
+                SmbGateway.onNetworkPathChanged("lost")
+            }
+
+            override fun onLinkPropertiesChanged(network: Network, linkProperties: android.net.LinkProperties) {
+                // Routes / DNS / VPN interface addresses — typical on VPN toggle & handoff.
+                SmbGateway.onNetworkPathChanged("link")
             }
         }
         runCatching {
-            connectivityManager.registerNetworkCallback(request, callback)
+            // Default route changes (Wi‑Fi lost, cell becomes default, full-tunnel VPN).
+            connectivityManager.registerDefaultNetworkCallback(pathCallback)
+        }.onFailure {
+            logcat(it)
+        }
+        runCatching {
+            // Any INTERNET-providing network including VPN that is not the default (split tunnel).
+            val anyInternet = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            connectivityManager.registerNetworkCallback(
+                anyInternet,
+                object : ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: Network) {
+                        SmbGateway.onNetworkPathChanged("net-available")
+                    }
+
+                    override fun onLost(network: Network) {
+                        SmbGateway.onNetworkPathChanged("net-lost")
+                    }
+                },
+            )
         }.onFailure {
             logcat(it)
         }

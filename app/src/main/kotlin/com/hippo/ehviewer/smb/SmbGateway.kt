@@ -59,12 +59,14 @@ import kotlin.math.min
 /**
  * smbj helper with a **per-source exclusive connection pool** + **foreground keep-alive**.
  *
- * ## Network loss / Wi‑Fi bounce
- * - [onNetworkLost] drops every session + cancels list jobs immediately (half-open sockets
- *   after radio drop hang for soTimeout otherwise → folder spinner forever).
- * - Per-host **circuit breaker**: unreachable / auth-storm failures open a cooldown so we do
- *   not open N TCP+NTLM sessions every few seconds and drain battery (or trip
- *   `STATUS_REQUEST_NOT_ACCEPTED` on Win11 from reconnect storms).
+ * ## Network path changes (generic — not LAN/Wi‑Fi only)
+ * - [onNetworkPathChanged] drops every session + cancels list jobs on **any** path change:
+ *   Wi‑Fi, Ethernet, cellular (5G), VPN up/down, default-route handoff, split-tunnel VPN.
+ *   Half-open TCP after a path change hangs for soTimeout otherwise → folder spinner forever.
+ * - Per-host **circuit breaker**: real unreachable / auth-storm failures open a cooldown so we
+ *   do not open N TCP+NTLM sessions every few seconds offline (battery + Win11
+ *   `STATUS_REQUEST_NOT_ACCEPTED`). Path change alone clears cooldowns so VPN/5G recovery
+ *   can reconnect on the next user action without waiting out a stale offline cooldown.
  * - New connects are **serialized per host** — parallel peeks reuse the free list; only one
  *   fresh authenticate at a time after recovery.
  *
@@ -448,32 +450,36 @@ object SmbGateway {
     }
 
     /**
-     * Connectivity lost (Wi‑Fi / LAN down). Drop every session and cancel list walks so the UI
-     * does not await a hung soTimeout. Opens host circuits lightly so keep-alive / retries
-     * do not hammer the radio while offline.
+     * Debounce window for [onNetworkPathChanged]. VPN / handoff often emits available+link+
+     * capabilities in a burst; one drop is enough.
      */
-    fun onNetworkLost() {
-        logcat { "SmbGateway: network lost — closing SMB sessions + cancelling lists" }
-        // Trip all known hosts so openLive fails fast until cooldown / networkAvailable.
-        hostKeyToSourceIds.keys.forEach { key ->
-            tripHostCircuit(key, networkUnreachable = true)
-        }
-        pools.values.forEach { pool ->
-            val parts = pool.fingerprint.split('|')
-            if (parts.size >= 2) {
-                tripHostCircuit(hostKey(parts[0], parts[1].toIntOrNull() ?: 445), networkUnreachable = true)
-            }
-        }
-        dropAllSessions(cancelLists = true, clearCircuits = false)
-    }
+    private const val PATH_CHANGE_DEBOUNCE_MS = 750L
+    private val lastPathChangeMs = AtomicLong(0L)
 
     /**
-     * Connectivity restored. Clear cooldowns so the next user action can reconnect immediately
-     * (still serialized per host; no mass parallel authenticate).
+     * Any connectivity path change that can invalidate existing SMB TCP sessions.
+     *
+     * Call sites: default-network callback + any INTERNET network (Wi‑Fi, cell, Ethernet, VPN).
+     * - Always tears down pools / in-flight lists (stale sockets hang UI).
+     * - Clears host cooldowns so recovery after VPN/5G toggle is immediate on next action.
+     * - Offline hammering is still limited: the next failed openLive trips the circuit breaker.
+     * - No-op when nothing is pooled and no list jobs (cheap; avoids work on background churn).
      */
-    fun onNetworkAvailable() {
-        logcat { "SmbGateway: network available — clearing host cooldowns" }
+    fun onNetworkPathChanged(reason: String) {
+        val now = System.currentTimeMillis()
+        val prev = lastPathChangeMs.getAndSet(now)
+        if (prev != 0L && now - prev < PATH_CHANGE_DEBOUNCE_MS) return
+
+        val hadWork = pools.isNotEmpty() || listJobs.isNotEmpty()
+        // Always clear cooldowns on path change so "VPN just came up" is not blocked by an
+        // offline circuit opened while the tunnel was down.
         hostCircuits.clear()
+        if (!hadWork) {
+            logcat { "SmbGateway: network path changed ($reason) — idle, cooldowns cleared" }
+            return
+        }
+        logcat { "SmbGateway: network path changed ($reason) — dropping SMB sessions + lists" }
+        dropAllSessions(cancelLists = true, clearCircuits = false)
     }
 
     private fun dropAllSessions(cancelLists: Boolean, clearCircuits: Boolean) {
