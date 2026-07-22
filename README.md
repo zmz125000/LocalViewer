@@ -15,25 +15,25 @@
 </p>
 
 <h1 align="center">
-  <img src="https://github.com/FooIbar/EhViewer-art/blob/master/launcher_icon-web.svg" width="200" alt="EhViewer">
+  <img src="https://github.com/zmz125000/LocalViewer-art/blob/master/launcher_icon-web.svg" width="200" alt="EhViewer">
   <br>EhViewer<br>
 </h1>
 
 <p align="center">
-  <a href="https://github.com/FooIbar/EhViewer/actions/workflows/ci.yml">
-    <img src="https://github.com/FooIbar/EhViewer/actions/workflows/ci.yml/badge.svg" alt="Github Actions">
+  <a href="https://github.com/zmz125000/LocalViewer/actions/workflows/ci.yml">
+    <img src="https://github.com/zmz125000/LocalViewer/actions/workflows/ci.yml/badge.svg" alt="Github Actions">
   </a>
   <a href="/LICENSE">
-    <img src="https://img.shields.io/github/license/FooIbar/EhViewer" alt="LICENSE">
+    <img src="https://img.shields.io/github/license/zmz125000/LocalViewer" alt="LICENSE">
   </a>
-  <a href="https://www.codefactor.io/repository/github/FooIbar/EhViewer">
-    <img src="https://www.codefactor.io/repository/github/FooIbar/EhViewer/badge" alt="CodeFactor">
+  <a href="https://www.codefactor.io/repository/github/zmz125000/LocalViewer">
+    <img src="https://www.codefactor.io/repository/github/zmz125000/LocalViewer/badge" alt="CodeFactor">
   </a>
-  <a href="https://github.com/FooIbar/EhViewer/releases">
-    <img src="https://img.shields.io/github/v/release/FooIbar/EhViewer" alt="Release">
+  <a href="https://github.com/zmz125000/LocalViewer/releases">
+    <img src="https://img.shields.io/github/v/release/zmz125000/LocalViewer" alt="Release">
   </a>
-  <a href="https://github.com/FooIbar/EhViewer/issues">
-    <img src="https://img.shields.io/github/issues/FooIbar/EhViewer" alt="Issues">
+  <a href="https://github.com/zmz125000/LocalViewer/issues">
+    <img src="https://img.shields.io/github/issues/zmz125000/LocalViewer" alt="Issues">
   </a>
 </p>
 
@@ -77,14 +77,14 @@ and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) 
 
 *Devices running Android 6 need to have the [ISRG Root X1](https://letsencrypt.org/certs/isrgrootx1.pem) certificate installed
 
-<a href="https://github.com/FooIbar/EhViewer/releases">
-<img alt="Get it on GitHub" src="https://github.com/FooIbar/EhViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
+<a href="https://github.com/zmz125000/LocalViewer/releases">
+<img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
 </a>
 
 # Screenshot
 
-![screenshots-01](https://github.com/FooIbar/EhViewer-art/blob/master/screenshots-01.webp)
-![screenshots-02](https://github.com/FooIbar/EhViewer-art/blob/master/screenshots-02.webp)
+![screenshots-01](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
+![screenshots-02](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-02.webp)
 
 # Thanks
 
