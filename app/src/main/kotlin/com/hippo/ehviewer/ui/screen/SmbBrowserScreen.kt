@@ -118,10 +118,16 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    // Scroll down hides the top bar; scroll up brings it back (enterAlways).
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
 
     val relativeDir = segments.joinToString("/")
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
+
+    // Show the bar again when entering a different folder.
+    LaunchedEffect(relativeDir) {
+        scrollBehavior.state.heightOffset = 0f
+    }
 
     /** Detect share/pathPrefix/host edits while this screen stays on the back stack. */
     var lastConfigKey by remember { mutableStateOf<String?>(null) }

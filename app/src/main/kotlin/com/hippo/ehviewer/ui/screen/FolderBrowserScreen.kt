@@ -114,7 +114,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val current = stack.lastOrNull()
     val currentPath = current?.path
     val title = current?.title ?: stringResource(R.string.folder)
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    // Scroll down hides the top bar; scroll up brings it back (enterAlways).
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+
+    // Show the bar again when entering a different folder.
+    LaunchedEffect(currentPath) {
+        scrollBehavior.state.heightOffset = 0f
+    }
 
     suspend fun reload(force: Boolean = false) {
         val frame = stack.lastOrNull()
