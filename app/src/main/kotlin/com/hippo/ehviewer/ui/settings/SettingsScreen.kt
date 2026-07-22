@@ -2,7 +2,11 @@ package com.hippo.ehviewer.ui.settings
 
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Adb
 import androidx.compose.material.icons.filled.Download
@@ -35,10 +39,16 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 @Composable
 fun AnimatedVisibilityScope.SettingsScreen(navigator: DestinationsNavigator) = Screen(navigator) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    // Zero content insets: NavigationRail already sits in a sibling Row, so default
+    // Scaffold safeDrawing would re-apply the start system inset as a huge left gap.
+    // Library/History (SearchBarScreen) already use contentWindowInsets = 0.
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text(text = stringResource(id = R.string.settings)) },
+                // Only status-bar top; start/end are handled by the rail / content edge.
+                windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 navigationIcon = { NavigationIcon() },
                 scrollBehavior = scrollBehavior,
             )
