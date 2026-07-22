@@ -284,21 +284,8 @@ fun SmbEditDialog(
             }
         },
         dismissButton = {
-            Column {
-                TextButton(
-                    onClick = { onTest(current(), currentPassword()) },
-                    enabled = host.isNotBlank() && sharePath.isNotBlank(),
-                ) {
-                    Text(stringResource(R.string.network_test))
-                }
-                if (state.id != 0L) {
-                    TextButton(onClick = { onDelete(state.id) }) {
-                        Text(stringResource(R.string.network_delete))
-                    }
-                }
-                TextButton(onClick = onDismiss) {
-                    Text(stringResource(android.R.string.cancel))
-                }
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(android.R.string.cancel))
             }
         },
     )
