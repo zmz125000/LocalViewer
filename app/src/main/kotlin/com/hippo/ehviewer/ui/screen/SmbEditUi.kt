@@ -112,11 +112,11 @@ fun SmbEditDialog(
     var username by remember { mutableStateOf(state.username) }
     var domain by remember { mutableStateOf(state.domain) }
     var password by remember { mutableStateOf(state.password) }
-    // Blank user (and guest) → treat as anonymous for edit/add.
+    // Default off for new adds. For edit, only on if already guest/blank credentials.
     var anonymous by remember {
         mutableStateOf(
-            state.username.isBlank() ||
-                state.username.equals("guest", ignoreCase = true),
+            state.id != 0L &&
+                (state.username.isBlank() || state.username.equals("guest", ignoreCase = true)),
         )
     }
 
