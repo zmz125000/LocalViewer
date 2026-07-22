@@ -275,6 +275,96 @@ fun HistoryListItem(
     }
 }
 
+/** History grid cell — same layout as [LocalGalleryGridItem], covers library + browse path rows. */
+@Composable
+fun HistoryGridItem(
+    info: GalleryInfo,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = onClick,
+    showPages: Boolean,
+    showProgress: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val kind = LocalHistory.kindLabelKey(info)
+    val placeholderIcon: ImageVector = when (kind) {
+        LocalHistory.KindLabel.Archive -> Icons.Default.Inventory2
+        LocalHistory.KindLabel.Smb -> Icons.Default.Lan
+        LocalHistory.KindLabel.Library -> Icons.AutoMirrored.Filled.InsertDriveFile
+        else -> Icons.Default.Folder
+    }
+    val nameHeight = GalleryGridDefaults.nameHeight()
+    val namePadH = GalleryGridDefaults.namePaddingH()
+    val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val gridDecodePx = CoverThumb.gridDecodePx(
+        screenWidthDp = LocalConfiguration.current.screenWidthDp,
+        columns = GalleryGridDefaults.columnCount(),
+        margin = GalleryGridDefaults.margin(),
+        gutter = GalleryGridDefaults.gutter(),
+    )
+    ElevatedCard(
+        modifier = modifier.fillMaxWidth(),
+        onClick = onClick,
+        onLongClick = onLongClick,
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(ShapeDefaults.Medium),
+            ) {
+                CoverImage(
+                    coverPath = info.thumbKey,
+                    sizePx = gridDecodePx,
+                    placeholder = placeholderIcon,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                if (
+                    showPages &&
+                    info.pages > 0 &&
+                    (kind == LocalHistory.KindLabel.Library || kind == LocalHistory.KindLabel.Archive)
+                ) {
+                    Badge(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .widthIn(min = 32.dp)
+                            .height(24.dp),
+                    ) {
+                        val readProgress = if (showProgress) {
+                            remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
+                        } else {
+                            0
+                        }
+                        Text(
+                            text = if (readProgress > 0) {
+                                "${readProgress + 1}/${info.pages}"
+                            } else {
+                                "${info.pages}"
+                            },
+                        )
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(nameHeight)
+                    .padding(horizontal = namePadH),
+                contentAlignment = Alignment.BottomStart,
+            ) {
+                Text(
+                    text = info.title.orEmpty(),
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = namePadBottom),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun LocalGalleryGridItem(
     gallery: LocalGalleryEntity,
