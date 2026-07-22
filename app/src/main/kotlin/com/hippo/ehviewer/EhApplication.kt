@@ -167,51 +167,64 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
     }
 
     /**
-     * Generic connectivity watch for SMB — not LAN/Wi‑Fi only.
+     * SMB path-change watch — **only real network identity changes**, not routine LAN noise.
      *
-     * Covers: Wi‑Fi, Ethernet, cellular (5G/LTE), VPN (TRANSPORT_VPN / tunnel as default),
-     * and public hosts over any of the above. Any of these changing can leave smbj TCP
-     * sessions half-open while [Connection.isConnected] still looks fine.
+     * Important: [ConnectivityManager.NetworkCallback.onLinkPropertiesChanged] and
+     * “any INTERNET network” callbacks fire constantly on a stable LAN (IPv6 RA, DNS,
+     * DHCP renew, scored secondary nets). Treating those as path changes was closing every
+     * pooled SMB session within seconds — Windows logs looked like keep-alive failure, but
+     * the client was actively disconnecting.
      *
-     * Uses [ConnectivityManager.registerDefaultNetworkCallback] for the system default
-     * route (common Wi‑Fi↔cell and VPN-as-default cases) **and** a broad INTERNET request
-     * so split-tunnel VPN networks that are not the default still fire on up/down.
+     * We only drop sessions when:
+     * - The **default** network object changes or is lost (Wi‑Fi↔cell, full-tunnel VPN, offline)
+     * - A **VPN** network appears or disappears (split-tunnel into a LAN share)
      */
     private fun registerSmbNetworkCallback() {
-        val pathCallback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                SmbGateway.onNetworkPathChanged("available")
-            }
-
-            override fun onLost(network: Network) {
-                SmbGateway.onNetworkPathChanged("lost")
-            }
-
-            override fun onLinkPropertiesChanged(network: Network, linkProperties: android.net.LinkProperties) {
-                // Routes / DNS / VPN interface addresses — typical on VPN toggle & handoff.
-                SmbGateway.onNetworkPathChanged("link")
-            }
-        }
+        // Track default network identity; ignore repeated callbacks for the same Network.
+        var defaultNetwork: Network? = null
         runCatching {
-            // Default route changes (Wi‑Fi lost, cell becomes default, full-tunnel VPN).
-            connectivityManager.registerDefaultNetworkCallback(pathCallback)
-        }.onFailure {
-            logcat(it)
-        }
-        runCatching {
-            // Any INTERNET-providing network including VPN that is not the default (split tunnel).
-            val anyInternet = NetworkRequest.Builder()
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .build()
-            connectivityManager.registerNetworkCallback(
-                anyInternet,
+            connectivityManager.registerDefaultNetworkCallback(
                 object : ConnectivityManager.NetworkCallback() {
                     override fun onAvailable(network: Network) {
-                        SmbGateway.onNetworkPathChanged("net-available")
+                        val prev = defaultNetwork
+                        defaultNetwork = network
+                        when {
+                            prev == null ->
+                                // Coming online (or first callback). Drop any half-open leftovers.
+                                SmbGateway.onNetworkPathChanged("default-up")
+                            prev != network ->
+                                // Actual default switch (Wi‑Fi → cell, VPN default, etc.).
+                                SmbGateway.onNetworkPathChanged("default-switch")
+                            // same Network instance: DHCP/IPv6/DNS churn — do NOT drop SMB
+                        }
                     }
 
                     override fun onLost(network: Network) {
-                        SmbGateway.onNetworkPathChanged("net-lost")
+                        if (defaultNetwork == null || defaultNetwork == network) {
+                            defaultNetwork = null
+                            SmbGateway.onNetworkPathChanged("default-lost")
+                        }
+                    }
+                },
+            )
+        }.onFailure {
+            logcat(it)
+        }
+        // Split-tunnel VPN is often not the default network but carries LAN SMB traffic.
+        runCatching {
+            val vpnOnly = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+                .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                .build()
+            connectivityManager.registerNetworkCallback(
+                vpnOnly,
+                object : ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: Network) {
+                        SmbGateway.onNetworkPathChanged("vpn-up")
+                    }
+
+                    override fun onLost(network: Network) {
+                        SmbGateway.onNetworkPathChanged("vpn-down")
                     }
                 },
             )

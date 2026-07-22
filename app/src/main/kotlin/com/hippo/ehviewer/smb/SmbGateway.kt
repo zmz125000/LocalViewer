@@ -59,22 +59,27 @@ import kotlin.math.min
 /**
  * smbj helper with a **per-source exclusive connection pool** + **foreground keep-alive**.
  *
- * ## Network path changes (generic — not LAN/Wi‑Fi only)
- * - [onNetworkPathChanged] drops every session + cancels list jobs on **any** path change:
- *   Wi‑Fi, Ethernet, cellular (5G), VPN up/down, default-route handoff, split-tunnel VPN.
- *   Half-open TCP after a path change hangs for soTimeout otherwise → folder spinner forever.
- * - Per-host **circuit breaker**: real unreachable / auth-storm failures open a cooldown so we
- *   do not open N TCP+NTLM sessions every few seconds offline (battery + Win11
- *   `STATUS_REQUEST_NOT_ACCEPTED`). Path change alone clears cooldowns so VPN/5G recovery
- *   can reconnect on the next user action without waiting out a stale offline cooldown.
- * - New connects are **serialized per host** — parallel peeks reuse the free list; only one
- *   fresh authenticate at a time after recovery.
+ * ## Network path changes + keep-alive
+ * - [onNetworkPathChanged] drops sessions only on **real** default-network switch/loss or
+ *   VPN up/down — **not** on [onLinkPropertiesChanged] spam (IPv6/DNS/DHCP), which previously
+ *   closed every free session within seconds on a stable LAN (looked like keep-alive failure
+ *   in Windows logs).
+ * - Free sessions are kept warm with a periodic share probe (~45s). In-use sessions rely on I/O.
+ * - Per-host **circuit breaker** on real open failures only (not keep-alive probe noise).
+ * - New connects are **serialized per host** after recovery.
  *
  * Pool size follows [Settings.multiThreadDownload] (SMB concurrency in Advanced).
  */
 object SmbGateway {
     private const val POOL_CAPACITY = 7
-    private const val KEEPALIVE_INTERVAL_MS = 25_000L
+
+    /**
+     * Application keep-alive interval for **free** pooled sessions.
+     * Win11 session idle is typically many minutes; ~45s keeps NAT/middleboxes happy without
+     * spamming CREATE (folderExists) traffic. In-use sessions are kept alive by real I/O.
+     */
+    private const val KEEPALIVE_INTERVAL_MS = 45_000L
+
     private const val ACQUIRE_WAIT_MS = 8_000L
     private const val POOL_HARD_CAP = POOL_CAPACITY + 2
 
@@ -82,7 +87,7 @@ object SmbGateway {
      * Fail-fast on dead radio. Bulk reads still progress while data flows; a black-holed peer
      * must not sit for minutes × retries × pool size.
      */
-    private const val SMB_IO_TIMEOUT_SEC = 15L
+    private const val SMB_IO_TIMEOUT_SEC = 20L
 
     /** Initial cooldown after network-unreachable (grows exponentially). */
     private const val COOLDOWN_BASE_MS = 3_000L
@@ -138,12 +143,37 @@ object SmbGateway {
         val isConnected: Boolean
             get() = connection.isConnected
 
-        fun ping(): Boolean = runCatching {
+        /**
+         * Cheap SMB-level keep-alive. Prefer [DiskShare.folderExists] on share root; on
+         * failure fall back to [Connection.isConnected] only if the failure is a path/ACL
+         * quirk (not transport) so a bad probe does not massacre a healthy pool.
+         */
+        fun ping(): Boolean {
             if (!connection.isConnected) return false
-            share.folderExists("")
-            lastUsedMs.set(System.currentTimeMillis())
-            true
-        }.getOrElse { false }
+            return try {
+                share.folderExists("")
+                lastUsedMs.set(System.currentTimeMillis())
+                true
+            } catch (e: SMBApiException) {
+                // Share root oddities should not kill the session; transport errors should.
+                if (isIgnorableListError(e)) {
+                    lastUsedMs.set(System.currentTimeMillis())
+                    true
+                } else {
+                    logcat(e)
+                    false
+                }
+            } catch (e: Throwable) {
+                if (isTransportError(e) || isNetworkUnreachable(e) || isSessionRejectError(e)) {
+                    false
+                } else {
+                    // Unknown non-transport: keep session, avoid false-positive retire.
+                    logcat(e)
+                    lastUsedMs.set(System.currentTimeMillis())
+                    true
+                }
+            }
+        }
     }
 
     private class SourcePool(
@@ -191,6 +221,8 @@ object SmbGateway {
                 }
                 if (live.isConnected && live.ping()) {
                     if (!free.trySend(live).isSuccess) {
+                        // Free channel full — another producer raced; keep the live session
+                        // by force-retire only if we cannot return it (should be rare).
                         retire(live)
                         dropped++
                     } else {
@@ -201,13 +233,11 @@ object SmbGateway {
                     dropped++
                 }
             }
-            if (dropped > 0) {
-                logcat { "SmbGateway: keep-alive retired $dropped dead session(s), kept $kept" }
-                // All free sessions died at once → typical radio drop; trip cooldown lightly.
-                if (kept == 0 && dropped > 0) {
-                    tripHostCircuit(hostPortKey, networkUnreachable = true)
-                }
+            if (dropped > 0 || kept > 0) {
+                logcat { "SmbGateway: keep-alive ping done kept=$kept dropped=$dropped" }
             }
+            // Do NOT trip the host circuit from keep-alive alone: a single flaky probe must
+            // not block the whole source. Circuit opens only on real withShare open failures.
         }
 
         suspend fun <T> borrow(open: suspend () -> LiveShare, block: (DiskShare) -> T): T {
@@ -450,20 +480,17 @@ object SmbGateway {
     }
 
     /**
-     * Debounce window for [onNetworkPathChanged]. VPN / handoff often emits available+link+
-     * capabilities in a burst; one drop is enough.
+     * Debounce for bursty default-switch / VPN events (not for link-properties spam — those
+     * are filtered at the callback site).
      */
-    private const val PATH_CHANGE_DEBOUNCE_MS = 750L
+    private const val PATH_CHANGE_DEBOUNCE_MS = 1_000L
     private val lastPathChangeMs = AtomicLong(0L)
 
     /**
-     * Any connectivity path change that can invalidate existing SMB TCP sessions.
+     * Real connectivity identity change (default network switch/loss, VPN up/down).
      *
-     * Call sites: default-network callback + any INTERNET network (Wi‑Fi, cell, Ethernet, VPN).
-     * - Always tears down pools / in-flight lists (stale sockets hang UI).
-     * - Clears host cooldowns so recovery after VPN/5G toggle is immediate on next action.
-     * - Offline hammering is still limited: the next failed openLive trips the circuit breaker.
-     * - No-op when nothing is pooled and no list jobs (cheap; avoids work on background churn).
+     * Drops pooled sessions that would otherwise be half-open. Does **not** run on routine
+     * LAN link-property noise (that was killing keep-alive sessions every few seconds).
      */
     fun onNetworkPathChanged(reason: String) {
         val now = System.currentTimeMillis()
@@ -471,8 +498,7 @@ object SmbGateway {
         if (prev != 0L && now - prev < PATH_CHANGE_DEBOUNCE_MS) return
 
         val hadWork = pools.isNotEmpty() || listJobs.isNotEmpty()
-        // Always clear cooldowns on path change so "VPN just came up" is not blocked by an
-        // offline circuit opened while the tunnel was down.
+        // Clear cooldowns so VPN/5G recovery can reconnect immediately on next action.
         hostCircuits.clear()
         if (!hadWork) {
             logcat { "SmbGateway: network path changed ($reason) — idle, cooldowns cleared" }
