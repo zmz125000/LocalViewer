@@ -7,7 +7,6 @@ import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.mserref.NtStatus
 import com.hierynomus.msfscc.FileAttributes
 import com.hierynomus.mssmb2.SMB2CreateDisposition
-import com.hierynomus.mssmb2.SMB2Dialect
 import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.mssmb2.SMBApiException
 import com.hierynomus.smbj.SMBClient
@@ -24,12 +23,15 @@ import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.naturalCompare
 import java.io.OutputStream
+import java.net.InetAddress
+import java.net.Socket
 import java.util.EnumSet
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import javax.net.SocketFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +45,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * smbj helper with a **per-source TCP connection pool**.
@@ -61,6 +64,12 @@ import kotlinx.coroutines.withContext
  * **all** sources on that host (including newly added ones) failed with Broken pipe until
  * process restart. Each pooled session therefore owns a **dedicated** [SMBClient].
  *
+ * **Idle / half-open hang (the ~1 min freeze):** NAS/NAT/Android often drop idle TCP while
+ * `Connection.isConnected` stays true. Reuse then blocks until soTimeout; worse, retiring a
+ * dead session used to call graceful share/session close first, which itself blocked on the
+ * dead socket and made browse/reader spin forever. Manual refresh “fixed” it only because it
+ * cancelled the stuck job and eventually opened a fresh TCP session.
+ *
  * Pool size follows [Settings.multiThreadDownload] (SMB concurrency in Advanced).
  */
 object SmbGateway {
@@ -68,25 +77,40 @@ object SmbGateway {
     private const val POOL_CAPACITY = 7
 
     /**
-     * Do not reuse free sessions idle longer than this — Android / NAS often drop sockets while
-     * the process is backgrounded without clearing [Connection.isConnected] immediately.
+     * Do not reuse free sessions idle longer than this — Android / NAS often drop sockets without
+     * clearing [Connection.isConnected]. Windows Explorer reconnects aggressively; we drop and
+     * reopen instead of risking a multi-minute half-open hang.
      */
-    private const val MAX_IDLE_MS = 45_000L
+    private const val MAX_IDLE_MS = 30_000L
+
+    /**
+     * After this idle, run a cheap share probe before reuse even if still under [MAX_IDLE_MS].
+     * Catches half-open sockets that still report [Connection.isConnected].
+     */
+    private const val PROBE_AFTER_IDLE_MS = 8_000L
+
+    /**
+     * Max wait for a free pooled session. If every connection is stuck in dead I/O,
+     * [Channel.receive] would otherwise block forever (waits only advanced after a receive).
+     */
+    private const val ACQUIRE_WAIT_MS = 8_000L
+
+    /** Hard cap including brief force-open overshoot — never steal an in-use live session. */
+    private const val POOL_HARD_CAP = POOL_CAPACITY + 2
+
+    /** SMB read/write/transact + socket timeout. Fail fast so [withShare] can reconnect. */
+    private const val SMB_IO_TIMEOUT_SEC = 20L
 
     /** Parallel TCP sessions per SMB source (reader seek + prefetch). */
     fun maxConnectionsPerSource(): Int = Settings.multiThreadDownload.value.coerceIn(1, POOL_CAPACITY)
 
     private val config: SmbConfig = SmbConfig.builder()
-        // Prefer modern dialects for Win11 / current Samba; still includes 3.0 for older appliances.
-        // .withDialects(SMB2Dialect.SMB_3_1_1, SMB2Dialect.SMB_3_0_2, SMB2Dialect.SMB_3_0)
-        // .withSigningEnabled(true)
-        // .withSigningRequired(false)
-        // .withEncryptData(false)
         // Client asks for max; server negotiates actual multi-credit window (often 4–8 MiB).
         .withNegotiatedBufferSize()
-        .withTimeout(60, TimeUnit.SECONDS)
-        // Keepalive so idle pooled sessions are less likely to be dropped mid-reuse.
-        .withSoTimeout(120, TimeUnit.SECONDS)
+        .withTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
+        .withSoTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
+        // TCP keepalive helps middleboxes notice dead peers; not a substitute for MAX_IDLE.
+        .withSocketFactory(KeepAliveSocketFactory)
         .build()
 
     private val pools = ConcurrentHashMap<Long, SourcePool>()
@@ -113,19 +137,42 @@ object SmbGateway {
         val share: DiskShare,
         val lastUsedMs: AtomicLong = AtomicLong(System.currentTimeMillis()),
     ) {
+        fun idleMs(): Long = System.currentTimeMillis() - lastUsedMs.get()
+
+        /**
+         * Tear down TCP first. Graceful share/session close on a half-open socket blocks until
+         * soTimeout and was the main “spin forever after idle” pathology when draining the pool.
+         */
         fun closeQuietly() {
-            runCatching { share.close() }
-            runCatching { session.close() }
             runCatching { connection.close() }
             runCatching { client.close() }
+            runCatching { share.close() }
+            runCatching { session.close() }
         }
 
         val isUsable: Boolean
             get() {
                 if (!connection.isConnected) return false
-                val idle = System.currentTimeMillis() - lastUsedMs.get()
-                return idle <= MAX_IDLE_MS
+                return idleMs() <= MAX_IDLE_MS
             }
+
+        /**
+         * [isUsable] alone is not enough: half-open TCP often still reports connected.
+         * After a short idle, probe the share with a cheap exists check; on any failure retire.
+         */
+        fun probeAlive(): Boolean {
+            if (!connection.isConnected) return false
+            if (idleMs() <= PROBE_AFTER_IDLE_MS) return true
+            return runCatching {
+                // folderExists issues a real CREATE/OPEN against the share root — fails fast
+                // on half-open transport without listing the whole directory.
+                share.folderExists("")
+                true
+            }.getOrElse { e ->
+                logcat(e)
+                false
+            }
+        }
     }
 
     /**
@@ -143,8 +190,8 @@ object SmbGateway {
             try {
                 val result = block(live.share)
                 live.lastUsedMs.set(System.currentTimeMillis())
-                // Only reuse on full success + still connected.
-                reusable = live.isUsable
+                // Only reuse on full success + still connected (just-used → idle check passes).
+                reusable = live.connection.isConnected
                 return result
             } finally {
                 if (reusable) {
@@ -160,25 +207,30 @@ object SmbGateway {
         }
 
         private suspend fun acquire(open: () -> LiveShare): LiveShare {
-            // Prefer free list; skip dead sockets.
+            // Prefer free list; skip dead / half-open sockets (probe may do a cheap round-trip).
             while (true) {
                 val candidate = free.tryReceive().getOrNull() ?: break
-                if (candidate.isUsable) return candidate
+                if (candidate.isUsable && candidate.probeAlive()) return candidate
                 retire(candidate)
             }
             tryGrow(open)?.let { return it }
-            // All connections busy: wait for one to free.
-            // Guard against waiting forever on a drained/broken pool.
+            // All connections busy: wait briefly for one to free. Must not block forever —
+            // if every borrower is stuck on half-open I/O, receive() never returns and the
+            // old waits++ counter never advanced.
             var waits = 0
             while (true) {
-                val candidate = free.receive()
-                if (candidate.isUsable) return candidate
+                val candidate = withTimeoutOrNull(ACQUIRE_WAIT_MS) { free.receive() }
+                if (candidate == null) {
+                    waits++
+                    tryGrow(open)?.let { return it }
+                    if (waits >= 1) return forceOpen(open)
+                    continue
+                }
+                if (candidate.isUsable && candidate.probeAlive()) return candidate
                 retire(candidate)
                 tryGrow(open)?.let { return it }
                 waits++
                 if (waits > POOL_CAPACITY * 2) {
-                    // Pool is stuck (size leak or all dead): force open one more if under hard cap,
-                    // else open a one-shot connection outside the size counter? Prefer reset size.
                     return forceOpen(open)
                 }
             }
@@ -196,18 +248,30 @@ object SmbGateway {
             }
         }
 
-        /** Last-resort open when free list only yields dead sockets. */
+        /**
+         * Last-resort open when free list is empty/dead or wait timed out.
+         * Only retires sessions that are already unusable — never closes an in-flight live one
+         * (that caused Broken pipe for concurrent downloads / peeks).
+         */
         private suspend fun forceOpen(open: () -> LiveShare): LiveShare = growLock.withLock {
-            // If at capacity, retire one free/dead slot conceptually by allowing overflow by 0:
-            // close the oldest unusable from all if needed.
             if (size.get() >= maxConnectionsPerSource()) {
                 val dead = synchronized(all) { all.firstOrNull { !it.isUsable } }
                 if (dead != null) retire(dead)
             }
-            if (size.get() >= POOL_CAPACITY) {
-                // Hard stop: open ephemeral connection not tracked — still track to avoid FD leak.
-                val victim = synchronized(all) { all.firstOrNull() }
-                if (victim != null) retire(victim)
+            if (size.get() >= POOL_HARD_CAP) {
+                val dead = synchronized(all) { all.firstOrNull { !it.isUsable } }
+                if (dead != null) {
+                    retire(dead)
+                } else {
+                    // Still at hard cap with only live sessions: cannot steal. Drop one free
+                    // socket if any (tryReceive), else fail the open so caller can surface error.
+                    val freeVictim = free.tryReceive().getOrNull()
+                    if (freeVictim != null) {
+                        retire(freeVictim)
+                    } else {
+                        error("SMB connection pool exhausted (all sessions busy)")
+                    }
+                }
             }
             val opened = open()
             synchronized(all) { all.add(opened) }
@@ -620,6 +684,7 @@ private fun isTransportError(t: Throwable): Boolean {
         when (cur) {
             is java.net.SocketException,
             is java.net.SocketTimeoutException,
+            is java.net.ConnectException,
             is java.io.EOFException,
             is java.io.InterruptedIOException,
             is com.hierynomus.protocol.transport.TransportException,
@@ -628,7 +693,11 @@ private fun isTransportError(t: Throwable): Boolean {
         val msg = cur.message.orEmpty()
         if (msg.contains("Broken pipe", ignoreCase = true) ||
             msg.contains("Connection reset", ignoreCase = true) ||
-            msg.contains("Connection closed", ignoreCase = true)
+            msg.contains("Connection closed", ignoreCase = true) ||
+            msg.contains("Connection aborted", ignoreCase = true) ||
+            msg.contains("Software caused connection abort", ignoreCase = true) ||
+            msg.contains("ETIMEDOUT", ignoreCase = true) ||
+            msg.contains("ECONNRESET", ignoreCase = true)
         ) {
             return true
         }
@@ -660,4 +729,35 @@ private fun isIgnorableListError(e: SMBApiException): Boolean {
         status == NtStatus.STATUS_OBJECT_NAME_NOT_FOUND ||
         status == NtStatus.STATUS_OBJECT_PATH_NOT_FOUND ||
         status == NtStatus.STATUS_OBJECT_NAME_INVALID
+}
+
+/**
+ * Enable TCP keepalive on every SMB socket. Does not replace idle eviction / probes, but
+ * helps the kernel notice dead peers sooner than a pure half-open socket.
+ */
+private object KeepAliveSocketFactory : SocketFactory() {
+    private val defaultFactory: SocketFactory = getDefault()
+
+    private fun Socket.configure(): Socket = apply {
+        keepAlive = true
+        tcpNoDelay = true
+    }
+
+    override fun createSocket(): Socket = defaultFactory.createSocket().configure()
+
+    override fun createSocket(host: String, port: Int): Socket =
+        defaultFactory.createSocket(host, port).configure()
+
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
+        defaultFactory.createSocket(host, port, localHost, localPort).configure()
+
+    override fun createSocket(host: InetAddress, port: Int): Socket =
+        defaultFactory.createSocket(host, port).configure()
+
+    override fun createSocket(
+        address: InetAddress,
+        port: Int,
+        localAddress: InetAddress,
+        localPort: Int,
+    ): Socket = defaultFactory.createSocket(address, port, localAddress, localPort).configure()
 }
