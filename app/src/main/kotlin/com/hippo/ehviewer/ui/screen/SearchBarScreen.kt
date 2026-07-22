@@ -16,12 +16,12 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsTopHeight
@@ -215,10 +215,19 @@ fun SearchBarScreen(
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         Scaffold(
+            // Do not reflow list content when reader toggles system bar visibility.
+            // Live statusBars/navBars go to 0 in immersive mode and would jump Library/History
+            // under the reader transition; ignoringVisibility keeps reserved size stable.
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
                 Column {
                     val scrim = MaterialTheme.colorScheme.background.scrim()
-                    Box(Modifier.windowInsetsTopHeight(WindowInsets.statusBars).fillMaxWidth().background(scrim))
+                    Box(
+                        Modifier
+                            .windowInsetsTopHeight(WindowInsets.statusBarsIgnoringVisibility)
+                            .fillMaxWidth()
+                            .background(scrim),
+                    )
 
                     // Placeholder: field height + equal top/bottom margin (same as top margin under status bar).
                     Spacer(
@@ -237,7 +246,9 @@ fun SearchBarScreen(
         val activeState = rememberCompositionActiveState()
         SearchBar(
             modifier = Modifier.align(Alignment.TopCenter).thenIf(!expanded) { offset { IntOffset(0, searchBarOffsetY()) } }
-                .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal)),
+                .windowInsetsPadding(
+                    WindowInsets.navigationBarsIgnoringVisibility.only(WindowInsetsSides.Horizontal),
+                ),
             inputField = {
                 InputField(
                     state = searchFieldState,
