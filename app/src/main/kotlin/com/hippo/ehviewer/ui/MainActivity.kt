@@ -467,7 +467,7 @@ class MainActivity : AppCompatActivity() {
                         AnimatedVisibility(
                             visible = showMainNav && !useRail,
                             enter = slideInVertically { it } + fadeIn(),
-                            exit = slideOutVertically { it } + fadeOut(),
+                            // exit = slideOutVertically { it } + fadeOut(),
                         ) {
                             NavigationBar {
                                 mainNavItems.forEach { item ->
@@ -500,7 +500,7 @@ class MainActivity : AppCompatActivity() {
                         AnimatedVisibility(
                             visible = showMainNav && useRail,
                             enter = slideInHorizontally { -it } + fadeIn(),
-                            exit = slideOutHorizontally { -it } + fadeOut(),
+                            // exit = slideOutHorizontally { -it } + fadeOut(),
                         ) {
                             NavigationRail(modifier = Modifier.fillMaxHeight()) {
                                 Spacer(Modifier.height(8.dp))
