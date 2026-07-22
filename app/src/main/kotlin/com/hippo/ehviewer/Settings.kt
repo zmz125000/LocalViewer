@@ -75,6 +75,14 @@ object Settings : DataStorePreferences(null) {
 
     /** 0 = detail (list), 1 = thumb (grid). Default: thumb. */
     val listMode = intPref("list_mode_2", 1)
+
+    /**
+     * When true, keep the main NavigationBar/Rail visible on nested Browse/History folder
+     * screens and Settings children so re-tapping the tab returns to that root.
+     * When false (default on phones), hide the bar on those screens and use the
+     * “Back to browse/history” FAB instead. Large screens always use a rail and never the FAB.
+     */
+    val persistMainNav = boolPref("persist_main_nav", false)
     val listThumbSize = intPref("list_tile_size", 40)
     val detailSize = intPref("detail_size_2", 0)
     val thumbColumns = intPref("thumb_columns", 3)

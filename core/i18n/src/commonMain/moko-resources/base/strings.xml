@@ -365,6 +365,8 @@
     <string name="image_saved">Image saved to %s</string>
     <string name="settings_eh">EH</string>
     <string name="settings_general">General</string>
+    <string name="settings_persist_main_nav">Keep main navigation on folder screens</string>
+    <string name="settings_persist_main_nav_summary">Show the bottom bar while browsing folders; re-tap Browse/History to jump back. Off uses a shortcut FAB instead (phones).</string>
     <string name="settings_eh_sign_out">Sign out</string>
     <string name="settings_eh_identity_cookies_signed">Identity cookies can be used to sign in to this account.&lt;br&gt;&lt;b&gt;KEEP IT SAFE&lt;/b&gt;</string>
     <string name="settings_eh_identity_cookies_guest">Guest mode</string>

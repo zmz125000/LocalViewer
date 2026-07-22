@@ -292,6 +292,8 @@
     <!-- Settings -->
     <string name="settings_eh">EH</string>
     <string name="settings_general">通用</string>
+    <string name="settings_persist_main_nav">文件夹页面保留主导航</string>
+    <string name="settings_persist_main_nav_summary">浏览文件夹时显示底部导航，再次点按“浏览/历史”可返回。关闭则使用快捷悬浮按钮（手机）。</string>
     <string name="settings_eh_sign_out">退出登录</string>
     <string name="settings_eh_identity_cookies_signed">身份 Cookie 可用于登录该账号。&lt;br&gt;&lt;b&gt;注意数据安全&lt;/b&gt;</string>
     <string name="settings_eh_identity_cookies_guest">游客模式</string>

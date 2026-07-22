@@ -60,6 +60,7 @@ import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.listLocalDirectory
 import com.hippo.ehviewer.library.stableGalleryId
+import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
@@ -290,34 +291,38 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             )
         },
         floatingActionButton = {
-            if (fromHistory) {
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
-                            navigator.navigate(HistoryScreenDestination) {
-                                launchSingleTop = true
+            // Compact phones without persistent main nav: shortcut FAB.
+            // Tablets (rail) and Settings → Keep main navigation: re-tap tab instead.
+            if (LocalShowNavShortcutFab.current) {
+                if (fromHistory) {
+                    ExtendedFloatingActionButton(
+                        onClick = {
+                            if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
+                                navigator.navigate(HistoryScreenDestination) {
+                                    launchSingleTop = true
+                                }
                             }
-                        }
-                    },
-                    icon = {
-                        Icon(Icons.Default.History, contentDescription = null)
-                    },
-                    text = { Text(stringResource(R.string.back_to_history)) },
-                )
-            } else {
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
-                            navigator.navigate(BrowseScreenDestination) {
-                                launchSingleTop = true
+                        },
+                        icon = {
+                            Icon(Icons.Default.History, contentDescription = null)
+                        },
+                        text = { Text(stringResource(R.string.back_to_history)) },
+                    )
+                } else {
+                    ExtendedFloatingActionButton(
+                        onClick = {
+                            if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
+                                navigator.navigate(BrowseScreenDestination) {
+                                    launchSingleTop = true
+                                }
                             }
-                        }
-                    },
-                    icon = {
-                        Icon(Icons.Default.Explore, contentDescription = null)
-                    },
-                    text = { Text(stringResource(R.string.back_to_browse)) },
-                )
+                        },
+                        icon = {
+                            Icon(Icons.Default.Explore, contentDescription = null)
+                        },
+                        text = { Text(stringResource(R.string.back_to_browse)) },
+                    )
+                }
             }
         },
     ) { padding ->

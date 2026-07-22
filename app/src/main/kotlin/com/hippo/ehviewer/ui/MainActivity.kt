@@ -28,26 +28,42 @@ import android.view.View
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
+import androidx.compose.material.icons.automirrored.outlined.LibraryBooks
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -82,6 +98,8 @@ import androidx.compose.ui.zIndex
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.navigation.NavController
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.toOkioPath
@@ -93,6 +111,7 @@ import com.ehviewer.core.ui.icons.EhIcons
 import com.ehviewer.core.ui.icons.filled.Subscriptions
 import com.ehviewer.core.ui.util.LocalSnackBarFabPadding
 import com.ehviewer.core.ui.util.LocalWindowSizeClass
+import com.ehviewer.core.ui.util.isMediumWidthOrWider
 import com.ehviewer.core.util.isAtLeastQ
 import com.ehviewer.core.util.isAtLeastR
 import com.ehviewer.core.util.isAtLeastS
@@ -100,10 +119,21 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhApplication.Companion.initialized
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.ui.destinations.AboutScreenDestination
+import com.hippo.ehviewer.ui.destinations.AdvancedScreenDestination
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
+import com.hippo.ehviewer.ui.destinations.DownloadScreenDestination
+import com.hippo.ehviewer.ui.destinations.EhScreenDestination
+import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
 import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
+import com.hippo.ehviewer.ui.destinations.LibrarySettingsScreenDestination
+import com.hippo.ehviewer.ui.destinations.LicenseScreenDestination
+import com.hippo.ehviewer.ui.destinations.NetworkScreenDestination
+import com.hippo.ehviewer.ui.destinations.PrivacyScreenDestination
+import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
 import com.hippo.ehviewer.ui.destinations.SettingsScreenDestination
+import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.settings.showNewVersion
 import com.hippo.ehviewer.ui.tools.DialogState
@@ -117,6 +147,8 @@ import com.hippo.ehviewer.util.getParcelableExtraCompat
 import com.hippo.ehviewer.util.getUrlFromClipboard
 import com.hippo.ehviewer.util.sha1
 import com.ramcosta.composedestinations.DestinationsNavHost
+import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import com.ramcosta.composedestinations.spec.DestinationSpec
 import com.ramcosta.composedestinations.spec.Direction
 import com.ramcosta.composedestinations.utils.currentDestinationAsState
 import com.ramcosta.composedestinations.utils.rememberDestinationsNavigator
@@ -132,21 +164,134 @@ import moe.tarsin.coroutines.runSuspendCatching
 import splitties.systemservices.clipboardManager
 import splitties.systemservices.connectivityManager
 
-private data class BottomNavItem(
+private data class MainNavItem(
+    val destination: DestinationSpec,
     val direction: Direction,
     val labelRes: Int,
-    val icon: ImageVector,
+    val selectedIcon: ImageVector,
+    val unselectedIcon: ImageVector,
 )
 
-/** Primary bottom-nav destinations (order = bar order). */
-private val bottomNavItems = listOf(
-    BottomNavItem(LibraryScreenDestination, R.string.library, Icons.AutoMirrored.Filled.LibraryBooks),
-    BottomNavItem(BrowseScreenDestination, R.string.browse, Icons.Default.Explore),
-    BottomNavItem(HistoryScreenDestination, R.string.history, Icons.Default.History),
-    BottomNavItem(SettingsScreenDestination, R.string.settings, Icons.Default.Settings),
+/** Primary main-nav destinations (order = bar/rail order). */
+private val mainNavItems = listOf(
+    MainNavItem(
+        LibraryScreenDestination,
+        LibraryScreenDestination,
+        R.string.library,
+        Icons.AutoMirrored.Filled.LibraryBooks,
+        Icons.AutoMirrored.Outlined.LibraryBooks,
+    ),
+    MainNavItem(
+        BrowseScreenDestination,
+        BrowseScreenDestination,
+        R.string.browse,
+        Icons.Filled.Explore,
+        Icons.Outlined.Explore,
+    ),
+    MainNavItem(
+        HistoryScreenDestination,
+        HistoryScreenDestination,
+        R.string.history,
+        Icons.Filled.History,
+        Icons.Outlined.History,
+    ),
+    MainNavItem(
+        SettingsScreenDestination,
+        SettingsScreenDestination,
+        R.string.settings,
+        Icons.Filled.Settings,
+        Icons.Outlined.Settings,
+    ),
 )
 
-private val bottomNavDirections: Set<Direction> = bottomNavItems.map { it.direction }.toSet()
+private val mainTabDestinations: Set<DestinationSpec> = mainNavItems.map { it.destination }.toSet()
+
+/** Destinations that belong under Settings. */
+private val settingsNestedDestinations: Set<DestinationSpec> = setOf(
+    EhScreenDestination,
+    PrivacyScreenDestination,
+    AdvancedScreenDestination,
+    AboutScreenDestination,
+    LicenseScreenDestination,
+    DownloadScreenDestination,
+    LibrarySettingsScreenDestination,
+)
+
+/** Folder / SMB / network browse stack (not the main Browse hub). */
+private val browseNestedDestinations: Set<DestinationSpec> = setOf(
+    FolderBrowserScreenDestination,
+    SmbBrowserScreenDestination,
+    NetworkScreenDestination,
+    LibrarySettingsScreenDestination,
+)
+
+/**
+ * Which main tab should appear selected for [dest].
+ * Reader returns null (hide chrome). Nested folder screens map to Browse or History
+ * via [fromHistory].
+ */
+private fun selectedMainTab(
+    dest: DestinationSpec?,
+    fromHistory: Boolean,
+    navController: NavController,
+): Direction? {
+    if (dest == null) return LibraryScreenDestination
+    return when (dest) {
+        LibraryScreenDestination -> LibraryScreenDestination
+        BrowseScreenDestination -> BrowseScreenDestination
+        HistoryScreenDestination -> HistoryScreenDestination
+        SettingsScreenDestination -> SettingsScreenDestination
+        ReaderScreenDestination -> null
+        FolderBrowserScreenDestination, SmbBrowserScreenDestination -> {
+            if (fromHistory) HistoryScreenDestination else BrowseScreenDestination
+        }
+        NetworkScreenDestination -> BrowseScreenDestination
+        LibrarySettingsScreenDestination -> {
+            // Opened from Settings hub or Browse gear — prefer Settings if still on stack.
+            val hasSettings = navController.currentBackStack.value.any {
+                it.destination.route?.startsWith(SettingsScreenDestination.baseRoute) == true
+            }
+            if (hasSettings) SettingsScreenDestination else BrowseScreenDestination
+        }
+        in settingsNestedDestinations -> SettingsScreenDestination
+        else -> null
+    }
+}
+
+/** Whether main NavigationBar / NavigationRail should be visible. */
+private fun shouldShowMainNav(
+    dest: DestinationSpec?,
+    persistMainNav: Boolean,
+    useRail: Boolean,
+): Boolean {
+    if (dest == null) return true
+    if (dest == ReaderScreenDestination) return false
+    if (dest in mainTabDestinations) return true
+    // Nested browse / settings: show when user opts in, or always on tablet rail.
+    if (dest in browseNestedDestinations || dest in settingsNestedDestinations) {
+        return persistMainNav || useRail
+    }
+    return false
+}
+
+private fun navigateMainTab(navigator: DestinationsNavigator, item: MainNavItem, selectedTab: Direction?) {
+    // Re-tap active tab (including while nested under it) → pop to that tab root.
+    if (selectedTab == item.direction) {
+        navigator.popBackStack(item.direction, inclusive = false)
+        return
+    }
+    if (item.direction == LibraryScreenDestination) {
+        navigator.popBackStack(LibraryScreenDestination, inclusive = false)
+    } else {
+        navigator.navigate(item.direction) {
+            popUpTo(LibraryScreenDestination) {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+}
 
 class MainActivity : AppCompatActivity() {
 
@@ -271,20 +416,38 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             val currentDestination by navController.currentDestinationAsState()
+            val navBackStackEntry by navController.currentBackStackEntryAsState()
+            val fromHistoryArg = when (currentDestination) {
+                FolderBrowserScreenDestination ->
+                    navBackStackEntry?.arguments
+                        ?.let { FolderBrowserScreenDestination.argsFrom(it).fromHistory }
+                        ?: false
+                SmbBrowserScreenDestination ->
+                    navBackStackEntry?.arguments
+                        ?.let { SmbBrowserScreenDestination.argsFrom(it).fromHistory }
+                        ?: false
+                else -> false
+            }
             val drawerHandle = remember { mutableStateListOf<Long>() }
             var snackbarFabPadding by remember { mutableStateOf(0.dp) }
             val drawerEnabled = drawerHandle.isNotEmpty()
             val density = LocalDensity.current
             val adaptiveInfo = currentWindowAdaptiveInfoV2()
-            val showBottomBar = bottomNavItems.any { it.direction == currentDestination } ||
-                currentDestination == null
+            val windowSizeClass = adaptiveInfo.windowSizeClass
+            val useRail = windowSizeClass.isMediumWidthOrWider
+            val persistMainNav by Settings.persistMainNav.collectAsState()
+            val selectedTab = selectedMainTab(currentDestination, fromHistoryArg, navController)
+            val showMainNav = shouldShowMainNav(currentDestination, persistMainNav, useRail)
+            // Shortcut FABs only on compact phones without persistent nav.
+            val showNavShortcutFab = !useRail && !persistMainNav
             CompositionLocalProvider(
                 LocalNavDrawerState provides navDrawerState,
                 LocalSideSheetState provides sideSheetState,
                 LocalDrawerHandle provides drawerHandle,
                 LocalSnackBarHostState provides snackbarState,
                 LocalSnackBarFabPadding provides animateDpAsState(snackbarFabPadding, label = "SnackbarFabPadding"),
-                LocalWindowSizeClass provides adaptiveInfo.windowSizeClass,
+                LocalWindowSizeClass provides windowSizeClass,
+                LocalShowNavShortcutFab provides showNavShortcutFab,
             ) {
                 // Do not consume status-bar insets here — each screen TopAppBar already does.
                 // Only reserve space for the bottom nav so we don't double-pad under the notch/status bar.
@@ -301,33 +464,28 @@ class MainActivity : AppCompatActivity() {
                         )
                     },
                     bottomBar = {
-                        if (showBottomBar) {
+                        AnimatedVisibility(
+                            visible = showMainNav && !useRail,
+                            enter = slideInVertically { it } + fadeIn(),
+                            exit = slideOutVertically { it } + fadeOut(),
+                        ) {
                             NavigationBar {
-                                bottomNavItems.forEach { item ->
-                                    val selected = currentDestination == item.direction
+                                mainNavItems.forEach { item ->
+                                    val selected = selectedTab == item.direction
                                     NavigationBarItem(
                                         selected = selected,
                                         onClick = {
-                                            if (selected) return@NavigationBarItem
-                                            // Keep Library as the single root. Other main tabs
-                                            // sit above it only; back → Library → exit app.
-                                            if (item.direction == LibraryScreenDestination) {
-                                                navigator.popBackStack(
-                                                    LibraryScreenDestination,
-                                                    inclusive = false,
-                                                )
-                                            } else {
-                                                navigator.navigate(item.direction) {
-                                                    popUpTo(LibraryScreenDestination) {
-                                                        saveState = true
-                                                    }
-                                                    launchSingleTop = true
-                                                    restoreState = true
-                                                }
-                                            }
+                                            navigateMainTab(navigator, item, selectedTab)
                                         },
                                         icon = {
-                                            Icon(imageVector = item.icon, contentDescription = null)
+                                            Icon(
+                                                imageVector = if (selected) {
+                                                    item.selectedIcon
+                                                } else {
+                                                    item.unselectedIcon
+                                                },
+                                                contentDescription = null,
+                                            )
                                         },
                                         label = {
                                             Text(text = stringResource(id = item.labelRes))
@@ -338,21 +496,56 @@ class MainActivity : AppCompatActivity() {
                         }
                     },
                 ) { paddingValues ->
-                    MutableSideSheet(
-                        drawerState = sideSheetState,
-                        // Only bottom padding for NavigationBar height (not status bar)
-                        modifier = Modifier.padding(bottom = paddingValues.calculateBottomPadding()),
-                        enabled = drawerEnabled,
-                    ) {
-                        SharedTransitionLayout {
-                            CompositionLocalProvider(LocalSharedTransitionScope provides this) {
-                                val start = LibraryScreenDestination
-                                DestinationsNavHost(
-                                    navGraph = NavGraphs.root,
-                                    start = start,
-                                    defaultTransitions = rememberEhNavAnim(),
-                                    navController = navController,
-                                )
+                    Row(Modifier.fillMaxSize()) {
+                        AnimatedVisibility(
+                            visible = showMainNav && useRail,
+                            enter = slideInHorizontally { -it } + fadeIn(),
+                            exit = slideOutHorizontally { -it } + fadeOut(),
+                        ) {
+                            NavigationRail(modifier = Modifier.fillMaxHeight()) {
+                                Spacer(Modifier.height(8.dp))
+                                mainNavItems.forEach { item ->
+                                    val selected = selectedTab == item.direction
+                                    NavigationRailItem(
+                                        selected = selected,
+                                        onClick = {
+                                            navigateMainTab(navigator, item, selectedTab)
+                                        },
+                                        icon = {
+                                            Icon(
+                                                imageVector = if (selected) {
+                                                    item.selectedIcon
+                                                } else {
+                                                    item.unselectedIcon
+                                                },
+                                                contentDescription = null,
+                                            )
+                                        },
+                                        label = {
+                                            Text(text = stringResource(id = item.labelRes))
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        MutableSideSheet(
+                            drawerState = sideSheetState,
+                            // Only bottom padding for NavigationBar height (not status bar / rail)
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(bottom = paddingValues.calculateBottomPadding()),
+                            enabled = drawerEnabled,
+                        ) {
+                            SharedTransitionLayout {
+                                CompositionLocalProvider(LocalSharedTransitionScope provides this) {
+                                    val start = LibraryScreenDestination
+                                    DestinationsNavHost(
+                                        navGraph = NavGraphs.root,
+                                        start = start,
+                                        defaultTransitions = rememberEhNavAnim(),
+                                        navController = navController,
+                                    )
+                                }
                             }
                         }
                     }
@@ -428,6 +621,12 @@ class MainActivity : AppCompatActivity() {
         shareUrl?.let { outContent?.webUri = it.toUri() }
     }
 }
+
+/**
+ * When true, folder browsers may show the “Back to browse/history” FAB.
+ * False on tablets (NavigationRail) and when Settings → General “Keep main navigation” is on.
+ */
+val LocalShowNavShortcutFab = compositionLocalOf { true }
 
 val LocalNavDrawerState = compositionLocalOf<DrawerState> { error("CompositionLocal LocalNavDrawerState not present!") }
 

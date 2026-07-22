@@ -93,6 +93,11 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.pref_double_tap_to_zoom),
                 state = Settings.doubleTapToZoom.asMutableState(),
             )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_persist_main_nav),
+                summary = stringResource(id = R.string.settings_persist_main_nav_summary),
+                state = Settings.persistMainNav.asMutableState(),
+            )
         }
     }
 }
