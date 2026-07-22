@@ -78,10 +78,10 @@ object SmbGateway {
 
     private val config: SmbConfig = SmbConfig.builder()
         // Prefer modern dialects for Win11 / current Samba; still includes 3.0 for older appliances.
-        .withDialects(SMB2Dialect.SMB_3_1_1, SMB2Dialect.SMB_3_0_2, SMB2Dialect.SMB_3_0)
-        .withSigningEnabled(true)
-        .withSigningRequired(false)
-        .withEncryptData(false)
+        // .withDialects(SMB2Dialect.SMB_3_1_1, SMB2Dialect.SMB_3_0_2, SMB2Dialect.SMB_3_0)
+        // .withSigningEnabled(true)
+        // .withSigningRequired(false)
+        // .withEncryptData(false)
         // Client asks for max; server negotiates actual multi-credit window (often 4–8 MiB).
         .withNegotiatedBufferSize()
         .withTimeout(60, TimeUnit.SECONDS)
