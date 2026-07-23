@@ -351,9 +351,10 @@ fun classifyRemoteListingWithPeeks(
                         val kind: RemoteChildKind.LeafGallery,
                     )
                     val galleryLeaves = ArrayList<PromotedLeaf>()
-                    // True unless a leaf has its own subdirs (navigable) — empty / archive-only
-                    // leaves do NOT invalidate this (they are not "failed" galleries).
-                    var allLeavesAreGalleries = true
+                    // Only navigable leaves (have their own subdirs) require keeping intermediate dir S.
+                    // Hidden / archive-only leaves do not.
+                    var hasNavigableLeaf = false
+                    val leafArchives = ArrayList<BrowseEntryRemote.ArchiveGallery>()
                     val sHasImages = peek.any { !it.isDirectory && !it.name.startsWith('.') && isImageFileName(it.name) }
                     for (leaf in leaves) {
                         val key = "${e.name}/${leaf.name}"
@@ -361,15 +362,20 @@ fun classifyRemoteListingWithPeeks(
                         when (val leafKind = classifyRemoteChild(leaf.name, leafPeek)) {
                             is RemoteChildKind.LeafGallery ->
                                 galleryLeaves += PromotedLeaf(leaf.name, key, leafKind)
-                            // Has subdirs → keep intermediate dir; empty shells / archives-only do not.
-                            is RemoteChildKind.Navigable, is RemoteChildKind.LeafArchivesOnly -> allLeavesAreGalleries = false
+                            is RemoteChildKind.Navigable -> hasNavigableLeaf = true
+                            is RemoteChildKind.LeafArchivesOnly -> {
+                                // Surface archives at parent with full relative path under S.
+                                for (a in leafKind.archives) {
+                                    leafArchives += a.copy(parentRelativeName = key)
+                                }
+                            }
                             is RemoteChildKind.Hidden -> Unit
                         }
                     }
 
                     if (galleryLeaves.isNotEmpty()) {
                         // Prefer @S when a single real gallery leaf is promoted and S has no dual.
-                        // Empty sibling leaves are ignored for this naming (same as allLeavesAreGalleries).
+                        // Empty sibling leaves are ignored for this naming.
                         val useBareAtS = galleryLeaves.size == 1 && !sHasImages
                         for (g in galleryLeaves) {
                             val display = if (useBareAtS) {
@@ -395,13 +401,30 @@ fun classifyRemoteListingWithPeeks(
                                 displayName = promotedSubGalleryName(e.name),
                             )?.let { leafGalleries += it }
                         }
-                        // Drop intermediate dir when no navigable leaf remains under S.
-                        if (!allLeavesAreGalleries) {
+                        archives += leafArchives
+                        // Keep intermediate dir only when a leaf still needs deeper navigation.
+                        if (hasNavigableLeaf) {
                             dirs += BrowseEntryRemote.Directory(e.name)
                         }
                         continue
                     }
-                    // No leaf was a gallery → fall through to original one-level logic.
+
+                    // No leaf was a gallery.
+                    // If none are navigable either (only Hidden / archives-only), do NOT fall through:
+                    // one-level logic would still mark S as a dir solely because empty shells exist.
+                    if (!hasNavigableLeaf) {
+                        if (sHasImages) {
+                            imagesInPeekAsGallery(
+                                relativeName = e.name,
+                                peek = peek,
+                                displayName = e.name,
+                            )?.let { leafGalleries += it }
+                        }
+                        archives += leafArchives
+                        // No Directory entry — remove the useless intermediate folder from parent.
+                        continue
+                    }
+                    // Some leaf is navigable but none are galleries → original one-level logic.
                 }
 
                 when (val kind = classifyRemoteChild(e.name, peek)) {
