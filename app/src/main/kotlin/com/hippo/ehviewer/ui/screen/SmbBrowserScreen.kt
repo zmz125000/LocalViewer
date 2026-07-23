@@ -446,6 +446,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     val dirKey = listedDir ?: relativeDir
                     val dirs = entries.filterIsInstance<BrowseEntryRemote.Directory>()
                     val galleries = entries.filter { it !is BrowseEntryRemote.Directory }
+
                     // Keys must stay unique when dual-list + "this folder as gallery" share a name
                     // (e.g. parent/ff has images and a child dir also named ff → g-self vs g-child-ff).
                     fun galleryKey(it: BrowseEntryRemote): String = when (it) {

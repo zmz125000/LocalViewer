@@ -34,6 +34,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.net.SocketFactory
+import kotlin.coroutines.coroutineContext
+import kotlin.math.min
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -53,8 +55,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.coroutines.coroutineContext
-import kotlin.math.min
 
 /**
  * smbj helper with a **per-host multiplexed session pool**.
@@ -81,12 +81,15 @@ import kotlin.math.min
  */
 object SmbGateway {
     private const val POOL_CAPACITY = 7
+
     /** Concurrent file/list ops multiplexed on one TCP session (smbj message IDs). */
     private const val OPS_PER_SESSION = 3
     private const val KEEPALIVE_INTERVAL_MS = 40_000L
+
     /** Skip probe if the session ran a successful op recently. */
     private const val KEEPALIVE_IDLE_BEFORE_PING_MS = 35_000L
     private const val ACQUIRE_WAIT_MS = 12_000L
+
     /** Long enough for large comic page transfers on a busy LAN. */
     private const val SMB_IO_TIMEOUT_SEC = 120L
     private const val COOLDOWN_BASE_MS = 3_000L
@@ -98,8 +101,7 @@ object SmbGateway {
     fun maxConnectionsPerSource(): Int = maxConnectionsPerHost()
 
     /** Soft upper bound for app-level download gates (sessions × multiplex). */
-    fun maxConcurrentOpsPerHost(): Int =
-        (maxConnectionsPerHost() * OPS_PER_SESSION).coerceAtMost(POOL_CAPACITY * OPS_PER_SESSION)
+    fun maxConcurrentOpsPerHost(): Int = (maxConnectionsPerHost() * OPS_PER_SESSION).coerceAtMost(POOL_CAPACITY * OPS_PER_SESSION)
 
     private val config: SmbConfig = SmbConfig.builder()
         .withNegotiatedBufferSize()
@@ -201,6 +203,7 @@ object SmbGateway {
         private val size = AtomicInteger(0)
         private val growLock = Mutex()
         private val closed = AtomicBoolean(false)
+
         /** Wakes waiters when an op finishes or a session is added. */
         private val freeSignal = Channel<Unit>(Channel.CONFLATED)
         private var keepAliveJob: Job? = null
@@ -280,20 +283,19 @@ object SmbGateway {
             }
         }
 
-        private fun tryReserveSession(credKey: String, shareName: String): PooledSession? =
-            synchronized(sessionsLock) {
-                // Prefer a session that already has this share tree-connected.
-                val ordered = sessions
-                    .filter { it.credKey == credKey && it.isConnected }
-                    .sortedByDescending { it.hasShare(shareName) }
-                for (ps in ordered) {
-                    if (ps.opSlots.tryAcquire()) {
-                        ps.outstanding.incrementAndGet()
-                        return ps
-                    }
+        private fun tryReserveSession(credKey: String, shareName: String): PooledSession? = synchronized(sessionsLock) {
+            // Prefer a session that already has this share tree-connected.
+            val ordered = sessions
+                .filter { it.credKey == credKey && it.isConnected }
+                .sortedByDescending { it.hasShare(shareName) }
+            for (ps in ordered) {
+                if (ps.opSlots.tryAcquire()) {
+                    ps.outstanding.incrementAndGet()
+                    return ps
                 }
-                null
             }
+            null
+        }
 
         private fun releaseOp(ps: PooledSession) {
             ps.outstanding.decrementAndGet()
@@ -486,11 +488,9 @@ object SmbGateway {
         return segments.joinToString("\\")
     }
 
-    private fun remotePath(source: SmbSourceEntity, relative: String): String =
-        joinPath(source.pathPrefix, relative)
+    private fun remotePath(source: SmbSourceEntity, relative: String): String = joinPath(source.pathPrefix, relative)
 
-    private fun joinRelative(parent: String, child: String): String =
-        if (parent.isEmpty()) child else "$parent/$child"
+    private fun joinRelative(parent: String, child: String): String = if (parent.isEmpty()) child else "$parent/$child"
 
     private fun hostKey(host: String, port: Int) = "${host.trim().lowercase(Locale.US)}:$port"
 
@@ -720,13 +720,12 @@ object SmbGateway {
         return classifyRemoteListingWithPeeks(dirName, children, peeks)
     }
 
-    private fun listChildren(share: DiskShare, path: String): List<RemoteChild> =
-        share.list(path.ifEmpty { "" }).mapNotNull { info ->
-            val name = info.fileName
-            if (name == "." || name == "..") return@mapNotNull null
-            val isDir = (info.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
-            RemoteChild(name, isDir)
-        }
+    private fun listChildren(share: DiskShare, path: String): List<RemoteChild> = share.list(path.ifEmpty { "" }).mapNotNull { info ->
+        val name = info.fileName
+        if (name == "." || name == "..") return@mapNotNull null
+        val isDir = (info.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
+        RemoteChild(name, isDir)
+    }
 
     private fun listChildrenLenient(share: DiskShare, path: String): List<RemoteChild> = try {
         listChildren(share, path)
@@ -1033,14 +1032,11 @@ private object KeepAliveSocketFactory : SocketFactory() {
 
     override fun createSocket(): Socket = defaultFactory.createSocket().configure()
 
-    override fun createSocket(host: String, port: Int): Socket =
-        defaultFactory.createSocket(host, port).configure()
+    override fun createSocket(host: String, port: Int): Socket = defaultFactory.createSocket(host, port).configure()
 
-    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
-        defaultFactory.createSocket(host, port, localHost, localPort).configure()
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket = defaultFactory.createSocket(host, port, localHost, localPort).configure()
 
-    override fun createSocket(host: InetAddress, port: Int): Socket =
-        defaultFactory.createSocket(host, port).configure()
+    override fun createSocket(host: InetAddress, port: Int): Socket = defaultFactory.createSocket(host, port).configure()
 
     override fun createSocket(
         address: InetAddress,

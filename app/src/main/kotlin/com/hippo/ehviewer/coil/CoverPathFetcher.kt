@@ -59,8 +59,7 @@ class CoverPathFetcher(
     }
 
     class Factory : Fetcher.Factory<CoverPath> {
-        override fun create(data: CoverPath, options: Options, imageLoader: ImageLoader): Fetcher =
-            CoverPathFetcher(data, options)
+        override fun create(data: CoverPath, options: Options, imageLoader: ImageLoader): Fetcher = CoverPathFetcher(data, options)
     }
 }
 

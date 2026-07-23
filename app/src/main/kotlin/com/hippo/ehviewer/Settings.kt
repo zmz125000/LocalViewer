@@ -139,6 +139,7 @@ object Settings : DataStorePreferences(null) {
 
     // About
     val backupBeforeUpdate = boolPref("backup_before_update", false)
+
     // Default off: release channel uses public GitHub Releases (recommended for LocalViewer).
     // CI channel needs Actions artifact access and is for snapshot builds only.
     val useCIUpdateChannel = boolPref("ci_update_channel", false)
