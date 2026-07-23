@@ -80,6 +80,32 @@ Build with Grok 4.5.
 * High performance reader with cache from EhViewer.
 * Reader auto rotate image.
 
+### To use SMB3 encryption:
+`Get-SmbShare | Select-Object Name, EncryptData`  
+`Set-SmbShare -Name "Media" -EncryptData $true`   
+
+```
+while ($true) {
+    Clear-Host
+    $config = Get-SmbServerConfiguration
+    $sessions = Get-SmbSession
+
+    Write-Host "--- SMB SERVER ENCRYPTION STATUS ---" -ForegroundColor Cyan
+    Write-Host "Global Server Encryption Enabled : $($config.EncryptData)"
+    Write-Host "Reject Unencrypted Access       : $($config.RejectUnencryptedAccess)"
+    Write-Host "Active Sessions                 : $(($sessions).Count)"
+    Write-Host "Timestamp                       : $(Get-Date -Format 'HH:mm:ss')"
+    Write-Host "------------------------------------`n"
+
+    if ($sessions) {
+        # Sessions using SMB 3.0+ support encryption
+        $sessions | Select-Object ClientComputerName, ClientUserName, Dialect | Format-Table -AutoSize
+    }
+
+    Start-Sleep -Seconds 1
+}
+```
+
 # Download
 
 | Flavor      | Minimum Android Version | Notes                          |
