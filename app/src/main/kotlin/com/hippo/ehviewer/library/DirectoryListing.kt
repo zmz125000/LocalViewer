@@ -344,37 +344,48 @@ fun classifyRemoteListingWithPeeks(
                 val canPromote = leaves.size in 1..SMB_PROMOTE_MAX_LEAVES && grandPeeks.isNotEmpty()
 
                 if (canPromote) {
-                    val promoted = ArrayList<BrowseEntryRemote.FolderGallery>()
+                    // Collect gallery leaves first; empty shells must not block promotion.
+                    data class PromotedLeaf(
+                        val leafName: String,
+                        val relativeName: String,
+                        val kind: RemoteChildKind.LeafGallery,
+                    )
+                    val galleryLeaves = ArrayList<PromotedLeaf>()
+                    // True unless a leaf has its own subdirs (navigable) — empty / archive-only
+                    // leaves do NOT invalidate this (they are not "failed" galleries).
                     var allLeavesAreGalleries = true
                     val sHasImages = peek.any { !it.isDirectory && !it.name.startsWith('.') && isImageFileName(it.name) }
                     for (leaf in leaves) {
                         val key = "${e.name}/${leaf.name}"
                         val leafPeek = grandPeeks[key].orEmpty()
                         when (val leafKind = classifyRemoteChild(leaf.name, leafPeek)) {
-                            is RemoteChildKind.LeafGallery -> {
-                                // Review: prefer @S for thin wrappers.
-                                // Single leaf + no images in S → @S (path still S/leaf).
-                                // Multi-leaf or dual @S would clash → @S-leaf.
-                                val display = if (leaves.size == 1 && !sHasImages) {
-                                    promotedSubGalleryName(e.name)
-                                } else {
-                                    "@${e.name}-${leaf.name}"
-                                }
-                                promoted += BrowseEntryRemote.FolderGallery(
-                                    name = display,
-                                    relativeName = key,
-                                    pageCount = leafKind.pageCount,
-                                    pageCountCapped = false,
-                                    coverFileName = leafKind.coverFileName,
-                                    imageFileNames = leafKind.imageFileNames,
-                                )
-                            }
-                            else -> allLeavesAreGalleries = false
+                            is RemoteChildKind.LeafGallery ->
+                                galleryLeaves += PromotedLeaf(leaf.name, key, leafKind)
+                            // Has subdirs → keep intermediate dir; empty shells / archives-only do not.
+                            is RemoteChildKind.Navigable, is RemoteChildKind.LeafArchivesOnly -> allLeavesAreGalleries = false
+                            is RemoteChildKind.Hidden -> Unit
                         }
                     }
 
-                    if (promoted.isNotEmpty()) {
-                        leafGalleries += promoted
+                    if (galleryLeaves.isNotEmpty()) {
+                        // Prefer @S when a single real gallery leaf is promoted and S has no dual.
+                        // Empty sibling leaves are ignored for this naming (same as allLeavesAreGalleries).
+                        val useBareAtS = galleryLeaves.size == 1 && !sHasImages
+                        for (g in galleryLeaves) {
+                            val display = if (useBareAtS) {
+                                promotedSubGalleryName(e.name)
+                            } else {
+                                "@${e.name}-${g.leafName}"
+                            }
+                            leafGalleries += BrowseEntryRemote.FolderGallery(
+                                name = display,
+                                relativeName = g.relativeName,
+                                pageCount = g.kind.pageCount,
+                                pageCountCapped = false,
+                                coverFileName = g.kind.coverFileName,
+                                imageFileNames = g.kind.imageFileNames,
+                            )
+                        }
                         // Dual gallery for images directly in S (from first peek of S — not re-scanned).
                         // Named @S so it sorts to the top of the gallery list with promotions.
                         if (sHasImages) {
@@ -384,7 +395,7 @@ fun classifyRemoteListingWithPeeks(
                                 displayName = promotedSubGalleryName(e.name),
                             )?.let { leafGalleries += it }
                         }
-                        // Remove intermediate dir only when every leaf was a gallery.
+                        // Drop intermediate dir when no navigable leaf remains under S.
                         if (!allLeavesAreGalleries) {
                             dirs += BrowseEntryRemote.Directory(e.name)
                         }
