@@ -74,7 +74,7 @@ Build with Grok 4.5.
 * Webtoon gallery reader.
 * Double tap to go to next folder.
 * Material Design 3 Navigation bar.
-* Optimized app navigation flow for deep folder path.
+* Optimized navigation flow for deep folder path.
 * High performance smbj client with concurrent connections support.
 * Network gallery folders recognition with fast cover loading.
 * High performance reader with cache from EhViewer.
