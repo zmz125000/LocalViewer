@@ -7,6 +7,7 @@ import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.mserref.NtStatus
 import com.hierynomus.msfscc.FileAttributes
 import com.hierynomus.mssmb2.SMB2CreateDisposition
+import com.hierynomus.mssmb2.SMB2Dialect
 import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.mssmb2.SMBApiException
 import com.hierynomus.smbj.SMBClient
@@ -103,12 +104,46 @@ object SmbGateway {
     /** Soft upper bound for app-level download gates (sessions × multiplex). */
     fun maxConcurrentOpsPerHost(): Int = (maxConnectionsPerHost() * OPS_PER_SESSION).coerceAtMost(POOL_CAPACITY * OPS_PER_SESSION)
 
-    private val config: SmbConfig = SmbConfig.builder()
-        .withNegotiatedBufferSize()
-        .withTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
-        .withSoTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
-        .withSocketFactory(KeepAliveSocketFactory)
-        .build()
+    private fun smbConfig(): SmbConfig = config
+
+    /**
+     * Advanced toggles (SMB3-only / encryption) changed — rebuild [SmbConfig] and drop every
+     * pooled session so the next op reconnects with the new dialects/capabilities.
+     */
+    fun onProtocolSettingsChanged() {
+        config = buildSmbConfig()
+        logcat {
+            "SmbGateway: protocol settings changed " +
+                "(smb3Only=${Settings.smb3Only.value}, encrypt=${Settings.smbEncryptData.value}) — resetting pool"
+        }
+        dropAllSessions(cancelLists = true, clearCircuits = false)
+    }
+
+    private fun buildSmbConfig(): SmbConfig {
+        val builder = SmbConfig.builder()
+            .withNegotiatedBufferSize()
+            .withTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
+            .withSoTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
+            .withSocketFactory(KeepAliveSocketFactory)
+            .withSigningEnabled(true)
+            .withEncryptData(Settings.smbEncryptData.value)
+        // Default smbj dialects: 3.1.1 … 2.0.2. SMB3-only drops 2.x.
+        if (Settings.smb3Only.value) {
+            builder.withDialects(
+                SMB2Dialect.SMB_3_1_1,
+                SMB2Dialect.SMB_3_0_2,
+                SMB2Dialect.SMB_3_0,
+            )
+        }
+        return builder.build()
+    }
+
+    /**
+     * Rebuilt when Advanced SMB dialect/encryption toggles change.
+     * Always read via [smbConfig]; never cache a stale client config across toggles.
+     */
+    @Volatile
+    private var config: SmbConfig = buildSmbConfig()
 
     private val hostPools = ConcurrentHashMap<String, HostPool>()
     private val poolCreateLock = Mutex()
@@ -623,7 +658,7 @@ object SmbGateway {
     suspend fun testConnection(source: SmbSourceEntity, password: String): Result<Unit> = withIOContext {
         runCatching {
             ensureHostNotCoolingDown(source.host, source.port)
-            val smbClient = SMBClient(config)
+            val smbClient = SMBClient(smbConfig())
             try {
                 smbClient.connect(source.host, source.port).use { connection ->
                     val session = connection.authenticate(auth(source, password))
@@ -858,7 +893,7 @@ object SmbGateway {
             ensureHostNotCoolingDown(source.host, source.port)
             // Dedicated SMBClient per session so smbj's host Connection cache
             // cannot poison other pool slots / shares on half-open TCP.
-            val smbClient = SMBClient(config)
+            val smbClient = SMBClient(smbConfig())
             try {
                 val connection = smbClient.connect(source.host, source.port)
                 try {

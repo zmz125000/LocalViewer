@@ -174,6 +174,16 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 state = smbConnections,
             )
             SwitchPreference(
+                title = stringResource(id = R.string.settings_smb3_only),
+                summary = stringResource(id = R.string.settings_smb3_only_summary),
+                state = Settings.smb3Only.asMutableState(),
+            )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_smb_encrypt),
+                summary = stringResource(id = R.string.settings_smb_encrypt_summary),
+                state = Settings.smbEncryptData.asMutableState(),
+            )
+            SwitchPreference(
                 title = stringResource(id = R.string.settings_upgrade_saf_to_media),
                 summary = stringResource(id = R.string.settings_upgrade_saf_to_media_summary),
                 state = Settings.upgradeSafToMediaStore.asMutableState(),

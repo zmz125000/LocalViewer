@@ -105,6 +105,14 @@ object Settings : DataStorePreferences(null) {
      * Shared by all sources on the same host:port; stays well under Win11 Pro’s ~20 inbound cap.
      */
     val multiThreadDownload = intPref("download_thread_2", 3)
+    /** Prefer SMB 3.x only (disable SMB 2.0.2 / 2.1 dialects). Default off. */
+    val smb3Only = boolPref("smb3_only", false).observed {
+        com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
+    }
+    /** Require SMB3 encryption when negotiating. Default off. */
+    val smbEncryptData = boolPref("smb_encrypt_data", false).observed {
+        com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
+    }
     val downloadDelay = intPref("download_delay_3", 1000)
     val timeoutSpeed = intPref("timeout_speed_level", 6)
     val preloadImage = intPref("preload_image_2", 5)
