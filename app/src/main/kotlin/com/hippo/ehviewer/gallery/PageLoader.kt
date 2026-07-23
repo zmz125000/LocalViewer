@@ -5,7 +5,6 @@ import androidx.collection.mutableIntObjectMapOf
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.bracketCase
 import com.ehviewer.core.model.GalleryInfo
-import com.ehviewer.core.util.isAtLeastO
 import com.ehviewer.core.util.withNonCancellableContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
@@ -33,23 +32,36 @@ import moe.tarsin.coroutines.withLock
 import okio.Path
 
 private val progressScope = CoroutineScope(Dispatchers.IO)
-private const val MAX_CACHE_SIZE = 512 * 1024 * 1024
-private const val MIN_CACHE_SIZE = 256 * 1024 * 1024
+
+/**
+ * Bound decoded-page cache to the **Java heap**, not device RAM.
+ *
+ * Previous logic used `totalMemory / 8` with a 256 MiB floor. On many devices
+ * `Runtime.maxMemory()` is only **256 MiB** (growth limit in OOM dumps), so the
+ * cache alone could claim the entire heap → OOM allocating 32 bytes after GC
+ * with <1% free — independent of SMB multiplex. SMB high throughput only
+ * made decode/download finish faster and fill the cache sooner.
+ */
+private fun pageImageCacheMaxBytes(): Int {
+    val heap = OSUtils.appMaxMemory.coerceAtLeast(64L * 1024 * 1024)
+    // ~35% of heap for retained pages; leave room for peak decode + UI + Coil thumbs.
+    val target = (heap * 35 / 100).toInt()
+    val min = (24L * 1024 * 1024).toInt()
+    val max = minOf((160L * 1024 * 1024).toInt(), (heap * 45 / 100).toInt())
+    return target.coerceIn(min, max.coerceAtLeast(min))
+}
 
 abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, startPage: Int, val size: Int, val hasAds: Boolean = false) : AutoCloseable {
     var startPage = startPage.coerceIn(0, size - 1)
 
     private val jobs = mutableIntObjectMapOf<Job>()
     private val mutex = NamedMutex<Int>()
+    /** Peak software decode is large; keep concurrency low on a 256 MiB heap. */
     private val semaphore = Semaphore(4)
 
     private val cache = SieveCache<Int, Image>(
-        maxSize = if (isAtLeastO) {
-            (OSUtils.totalMemory / 8).toInt().coerceIn(MIN_CACHE_SIZE, MAX_CACHE_SIZE)
-        } else {
-            (OSUtils.appMaxMemory / 3 * 2).toInt()
-        },
-        sizeOf = { _, v -> v.allocationSize.toInt() },
+        maxSize = pageImageCacheMaxBytes(),
+        sizeOf = { _, v -> v.allocationSize.toInt().coerceAtLeast(1) },
         onEntryRemoved = { k, o, n, _ -> if (o.unpin()) n ?: notifyPageWait(k) },
     )
 

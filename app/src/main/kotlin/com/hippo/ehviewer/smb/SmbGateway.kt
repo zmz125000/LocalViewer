@@ -95,7 +95,7 @@ object SmbGateway {
      * 5×3=15 or 7×3=21 concurrent ~20MB page downloads OOMs / races Android mid-flight;
      * 3×3=9 is the largest configuration confirmed stable on device.
      */
-    private const val MAX_SAFE_HOST_OPS = 12
+    private const val MAX_SAFE_HOST_OPS = 18
 
     private const val KEEPALIVE_INTERVAL_MS = 40_000L
 
