@@ -8,15 +8,12 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularWavyProgressIndicator
@@ -39,11 +36,14 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onVisibilityChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
+import kotlin.math.roundToInt
 import coil3.BitmapImage
 import coil3.DrawableImage
 import coil3.compose.AsyncImagePainter
@@ -191,8 +191,9 @@ fun PagerItem(
 /**
  * Draws [painter] optionally rotated 90° CW so the image long side matches the screen.
  *
- * When [rotate] is true, the layout box uses the swapped aspect ratio (critical for webtoon
- * LazyColumn height) and the bitmap is drawn pre-sized then rotated into that box.
+ * Layout reports the **post-rotation** size (aspect swapped) so webtoon row height is correct.
+ * The image is measured at the pre-rotation size with matching aspect and drawn with the
+ * caller's [contentScale] (never [ContentScale.FillBounds]), then rotated — so no stretch.
  */
 @Composable
 private fun FitPageImage(
@@ -215,32 +216,62 @@ private fun FitPageImage(
     }
 
     val src = painter.intrinsicSize
-    // Display box aspect (width / height) after 90° CW = origH / origW
-    val displayAspect = if (src.width > 0f && src.height > 0f) {
-        src.height / src.width
+    val imageAspect = if (src.width > 0f && src.height > 0f) {
+        src.width / src.height
     } else {
-        DEFAULT_ASPECT
+        1f / DEFAULT_ASPECT
+    }
+    // After 90° CW the laid-out box has aspect (width/height) = origH/origW = 1/imageAspect
+    val displayAspect = 1f / imageAspect
+
+    Image(
+        painter = painter,
+        contentDescription = null,
+        // Same outer order as non-rotate (zoomable outside); layout reports post-rotation
+        // size, child is measured pre-rotation with matching aspect → uniform scale only.
+        modifier = modifier
+            .then(contentModifier)
+            .fillMaxWidth()
+            .rotate90CwFitLayout(displayAspect = displayAspect)
+            .graphicsLayer { rotationZ = 90f },
+        // Preserve aspect inside fixed pre-rotation constraints (matches bitmap aspect).
+        contentScale = ContentScale.Fit,
+        colorFilter = colorFilter,
+    )
+}
+
+/**
+ * Measures the child in the **pre-rotation** frame (aspect = 1/[displayAspect]), then
+ * reports the **post-rotation** size (aspect = [displayAspect]) to the parent.
+ *
+ * Example: landscape bitmap on portrait screen → tall display box; child is measured
+ * wide×short (original orientation), then layout size is swapped for LazyColumn height.
+ */
+private fun Modifier.rotate90CwFitLayout(displayAspect: Float): Modifier = layout { measurable, constraints ->
+    val maxW = constraints.maxWidth
+    val maxH = constraints.maxHeight
+    val hasBoundedH = maxH != Constraints.Infinity
+
+    // Largest display rect (post-rotation) that fits in parent constraints.
+    val displayW: Int
+    val displayH: Int
+    if (!hasBoundedH || maxW.toFloat() / maxH <= displayAspect) {
+        displayW = maxW.coerceAtLeast(1)
+        displayH = (displayW / displayAspect).roundToInt().coerceAtLeast(1)
+    } else {
+        displayH = maxH.coerceAtLeast(1)
+        displayW = (displayH * displayAspect).roundToInt().coerceAtLeast(1)
     }
 
-    BoxWithConstraints(
-        modifier = modifier
-            .fillMaxWidth()
-            .aspectRatio(displayAspect)
-            .then(contentModifier),
-        contentAlignment = Alignment.Center,
-    ) {
-        val boxW = maxWidth
-        val boxH = maxHeight
-        // Pre-rotate layout is swapped so after 90° CW it maps onto (boxW × boxH).
-        Image(
-            painter = painter,
-            contentDescription = null,
-            modifier = Modifier
-                .width(boxH)
-                .height(boxW)
-                .graphicsLayer { rotationZ = 90f },
-            contentScale = ContentScale.FillBounds,
-            colorFilter = colorFilter,
+    // Pre-rotation child size: swap of display → same aspect as the original bitmap.
+    val preW = displayH
+    val preH = displayW
+    val placeable = measurable.measure(Constraints.fixed(preW, preH))
+
+    layout(displayW, displayH) {
+        placeable.place(
+            x = (displayW - preW) / 2,
+            y = (displayH - preH) / 2,
         )
     }
 }
