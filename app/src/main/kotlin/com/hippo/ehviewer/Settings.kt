@@ -191,8 +191,10 @@ object Settings : DataStorePreferences(null) {
 
     /** Off = double-tap prev/next gallery (folder mode). Default: off. */
     val doubleTapToZoom = boolPref("pref_double_tap_to_zoom", false)
-    /** Rotate page 90° CW when image orientation ≠ screen orientation. */
+    /** Rotate page 90° when image orientation ≠ screen orientation. */
     val autoRotateToFit = boolPref("pref_auto_rotate_to_fit", true)
+    /** When auto-rotate is on: true = 90° CW, false = 90° CCW. */
+    val autoRotateClockwise = boolPref("pref_auto_rotate_clockwise", true)
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)

@@ -513,6 +513,7 @@
     <string name="pref_double_tap_to_zoom">雙擊縮放</string>
     <string name="pref_auto_rotate_to_fit">自動旋轉以配合螢幕</string>
     <string name="pref_auto_rotate_to_fit_summary">將頁面長邊與螢幕長邊對齊</string>
+    <string name="pref_auto_rotate_clockwise">自動旋轉順時針（關：逆時針）</string>
     <string name="pref_custom_brightness">自訂亮度</string>
     <string name="pref_custom_color_filter">色彩濾鏡</string>
     <string name="pref_keep_screen_on">保持螢幕恆亮</string>

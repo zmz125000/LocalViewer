@@ -551,6 +551,7 @@
     <string name="pref_double_tap_to_zoom">ダブルタップで拡大</string>
     <string name="pref_auto_rotate_to_fit">画面に合わせて自動回転</string>
     <string name="pref_auto_rotate_to_fit_summary">画像の長辺を画面の長辺に合わせる</string>
+    <string name="pref_auto_rotate_clockwise">自動回転を時計回り（オフ：反時計回り）</string>
     <string name="pref_custom_brightness">明るさをカスタマイズ</string>
     <string name="pref_grayscale">グレースケール</string>
     <string name="pref_inverted_colors">色の反転</string>

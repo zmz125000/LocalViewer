@@ -37,6 +37,13 @@ fun ReaderModeSetting(isWebtoon: Boolean) = Column(modifier = Modifier.verticalS
         values = OrientationType.entries.map { it.prefValue },
         field = Settings.orientationMode.asMutableState(),
     )
+    val autoRotateToFit = Settings.autoRotateToFit.asMutableState()
+    AnimatedVisibility(visible = autoRotateToFit.value) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_auto_rotate_clockwise),
+            field = Settings.autoRotateClockwise.asMutableState(),
+        )
+    }
     Spacer(modifier = Modifier.size(16.dp))
     Crossfade(targetState = isWebtoon, label = "Setting") { webtoon ->
         if (webtoon) {

@@ -133,6 +133,7 @@ fun PagerItem(
                 val grayScale by Settings.grayScale.collectAsState()
                 val invert by Settings.invertedColors.collectAsState()
                 val autoRotate by Settings.autoRotateToFit.collectAsState()
+                val clockwise by Settings.autoRotateClockwise.collectAsState()
                 val imgSize = image.intrinsicSize
                 val rotate = autoRotate &&
                     viewportSize != Size.Zero &&
@@ -146,6 +147,7 @@ fun PagerItem(
                 FitPageImage(
                     painter = remember(painter) { painter },
                     rotate = rotate,
+                    clockwise = clockwise,
                     contentScale = contentScale,
                     colorFilter = colorFilter,
                     modifier = Modifier.thenIf(drawable is Animatable) {
@@ -189,16 +191,17 @@ fun PagerItem(
 }
 
 /**
- * Draws [painter] optionally rotated 90° CW so the image long side matches the screen.
+ * Draws [painter] optionally rotated ±90° so the image long side matches the screen.
  *
  * Layout reports the **post-rotation** size (aspect swapped) so webtoon row height is correct.
- * The image is measured at the pre-rotation size with matching aspect and drawn with the
- * caller's [contentScale] (never [ContentScale.FillBounds]), then rotated — so no stretch.
+ * The image is measured at the pre-rotation size with matching aspect and drawn with Fit,
+ * then rotated CW or CCW — no stretch.
  */
 @Composable
 private fun FitPageImage(
     painter: Painter,
     rotate: Boolean,
+    clockwise: Boolean,
     contentScale: ContentScale,
     colorFilter: ColorFilter?,
     modifier: Modifier,
@@ -221,8 +224,9 @@ private fun FitPageImage(
     } else {
         1f / DEFAULT_ASPECT
     }
-    // After 90° CW the laid-out box has aspect (width/height) = origH/origW = 1/imageAspect
+    // After ±90° the laid-out box has aspect (width/height) = origH/origW = 1/imageAspect
     val displayAspect = 1f / imageAspect
+    val degrees = if (clockwise) 90f else -90f
 
     Image(
         painter = painter,
@@ -232,8 +236,8 @@ private fun FitPageImage(
         modifier = modifier
             .then(contentModifier)
             .fillMaxWidth()
-            .rotate90CwFitLayout(displayAspect = displayAspect)
-            .graphicsLayer { rotationZ = 90f },
+            .rotate90FitLayout(displayAspect = displayAspect)
+            .graphicsLayer { rotationZ = degrees },
         // Preserve aspect inside fixed pre-rotation constraints (matches bitmap aspect).
         contentScale = ContentScale.Fit,
         colorFilter = colorFilter,
@@ -244,10 +248,9 @@ private fun FitPageImage(
  * Measures the child in the **pre-rotation** frame (aspect = 1/[displayAspect]), then
  * reports the **post-rotation** size (aspect = [displayAspect]) to the parent.
  *
- * Example: landscape bitmap on portrait screen → tall display box; child is measured
- * wide×short (original orientation), then layout size is swapped for LazyColumn height.
+ * Bounding box is the same for CW and CCW (±90° both swap width/height).
  */
-private fun Modifier.rotate90CwFitLayout(displayAspect: Float): Modifier = layout { measurable, constraints ->
+private fun Modifier.rotate90FitLayout(displayAspect: Float): Modifier = layout { measurable, constraints ->
     val maxW = constraints.maxWidth
     val maxH = constraints.maxHeight
     val hasBoundedH = maxH != Constraints.Infinity
