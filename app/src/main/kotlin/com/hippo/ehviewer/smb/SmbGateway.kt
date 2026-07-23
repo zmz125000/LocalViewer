@@ -70,9 +70,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * ## Pool model
  * - **Budget:** max [maxConnectionsPerHost] TCP/SMB **sessions** per `host:port`
  *   (Settings concurrency, default 5), shared by every source on that server.
- * - **Multiplex:** each session allows up to [OPS_PER_SESSION] concurrent ops
- *   (smbj multiplexes SMB2 messages on one connection). Effective concurrency ≈
- *   sessions × ops — **not** one file per TCP.
+ * - **Multiplex:** each session allows up to [OPS_PER_SESSION] concurrent ops, with a
+ *   host-wide hard cap ([MAX_SAFE_HOST_OPS]) so 5–7 TCP sessions do not open 15–21
+ *   concurrent large-page reads (OOM / close-under-read crash).
  * - **Session identity:** `host|port|user|domain|password`
  * - **Retire only** on transport / session death — never on access-denied / not-found
  *
@@ -84,8 +84,19 @@ import kotlinx.coroutines.withTimeoutOrNull
 object SmbGateway {
     private const val POOL_CAPACITY = 7
 
-    /** Concurrent file/list ops multiplexed on one TCP session (smbj message IDs). */
+    /**
+     * Concurrent file/list ops multiplexed on one TCP session (smbj message IDs).
+     * Keep modest: smbj + large multi-credit reads are heavy per op.
+     */
     private const val OPS_PER_SESSION = 3
+
+    /**
+     * Hard cap on simultaneous ops **per host** (all sessions).
+     * 5×3=15 or 7×3=21 concurrent ~20MB page downloads OOMs / races Android mid-flight;
+     * 3×3=9 is the largest configuration confirmed stable on device.
+     */
+    private const val MAX_SAFE_HOST_OPS = 12
+
     private const val KEEPALIVE_INTERVAL_MS = 40_000L
 
     /** Skip probe if the session ran a successful op recently. */
@@ -102,8 +113,12 @@ object SmbGateway {
 
     fun maxConnectionsPerSource(): Int = maxConnectionsPerHost()
 
-    /** Soft upper bound for app-level download gates (sessions × multiplex). */
-    fun maxConcurrentOpsPerHost(): Int = (maxConnectionsPerHost() * OPS_PER_SESSION).coerceAtMost(POOL_CAPACITY * OPS_PER_SESSION)
+    /**
+     * App-level download/list gate. Always ≤ [MAX_SAFE_HOST_OPS] so raising session count
+     * does not explode concurrent 20MB transfers (OOM) or smbj mid-close races.
+     */
+    fun maxConcurrentOpsPerHost(): Int =
+        (maxConnectionsPerHost() * OPS_PER_SESSION).coerceIn(1, MAX_SAFE_HOST_OPS)
 
     private fun smbConfig(): SmbConfig = config
 
@@ -240,6 +255,12 @@ object SmbGateway {
         private val growLock = Mutex()
         private val closed = AtomicBoolean(false)
 
+        /**
+         * Host-wide op gate (≤ [MAX_SAFE_HOST_OPS]). Prevents 5×3 / 7×3 concurrent large
+         * reads from OOMing or racing session teardown under high throughput.
+         */
+        private val hostOpSlots = Semaphore(MAX_SAFE_HOST_OPS)
+
         /** Wakes waiters when an op finishes or a session is added. */
         private val freeSignal = Channel<Unit>(Channel.CONFLATED)
         private var keepAliveJob: Job? = null
@@ -272,7 +293,7 @@ object SmbGateway {
          */
         private fun pingIdleSessions() {
             val candidates = synchronized(sessionsLock) {
-                sessions.filter { it.outstanding.get() == 0 && it.isConnected }
+                sessions.filter { !it.retired.get() && it.outstanding.get() == 0 && it.isConnected }
             }
             if (candidates.isEmpty()) return
             var kept = 0
@@ -280,8 +301,7 @@ object SmbGateway {
             val now = System.currentTimeMillis()
             for (ps in candidates) {
                 if (closed.get()) break
-                // Still busy? skip (race with a new op)
-                if (ps.outstanding.get() != 0) {
+                if (ps.outstanding.get() != 0 || ps.retired.get()) {
                     kept++
                     continue
                 }
@@ -296,7 +316,6 @@ object SmbGateway {
                         acquired++
                     }
                     if (acquired < OPS_PER_SESSION) {
-                        // An op took a slot; release and leave session alone
                         repeat(acquired) { ps.opSlots.release() }
                         kept++
                         continue
@@ -304,11 +323,14 @@ object SmbGateway {
                     if (ps.ping()) {
                         kept++
                     } else {
-                        retire(ps)
+                        markDyingAndMaybeClose(ps)
                         dropped++
                     }
                 } finally {
-                    repeat(acquired) { ps.opSlots.release() }
+                    // Only release if we still own the slots and session is not dying mid-close.
+                    if (!ps.retired.get()) {
+                        repeat(acquired) { ps.opSlots.release() }
+                    }
                 }
             }
             if (dropped > 0) signalFree()
@@ -319,31 +341,73 @@ object SmbGateway {
             }
         }
 
-        private fun tryReserveSession(credKey: String, shareName: String): PooledSession? = synchronized(sessionsLock) {
-            // Prefer a session that already has this share tree-connected.
-            val ordered = sessions
-                .filter { it.credKey == credKey && it.isConnected }
-                .sortedByDescending { it.hasShare(shareName) }
-            for (ps in ordered) {
-                if (ps.opSlots.tryAcquire()) {
-                    ps.outstanding.incrementAndGet()
-                    return ps
+        private fun tryReserveSession(credKey: String, shareName: String): PooledSession? =
+            synchronized(sessionsLock) {
+                val ordered = sessions
+                    .filter { !it.retired.get() && it.credKey == credKey && it.isConnected }
+                    .sortedByDescending { it.hasShare(shareName) }
+                for (ps in ordered) {
+                    if (ps.opSlots.tryAcquire()) {
+                        // Re-check after slot: may have been marked dying between filter and acquire.
+                        if (ps.retired.get() || !ps.connection.isConnected) {
+                            ps.opSlots.release()
+                            continue
+                        }
+                        ps.outstanding.incrementAndGet()
+                        return ps
+                    }
                 }
+                null
             }
-            null
+
+        /**
+         * End one op. If the session was marked dying, the **last** outstanding op closes it
+         * (never close while siblings still read — that crashed high multiplex throughput).
+         */
+        private fun releaseOp(ps: PooledSession, killSession: Boolean) {
+            if (killSession) {
+                ps.retired.set(true)
+            }
+            val left = ps.outstanding.decrementAndGet()
+            if (!ps.retired.get()) {
+                ps.opSlots.release()
+            }
+            if (ps.retired.get() && left <= 0) {
+                removeAndClose(ps)
+            }
+            signalFree()
         }
 
-        private fun releaseOp(ps: PooledSession) {
-            ps.outstanding.decrementAndGet()
-            ps.opSlots.release()
+        private fun markDyingAndMaybeClose(ps: PooledSession) {
+            ps.retired.set(true)
+            if (ps.outstanding.get() <= 0) {
+                removeAndClose(ps)
+            }
+            // else: last in-flight op's releaseOp will close
             signalFree()
+        }
+
+        private fun removeAndClose(ps: PooledSession) {
+            synchronized(sessionsLock) {
+                if (sessions.remove(ps)) {
+                    size.updateAndGet { (it - 1).coerceAtLeast(0) }
+                }
+            }
+            ps.closeQuietly()
         }
 
         private fun retireOneOtherCred(credKey: String): Boolean = synchronized(sessionsLock) {
             val victim = sessions.firstOrNull {
-                it.credKey != credKey && it.outstanding.get() == 0 && it.isConnected
+                !it.retired.get() &&
+                    it.credKey != credKey &&
+                    it.outstanding.get() == 0 &&
+                    it.isConnected
             } ?: return false
-            retireLocked(victim)
+            // No outstanding — safe to close immediately.
+            sessions.remove(victim)
+            size.updateAndGet { (it - 1).coerceAtLeast(0) }
+            victim.retired.set(true)
+            victim.closeQuietly()
             true
         }
 
@@ -369,7 +433,6 @@ object SmbGateway {
                     }
                     throw e
                 }
-                // Reserve one op slot for the caller
                 check(opened.opSlots.tryAcquire())
                 opened.outstanding.incrementAndGet()
                 synchronized(sessionsLock) { sessions.add(opened) }
@@ -407,26 +470,11 @@ object SmbGateway {
                         error(
                             "SMB host $hostPortKey busy: no free op slot for this user " +
                                 "(sessions=${size.get()}/${maxConnectionsPerHost()}, " +
-                                "ops/session=$OPS_PER_SESSION)",
+                                "ops/session=$OPS_PER_SESSION, hostOps≤$MAX_SAFE_HOST_OPS)",
                         )
                     }
                 }
             }
-        }
-
-        fun retire(ps: PooledSession) {
-            synchronized(sessionsLock) { retireLocked(ps) }
-            signalFree()
-        }
-
-        private fun retireLocked(ps: PooledSession) {
-            if (!sessions.remove(ps)) {
-                // Already gone — still close if not retired
-                if (!ps.retired.get()) ps.closeQuietly()
-                return
-            }
-            size.updateAndGet { (it - 1).coerceAtLeast(0) }
-            ps.closeQuietly()
         }
 
         fun retireMatchingCred(credKey: String) {
@@ -436,7 +484,9 @@ object SmbGateway {
                 }
             }
             doomed.forEach { ps ->
+                ps.retired.set(true)
                 size.updateAndGet { (it - 1).coerceAtLeast(0) }
+                // Force-close even if ops outstanding (source deleted / credentials changed).
                 ps.closeQuietly()
             }
             signalFree()
@@ -451,13 +501,19 @@ object SmbGateway {
                 copy
             }
             size.set(0)
-            snapshot.forEach { it.closeQuietly() }
+            snapshot.forEach {
+                it.retired.set(true)
+                it.closeQuietly()
+            }
             signalFree()
         }
 
         /**
-         * Run [block] on a multiplexed session op slot.
-         * Retires the session only on transport / session-reject errors.
+         * Run [block] under host-op + per-session multiplex slots.
+         *
+         * On transport death: mark session dying but **do not close sockets until the last
+         * in-flight op releases** — closing under concurrent smbj reads crashed the process
+         * at 5–7 sessions × 3 multiplex under large-page load.
          */
         suspend fun <T> borrowForShare(
             credKey: String,
@@ -466,30 +522,27 @@ object SmbGateway {
             block: (DiskShare) -> T,
         ): T {
             check(!closed.get()) { "SMB host pool closed" }
-            val ps = acquire(credKey, shareName, openSession)
-            var killSession = false
+            hostOpSlots.acquire()
             try {
-                if (!ps.isConnected) {
-                    killSession = true
-                    throw IOException("SMB session disconnected")
+                val ps = acquire(credKey, shareName, openSession)
+                var killSession = false
+                try {
+                    if (!ps.isConnected) {
+                        killSession = true
+                        throw IOException("SMB session disconnected")
+                    }
+                    val disk = ps.diskShare(shareName)
+                    val result = block(disk)
+                    ps.lastUsedMs.set(System.currentTimeMillis())
+                    return result
+                } catch (e: Throwable) {
+                    killSession = isTransportError(e) || isSessionRejectError(e) || !ps.isConnected
+                    throw e
+                } finally {
+                    releaseOp(ps, killSession = killSession || closed.get())
                 }
-                val disk = ps.diskShare(shareName)
-                val result = block(disk)
-                ps.lastUsedMs.set(System.currentTimeMillis())
-                return result
-            } catch (e: Throwable) {
-                // Keep the session for normal SMB status errors (not found, access denied, …).
-                killSession = isTransportError(e) || isSessionRejectError(e) || !ps.isConnected
-                throw e
             } finally {
-                if (killSession || closed.get()) {
-                    // Drop permit accounting then retire so size stays consistent
-                    ps.outstanding.decrementAndGet()
-                    // Don't release opSlots on a dead session — nothing else should use it
-                    retire(ps)
-                } else {
-                    releaseOp(ps)
-                }
+                hostOpSlots.release()
             }
         }
     }
