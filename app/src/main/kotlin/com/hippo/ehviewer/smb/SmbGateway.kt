@@ -20,6 +20,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.RemoteChild
+import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.naturalCompare
@@ -732,10 +733,10 @@ object SmbGateway {
 
         val dirsToPeek = children.filter { it.isDirectory && !it.name.startsWith('.') }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
+        val parallelism = maxConcurrentOpsPerHost().coerceAtLeast(1)
+        val gate = Semaphore(parallelism)
         if (dirsToPeek.isNotEmpty()) {
-            // Parallel peeks use multiplexed ops + multiple sessions up to host cap.
-            val parallelism = maxConcurrentOpsPerHost().coerceAtLeast(1)
-            val gate = Semaphore(parallelism)
+            // Wave 1: peek each direct subdir (S). Discovers leaves before any promotion peeks.
             coroutineScope {
                 dirsToPeek.map { c ->
                     async {
@@ -750,9 +751,40 @@ object SmbGateway {
             }
         }
 
+        // Wave 2: if S has 1..3 immediate child dirs, peek those leaves for promotion.
+        // S itself is NOT re-listed — dual-gallery images come from wave-1 peek.
+        val grandPeeks = ConcurrentHashMap<String, List<RemoteChild>>()
+        val leavesToPeek = ArrayList<Pair<String, String>>() // (subName, leafName)
+        for ((subName, peek) in peeks) {
+            val leaves = peek.filter { it.isDirectory && !it.name.startsWith('.') }
+            if (leaves.size in 1..SMB_PROMOTE_MAX_LEAVES) {
+                for (leaf in leaves) {
+                    leavesToPeek += subName to leaf.name
+                }
+            }
+        }
+        if (leavesToPeek.isNotEmpty()) {
+            coroutineScope {
+                leavesToPeek.map { (subName, leafName) ->
+                    async {
+                        gate.withPermit {
+                            val leafRel = "$subName/$leafName"
+                            val leafPath = when {
+                                path.isEmpty() -> "$subName\\$leafName"
+                                else -> "$path\\$subName\\$leafName"
+                            }
+                            grandPeeks[leafRel] = withShare(source, password) { share ->
+                                listChildrenLenient(share, leafPath)
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+        }
+
         val dirName = relativeDir.substringAfterLast('/').substringAfterLast('\\')
             .ifEmpty { source.displayName }
-        return classifyRemoteListingWithPeeks(dirName, children, peeks)
+        return classifyRemoteListingWithPeeks(dirName, children, peeks, grandPeeks)
     }
 
     private fun listChildren(share: DiskShare, path: String): List<RemoteChild> = share.list(path.ifEmpty { "" }).mapNotNull { info ->

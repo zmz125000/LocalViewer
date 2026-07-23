@@ -302,16 +302,32 @@ sealed interface BrowseEntryRemote {
 }
 
 /**
+ * Max immediate child directories of a subfolder for which we also peek leaves and
+ * may promote leaf galleries onto the parent listing.
+ */
+const val SMB_PROMOTE_MAX_LEAVES = 3
+
+/** Display name for gallery S after leaf promotion (`@S` sorts first). */
+fun promotedSubGalleryName(subName: String) = "@$subName"
+
+/**
  * Classify an SMB (or other remote) directory listing.
  *
  * Unlike local SAF, remote [share.list] already returns every child name, so the
  * local [BROWSE_IMAGE_SCAN_CAP] early-exit does not save network work — we keep full
  * image lists and exact page counts here.
+ *
+ * [grandPeeks] keys are `SubName/LeafName` (relative to the listed dir). Populated only
+ * when a subfolder has 1..[SMB_PROMOTE_MAX_LEAVES] child dirs — see SmbGateway.
+ *
+ * Scan order (by design): **S is listed first** (to discover leaves), then each leaf.
+ * Dual gallery for images **in S** reuses the first peek of S — no third scan of S.
  */
 fun classifyRemoteListingWithPeeks(
     currentDirName: String,
     entries: List<RemoteChild>,
     childPeeks: Map<String, List<RemoteChild>>,
+    grandPeeks: Map<String, List<RemoteChild>> = emptyMap(),
 ): List<BrowseEntryRemote> {
     val dirs = ArrayList<BrowseEntryRemote.Directory>()
     val leafGalleries = ArrayList<BrowseEntryRemote.FolderGallery>()
@@ -324,6 +340,59 @@ fun classifyRemoteListingWithPeeks(
         when {
             e.isDirectory -> {
                 val peek = childPeeks[e.name].orEmpty()
+                val leaves = peek.filter { it.isDirectory && !it.name.startsWith('.') }
+                val canPromote = leaves.size in 1..SMB_PROMOTE_MAX_LEAVES && grandPeeks.isNotEmpty()
+
+                if (canPromote) {
+                    val promoted = ArrayList<BrowseEntryRemote.FolderGallery>()
+                    var allLeavesAreGalleries = true
+                    val sHasImages = peek.any { !it.isDirectory && !it.name.startsWith('.') && isImageFileName(it.name) }
+                    for (leaf in leaves) {
+                        val key = "${e.name}/${leaf.name}"
+                        val leafPeek = grandPeeks[key].orEmpty()
+                        when (val leafKind = classifyRemoteChild(leaf.name, leafPeek)) {
+                            is RemoteChildKind.LeafGallery -> {
+                                // Review: prefer @S for thin wrappers.
+                                // Single leaf + no images in S → @S (path still S/leaf).
+                                // Multi-leaf or dual @S would clash → @S-leaf.
+                                val display = if (leaves.size == 1 && !sHasImages) {
+                                    promotedSubGalleryName(e.name)
+                                } else {
+                                    "@${e.name}-${leaf.name}"
+                                }
+                                promoted += BrowseEntryRemote.FolderGallery(
+                                    name = display,
+                                    relativeName = key,
+                                    pageCount = leafKind.pageCount,
+                                    pageCountCapped = false,
+                                    coverFileName = leafKind.coverFileName,
+                                    imageFileNames = leafKind.imageFileNames,
+                                )
+                            }
+                            else -> allLeavesAreGalleries = false
+                        }
+                    }
+
+                    if (promoted.isNotEmpty()) {
+                        leafGalleries += promoted
+                        // Dual gallery for images directly in S (from first peek of S — not re-scanned).
+                        // Named @S so it sorts to the top of the gallery list with promotions.
+                        if (sHasImages) {
+                            imagesInPeekAsGallery(
+                                relativeName = e.name,
+                                peek = peek,
+                                displayName = promotedSubGalleryName(e.name),
+                            )?.let { leafGalleries += it }
+                        }
+                        // Remove intermediate dir only when every leaf was a gallery.
+                        if (!allLeavesAreGalleries) {
+                            dirs += BrowseEntryRemote.Directory(e.name)
+                        }
+                        continue
+                    }
+                    // No leaf was a gallery → fall through to original one-level logic.
+                }
+
                 when (val kind = classifyRemoteChild(e.name, peek)) {
                     is RemoteChildKind.Navigable -> {
                         dirs += BrowseEntryRemote.Directory(e.name)
@@ -385,6 +454,33 @@ fun classifyRemoteListingWithPeeks(
     }
     result += archives
     return result
+}
+
+/** Build a FolderGallery from images found in a one-level peek, or null if none. */
+private fun imagesInPeekAsGallery(
+    relativeName: String,
+    peek: List<RemoteChild>,
+    displayName: String,
+): BrowseEntryRemote.FolderGallery? {
+    var cover: String? = null
+    val images = ArrayList<String>()
+    for (c in peek) {
+        if (c.name.startsWith('.') || c.isDirectory) continue
+        if (isImageFileName(c.name)) {
+            if (cover == null) cover = c.name
+            images += c.name
+        }
+    }
+    if (images.isEmpty()) return null
+    images.sortWith { a, b -> naturalCompare(a, b) }
+    return BrowseEntryRemote.FolderGallery(
+        name = displayName,
+        relativeName = relativeName,
+        pageCount = images.size,
+        pageCountCapped = false,
+        coverFileName = cover,
+        imageFileNames = images,
+    )
 }
 
 private sealed interface RemoteChildKind {
