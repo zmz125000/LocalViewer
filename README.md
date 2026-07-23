@@ -78,6 +78,7 @@ Build with Grok 4.5.
 * High performance smbj client with concurrent connections support.
 * Network gallery folders recognition with fast cover loading.
 * High performance reader with cache from EhViewer.
+* 4 concurrent full size image decode.
 * Reader auto rotate image.
 
 ### To use SMB3 encryption:
