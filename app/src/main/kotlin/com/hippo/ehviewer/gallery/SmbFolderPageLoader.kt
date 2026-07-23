@@ -22,12 +22,11 @@ import okio.Path
 
 /**
  * SMB folder reader with seek-friendly downloads:
- * - Host connection pool ([SmbGateway.maxConnectionsPerHost]) so a seekbar jump can start
- *   on a free TCP session without waiting for the current page transfer to finish.
+ * - Host pool multiplexes ops ([SmbGateway.maxConcurrentOpsPerHost] ≈ sessions × ops/session).
  * - One reserved interactive slot for [onRequest]; prefetch uses the remaining slots
- *   (when pool size is 1, both share the same slot).
+ *   so a seek does not wait behind every prefetch transfer.
  * - Per-file mutex in [SmbCache] joins overlapping downloads (small jump / prefetch race).
- * - Large jumps cancel far-away prefetch jobs so they stop borrowing pool connections.
+ * - Large jumps cancel far-away prefetch jobs so they stop holding pool op slots.
  */
 suspend inline fun <T> useSmbFolderPageLoader(
     source: SmbSourceEntity,
@@ -41,13 +40,13 @@ suspend inline fun <T> useSmbFolderPageLoader(
         check(imageFileNames.isNotEmpty()) { "No images in SMB folder" }
         val password = SmbPasswordStore.get(source.id)
         val size = imageFileNames.size
-        val poolSize = SmbGateway.maxConnectionsPerHost()
-        // Reserve 1 connection for the page the user is looking at / just seeked to.
+        val maxOps = SmbGateway.maxConcurrentOpsPerHost().coerceAtLeast(1)
+        // Reserve 1 op for the page the user is looking at / just seeked to.
         val interactiveSlots = Semaphore(1)
-        val prefetchSlots = if (poolSize <= 1) {
+        val prefetchSlots = if (maxOps <= 1) {
             interactiveSlots
         } else {
-            Semaphore(poolSize - 1)
+            Semaphore(maxOps - 1)
         }
         // In-flight downloads by page index — join small-jump overlap, cancel large jumps.
         val downloadJobs = ConcurrentHashMap<Int, Job>()
