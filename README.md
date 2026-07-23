@@ -77,7 +77,8 @@ Build with Grok 4.5.
 * Optimized app navigation flow for deep folder path.
 * High performance smbj client with concurrent connections support.
 * Network gallery folders recognition with fast cover loading.
-* High performance reader with cache from EhViewer. 
+* High performance reader with cache from EhViewer.
+* Reader auto rotate image.
 
 # Download
 
