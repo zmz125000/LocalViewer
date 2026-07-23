@@ -98,8 +98,7 @@ while ($true) {
     Write-Host "------------------------------------`n"
 
     if ($sessions) {
-        # Sessions using SMB 3.0+ support encryption
-        $sessions | Select-Object ClientComputerName, ClientUserName, Dialect | Format-Table -AutoSize
+        $sessions | Select-Object ClientComputerName, ClientUserName, Dialect, NumOpens | Format-Table -AutoSize
     }
 
     Start-Sleep -Seconds 1
