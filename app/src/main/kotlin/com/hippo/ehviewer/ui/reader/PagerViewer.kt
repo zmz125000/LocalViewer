@@ -71,6 +71,7 @@ fun PagerViewer(
     val items = pageLoader.pages
     val scaleType by Settings.imageScaleType.collectAsState()
     val landscapeZoom by Settings.landscapeZoom.collectAsState()
+    val autoRotateToFit by Settings.autoRotateToFit.collectAsState()
     val zoomStart by Settings.zoomStart.collectAsState()
     val alignment = Alignment.fromPreferences(zoomStart, isRtl, isVertical)
     val layoutSize by remember(pagerState) {
@@ -106,6 +107,7 @@ fun PagerViewer(
                 isRtl = false,
                 scaleType = scaleType,
                 landscapeZoom = landscapeZoom,
+                autoRotateToFit = autoRotateToFit,
                 alignment = alignment,
                 layoutSize = layoutSize,
                 navigator = navigator,
@@ -132,6 +134,7 @@ fun PagerViewer(
                 isRtl = isRtl,
                 scaleType = scaleType,
                 landscapeZoom = landscapeZoom,
+                autoRotateToFit = autoRotateToFit,
                 alignment = alignment,
                 layoutSize = layoutSize,
                 navigator = navigator,
@@ -152,6 +155,7 @@ private fun PageContainer(
     isRtl: Boolean,
     scaleType: Int,
     landscapeZoom: Boolean,
+    autoRotateToFit: Boolean,
     alignment: Alignment.Horizontal,
     layoutSize: Size,
     navigator: () -> NavigationRegions,
@@ -166,7 +170,9 @@ private fun PageContainer(
     val zoomableState = rememberZoomableState(zoomSpec = PagerZoomSpec)
     val status = page.statusObserved
     if (status is PageStatus.Ready && layoutSize != Size.Zero) {
-        val size = status.image.intrinsicSize.toSize()
+        val raw = status.image.intrinsicSize.toSize()
+        val rotate = autoRotateToFit && needsFitRotation(raw, layoutSize)
+        val size = fitDisplaySize(raw, rotate)
         val contentScale = ContentScale.fromPreferences(scaleType, size, layoutSize)
         zoomableState.contentScale = contentScale
         LaunchedEffect(size, contentScale, alignment) {
@@ -191,7 +197,8 @@ private fun PageContainer(
             val contentLocation = ZoomableContentLocation.scaledInsideAndCenterAligned(size)
             zoomableState.setContentLocation(contentLocation)
         }
-        if (landscapeZoom && contentScale == ContentScale.Fit && size.width > size.height) {
+        // Skip landscape-zoom when this page was fit-rotated (would double-treat).
+        if (landscapeZoom && !rotate && contentScale == ContentScale.Fit && raw.width > raw.height) {
             LaunchedEffect(alignment) {
                 val zoomFraction = snapshotFlow { zoomableState.zoomFraction }.first { it != null }
                 if (zoomFraction == 0f) {
@@ -250,6 +257,7 @@ private fun PageContainer(
             page = page,
             pageLoader = pageLoader,
             contentScale = ContentScale.Inside,
+            viewportSize = layoutSize,
             modifier = Modifier.pointerInput(onTap) {
                 detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
             },

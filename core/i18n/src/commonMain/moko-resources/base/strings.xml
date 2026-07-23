@@ -648,6 +648,8 @@
     <string name="pref_show_page_number">Show page number</string>
     <string name="pref_show_reader_seekbar">Show page jumping seekbar</string>
     <string name="pref_double_tap_to_zoom">Double tap to zoom (off: prev/next gallery)</string>
+    <string name="pref_auto_rotate_to_fit">Auto-rotate to fit screen</string>
+    <string name="pref_auto_rotate_to_fit_summary">Rotate pages so the long side matches the screen</string>
     <string name="pref_custom_brightness">Custom brightness</string>
     <string name="pref_grayscale">Grayscale</string>
     <string name="pref_inverted_colors">Inverted</string>

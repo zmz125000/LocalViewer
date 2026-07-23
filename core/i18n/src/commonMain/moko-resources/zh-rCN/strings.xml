@@ -544,6 +544,8 @@
     <string name="pref_show_page_number">显示页码</string>
     <string name="pref_show_reader_seekbar">显示跳页拖动条</string>
     <string name="pref_double_tap_to_zoom">双击缩放</string>
+    <string name="pref_auto_rotate_to_fit">自动旋转以适配屏幕</string>
+    <string name="pref_auto_rotate_to_fit_summary">将页面长边与屏幕长边对齐（横图竖屏时旋转 90°）</string>
     <string name="pref_custom_brightness">自定义亮度</string>
     <string name="pref_custom_color_filter">自定义滤镜</string>
     <string name="pref_keep_screen_on">保持屏幕常亮</string>

@@ -8,12 +8,15 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularWavyProgressIndicator
@@ -30,8 +33,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onVisibilityChanged
@@ -67,6 +72,7 @@ fun PagerItem(
     contentScale: ContentScale,
     modifier: Modifier = Modifier,
     contentModifier: Modifier = Modifier,
+    viewportSize: Size = Size.Zero,
 ) {
     LaunchedEffect(Unit) {
         pageLoader.request(page.index)
@@ -126,22 +132,28 @@ fun PagerItem(
                 val drawable = (painter as? DrawablePainter)?.drawable
                 val grayScale by Settings.grayScale.collectAsState()
                 val invert by Settings.invertedColors.collectAsState()
-                Image(
-                    // DrawablePainter <: RememberObserver
+                val autoRotate by Settings.autoRotateToFit.collectAsState()
+                val imgSize = image.intrinsicSize
+                val rotate = autoRotate &&
+                    viewportSize != Size.Zero &&
+                    needsFitRotation(imgSize, viewportSize)
+                val colorFilter = when {
+                    grayScale && invert -> grayScaleAndInvertFilter
+                    grayScale -> grayScaleFilter
+                    invert -> invertFilter
+                    else -> null
+                }
+                FitPageImage(
                     painter = remember(painter) { painter },
-                    contentDescription = null,
+                    rotate = rotate,
+                    contentScale = contentScale,
+                    colorFilter = colorFilter,
                     modifier = Modifier.thenIf(drawable is Animatable) {
                         onVisibilityChanged(minDurationMs = 33, minFractionVisible = 0.5f) {
                             drawable!!.setVisible(it, false)
                         }
-                    }.then(contentModifier).fillMaxSize(),
-                    contentScale = contentScale,
-                    colorFilter = when {
-                        grayScale && invert -> grayScaleAndInvertFilter
-                        grayScale -> grayScaleFilter
-                        invert -> invertFilter
-                        else -> null
-                    },
+                    }.then(modifier),
+                    contentModifier = contentModifier,
                 )
             } ?: Spacer(modifier = modifier.fillMaxWidth().aspectRatio(DEFAULT_ASPECT))
         }
@@ -173,6 +185,63 @@ fun PagerItem(
                 }
             }
         }
+    }
+}
+
+/**
+ * Draws [painter] optionally rotated 90° CW so the image long side matches the screen.
+ *
+ * When [rotate] is true, the layout box uses the swapped aspect ratio (critical for webtoon
+ * LazyColumn height) and the bitmap is drawn pre-sized then rotated into that box.
+ */
+@Composable
+private fun FitPageImage(
+    painter: Painter,
+    rotate: Boolean,
+    contentScale: ContentScale,
+    colorFilter: ColorFilter?,
+    modifier: Modifier,
+    contentModifier: Modifier,
+) {
+    if (!rotate) {
+        Image(
+            painter = painter,
+            contentDescription = null,
+            modifier = modifier.then(contentModifier).fillMaxSize(),
+            contentScale = contentScale,
+            colorFilter = colorFilter,
+        )
+        return
+    }
+
+    val src = painter.intrinsicSize
+    // Display box aspect (width / height) after 90° CW = origH / origW
+    val displayAspect = if (src.width > 0f && src.height > 0f) {
+        src.height / src.width
+    } else {
+        DEFAULT_ASPECT
+    }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(displayAspect)
+            .then(contentModifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        val boxW = maxWidth
+        val boxH = maxHeight
+        // Pre-rotate layout is swapped so after 90° CW it maps onto (boxW × boxH).
+        Image(
+            painter = painter,
+            contentDescription = null,
+            modifier = Modifier
+                .width(boxH)
+                .height(boxW)
+                .graphicsLayer { rotationZ = 90f },
+            contentScale = ContentScale.FillBounds,
+            colorFilter = colorFilter,
+        )
     }
 }
 

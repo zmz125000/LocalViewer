@@ -130,10 +130,12 @@ fun WebtoonViewer(
         verticalArrangement = Arrangement.spacedBy(if (withGaps) 15.dp else 0.dp),
     ) {
         items(items, key = { it.index }) { page ->
+            val viewport = lazyListState.layoutInfo.viewportSize.toSize()
             PagerItem(
                 page = page,
                 pageLoader = pageLoader,
                 contentScale = ContentScale.FillWidth,
+                viewportSize = viewport,
             )
         }
     }
