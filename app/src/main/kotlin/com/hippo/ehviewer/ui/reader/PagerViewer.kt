@@ -171,7 +171,8 @@ private fun PageContainer(
     val status = page.statusObserved
     if (status is PageStatus.Ready && layoutSize != Size.Zero) {
         val raw = status.image.intrinsicSize.toSize()
-        val rotate = autoRotateMode != 0 && needsFitRotation(raw, layoutSize)
+        // Must match PagerItem / FitPageImage (shouldAutoRotate) so draw + contentLocation lockstep.
+        val rotate = shouldAutoRotate(raw, layoutSize, autoRotateMode)
         val size = fitDisplaySize(raw, rotate)
         val contentScale = ContentScale.fromPreferences(scaleType, size, layoutSize)
         zoomableState.contentScale = contentScale

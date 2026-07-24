@@ -134,10 +134,8 @@ fun PagerItem(
                 val invert by Settings.invertedColors.collectAsState()
                 val autoRotateMode by Settings.autoRotateMode.collectAsState()
                 val imgSize = image.intrinsicSize
-                val rotate = autoRotateMode != 0 &&
-                    viewportSize != Size.Zero &&
-                    needsFitRotation(imgSize, viewportSize)
-                val clockwise = autoRotateMode != 2 // 1=CW, 2=CCW
+                val rotate = shouldAutoRotate(imgSize, viewportSize, autoRotateMode)
+                val clockwise = isAutoRotateClockwise(autoRotateMode)
                 val colorFilter = when {
                     grayScale && invert -> grayScaleAndInvertFilter
                     grayScale -> grayScaleFilter
@@ -198,10 +196,12 @@ fun PagerItem(
  * pages draw with ContentScale.Inside so the bitmap matches that model.
  *
  * **Pager:** draw the rotated image at **Inside** size of the swapped aspect (never pre-upscale).
- * Pre-fitting with Fit upscaled small pages (1220×889 → scale &gt; 1), then telephoto Fit
+ * Pre-fitting with Fit upscaled small pages (1220×889 → scale > 1), then telephoto Fit
  * upscaled again → crop. Large pages only downscaled once so they looked fine.
  *
  * **Webtoon:** no per-page telephoto fit — width-driven post-rotation row height.
+ *
+ * Whether to rotate must match [shouldAutoRotate] used in [PagerViewer] for contentLocation.
  */
 @Composable
 private fun FitPageImage(
@@ -227,13 +227,6 @@ private fun FitPageImage(
     val src = painter.intrinsicSize
     val srcW = src.width.roundToInt().coerceAtLeast(1)
     val srcH = src.height.roundToInt().coerceAtLeast(1)
-    val imageAspect = if (src.width > 0f && src.height > 0f) {
-        src.width / src.height
-    } else {
-        1f / DEFAULT_ASPECT
-    }
-    // After ±90° the on-screen aspect (width/height) = origH/origW
-    val displayAspect = 1f / imageAspect
     val degrees = if (clockwise) 90f else -90f
 
     Image(
@@ -242,16 +235,13 @@ private fun FitPageImage(
         modifier = modifier
             .then(contentModifier)
             .fillMaxWidth()
-            .rotate90FitLayout(
-                bitmapW = srcW,
-                bitmapH = srcH,
-                displayAspect = displayAspect,
-            )
+            .rotate90FitLayout(bitmapW = srcW, bitmapH = srcH)
             .graphicsLayer {
                 rotationZ = degrees
                 clip = false
             },
         // Pre-rotation box matches drawn aspect → FillBounds is uniform 1:1 in that box.
+        // (contentScale param is for the non-rotate path; telephoto owns Fit/Crop/Original.)
         contentScale = ContentScale.FillBounds,
         colorFilter = colorFilter,
     )
@@ -260,16 +250,17 @@ private fun FitPageImage(
 /**
  * - **Pager (bounded H):** measure at ContentScale.**Inside** of post-rotation size (no upscale),
  *   report full viewport so telephoto can Fit-upscale / zoom.
- * - **Webtoon (unbounded H):** width-driven post-rotation row height.
+ * - **Webtoon (unbounded H):** width-driven post-rotation row height from bitmap aspect.
  */
 private fun Modifier.rotate90FitLayout(
     bitmapW: Int,
     bitmapH: Int,
-    displayAspect: Float,
 ): Modifier = layout { measurable, constraints ->
     val maxW = constraints.maxWidth.coerceAtLeast(1)
     val maxH = constraints.maxHeight
     val hasBoundedH = maxH != Constraints.Infinity
+    // Post-rotation aspect (width/height) = origH/origW
+    val displayAspect = bitmapH.toFloat().coerceAtLeast(1f) / bitmapW.toFloat().coerceAtLeast(1f)
 
     if (!hasBoundedH) {
         // Webtoon: width-driven strip; fit rotated image to max width.
@@ -297,6 +288,7 @@ private fun Modifier.rotate90FitLayout(
         val displayW = (logicalW * inside.scaleX).roundToInt().coerceAtLeast(1)
         val displayH = (logicalH * inside.scaleY).roundToInt().coerceAtLeast(1)
         // Pre-rotation child = swap of display box.
+        // May place with negative x when bitmap width > viewport (no clip; graphicsLayer clip=false).
         val preW = displayH
         val preH = displayW
         val placeable = measurable.measure(Constraints.fixed(preW, preH))
