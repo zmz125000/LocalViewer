@@ -115,6 +115,9 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
             forceOriginal: Boolean,
         ): CoilImage {
             val mode = decodeMode(forceOriginal)
+            // Direct hardware path: Coil may decode to HARDWARE without a software copy for
+            // crop / QR post-process. Incompatible with maybeCropBorder + detectQrCode.
+            val hardwareDirect = Settings.readerHardwareBitmap.value
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
@@ -128,10 +131,17 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                         precision(Precision.INEXACT)
                     }
                     maxBitmapSize(Size.ORIGINAL)
-                    allowHardware(false)
-                    hardwareThreshold(Settings.hardwareBitmapThreshold.value)
-                    maybeCropBorder(Settings.cropBorder.value)
-                    detectQrCode(checkExtraneousAds)
+                    if (hardwareDirect) {
+                        allowHardware(true)
+                        // Skip CPU post-process that forces software bitmap + copy.
+                        maybeCropBorder(false)
+                        detectQrCode(false)
+                    } else {
+                        allowHardware(false)
+                        hardwareThreshold(Settings.hardwareBitmapThreshold.value)
+                        maybeCropBorder(Settings.cropBorder.value)
+                        detectQrCode(checkExtraneousAds)
+                    }
                     memoryCachePolicy(CachePolicy.DISABLED)
                 }
             }

@@ -257,7 +257,11 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     }
     LaunchedEffect(pageLoader) {
         with(Settings) {
-            merge(cropBorder.changesFlow(), stripExtraneousAds.changesFlow()).collect {
+            merge(
+                cropBorder.changesFlow(),
+                stripExtraneousAds.changesFlow(),
+                readerHardwareBitmap.changesFlow(),
+            ).collect {
                 pageLoader.restart()
             }
         }

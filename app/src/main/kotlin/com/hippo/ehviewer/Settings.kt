@@ -218,6 +218,12 @@ object Settings : DataStorePreferences(null) {
     val smbReaderSafeConcurrency = boolPref("pref_smb_reader_safe_concurrency", false).observed {
         runCatching { com.hippo.ehviewer.smb.SmbGateway.onReaderSafeConcurrencyChanged() }
     }
+    /**
+     * Coil [allowHardware] for reader decode: GPU hardware bitmaps without software
+     * intermediate for crop-border / QR-ad detection. Faster + less Java-heap RAM;
+     * disables crop borders and extraneous-ad strip while on.
+     */
+    val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", false)
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)

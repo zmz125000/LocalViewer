@@ -41,6 +41,11 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         title = stringResource(id = R.string.pref_smb_reader_safe_concurrency),
         field = Settings.smbReaderSafeConcurrency.asMutableState(),
     )
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_hardware_bitmap),
+        summary = stringResource(id = R.string.pref_reader_hardware_bitmap_summary),
+        field = Settings.readerHardwareBitmap.asMutableState(),
+    )
     val fullscreen = Settings.fullscreen.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_fullscreen),

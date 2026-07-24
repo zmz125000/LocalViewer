@@ -561,6 +561,8 @@
     <string name="pref_reader_original_size_summary">按文件完整分辨率解码（更占内存）。关闭时缩放到屏幕大小。也可在页面菜单中单次“查看原图”。</string>
     <string name="pref_smb_reader_safe_concurrency">限制 SMB 并发（原图更稳）</string>
     <string name="pref_smb_reader_safe_concurrency_summary">强制 3 条连接、每连接 1 个传输。降低原图/大图阅读时的 OOM 风险。</string>
+    <string name="pref_reader_hardware_bitmap">硬件位图解码</string>
+    <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路径（GPU 位图）。会关闭裁边与二维码广告检测，避免先软件解码再拷贝。</string>
     <string name="pref_custom_brightness">自定义亮度</string>
     <string name="pref_custom_color_filter">自定义滤镜</string>
     <string name="pref_keep_screen_on">保持屏幕常亮</string>

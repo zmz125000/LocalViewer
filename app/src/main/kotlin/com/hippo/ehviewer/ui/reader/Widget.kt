@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.reader
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -66,13 +67,30 @@ fun SpinnerChoice(title: String, entries: Array<String>, values: List<Int>, fiel
 }
 
 @Composable
-fun SwitchChoice(title: String, field: MutableState<Boolean>) {
+fun SwitchChoice(
+    title: String,
+    field: MutableState<Boolean>,
+    summary: String? = null,
+) {
     var value by field
     Row(
-        modifier = Modifier.fillMaxWidth().height(48.dp).clickable { value = !value }.padding(horizontal = 16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (summary == null) Modifier.height(48.dp) else Modifier)
+            .clickable { value = !value }
+            .padding(horizontal = 16.dp, vertical = if (summary == null) 0.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = title, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(text = title, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (summary != null) {
+                Text(
+                    text = summary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
         Switch(
             checked = value,
             onCheckedChange = { value = !value },
