@@ -193,11 +193,15 @@ fun PagerItem(
 /**
  * Draws [painter] optionally rotated ±90° so the image long side matches the screen.
  *
- * **Pager (bounded height):** layout fills the full viewport (same as non-rotated + telephoto
- * zoomable). The bitmap is measured pre-rotation and drawn centered; zoom/pan fill the screen.
+ * Telephoto uses [ZoomableContentLocation.scaledInsideAndCenterAligned] (ContentScale.**Inside**)
+ * for unscaled bounds, then [ZoomableState.contentScale] (e.g. Fit) as base zoom. Non-rotated
+ * pages draw with ContentScale.Inside so the bitmap matches that model.
  *
- * **Webtoon (unbounded height):** layout height follows post-rotation aspect so list rows are
- * correct; width fills the strip.
+ * **Pager:** draw the rotated image at **Inside** size of the swapped aspect (never pre-upscale).
+ * Pre-fitting with Fit upscaled small pages (1220×889 → scale &gt; 1), then telephoto Fit
+ * upscaled again → crop. Large pages only downscaled once so they looked fine.
+ *
+ * **Webtoon:** no per-page telephoto fit — width-driven post-rotation row height.
  */
 @Composable
 private fun FitPageImage(
@@ -221,76 +225,89 @@ private fun FitPageImage(
     }
 
     val src = painter.intrinsicSize
+    val srcW = src.width.roundToInt().coerceAtLeast(1)
+    val srcH = src.height.roundToInt().coerceAtLeast(1)
     val imageAspect = if (src.width > 0f && src.height > 0f) {
         src.width / src.height
     } else {
         1f / DEFAULT_ASPECT
     }
-    // After ±90° the on-screen aspect (width/height) = origH/origW = 1/imageAspect
+    // After ±90° the on-screen aspect (width/height) = origH/origW
     val displayAspect = 1f / imageAspect
     val degrees = if (clockwise) 90f else -90f
 
     Image(
         painter = painter,
         contentDescription = null,
-        // Same modifier order as non-rotate: outer chrome → zoomable → size → draw.
-        // fillMaxWidth (not fillMaxSize): webtoon needs unbounded height; pager still
-        // passes a bounded maxHeight so rotate90FitLayout can fill the full viewport.
         modifier = modifier
             .then(contentModifier)
             .fillMaxWidth()
-            .rotate90FitLayout(displayAspect = displayAspect)
+            .rotate90FitLayout(
+                bitmapW = srcW,
+                bitmapH = srcH,
+                displayAspect = displayAspect,
+            )
             .graphicsLayer {
                 rotationZ = degrees
                 clip = false
             },
-        // Pre-rotation constraints match bitmap aspect → Fit == uniform, no stretch.
-        contentScale = ContentScale.Fit,
+        // Pre-rotation box matches drawn aspect → FillBounds is uniform 1:1 in that box.
+        contentScale = ContentScale.FillBounds,
         colorFilter = colorFilter,
     )
 }
 
 /**
- * Measures the child in the **pre-rotation** frame (aspect matches the bitmap), places it so
- * after ±90° it sits as a ContentScale.Fit/Inside rect in the parent, then:
- * - **Bounded height (pager):** reports the **full parent** size so zoomable fills the screen.
- * - **Unbounded height (webtoon):** reports the **post-rotation** size for correct row height.
+ * - **Pager (bounded H):** measure at ContentScale.**Inside** of post-rotation size (no upscale),
+ *   report full viewport so telephoto can Fit-upscale / zoom.
+ * - **Webtoon (unbounded H):** width-driven post-rotation row height.
  */
-private fun Modifier.rotate90FitLayout(displayAspect: Float): Modifier = layout { measurable, constraints ->
+private fun Modifier.rotate90FitLayout(
+    bitmapW: Int,
+    bitmapH: Int,
+    displayAspect: Float,
+): Modifier = layout { measurable, constraints ->
     val maxW = constraints.maxWidth.coerceAtLeast(1)
     val maxH = constraints.maxHeight
     val hasBoundedH = maxH != Constraints.Infinity
 
-    // Largest post-rotation rect with [displayAspect] that fits the available area (Fit/Inside).
-    val displayW: Int
-    val displayH: Int
     if (!hasBoundedH) {
-        // Webtoon strip: width-driven height.
-        displayW = maxW
-        displayH = (displayW / displayAspect).roundToInt().coerceAtLeast(1)
-    } else if (maxW.toFloat() / maxH <= displayAspect) {
-        displayW = maxW
-        displayH = (displayW / displayAspect).roundToInt().coerceAtLeast(1)
+        // Webtoon: width-driven strip; fit rotated image to max width.
+        val displayW = maxW
+        val displayH = (displayW / displayAspect).roundToInt().coerceAtLeast(1)
+        val preW = displayH
+        val preH = displayW
+        val placeable = measurable.measure(Constraints.fixed(preW, preH))
+        layout(displayW, displayH) {
+            placeable.place(
+                x = (displayW - preW) / 2,
+                y = (displayH - preH) / 2,
+            )
+        }
     } else {
-        displayH = maxH.coerceAtLeast(1)
-        displayW = (displayH * displayAspect).roundToInt().coerceAtLeast(1)
-    }
-
-    // Pre-rotation child = swap of display box → same aspect as original bitmap.
-    val preW = displayH
-    val preH = displayW
-    val placeable = measurable.measure(Constraints.fixed(preW, preH))
-
-    // Pager: occupy full viewport so telephoto zoom is not locked to the letterbox.
-    // Webtoon: only the image row height (no infinite height).
-    val layoutW = maxW
-    val layoutH = if (hasBoundedH) maxH.coerceAtLeast(1) else displayH
-
-    layout(layoutW, layoutH) {
-        placeable.place(
-            x = (layoutW - preW) / 2,
-            y = (layoutH - preH) / 2,
+        // Post-rotation logical size = swap of bitmap (matches fitDisplaySize / contentLocation).
+        val logicalW = bitmapH.toFloat().coerceAtLeast(1f)
+        val logicalH = bitmapW.toFloat().coerceAtLeast(1f)
+        val viewport = Size(maxW.toFloat(), maxH.toFloat().coerceAtLeast(1f))
+        // Same as telephoto scaledInsideAndCenterAligned: Inside never upscales.
+        val inside = ContentScale.Inside.computeScaleFactor(
+            srcSize = Size(logicalW, logicalH),
+            dstSize = viewport,
         )
+        val displayW = (logicalW * inside.scaleX).roundToInt().coerceAtLeast(1)
+        val displayH = (logicalH * inside.scaleY).roundToInt().coerceAtLeast(1)
+        // Pre-rotation child = swap of display box.
+        val preW = displayH
+        val preH = displayW
+        val placeable = measurable.measure(Constraints.fixed(preW, preH))
+        val layoutW = maxW
+        val layoutH = maxH.coerceAtLeast(1)
+        layout(layoutW, layoutH) {
+            placeable.place(
+                x = (layoutW - preW) / 2,
+                y = (layoutH - preH) / 2,
+            )
+        }
     }
 }
 
