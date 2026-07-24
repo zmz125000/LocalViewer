@@ -59,11 +59,27 @@ abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, sta
     /** Peak software decode is large; keep concurrency low on a 256 MiB heap. */
     private val semaphore = Semaphore(4)
 
+    /**
+     * Decoded-page budget. Each [sizeOf] entry **must be ≤ maxSize** — androidx
+     * [SieveCache.put] then [trimToSize] crashes with
+     * `ArrayIndexOutOfBoundsException: index=2147483647` (NodeInvalidLink) when a
+     * single bitmap is larger than maxSize (e.g. 7000×5000 original ≈ 133 MiB on a
+     * ~90 MiB cache). Clamp weight to [imageCacheMaxBytes].
+     */
+    private val imageCacheMaxBytes = pageImageCacheMaxBytes()
+
     private val cache = SieveCache<Int, Image>(
-        maxSize = pageImageCacheMaxBytes(),
-        sizeOf = { _, v -> v.allocationSize.toInt().coerceAtLeast(1) },
+        maxSize = imageCacheMaxBytes,
+        sizeOf = { _, v -> cacheWeightOf(v) },
         onEntryRemoved = { k, o, n, _ -> if (o.unpin()) n ?: notifyPageWait(k) },
     )
+
+    private fun cacheWeightOf(image: Image): Int {
+        val raw = image.allocationSize
+        if (raw <= 0L) return 1
+        // Never report more than maxSize — SieveCache cannot evict a sole oversize entry.
+        return raw.coerceAtMost(imageCacheMaxBytes.toLong()).toInt().coerceAtLeast(1)
+    }
 
     private suspend fun atomicallyDecodeAndUpdate(index: Int, originalSize: Boolean) {
         bracketCase(
@@ -126,7 +142,14 @@ abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, sta
     }
 
     fun notifyPageSucceed(index: Int, image: Image, replaceCache: Boolean = true) {
-        if (replaceCache) lock.write { cache[index] = image }
+        if (replaceCache) {
+            lock.write {
+                // Replace any prior entry first so put() doesn't sum two huge weights.
+                cache.remove(index)
+                // sizeOf is clamped to maxSize — safe for SieveCache put/trim.
+                cache[index] = image
+            }
+        }
         pages[index].statusFlow.update { if (image.hasQrCode) PageStatus.Blocked(image) else PageStatus.Ready(image) }
     }
 
