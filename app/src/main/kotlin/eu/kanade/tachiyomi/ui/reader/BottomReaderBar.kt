@@ -51,16 +51,16 @@ fun BottomReaderBar(onClickSettings: () -> Unit, containerColor: Color) = Flexib
         },
         minMenuWidth = 192.dp,
     )
-    // 2. Auto-rotate to fit (off / CW / CCW)
+    // 2. Auto-rotate to fit — cycle Off → CW → CCW → Off
     val autoRotate by Settings.autoRotateMode.collectAsState { AutoRotateMode.fromPreference(it) }
-    DropdownIconButton(
-        label = stringResource(R.string.pref_auto_rotate_mode),
-        menuItems = AutoRotateMode.entries,
-        selectedItem = autoRotate,
-        onSelectedItemChange = {
-            Settings.autoRotateMode.value = it.prefValue
+    ActionButton(
+        onClick = {
+            val modes = AutoRotateMode.entries
+            val next = modes[(modes.indexOf(autoRotate) + 1) % modes.size]
+            Settings.autoRotateMode.value = next.prefValue
         },
-        minMenuWidth = 160.dp,
+        imageVector = autoRotate.icon,
+        contentDescription = stringResource(autoRotate.stringRes),
     )
     // 3. Decode size (1.5x … origin)
     val decodeSize by Settings.readerDecodeSize.collectAsState { DecodeSizeType.fromPreference(it) }
