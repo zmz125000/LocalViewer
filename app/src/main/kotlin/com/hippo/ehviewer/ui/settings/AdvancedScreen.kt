@@ -165,14 +165,22 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 entryValueRes = com.hippo.ehviewer.R.array.preload_image_entry_values,
                 state = preloadImage,
             )
-            val smbConnections = Settings.multiThreadDownload.asMutableState()
-            SimpleMenuPreferenceInt(
-                title = stringResource(id = R.string.settings_smb_concurrency),
-                summary = stringResource(id = R.string.settings_smb_concurrency_summary, smbConnections.value),
-                entry = com.hippo.ehviewer.R.array.multi_thread_download_entries,
-                entryValueRes = com.hippo.ehviewer.R.array.multi_thread_download_entry_values,
-                state = smbConnections,
+            val smbSafeConcurrency = Settings.smbReaderSafeConcurrency.asMutableState()
+            SwitchPreference(
+                title = stringResource(id = R.string.pref_smb_reader_safe_concurrency),
+                summary = stringResource(id = R.string.pref_smb_reader_safe_concurrency_summary),
+                state = smbSafeConcurrency,
             )
+            AnimatedVisibility(visible = !smbSafeConcurrency.value) {
+                val smbConnections = Settings.multiThreadDownload.asMutableState()
+                SimpleMenuPreferenceInt(
+                    title = stringResource(id = R.string.settings_smb_concurrency),
+                    summary = stringResource(id = R.string.settings_smb_concurrency_summary, smbConnections.value),
+                    entry = com.hippo.ehviewer.R.array.multi_thread_download_entries,
+                    entryValueRes = com.hippo.ehviewer.R.array.multi_thread_download_entry_values,
+                    state = smbConnections,
+                )
+            }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_smb3_only),
                 summary = stringResource(id = R.string.settings_smb3_only_summary),

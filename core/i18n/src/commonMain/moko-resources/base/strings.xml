@@ -668,7 +668,7 @@
     <string name="pref_reader_original_size">Always load original image size</string>
     <string name="pref_reader_original_size_summary">Decode full resolution (more RAM). Off: downscale to screen. Or use page menu View original once.</string>
     <string name="pref_smb_reader_safe_concurrency">Limit SMB concurrency (safer original size)</string>
-    <string name="pref_smb_reader_safe_concurrency_summary">Force 3 connections and 1 transfer per connection. Reduces OOM when loading large/original pages over SMB.</string>
+    <string name="pref_smb_reader_safe_concurrency_summary">Force 3 connections and 1 transfer per connection. Reduces OOM when loading large images over SMB.</string>
     <string name="pref_custom_brightness">Custom brightness</string>
     <string name="pref_grayscale">Grayscale</string>
     <string name="pref_inverted_colors">Inverted</string>
