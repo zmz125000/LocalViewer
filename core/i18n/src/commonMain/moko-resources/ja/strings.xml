@@ -554,6 +554,8 @@
     <string name="pref_auto_rotate_clockwise">自動回転を時計回り（オフ：反時計回り）</string>
     <string name="pref_reader_original_size">常に原寸で読み込む</string>
     <string name="pref_reader_original_size_summary">ファイルのフル解像度でデコード（メモリ多め）。オフ時は画面向け縮小。ページメニューの「オリジナルの画像を表示」で1枚だけ原寸も可。</string>
+    <string name="pref_smb_reader_safe_concurrency">SMB同時接続を制限（原寸向け）</string>
+    <string name="pref_smb_reader_safe_concurrency_summary">接続3本・各1転送に固定。原寸/大画像時のOOMを抑えます。</string>
     <string name="pref_custom_brightness">明るさをカスタマイズ</string>
     <string name="pref_grayscale">グレースケール</string>
     <string name="pref_inverted_colors">色の反転</string>

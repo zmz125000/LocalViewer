@@ -209,6 +209,13 @@ object Settings : DataStorePreferences(null) {
      * One-shot override: page menu "View original image".
      */
     val readerOriginalSize = boolPref("pref_reader_original_size", false)
+    /**
+     * Cap SMB pool for safer original-size reading: 3 TCP sessions, 1 op/session.
+     * Overrides Advanced concurrent-connection count while enabled.
+     */
+    val smbReaderSafeConcurrency = boolPref("pref_smb_reader_safe_concurrency", false).observed {
+        runCatching { com.hippo.ehviewer.smb.SmbGateway.onReaderSafeConcurrencyChanged() }
+    }
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)

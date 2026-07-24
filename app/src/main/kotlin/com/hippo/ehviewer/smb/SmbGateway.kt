@@ -70,7 +70,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * ## Pool model
  * - **Budget:** max [maxConnectionsPerHost] TCP/SMB **sessions** per `host:port`
  *   (Settings concurrency, default 5), shared by every source on that server.
- * - **Multiplex:** each session allows up to [OPS_PER_SESSION] concurrent ops, with a
+ * - **Multiplex:** each session allows up to [opsPerSession] concurrent ops, with a
  *   host-wide hard cap ([MAX_SAFE_HOST_OPS]) so 5–7 TCP sessions do not open 15–21
  *   concurrent large-page reads (OOM / close-under-read crash).
  * - **Session identity:** `host|port|user|domain|password`
@@ -86,9 +86,11 @@ object SmbGateway {
 
     /**
      * Concurrent file/list ops multiplexed on one TCP session (smbj message IDs).
-     * Keep modest: smbj + large multi-credit reads are heavy per op.
+     * Default 3; reduced to 1 when [Settings.smbReaderSafeConcurrency] (original-size RAM).
      */
-    private const val OPS_PER_SESSION = 3
+    private const val OPS_PER_SESSION_DEFAULT = 3
+    private const val OPS_PER_SESSION_SAFE = 1
+    private const val CONNECTIONS_SAFE = 3
 
     /**
      * Hard cap on simultaneous ops **per host** (all sessions).
@@ -109,16 +111,36 @@ object SmbGateway {
     private const val COOLDOWN_MAX_MS = 60_000L
     private const val PATH_CHANGE_DEBOUNCE_MS = 1_000L
 
-    fun maxConnectionsPerHost(): Int = Settings.multiThreadDownload.value.coerceIn(1, POOL_CAPACITY)
+    /** Ops multiplexed per TCP session (fixed when the session is opened). */
+    fun opsPerSession(): Int =
+        if (Settings.smbReaderSafeConcurrency.value) OPS_PER_SESSION_SAFE else OPS_PER_SESSION_DEFAULT
+
+    /**
+     * Max TCP sessions per host. Safe mode forces [CONNECTIONS_SAFE] (3).
+     * Otherwise uses Advanced → SMB concurrent connections.
+     */
+    fun maxConnectionsPerHost(): Int =
+        if (Settings.smbReaderSafeConcurrency.value) {
+            CONNECTIONS_SAFE
+        } else {
+            Settings.multiThreadDownload.value.coerceIn(1, POOL_CAPACITY)
+        }
 
     fun maxConnectionsPerSource(): Int = maxConnectionsPerHost()
 
     /**
      * App-level download/list gate. Always ≤ [MAX_SAFE_HOST_OPS] so raising session count
      * does not explode concurrent 20MB transfers (OOM) or smbj mid-close races.
+     * Safe mode: 3 sessions × 1 op = 3 concurrent transfers.
      */
     fun maxConcurrentOpsPerHost(): Int =
-        (maxConnectionsPerHost() * OPS_PER_SESSION).coerceIn(1, MAX_SAFE_HOST_OPS)
+        (maxConnectionsPerHost() * opsPerSession()).coerceIn(1, MAX_SAFE_HOST_OPS)
+
+    /** Reader toggle changed — drop pools so new sessions use the new op/session budget. */
+    fun onReaderSafeConcurrencyChanged() {
+        logcat { "SmbGateway: reader safe concurrency → connections=${maxConnectionsPerHost()} ops/session=${opsPerSession()}" }
+        dropAllSessions(cancelLists = true, clearCircuits = false)
+    }
 
     private fun smbConfig(): SmbConfig = config
 
@@ -190,7 +212,9 @@ object SmbGateway {
     ) {
         private val shares = HashMap<String, DiskShare>()
         private val shareLock = Any()
-        val opSlots = Semaphore(OPS_PER_SESSION)
+        /** Snapshot of [opsPerSession] at open — do not resize mid-life. */
+        val opsLimit: Int = opsPerSession()
+        val opSlots = Semaphore(opsLimit)
         val outstanding = AtomicInteger(0)
         val retired = AtomicBoolean(false)
 
@@ -312,10 +336,10 @@ object SmbGateway {
                 // tryAcquire all slots so we don't race an op mid-ping
                 var acquired = 0
                 try {
-                    while (acquired < OPS_PER_SESSION && ps.opSlots.tryAcquire()) {
+                    while (acquired < ps.opsLimit && ps.opSlots.tryAcquire()) {
                         acquired++
                     }
-                    if (acquired < OPS_PER_SESSION) {
+                    if (acquired < ps.opsLimit) {
                         repeat(acquired) { ps.opSlots.release() }
                         kept++
                         continue
@@ -470,7 +494,7 @@ object SmbGateway {
                         error(
                             "SMB host $hostPortKey busy: no free op slot for this user " +
                                 "(sessions=${size.get()}/${maxConnectionsPerHost()}, " +
-                                "ops/session=$OPS_PER_SESSION, hostOps≤$MAX_SAFE_HOST_OPS)",
+                                "ops/session=${opsPerSession()}, hostOps≤$MAX_SAFE_HOST_OPS)",
                         )
                     }
                 }

@@ -516,6 +516,8 @@
     <string name="pref_auto_rotate_clockwise">自動旋轉順時針（關：逆時針）</string>
     <string name="pref_reader_original_size">一律載入原始影像尺寸</string>
     <string name="pref_reader_original_size_summary">以檔案完整解析度解碼（較占記憶體）。關閉時縮放至螢幕。亦可在頁面選單單次「查看原圖」。</string>
+    <string name="pref_smb_reader_safe_concurrency">限制 SMB 並行（原圖更穩）</string>
+    <string name="pref_smb_reader_safe_concurrency_summary">強制 3 條連線、每連線 1 個傳輸。降低原圖／大圖閱讀時的 OOM 風險。</string>
     <string name="pref_custom_brightness">自訂亮度</string>
     <string name="pref_custom_color_filter">色彩濾鏡</string>
     <string name="pref_keep_screen_on">保持螢幕恆亮</string>
