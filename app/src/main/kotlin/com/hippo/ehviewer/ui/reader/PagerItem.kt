@@ -132,12 +132,12 @@ fun PagerItem(
                 val drawable = (painter as? DrawablePainter)?.drawable
                 val grayScale by Settings.grayScale.collectAsState()
                 val invert by Settings.invertedColors.collectAsState()
-                val autoRotate by Settings.autoRotateToFit.collectAsState()
-                val clockwise by Settings.autoRotateClockwise.collectAsState()
+                val autoRotateMode by Settings.autoRotateMode.collectAsState()
                 val imgSize = image.intrinsicSize
-                val rotate = autoRotate &&
+                val rotate = autoRotateMode != 0 &&
                     viewportSize != Size.Zero &&
                     needsFitRotation(imgSize, viewportSize)
+                val clockwise = autoRotateMode != 2 // 1=CW, 2=CCW
                 val colorFilter = when {
                     grayScale && invert -> grayScaleAndInvertFilter
                     grayScale -> grayScaleFilter

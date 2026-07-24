@@ -199,16 +199,18 @@ object Settings : DataStorePreferences(null) {
 
     /** Off = double-tap prev/next gallery (folder mode). Default: off. */
     val doubleTapToZoom = boolPref("pref_double_tap_to_zoom", false)
-    /** Rotate page 90° when image orientation ≠ screen orientation. */
-    val autoRotateToFit = boolPref("pref_auto_rotate_to_fit", true)
-    /** When auto-rotate is on: true = 90° CW, false = 90° CCW. */
-    val autoRotateClockwise = boolPref("pref_auto_rotate_clockwise", true)
     /**
-     * When true, reader pages decode at full file resolution (Coil Size.ORIGINAL).
-     * Default false: downscale to ~screen * 4/3 (see Image.displaySizeResolver).
-     * One-shot override: page menu "View original image".
+     * Fit-rotate mode: 0=off, 1=CW, 2=CCW ([eu.kanade.tachiyomi.ui.reader.setting.AutoRotateMode]).
+     * Default CW (matches previous auto-on + clockwise).
      */
-    val readerOriginalSize = boolPref("pref_reader_original_size", false)
+    val autoRotateMode = intPref("pref_auto_rotate_mode", 1)
+    /**
+     * Coil decode size vs shorter screen edge:
+     * 0=1.5x, 1=2x, 2=2.5x, 3=3x, 4=original
+     * ([eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType]). Default 1.5x.
+     * One-shot full-res: page menu "View original image".
+     */
+    val readerDecodeSize = intPref("pref_reader_decode_size", 0)
     /**
      * Cap SMB pool for safer original-size reading: 3 TCP sessions, 1 op/session.
      * Overrides Advanced concurrent-connection count while enabled.

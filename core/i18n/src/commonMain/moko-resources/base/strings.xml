@@ -655,6 +655,16 @@
     <string name="pref_auto_rotate_to_fit">Auto-rotate to fit screen</string>
     <string name="pref_auto_rotate_to_fit_summary">Rotate pages so the long side matches the screen</string>
     <string name="pref_auto_rotate_clockwise">Auto-rotate clockwise (off: counter-clockwise)</string>
+    <string name="pref_auto_rotate_mode">Auto-rotate to fit</string>
+    <string name="pref_auto_rotate_off">Off</string>
+    <string name="pref_auto_rotate_cw">Clockwise 90°</string>
+    <string name="pref_auto_rotate_ccw">Counter-clockwise 90°</string>
+    <string name="pref_decode_size">Decode size</string>
+    <string name="pref_decode_size_1_5x">1.5× screen</string>
+    <string name="pref_decode_size_2x">2× screen</string>
+    <string name="pref_decode_size_2_5x">2.5× screen</string>
+    <string name="pref_decode_size_3x">3× screen</string>
+    <string name="pref_decode_size_origin">Original</string>
     <string name="pref_reader_original_size">Always load original image size</string>
     <string name="pref_reader_original_size_summary">Decode full resolution (more RAM). Off: downscale to screen. Or use page menu View original once.</string>
     <string name="pref_smb_reader_safe_concurrency">Limit SMB concurrency (safer original size)</string>

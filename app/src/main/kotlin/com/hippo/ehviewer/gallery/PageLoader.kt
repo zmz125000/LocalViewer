@@ -81,7 +81,7 @@ abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, sta
         return raw.coerceAtMost(imageCacheMaxBytes.toLong()).toInt().coerceAtLeast(1)
     }
 
-    private suspend fun atomicallyDecodeAndUpdate(index: Int, originalSize: Boolean) {
+    private suspend fun atomicallyDecodeAndUpdate(index: Int, forceOriginal: Boolean) {
         bracketCase(
             { openSource(index) },
             { src ->
@@ -91,7 +91,7 @@ abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, sta
                         Image.decode(
                             src,
                             checkExtraneousAds = hasAds && detectAds(index, size),
-                            originalSize = originalSize,
+                            forceOriginal = forceOriginal,
                         ),
                     )
                 }
@@ -123,8 +123,8 @@ abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, sta
     protected abstract fun prefetchPages(pages: List<Int>, bounds: IntRange)
 
     /**
-     * @param orgImg if true, decode this page at full resolution (Coil [Size.ORIGINAL]).
-     *   Combined with [Settings.readerOriginalSize] in [notifySourceReady].
+     * @param orgImg if true, force full-resolution decode for this page (page menu).
+     *   Otherwise uses [Settings.readerDecodeSize] (1.5x…3x / origin).
      */
     protected abstract fun onRequest(index: Int, force: Boolean = false, orgImg: Boolean = false)
 
@@ -210,17 +210,16 @@ abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, sta
 
     /**
      * Decode [index] when the source file is ready.
-     * @param orgImg one-shot full-res request (page sheet "View original"); also true when
-     *   [Settings.readerOriginalSize] is enabled so every page loads native resolution.
+     * @param orgImg one-shot full-res (page sheet "View original"); otherwise
+     *   [Settings.readerDecodeSize] controls Coil target size.
      */
     fun notifySourceReady(index: Int, orgImg: Boolean = false) = synchronized(jobs) {
-        val originalSize = orgImg || Settings.readerOriginalSize.value
         if (jobs[index]?.isActive != true) {
             jobs[index] = scope.launch {
                 try {
                     mutex.withLock(index) {
                         semaphore.withPermit {
-                            atomicallyDecodeAndUpdate(index, originalSize)
+                            atomicallyDecodeAndUpdate(index, forceOriginal = orgImg)
                         }
                     }
                 } catch (e: Throwable) {

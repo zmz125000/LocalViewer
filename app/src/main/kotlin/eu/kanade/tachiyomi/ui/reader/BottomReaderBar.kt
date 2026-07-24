@@ -27,13 +27,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
-import com.ehviewer.core.ui.icons.EhIcons
-import com.ehviewer.core.ui.icons.filled.Crop
-import com.ehviewer.core.ui.icons.filled.CropOff
 import com.hippo.ehviewer.Settings
-import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.collectAsState
-import eu.kanade.tachiyomi.ui.reader.setting.OrientationType
+import eu.kanade.tachiyomi.ui.reader.setting.AutoRotateMode
+import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
 import eu.kanade.tachiyomi.ui.reader.setting.PreferenceType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 
@@ -43,6 +40,7 @@ fun BottomReaderBar(onClickSettings: () -> Unit, containerColor: Color) = Flexib
     contentPadding = PaddingValues.Zero,
     horizontalArrangement = Arrangement.SpaceEvenly,
 ) {
+    // 1. Reading mode
     val readingMode by Settings.readingMode.collectAsState { ReadingModeType.fromPreference(it) }
     DropdownIconButton(
         label = stringResource(R.string.viewer),
@@ -53,22 +51,29 @@ fun BottomReaderBar(onClickSettings: () -> Unit, containerColor: Color) = Flexib
         },
         minMenuWidth = 192.dp,
     )
-    val orientationMode by Settings.orientationMode.collectAsState { OrientationType.fromPreference(it) }
+    // 2. Auto-rotate to fit (off / CW / CCW)
+    val autoRotate by Settings.autoRotateMode.collectAsState { AutoRotateMode.fromPreference(it) }
     DropdownIconButton(
-        label = stringResource(R.string.pref_rotation_type),
-        menuItems = OrientationType.entries,
-        selectedItem = orientationMode,
+        label = stringResource(R.string.pref_auto_rotate_mode),
+        menuItems = AutoRotateMode.entries,
+        selectedItem = autoRotate,
         onSelectedItemChange = {
-            Settings.orientationMode.value = it.prefValue
+            Settings.autoRotateMode.value = it.prefValue
         },
-        minMenuWidth = 192.dp,
+        minMenuWidth = 160.dp,
     )
-    var cropBorder by Settings.cropBorder.asMutableState()
-    ActionButton(
-        onClick = { cropBorder = !cropBorder },
-        imageVector = if (cropBorder) EhIcons.Default.Crop else EhIcons.Default.CropOff,
-        contentDescription = stringResource(R.string.pref_crop_borders),
+    // 3. Decode size (1.5x … origin)
+    val decodeSize by Settings.readerDecodeSize.collectAsState { DecodeSizeType.fromPreference(it) }
+    DropdownIconButton(
+        label = stringResource(R.string.pref_decode_size),
+        menuItems = DecodeSizeType.entries,
+        selectedItem = decodeSize,
+        onSelectedItemChange = {
+            Settings.readerDecodeSize.value = it.prefValue
+        },
+        minMenuWidth = 160.dp,
     )
+    // 4. Settings
     ActionButton(
         onClick = onClickSettings,
         imageVector = Icons.Outlined.Settings,

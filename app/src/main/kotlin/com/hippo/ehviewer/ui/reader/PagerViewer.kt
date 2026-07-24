@@ -71,7 +71,7 @@ fun PagerViewer(
     val items = pageLoader.pages
     val scaleType by Settings.imageScaleType.collectAsState()
     val landscapeZoom by Settings.landscapeZoom.collectAsState()
-    val autoRotateToFit by Settings.autoRotateToFit.collectAsState()
+    val autoRotateMode by Settings.autoRotateMode.collectAsState()
     val zoomStart by Settings.zoomStart.collectAsState()
     val alignment = Alignment.fromPreferences(zoomStart, isRtl, isVertical)
     val layoutSize by remember(pagerState) {
@@ -107,7 +107,7 @@ fun PagerViewer(
                 isRtl = false,
                 scaleType = scaleType,
                 landscapeZoom = landscapeZoom,
-                autoRotateToFit = autoRotateToFit,
+                autoRotateMode = autoRotateMode,
                 alignment = alignment,
                 layoutSize = layoutSize,
                 navigator = navigator,
@@ -134,7 +134,7 @@ fun PagerViewer(
                 isRtl = isRtl,
                 scaleType = scaleType,
                 landscapeZoom = landscapeZoom,
-                autoRotateToFit = autoRotateToFit,
+                autoRotateMode = autoRotateMode,
                 alignment = alignment,
                 layoutSize = layoutSize,
                 navigator = navigator,
@@ -155,7 +155,7 @@ private fun PageContainer(
     isRtl: Boolean,
     scaleType: Int,
     landscapeZoom: Boolean,
-    autoRotateToFit: Boolean,
+    autoRotateMode: Int,
     alignment: Alignment.Horizontal,
     layoutSize: Size,
     navigator: () -> NavigationRegions,
@@ -171,7 +171,7 @@ private fun PageContainer(
     val status = page.statusObserved
     if (status is PageStatus.Ready && layoutSize != Size.Zero) {
         val raw = status.image.intrinsicSize.toSize()
-        val rotate = autoRotateToFit && needsFitRotation(raw, layoutSize)
+        val rotate = autoRotateMode != 0 && needsFitRotation(raw, layoutSize)
         val size = fitDisplaySize(raw, rotate)
         val contentScale = ContentScale.fromPreferences(scaleType, size, layoutSize)
         zoomableState.contentScale = contentScale

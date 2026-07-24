@@ -552,6 +552,16 @@
     <string name="pref_auto_rotate_to_fit">画面に合わせて自動回転</string>
     <string name="pref_auto_rotate_to_fit_summary">画像の長辺を画面の長辺に合わせる</string>
     <string name="pref_auto_rotate_clockwise">自動回転を時計回り（オフ：反時計回り）</string>
+    <string name="pref_auto_rotate_mode">画面フィット自動回転</string>
+    <string name="pref_auto_rotate_off">オフ</string>
+    <string name="pref_auto_rotate_cw">時計回り 90°</string>
+    <string name="pref_auto_rotate_ccw">反時計回り 90°</string>
+    <string name="pref_decode_size">デコードサイズ</string>
+    <string name="pref_decode_size_1_5x">画面の 1.5×</string>
+    <string name="pref_decode_size_2x">画面の 2×</string>
+    <string name="pref_decode_size_2_5x">画面の 2.5×</string>
+    <string name="pref_decode_size_3x">画面の 3×</string>
+    <string name="pref_decode_size_origin">原寸</string>
     <string name="pref_reader_original_size">常に原寸で読み込む</string>
     <string name="pref_reader_original_size_summary">ファイルのフル解像度でデコード（メモリ多め）。オフ時は画面向け縮小。ページメニューの「オリジナルの画像を表示」で1枚だけ原寸も可。</string>
     <string name="pref_smb_reader_safe_concurrency">SMB同時接続を制限（原寸向け）</string>

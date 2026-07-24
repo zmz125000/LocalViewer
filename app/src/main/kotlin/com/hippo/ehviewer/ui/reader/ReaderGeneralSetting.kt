@@ -38,14 +38,6 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         field = Settings.doubleTapToZoom.asMutableState(),
     )
     SwitchChoice(
-        title = stringResource(id = R.string.pref_auto_rotate_to_fit),
-        field = Settings.autoRotateToFit.asMutableState(),
-    )
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_reader_original_size),
-        field = Settings.readerOriginalSize.asMutableState(),
-    )
-    SwitchChoice(
         title = stringResource(id = R.string.pref_smb_reader_safe_concurrency),
         field = Settings.smbReaderSafeConcurrency.asMutableState(),
     )

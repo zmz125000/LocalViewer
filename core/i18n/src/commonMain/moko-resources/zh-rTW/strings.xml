@@ -514,6 +514,16 @@
     <string name="pref_auto_rotate_to_fit">自動旋轉以配合螢幕</string>
     <string name="pref_auto_rotate_to_fit_summary">將頁面長邊與螢幕長邊對齊</string>
     <string name="pref_auto_rotate_clockwise">自動旋轉順時針（關：逆時針）</string>
+    <string name="pref_auto_rotate_mode">自動旋轉適配</string>
+    <string name="pref_auto_rotate_off">關閉</string>
+    <string name="pref_auto_rotate_cw">順時針 90°</string>
+    <string name="pref_auto_rotate_ccw">逆時針 90°</string>
+    <string name="pref_decode_size">解碼尺寸</string>
+    <string name="pref_decode_size_1_5x">1.5× 螢幕</string>
+    <string name="pref_decode_size_2x">2× 螢幕</string>
+    <string name="pref_decode_size_2_5x">2.5× 螢幕</string>
+    <string name="pref_decode_size_3x">3× 螢幕</string>
+    <string name="pref_decode_size_origin">原圖</string>
     <string name="pref_reader_original_size">一律載入原始影像尺寸</string>
     <string name="pref_reader_original_size_summary">以檔案完整解析度解碼（較占記憶體）。關閉時縮放至螢幕。亦可在頁面選單單次「查看原圖」。</string>
     <string name="pref_smb_reader_safe_concurrency">限制 SMB 並行（原圖更穩）</string>

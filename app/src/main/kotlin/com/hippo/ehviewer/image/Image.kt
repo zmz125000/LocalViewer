@@ -53,10 +53,12 @@ import com.hippo.ehviewer.jni.munmap
 import com.hippo.ehviewer.jni.rewriteGifSource
 import com.hippo.ehviewer.ktbuilder.execute
 import com.hippo.ehviewer.ktbuilder.imageRequest
+import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
 import java.nio.ByteBuffer
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.updateAndFetch
+import kotlin.math.roundToInt
 import okio.Path
 import splitties.init.appCtx
 
@@ -92,28 +94,36 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
 
     companion object {
         /**
-         * Default display-sized decode target (good for reader RAM).
-         * `min(screen edge) * 4/3` — downscale large comic pages; not full sensor resolution.
+         * Decode target = min(screen edge) × [DecodeSizeType.scale].
+         * Default 1.5x (was 4/3). [DecodeSizeType.ORIGIN] / forceOriginal → full file res.
          */
-        private val displaySizeResolver = with(appCtx.resources.displayMetrics) {
-            val targetSize = minOf(widthPixels, heightPixels) * 4 / 3
-            SizeResolver(Size(targetSize, targetSize))
+        private fun sizeResolverFor(mode: DecodeSizeType): SizeResolver {
+            val scale = mode.scale ?: return SizeResolver(Size.ORIGINAL)
+            return with(appCtx.resources.displayMetrics) {
+                val targetSize = (minOf(widthPixels, heightPixels) * scale).roundToInt().coerceAtLeast(1)
+                SizeResolver(Size(targetSize, targetSize))
+            }
+        }
+
+        private fun decodeMode(forceOriginal: Boolean): DecodeSizeType {
+            if (forceOriginal) return DecodeSizeType.ORIGIN
+            return DecodeSizeType.fromPreference(Settings.readerDecodeSize.value)
         }
 
         private suspend fun Either<ByteBufferSource, PathSource>.decodeCoil(
             checkExtraneousAds: Boolean,
-            originalSize: Boolean,
+            forceOriginal: Boolean,
         ): CoilImage {
+            val mode = decodeMode(forceOriginal)
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
                     onRight { data(it.source.toUri()) }
-                    if (originalSize) {
-                        // Full-resolution decode for "View original" / always-original setting.
+                    if (mode.isOriginal) {
                         size(Size.ORIGINAL)
                         precision(Precision.EXACT)
                     } else {
-                        size(displaySizeResolver)
+                        size(sizeResolverFor(mode))
                         scale(Scale.FILL)
                         precision(Precision.INEXACT)
                     }
@@ -132,13 +142,13 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
         }
 
         /**
-         * @param originalSize if true, Coil decodes at native pixel size ([Size.ORIGINAL]);
-         *   if false (default), downscales to ~display * 4/3.
+         * @param forceOriginal if true (page menu "View original"), decode at file resolution;
+         *   otherwise use [Settings.readerDecodeSize] (1.5x…3x or origin).
          */
         suspend fun decode(
             src: ImageSource,
             checkExtraneousAds: Boolean = false,
-            originalSize: Boolean = false,
+            forceOriginal: Boolean = false,
         ): Image {
             val image = when (src) {
                 is PathSource -> {
@@ -152,7 +162,7 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                                         decode(
                                             byteBufferSource(buffer) { munmap(buffer).also { src.close() } },
                                             checkExtraneousAds,
-                                            originalSize,
+                                            forceOriginal,
                                         )
                                     },
                                     { buffer, case -> if (case !is ExitCase.Completed) munmap(buffer) },
@@ -160,13 +170,13 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                             }
                         }
                     }
-                    src.right().decodeCoil(checkExtraneousAds, originalSize)
+                    src.right().decodeCoil(checkExtraneousAds, forceOriginal)
                 }
                 is ByteBufferSource -> {
                     if (isAtLeastP && !isAtLeastU) {
                         rewriteGifSource(src.source)
                     }
-                    src.left().decodeCoil(checkExtraneousAds, originalSize)
+                    src.left().decodeCoil(checkExtraneousAds, forceOriginal)
                 }
             }
             return Image(image, src).apply {

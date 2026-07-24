@@ -37,13 +37,28 @@ fun ReaderModeSetting(isWebtoon: Boolean) = Column(modifier = Modifier.verticalS
         values = OrientationType.entries.map { it.prefValue },
         field = Settings.orientationMode.asMutableState(),
     )
-    val autoRotateToFit = Settings.autoRotateToFit.asMutableState()
-    AnimatedVisibility(visible = autoRotateToFit.value) {
-        SwitchChoice(
-            title = stringResource(id = R.string.pref_auto_rotate_clockwise),
-            field = Settings.autoRotateClockwise.asMutableState(),
-        )
-    }
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_auto_rotate_mode),
+        entries = arrayOf(
+            stringResource(id = R.string.pref_auto_rotate_off),
+            stringResource(id = R.string.pref_auto_rotate_cw),
+            stringResource(id = R.string.pref_auto_rotate_ccw),
+        ),
+        values = listOf(0, 1, 2),
+        field = Settings.autoRotateMode.asMutableState(),
+    )
+    SpinnerChoice(
+        title = stringResource(id = R.string.pref_decode_size),
+        entries = arrayOf(
+            stringResource(id = R.string.pref_decode_size_1_5x),
+            stringResource(id = R.string.pref_decode_size_2x),
+            stringResource(id = R.string.pref_decode_size_2_5x),
+            stringResource(id = R.string.pref_decode_size_3x),
+            stringResource(id = R.string.pref_decode_size_origin),
+        ),
+        values = listOf(0, 1, 2, 3, 4),
+        field = Settings.readerDecodeSize.asMutableState(),
+    )
     Spacer(modifier = Modifier.size(16.dp))
     Crossfade(targetState = isWebtoon, label = "Setting") { webtoon ->
         if (webtoon) {
