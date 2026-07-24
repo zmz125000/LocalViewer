@@ -40,7 +40,11 @@ fun BoxScope.ReaderAppBars(
     onSliderValueChange: (Int) -> Unit,
     onClickSettings: () -> Unit,
 ) {
-    val backgroundColor = BottomAppBarDefaults.containerColor.copy(alpha = if (isSystemInDarkTheme()) 0.9f else 0.95f)
+    // Dark already reads as translucent grey; light used near-opaque white (0.95).
+    // Match the glass look so the page shows through in both themes.
+    val backgroundColor = BottomAppBarDefaults.containerColor.copy(
+        alpha = if (isSystemInDarkTheme()) 0.72f else 0.55f,
+    )
 
     AnimatedVisibility(
         visible = visible,
