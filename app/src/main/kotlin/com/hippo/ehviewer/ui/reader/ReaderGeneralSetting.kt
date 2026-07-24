@@ -41,6 +41,10 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         title = stringResource(id = R.string.pref_auto_rotate_to_fit),
         field = Settings.autoRotateToFit.asMutableState(),
     )
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_original_size),
+        field = Settings.readerOriginalSize.asMutableState(),
+    )
     val fullscreen = Settings.fullscreen.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_fullscreen),

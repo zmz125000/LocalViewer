@@ -65,12 +65,19 @@ abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, sta
         onEntryRemoved = { k, o, n, _ -> if (o.unpin()) n ?: notifyPageWait(k) },
     )
 
-    private suspend fun atomicallyDecodeAndUpdate(index: Int) {
+    private suspend fun atomicallyDecodeAndUpdate(index: Int, originalSize: Boolean) {
         bracketCase(
             { openSource(index) },
             { src ->
                 withNonCancellableContext {
-                    notifyPageSucceed(index, Image.decode(src, hasAds && detectAds(index, size)))
+                    notifyPageSucceed(
+                        index,
+                        Image.decode(
+                            src,
+                            checkExtraneousAds = hasAds && detectAds(index, size),
+                            originalSize = originalSize,
+                        ),
+                    )
                 }
             },
             { src, case -> if (case !is ExitCase.Completed) src.close() },
@@ -91,6 +98,7 @@ abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, sta
     private val prevIndex = AtomicInt(-1)
 
     fun retryPage(index: Int, orgImg: Boolean = false) {
+        cancelRequest(index)
         notifyPageWait(index)
         lock.write { cache.remove(index) }
         onRequest(index, true, orgImg)
@@ -98,6 +106,10 @@ abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, sta
 
     protected abstract fun prefetchPages(pages: List<Int>, bounds: IntRange)
 
+    /**
+     * @param orgImg if true, decode this page at full resolution (Coil [Size.ORIGINAL]).
+     *   Combined with [Settings.readerOriginalSize] in [notifySourceReady].
+     */
     protected abstract fun onRequest(index: Int, force: Boolean = false, orgImg: Boolean = false)
 
     fun notifyPageWait(index: Int) {
@@ -173,13 +185,19 @@ abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, sta
 
     abstract fun save(index: Int, file: Path): Boolean
 
-    fun notifySourceReady(index: Int) = synchronized(jobs) {
+    /**
+     * Decode [index] when the source file is ready.
+     * @param orgImg one-shot full-res request (page sheet "View original"); also true when
+     *   [Settings.readerOriginalSize] is enabled so every page loads native resolution.
+     */
+    fun notifySourceReady(index: Int, orgImg: Boolean = false) = synchronized(jobs) {
+        val originalSize = orgImg || Settings.readerOriginalSize.value
         if (jobs[index]?.isActive != true) {
             jobs[index] = scope.launch {
                 try {
                     mutex.withLock(index) {
                         semaphore.withPermit {
-                            atomicallyDecodeAndUpdate(index)
+                            atomicallyDecodeAndUpdate(index, originalSize)
                         }
                     }
                 } catch (e: Throwable) {

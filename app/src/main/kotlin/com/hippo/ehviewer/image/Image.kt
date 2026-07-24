@@ -91,19 +91,32 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
     }
 
     companion object {
-        private val sizeResolver = with(appCtx.resources.displayMetrics) {
+        /**
+         * Default display-sized decode target (good for reader RAM).
+         * `min(screen edge) * 4/3` — downscale large comic pages; not full sensor resolution.
+         */
+        private val displaySizeResolver = with(appCtx.resources.displayMetrics) {
             val targetSize = minOf(widthPixels, heightPixels) * 4 / 3
             SizeResolver(Size(targetSize, targetSize))
         }
 
-        private suspend fun Either<ByteBufferSource, PathSource>.decodeCoil(checkExtraneousAds: Boolean): CoilImage {
+        private suspend fun Either<ByteBufferSource, PathSource>.decodeCoil(
+            checkExtraneousAds: Boolean,
+            originalSize: Boolean,
+        ): CoilImage {
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
                     onRight { data(it.source.toUri()) }
-                    size(sizeResolver)
-                    scale(Scale.FILL)
-                    precision(Precision.INEXACT)
+                    if (originalSize) {
+                        // Full-resolution decode for "View original" / always-original setting.
+                        size(Size.ORIGINAL)
+                        precision(Precision.EXACT)
+                    } else {
+                        size(displaySizeResolver)
+                        scale(Scale.FILL)
+                        precision(Precision.INEXACT)
+                    }
                     maxBitmapSize(Size.ORIGINAL)
                     allowHardware(false)
                     hardwareThreshold(Settings.hardwareBitmapThreshold.value)
@@ -118,7 +131,15 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
             }
         }
 
-        suspend fun decode(src: ImageSource, checkExtraneousAds: Boolean = false): Image {
+        /**
+         * @param originalSize if true, Coil decodes at native pixel size ([Size.ORIGINAL]);
+         *   if false (default), downscales to ~display * 4/3.
+         */
+        suspend fun decode(
+            src: ImageSource,
+            checkExtraneousAds: Boolean = false,
+            originalSize: Boolean = false,
+        ): Image {
             val image = when (src) {
                 is PathSource -> {
                     if (isAtLeastP && !isAtLeastU) {
@@ -127,19 +148,25 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                             if (isGif(fd)) {
                                 return bracketCase(
                                     { mmap(fd)!! },
-                                    { buffer -> decode(byteBufferSource(buffer) { munmap(buffer).also { src.close() } }, checkExtraneousAds) },
+                                    { buffer ->
+                                        decode(
+                                            byteBufferSource(buffer) { munmap(buffer).also { src.close() } },
+                                            checkExtraneousAds,
+                                            originalSize,
+                                        )
+                                    },
                                     { buffer, case -> if (case !is ExitCase.Completed) munmap(buffer) },
                                 )
                             }
                         }
                     }
-                    src.right().decodeCoil(checkExtraneousAds)
+                    src.right().decodeCoil(checkExtraneousAds, originalSize)
                 }
                 is ByteBufferSource -> {
                     if (isAtLeastP && !isAtLeastU) {
                         rewriteGifSource(src.source)
                     }
-                    src.left().decodeCoil(checkExtraneousAds)
+                    src.left().decodeCoil(checkExtraneousAds, originalSize)
                 }
             }
             return Image(image, src).apply {

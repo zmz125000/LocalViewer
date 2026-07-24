@@ -94,7 +94,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     // Large seek: drop distant prefeches so pool capacity frees for the new region.
                     cancelDistantDownloads(index)
                     ensureDownload(index, interactive = true) {
-                        notifySourceReady(index)
+                        notifySourceReady(index, orgImg)
                     }
                 }
 

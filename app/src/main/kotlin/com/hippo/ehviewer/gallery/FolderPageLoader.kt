@@ -54,7 +54,8 @@ suspend inline fun <T> useFolderPageLoader(
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) = Unit
 
-                override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) = notifySourceReady(index)
+                override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) =
+                    notifySourceReady(index, orgImg)
             },
         )
         block(loader)

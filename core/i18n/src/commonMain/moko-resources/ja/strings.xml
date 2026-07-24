@@ -552,6 +552,8 @@
     <string name="pref_auto_rotate_to_fit">画面に合わせて自動回転</string>
     <string name="pref_auto_rotate_to_fit_summary">画像の長辺を画面の長辺に合わせる</string>
     <string name="pref_auto_rotate_clockwise">自動回転を時計回り（オフ：反時計回り）</string>
+    <string name="pref_reader_original_size">常に原寸で読み込む</string>
+    <string name="pref_reader_original_size_summary">ファイルのフル解像度でデコード（メモリ多め）。オフ時は画面向け縮小。ページメニューの「オリジナルの画像を表示」で1枚だけ原寸も可。</string>
     <string name="pref_custom_brightness">明るさをカスタマイズ</string>
     <string name="pref_grayscale">グレースケール</string>
     <string name="pref_inverted_colors">色の反転</string>

@@ -203,6 +203,12 @@ object Settings : DataStorePreferences(null) {
     val autoRotateToFit = boolPref("pref_auto_rotate_to_fit", true)
     /** When auto-rotate is on: true = 90° CW, false = 90° CCW. */
     val autoRotateClockwise = boolPref("pref_auto_rotate_clockwise", true)
+    /**
+     * When true, reader pages decode at full file resolution (Coil Size.ORIGINAL).
+     * Default false: downscale to ~screen * 4/3 (see Image.displaySizeResolver).
+     * One-shot override: page menu "View original image".
+     */
+    val readerOriginalSize = boolPref("pref_reader_original_size", false)
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)
