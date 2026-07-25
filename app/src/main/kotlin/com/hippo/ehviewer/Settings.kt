@@ -130,7 +130,7 @@ object Settings : DataStorePreferences(null) {
 
     // Advanced
     val saveParseErrorBody = boolPref("save_parse_error_body", true)
-    val saveCrashLog = boolPref("save_crash_log", true)
+    val saveCrashLog = boolPref("save_crash_log", false)
     val readCacheSize = intPref("read_cache_size_2", 640)
     val enableCronet = boolPref("enable_cronet", true)
     val enableQuic = boolPref("enable_quic", true)
