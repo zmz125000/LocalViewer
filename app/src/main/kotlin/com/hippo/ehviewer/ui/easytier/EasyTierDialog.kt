@@ -176,10 +176,5 @@ fun EasyTierDialog(
                 }
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.easytier_close))
-            }
-        },
     )
 }

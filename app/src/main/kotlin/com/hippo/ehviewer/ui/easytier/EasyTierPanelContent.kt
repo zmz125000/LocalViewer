@@ -15,15 +15,16 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -83,16 +84,26 @@ fun EasyTierTabRow(
     selected: EasyTierUiTab,
     onSelect: (EasyTierUiTab) -> Unit,
 ) {
-    TabRow(selectedTabIndex = if (selected == EasyTierUiTab.STATUS) 0 else 1) {
+    // Transparent container so Status/Config tabs inherit the parent surface —
+    // AlertDialog (surfaceContainerHigh) and Settings scaffold (surface) both look correct
+    // in light and dark mode, instead of the default primaryContainer strip.
+    val unselected = MaterialTheme.colorScheme.onSurfaceVariant
+    SecondaryTabRow(
+        selectedTabIndex = if (selected == EasyTierUiTab.STATUS) 0 else 1,
+        containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.primary,
+    ) {
         Tab(
             selected = selected == EasyTierUiTab.STATUS,
             onClick = { onSelect(EasyTierUiTab.STATUS) },
             text = { Text(stringResource(R.string.easytier_tab_status)) },
+            unselectedContentColor = unselected,
         )
         Tab(
             selected = selected == EasyTierUiTab.CONFIG,
             onClick = { onSelect(EasyTierUiTab.CONFIG) },
             text = { Text(stringResource(R.string.easytier_tab_config)) },
+            unselectedContentColor = unselected,
         )
     }
 }
