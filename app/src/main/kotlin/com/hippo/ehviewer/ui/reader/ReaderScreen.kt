@@ -95,6 +95,7 @@ import com.hippo.ehviewer.gallery.useSmbFolderPageLoader
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.MainActivity
 import com.hippo.ehviewer.ui.Screen
@@ -383,13 +384,22 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                     val sibling = withIOContext {
                         GallerySiblingNavigator.sibling(args, next)
                     } ?: return@launch
-                    // Progress FK for sibling gallery + bump browse folder history
+                    // Progress FK for sibling gallery + bump History (library gallery or browse path).
                     sibling.let { s ->
                         withIOContext {
                             when (s) {
                                 is ReaderScreenArgs.LocalFolder -> {
                                     s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                                    // Browse stack only — library playlist siblings skip path history.
+                                    // Library / History playlist: real LocalLibrary row → history as gallery.
+                                    // (Previously only browse-stack path was recorded, so Library next/prev
+                                    // never appeared in History.)
+                                    val libId = s.info?.gid
+                                    val lib = libId?.let { LocalLibrary.loadGallery(it) }
+                                    if (lib != null) {
+                                        LocalHistory.recordLibraryGallery(lib)
+                                        return@withIOContext
+                                    }
+                                    // Browse folder path link (lazy galleries are not permanent library rows).
                                     val frame = BrowseSession.localStack.lastOrNull()
                                         ?: return@withIOContext
                                     val rel = if (s.path == frame.path) {
@@ -415,7 +425,11 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                                         pages = s.info?.pages ?: 0,
                                     )
                                 }
-                                is ReaderScreenArgs.Archive -> Unit
+                                is ReaderScreenArgs.Archive -> {
+                                    // Library archive playlist sibling — match by content path.
+                                    LocalLibrary.loadGalleryByContentPath(s.path)
+                                        ?.let { LocalHistory.recordLibraryGallery(it) }
+                                }
                                 else -> Unit
                             }
                         }

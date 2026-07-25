@@ -55,6 +55,9 @@ object LocalLibrary {
 
     suspend fun loadGallery(id: Long): LocalGalleryEntity? = db.localGalleryDao().load(id)
 
+    suspend fun loadGalleryByContentPath(path: String): LocalGalleryEntity? =
+        db.localGalleryDao().loadByContentPath(path)
+
     suspend fun loadRoot(id: Long): LibraryRootEntity? = db.libraryRootDao().load(id)
 
     /**

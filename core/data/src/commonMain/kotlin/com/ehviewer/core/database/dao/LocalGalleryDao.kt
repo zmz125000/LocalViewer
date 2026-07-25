@@ -19,6 +19,9 @@ interface LocalGalleryDao {
     @Query("SELECT * FROM LOCAL_GALLERIES WHERE ID = :id")
     suspend fun load(id: Long): LocalGalleryEntity?
 
+    @Query("SELECT * FROM LOCAL_GALLERIES WHERE CONTENT_PATH = :path LIMIT 1")
+    suspend fun loadByContentPath(path: String): LocalGalleryEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(galleries: List<LocalGalleryEntity>)
 
