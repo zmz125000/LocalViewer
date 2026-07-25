@@ -181,6 +181,19 @@ class EasyTierVpnService : VpnService() {
         }
     }
 
+    /**
+     * System UI / another VPN took the slot / always-on policy revoked us.
+     * Close TUN, stop native EasyTier, and refresh app UI via [onRevokedListener].
+     */
+    override fun onRevoke() {
+        logcat(TAG, LogPriority.WARN) { "VPN revoked by system" }
+        cancelSessionAndCloseTun()
+        // Notify before stopSelf so runtime can stop the native stack without re-entering stopService.
+        runCatching { onRevokedListener?.invoke() }
+        stopSelf()
+        super.onRevoke()
+    }
+
     override fun onDestroy() {
         cancelSessionAndCloseTun()
         super.onDestroy()
@@ -212,6 +225,10 @@ class EasyTierVpnService : VpnService() {
         const val EXTRA_IPV4_ADDRESS = "ipv4_address"
         const val EXTRA_PROXY_CIDRS = "proxy_cidrs"
         const val EXTRA_INSTANCE_NAME = "instance_name"
+
+        /** Called on the main or binder thread when the system revokes this VPN. */
+        @Volatile
+        var onRevokedListener: (() -> Unit)? = null
 
         fun start(
             context: Context,

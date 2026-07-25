@@ -72,21 +72,29 @@ class EasyTierManager(
         }
     }
 
-    fun stop() {
+    /**
+     * @param closeVpnService when false, only tear down the native instance (e.g. system
+     * already revoked the VPN via [android.net.VpnService.onRevoke]).
+     */
+    fun stop(closeVpnService: Boolean = true) {
         isRunning = false
         handler.removeCallbacks(monitorRunnable)
         try {
-            EasyTierVpnService.stop(appContext)
+            if (closeVpnService) {
+                EasyTierVpnService.stop(appContext)
+            }
             if (EasyTierJNI.isLibraryLoaded()) {
                 EasyTierJNI.stopAllInstances()
             }
             latestNetworkInfoJson = null
             currentIpv4 = null
             currentProxyCidrs = emptyList()
-            logcat(TAG) { "EasyTier instance stopped: $instanceName" }
+            logcat(TAG) { "EasyTier instance stopped: $instanceName (vpn=$closeVpnService)" }
         } catch (e: Exception) {
             logcat(TAG, LogPriority.ERROR) { "stop exception: ${e.message}" }
-            runCatching { EasyTierVpnService.stop(appContext) }
+            if (closeVpnService) {
+                runCatching { EasyTierVpnService.stop(appContext) }
+            }
         }
     }
 

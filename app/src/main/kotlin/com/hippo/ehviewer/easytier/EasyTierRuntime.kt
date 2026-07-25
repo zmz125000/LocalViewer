@@ -4,7 +4,9 @@ import android.content.Context
 import android.os.Build
 import com.easytier.jni.EasyTierJNI
 import com.easytier.jni.EasyTierManager
+import com.easytier.jni.EasyTierVpnService
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.smb.SmbGateway
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,8 +45,7 @@ object EasyTierRuntime {
     private val statusPoll = object : Runnable {
         override fun run() {
             val m = manager
-            val ctx = appContext
-            if (m == null || ctx == null) return
+            if (m == null) return
             val json = m.latestNetworkInfoJson
             val running = m.running
             _state.update {
@@ -67,6 +68,7 @@ object EasyTierRuntime {
         val app = context.applicationContext
         appContext = app
         store = EasyTierConfigStore(app)
+        EasyTierVpnService.onRevokedListener = { onSystemVpnRevoked() }
         _state.update {
             it.copy(
                 supported = isArm64Device(),
@@ -86,12 +88,11 @@ object EasyTierRuntime {
         val s = store ?: return
         s.saveUiState(config)
         _state.update { it.copy(config = config) }
-        // Re-init manager with new config (stops if was running — match moonlight).
         val wasRunning = manager?.running == true
         rebuildManager()
         if (wasRunning) {
-            // User must start again after config change while running, or auto-restart:
-            // moonlight re-inits and leaves stopped until user starts. We match that.
+            // Config change while running stops the instance; user must start again.
+            notifySmbPathChanged("easytier-config-reinit")
             _state.update {
                 it.copy(
                     running = false,
@@ -127,6 +128,8 @@ object EasyTierRuntime {
         val m = manager ?: return false
         val ok = m.start()
         if (ok) {
+            // Virtual routes / TUN just came up — drop half-open SMB sockets on the old path.
+            notifySmbPathChanged("easytier-start")
             _state.update {
                 it.copy(
                     connectingOrRunning = true,
@@ -152,8 +155,9 @@ object EasyTierRuntime {
 
     fun stop() {
         mainHandler.removeCallbacks(statusPoll)
-        manager?.stop()
+        manager?.stop(closeVpnService = true)
         manager = null
+        notifySmbPathChanged("easytier-stop")
         _state.update {
             it.copy(
                 running = false,
@@ -161,6 +165,35 @@ object EasyTierRuntime {
                 statusJson = null,
                 lastError = null,
             )
+        }
+    }
+
+    /**
+     * System revoked the VPN (status bar disconnect, always-on conflict, another VPN, etc.).
+     * TUN is already gone; stop native EasyTier and mark UI stopped.
+     */
+    fun onSystemVpnRevoked() {
+        val apply = Runnable {
+            val wasActive = _state.value.connectingOrRunning || _state.value.running
+            if (!wasActive && manager == null) return@Runnable
+            logcat(TAG, LogPriority.WARN) { "System VPN revoked — stopping EasyTier" }
+            mainHandler.removeCallbacks(statusPoll)
+            manager?.stop(closeVpnService = false)
+            manager = null
+            notifySmbPathChanged("easytier-vpn-revoked")
+            _state.update {
+                it.copy(
+                    running = false,
+                    connectingOrRunning = false,
+                    statusJson = null,
+                    lastError = "vpn_revoked",
+                )
+            }
+        }
+        if (android.os.Looper.myLooper() == mainHandler.looper) {
+            apply.run()
+        } else {
+            mainHandler.post(apply)
         }
     }
 
@@ -178,8 +211,18 @@ object EasyTierRuntime {
     private fun rebuildManager() {
         val ctx = appContext ?: return
         val s = store ?: EasyTierConfigStore(ctx).also { store = it }
-        manager?.stop()
+        manager?.stop(closeVpnService = true)
         manager = EasyTierManager(ctx, INSTANCE_NAME, s.loadToml())
+    }
+
+    /**
+     * Drop pooled SMB sessions when the EasyTier path appears/disappears.
+     * Complements [com.hippo.ehviewer.EhApplication] VPN ConnectivityManager callbacks
+     * (covers app-only TUN timing and explicit start/stop/revoke).
+     */
+    private fun notifySmbPathChanged(reason: String) {
+        runCatching { SmbGateway.onNetworkPathChanged(reason) }
+            .onFailure { logcat(TAG, LogPriority.WARN) { "SMB path notify failed: ${it.message}" } }
     }
 
     fun isArm64Device(): Boolean =
