@@ -9,16 +9,12 @@ import java.io.IOException
 import logcat.LogPriority
 
 /**
- * Split-tunnel VpnService for EasyTier.
+ * Split-tunnel VpnService for EasyTier (this app only; virtual subnet + proxy CIDRs).
  *
- * Only this app is allowed on the TUN; routes are virtual subnet + proxy CIDRs.
- *
- * Lifecycle notes (regression fixes):
- * - Topology updates must **replace the TUN in-process** without [stopSelf], otherwise a
- *   racing [stopSelf]/ [Context.stopService] drops the system VPN a few seconds after
- *   connect (when peers / proxy_cidrs first appear).
- * - User stop uses explicit [ACTION_STOP] + [stopSelf] with the matching startId so a
- *   later START is not cancelled. Closing the [ParcelFileDescriptor] clears the system badge.
+ * Stop must close the TUN [ParcelFileDescriptor] via [ACTION_STOP] — that is what clears
+ * the system VPN indicator. Prefer [stopSelf] with startId so an older STOP cannot cancel
+ * a newer START. Topology updates call [start] again to replace the TUN without a full
+ * process-level [Context.stopService].
  */
 class EasyTierVpnService : VpnService() {
 
@@ -26,18 +22,13 @@ class EasyTierVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var vpnThread: Thread? = null
 
-    /** Bumped to cancel an in-flight setup thread without destroying the service. */
+    /** Bumped to cancel the current setup/hold thread. */
     private var sessionId = 0
-
-    @Volatile
-    private var userStopping = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null || intent.action == ACTION_STOP) {
-            logcat(TAG) { "ACTION_STOP startId=$startId" }
-            userStopping = true
+            logcat(TAG) { "STOP startId=$startId" }
             cancelSessionAndCloseTun()
-            // stopSelf(startId): only stops if no newer startService arrived after this STOP.
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -50,30 +41,24 @@ class EasyTierVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
-        userStopping = false
         val mySession: Int
         synchronized(lock) {
-            // Invalidate previous setup thread; keep service alive.
             sessionId += 1
             mySession = sessionId
             vpnThread?.interrupt()
             vpnThread = null
-            // Close old TUN only after we are about to build a new one on the worker thread
-            // so the system badge does not flicker off if establish fails later — still
-            // close before establish to avoid two concurrent interfaces.
             closeTunLocked()
         }
 
-        val thread = Thread({
-            runSession(mySession, ipv4Address, proxyCidrs, instanceName)
-        }, "EasyTierVpn-$mySession")
-
+        val thread = Thread(
+            { runSession(mySession, ipv4Address, proxyCidrs, instanceName) },
+            "EasyTierVpn-$mySession",
+        )
         synchronized(lock) {
-            if (mySession != sessionId || userStopping) return START_NOT_STICKY
+            if (mySession != sessionId) return START_NOT_STICKY
             vpnThread = thread
         }
         thread.start()
-        // Sticky is unnecessary; EasyTierManager re-starts VPN when topology is known.
         return START_NOT_STICKY
     }
 
@@ -128,11 +113,10 @@ class EasyTierVpnService : VpnService() {
             }
 
             synchronized(lock) {
-                if (mySession != sessionId || userStopping) {
+                if (mySession != sessionId) {
                     closeQuietly(established)
                     return
                 }
-                // Replace any residual interface (should already be null).
                 closeTunLocked()
                 vpnInterface = established
             }
@@ -149,7 +133,6 @@ class EasyTierVpnService : VpnService() {
             val rc = EasyTierJNI.setTunFd(instanceName, fd)
             logcat(TAG) { "setTunFd($instanceName, $fd) = $rc session=$mySession" }
 
-            // Hold this session until cancelled (topology replace or user stop).
             while (isActiveSession(mySession)) {
                 try {
                     Thread.sleep(Long.MAX_VALUE)
@@ -161,20 +144,18 @@ class EasyTierVpnService : VpnService() {
         } catch (t: Throwable) {
             logcat(TAG, LogPriority.ERROR) { "VPN session error: ${t.message}" }
         } finally {
-            // Only the active session closes the TUN here. A superseded session must not
-            // close a newer session's interface.
+            // Superseded sessions must not close a newer TUN.
             synchronized(lock) {
                 if (mySession == sessionId) {
                     closeTunLocked()
-                    vpnThread = null
+                    if (vpnThread === Thread.currentThread()) vpnThread = null
                 }
             }
-            logcat(TAG) { "Session $mySession exited" }
         }
     }
 
     private fun isActiveSession(mySession: Int): Boolean =
-        synchronized(lock) { mySession == sessionId && !userStopping }
+        synchronized(lock) { mySession == sessionId }
 
     private fun cancelSessionAndCloseTun() {
         synchronized(lock) {
@@ -189,7 +170,7 @@ class EasyTierVpnService : VpnService() {
         val iface = vpnInterface ?: return
         vpnInterface = null
         closeQuietly(iface)
-        logcat(TAG) { "TUN closed (system VPN should drop if no other iface)" }
+        logcat(TAG) { "TUN closed" }
     }
 
     private fun closeQuietly(pfd: ParcelFileDescriptor) {
@@ -201,10 +182,8 @@ class EasyTierVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        userStopping = true
         cancelSessionAndCloseTun()
         super.onDestroy()
-        logcat(TAG) { "onDestroy" }
     }
 
     private data class IpAddressInfo(val ip: String, val networkLength: Int)
@@ -229,6 +208,7 @@ class EasyTierVpnService : VpnService() {
     companion object {
         private const val TAG = "EasyTierVpnService"
         const val ACTION_STOP = "com.easytier.jni.EasyTierVpnService.STOP"
+        private const val ACTION_START = "com.easytier.jni.EasyTierVpnService.START"
         const val EXTRA_IPV4_ADDRESS = "ipv4_address"
         const val EXTRA_PROXY_CIDRS = "proxy_cidrs"
         const val EXTRA_INSTANCE_NAME = "instance_name"
@@ -240,33 +220,26 @@ class EasyTierVpnService : VpnService() {
             instanceName: String,
         ) {
             val app = context.applicationContext
-            val intent = Intent(app, EasyTierVpnService::class.java).apply {
-                // Explicit non-STOP action so a sticky redelivery is not treated as stop.
-                action = ACTION_START
-                putExtra(EXTRA_IPV4_ADDRESS, ipv4)
-                putStringArrayListExtra(EXTRA_PROXY_CIDRS, ArrayList(proxyCidrs))
-                putExtra(EXTRA_INSTANCE_NAME, instanceName)
-            }
-            app.startService(intent)
+            app.startService(
+                Intent(app, EasyTierVpnService::class.java).apply {
+                    action = ACTION_START
+                    putExtra(EXTRA_IPV4_ADDRESS, ipv4)
+                    putStringArrayListExtra(EXTRA_PROXY_CIDRS, ArrayList(proxyCidrs))
+                    putExtra(EXTRA_INSTANCE_NAME, instanceName)
+                },
+            )
         }
 
-        /**
-         * User / manager stop: deliver ACTION_STOP so the service closes the TUN (system
-         * badge clears) and stops. Do **not** also call [Context.stopService] here — that
-         * races with a follow-up [start] on topology change and drops a fresh VPN session.
-         */
+        /** Closes the TUN (clears system VPN) and stops the service. */
         fun stop(context: Context) {
             val app = context.applicationContext
-            val stopIntent = Intent(app, EasyTierVpnService::class.java).apply {
-                action = ACTION_STOP
-            }
             try {
-                app.startService(stopIntent)
+                app.startService(
+                    Intent(app, EasyTierVpnService::class.java).apply { action = ACTION_STOP },
+                )
             } catch (e: Exception) {
                 logcat(TAG, LogPriority.WARN) { "startService(STOP) failed: ${e.message}" }
             }
         }
-
-        private const val ACTION_START = "com.easytier.jni.EasyTierVpnService.START"
     }
 }

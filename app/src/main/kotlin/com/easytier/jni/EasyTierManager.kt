@@ -76,7 +76,6 @@ class EasyTierManager(
         isRunning = false
         handler.removeCallbacks(monitorRunnable)
         try {
-            // Always tear down the system VPN first (closes TUN fd), then native stack.
             EasyTierVpnService.stop(appContext)
             if (EasyTierJNI.isLibraryLoaded()) {
                 EasyTierJNI.stopAllInstances()
@@ -87,7 +86,6 @@ class EasyTierManager(
             logcat(TAG) { "EasyTier instance stopped: $instanceName" }
         } catch (e: Exception) {
             logcat(TAG, LogPriority.ERROR) { "stop exception: ${e.message}" }
-            // Best-effort: still try to drop VPN if native stop threw.
             runCatching { EasyTierVpnService.stop(appContext) }
         }
     }
@@ -159,12 +157,11 @@ class EasyTierManager(
             val proxyCidrsChanged = newProxyCidrs != currentProxyCidrs
 
             if (ipv4Changed || proxyCidrsChanged) {
-                logcat(TAG) { "Topology change; updating VPN ($newIpv4, ${newProxyCidrs.size} cidrs)" }
+                logcat(TAG) { "Topology change; VPN $newIpv4 cidrs=${newProxyCidrs.size}" }
                 currentIpv4 = newIpv4
                 currentProxyCidrs = ArrayList(newProxyCidrs)
                 if (newIpv4 != null) {
-                    // In-place TUN replace via start() only — do not stopService/stopSelf
-                    // between updates or the system VPN badge drops when peers connect.
+                    // Replace TUN in the running service (no full stop between route updates).
                     EasyTierVpnService.start(appContext, newIpv4, newProxyCidrs, instanceName)
                 } else {
                     EasyTierVpnService.stop(appContext)
