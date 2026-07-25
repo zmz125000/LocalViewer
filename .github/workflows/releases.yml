@@ -8,6 +8,14 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ref: main
+            suffix: default
+          - ref: easytier
+            suffix: easytier
     steps:
       - name: Free disk space
         run: rm -rf $AGENT_TOOLSDIRECTORY
@@ -20,6 +28,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.ref }}
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -34,12 +44,13 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "./app/src/main/rust"
+          key: ${{ matrix.ref }}
 
       - name: CMake Cache
         uses: actions/cache/restore@v5
         with:
           path: app/.cxx
-          key: cmake-
+          key: cmake-${{ matrix.ref }}-
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -58,21 +69,24 @@ jobs:
 
       - name: Rename Apks
         run: |
-          mv app/build/outputs/apk/default/release/app-default-universal-release.apk LocalViewer-${{ github.ref_name }}-default-universal.apk
-          mv app/build/outputs/apk/default/release/app-default-arm64-v8a-release.apk LocalViewer-${{ github.ref_name }}-default-arm64-v8a.apk
-          mv app/build/outputs/apk/default/release/app-default-x86_64-release.apk LocalViewer-${{ github.ref_name }}-default-x86_64.apk
-          mv app/build/outputs/apk/default/release/app-default-armeabi-v7a-release.apk LocalViewer-${{ github.ref_name }}-default-armeabi-v7a.apk
-          mv app/build/outputs/mapping/defaultRelease/mapping.txt LocalViewer-${{ github.ref_name }}-default-mapping.txt
-          mv app/build/outputs/native-debug-symbols/defaultRelease/native-debug-symbols.zip LocalViewer-${{ github.ref_name }}-default-native-debug-symbols.zip
+          TAG="${{ github.ref_name }}"
+          S="${{ matrix.suffix }}"
+          mv app/build/outputs/apk/default/release/app-default-universal-release.apk LocalViewer-${TAG}-${S}-universal.apk
+          mv app/build/outputs/apk/default/release/app-default-arm64-v8a-release.apk LocalViewer-${TAG}-${S}-arm64-v8a.apk
+          mv app/build/outputs/apk/default/release/app-default-x86_64-release.apk LocalViewer-${TAG}-${S}-x86_64.apk
+          mv app/build/outputs/apk/default/release/app-default-armeabi-v7a-release.apk LocalViewer-${TAG}-${S}-armeabi-v7a.apk
+          mv app/build/outputs/mapping/defaultRelease/mapping.txt LocalViewer-${TAG}-${S}-mapping.txt
+          mv app/build/outputs/native-debug-symbols/defaultRelease/native-debug-symbols.zip LocalViewer-${TAG}-${S}-native-debug-symbols.zip
 
       - name: Releases
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ github.ref_name }}
           body: Bump Version
           files: |
-            LocalViewer-${{ github.ref_name }}-default-universal.apk
-            LocalViewer-${{ github.ref_name }}-default-arm64-v8a.apk
-            LocalViewer-${{ github.ref_name }}-default-x86_64.apk
-            LocalViewer-${{ github.ref_name }}-default-armeabi-v7a.apk
-            LocalViewer-${{ github.ref_name }}-default-mapping.txt
-            LocalViewer-${{ github.ref_name }}-default-native-debug-symbols.zip
+            LocalViewer-${{ github.ref_name }}-${{ matrix.suffix }}-universal.apk
+            LocalViewer-${{ github.ref_name }}-${{ matrix.suffix }}-arm64-v8a.apk
+            LocalViewer-${{ github.ref_name }}-${{ matrix.suffix }}-x86_64.apk
+            LocalViewer-${{ github.ref_name }}-${{ matrix.suffix }}-armeabi-v7a.apk
+            LocalViewer-${{ github.ref_name }}-${{ matrix.suffix }}-mapping.txt
+            LocalViewer-${{ github.ref_name }}-${{ matrix.suffix }}-native-debug-symbols.zip
