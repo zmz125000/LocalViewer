@@ -57,16 +57,29 @@ fun GalleryPager(
         ViewerNavigation.fromPreference(navigationType, ReadingModeType.isVertical(type))
     }
     val invertMode = if (isPagerType) pagerInvertMode else webtoonInvertMode
-    var firstLaunch by remember { mutableStateOf(true) }
     val regions = remember(navigation, invertMode) {
-        if (firstLaunch) {
-            firstLaunch = false
-        } else {
-            onNavigationModeChange()
-        }
         navigation.regions(TappingInvertMode.entries[invertMode])
     }
     val navigator by rememberUpdatedState(regions)
+    // Tap-zone hint: only when viewer-nav / invert prefs change — not when reading mode
+    // alone rebuilds [navigation] (LTR ↔ vertical ↔ webtoon was flashing the overlay).
+    val onNavModeChange by rememberUpdatedState(onNavigationModeChange)
+    var skipPagerNavHint by remember { mutableStateOf(true) }
+    var skipWebtoonNavHint by remember { mutableStateOf(true) }
+    LaunchedEffect(pagerNavigation, pagerInvertMode) {
+        if (skipPagerNavHint) {
+            skipPagerNavHint = false
+            return@LaunchedEffect
+        }
+        if (isPagerType) onNavModeChange()
+    }
+    LaunchedEffect(webtoonNavigation, webtoonInvertMode) {
+        if (skipWebtoonNavHint) {
+            skipWebtoonNavHint = false
+            return@LaunchedEffect
+        }
+        if (!isPagerType) onNavModeChange()
+    }
     if (isPagerType) {
         val channel = remember { Channel<Float>(Channel.CONFLATED) }
         LaunchedEffect(channel) {
