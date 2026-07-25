@@ -80,6 +80,7 @@ Build with Grok 4.5.
 * High performance reader with cache from EhViewer.
 * Reader allow full size image decode.
 * Reader auto rotate image.
+* EasyTier support (ported from [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus)).
 
 ### To use SMB3 encryption:
 `Get-SmbShare | Select-Object Name, EncryptData`  
