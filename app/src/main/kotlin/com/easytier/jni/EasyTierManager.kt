@@ -159,11 +159,12 @@ class EasyTierManager(
             val proxyCidrsChanged = newProxyCidrs != currentProxyCidrs
 
             if (ipv4Changed || proxyCidrsChanged) {
-                logcat(TAG) { "Topology change; restarting VPN ($newIpv4, ${newProxyCidrs.size} cidrs)" }
+                logcat(TAG) { "Topology change; updating VPN ($newIpv4, ${newProxyCidrs.size} cidrs)" }
                 currentIpv4 = newIpv4
                 currentProxyCidrs = ArrayList(newProxyCidrs)
                 if (newIpv4 != null) {
-                    EasyTierVpnService.stop(appContext)
+                    // In-place TUN replace via start() only — do not stopService/stopSelf
+                    // between updates or the system VPN badge drops when peers connect.
                     EasyTierVpnService.start(appContext, newIpv4, newProxyCidrs, instanceName)
                 } else {
                     EasyTierVpnService.stop(appContext)
