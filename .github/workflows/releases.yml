@@ -67,26 +67,42 @@ jobs:
         run: ./gradlew assembleRelease
           -Prelease
 
-      - name: Rename Apks
+      - name: Rename Apks (main)
+        if: matrix.suffix == 'default'
         run: |
           TAG="${{ github.ref_name }}"
-          S="${{ matrix.suffix }}"
-          mv app/build/outputs/apk/default/release/app-default-universal-release.apk LocalViewer-${TAG}-${S}-universal.apk
-          mv app/build/outputs/apk/default/release/app-default-arm64-v8a-release.apk LocalViewer-${TAG}-${S}-arm64-v8a.apk
-          mv app/build/outputs/apk/default/release/app-default-x86_64-release.apk LocalViewer-${TAG}-${S}-x86_64.apk
-          mv app/build/outputs/apk/default/release/app-default-armeabi-v7a-release.apk LocalViewer-${TAG}-${S}-armeabi-v7a.apk
-          mv app/build/outputs/mapping/defaultRelease/mapping.txt LocalViewer-${TAG}-${S}-mapping.txt
-          mv app/build/outputs/native-debug-symbols/defaultRelease/native-debug-symbols.zip LocalViewer-${TAG}-${S}-native-debug-symbols.zip
+          mv app/build/outputs/apk/default/release/app-default-universal-release.apk LocalViewer-${TAG}-default-universal.apk
+          mv app/build/outputs/apk/default/release/app-default-arm64-v8a-release.apk LocalViewer-${TAG}-default-arm64-v8a.apk
+          mv app/build/outputs/apk/default/release/app-default-x86_64-release.apk LocalViewer-${TAG}-default-x86_64.apk
+          mv app/build/outputs/apk/default/release/app-default-armeabi-v7a-release.apk LocalViewer-${TAG}-default-armeabi-v7a.apk
+          mv app/build/outputs/mapping/defaultRelease/mapping.txt LocalViewer-${TAG}-default-mapping.txt
+          mv app/build/outputs/native-debug-symbols/defaultRelease/native-debug-symbols.zip LocalViewer-${TAG}-default-native-debug-symbols.zip
 
-      - name: Releases
+      - name: Rename Apks (easytier)
+        if: matrix.suffix == 'easytier'
+        run: |
+          TAG="${{ github.ref_name }}"
+          mv app/build/outputs/apk/default/release/app-default-arm64-v8a-release.apk LocalViewer-${TAG}-easytier-arm64-v8a.apk
+
+      - name: Releases (main)
+        if: matrix.suffix == 'default'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           body: Bump Version
           files: |
-            LocalViewer-${{ github.ref_name }}-${{ matrix.suffix }}-universal.apk
-            LocalViewer-${{ github.ref_name }}-${{ matrix.suffix }}-arm64-v8a.apk
-            LocalViewer-${{ github.ref_name }}-${{ matrix.suffix }}-x86_64.apk
-            LocalViewer-${{ github.ref_name }}-${{ matrix.suffix }}-armeabi-v7a.apk
-            LocalViewer-${{ github.ref_name }}-${{ matrix.suffix }}-mapping.txt
-            LocalViewer-${{ github.ref_name }}-${{ matrix.suffix }}-native-debug-symbols.zip
+            LocalViewer-${{ github.ref_name }}-default-universal.apk
+            LocalViewer-${{ github.ref_name }}-default-arm64-v8a.apk
+            LocalViewer-${{ github.ref_name }}-default-x86_64.apk
+            LocalViewer-${{ github.ref_name }}-default-armeabi-v7a.apk
+            LocalViewer-${{ github.ref_name }}-default-mapping.txt
+            LocalViewer-${{ github.ref_name }}-default-native-debug-symbols.zip
+
+      - name: Releases (easytier)
+        if: matrix.suffix == 'easytier'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          body: Bump Version
+          files: |
+            LocalViewer-${{ github.ref_name }}-easytier-arm64-v8a.apk
