@@ -116,14 +116,18 @@ object LocalLibrary {
     ): AddRootResult = addRoot(MEDIASTORE_ROOT_URI, displayName, role)
 
     suspend fun removeRoot(root: LibraryRootEntity) = withIOContext {
-        if (!isMediaStoreRootUri(root.treeUri)) {
-            runCatching {
-                appCtx.contentResolver.releasePersistableUriPermission(root.treeUri.toUri(), URI_FLAGS)
-            }.onFailure { logcat(it) }
+        // Serialize with scanRoot: otherwise a long MediaStore scan can finish after
+        // delete and replaceForRoot() → SQLITE_CONSTRAINT_FOREIGNKEY (orphan ROOT_ID).
+        scanMutex.withLock {
+            if (!isMediaStoreRootUri(root.treeUri)) {
+                runCatching {
+                    appCtx.contentResolver.releasePersistableUriPermission(root.treeUri.toUri(), URI_FLAGS)
+                }.onFailure { logcat(it) }
+            }
+            // CASCADE also clears galleries; explicit delete keeps behavior obvious if FK is off.
+            db.localGalleryDao().deleteByRootId(root.id)
+            db.libraryRootDao().delete(root)
         }
-        // CASCADE also clears galleries; explicit delete keeps behavior obvious if FK is off.
-        db.localGalleryDao().deleteByRootId(root.id)
-        db.libraryRootDao().delete(root)
     }
 
     suspend fun rescanAll() = withIOContext {
@@ -132,6 +136,8 @@ object LocalLibrary {
             try {
                 val roots = db.libraryRootDao().listByRole(LIBRARY_ROOT_ROLE_LIBRARY)
                 for (root in roots) {
+                    // Root may have been deleted while we scanned an earlier root.
+                    if (db.libraryRootDao().load(root.id) == null) continue
                     scanRootLocked(root)
                 }
             } finally {
@@ -144,11 +150,11 @@ object LocalLibrary {
         scanMutex.withLock {
             _scanning.value = true
             try {
-                val root = db.libraryRootDao().load(rootId) ?: return@withIOContext
+                val root = db.libraryRootDao().load(rootId) ?: return@withLock
                 if (root.role != LIBRARY_ROOT_ROLE_LIBRARY) {
                     // Folder-only roots must never contribute library galleries.
                     db.localGalleryDao().deleteByRootId(root.id)
-                    return@withIOContext
+                    return@withLock
                 }
                 scanRootLocked(root)
             } finally {
@@ -164,24 +170,39 @@ object LocalLibrary {
         }
         val path = rootPath(root) ?: run {
             logcat("LocalLibrary") { "Library root not accessible: ${root.treeUri}" }
-            db.localGalleryDao().deleteByRootId(root.id)
+            if (db.libraryRootDao().load(root.id) != null) {
+                db.localGalleryDao().deleteByRootId(root.id)
+            }
             return
         }
         // MediaStore virtual root is always a directory tree; skip FileSystem metadata check
         // which can mis-classify synthetic paths.
         if (!isMediaStoreRootUri(root.treeUri) && !path.isDirectory) {
             logcat("LocalLibrary") { "Library root is not a directory: $path" }
-            db.localGalleryDao().deleteByRootId(root.id)
+            if (db.libraryRootDao().load(root.id) != null) {
+                db.localGalleryDao().deleteByRootId(root.id)
+            }
             return
         }
         if (isMediaStoreRootUri(root.treeUri) && !MediaPermissions.hasImageAccess()) {
             logcat("LocalLibrary") { "Device media library root without READ_MEDIA_IMAGES" }
-            db.localGalleryDao().deleteByRootId(root.id)
+            if (db.libraryRootDao().load(root.id) != null) {
+                db.localGalleryDao().deleteByRootId(root.id)
+            }
             return
         }
         val galleries = LibraryScanner.scan(root.id, path, rootDisplayName = root.displayName)
+        // Drop results if the root was removed while scanning (belt-and-suspenders with mutex).
+        if (db.libraryRootDao().load(root.id) == null) {
+            logcat("LocalLibrary") { "Skip scan write for deleted root ${root.id}" }
+            return
+        }
         logcat("LocalLibrary") { "Scanned root ${root.id} (${root.displayName}): ${galleries.size} galleries" }
-        db.localGalleryDao().replaceForRoot(root.id, galleries)
+        runCatching {
+            db.localGalleryDao().replaceForRoot(root.id, galleries)
+        }.onFailure {
+            logcat(it)
+        }
     }
 
     /**
