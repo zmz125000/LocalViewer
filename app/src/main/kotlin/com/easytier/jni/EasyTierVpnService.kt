@@ -1,15 +1,12 @@
 package com.easytier.jni
 
-import android.annotation.SuppressLint
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.net.VpnService
-import android.os.Build
 import android.os.ParcelFileDescriptor
 import com.ehviewer.core.util.logcat
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 import logcat.LogPriority
 
 /**
@@ -18,75 +15,82 @@ import logcat.LogPriority
  * Only the app package is allowed through the TUN ([Builder.addAllowedApplication]), and
  * routes are limited to the virtual subnet + peer proxy CIDRs — not a full-device tunnel.
  * Android still permits only one active VpnService system-wide.
+ *
+ * Stop path must close the [ParcelFileDescriptor] (and [stopSelf]); otherwise the system
+ * VPN indicator stays on even after EasyTier is stopped in-app.
  */
 class EasyTierVpnService : VpnService() {
 
+    private val lock = Any()
     private var vpnInterface: ParcelFileDescriptor? = null
-
-    @Volatile
-    private var isRunning = false
-    private var instanceName: String? = null
     private var vpnThread: Thread? = null
+    private var instanceName: String? = null
 
-    private val stopVpnReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == stopAction(context)) {
-                logcat(TAG) { "Stop broadcast received; tearing down VPN" }
-                cleanupAndStop()
-            }
-        }
-    }
-
-    @SuppressLint("UnspecifiedRegisterReceiverFlag")
-    override fun onCreate() {
-        super.onCreate()
-        val filter = IntentFilter(stopAction(this))
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(stopVpnReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(stopVpnReceiver, filter)
-        }
-    }
+    /** Generation token so a superseded setup thread cannot keep / re-open the TUN. */
+    private var setupGeneration = 0
+    private val keepAlive = AtomicBoolean(false)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent == null || intent.action == stopAction(this)) {
-            cleanupAndStop()
+        if (intent == null || intent.action == ACTION_STOP) {
+            logcat(TAG) { "Stop command; tearing down VPN" }
+            teardownAndStopSelf()
             return START_NOT_STICKY
         }
 
-        vpnThread = Thread({
-            try {
-                val ipv4Address = intent.getStringExtra(EXTRA_IPV4_ADDRESS)
-                val proxyCidrs = intent.getStringArrayListExtra(EXTRA_PROXY_CIDRS)
-                instanceName = intent.getStringExtra(EXTRA_INSTANCE_NAME)
+        val ipv4Address = intent.getStringExtra(EXTRA_IPV4_ADDRESS)
+        val proxyCidrs = intent.getStringArrayListExtra(EXTRA_PROXY_CIDRS).orEmpty()
+        val name = intent.getStringExtra(EXTRA_INSTANCE_NAME)
+        if (ipv4Address == null || name == null) {
+            logcat(TAG, LogPriority.ERROR) { "Missing ipv4/instance; stop" }
+            teardownAndStopSelf()
+            return START_NOT_STICKY
+        }
 
-                if (ipv4Address == null || instanceName == null) {
-                    cleanupAndStop()
-                    return@Thread
-                }
+        val generation: Int
+        synchronized(lock) {
+            // Drop any previous TUN before establishing a new one.
+            closeTunLocked()
+            keepAlive.set(false)
+            vpnThread?.interrupt()
+            vpnThread = null
+            setupGeneration += 1
+            generation = setupGeneration
+            instanceName = name
+            keepAlive.set(true)
+        }
 
-                setupVpnInterface(ipv4Address, proxyCidrs.orEmpty())
-            } catch (t: Throwable) {
-                logcat(TAG, LogPriority.ERROR) { "VPN setup thread failed: ${t.message}" }
-                cleanupAndStop()
+        val thread = Thread({
+            setupVpnInterface(generation, ipv4Address, proxyCidrs, name)
+        }, "EasyTierVpnSetup-$generation")
+
+        synchronized(lock) {
+            if (generation != setupGeneration) {
+                // Superseded before start.
+                return START_NOT_STICKY
             }
-        }, "EasyTierVpnSetup")
-
-        vpnThread!!.start()
+            vpnThread = thread
+        }
+        thread.start()
         return START_NOT_STICKY
     }
 
-    private fun setupVpnInterface(ipv4Address: String, proxyCidrs: List<String>) {
+    private fun setupVpnInterface(
+        generation: Int,
+        ipv4Address: String,
+        proxyCidrs: List<String>,
+        name: String,
+    ) {
+        var established: ParcelFileDescriptor? = null
         try {
-            val addressInfo = parseCidr(ipv4Address, defaultPrefix = 24)
+            if (!isCurrentGeneration(generation) || !keepAlive.get()) return
 
+            val addressInfo = parseCidr(ipv4Address, defaultPrefix = 24)
             val builder = Builder()
                 .setSession("EasyTier")
                 .setMtu(1400)
                 .addAddress(addressInfo.ip, addressInfo.networkLength)
                 .addDnsServer("223.5.5.5")
 
-            // Route the virtual subnet so peer virtual IPs hit the TUN (needed for SMB).
             val networkBase = networkAddress(addressInfo.ip, addressInfo.networkLength)
             builder.addRoute(networkBase, addressInfo.networkLength)
             logcat(TAG) { "Virtual route $networkBase/${addressInfo.networkLength}" }
@@ -107,32 +111,42 @@ class EasyTierVpnService : VpnService() {
                 }
             }
 
-            // Only this app — other apps keep normal networking (still occupies the VPN slot).
             try {
                 builder.addAllowedApplication(packageName)
             } catch (e: Exception) {
                 logcat(TAG, LogPriority.WARN) { "addAllowedApplication failed: ${e.message}" }
             }
 
-            vpnInterface = builder.establish()
-            if (vpnInterface == null) {
+            if (!isCurrentGeneration(generation) || !keepAlive.get()) return
+
+            established = builder.establish()
+            if (established == null) {
                 logcat(TAG, LogPriority.ERROR) { "establish() returned null" }
                 return
             }
-            isRunning = true
 
-            val name = instanceName!!
-            val fd = vpnInterface!!.fd
+            synchronized(lock) {
+                if (generation != setupGeneration || !keepAlive.get()) {
+                    // Stop won the race — discard this TUN immediately.
+                    closeQuietly(established)
+                    established = null
+                    return
+                }
+                vpnInterface = established
+            }
+
             if (!EasyTierJNI.ensureLoaded()) {
                 logcat(TAG, LogPriority.ERROR) { "Native lib not loaded: ${EasyTierJNI.libraryLoadError()}" }
                 return
             }
+            val fd = established.fd
             val rc = EasyTierJNI.setTunFd(name, fd)
-            logcat(TAG) { "setTunFd($name, $fd) = $rc" }
+            logcat(TAG) { "setTunFd($name, $fd) = $rc (gen=$generation)" }
 
-            while (isRunning) {
+            // Hold the service alive while this generation owns the TUN.
+            while (keepAlive.get() && isCurrentGeneration(generation)) {
                 try {
-                    Thread.sleep(Long.MAX_VALUE)
+                    Thread.sleep(60_000L)
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                     break
@@ -141,35 +155,66 @@ class EasyTierVpnService : VpnService() {
         } catch (t: Throwable) {
             logcat(TAG, LogPriority.ERROR) { "VPN interface error: ${t.message}" }
         } finally {
-            cleanup()
+            synchronized(lock) {
+                if (generation == setupGeneration) {
+                    closeTunLocked()
+                    if (!keepAlive.get()) {
+                        stopSelf()
+                    }
+                } else {
+                    // Older generation — only close the fd we may still hold locally.
+                    if (established != null && vpnInterface !== established) {
+                        closeQuietly(established)
+                    }
+                }
+            }
+            logcat(TAG) { "Setup thread exit gen=$generation" }
         }
     }
 
-    private fun cleanupAndStop() {
-        cleanup()
+    private fun isCurrentGeneration(generation: Int): Boolean =
+        synchronized(lock) { generation == setupGeneration }
+
+    private fun teardownAndStopSelf() {
+        synchronized(lock) {
+            keepAlive.set(false)
+            setupGeneration += 1 // invalidate any in-flight setup
+            vpnThread?.interrupt()
+            vpnThread = null
+            closeTunLocked()
+        }
         stopSelf()
+        logcat(TAG) { "VPN torn down and stopSelf()" }
     }
 
-    private fun cleanup() {
-        if (!isRunning && vpnInterface == null) return
-        isRunning = false
-        vpnThread?.interrupt()
-        vpnThread = null
+    /** Caller must hold [lock]. Closing the PFD is what clears the system VPN status. */
+    private fun closeTunLocked() {
+        val iface = vpnInterface
+        vpnInterface = null
+        if (iface != null) {
+            closeQuietly(iface)
+            logcat(TAG) { "TUN closed" }
+        }
+    }
+
+    private fun closeQuietly(pfd: ParcelFileDescriptor) {
         try {
-            vpnInterface?.close()
+            pfd.close()
         } catch (e: IOException) {
             logcat(TAG, LogPriority.ERROR) { "Close VPN interface: ${e.message}" }
         }
-        vpnInterface = null
     }
 
     override fun onDestroy() {
-        try {
-            unregisterReceiver(stopVpnReceiver)
-        } catch (_: IllegalArgumentException) {
+        synchronized(lock) {
+            keepAlive.set(false)
+            setupGeneration += 1
+            vpnThread?.interrupt()
+            vpnThread = null
+            closeTunLocked()
         }
-        cleanup()
         super.onDestroy()
+        logcat(TAG) { "onDestroy" }
     }
 
     private data class IpAddressInfo(val ip: String, val networkLength: Int)
@@ -193,12 +238,10 @@ class EasyTierVpnService : VpnService() {
 
     companion object {
         private const val TAG = "EasyTierVpnService"
+        const val ACTION_STOP = "com.easytier.jni.EasyTierVpnService.STOP"
         const val EXTRA_IPV4_ADDRESS = "ipv4_address"
         const val EXTRA_PROXY_CIDRS = "proxy_cidrs"
         const val EXTRA_INSTANCE_NAME = "instance_name"
-
-        fun stopAction(context: Context): String =
-            "${context.packageName}.easytier.ACTION_STOP_VPN"
 
         fun start(
             context: Context,
@@ -206,16 +249,36 @@ class EasyTierVpnService : VpnService() {
             proxyCidrs: List<String>,
             instanceName: String,
         ) {
-            val intent = Intent(context, EasyTierVpnService::class.java).apply {
+            val app = context.applicationContext
+            val intent = Intent(app, EasyTierVpnService::class.java).apply {
                 putExtra(EXTRA_IPV4_ADDRESS, ipv4)
                 putStringArrayListExtra(EXTRA_PROXY_CIDRS, ArrayList(proxyCidrs))
                 putExtra(EXTRA_INSTANCE_NAME, instanceName)
             }
-            context.startService(intent)
+            app.startService(intent)
         }
 
+        /**
+         * Tear down the system VPN: deliver a stop command to the service (closes TUN fd)
+         * and request [Context.stopService] so the service is destroyed.
+         */
         fun stop(context: Context) {
-            context.sendBroadcast(Intent(stopAction(context)))
+            val app = context.applicationContext
+            val stopIntent = Intent(app, EasyTierVpnService::class.java).apply {
+                action = ACTION_STOP
+            }
+            try {
+                // Preferred: onStartCommand(ACTION_STOP) closes the TUN then stopSelf().
+                app.startService(stopIntent)
+            } catch (e: Exception) {
+                logcat(TAG, LogPriority.WARN) { "startService(STOP) failed: ${e.message}" }
+            }
+            try {
+                // Ensures service destruction if startService path is a no-op (not running).
+                app.stopService(Intent(app, EasyTierVpnService::class.java))
+            } catch (e: Exception) {
+                logcat(TAG, LogPriority.WARN) { "stopService failed: ${e.message}" }
+            }
         }
     }
 }

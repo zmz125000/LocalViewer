@@ -73,12 +73,10 @@ class EasyTierManager(
     }
 
     fun stop() {
-        if (!isRunning && latestNetworkInfoJson == null) {
-            // Still try to stop VPN / native in case of partial start.
-        }
         isRunning = false
         handler.removeCallbacks(monitorRunnable)
         try {
+            // Always tear down the system VPN first (closes TUN fd), then native stack.
             EasyTierVpnService.stop(appContext)
             if (EasyTierJNI.isLibraryLoaded()) {
                 EasyTierJNI.stopAllInstances()
@@ -89,6 +87,8 @@ class EasyTierManager(
             logcat(TAG) { "EasyTier instance stopped: $instanceName" }
         } catch (e: Exception) {
             logcat(TAG, LogPriority.ERROR) { "stop exception: ${e.message}" }
+            // Best-effort: still try to drop VPN if native stop threw.
+            runCatching { EasyTierVpnService.stop(appContext) }
         }
     }
 
