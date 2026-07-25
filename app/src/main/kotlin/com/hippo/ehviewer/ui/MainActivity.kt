@@ -126,6 +126,7 @@ import com.hippo.ehviewer.ui.destinations.AboutScreenDestination
 import com.hippo.ehviewer.ui.destinations.AdvancedScreenDestination
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.DownloadScreenDestination
+import com.hippo.ehviewer.ui.destinations.EasyTierScreenDestination
 import com.hippo.ehviewer.ui.destinations.EhScreenDestination
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
@@ -218,6 +219,7 @@ private val settingsNestedDestinations: Set<DestinationSpec> = setOf(
     LicenseScreenDestination,
     DownloadScreenDestination,
     LibrarySettingsScreenDestination,
+    EasyTierScreenDestination,
 )
 
 /** Folder / SMB / network browse stack (not the main Browse hub). */

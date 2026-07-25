@@ -69,6 +69,7 @@ import com.hippo.ehviewer.ktor.Cronet
 import com.hippo.ehviewer.ktor.configureClient
 import com.hippo.ehviewer.ktor.configureCommon
 import com.hippo.ehviewer.ktor.isCronetAvailable
+import com.hippo.ehviewer.easytier.EasyTierRuntime
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
 import com.hippo.ehviewer.ui.tools.dataStateFlow
@@ -113,6 +114,8 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         }
         CrashHandler.install()
         super.onCreate()
+        // onCreate body is `with(lifecycleScope)` — use Application receiver explicitly.
+        EasyTierRuntime.init(this@EhApplication)
         System.loadLibrary("ehviewer")
         // SMB: drop half-open sockets when app is backgrounded (power button / switch apps).
         // smbj used to keep a host-level dead Connection that broke every share until restart.

@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Adb
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
@@ -27,6 +28,7 @@ import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.AboutScreenDestination
 import com.hippo.ehviewer.ui.destinations.AdvancedScreenDestination
 import com.hippo.ehviewer.ui.destinations.DownloadScreenDestination
+import com.hippo.ehviewer.ui.destinations.EasyTierScreenDestination
 import com.hippo.ehviewer.ui.destinations.EhScreenDestination
 import com.hippo.ehviewer.ui.destinations.LibrarySettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.PrivacyScreenDestination
@@ -77,6 +79,12 @@ fun AnimatedVisibilityScope.SettingsScreen(navigator: DestinationsNavigator) = S
                 icon = Icons.Default.Download,
                 title = R.string.settings_download,
                 childRoute = DownloadScreenDestination,
+                navigator = navigator,
+            )
+            PreferenceHeader(
+                icon = Icons.Default.Hub,
+                title = R.string.settings_easytier,
+                childRoute = EasyTierScreenDestination,
                 navigator = navigator,
             )
             PreferenceHeader(

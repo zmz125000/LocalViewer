@@ -2,6 +2,9 @@
     native <methods>;
 }
 
+# EasyTier JNI: native symbols are Java_com_easytier_jni_EasyTierJNI_*
+-keep class com.easytier.jni.EasyTierJNI { *; }
+
 -keepclassmembers enum * {
     public static **[] values();
     public static ** valueOf(java.lang.String);

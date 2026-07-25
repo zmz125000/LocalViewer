@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,6 +47,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -64,6 +66,7 @@ import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.easytier.EasyTierRuntime
 import com.hippo.ehviewer.library.AddRootResult
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LocalLibrary
@@ -73,9 +76,11 @@ import com.hippo.ehviewer.library.isMediaStoreRootUri
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.destinations.EasyTierScreenDestination
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.LibrarySettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
+import com.hippo.ehviewer.ui.easytier.EasyTierDialog
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.ramcosta.composedestinations.annotation.Destination
@@ -105,6 +110,8 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     val alreadyAdded = stringResource(id = R.string.library_root_already_added)
 
     var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }
+    var showEasyTierDialog by remember { mutableStateOf(false) }
+    val easyTierState by EasyTierRuntime.state.collectAsState()
     // Pending role for the next OpenDocumentTree result.
     var pendingSafRole by remember { mutableIntStateOf(LIBRARY_ROOT_ROLE_LIBRARY) }
     var accessChooserRole by remember { mutableStateOf<Int?>(null) }
@@ -330,6 +337,20 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 actions = {
                     IconButton(
+                        onClick = { showEasyTierDialog = true },
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        Icon(
+                            Icons.Default.Hub,
+                            contentDescription = stringResource(R.string.settings_easytier),
+                            tint = if (easyTierState.connectingOrRunning) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                Color.Unspecified
+                            },
+                        )
+                    }
+                    IconButton(
                         onClick = { launchAddLocalSource(LIBRARY_ROOT_ROLE_LIBRARY) },
                         shapes = IconButtonDefaults.shapes(),
                     ) {
@@ -496,6 +517,16 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 smbEditor = null
             },
             onTest = { testState, password -> testSmb(testState, password) },
+        )
+    }
+
+    if (showEasyTierDialog) {
+        EasyTierDialog(
+            onDismiss = { showEasyTierDialog = false },
+            onOpenFullSettings = {
+                showEasyTierDialog = false
+                navigate(EasyTierScreenDestination)
+            },
         )
     }
 }
