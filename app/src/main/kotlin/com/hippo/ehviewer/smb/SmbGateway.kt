@@ -66,6 +66,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 2. Reuse sessions for same host + user (tree-connect extra shares as needed)
  * 3. Stay under Win11 ~20 inbound session limit (cap TCP sessions, multiplex ops)
  * 4. Keep-alive idle sessions; drop on real transport death / app background / net path change
+ *    (Wi‑Fi↔cell, EasyTier VPN up/down/revoke — half-open TCP is common after path changes)
  *
  * ## Pool model
  * - **Budget:** max [maxConnectionsPerHost] TCP/SMB **sessions** per `host:port`
