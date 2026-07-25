@@ -75,8 +75,6 @@ jobs:
           mv app/build/outputs/apk/default/release/app-default-arm64-v8a-release.apk LocalViewer-${TAG}-default-arm64-v8a.apk
           mv app/build/outputs/apk/default/release/app-default-x86_64-release.apk LocalViewer-${TAG}-default-x86_64.apk
           mv app/build/outputs/apk/default/release/app-default-armeabi-v7a-release.apk LocalViewer-${TAG}-default-armeabi-v7a.apk
-          mv app/build/outputs/mapping/defaultRelease/mapping.txt LocalViewer-${TAG}-default-mapping.txt
-          mv app/build/outputs/native-debug-symbols/defaultRelease/native-debug-symbols.zip LocalViewer-${TAG}-default-native-debug-symbols.zip
 
       - name: Rename Apks (easytier)
         if: matrix.suffix == 'easytier'
@@ -95,8 +93,6 @@ jobs:
             LocalViewer-${{ github.ref_name }}-default-arm64-v8a.apk
             LocalViewer-${{ github.ref_name }}-default-x86_64.apk
             LocalViewer-${{ github.ref_name }}-default-armeabi-v7a.apk
-            LocalViewer-${{ github.ref_name }}-default-mapping.txt
-            LocalViewer-${{ github.ref_name }}-default-native-debug-symbols.zip
 
       - name: Releases (easytier)
         if: matrix.suffix == 'easytier'
