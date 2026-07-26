@@ -68,7 +68,7 @@ A High performance Android SMB image viewer/comic reader with network gallery fo
 With [Material Design 3](https://m3.material.io/)
 and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) Support.  
 
-Similar to Perfect Viewer and Kuro Reader.
+Similar to Perfect Viewer and Kuro Reader but with Hi-Res images support (no downscaling).
 
 Build with Grok 4.5.
 
