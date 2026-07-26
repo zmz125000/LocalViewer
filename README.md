@@ -112,6 +112,7 @@ while ($true) {
 | Flavor      | Minimum Android Version | Notes                          |
 |-------------|-------------------------|--------------------------------|
 | Default     | 12L                     | Full support                   |
+| EasyTier    | 12L (arm64-v8a)         | Full support                   |
 
 <a href="https://github.com/zmz125000/LocalViewer/releases">
 <img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
