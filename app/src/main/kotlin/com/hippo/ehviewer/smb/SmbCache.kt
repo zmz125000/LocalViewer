@@ -49,10 +49,10 @@ object SmbCache {
      * Long edge of JPEGs stored for browse covers. Matches [com.hippo.ehviewer.coil.CoverThumb]
      * upper decode clamp so Coil rarely re-scales heavily.
      */
-    const val THUMB_DISK_EDGE = 512
+    const val THUMB_DISK_EDGE = 768
 
     /** JPEG quality for disk thumbs (small + sharp enough for list/grid). */
-    private const val THUMB_JPEG_QUALITY = 82
+    private const val THUMB_JPEG_QUALITY = 85
 
     /**
      * Fixed thumb store budget (512 MiB). Independent of Settings.readCacheSize so
@@ -255,9 +255,11 @@ object SmbCache {
         val h = bounds.outHeight
         if (w <= 0 || h <= 0) error("Cannot decode image bounds: ${source.name}")
 
-        val longEdge = maxOf(w, h)
+        // Subsample on short edge (less aggressive than long edge) so decode keeps more
+        // pixels; final pass still clamps long edge to maxEdge with bilinear scale.
+        val shortEdge = minOf(w, h)
         var sample = 1
-        while (longEdge / sample > maxEdge) {
+        while (shortEdge / sample > maxEdge) {
             sample *= 2
         }
 
