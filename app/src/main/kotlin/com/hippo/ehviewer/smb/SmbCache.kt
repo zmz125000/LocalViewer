@@ -149,11 +149,14 @@ object SmbCache {
     /**
      * Ensure a **small JPEG** browse thumb exists for [remoteRelativeFile].
      *
-     * 1. Cache hit → touch + return (no SMB, no full-res decode)
-     * 2. Miss → download original to a temp file (SMB once) → subsample + JPEG encode
-     *    → store only the small file → delete original temp
+     * 1. Thumb hit → touch + return (no SMB)
+     * 2. Miss → ensure **full original** in page cache ([smb_cache] / [Kind.Page]) via
+     *    [downloadIfNeeded] (one SMB fetch, shared with reader), then subsample + JPEG
+     *    into [smb_thumb_cache]
+     * 3. If page cache already has the file (e.g. reader opened first), thumb is built
+     *    offline with no network
      *
-     * Concurrent callers for the same path share one job.
+     * Concurrent callers for the same thumb path share one job.
      */
     suspend fun ensureBrowseThumb(
         sourceId: Long,
@@ -165,6 +168,7 @@ object SmbCache {
             touch(destPath)
             return@withContext destPath
         }
+        val pagePath = cachePathForRemoteFile(sourceId, remoteRelativeFile, Kind.Page)
         val key = destPath.toString()
         val mutex = pathLocks.getOrPut(key) { Mutex() }
         mutex.withLock {
@@ -177,26 +181,28 @@ object SmbCache {
                     touch(destPath)
                     return@withContext destPath
                 }
+                // Full original → smb_cache (same key as reader pages for this file).
+                downloadIfNeeded(pagePath, download)
+                if (!isCached(pagePath)) {
+                    error("SMB page cache empty after download for $remoteRelativeFile")
+                }
                 destPath.parent?.mkdirs()
                 val dest = File(key)
-                val fullTmp = File("$key.full.${System.nanoTime()}")
                 val jpgTmp = File("$key.jpg.${System.nanoTime()}")
                 try {
-                    FileOutputStream(fullTmp).use { out -> download(out) }
-                    if (!fullTmp.isFile || fullTmp.length() == 0L) {
-                        error("SMB thumb download empty for $remoteRelativeFile")
-                    }
-                    writeSubsampledJpeg(fullTmp, jpgTmp, THUMB_DISK_EDGE, THUMB_JPEG_QUALITY)
+                    writeSubsampledJpeg(
+                        File(pagePath.toString()),
+                        jpgTmp,
+                        THUMB_DISK_EDGE,
+                        THUMB_JPEG_QUALITY,
+                    )
                     commitTmp(jpgTmp, dest)
                     touch(destPath)
                 } catch (e: Throwable) {
-                    fullTmp.delete()
-                    jpgTmp.delete()
+                    if (jpgTmp.exists()) jpgTmp.delete()
                     if (isCached(destPath)) return@withContext destPath
                     throw e
                 } finally {
-                    fullTmp.delete()
-                    // jpgTmp removed by commitTmp rename, or delete on failure above
                     if (jpgTmp.exists()) jpgTmp.delete()
                 }
             }
