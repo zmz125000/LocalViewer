@@ -11,6 +11,7 @@ import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.util.FileUtils
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -27,6 +28,9 @@ import okio.Path
  *   so a seek does not wait behind every prefetch transfer.
  * - Per-file mutex in [SmbCache] joins overlapping downloads (small jump / prefetch race).
  * - Large jumps cancel far-away prefetch jobs so they stop holding pool op slots.
+ * - UI waiters ([onReady] / notifySourceReady) are registered on a list so cancel/join
+ *   races never leave a page spinning forever (manual refresh worked because it
+ *   forced a clean onRequest).
  */
 suspend inline fun <T> useSmbFolderPageLoader(
     source: SmbSourceEntity,
@@ -50,6 +54,8 @@ suspend inline fun <T> useSmbFolderPageLoader(
         }
         // In-flight downloads by page index — join small-jump overlap, cancel large jumps.
         val downloadJobs = ConcurrentHashMap<Int, Job>()
+        /** UI/decode callbacks waiting for [index] to land in [SmbCache]. */
+        val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         // Pages within this distance of the target keep running; farther jobs are cancelled.
         val keepWindow = 4
 
@@ -102,16 +108,30 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     val snapshot = downloadJobs.entries.toList()
                     for ((idx, job) in snapshot) {
                         if (kotlin.math.abs(idx - center) > keepWindow) {
+                            // Do not remove waiters here — job's CancellationException handler
+                            // restarts download if the UI is still waiting for this page.
                             job.cancel()
-                            downloadJobs.remove(idx, job)
                         }
                     }
                 }
 
+                private fun addReadyWaiter(index: Int, onReady: () -> Unit) {
+                    readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
+                }
+
+                private fun takeReadyWaiters(index: Int): List<() -> Unit> =
+                    readyWaiters.remove(index)?.toList().orEmpty()
+
+                private fun dispatchReady(index: Int) {
+                    takeReadyWaiters(index).forEach { runCatching { it() } }
+                }
+
                 /**
                  * Start or join a download for [index].
-                 * - Small jump / same page: reuses the existing job (and [SmbCache] path lock).
+                 * - Small jump / same page: reuses the existing job; [onReady] is queued.
                  * - Interactive: uses reserved pool capacity so seek does not queue behind prefetch.
+                 * - Always completes waiters: success → notifySourceReady; fail/cancel with waiters
+                 *   → retry once or [notifyPageFailed] (never silent forever-spinner).
                  */
                 private fun ensureDownload(
                     index: Int,
@@ -123,46 +143,68 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
                     if (SmbCache.isCached(cache)) {
                         onReady?.invoke()
+                        // Also flush any stale waiters from a prior race.
+                        dispatchReady(index)
                         return
                     }
-                    // Overlap: join in-flight job for this page (common on small seeks).
-                    downloadJobs[index]?.let { existing ->
-                        if (existing.isActive) {
-                            if (onReady != null) {
-                                scope.launch(Dispatchers.IO) {
-                                    existing.join()
-                                    if (SmbCache.isCached(cache)) {
-                                        onReady()
-                                    } else {
-                                        // Previous job failed/cancelled — retry as interactive.
-                                        ensureDownload(index, interactive = true, onReady = onReady)
-                                    }
-                                }
-                            }
-                            return
-                        }
+                    if (onReady != null) {
+                        addReadyWaiter(index, onReady)
+                    }
+                    val existing = downloadJobs[index]
+                    if (existing != null && existing.isActive) {
+                        // Waiters already registered; in-flight job will dispatch or retry.
+                        return
                     }
                     val job = scope.launch(Dispatchers.IO) {
+                        var needsInteractive = interactive
                         try {
-                            val slots = if (interactive) interactiveSlots else prefetchSlots
+                            // Promote to interactive slot if the UI is waiting (joined mid-prefetch).
+                            if (readyWaiters[index]?.isNotEmpty() == true) {
+                                needsInteractive = true
+                            }
+                            val slots = if (needsInteractive) interactiveSlots else prefetchSlots
                             slots.withPermit {
                                 downloadToCache(index)
                             }
                             if (SmbCache.isCached(cache)) {
-                                onReady?.invoke()
+                                dispatchReady(index)
+                            } else {
+                                val waiters = takeReadyWaiters(index)
+                                if (waiters.isNotEmpty()) {
+                                    notifyPageFailed(index, "Download incomplete")
+                                }
                             }
                         } catch (_: kotlinx.coroutines.CancellationException) {
-                            // Distant-prefetch cancel or loader teardown — ignore.
+                            val waiters = takeReadyWaiters(index)
+                            if (waiters.isNotEmpty()) {
+                                // Seek cancelled this job while the page UI still needs the file.
+                                // Re-queue waiters and restart after this job releases its map slot
+                                // (do not ensureDownload here — finally would remove the new job).
+                                waiters.forEach { addReadyWaiter(index, it) }
+                                scope.launch(Dispatchers.IO) {
+                                    ensureDownload(index, interactive = true)
+                                }
+                            }
                         } catch (e: Throwable) {
                             // Never rethrow: a failed child would cancel the whole reader scope.
-                            if (interactive) {
+                            val waiters = takeReadyWaiters(index)
+                            if (waiters.isNotEmpty() || needsInteractive) {
                                 notifyPageFailed(index, e.message)
                             }
                         } finally {
-                            downloadJobs.remove(index)
+                            // Only remove *this* job — a replacement may already be registered.
+                            downloadJobs.remove(index, coroutineContext[Job])
                         }
                     }
-                    downloadJobs[index] = job
+                    val prev = downloadJobs.putIfAbsent(index, job)
+                    if (prev != null) {
+                        if (prev.isActive) {
+                            // Lost the race — keep the owner; waiters are already registered.
+                            job.cancel()
+                        } else {
+                            downloadJobs[index] = job
+                        }
+                    }
                 }
 
                 private suspend fun downloadToCache(index: Int) {
