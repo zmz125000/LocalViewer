@@ -81,11 +81,18 @@ object SmbCache {
         Kind.Thumb -> thumbRoot
     }
 
+    /**
+     * Reader page cache path (full remote file). Explicit 3-arg overload kept so
+     * callers / inlined loaders never hit NoSuchMethodError when [Kind] defaults change.
+     */
+    fun cachePath(sourceId: Long, remoteRelativePath: String, fileName: String): Path =
+        cachePath(sourceId, remoteRelativePath, fileName, Kind.Page)
+
     fun cachePath(
         sourceId: Long,
         remoteRelativePath: String,
         fileName: String,
-        kind: Kind = Kind.Page,
+        kind: Kind,
     ): Path {
         if (kind == Kind.Thumb) {
             val dir = remoteRelativePath.replace('\\', '/').trim('/')
@@ -105,10 +112,13 @@ object SmbCache {
      * Cache path for a full share-relative file path (`Comics/Title/001.jpg`).
      * For [Kind.Thumb] this is always a **`.jpg` small thumb**, not the original file.
      */
+    fun cachePathForRemoteFile(sourceId: Long, remoteRelativeFile: String): Path =
+        cachePathForRemoteFile(sourceId, remoteRelativeFile, Kind.Page)
+
     fun cachePathForRemoteFile(
         sourceId: Long,
         remoteRelativeFile: String,
-        kind: Kind = Kind.Page,
+        kind: Kind,
     ): Path {
         val normalized = remoteRelativeFile.replace('\\', '/').trimStart('/')
         if (kind == Kind.Thumb) return thumbCachePath(sourceId, normalized)
