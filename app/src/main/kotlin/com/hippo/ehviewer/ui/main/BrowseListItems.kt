@@ -288,42 +288,49 @@ fun BrowseCoverThumb(
     placeholderSize: Dp = 24.dp,
     decodeSizePx: Int? = null,
     /**
-     * Bumped by parent (e.g. SMB browse [refreshToken]) to clear sticky fail and re-fetch.
-     * ON_RESUME also bumps an internal epoch for the same purpose.
+     * Bumped by parent (e.g. SMB browse [refreshToken]) to clear sticky fail and re-fetch
+     * **only when disk cache is missing**. Cache hits never re-download.
      */
     retryKey: Any? = null,
 ) {
     val resolvedDecodePx = decodeSizePx ?: CoverThumb.listDecodePx()
     val context = LocalContext.current
-    var localPath by remember(cover) {
+    // Stable keys: BrowseCover is a new instance per list paint; identity by fields.
+    val smbKey = when (cover) {
+        is BrowseCover.Smb -> "${cover.sourceId}\u0000${cover.remoteRelativeFile}"
+        else -> null
+    }
+    var localPath by remember(smbKey, cover is BrowseCover.Local) {
         mutableStateOf(
             when (cover) {
                 is BrowseCover.Local -> cover.path
                 is BrowseCover.Smb -> {
-                    val cache = SmbCache.cachePathForRemoteFile(cover.sourceId, cover.remoteRelativeFile)
-                    cache.takeIf { SmbCache.isCached(it) }
+                    val cache = SmbCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
+                    cache.takeIf { SmbCache.isCached(it) }?.also { SmbCache.touch(it) }
                 }
                 null -> null
             },
         )
     }
-    var fetchFailed by remember(cover) { mutableStateOf(false) }
+    var fetchFailed by remember(smbKey) { mutableStateOf(false) }
     // Internal resume counter + external retryKey both re-run the download effect.
-    var resumeEpoch by remember(cover) { mutableIntStateOf(0) }
+    var resumeEpoch by remember(smbKey) { mutableIntStateOf(0) }
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, cover) {
+    DisposableEffect(lifecycleOwner, smbKey) {
         if (cover !is BrowseCover.Smb) {
             return@DisposableEffect onDispose { }
         }
         val smb = cover
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                val cache = SmbCache.cachePathForRemoteFile(smb.sourceId, smb.remoteRelativeFile)
+                val cache = SmbCache.thumbCachePath(smb.sourceId, smb.remoteRelativeFile)
                 if (SmbCache.isCached(cache)) {
+                    SmbCache.touch(cache)
                     localPath = cache
                     fetchFailed = false
-                } else if (localPath == null) {
+                } else if (localPath == null || !SmbCache.isCached(localPath!!)) {
                     // Pool sockets were closed on background; allow another 3-attempt cycle.
+                    localPath = null
                     fetchFailed = false
                     resumeEpoch++
                 }
@@ -334,27 +341,28 @@ fun BrowseCoverThumb(
     }
 
     // Lazy: only runs when this row is composed (in LazyColumn viewport).
-    // Retry a few times — a single broken-pipe on a pooled connection must not
-    // permanently blank gallery thumbs while scrolling the browse list.
-    LaunchedEffect(cover, retryKey, resumeEpoch) {
+    // Disk cache is authoritative — scroll recycle / refreshToken must not re-hit SMB
+    // when the thumb file is already in smb_thumb_cache.
+    LaunchedEffect(smbKey, retryKey, resumeEpoch) {
         val smb = cover as? BrowseCover.Smb ?: return@LaunchedEffect
-        if (localPath != null) return@LaunchedEffect
-        // Parent refresh / resume clears sticky fail for a new attempt cycle.
-        fetchFailed = false
-        val cache = SmbCache.cachePathForRemoteFile(smb.sourceId, smb.remoteRelativeFile)
+        val cache = SmbCache.thumbCachePath(smb.sourceId, smb.remoteRelativeFile)
+        // Small JPEG on disk → no SMB, no full-res decode.
         if (SmbCache.isCached(cache)) {
+            SmbCache.touch(cache)
             localPath = cache
+            fetchFailed = false
             return@LaunchedEffect
         }
+        fetchFailed = false
         var lastError: Throwable? = null
         repeat(3) { attempt ->
             val result = runCatching {
                 val source = SmbRepository.load(smb.sourceId) ?: error("SMB source missing")
                 val password = SmbPasswordStore.get(smb.sourceId)
-                SmbCache.downloadIfNeeded(cache) { out ->
+                // Download once → write ~512px JPEG into smb_thumb_cache (not the original).
+                SmbCache.ensureBrowseThumb(smb.sourceId, smb.remoteRelativeFile) { out ->
                     SmbGateway.downloadFile(source, password, smb.remoteRelativeFile, out)
                 }
-                cache
             }
             if (result.isSuccess) {
                 localPath = result.getOrNull()
@@ -370,17 +378,16 @@ fun BrowseCoverThumb(
         fetchFailed = true
     }
 
-    // Memory/disk keys include remote identity + decode size so list/grid recycle
-    // never paints another comic's 001.jpg at full resolution.
+    // Disk thumbs are already ~512px JPEG; Coil size request is a light second pass.
     val request = remember(cover, localPath, resolvedDecodePx) {
         localPath?.let { path ->
             val cacheKey = when (cover) {
-                is BrowseCover.Smb -> "smb:${cover.sourceId}:${cover.remoteRelativeFile}"
+                is BrowseCover.Smb ->
+                    "smb-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${SmbCache.THUMB_DISK_EDGE}"
                 is BrowseCover.Local -> cover.path.toString()
                 null -> path.toString()
             }
             with(context) {
-                // Path string only — MediaStore/SAF URI resolve happens in CoverPathFetcher (off-main).
                 coverThumbRequest(
                     path = path.toString(),
                     sizePx = resolvedDecodePx,

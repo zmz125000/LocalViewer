@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.smb
 
-import com.ehviewer.core.files.exists
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.util.FileUtils
@@ -18,49 +19,185 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okio.Path
 import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
 
+/**
+ * On-disk SMB file cache.
+ *
+ * - **Pages** (`smb_cache/`): full remote files for the reader. Budget = Advanced
+ *   image disk cache size.
+ * - **Browse thumbs** (`smb_thumb_cache/`): **small JPEG only** (long edge
+ *   [THUMB_DISK_EDGE]), fixed [THUMB_BUDGET_BYTES] — **not** tied to Advanced
+ *   cache size, and not full studio originals.
+ */
 object SmbCache {
-    private val root: Path
+    enum class Kind {
+        /** Reader page / full-file download. */
+        Page,
+
+        /** Browse folder-list cover (small JPEG on disk). */
+        Thumb,
+    }
+
+    /**
+     * Long edge of JPEGs stored for browse covers. Matches [com.hippo.ehviewer.coil.CoverThumb]
+     * upper decode clamp so Coil rarely re-scales heavily.
+     */
+    const val THUMB_DISK_EDGE = 512
+
+    /** JPEG quality for disk thumbs (small + sharp enough for list/grid). */
+    private const val THUMB_JPEG_QUALITY = 82
+
+    /**
+     * Fixed thumb store budget (512 MiB). Independent of Settings.readCacheSize so
+     * Advanced disk size does not wipe or starve folder covers.
+     */
+    private const val THUMB_BUDGET_BYTES = 512L * 1024L * 1024L
+
+    /** Cap concurrent full-file SMB fetches for thumb generation (first paint). */
+    private val thumbFetchSlots = Semaphore(3)
+
+    private val pageRoot: Path
         get() = appCtx.cacheDir.resolve("smb_cache").toOkioPath().also { it.mkdirs() }
 
-    /** One lock per cache file so prefetch + onRequest never race the same .tmp. */
+    private val thumbRoot: Path
+        get() = appCtx.cacheDir.resolve("smb_thumb_cache").toOkioPath().also { it.mkdirs() }
+
+    /** One lock per cache file so concurrent callers share one download/encode. */
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
 
     private val trimScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val trimLock = Mutex()
     private val trimScheduled = AtomicBoolean(false)
 
-    fun cachePath(sourceId: Long, remoteRelativePath: String, fileName: String): Path {
+    private fun rootFor(kind: Kind): Path = when (kind) {
+        Kind.Page -> pageRoot
+        Kind.Thumb -> thumbRoot
+    }
+
+    fun cachePath(
+        sourceId: Long,
+        remoteRelativePath: String,
+        fileName: String,
+        kind: Kind = Kind.Page,
+    ): Path {
+        if (kind == Kind.Thumb) {
+            val dir = remoteRelativePath.replace('\\', '/').trim('/')
+            val name = fileName.replace('\\', '/').substringAfterLast('/')
+            val remote = if (dir.isEmpty()) name else "$dir/$name"
+            return thumbCachePath(sourceId, remote)
+        }
         val dir = remoteRelativePath.replace('\\', '/').trim('/')
         val name = fileName.replace('\\', '/').substringAfterLast('/')
-        // Full remote path in the key so same basenames (001.jpg) in different folders never collide.
         val key = if (dir.isEmpty()) "$sourceId:$name" else "$sourceId:$dir/$name"
         val hash = sha256Hex(key)
         val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: "bin"
-        return root / "$hash.$ext"
+        return pageRoot / "$hash.$ext"
     }
 
     /**
      * Cache path for a full share-relative file path (`Comics/Title/001.jpg`).
-     * Prefer this over splitting parent/name at call sites — easy to drop the parent by accident.
+     * For [Kind.Thumb] this is always a **`.jpg` small thumb**, not the original file.
      */
-    fun cachePathForRemoteFile(sourceId: Long, remoteRelativeFile: String): Path {
+    fun cachePathForRemoteFile(
+        sourceId: Long,
+        remoteRelativeFile: String,
+        kind: Kind = Kind.Page,
+    ): Path {
         val normalized = remoteRelativeFile.replace('\\', '/').trimStart('/')
+        if (kind == Kind.Thumb) return thumbCachePath(sourceId, normalized)
         val name = normalized.substringAfterLast('/')
         val parent = normalized.substringBeforeLast('/', missingDelimiterValue = "")
-        return cachePath(sourceId, parent, name)
+        return cachePath(sourceId, parent, name, Kind.Page)
     }
 
-    fun isCached(path: Path) = path.exists()
+    /** Stable path for a small JPEG browse thumb. */
+    fun thumbCachePath(sourceId: Long, remoteRelativeFile: String): Path {
+        val normalized = remoteRelativeFile.replace('\\', '/').trimStart('/')
+        val key = "thumb:$sourceId:$normalized@$THUMB_DISK_EDGE"
+        return thumbRoot / "${sha256Hex(key)}.jpg"
+    }
+
+    /** Non-empty regular file on disk (Java File — reliable for app cache paths). */
+    fun isCached(path: Path): Boolean {
+        val f = File(path.toString())
+        return f.isFile && f.length() > 0L
+    }
+
+    /** Bump mtime so LRU eviction prefers colder files. Safe to call on list scroll hits. */
+    fun touch(path: Path) {
+        val f = File(path.toString())
+        if (f.isFile) f.setLastModified(System.currentTimeMillis())
+    }
 
     /**
-     * Download into [path] if missing. Concurrent callers for the same path share one download;
-     * commit is atomic so a second writer never fails with "Failed to commit".
+     * Ensure a **small JPEG** browse thumb exists for [remoteRelativeFile].
+     *
+     * 1. Cache hit → touch + return (no SMB, no full-res decode)
+     * 2. Miss → download original to a temp file (SMB once) → subsample + JPEG encode
+     *    → store only the small file → delete original temp
+     *
+     * Concurrent callers for the same path share one job.
+     */
+    suspend fun ensureBrowseThumb(
+        sourceId: Long,
+        remoteRelativeFile: String,
+        download: suspend (OutputStream) -> Unit,
+    ): Path = withContext(Dispatchers.IO) {
+        val destPath = thumbCachePath(sourceId, remoteRelativeFile)
+        if (isCached(destPath)) {
+            touch(destPath)
+            return@withContext destPath
+        }
+        val key = destPath.toString()
+        val mutex = pathLocks.getOrPut(key) { Mutex() }
+        mutex.withLock {
+            if (isCached(destPath)) {
+                touch(destPath)
+                return@withContext destPath
+            }
+            thumbFetchSlots.withPermit {
+                if (isCached(destPath)) {
+                    touch(destPath)
+                    return@withContext destPath
+                }
+                destPath.parent?.mkdirs()
+                val dest = File(key)
+                val fullTmp = File("$key.full.${System.nanoTime()}")
+                val jpgTmp = File("$key.jpg.${System.nanoTime()}")
+                try {
+                    FileOutputStream(fullTmp).use { out -> download(out) }
+                    if (!fullTmp.isFile || fullTmp.length() == 0L) {
+                        error("SMB thumb download empty for $remoteRelativeFile")
+                    }
+                    writeSubsampledJpeg(fullTmp, jpgTmp, THUMB_DISK_EDGE, THUMB_JPEG_QUALITY)
+                    commitTmp(jpgTmp, dest)
+                    touch(destPath)
+                } catch (e: Throwable) {
+                    fullTmp.delete()
+                    jpgTmp.delete()
+                    if (isCached(destPath)) return@withContext destPath
+                    throw e
+                } finally {
+                    fullTmp.delete()
+                    // jpgTmp removed by commitTmp rename, or delete on failure above
+                    if (jpgTmp.exists()) jpgTmp.delete()
+                }
+            }
+        }
+        scheduleTrim()
+        destPath
+    }
+
+    /**
+     * Download full file into [path] if missing (reader pages).
+     * Do **not** use for browse covers — use [ensureBrowseThumb].
      */
     suspend fun downloadIfNeeded(path: Path, write: suspend (OutputStream) -> Unit) {
         if (isCached(path)) {
@@ -76,7 +213,6 @@ object SmbCache {
             }
             path.parent?.mkdirs()
             val dest = File(key)
-            // Unique tmp so concurrent different files (or a stale .tmp) never collide.
             val tmp = File("$key.tmp.${System.nanoTime()}")
             try {
                 FileOutputStream(tmp).use { out -> write(out) }
@@ -84,7 +220,6 @@ object SmbCache {
                 touch(path)
             } catch (e: Throwable) {
                 tmp.delete()
-                // Another writer may have finished while we failed.
                 if (isCached(path)) return
                 throw e
             }
@@ -92,15 +227,56 @@ object SmbCache {
         scheduleTrim()
     }
 
-    /** Bump mtime so LRU eviction prefers older pages. */
-    private fun touch(path: Path) {
-        val f = File(path.toString())
-        if (f.isFile) f.setLastModified(System.currentTimeMillis())
+    private fun writeSubsampledJpeg(
+        source: File,
+        destJpeg: File,
+        maxEdge: Int,
+        quality: Int,
+    ) {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(source.absolutePath, bounds)
+        val w = bounds.outWidth
+        val h = bounds.outHeight
+        if (w <= 0 || h <= 0) error("Cannot decode image bounds: ${source.name}")
+
+        val longEdge = maxOf(w, h)
+        var sample = 1
+        while (longEdge / sample > maxEdge) {
+            sample *= 2
+        }
+
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sample.coerceAtLeast(1)
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        var decoded = BitmapFactory.decodeFile(source.absolutePath, opts)
+            ?: error("Cannot decode image: ${source.name}")
+        try {
+            if (maxOf(decoded.width, decoded.height) > maxEdge) {
+                val scale = maxEdge.toFloat() / maxOf(decoded.width, decoded.height)
+                val nw = (decoded.width * scale).toInt().coerceAtLeast(1)
+                val nh = (decoded.height * scale).toInt().coerceAtLeast(1)
+                val scaled = Bitmap.createScaledBitmap(decoded, nw, nh, true)
+                if (scaled !== decoded) {
+                    decoded.recycle()
+                    decoded = scaled
+                }
+            }
+            FileOutputStream(destJpeg).use { out ->
+                if (!decoded.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
+                    error("JPEG compress failed for ${source.name}")
+                }
+            }
+        } finally {
+            if (!decoded.isRecycled) decoded.recycle()
+        }
+        if (!destJpeg.isFile || destJpeg.length() == 0L) {
+            error("Empty JPEG thumb for ${source.name}")
+        }
     }
 
     private fun scheduleTrim() {
         if (!trimScheduled.compareAndSet(false, true)) return
-        // Fire-and-forget on IO; next download can schedule again after this finishes.
         trimScope.launch {
             try {
                 trimToMaxSize()
@@ -111,26 +287,32 @@ object SmbCache {
     }
 
     /**
-     * Evict oldest files in `smb_cache` until total size ≤ [Settings.readCacheSize] MiB.
-     * Same budget as legacy EH `image_cache` (Advanced → Image disk cache).
+     * Evict oldest files until each store is within budget.
+     * - Pages: [Settings.readCacheSize] MiB
+     * - Thumbs: fixed [THUMB_BUDGET_BYTES] (not settings)
      */
     suspend fun trimToMaxSize() = withContext(Dispatchers.IO) {
         trimLock.withLock {
-            val maxBytes = Settings.readCacheSize.value.coerceIn(320, 5120).toLong() * 1024L * 1024L
-            val dir = File(root.toString())
-            if (!dir.isDirectory) return@withLock
-            val files = dir.listFiles { f -> f.isFile && !f.name.contains(".tmp.") }?.toMutableList()
-                ?: return@withLock
-            var total = files.sumOf { it.length() }
-            if (total <= maxBytes) return@withLock
-            files.sortBy { it.lastModified() }
-            for (f in files) {
-                if (total <= maxBytes) break
-                val len = f.length()
-                if (f.delete()) {
-                    total -= len
-                    pathLocks.remove(f.absolutePath)
-                }
+            val pageBudget = Settings.readCacheSize.value.coerceIn(320, 5120).toLong() * 1024L * 1024L
+            trimDir(File(pageRoot.toString()), pageBudget)
+            trimDir(File(thumbRoot.toString()), THUMB_BUDGET_BYTES)
+        }
+    }
+
+    private fun trimDir(dir: File, maxBytes: Long) {
+        if (!dir.isDirectory) return
+        val files = dir.listFiles { f ->
+            f.isFile && !f.name.contains(".tmp.") && !f.name.contains(".full.") && !f.name.contains(".jpg.")
+        }?.toMutableList() ?: return
+        var total = files.sumOf { it.length() }
+        if (total <= maxBytes) return
+        files.sortBy { it.lastModified() }
+        for (f in files) {
+            if (total <= maxBytes) break
+            val len = f.length()
+            if (f.delete()) {
+                total -= len
+                pathLocks.remove(f.absolutePath)
             }
         }
     }
@@ -140,9 +322,7 @@ object SmbCache {
             tmp.delete()
             error("SMB download produced empty temp file for ${dest.name}")
         }
-        // Fast path.
         if (tmp.renameTo(dest)) return
-        // Destination already present (lost the race after re-check, or rename semantics).
         if (dest.isFile && dest.length() > 0L) {
             tmp.delete()
             return
