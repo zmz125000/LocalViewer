@@ -87,6 +87,7 @@ Build with Grok 4.5.
 ### To use SMB3 encryption:
 `Get-SmbShare | Select-Object Name, EncryptData`  
 `Set-SmbShare -Name "Media" -EncryptData $true`   
+`Set-SmbServerConfiguration -RejectUnencryptedAccess $false -Force`
 
 ```
 while ($true) {
