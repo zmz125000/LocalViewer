@@ -1,7 +1,7 @@
 package com.hippo.ehviewer.smb
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.util.FileUtils
@@ -53,6 +53,12 @@ object SmbCache {
 
     /** JPEG quality for disk thumbs (small + sharp enough for list/grid). */
     private const val THUMB_JPEG_QUALITY = 85
+
+    /**
+     * Bump when thumb encode semantics change (e.g. EXIF bake-in) so old on-disk
+     * thumbs are not reused with wrong orientation/size.
+     */
+    private const val THUMB_FORMAT_VERSION = 2
 
     /**
      * Fixed thumb store budget (512 MiB). Independent of Settings.readCacheSize so
@@ -130,7 +136,7 @@ object SmbCache {
     /** Stable path for a small JPEG browse thumb. */
     fun thumbCachePath(sourceId: Long, remoteRelativeFile: String): Path {
         val normalized = remoteRelativeFile.replace('\\', '/').trimStart('/')
-        val key = "thumb:$sourceId:$normalized@$THUMB_DISK_EDGE"
+        val key = "thumb:$sourceId:$normalized@$THUMB_DISK_EDGE.v$THUMB_FORMAT_VERSION"
         return thumbRoot / "${sha256Hex(key)}.jpg"
     }
 
@@ -243,43 +249,37 @@ object SmbCache {
         scheduleTrim()
     }
 
+    /**
+     * Decode [source] → small JPEG. Uses [ImageDecoder] so EXIF orientation is baked
+     * in (matches Coil/reader). Long edge clamped to [maxEdge]; never upscales.
+     */
     private fun writeSubsampledJpeg(
         source: File,
         destJpeg: File,
         maxEdge: Int,
         quality: Int,
     ) {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(source.absolutePath, bounds)
-        val w = bounds.outWidth
-        val h = bounds.outHeight
-        if (w <= 0 || h <= 0) error("Cannot decode image bounds: ${source.name}")
-
-        // Subsample on short edge (less aggressive than long edge) so decode keeps more
-        // pixels; final pass still clamps long edge to maxEdge with bilinear scale.
-        val shortEdge = minOf(w, h)
-        var sample = 1
-        while (shortEdge / sample > maxEdge) {
-            sample *= 2
-        }
-
-        val opts = BitmapFactory.Options().apply {
-            inSampleSize = sample.coerceAtLeast(1)
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-        }
-        var decoded = BitmapFactory.decodeFile(source.absolutePath, opts)
-            ?: error("Cannot decode image: ${source.name}")
-        try {
-            if (maxOf(decoded.width, decoded.height) > maxEdge) {
-                val scale = maxEdge.toFloat() / maxOf(decoded.width, decoded.height)
-                val nw = (decoded.width * scale).toInt().coerceAtLeast(1)
-                val nh = (decoded.height * scale).toInt().coerceAtLeast(1)
-                val scaled = Bitmap.createScaledBitmap(decoded, nw, nh, true)
-                if (scaled !== decoded) {
-                    decoded.recycle()
-                    decoded = scaled
+        val decoded = try {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(source)) { decoder, info, _ ->
+                // JPEG compress requires a software bitmap (not HARDWARE).
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                // Default: apply EXIF orientation; [info.size] is post-orient.
+                val w = info.size.width
+                val h = info.size.height
+                if (w <= 0 || h <= 0) error("Cannot decode image bounds: ${source.name}")
+                val longEdge = maxOf(w, h)
+                if (longEdge > maxEdge) {
+                    val scale = maxEdge.toFloat() / longEdge
+                    decoder.setTargetSize(
+                        (w * scale).toInt().coerceAtLeast(1),
+                        (h * scale).toInt().coerceAtLeast(1),
+                    )
                 }
             }
+        } catch (e: Throwable) {
+            throw IllegalStateException("Cannot decode image: ${source.name}", e)
+        }
+        try {
             FileOutputStream(destJpeg).use { out ->
                 if (!decoded.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
                     error("JPEG compress failed for ${source.name}")
