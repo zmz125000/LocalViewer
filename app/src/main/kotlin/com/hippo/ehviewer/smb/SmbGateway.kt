@@ -140,7 +140,8 @@ object SmbGateway {
     /** Reader toggle changed — drop pools so new sessions use the new op/session budget. */
     fun onReaderSafeConcurrencyChanged() {
         logcat { "SmbGateway: reader safe concurrency → connections=${maxConnectionsPerHost()} ops/session=${opsPerSession()}" }
-        dropAllSessions(cancelLists = true, clearCircuits = false)
+        // Never close smbj sockets on the UI thread (see [dropAllSessions]).
+        dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
 
     private fun smbConfig(): SmbConfig = config
@@ -155,7 +156,7 @@ object SmbGateway {
             "SmbGateway: protocol settings changed " +
                 "(smb3Only=${Settings.smb3Only.value}, encrypt=${Settings.smbEncryptData.value}) — resetting pool"
         }
-        dropAllSessions(cancelLists = true, clearCircuits = false)
+        dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
 
     private fun buildSmbConfig(): SmbConfig {
@@ -511,10 +512,14 @@ object SmbGateway {
             doomed.forEach { ps ->
                 ps.retired.set(true)
                 size.updateAndGet { (it - 1).coerceAtLeast(0) }
-                // Force-close even if ops outstanding (source deleted / credentials changed).
-                ps.closeQuietly()
             }
             signalFree()
+            // Force-close off caller if needed — dead path can block Socket.close.
+            if (doomed.isNotEmpty()) {
+                gatewayScope.launch {
+                    doomed.forEach { ps -> runCatching { ps.closeQuietly() } }
+                }
+            }
         }
 
         fun closeAll() {
@@ -526,11 +531,12 @@ object SmbGateway {
                 copy
             }
             size.set(0)
-            snapshot.forEach {
-                it.retired.set(true)
-                it.closeQuietly()
-            }
             signalFree()
+            // Prefer caller's IO context; if still invoked from UI, each close is guarded.
+            snapshot.forEach { ps ->
+                ps.retired.set(true)
+                runCatching { ps.closeQuietly() }
+            }
         }
 
         /**
@@ -666,35 +672,62 @@ object SmbGateway {
             val remaining = hostKeyToSourceIds[key]
             if (remaining.isNullOrEmpty()) {
                 hostKeyToSourceIds.remove(key)
-                hostPools.remove(key)?.closeAll()
+                val pool = hostPools.remove(key)
+                if (pool != null) {
+                    gatewayScope.launch { runCatching { pool.closeAll() } }
+                }
             }
             // If other sources remain on this host, leave the host pool (shared sessions).
         }
     }
 
     fun disconnectAll() {
-        sourceIdToHostKey.keys.toList().forEach { disconnect(it) }
-        hostPools.keys.toList().forEach { hostPools.remove(it)?.closeAll() }
-        hostKeyToSourceIds.clear()
+        sourceIdToHostKey.keys.toList().forEach { id ->
+            listJobs.keys.filter { it.startsWith("$id|") }.forEach { key ->
+                listJobs.remove(key)?.cancel()
+            }
+            BrowseSession.invalidateSmbListing(id)
+            BrowseSession.clearSmbSegments(id)
+        }
         sourceIdToHostKey.clear()
+        hostKeyToSourceIds.clear()
+        val pools = hostPools.keys.toList().mapNotNull { k -> hostPools.remove(k) }
+        if (pools.isNotEmpty()) {
+            gatewayScope.launch {
+                pools.forEach { runCatching { it.closeAll() } }
+            }
+        }
     }
 
     fun disconnectHost(host: String, port: Int) {
         val key = hostKey(host, port)
-        hostPools.remove(key)?.closeAll()
+        val pool = hostPools.remove(key)
         hostKeyToSourceIds.remove(key)?.forEach { sid ->
             sourceIdToHostKey.remove(sid)
             listJobs.keys.filter { it.startsWith("$sid|") }.forEach { k ->
                 listJobs.remove(k)?.cancel()
             }
         }
+        if (pool != null) {
+            gatewayScope.launch {
+                runCatching { pool.closeAll() }
+            }
+        }
     }
 
     fun onAppBackgrounded() {
         logcat { "SmbGateway: app background — closing all SMB sessions" }
-        dropAllSessions(cancelLists = true, clearCircuits = false)
+        dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
 
+    /**
+     * Path change (Wi‑Fi/cell/VPN/EasyTier stop). Safe to call from **main**, binder, or
+     * EasyTier UI stop — pool maps are cleared immediately; socket teardown is async.
+     *
+     * **ANR note:** when EasyTier/VPN dies, half-open SMB sockets can block
+     * [java.net.Socket.close] until SO timeout (up to [SMB_IO_TIMEOUT_SEC]). That must
+     * never run on the main thread.
+     */
     fun onNetworkPathChanged(reason: String) {
         val now = System.currentTimeMillis()
         val prev = lastPathChangeMs.getAndSet(now)
@@ -706,18 +739,28 @@ object SmbGateway {
             logcat { "SmbGateway: network path changed ($reason) — idle, cooldowns cleared" }
             return
         }
-        logcat { "SmbGateway: network path changed ($reason) — dropping SMB sessions + lists" }
-        dropAllSessions(cancelLists = true, clearCircuits = false)
+        logcat { "SmbGateway: network path changed ($reason) — dropping SMB sessions + lists (async close)" }
+        dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
 
-    private fun dropAllSessions(cancelLists: Boolean, clearCircuits: Boolean) {
+    /**
+     * Detach pools / cancel lists **synchronously** so new ops open fresh sessions, then
+     * close TCP sockets on [gatewayScope] (never block the caller).
+     */
+    private fun dropAllSessionsAsync(cancelLists: Boolean, clearCircuits: Boolean) {
         if (cancelLists) {
             listJobs.keys.toList().forEach { key -> listJobs.remove(key)?.cancel() }
         }
-        hostPools.keys.toList().forEach { k -> hostPools.remove(k)?.closeAll() }
+        val pools = hostPools.keys.toList().mapNotNull { k -> hostPools.remove(k) }
         hostKeyToSourceIds.clear()
         sourceIdToHostKey.clear()
         if (clearCircuits) hostCircuits.clear()
+        if (pools.isEmpty()) return
+        gatewayScope.launch {
+            pools.forEach { pool ->
+                runCatching { pool.closeAll() }
+            }
+        }
     }
 
     fun sourceConfigKey(source: SmbSourceEntity): String = buildString {
@@ -1165,6 +1208,7 @@ private fun isIgnorableListError(e: SMBApiException): Boolean {
 /**
  * Standard socket options only — not a custom TCP stack.
  * SO_KEEPALIVE lets the kernel detect dead peers; TCP_NODELAY reduces small-write delay.
+ * SO_LINGER 0 sends RST on close so half-open VPN paths do not hang close() for SO timeout.
  * smbj owns protocol framing / credits / reconnect policy beyond this.
  */
 private object KeepAliveSocketFactory : SocketFactory() {
@@ -1173,6 +1217,8 @@ private object KeepAliveSocketFactory : SocketFactory() {
     private fun Socket.configure(): Socket = apply {
         keepAlive = true
         tcpNoDelay = true
+        // Abortive close — important when EasyTier/VPN dies under active SMB I/O.
+        runCatching { setSoLinger(true, 0) }
     }
 
     override fun createSocket(): Socket = defaultFactory.createSocket().configure()
