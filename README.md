@@ -68,6 +68,8 @@ A High performance Android SMB image viewer/comic reader with network gallery fo
 With [Material Design 3](https://m3.material.io/)
 and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) Support.  
 
+Similar to Perfect Viewer and Kuro Reader but with Hi-Res images support (no downscaling).
+
 Build with Grok 4.5.
 
 ## Features
@@ -80,10 +82,12 @@ Build with Grok 4.5.
 * High performance reader with cache from EhViewer.
 * Reader allow full size image decode.
 * Reader auto rotate image.
+* EasyTier support (ported from [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus)).
 
 ### To use SMB3 encryption:
 `Get-SmbShare | Select-Object Name, EncryptData`  
 `Set-SmbShare -Name "Media" -EncryptData $true`   
+`Set-SmbServerConfiguration -RejectUnencryptedAccess $false -Force`
 
 ```
 while ($true) {
@@ -111,6 +115,7 @@ while ($true) {
 | Flavor      | Minimum Android Version | Notes                          |
 |-------------|-------------------------|--------------------------------|
 | Default     | 12L                     | Full support                   |
+| EasyTier    | 12L (arm64-v8a)         | Full support                   |
 
 <a href="https://github.com/zmz125000/LocalViewer/releases">
 <img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
