@@ -115,7 +115,6 @@ android {
 
     androidResources {
         ignoreAssetsPatterns += listOf(
-            "!PublicSuffixDatabase.list", // OkHttp
             "!composepreference.preference.generated.resources",
         )
         generateLocaleConfig = true
@@ -203,15 +202,11 @@ dependencies {
     // https://developer.android.com/jetpack/androidx/releases/room
     implementation(libs.androidx.room.paging)
 
-    implementation(libs.androidx.security.crypto)
     implementation(libs.smbj)
     implementation(libs.material.motion.core)
     implementation(libs.material.kolor)
 
     implementation(libs.bundles.splitties)
-
-    // https://square.github.io/okhttp/changelogs/changelog/
-    implementation(platform(libs.okhttp.bom))
 
     implementation(libs.logcat)
 
@@ -219,7 +214,6 @@ dependencies {
 
     implementation(libs.aboutlibraries.core)
     implementation(libs.aboutlibraries.compose.m3)
-    implementation(libs.accompanist.drawable.painter)
 
     implementation(libs.reorderable)
 
@@ -232,7 +226,8 @@ dependencies {
 
     implementation(libs.telephoto.zoomable)
 
-    implementation(libs.ktor.client.okhttp)
+    // Cronet (preferred) + Android HttpURLConnection fallback — no OkHttp.
+    implementation(libs.ktor.client.android)
 
     implementation(libs.bundles.kotlinx.serialization)
 

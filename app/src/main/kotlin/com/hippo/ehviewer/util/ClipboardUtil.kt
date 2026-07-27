@@ -21,10 +21,10 @@ import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
-import android.os.Build
 import android.os.PersistableBundle
 import android.view.textclassifier.TextClassifier
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.util.isAtLeastT
 import com.hippo.ehviewer.ui.MainActivity
 import moe.tarsin.tip
 import splitties.systemservices.clipboardManager
@@ -32,7 +32,8 @@ import splitties.systemservices.clipboardManager
 fun copyTextToClipboard(text: CharSequence?, isSensitive: Boolean) {
     clipboardManager.setPrimaryClip(
         ClipData.newPlainText(null, text).apply {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && isSensitive) {
+            // Sensitive flag is Tiramisu+ (API 33); minSdk 32 still needs the gate.
+            if (isAtLeastT && isSensitive) {
                 description.extras = PersistableBundle().apply {
                     putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
                 }
@@ -44,8 +45,8 @@ fun copyTextToClipboard(text: CharSequence?, isSensitive: Boolean) {
 context(_: Context)
 fun addTextToClipboard(text: CharSequence?, useToast: Boolean = false) {
     copyTextToClipboard(text, false)
-    // Avoid double notify user since system have done that on Tiramisu above
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+    // System already toasts on Tiramisu+; API 32 still needs our tip.
+    if (!isAtLeastT) {
         with(findActivity<MainActivity>()) {
             tip(R.string.copied_to_clipboard, useToast)
         }
@@ -53,8 +54,11 @@ fun addTextToClipboard(text: CharSequence?, useToast: Boolean = false) {
 }
 
 fun ClipboardManager.getUrlFromClipboard(context: Context): String? {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && primaryClipDescription?.classificationStatus == ClipDescription.CLASSIFICATION_COMPLETE) {
-        if (primaryClipDescription?.getConfidenceScore(TextClassifier.TYPE_URL)?.let { it <= 0 } == true) return null
+    // Classification APIs exist since S (always true at minSdk 32).
+    if (primaryClipDescription?.classificationStatus == ClipDescription.CLASSIFICATION_COMPLETE) {
+        if (primaryClipDescription?.getConfidenceScore(TextClassifier.TYPE_URL)?.let { it <= 0 } == true) {
+            return null
+        }
     }
     val item = primaryClip?.getItemAt(0)
     val string = item?.coerceToText(context).toString()

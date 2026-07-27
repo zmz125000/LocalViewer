@@ -1,34 +1,95 @@
 package com.hippo.ehviewer.smb
 
 import android.content.Context
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+import com.ehviewer.core.util.logcat
 import splitties.init.appCtx
 
+/**
+ * SMB passwords encrypted with AES-GCM via Android Keystore.
+ *
+ * Replaces androidx.security EncryptedSharedPreferences (soft-deprecated).
+ * Ciphertext is stored in a private SharedPreferences file as Base64(iv || ciphertext).
+ *
+ * Note: passwords previously stored only in EncryptedSharedPreferences (`smb_secrets`)
+ * are not auto-migrated (that library was removed). Users re-enter SMB passwords once.
+ */
 object SmbPasswordStore {
-    private const val PREFS = "smb_secrets"
+    private const val PREFS = "smb_secrets_ks"
     private const val KEY_PREFIX = "pwd_"
+    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+    private const val KEY_ALIAS = "localviewer_smb_aes"
+    private const val TRANSFORMATION = "AES/GCM/NoPadding"
+    private const val GCM_TAG_BITS = 128
+    private const val IV_BYTES = 12
 
     private val prefs by lazy {
-        val masterKey = MasterKey.Builder(appCtx)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        EncryptedSharedPreferences.create(
-            appCtx,
-            PREFS,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
+        appCtx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     }
 
-    fun get(sourceId: Long): String = prefs.getString(KEY_PREFIX + sourceId, "") ?: ""
+    fun get(sourceId: Long): String {
+        val packed = prefs.getString(KEY_PREFIX + sourceId, null) ?: return ""
+        return runCatching { decrypt(packed) }.getOrElse { e ->
+            logcat(e)
+            ""
+        }
+    }
 
     fun set(sourceId: Long, password: String) {
-        prefs.edit().putString(KEY_PREFIX + sourceId, password).apply()
+        if (password.isEmpty()) {
+            remove(sourceId)
+            return
+        }
+        val packed = encrypt(password)
+        prefs.edit().putString(KEY_PREFIX + sourceId, packed).apply()
     }
 
     fun remove(sourceId: Long) {
         prefs.edit().remove(KEY_PREFIX + sourceId).apply()
+    }
+
+    private fun getOrCreateKey(): SecretKey {
+        val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        (ks.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey?.let { return it }
+        val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+        keyGenerator.init(
+            KeyGenParameterSpec.Builder(
+                KEY_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build(),
+        )
+        return keyGenerator.generateKey()
+    }
+
+    private fun encrypt(plain: String): String {
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+        val iv = cipher.iv
+        val ciphertext = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
+        val out = ByteArray(iv.size + ciphertext.size)
+        System.arraycopy(iv, 0, out, 0, iv.size)
+        System.arraycopy(ciphertext, 0, out, iv.size, ciphertext.size)
+        return Base64.encodeToString(out, Base64.NO_WRAP)
+    }
+
+    private fun decrypt(packed: String): String {
+        val all = Base64.decode(packed, Base64.NO_WRAP)
+        require(all.size > IV_BYTES) { "ciphertext too short" }
+        val iv = all.copyOfRange(0, IV_BYTES)
+        val ciphertext = all.copyOfRange(IV_BYTES, all.size)
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+        return cipher.doFinal(ciphertext).toString(Charsets.UTF_8)
     }
 }

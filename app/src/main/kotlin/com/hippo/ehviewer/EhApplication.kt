@@ -70,7 +70,7 @@ import com.hippo.ehviewer.util.CrashHandler
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.engine.android.Android
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import logcat.AndroidLogcatLogger
@@ -270,14 +270,14 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             private set
 
         val ktorClient by lazy {
+            // Prefer Cronet (QUIC/HTTP3); fallback is platform HttpURLConnection (no OkHttp).
             if (isCronetAvailable && Settings.enableCronet.value) {
                 HttpClient(Cronet) {
                     engine { configureClient(Settings.enableQuic.value) }
                     configureCommon()
                 }
             } else {
-                HttpClient(OkHttp) {
-                    engine { configureClient() }
+                HttpClient(Android) {
                     configureCommon()
                 }
             }

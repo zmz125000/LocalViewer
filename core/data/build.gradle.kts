@@ -14,12 +14,6 @@ kotlin {
                 implementation(libs.ktor.client.core)
             }
         }
-        androidMain {
-            dependencies {
-                implementation(project.dependencies.platform(libs.okhttp.bom))
-                implementation(libs.ktor.client.okhttp)
-            }
-        }
     }
 }
 

@@ -1,6 +1,5 @@
 [versions]
 aboutlibraries = "14.2.0"
-accompanist = "0.37.3"
 agp = "9.3.1"
 androidx-activity = "1.13.0"
 androidx-appcompat = "1.7.1"
@@ -29,7 +28,6 @@ kotlinx-serialization = "1.11.0"
 ksp = "2.3.8"
 ktor = "3.5.0"
 moko-resources = "0.26.4"
-okhttp = "5.3.2"
 okio = "3.17.0"
 splitties = "3.0.0"
 spotless = "8.5.1"
@@ -40,12 +38,10 @@ uiautomator = "2.4.0-beta02"
 benchmark = "1.5.0-alpha06"
 profileinstaller = "1.4.1"
 smbj = "0.14.0"
-security-crypto = "1.1.0"
 
 [libraries]
 aboutlibraries-core = { module = "com.mikepenz:aboutlibraries-core", version.ref = "aboutlibraries" }
 aboutlibraries-compose-m3 = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "aboutlibraries" }
-accompanist-drawable-painter = { module = "com.google.accompanist:accompanist-drawablepainter", version.ref = "accompanist" }
 
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "androidx-appcompat" }
@@ -104,9 +100,8 @@ kotlinx-io = { module = "org.jetbrains.kotlinx:kotlinx-io-core", version.ref = "
 
 ktlint = "com.pinterest.ktlint:ktlint-cli:1.8.0"
 
-okhttp-bom = { module = "com.squareup.okhttp3:okhttp-bom", version.ref = "okhttp" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
-ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-android = { module = "io.ktor:ktor-client-android", version.ref = "ktor" }
 
 logcat = "com.squareup.logcat:logcat:0.4"
 
@@ -132,7 +127,6 @@ androidx-junit = { module = "androidx.test.ext:junit", version.ref = "junit" }
 androidx-uiautomator = { module = "androidx.test.uiautomator:uiautomator", version.ref = "uiautomator" }
 androidx-benchmark-macro-junit4 = { module = "androidx.benchmark:benchmark-macro-junit4", version.ref = "benchmark" }
 androidx-profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileinstaller" }
-androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "security-crypto" }
 
 smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
 
