@@ -34,7 +34,6 @@ import com.ehviewer.core.files.delete
 import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.i18n.R
-import com.ehviewer.core.util.isAtLeastO
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
@@ -238,15 +237,13 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                     }
                 }
             }
-            if (isAtLeastO) {
-                IntSliderPreference(
-                    maxValue = 16384,
-                    step = 3,
-                    title = stringResource(id = R.string.settings_advanced_hardware_bitmap_threshold),
-                    summary = stringResource(id = R.string.settings_advanced_hardware_bitmap_threshold_summary),
-                    state = Settings.hardwareBitmapThreshold.asMutableState(),
-                )
-            }
+            IntSliderPreference(
+                maxValue = 16384,
+                step = 3,
+                title = stringResource(id = R.string.settings_advanced_hardware_bitmap_threshold),
+                summary = stringResource(id = R.string.settings_advanced_hardware_bitmap_threshold_summary),
+                state = Settings.hardwareBitmapThreshold.asMutableState(),
+            )
             SwitchPreference(
                 title = stringResource(id = R.string.preload_thumb_aggressively),
                 state = Settings.preloadThumbAggressively.asMutableState(),

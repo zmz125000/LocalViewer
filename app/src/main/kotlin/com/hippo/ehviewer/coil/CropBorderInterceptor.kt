@@ -2,8 +2,6 @@ package com.hippo.ehviewer.coil
 
 import android.graphics.Bitmap
 import android.hardware.HardwareBuffer
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.toIntRect
 import arrow.fx.coroutines.autoCloseable
@@ -12,12 +10,11 @@ import coil3.asImage
 import coil3.intercept.Interceptor
 import coil3.request.ImageResult
 import coil3.request.SuccessResult
-import com.ehviewer.core.util.isAtLeastQ
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.image.copyBitmapToAHB
 import moe.tarsin.coroutines.runSuspendCatching
 
-@RequiresApi(Build.VERSION_CODES.O)
+// minSdk 32 ≥ Q: hardware-buffer crop path is always available.
 private const val USAGE = HardwareBuffer.USAGE_CPU_WRITE_RARELY or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE
 
 object CropBorderInterceptor : Interceptor {
@@ -38,7 +35,7 @@ object CropBorderInterceptor : Interceptor {
                     // All we know is that it's less than the maximum texture size.
                     val meetHardwareThreshold = maxOf(w, h) <= chain.request.hardwareThreshold
                     val bitmap = when {
-                        isAtLeastQ && meetHardwareThreshold -> runSuspendCatching {
+                        meetHardwareThreshold -> runSuspendCatching {
                             val format = when (val config = src.config) {
                                 Bitmap.Config.ARGB_8888 -> HardwareBuffer.RGBA_8888
                                 Bitmap.Config.RGB_565 -> HardwareBuffer.RGB_565

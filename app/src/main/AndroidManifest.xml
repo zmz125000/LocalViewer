@@ -9,10 +9,8 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Device media access (alternative to SAF tree picker), same model as Aves gallery. -->
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
@@ -22,9 +20,6 @@
     <uses-permission
         android:name="android.permission.ACCESS_MEDIA_LOCATION"
         tools:ignore="PhotoAndVideoPolicy" />
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
 
     <application
         android:name=".EhApplication"
@@ -99,20 +94,6 @@
                 <data android:mimeType="application/x-bzip-compressed-tar" />
                 <data android:mimeType="application/x-lzma-compressed-tar" />
                 <data android:mimeType="application/x-xz-compressed-tar" />
-            </intent-filter>
-            <intent-filter android:label="@string/keyword_search">
-                <action android:name="android.intent.action.SEND" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-
-                <data android:mimeType="text/plain" />
-            </intent-filter>
-            <intent-filter android:label="@string/image_search">
-                <action android:name="android.intent.action.SEND" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-
-                <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
         <activity

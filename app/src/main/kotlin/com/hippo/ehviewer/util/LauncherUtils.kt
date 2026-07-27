@@ -6,7 +6,6 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
@@ -14,7 +13,6 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.VisualMediaType
-import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
@@ -22,7 +20,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.ehviewer.core.i18n.R
-import com.ehviewer.core.util.isAtLeastO
 import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
 import java.io.File
@@ -84,7 +81,6 @@ suspend fun requestPermission(key: String): Boolean {
 context(_: Context)
 suspend fun pickVisualMedia(type: VisualMediaType): Uri? = awaitActivityResult(ActivityResultContracts.PickVisualMedia(), PickVisualMediaRequest(mediaType = type))
 
-@RequiresApi(Build.VERSION_CODES.O)
 context(ctx: Context)
 suspend fun requestInstallPermission(): Boolean = with(ctx) {
     if (packageManager.canRequestPackageInstalls()) return true
@@ -104,8 +100,8 @@ suspend fun requestInstallPermission(): Boolean = with(ctx) {
 
 context(ctx: Context)
 suspend fun installPackage(file: File) = with(ctx) {
-    val canInstall = !isAtLeastO || requestInstallPermission()
-    check(canInstall) { getString(R.string.permission_denied) }
+    // minSdk 32: unknown-sources install permission is always required when restricted.
+    check(requestInstallPermission()) { getString(R.string.permission_denied) }
     val contentUri = withIOContext { FileProvider.getUriForFile(ctx, "$packageName.fileprovider", file) }
     val intent = Intent(Intent.ACTION_VIEW).apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

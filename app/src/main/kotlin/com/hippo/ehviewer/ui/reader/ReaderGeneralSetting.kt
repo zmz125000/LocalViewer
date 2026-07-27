@@ -13,7 +13,6 @@ import androidx.compose.ui.res.integerArrayResource
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import com.ehviewer.core.i18n.R
-import com.ehviewer.core.util.isAtLeastP
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 
@@ -52,7 +51,7 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         field = fullscreen,
     )
     val view = LocalView.current
-    val hasDisplayCutout = remember(view) { isAtLeastP && view.rootWindowInsets.displayCutout != null }
+    val hasDisplayCutout = remember(view) { view.rootWindowInsets.displayCutout != null }
     if (hasDisplayCutout) {
         AnimatedVisibility(visible = fullscreen.value) {
             SwitchChoice(

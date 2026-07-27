@@ -1,11 +1,9 @@
 package com.hippo.ehviewer.ui.settings
 
-import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
 import android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-import android.os.Environment
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,11 +24,9 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import com.ehviewer.core.files.delete
 import com.ehviewer.core.files.isDirectory
-import com.ehviewer.core.files.mkdirs
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
-import com.ehviewer.core.util.isAtLeastQ
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.logcat
@@ -44,7 +40,6 @@ import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.ui.tools.observed
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.displayPath
-import com.hippo.ehviewer.util.requestPermission
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -122,19 +117,7 @@ fun AnimatedVisibilityScope.DownloadScreen(navigator: DestinationsNavigator) = S
                     try {
                         selectDownloadDirLauncher.launch(null)
                     } catch (_: ActivityNotFoundException) {
-                        // Best effort for devices without DocumentsUI
-                        if (!isAtLeastQ && requestPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
-                            runCatching {
-                                val path = Environment.getExternalStorageDirectory().toOkioPath() / AppConfig.APP_DIRNAME
-                                path.mkdirs()
-                                check(path.isDirectory) { "$path is not a directory" }
-                                keepNoMediaFileStatus(path) // Check if the directory is writable
-                                downloadLocationState = path
-                                return@launchIO
-                            }.onFailure {
-                                logcat(it)
-                            }
-                        }
+                        // minSdk 32: no legacy external-storage fallback; SAF only.
                         launchSnackbar(cannotGetDownloadLocation)
                     }
                 }

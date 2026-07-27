@@ -203,7 +203,6 @@ dependencies {
     // https://developer.android.com/jetpack/androidx/releases/room
     implementation(libs.androidx.room.paging)
 
-    implementation(libs.androidx.work.runtime)
     implementation(libs.androidx.security.crypto)
     implementation(libs.smbj)
     implementation(libs.material.motion.core)
@@ -253,7 +252,6 @@ kotlin {
     compilerOptions {
         optIn.addAll(
             "coil3.annotation.ExperimentalCoilApi",
-            "androidx.paging.ExperimentalPagingApi",
             "me.saket.telephoto.ExperimentalTelephotoApi",
         )
     }

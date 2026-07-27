@@ -2,7 +2,6 @@ package com.ehviewer.core.files
 
 import android.content.Context
 import android.net.Uri
-import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
@@ -40,11 +39,8 @@ class AndroidFileSystem(context: Context) : FileSystem() {
         source.runCatching {
             DocumentsContract.renameDocument(contentResolver, toUri(), target.name)
         }.onFailure {
-            // ExternalStorageProvider always throw exception when renameDocument on API 28
-            // https://android.googlesource.com/platform/frameworks/base/+/7bf90408e36613a84dc2a665905fde2c83cfa797
-            if (Build.VERSION.SDK_INT != Build.VERSION_CODES.P) {
-                throw FileNotFoundException("Failed to move $source to $target")
-            }
+            // minSdk 32: no API-28 ExternalStorageProvider rename quirk.
+            throw FileNotFoundException("Failed to move $source to $target")
         }
     }
 
@@ -53,18 +49,15 @@ class AndroidFileSystem(context: Context) : FileSystem() {
     }
 
     override fun copy(source: Path, target: Path) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            source.openFileDescriptor("r").use { src ->
-                target.openFileDescriptor("wt").use { dst ->
-                    try {
-                        Os.sendfile(dst.fileDescriptor, src.fileDescriptor, Int64Ref(0), Long.MAX_VALUE)
-                        return
-                    } catch (_: ErrnoException) {}
-                }
+        // Prefer sendfile (API 28+; always on minSdk 32), fall back to channel transfer.
+        source.openFileDescriptor("r").use { src ->
+            target.openFileDescriptor("wt").use { dst ->
+                try {
+                    Os.sendfile(dst.fileDescriptor, src.fileDescriptor, Int64Ref(0), Long.MAX_VALUE)
+                    return
+                } catch (_: ErrnoException) {}
             }
         }
-
-        // Fallback to transferTo if sendfile is not available or fails
         source.inputStream().use { src ->
             target.outputStream().use { dst ->
                 src.channel.transferTo(0, Long.MAX_VALUE, dst.channel)

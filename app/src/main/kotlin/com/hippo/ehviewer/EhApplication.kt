@@ -23,7 +23,6 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.StrictMode
-import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.compose.runtime.Composer
 import androidx.compose.runtime.tooling.ComposeStackTraceMode
@@ -35,13 +34,11 @@ import coil3.EventListener
 import coil3.SingletonImageLoader
 import coil3.asImage
 import coil3.gif.AnimatedImageDecoder
-import coil3.gif.GifDecoder
 import coil3.memory.MemoryCache
 import coil3.network.ConnectivityChecker
 import coil3.network.ktor3.KtorNetworkFetcherFactory
 import coil3.request.ErrorResult
 import coil3.request.ImageRequest
-import coil3.request.allowRgb565
 import coil3.request.crossfade
 import coil3.serviceLoaderEnabled
 import coil3.util.DebugLogger
@@ -49,12 +46,8 @@ import com.ehviewer.core.database.SearchDatabase
 import com.ehviewer.core.database.roomDb
 import com.ehviewer.core.files.deleteContent
 import com.ehviewer.core.ui.util.initSETConnection
-import com.ehviewer.core.util.isAtLeastO
-import com.ehviewer.core.util.isAtLeastP
-import com.ehviewer.core.util.isAtLeastS
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.logcat
-import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.coil.AnimatedWebPDecoder
 import com.hippo.ehviewer.coil.CoverPathFetcher
 import com.hippo.ehviewer.coil.CoverPathKeyer
@@ -96,12 +89,8 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         initSETConnection()
         // Initialize Settings on first access
         launchIO {
-            val mode = Settings.theme.value
-            if (!isAtLeastS) {
-                withUIContext {
-                    AppCompatDelegate.setDefaultNightMode(mode)
-                }
-            }
+            // Apply saved night mode once (observed() only runs on later changes).
+            updateWhenThemeChanges(Settings.theme.value)
             LogcatLogger.loggers += AndroidLogcatLogger(LogPriority.VERBOSE)
             Settings.saveCrashLog.valueFlow().collect {
                 if (it) {
@@ -246,21 +235,14 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             // Local covers (library/history/browse): resolve MediaStore off-main.
             add(CoverPathFetcher.Factory())
             add(CoverPathKeyer)
-            if (isAtLeastO) {
-                add(HardwareBitmapInterceptor)
-            } else {
-                allowRgb565(true)
-            }
+            // minSdk 32: hardware bitmaps + platform animated image decoder always available.
+            add(HardwareBitmapInterceptor)
             add(MapExtraInfoInterceptor)
             add(CropBorderInterceptor)
             add(DetectBorderInterceptor)
             add(QrCodeInterceptor)
             add(AnimatedWebPDecoder.Factory)
-            if (isAtLeastP) {
-                add(AnimatedImageDecoder.Factory(false))
-            } else {
-                add(GifDecoder.Factory())
-            }
+            add(AnimatedImageDecoder.Factory(false))
         }
         // Dedicated budgets for library/browse covers (reader pages use their own path).
         memoryCache { thumbMemoryCache }
