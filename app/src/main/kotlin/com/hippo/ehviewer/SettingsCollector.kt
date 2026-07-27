@@ -4,7 +4,6 @@ import android.app.UiModeManager
 import androidx.appcompat.app.AppCompatDelegate
 import arrow.core.Either.Companion.catch
 import com.ehviewer.core.preferences.PrefDelegate
-import com.ehviewer.core.util.isAtLeastS
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
@@ -38,14 +37,13 @@ suspend fun updateWhenKeepMediaStatusChanges(mediaScan: Boolean) {
 
 suspend fun updateWhenThemeChanges(theme: Int) {
     delay(100) // Avoid recompose being cancelled
-    if (isAtLeastS) {
-        val mode = when (theme) {
-            AppCompatDelegate.MODE_NIGHT_NO -> UiModeManager.MODE_NIGHT_NO
-            AppCompatDelegate.MODE_NIGHT_YES -> UiModeManager.MODE_NIGHT_YES
-            else -> UiModeManager.MODE_NIGHT_AUTO
-        }
-        uiModeManager.setApplicationNightMode(mode)
+    // minSdk 32: UiModeManager per-app night mode is always available.
+    val mode = when (theme) {
+        AppCompatDelegate.MODE_NIGHT_NO -> UiModeManager.MODE_NIGHT_NO
+        AppCompatDelegate.MODE_NIGHT_YES -> UiModeManager.MODE_NIGHT_YES
+        else -> UiModeManager.MODE_NIGHT_AUTO
     }
+    uiModeManager.setApplicationNightMode(mode)
     AppCompatDelegate.setDefaultNightMode(theme)
 }
 

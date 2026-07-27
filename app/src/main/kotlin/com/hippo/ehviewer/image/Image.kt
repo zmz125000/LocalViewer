@@ -39,7 +39,6 @@ import coil3.size.Size
 import coil3.size.SizeResolver
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.files.toUri
-import com.ehviewer.core.util.isAtLeastP
 import com.ehviewer.core.util.isAtLeastU
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.AnimatedWebPDrawable
@@ -162,7 +161,8 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
         ): Image {
             val image = when (src) {
                 is PathSource -> {
-                    if (isAtLeastP && !isAtLeastU) {
+                    // Pre-U GIF rewrite via mmap (platform animated decoder on U+ is fine).
+                    if (!isAtLeastU) {
                         src.source.openFileDescriptor("rw").use {
                             val fd = it.fd
                             if (isGif(fd)) {
@@ -183,7 +183,7 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                     src.right().decodeCoil(checkExtraneousAds, forceOriginal)
                 }
                 is ByteBufferSource -> {
-                    if (isAtLeastP && !isAtLeastU) {
+                    if (!isAtLeastU) {
                         rewriteGifSource(src.source)
                     }
                     src.left().decodeCoil(checkExtraneousAds, forceOriginal)

@@ -1,8 +1,6 @@
 package com.hippo.ehviewer.coil
 
 import android.graphics.Bitmap
-import android.os.Build
-import androidx.annotation.RequiresApi
 import coil3.Extras
 import coil3.asImage
 import coil3.getExtra
@@ -22,7 +20,7 @@ fun ImageRequest.Builder.hardwareThreshold(size: Int) = apply {
 val ImageRequest.hardwareThreshold: Int
     get() = getExtra(hardwareThresholdKey)
 
-@RequiresApi(Build.VERSION_CODES.O)
+// minSdk 32: HARDWARE bitmaps always available.
 object HardwareBitmapInterceptor : Interceptor {
     override suspend fun intercept(chain: Chain): ImageResult {
         val result = chain.proceed()

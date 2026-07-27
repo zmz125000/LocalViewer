@@ -24,7 +24,6 @@ import android.content.pm.verify.domain.DomainVerificationManager
 import android.content.pm.verify.domain.DomainVerificationUserState.DOMAIN_STATE_NONE
 import android.net.Uri
 import android.os.Bundle
-import android.view.View
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -115,9 +114,6 @@ import com.ehviewer.core.ui.util.LocalSnackBarFabPadding
 import com.ehviewer.core.ui.util.LocalWindowSizeClass
 import com.ehviewer.core.ui.util.isExpanded
 import com.ehviewer.core.ui.util.isMediumWidthOrWider
-import com.ehviewer.core.util.isAtLeastQ
-import com.ehviewer.core.util.isAtLeastR
-import com.ehviewer.core.util.isAtLeastS
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhApplication.Companion.initialized
 import com.hippo.ehviewer.Settings
@@ -327,14 +323,6 @@ class MainActivity : AppCompatActivity() {
         installSplashScreen().setKeepOnScreenCondition { !initialized }
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // https://issuetracker.google.com/204791558
-        // Fix system bars insets still exist in fullscreen mode on API < 30
-        @Suppress("DEPRECATION")
-        if (!isAtLeastR) {
-            with(window.decorView) {
-                systemUiVisibility = systemUiVisibility and View.SYSTEM_UI_FLAG_LAYOUT_STABLE.inv()
-            }
-        }
         setMD3Content {
             val navDrawerState = rememberDrawerState(DrawerValue.Closed)
             val sideSheetState = rememberDrawerState2(DrawerValue.Closed)
@@ -408,14 +396,10 @@ class MainActivity : AppCompatActivity() {
             if (checkMeteredNetwork) {
                 LaunchedEffect(Unit) {
                     if (connectivityManager.isActiveNetworkMetered) {
-                        if (isAtLeastQ) {
-                            val ret = snackbarState.showSnackbar(warning, settings, true)
-                            if (ret == SnackbarResult.ActionPerformed) {
-                                val panelIntent = Intent(android.provider.Settings.Panel.ACTION_INTERNET_CONNECTIVITY)
-                                startActivity(panelIntent)
-                            }
-                        } else {
-                            snackbarState.showSnackbar(warning)
+                        val ret = snackbarState.showSnackbar(warning, settings, true)
+                        if (ret == SnackbarResult.ActionPerformed) {
+                            val panelIntent = Intent(android.provider.Settings.Panel.ACTION_INTERNET_CONNECTIVITY)
+                            startActivity(panelIntent)
                         }
                     }
                 }
@@ -579,7 +563,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private suspend fun DialogState.checkAppLinkVerify() {
-        if (isAtLeastS && !Settings.appLinkVerifyTip) {
+        if (!Settings.appLinkVerifyTip) {
             val manager = getSystemService(DomainVerificationManager::class.java)
             val packageName = packageName
             val userState = manager.getDomainVerificationUserState(packageName) ?: return
