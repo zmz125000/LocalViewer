@@ -15,6 +15,7 @@ import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
+import com.ehviewer.core.util.withNonCancellableContext
 import kotlin.time.Clock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -68,42 +69,48 @@ object LocalLibrary {
         treeUri: String,
         displayName: String,
         role: Int = LIBRARY_ROOT_ROLE_LIBRARY,
-    ): AddRootResult = withIOContext {
-        val ctx = appCtx
-        val media = isMediaStoreRootUri(treeUri)
-        if (!media) {
-            runCatching {
-                ctx.contentResolver.takePersistableUriPermission(treeUri.toUri(), URI_FLAGS)
-            }.onFailure { logcat(it) }
-        }
-
-        val existing = db.libraryRootDao().loadByTreeUri(treeUri)
-        if (existing != null) {
-            if (role == LIBRARY_ROOT_ROLE_LIBRARY && existing.role != LIBRARY_ROOT_ROLE_LIBRARY) {
-                db.libraryRootDao().update(
-                    existing.copy(
-                        role = LIBRARY_ROOT_ROLE_LIBRARY,
-                        displayName = displayName.ifBlank { existing.displayName },
-                    ),
-                )
-                scanRoot(existing.id)
-                return@withIOContext AddRootResult.UpgradedToLibrary(existing.id)
+    ): AddRootResult = withNonCancellableContext {
+        // NonCancellable: MediaStore whole-library scan often outlives the add screen.
+        // Composition-scoped jobs (LaunchedEffect / rememberCoroutineScope) cancel on leave
+        // and used to leave an empty library until manual rescan; SAF felt fine only because
+        // single-folder scans usually finished while the user was still on the screen.
+        withIOContext {
+            val ctx = appCtx
+            val media = isMediaStoreRootUri(treeUri)
+            if (!media) {
+                runCatching {
+                    ctx.contentResolver.takePersistableUriPermission(treeUri.toUri(), URI_FLAGS)
+                }.onFailure { logcat(it) }
             }
-            return@withIOContext AddRootResult.AlreadyExists(existing.id, existing.role)
-        }
 
-        val id = db.libraryRootDao().insert(
-            LibraryRootEntity(
-                treeUri = treeUri,
-                displayName = displayName,
-                addedAt = Clock.System.now().toEpochMilliseconds(),
-                role = role,
-            ),
-        )
-        if (role == LIBRARY_ROOT_ROLE_LIBRARY) {
-            scanRoot(id)
+            val existing = db.libraryRootDao().loadByTreeUri(treeUri)
+            if (existing != null) {
+                if (role == LIBRARY_ROOT_ROLE_LIBRARY && existing.role != LIBRARY_ROOT_ROLE_LIBRARY) {
+                    db.libraryRootDao().update(
+                        existing.copy(
+                            role = LIBRARY_ROOT_ROLE_LIBRARY,
+                            displayName = displayName.ifBlank { existing.displayName },
+                        ),
+                    )
+                    scanRoot(existing.id)
+                    return@withIOContext AddRootResult.UpgradedToLibrary(existing.id)
+                }
+                return@withIOContext AddRootResult.AlreadyExists(existing.id, existing.role)
+            }
+
+            val id = db.libraryRootDao().insert(
+                LibraryRootEntity(
+                    treeUri = treeUri,
+                    displayName = displayName,
+                    addedAt = Clock.System.now().toEpochMilliseconds(),
+                    role = role,
+                ),
+            )
+            if (role == LIBRARY_ROOT_ROLE_LIBRARY) {
+                scanRoot(id)
+            }
+            AddRootResult.Created(id)
         }
-        AddRootResult.Created(id)
     }
 
     /**

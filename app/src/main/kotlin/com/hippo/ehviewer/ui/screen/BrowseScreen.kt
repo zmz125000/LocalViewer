@@ -108,7 +108,6 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     // Pending role for the next OpenDocumentTree result.
     var pendingSafRole by remember { mutableIntStateOf(LIBRARY_ROOT_ROLE_LIBRARY) }
     var accessChooserRole by remember { mutableStateOf<Int?>(null) }
-    var pendingMediaRole by remember { mutableStateOf<Int?>(null) }
     var mediaDenied by remember { mutableStateOf(false) }
 
     /** After media-permission dialog for SAF add: open picker whether granted or denied. */
@@ -116,26 +115,23 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     val permissionDenied = stringResource(id = R.string.source_media_permission_denied)
     val deviceMediaName = stringResource(id = R.string.source_device_media_name)
 
-    // Permission callbacks are outside Screen context receivers — apply results here.
-    // Clear state only AFTER work finishes: clearing the LaunchedEffect key first would
-    // cancel addMediaStoreRoot mid-scan (SAF uses launchIO and does not hit this bug).
-    androidx.compose.runtime.LaunchedEffect(pendingMediaRole) {
-        val role = pendingMediaRole ?: return@LaunchedEffect
-        try {
-            when (LocalLibrary.addMediaStoreRoot(deviceMediaName, role)) {
-                is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
-                is AddRootResult.AlreadyExists -> snackbar(alreadyAdded)
-            }
-        } finally {
-            pendingMediaRole = null
-        }
-    }
     androidx.compose.runtime.LaunchedEffect(mediaDenied) {
         if (!mediaDenied) return@LaunchedEffect
         try {
             snackbar(permissionDenied)
         } finally {
             mediaDenied = false
+        }
+    }
+
+    fun addDeviceMediaLibrary(role: Int) {
+        // Same launchIO path as SAF: never tie the MediaStore scan to LaunchedEffect keys
+        // (composition cancel left an empty library until manual rescan).
+        launchIO {
+            when (LocalLibrary.addMediaStoreRoot(deviceMediaName, role)) {
+                is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
+                is AddRootResult.AlreadyExists -> launch { snackbar(alreadyAdded) }
+            }
         }
     }
 
@@ -178,7 +174,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 openSafAfterMediaPerm = false
                 openSafPicker()
             } else {
-                pendingMediaRole = role
+                addDeviceMediaLibrary(role)
             }
         },
         onDenied = {

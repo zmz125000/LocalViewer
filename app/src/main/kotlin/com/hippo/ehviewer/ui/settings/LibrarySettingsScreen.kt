@@ -96,28 +96,25 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
     val deviceMediaName = stringResource(id = R.string.source_device_media_name)
     var pendingSafRole by remember { mutableIntStateOf(LIBRARY_ROOT_ROLE_LIBRARY) }
     var accessChooserRole by remember { mutableStateOf<Int?>(null) }
-    var pendingMediaRole by remember { mutableStateOf<Int?>(null) }
     var mediaDenied by remember { mutableStateOf(false) }
     var openSafAfterMediaPerm by remember { mutableStateOf(false) }
 
-    // Clear state only AFTER work finishes — clearing the key first cancels the scan.
-    androidx.compose.runtime.LaunchedEffect(pendingMediaRole) {
-        val role = pendingMediaRole ?: return@LaunchedEffect
-        try {
-            when (LocalLibrary.addMediaStoreRoot(deviceMediaName, role)) {
-                is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
-                is AddRootResult.AlreadyExists -> snackbar(alreadyAdded)
-            }
-        } finally {
-            pendingMediaRole = null
-        }
-    }
     androidx.compose.runtime.LaunchedEffect(mediaDenied) {
         if (!mediaDenied) return@LaunchedEffect
         try {
             snackbar(permissionDenied)
         } finally {
             mediaDenied = false
+        }
+    }
+
+    fun addDeviceMediaLibrary(role: Int) {
+        // Match SAF: IO job + non-cancellable scan in LocalLibrary (not LaunchedEffect).
+        launchIO {
+            when (LocalLibrary.addMediaStoreRoot(deviceMediaName, role)) {
+                is AddRootResult.Created, is AddRootResult.UpgradedToLibrary -> Unit
+                is AddRootResult.AlreadyExists -> launch { snackbar(alreadyAdded) }
+            }
         }
     }
 
@@ -159,7 +156,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                 openSafAfterMediaPerm = false
                 openSafPicker()
             } else {
-                pendingMediaRole = role
+                addDeviceMediaLibrary(role)
             }
         },
         onDenied = {
