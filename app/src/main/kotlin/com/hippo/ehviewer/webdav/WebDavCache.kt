@@ -103,14 +103,20 @@ object WebDavCache {
 
     /**
      * Fast cache presence check.
-     * - Memory hit → true (no disk)
-     * - Main thread + unknown → false (StrictMode-safe; caller must verify on IO)
-     * - Background → real [File.isFile] probe and remember hits
+     * Memory hit → true; main + unknown → false (no disk); background → probe disk.
+     * For “show if file exists” from Compose, use [isCachedOnDisk] on IO.
      */
     fun isCached(path: Path): Boolean {
         val key = path.toString()
         if (knownPresent.contains(key)) return true
         if (Looper.getMainLooper().isCurrentThread) return false
+        return isCachedOnDisk(path)
+    }
+
+    /** Real disk probe; updates [knownPresent] so later main-thread [isCached] works. */
+    fun isCachedOnDisk(path: Path): Boolean {
+        val key = path.toString()
+        if (knownPresent.contains(key)) return true
         val f = File(key)
         val ok = f.isFile && f.length() > 0L
         if (ok) knownPresent.add(key)

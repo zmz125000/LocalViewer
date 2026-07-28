@@ -86,6 +86,14 @@ object Settings : DataStorePreferences(null) {
     val listThumbSize = intPref("list_tile_size", 40)
     val detailSize = intPref("detail_size_2", 0)
     val thumbColumns = intPref("thumb_columns", 3)
+
+    /**
+     * When false, SMB/WebDAV browse covers are not downloaded over the network
+     * (already-cached thumbs still show). Useful for remote / metered access.
+     * Default true (download covers as usual).
+     */
+    val downloadRemoteThumbs = boolPref("download_remote_thumbs", true)
+
     val showGalleryPages = boolPref("show_gallery_pages", true)
     val showReadingProgress = boolPref("show_reading_progress", false)
     val showVoteStatus = boolPref("show_vote_status", false)

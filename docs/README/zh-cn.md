@@ -15,8 +15,8 @@
 </p>
 
 <h1 align="center">
-  <img src="https://github.com/FooIbar/EhViewer-art/blob/master/launcher_icon-web.svg" width="200" alt="EhViewer">
-  <br>EhViewer<br>
+  <img src="https://github.com/zmz125000/LocalViewer-art/blob/master/launcher_icon-web.svg" width="200" alt="EhViewer">
+  <br>LocalViewer<br>
 </h1>
 
 <p align="center">
@@ -24,16 +24,16 @@
     <img src="https://github.com/zmz125000/LocalViewer/actions/workflows/ci.yml/badge.svg" alt="Github Actions">
   </a>
   <a href="/LICENSE">
-    <img src="https://img.shields.io/github/license/FooIbar/EhViewer" alt="LICENSE">
+    <img src="https://img.shields.io/github/license/zmz125000/LocalViewer" alt="LICENSE">
   </a>
-  <a href="https://www.codefactor.io/repository/github/FooIbar/EhViewer">
-    <img src="https://www.codefactor.io/repository/github/FooIbar/EhViewer/badge" alt="CodeFactor">
+  <a href="https://www.codefactor.io/repository/github/zmz125000/LocalViewer">
+    <img src="https://www.codefactor.io/repository/github/zmz125000/LocalViewer/badge" alt="CodeFactor">
   </a>
   <a href="https://github.com/zmz125000/LocalViewer/releases">
-    <img src="https://img.shields.io/github/v/release/FooIbar/EhViewer" alt="Release">
+    <img src="https://img.shields.io/github/v/release/zmz125000/LocalViewer" alt="Release">
   </a>
   <a href="https://github.com/zmz125000/LocalViewer/issues">
-    <img src="https://img.shields.io/github/issues/FooIbar/EhViewer" alt="Issues">
+    <img src="https://img.shields.io/github/issues/zmz125000/LocalViewer" alt="Issues">
   </a>
 </p>
 
@@ -63,21 +63,41 @@
 
 # 描述
 
-致力于高性能的现代 EhViewer 分支
+基于 EhViewer 的高性能 Android SMB/WebDAV/LAN 图片查看器和漫画阅读器，多级文件夹智能分类，缩略图，看图双击跳转前后相册，最大两亿像素原图显示。
 
-已针对性适配 Material Design 3 及其动态取色系统
+致敬 Perfect Viewer 和 Kuro Reader.  
+
+采用 [Material Design 3](https://m3.material.io/) 并支持 [动态取色](https://m3.material.io/styles/color/dynamic-color/overview)。
+
+# 功能特性
+
+* 开源自由免费无广告
+* 原生安卓应用 (Kotlin + Jetpack Compose)
+* 基于 EhViewer 带预加载和本地缓存的高性能阅读器
+* Webtoon 条漫模式
+* 根据屏幕尺寸自动旋转图片
+* 双击跳转到下一个文件夹
+* 隐私模式和历史记录
+* 高性能 smbj 客户端，支持并发连接，图片丝滑加载
+* Cronet WebDAV 客户端，支持 HTTP/2 和 QUIC
+* HQ 模式支持原图解码显示 (HW 位图最大支持两亿像素)
+* 自适应 Material Design 3 导航条和侧边栏
+* 针对深层文件夹路径优化的导航流程
+* **智能混合加载相册目录和子文件夹，默认加载 SMB 相册封面**
+* 支持 SMB3 加密
+* 支持 EasyTier (移植自 [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus))
+
 
 # 下载
 
-| 变种          | 最低 Android 版本 | 备注       |
-|-------------|---------------|----------|
-| Default     | 8.0           | 完全支持     |
-| Marshmallow | 6.0*          | 有限支持，无保证 |
+| Flavor      | Minimum Android Version | Notes                          |
+|-------------|-------------------------|--------------------------------|
+| Default     | 12L                     | Full support                   |
+| EasyTier    | 12L (arm64-v8a)         | Full support                   |
 
-*运行 Android 6 的设备需安装 [ISRG Root X1](https://letsencrypt.org/certs/isrgrootx1.pem) 证书
 
-<a href="https://github.com/FooIbar/EhViewer/releases">
-<img alt="Get it on GitHub" src="https://github.com/FooIbar/EhViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
+<a href="https://github.com/zmz125000/LocalViewer/releases">
+<img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
 </a>
 
 # 截图
