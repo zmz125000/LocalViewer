@@ -86,10 +86,7 @@ android {
         buildConfigField("String", "RELEASE_CHANNEL", "\"$releaseChannel\"")
         ndk {
             if (isRelease) {
-                // EasyTier ships arm64 native libs only (see releases.yml).
-                if (releaseChannel == "easytier") {
-                    abiFilters.add("arm64-v8a")
-                } else {
+                if (releaseChannel != "easytier") {
                     abiFilters.addAll(supportedAbis)
                 }
             }
@@ -101,7 +98,7 @@ android {
 
     productFlavors {
         create("default") {
-            minSdk = 32
+            minSdk = 31
         }
     }
 
