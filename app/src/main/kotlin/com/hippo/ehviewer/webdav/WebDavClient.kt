@@ -110,7 +110,9 @@ object WebDavClient {
         val useCronet = !insecureTls && isCronetAvailable && Settings.enableCronet.value
         return if (useCronet) {
             HttpClient(Cronet) {
-                engine { configureClient(Settings.enableQuic.value) }
+                // Distinct from EhApplication.ktorClient's "http_cache" — Cronet forbids
+                // two HttpEngines sharing one disk cache storage path.
+                engine { configureClient(Settings.enableQuic.value, storageDirName = "http_cache_webdav") }
                 install(HttpTimeout) {
                     requestTimeoutMillis = 120_000
                     connectTimeoutMillis = 30_000

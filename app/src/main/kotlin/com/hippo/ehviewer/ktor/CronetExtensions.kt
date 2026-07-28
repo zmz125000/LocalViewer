@@ -6,13 +6,22 @@ import androidx.annotation.RequiresExtension
 import com.ehviewer.core.util.isAtLeastSExtension7
 import java.io.File
 
+/**
+ * @param storageDirName Subdirectory under [Context.getCacheDir] for Cronet disk state.
+ *   Cronet allows only **one** [HttpEngine] per storage path in a process — callers that
+ *   create a second engine (e.g. WebDAV) must pass a distinct name or build will fail with
+ *   "Disk cache storage path already in use".
+ */
 @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
-fun CronetConfig.configureClient(enableQuic: Boolean) {
+fun CronetConfig.configureClient(
+    enableQuic: Boolean,
+    storageDirName: String = "http_cache",
+) {
     config = {
         setEnableBrotli(true)
 
         // Cache Quic hint only since the real cache mechanism should on Ktor layer
-        val cache = File(context.cacheDir, "http_cache").apply { mkdirs() }
+        val cache = File(context.cacheDir, storageDirName).apply { mkdirs() }
         setStoragePath(cache.path)
         setEnableHttpCache(HttpEngine.Builder.HTTP_CACHE_DISK_NO_HTTP, 4096)
 
