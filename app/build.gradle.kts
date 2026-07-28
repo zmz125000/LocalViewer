@@ -16,14 +16,30 @@ plugins {
 
 val supportedAbis = arrayOf("arm64-v8a", "x86_64", "armeabi-v7a")
 
+// GitHub release APKs: LocalViewer-<tag>-{default|easytier}-<abi>.apk
+// Product flavor stays "default"; channel identifies the installed build family.
+val releaseChannel = if (
+    file("src/main/jniLibs/arm64-v8a/libeasytier_android_jni.so").exists()
+) {
+    "easytier"
+} else {
+    "default"
+}
+
 android {
     splits {
         abi {
             isEnable = true
             reset()
             if (isRelease) {
-                include(*supportedAbis)
-                isUniversalApk = true
+                // EasyTier release is arm64-only (matches GitHub asset naming).
+                if (releaseChannel == "easytier") {
+                    include("arm64-v8a")
+                    isUniversalApk = false
+                } else {
+                    include(*supportedAbis)
+                    isUniversalApk = true
+                }
             } else {
                 include("arm64-v8a", "x86_64")
             }
@@ -58,18 +74,24 @@ android {
         applicationId = "moe.tarsin.localviewer"
         versionCode = 30
         versionName = if (snapshot) {
-            "1.6.0-SNAPSHOT"
+            "1.6.1-SNAPSHOT"
         } else {
-            "1.6.0"
+            "1.6.1"
         }
         buildConfigField("boolean", "SNAPSHOT", "$snapshot")
         buildConfigField("String", "RAW_VERSION_NAME", "\"$versionName\"")
         buildConfigField("String", "COMMIT_SHA", "\"$commitSha\"")
         buildConfigField("long", "COMMIT_TIME", commitTime)
         buildConfigField("String", "REPO_NAME", "\"$repoName\"")
+        buildConfigField("String", "RELEASE_CHANNEL", "\"$releaseChannel\"")
         ndk {
             if (isRelease) {
-                abiFilters.addAll(supportedAbis)
+                // EasyTier ships arm64 native libs only (see releases.yml).
+                if (releaseChannel == "easytier") {
+                    abiFilters.add("arm64-v8a")
+                } else {
+                    abiFilters.addAll(supportedAbis)
+                }
             }
             debugSymbolLevel = "FULL"
         }

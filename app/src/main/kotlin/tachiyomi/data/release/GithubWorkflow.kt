@@ -26,10 +26,13 @@ data class GithubArtifacts(
     @SerialName("artifacts") val artifacts: List<GithubArtifact>,
 ) {
     fun getDownloadLink(): String {
-        // The default order is upload order, so we need to sort it
-        return artifacts.sortedBy { it.name }.run {
-            find { AppConfig.matchVariant(it.name) } ?: this[0]
-        }.downloadLink
+        // Prefer channel+abi match; do not fall back to another channel's artifact.
+        val match = artifacts.sortedBy { it.name }.find { AppConfig.matchVariant(it.name) }
+            ?: error(
+                "No matching CI artifact for channel=${AppConfig.releaseChannel} abi=${AppConfig.abi}. " +
+                    "Artifacts: ${artifacts.joinToString { it.name }}",
+            )
+        return match.downloadLink
     }
 }
 

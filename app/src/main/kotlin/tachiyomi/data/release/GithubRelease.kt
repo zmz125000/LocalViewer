@@ -15,10 +15,13 @@ data class GithubRelease(
     @SerialName("assets") val assets: List<GitHubAssets> = emptyList(),
 ) {
     fun getDownloadLink(): String {
+        // Match installed build: default vs easytier, and device ABI.
+        // Do not fall back to a random APK (would install the wrong channel).
         val asset = assets.find { AppConfig.matchVariant(it.name) }
-            ?: assets.find { it.name.endsWith(".apk", ignoreCase = true) }
-            ?: assets.firstOrNull()
-            ?: error("No APK assets in the latest GitHub release")
+            ?: error(
+                "No matching APK for channel=${AppConfig.releaseChannel} abi=${AppConfig.abi}. " +
+                    "Assets: ${assets.joinToString { it.name }}",
+            )
         // Prefer public CDN URL so download works without a GitHub token.
         return asset.browserDownloadUrl.ifBlank { asset.url }
     }
