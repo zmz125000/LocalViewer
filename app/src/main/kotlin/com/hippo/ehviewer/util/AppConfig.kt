@@ -38,13 +38,35 @@ object AppConfig {
     private const val CRASH = "crash"
     private const val TAG_TRANSLATIONS = "tag-translations"
 
-    private val abi = Build.SUPPORTED_ABIS[0].takeIf {
+    /** Device primary ABI used for GitHub release / CI artifact selection. */
+    val abi = Build.SUPPORTED_ABIS[0].takeIf {
         it in setOf("arm64-v8a", "x86_64", "armeabi-v7a")
     } ?: "universal"
 
+    /**
+     * Installed release channel: `default` or `easytier`.
+     * Must match the token in GitHub asset names
+     * (`LocalViewer-<tag>-default-arm64-v8a.apk` / `…-easytier-arm64-v8a.apk`).
+     * Not the same as [BuildConfig.FLAVOR] (both channels use product flavor `default`).
+     */
+    val releaseChannel: String = BuildConfig.RELEASE_CHANNEL
+
     val isBenchmark = "nonMinified" in BuildConfig.BUILD_TYPE || "benchmark" in BuildConfig.BUILD_TYPE
 
-    fun matchVariant(name: String) = name.contains(BuildConfig.FLAVOR) && name.contains(abi)
+    /**
+     * True if [name] is the APK/artifact for this install (channel + ABI).
+     * Accepts release names (`…-easytier-arm64-v8a.apk`) and CI names (`easytier-arm64-v8a-<sha>`).
+     */
+    fun matchVariant(name: String): Boolean {
+        val n = name.lowercase()
+        val channel = releaseChannel.lowercase()
+        val channelOk = n.contains("-$channel-") ||
+            n.startsWith("$channel-") ||
+            n.contains("_${channel}_")
+        // EasyTier publishes arm64 only; still require that ABI in the asset name.
+        val abiOk = n.contains(abi.lowercase())
+        return channelOk && abiOk
+    }
 
     val commitTime = BuildConfig.COMMIT_TIME.toString()
 

@@ -85,33 +85,46 @@ jobs:
       - name: Build
         run: ./gradlew assembleDefaultRelease
 
+      # Artifact channel token must match BuildConfig.RELEASE_CHANNEL (default | easytier)
+      # so in-app CI update picks the same build family as the installed app.
+      - name: Detect release channel
+        id: channel
+        run: |
+          if [ -f app/src/main/jniLibs/arm64-v8a/libeasytier_android_jni.so ]; then
+            echo "name=easytier" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=default" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload ARM64
         uses: actions/upload-artifact@v7
         with:
-          name: default-arm64-v8a-${{ github.sha }}
+          name: ${{ steps.channel.outputs.name }}-arm64-v8a-${{ github.sha }}
           path: app/build/outputs/apk/default/release/app-default-arm64-v8a-release.apk
 
       - name: Upload x86_64
+        if: steps.channel.outputs.name == 'default'
         uses: actions/upload-artifact@v7
         with:
-          name: default-x86_64-${{ github.sha }}
+          name: ${{ steps.channel.outputs.name }}-x86_64-${{ github.sha }}
           path: app/build/outputs/apk/default/release/app-default-x86_64-release.apk
 
       - name: Upload ARM32
+        if: steps.channel.outputs.name == 'default'
         uses: actions/upload-artifact@v7
         with:
-          name: default-armeabi-v7a-${{ github.sha }}
+          name: ${{ steps.channel.outputs.name }}-armeabi-v7a-${{ github.sha }}
           path: app/build/outputs/apk/default/release/app-default-armeabi-v7a-release.apk
 
       - name: Upload mapping
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: default-mapping-${{ github.sha }}
+          name: ${{ steps.channel.outputs.name }}-mapping-${{ github.sha }}
           path: app/build/outputs/mapping/defaultRelease/*.txt
 
       - name: Upload native debug symbols
         uses: actions/upload-artifact@v7
         with:
-          name: default-native-debug-symbols-${{ github.sha }}
+          name: ${{ steps.channel.outputs.name }}-native-debug-symbols-${{ github.sha }}
           path: app/build/outputs/native-debug-symbols/defaultRelease/native-debug-symbols.zip
