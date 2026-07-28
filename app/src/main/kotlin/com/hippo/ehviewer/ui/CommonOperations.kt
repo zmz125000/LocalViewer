@@ -61,6 +61,15 @@ fun navToSmbFolderReader(
     page: Int = -1,
 ) = navToReader(ReaderScreenArgs.SmbFolder(sourceId, remoteDir, imageNames, page, info))
 
+context(_: DestinationsNavigator)
+fun navToWebDavFolderReader(
+    sourceId: Long,
+    remoteDir: String,
+    imageNames: List<String>,
+    info: BaseGalleryInfo? = null,
+    page: Int = -1,
+) = navToReader(ReaderScreenArgs.WebDavFolder(sourceId, remoteDir, imageNames, page, info))
+
 context(nav: DestinationsNavigator)
 private fun navToReader(args: ReaderScreenArgs) = nav.navigate(ReaderScreenDestination(args)) { launchSingleTop = true }
 

@@ -62,6 +62,14 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.NavigationIcon
 import com.hippo.ehviewer.ui.screen.SmbEditDialog
 import com.hippo.ehviewer.ui.screen.SmbEditorState
+import com.hippo.ehviewer.ui.screen.WebDavEditDialog
+import com.hippo.ehviewer.ui.screen.WebDavEditorState
+import com.hippo.ehviewer.ui.screen.resolvedDisplayName
+import com.hippo.ehviewer.ui.screen.toDuplicateEditorState
+import com.hippo.ehviewer.ui.screen.toEditorState
+import com.hippo.ehviewer.webdav.WebDavClient
+import com.hippo.ehviewer.webdav.WebDavRepository
+import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.hippo.ehviewer.ui.screen.resolvedDisplayName
 import com.hippo.ehviewer.ui.screen.resolvedShareAndPath
 import com.hippo.ehviewer.ui.screen.toDuplicateEditorState
@@ -87,8 +95,10 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
     val libraryRoots by LocalLibrary.libraryRootsFlow().collectAsState(initial = emptyList())
     val folderRoots by LocalLibrary.folderOnlyRootsFlow().collectAsState(initial = emptyList())
     val smbSources by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
+    val webDavSources by WebDavRepository.sourcesFlow().collectAsState(initial = emptyList())
     val scanning by LocalLibrary.scanning.collectAsState()
     var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }
+    var webDavEditor by remember { mutableStateOf<WebDavEditorState?>(null) }
     val context = LocalContext.current
     val cannotGetLocation = stringResource(id = R.string.settings_download_cant_get_download_location)
     val alreadyAdded = stringResource(id = R.string.library_root_already_added)
@@ -361,6 +371,63 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                     onClick = { smbEditor = SmbEditorState() },
                 )
             }
+
+            item(key = "hdr-webdav") {
+                BrowseSectionHeader(stringResource(R.string.webdav))
+            }
+            items(webDavSources, key = { "w-${it.id}" }) { source ->
+                ListItem(
+                    headlineContent = { Text(source.displayName) },
+                    supportingContent = {
+                        Text(
+                            buildString {
+                                append(source.baseUrl.trimEnd('/'))
+                                if (source.pathPrefix.isNotBlank()) {
+                                    append('/')
+                                    append(source.pathPrefix.trim('/'))
+                                }
+                            },
+                        )
+                    },
+                    trailingContent = {
+                        Row {
+                            IconButton(
+                                onClick = { webDavEditor = source.toDuplicateEditorState() },
+                                shapes = IconButtonDefaults.shapes(),
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = stringResource(R.string.network_duplicate_smb),
+                                )
+                            }
+                            IconButton(
+                                onClick = { webDavEditor = source.toEditorState() },
+                                shapes = IconButtonDefaults.shapes(),
+                            ) {
+                                Icon(
+                                    Icons.Default.Edit,
+                                    contentDescription = stringResource(R.string.webdav_edit),
+                                )
+                            }
+                            IconButton(
+                                onClick = { launchIO { WebDavRepository.delete(source) } },
+                                shapes = IconButtonDefaults.shapes(),
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = stringResource(R.string.library_remove_root),
+                                )
+                            }
+                        }
+                    },
+                )
+            }
+            item(key = "add-webdav") {
+                AddSourceRow(
+                    title = stringResource(R.string.webdav_add),
+                    onClick = { webDavEditor = WebDavEditorState() },
+                )
+            }
         }
     }
 
@@ -436,6 +503,70 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                     }
                 }
             },
+        )
+    }
+
+    webDavEditor?.let { state ->
+        WebDavEditDialog(
+            state = state,
+            onDismiss = { webDavEditor = null },
+            onSave = { saved, password ->
+                launchIO {
+                    if (saved.id == 0L) {
+                        WebDavRepository.add(
+                            displayName = saved.resolvedDisplayName(),
+                            baseUrl = saved.baseUrl,
+                            pathPrefix = saved.pathPrefix,
+                            username = saved.username,
+                            password = password,
+                        )
+                    } else {
+                        val existing = WebDavRepository.load(saved.id)
+                        WebDavRepository.update(
+                            WebDavSourceEntity(
+                                id = saved.id,
+                                displayName = saved.resolvedDisplayName(),
+                                baseUrl = saved.baseUrl.trim(),
+                                pathPrefix = saved.pathPrefix,
+                                username = saved.username,
+                                addedAt = existing?.addedAt
+                                    ?: Clock.System.now().toEpochMilliseconds(),
+                                lastOkAt = existing?.lastOkAt,
+                                lastError = existing?.lastError,
+                            ),
+                            password = password,
+                        )
+                    }
+                }
+                webDavEditor = null
+            },
+            onTest = { testState, password ->
+                launch {
+                    val entity = WebDavSourceEntity(
+                        id = testState.id,
+                        displayName = testState.resolvedDisplayName(),
+                        baseUrl = testState.baseUrl.trim(),
+                        pathPrefix = testState.pathPrefix,
+                        username = testState.username,
+                        addedAt = 0L,
+                    )
+                    val result = WebDavClient.testConnection(entity, password)
+                    if (result.isSuccess) {
+                        if (testState.id != 0L) WebDavRepository.markOk(testState.id)
+                        snackbar(string(R.string.network_test_ok))
+                    } else {
+                        val msg = result.exceptionOrNull()?.message ?: "error"
+                        if (testState.id != 0L) WebDavRepository.markError(testState.id, msg)
+                        snackbar(string(R.string.network_test_fail, msg))
+                    }
+                }
+            },
+            onDelete = {
+                launchIO {
+                    WebDavRepository.load(state.id)?.let { WebDavRepository.delete(it) }
+                }
+                webDavEditor = null
+            }.takeIf { state.id != 0L },
         )
     }
 }

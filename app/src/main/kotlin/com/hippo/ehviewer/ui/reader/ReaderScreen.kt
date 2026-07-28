@@ -92,6 +92,10 @@ import com.hippo.ehviewer.gallery.unblock
 import com.hippo.ehviewer.gallery.useArchivePageLoader
 import com.hippo.ehviewer.gallery.useFolderPageLoader
 import com.hippo.ehviewer.gallery.useSmbFolderPageLoader
+import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
+import com.hippo.ehviewer.webdav.WebDavGateway
+import com.hippo.ehviewer.webdav.WebDavPasswordStore
+import com.hippo.ehviewer.webdav.WebDavRepository
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
@@ -149,6 +153,16 @@ sealed interface ReaderScreenArgs {
     /** SMB image folder — pages fetched into local disk cache on demand. */
     @Serializable
     data class SmbFolder(
+        val sourceId: Long,
+        val remoteDir: String,
+        val imageNames: List<String>,
+        val page: Int = -1,
+        val info: BaseGalleryInfo? = null,
+    ) : ReaderScreenArgs
+
+    /** WebDAV image folder — pages fetched into local disk cache on demand. */
+    @Serializable
+    data class WebDavFolder(
         val sourceId: Long,
         val remoteDir: String,
         val imageNames: List<String>,
@@ -237,6 +251,7 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                 val info = when (args) {
                     is ReaderScreenArgs.LocalFolder -> args.info
                     is ReaderScreenArgs.SmbFolder -> args.info
+                    is ReaderScreenArgs.WebDavFolder -> args.info
                     is ReaderScreenArgs.Archive -> null
                 }
                 key(loader) {
@@ -302,7 +317,9 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
-            if (currentArgs !is ReaderScreenArgs.SmbFolder) return@LifecycleEventObserver
+            val remote = currentArgs is ReaderScreenArgs.SmbFolder ||
+                currentArgs is ReaderScreenArgs.WebDavFolder
+            if (!remote) return@LifecycleEventObserver
             val loader = currentLoader
             if (loader.size <= 0) return@LifecycleEventObserver
             val center = (currentPage1 - 1).coerceIn(0, loader.size - 1)
@@ -412,6 +429,16 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                                         rootId = frame.rootId,
                                         relativePath = rel,
                                         title = s.info?.title ?: s.path.toPath().name,
+                                        pages = s.info?.pages ?: 0,
+                                    )
+                                }
+                                is ReaderScreenArgs.WebDavFolder -> {
+                                    s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                                    LocalHistory.recordWebDavBrowseFolder(
+                                        sourceId = s.sourceId,
+                                        relativePath = s.remoteDir,
+                                        title = s.info?.title
+                                            ?: s.remoteDir.substringAfterLast('/').ifEmpty { "WebDAV" },
                                         pages = s.info?.pages ?: 0,
                                     )
                                 }
@@ -665,6 +692,23 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             )
         }
         useSmbFolderPageLoader(source, args.remoteDir, names, info, page, block)
+    }
+    is ReaderScreenArgs.WebDavFolder -> {
+        val source = requireNotNull(WebDavRepository.load(args.sourceId)) { "WebDAV source not found" }
+        val info = args.info
+        val page = when {
+            args.page != -1 -> args.page
+            info != null -> EhDB.getReadProgress(info.gid)
+            else -> 0
+        }
+        val names = args.imageNames.ifEmpty {
+            WebDavGateway.listImageFileNames(
+                source,
+                WebDavPasswordStore.get(source.id),
+                args.remoteDir,
+            )
+        }
+        useWebDavFolderPageLoader(source, args.remoteDir, names, info, page, block)
     }
     is ReaderScreenArgs.Archive -> useArchivePageLoader(
         args.path.toPath(),

@@ -6,10 +6,13 @@ import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
+import com.hippo.ehviewer.webdav.WebDavGateway
+import com.hippo.ehviewer.webdav.WebDavPasswordStore
+import com.hippo.ehviewer.webdav.WebDavRepository
 import okio.Path.Companion.toPath
 
 /**
- * Resolve prev/next gallery for folder/SMB/archive readers.
+ * Resolve prev/next gallery for folder/SMB/WebDAV/archive readers.
  *
  * Prefer [ReaderGalleryPlaylist] (the Library/Browse list the user opened from).
  * Fall back to filesystem parent siblings when no playlist is set (e.g. History).
@@ -23,6 +26,7 @@ object GallerySiblingNavigator {
         return when (args) {
             is ReaderScreenArgs.LocalFolder -> localSibling(args, next)
             is ReaderScreenArgs.SmbFolder -> smbSibling(args, next)
+            is ReaderScreenArgs.WebDavFolder -> webDavSibling(args, next)
             else -> null
         }
     }
@@ -94,5 +98,40 @@ object GallerySiblingNavigator {
         )
         val names = if (target.pageCountCapped) emptyList() else target.imageFileNames
         return ReaderScreenArgs.SmbFolder(source.id, remote, names, page = -1, info = info)
+    }
+
+    private suspend fun webDavSibling(
+        args: ReaderScreenArgs.WebDavFolder,
+        next: Boolean,
+    ): ReaderScreenArgs.WebDavFolder? {
+        val source = WebDavRepository.load(args.sourceId) ?: return null
+        val password = WebDavPasswordStore.get(source.id)
+        val galleryPath = args.remoteDir.trim('/')
+        val parentRel = galleryPath.substringBeforeLast('/', missingDelimiterValue = "")
+        val listing = WebDavGateway.listDirectory(source, password, parentRel, useCache = true)
+        val galleries = listing.filterIsInstance<BrowseEntryRemote.FolderGallery>()
+        if (galleries.isEmpty()) return null
+
+        fun remoteOf(g: BrowseEntryRemote.FolderGallery): String = if (g.relativeName.isEmpty()) {
+            parentRel
+        } else {
+            WebDavGateway.joinRelative(parentRel, g.relativeName)
+        }
+
+        val idx = galleries.indexOfFirst { remoteOf(it).trim('/') == galleryPath }
+        if (idx < 0) return null
+        val target = galleries.getOrNull(if (next) idx + 1 else idx - 1) ?: return null
+        val remote = remoteOf(target)
+        val gid = stableGalleryId(source.id, "webdav:$remote")
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = LOCAL_GALLERY_TOKEN,
+            title = target.name,
+            pages = if (target.pageCountCapped) 0 else target.pageCount,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+        )
+        val names = if (target.pageCountCapped) emptyList() else target.imageFileNames
+        return ReaderScreenArgs.WebDavFolder(source.id, remote, names, page = -1, info = info)
     }
 }

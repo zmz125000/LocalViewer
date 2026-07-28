@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lan
@@ -210,11 +211,13 @@ fun HistoryListItem(
         LocalHistory.KindLabel.Archive -> stringResource(R.string.library_gallery_archive)
         LocalHistory.KindLabel.Folder -> stringResource(R.string.folder)
         LocalHistory.KindLabel.Smb -> stringResource(R.string.network)
+        LocalHistory.KindLabel.WebDav -> stringResource(R.string.webdav)
         LocalHistory.KindLabel.Unknown -> stringResource(R.string.history)
     }
     val placeholderIcon: ImageVector = when (kind) {
         LocalHistory.KindLabel.Archive -> Icons.Default.Inventory2
         LocalHistory.KindLabel.Smb -> Icons.Default.Lan
+        LocalHistory.KindLabel.WebDav -> Icons.Default.Cloud
         LocalHistory.KindLabel.Library -> Icons.AutoMirrored.Filled.InsertDriveFile
         else -> Icons.Default.Folder
     }
@@ -289,6 +292,7 @@ fun HistoryGridItem(
     val placeholderIcon: ImageVector = when (kind) {
         LocalHistory.KindLabel.Archive -> Icons.Default.Inventory2
         LocalHistory.KindLabel.Smb -> Icons.Default.Lan
+        LocalHistory.KindLabel.WebDav -> Icons.Default.Cloud
         LocalHistory.KindLabel.Library -> Icons.AutoMirrored.Filled.InsertDriveFile
         else -> Icons.Default.Folder
     }

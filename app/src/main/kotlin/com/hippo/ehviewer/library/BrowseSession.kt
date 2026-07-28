@@ -75,6 +75,38 @@ object BrowseSession {
         }
     }
 
+    // --- WebDAV path segments / listings (mirror SMB session keys) ---
+    private val webDavSegments = ConcurrentHashMap<Long, List<String>>()
+    private val webDavListings = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
+
+    fun webDavSegmentsOrNull(sourceId: Long): List<String>? = webDavSegments[sourceId]
+
+    fun setWebDavSegments(sourceId: Long, segments: List<String>) {
+        webDavSegments[sourceId] = segments
+    }
+
+    fun clearWebDavSegments(sourceId: Long) {
+        webDavSegments[sourceId] = emptyList()
+    }
+
+    fun webDavListingKey(sourceId: Long, relativeDir: String) = "dav:$sourceId|$relativeDir"
+
+    fun getWebDavListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? =
+        webDavListings[webDavListingKey(sourceId, relativeDir)]
+
+    fun putWebDavListing(sourceId: Long, relativeDir: String, entries: List<BrowseEntryRemote>) {
+        webDavListings[webDavListingKey(sourceId, relativeDir)] = entries
+    }
+
+    fun invalidateWebDavListing(sourceId: Long, relativeDir: String? = null) {
+        if (relativeDir == null) {
+            val prefix = "dav:$sourceId|"
+            webDavListings.keys.filter { it.startsWith(prefix) }.forEach { webDavListings.remove(it) }
+        } else {
+            webDavListings.remove(webDavListingKey(sourceId, relativeDir))
+        }
+    }
+
     fun pathKey(path: Path): String = path.toString()
 
     // --- Browse list scroll (per directory; process lifetime) ---

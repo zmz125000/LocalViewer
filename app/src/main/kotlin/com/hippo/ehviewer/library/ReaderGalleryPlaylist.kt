@@ -27,6 +27,13 @@ object ReaderGalleryPlaylist {
             val info: BaseGalleryInfo? = null,
         ) : Item
 
+        data class WebDavFolder(
+            val sourceId: Long,
+            val remoteDir: String,
+            val imageNames: List<String>,
+            val info: BaseGalleryInfo? = null,
+        ) : Item
+
         data class Archive(val path: String) : Item
     }
 
@@ -116,22 +123,56 @@ object ReaderGalleryPlaylist {
         }
     }
 
+    fun setFromWebDavBrowse(
+        sourceId: Long,
+        parentRelative: String,
+        entries: List<BrowseEntryRemote>,
+    ) {
+        items = entries.mapNotNull { e ->
+            when (e) {
+                is BrowseEntryRemote.FolderGallery -> {
+                    val remote = if (e.relativeName.isEmpty()) {
+                        parentRelative
+                    } else if (parentRelative.isEmpty()) {
+                        e.relativeName
+                    } else {
+                        "$parentRelative/${e.relativeName}"
+                    }
+                    val info = BaseGalleryInfo(
+                        gid = stableGalleryId(sourceId, "webdav:$remote"),
+                        token = LOCAL_GALLERY_TOKEN,
+                        title = e.name,
+                        pages = if (e.pageCountCapped) 0 else e.pageCount,
+                        favoriteSlot = com.ehviewer.core.model.GalleryInfo.NOT_FAVORITED,
+                        rating = -1f,
+                    )
+                    val names = if (e.pageCountCapped) emptyList() else e.imageFileNames
+                    Item.WebDavFolder(sourceId, remote, names, info)
+                }
+                is BrowseEntryRemote.Directory -> null
+                else -> null
+            }
+        }
+    }
+
     fun keyOf(args: ReaderScreenArgs): String? = when (args) {
         is ReaderScreenArgs.LocalFolder -> "local:${args.path}"
         is ReaderScreenArgs.SmbFolder -> "smb:${args.sourceId}:${args.remoteDir.trim('/')}"
+        is ReaderScreenArgs.WebDavFolder -> "webdav:${args.sourceId}:${args.remoteDir.trim('/')}"
         is ReaderScreenArgs.Archive -> "archive:${args.path}"
-        else -> null
     }
 
     private fun keyOf(item: Item): String = when (item) {
         is Item.LocalFolder -> "local:${item.path}"
         is Item.SmbFolder -> "smb:${item.sourceId}:${item.remoteDir.trim('/')}"
+        is Item.WebDavFolder -> "webdav:${item.sourceId}:${item.remoteDir.trim('/')}"
         is Item.Archive -> "archive:${item.path}"
     }
 
     private fun Item.toArgs(): ReaderScreenArgs = when (this) {
         is Item.LocalFolder -> ReaderScreenArgs.LocalFolder(path, page = -1, info = info)
         is Item.SmbFolder -> ReaderScreenArgs.SmbFolder(sourceId, remoteDir, imageNames, page = -1, info = info)
+        is Item.WebDavFolder -> ReaderScreenArgs.WebDavFolder(sourceId, remoteDir, imageNames, page = -1, info = info)
         is Item.Archive -> ReaderScreenArgs.Archive(path)
     }
 

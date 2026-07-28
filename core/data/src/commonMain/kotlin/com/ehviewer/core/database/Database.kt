@@ -18,6 +18,7 @@ import com.ehviewer.core.database.dao.ProgressDao
 import com.ehviewer.core.database.dao.QuickSearchDao
 import com.ehviewer.core.database.dao.SearchDao
 import com.ehviewer.core.database.dao.SmbSourceDao
+import com.ehviewer.core.database.dao.WebDavSourceDao
 import com.ehviewer.core.database.model.DownloadArtist
 import com.ehviewer.core.database.model.DownloadDirname
 import com.ehviewer.core.database.model.DownloadEntity
@@ -34,6 +35,7 @@ import com.ehviewer.core.database.model.ProgressInfo
 import com.ehviewer.core.database.model.QuickSearch
 import com.ehviewer.core.database.model.Search
 import com.ehviewer.core.database.model.SmbSourceEntity
+import com.ehviewer.core.database.model.WebDavSourceEntity
 
 @Database(
     entities = [
@@ -90,16 +92,23 @@ abstract class SearchDatabase : RoomDatabase() {
 }
 
 @Database(
-    entities = [LibraryRootEntity::class, LocalGalleryEntity::class, SmbSourceEntity::class],
-    version = 3,
+    entities = [
+        LibraryRootEntity::class,
+        LocalGalleryEntity::class,
+        SmbSourceEntity::class,
+        WebDavSourceEntity::class,
+    ],
+    version = 4,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
+        AutoMigration(from = 3, to = 4),
     ],
 )
 abstract class LocalLibraryDatabase : RoomDatabase() {
     abstract fun libraryRootDao(): LibraryRootDao
     abstract fun localGalleryDao(): LocalGalleryDao
     abstract fun smbSourceDao(): SmbSourceDao
+    abstract fun webDavSourceDao(): WebDavSourceDao
 }
