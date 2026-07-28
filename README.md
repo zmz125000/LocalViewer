@@ -63,7 +63,7 @@
 
 # Description
 
-A High performance Android SMB image viewer/comic reader with network gallery folder support.
+A High performance Android SMB/WebDAV image viewer/comic reader with network gallery folder support.
 
 With [Material Design 3](https://m3.material.io/)
 and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) Support.  
@@ -78,6 +78,7 @@ Build with Grok 4.5.
 * Material Design 3 Navigation bar.
 * Optimized navigation flow for deep folder path.
 * High performance smbj client with concurrent connections support.
+* Cronet WebDAV client with HTTP/2 and QUIC support.
 * Network gallery folders recognition with fast cover loading.
 * High performance reader with cache from EhViewer.
 * Reader allow full size image decode.
