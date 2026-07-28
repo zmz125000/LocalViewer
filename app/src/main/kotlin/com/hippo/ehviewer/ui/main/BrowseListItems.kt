@@ -46,6 +46,7 @@ import coil3.compose.AsyncImage
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.util.logcat
+import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
@@ -309,17 +310,19 @@ fun BrowseCoverThumb(
         is BrowseCover.WebDav -> "dav\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
         else -> null
     }
+    // Local covers set immediately; remote paths are filled by LaunchedEffect after IO disk probe
+    // (main-thread isCached only sees memory — cold process would miss real cache files).
     var localPath by remember(remoteKey, cover is BrowseCover.Local) {
         mutableStateOf(
             when (cover) {
                 is BrowseCover.Local -> cover.path
                 is BrowseCover.Smb -> {
                     val cache = SmbCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
-                    cache.takeIf { SmbCache.isCached(it) }?.also { SmbCache.touch(it) }
+                    cache.takeIf { SmbCache.isCached(it) }
                 }
                 is BrowseCover.WebDav -> {
                     val cache = WebDavCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
-                    cache.takeIf { WebDavCache.isCached(it) }?.also { WebDavCache.touch(it) }
+                    cache.takeIf { WebDavCache.isCached(it) }
                 }
                 null -> null
             },
@@ -335,37 +338,9 @@ fun BrowseCoverThumb(
         }
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                when (cover) {
-                    is BrowseCover.Smb -> {
-                        val cache = SmbCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
-                        if (SmbCache.isCached(cache)) {
-                            SmbCache.touch(cache)
-                            localPath = cache
-                            fetchFailed = false
-                        } else if (Settings.downloadRemoteThumbs.value &&
-                            (localPath == null || !SmbCache.isCached(localPath!!))
-                        ) {
-                            localPath = null
-                            fetchFailed = false
-                            resumeEpoch++
-                        }
-                    }
-                    is BrowseCover.WebDav -> {
-                        val cache = WebDavCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
-                        if (WebDavCache.isCached(cache)) {
-                            WebDavCache.touch(cache)
-                            localPath = cache
-                            fetchFailed = false
-                        } else if (Settings.downloadRemoteThumbs.value &&
-                            (localPath == null || !WebDavCache.isCached(localPath!!))
-                        ) {
-                            localPath = null
-                            fetchFailed = false
-                            resumeEpoch++
-                        }
-                    }
-                    else -> Unit
-                }
+                // Disk probe / re-download is owned by LaunchedEffect (IO).
+                fetchFailed = false
+                resumeEpoch++
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -373,20 +348,20 @@ fun BrowseCoverThumb(
     }
 
     // Lazy: only runs when this row is composed (in LazyColumn viewport).
-    // Disk cache is authoritative — scroll recycle / refreshToken must not re-hit network
-    // when the thumb file is already cached. Network download respects General setting.
+    // Always probe disk on IO first so cached thumbs show even when download is off.
     LaunchedEffect(remoteKey, retryKey, resumeEpoch, downloadRemoteThumbs) {
         when (cover) {
             is BrowseCover.Smb -> {
                 val cache = SmbCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
-                if (SmbCache.isCached(cache)) {
-                    SmbCache.touch(cache)
+                val onDisk = withIOContext { SmbCache.isCachedOnDisk(cache) }
+                if (onDisk) {
+                    withIOContext { SmbCache.touch(cache) }
                     localPath = cache
                     fetchFailed = false
                     return@LaunchedEffect
                 }
                 if (!downloadRemoteThumbs) {
-                    // Remote access: skip download; keep placeholder.
+                    // No network; placeholder only when nothing cached.
                     fetchFailed = false
                     return@LaunchedEffect
                 }
@@ -413,8 +388,9 @@ fun BrowseCoverThumb(
             }
             is BrowseCover.WebDav -> {
                 val cache = WebDavCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
-                if (WebDavCache.isCached(cache)) {
-                    WebDavCache.touch(cache)
+                val onDisk = withIOContext { WebDavCache.isCachedOnDisk(cache) }
+                if (onDisk) {
+                    withIOContext { WebDavCache.touch(cache) }
                     localPath = cache
                     fetchFailed = false
                     return@LaunchedEffect

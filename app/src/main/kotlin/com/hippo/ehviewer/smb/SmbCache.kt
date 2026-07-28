@@ -161,11 +161,22 @@ object SmbCache {
     /**
      * Fast cache presence check.
      * Memory hit → true; main + unknown → false (no disk); background → probe disk.
+     * For “show if file exists” from Compose, use [isCachedOnDisk] on [Dispatchers.IO].
      */
     fun isCached(path: Path): Boolean {
         val key = path.toString()
         if (knownPresent.contains(key)) return true
         if (Looper.getMainLooper().isCurrentThread) return false
+        return isCachedOnDisk(path)
+    }
+
+    /**
+     * Real disk probe; safe on any thread but prefer IO from UI.
+     * Updates [knownPresent] so later main-thread [isCached] hits memory.
+     */
+    fun isCachedOnDisk(path: Path): Boolean {
+        val key = path.toString()
+        if (knownPresent.contains(key)) return true
         val f = File(key)
         val ok = f.isFile && f.length() > 0L
         if (ok) knownPresent.add(key)
