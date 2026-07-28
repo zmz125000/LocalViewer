@@ -46,8 +46,10 @@ import coil3.compose.AsyncImage
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
+import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
@@ -300,6 +302,7 @@ fun BrowseCoverThumb(
 ) {
     val resolvedDecodePx = decodeSizePx ?: CoverThumb.listDecodePx()
     val context = LocalContext.current
+    val downloadRemoteThumbs by Settings.downloadRemoteThumbs.collectAsState()
     // Stable keys: BrowseCover is a new instance per list paint; identity by fields.
     val remoteKey = when (cover) {
         is BrowseCover.Smb -> "smb\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
@@ -339,7 +342,9 @@ fun BrowseCoverThumb(
                             SmbCache.touch(cache)
                             localPath = cache
                             fetchFailed = false
-                        } else if (localPath == null || !SmbCache.isCached(localPath!!)) {
+                        } else if (Settings.downloadRemoteThumbs.value &&
+                            (localPath == null || !SmbCache.isCached(localPath!!))
+                        ) {
                             localPath = null
                             fetchFailed = false
                             resumeEpoch++
@@ -351,7 +356,9 @@ fun BrowseCoverThumb(
                             WebDavCache.touch(cache)
                             localPath = cache
                             fetchFailed = false
-                        } else if (localPath == null || !WebDavCache.isCached(localPath!!)) {
+                        } else if (Settings.downloadRemoteThumbs.value &&
+                            (localPath == null || !WebDavCache.isCached(localPath!!))
+                        ) {
                             localPath = null
                             fetchFailed = false
                             resumeEpoch++
@@ -367,14 +374,19 @@ fun BrowseCoverThumb(
 
     // Lazy: only runs when this row is composed (in LazyColumn viewport).
     // Disk cache is authoritative — scroll recycle / refreshToken must not re-hit network
-    // when the thumb file is already cached.
-    LaunchedEffect(remoteKey, retryKey, resumeEpoch) {
+    // when the thumb file is already cached. Network download respects General setting.
+    LaunchedEffect(remoteKey, retryKey, resumeEpoch, downloadRemoteThumbs) {
         when (cover) {
             is BrowseCover.Smb -> {
                 val cache = SmbCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
                 if (SmbCache.isCached(cache)) {
                     SmbCache.touch(cache)
                     localPath = cache
+                    fetchFailed = false
+                    return@LaunchedEffect
+                }
+                if (!downloadRemoteThumbs) {
+                    // Remote access: skip download; keep placeholder.
                     fetchFailed = false
                     return@LaunchedEffect
                 }
@@ -404,6 +416,10 @@ fun BrowseCoverThumb(
                 if (WebDavCache.isCached(cache)) {
                     WebDavCache.touch(cache)
                     localPath = cache
+                    fetchFailed = false
+                    return@LaunchedEffect
+                }
+                if (!downloadRemoteThumbs) {
                     fetchFailed = false
                     return@LaunchedEffect
                 }
