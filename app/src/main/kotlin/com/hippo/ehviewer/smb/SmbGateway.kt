@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.smb
 
+import android.net.TrafficStats
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
@@ -1210,11 +1211,21 @@ private fun isIgnorableListError(e: SMBApiException): Boolean {
  * SO_KEEPALIVE lets the kernel detect dead peers; TCP_NODELAY reduces small-write delay.
  * SO_LINGER 0 sends RST on close so half-open VPN paths do not hang close() for SO timeout.
  * smbj owns protocol framing / credits / reconnect policy beyond this.
+ *
+ * Also tags sockets for [TrafficStats] so StrictMode does not report UntaggedSocketViolation.
  */
 private object KeepAliveSocketFactory : SocketFactory() {
+    /** Distinct app traffic tag for SMB (see TrafficStats.setThreadStatsTag). */
+    private const val SMB_TRAFFIC_TAG = 0x534D42 // "SMB"
+
     private val defaultFactory: SocketFactory = getDefault()
 
     private fun Socket.configure(): Socket = apply {
+        // Tag before use so accounting / StrictMode see all SMB sockets.
+        runCatching {
+            TrafficStats.setThreadStatsTag(SMB_TRAFFIC_TAG)
+            TrafficStats.tagSocket(this)
+        }
         keepAlive = true
         tcpNoDelay = true
         // Abortive close — important when EasyTier/VPN dies under active SMB I/O.

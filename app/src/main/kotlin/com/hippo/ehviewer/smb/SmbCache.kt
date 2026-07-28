@@ -70,11 +70,19 @@ object SmbCache {
     /** Cap concurrent full-file SMB fetches for thumb generation (first paint). */
     private val thumbFetchSlots = Semaphore(3)
 
-    private val pageRoot: Path
-        get() = appCtx.cacheDir.resolve("smb_cache").toOkioPath().also { it.mkdirs() }
+    /**
+     * Cache roots as pure path math from [ApplicationInfo.dataDir] (string field — no disk).
+     * Avoid [Context.getCacheDir] + [mkdirs] on every path resolve (main-thread StrictMode
+     * when browse thumbs call [thumbCachePath] during composition).
+     * Directories are created only on write paths via [ensureRootDirs].
+     */
+    private val pageRoot: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        File(appCtx.applicationInfo.dataDir, "cache/smb_cache").toOkioPath()
+    }
 
-    private val thumbRoot: Path
-        get() = appCtx.cacheDir.resolve("smb_thumb_cache").toOkioPath().also { it.mkdirs() }
+    private val thumbRoot: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        File(appCtx.applicationInfo.dataDir, "cache/smb_thumb_cache").toOkioPath()
+    }
 
     /** One lock per cache file so concurrent callers share one download/encode. */
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
@@ -89,6 +97,12 @@ object SmbCache {
     private fun rootFor(kind: Kind): Path = when (kind) {
         Kind.Page -> pageRoot
         Kind.Thumb -> thumbRoot
+    }
+
+    /** Call only from IO write paths. */
+    private fun ensureRootDirs() {
+        File(pageRoot.toString()).mkdirs()
+        File(thumbRoot.toString()).mkdirs()
     }
 
     /**
@@ -209,7 +223,8 @@ object SmbCache {
                 if (!isCached(pagePath)) {
                     error("SMB page cache empty after download for $remoteRelativeFile")
                 }
-                destPath.parent?.mkdirs()
+                ensureRootDirs()
+                File(destPath.parent!!.toString()).mkdirs()
                 val dest = File(key)
                 val jpgTmp = File("$key.jpg.${System.nanoTime()}")
                 try {
@@ -251,7 +266,8 @@ object SmbCache {
                 touch(path)
                 return
             }
-            path.parent?.mkdirs()
+            ensureRootDirs()
+            path.parent?.let { File(it.toString()).mkdirs() }
             val dest = File(key)
             val tmp = File("$key.tmp.${System.nanoTime()}")
             try {

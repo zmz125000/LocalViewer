@@ -42,10 +42,16 @@ object WebDavCache {
     private const val THUMB_BUDGET_BYTES = 512L * 1024L * 1024L
     private val thumbFetchSlots = Semaphore(3)
 
-    private val pageRoot: Path
-        get() = appCtx.cacheDir.resolve("webdav_cache").toOkioPath().also { it.mkdirs() }
-    private val thumbRoot: Path
-        get() = appCtx.cacheDir.resolve("webdav_thumb_cache").toOkioPath().also { it.mkdirs() }
+    /**
+     * Pure path from dataDir string — no [Context.getCacheDir]/[mkdirs] on path resolve
+     * (browse thumbs call this on main during composition).
+     */
+    private val pageRoot: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        File(appCtx.applicationInfo.dataDir, "cache/webdav_cache").toOkioPath()
+    }
+    private val thumbRoot: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        File(appCtx.applicationInfo.dataDir, "cache/webdav_thumb_cache").toOkioPath()
+    }
 
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
     /** Paths known to exist after a successful write or off-main probe — avoids main-thread File I/O. */
@@ -53,6 +59,11 @@ object WebDavCache {
     private val trimScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val trimLock = Mutex()
     private val trimScheduled = AtomicBoolean(false)
+
+    private fun ensureRootDirs() {
+        File(pageRoot.toString()).mkdirs()
+        File(thumbRoot.toString()).mkdirs()
+    }
 
     fun cachePath(sourceId: Long, remoteRelativePath: String, fileName: String): Path =
         cachePath(sourceId, remoteRelativePath, fileName, Kind.Page)
@@ -142,7 +153,8 @@ object WebDavCache {
                 }
                 downloadIfNeeded(pagePath, download)
                 if (!probeDisk(pagePath)) error("WebDAV page cache empty for $remoteRelativeFile")
-                destPath.parent?.mkdirs()
+                ensureRootDirs()
+                File(destPath.parent!!.toString()).mkdirs()
                 val dest = File(key)
                 val jpgTmp = File("$key.jpg.${System.nanoTime()}")
                 try {
@@ -175,7 +187,8 @@ object WebDavCache {
                 touch(path)
                 return
             }
-            path.parent?.mkdirs()
+            ensureRootDirs()
+            path.parent?.let { File(it.toString()).mkdirs() }
             val dest = File(key)
             val tmp = File("$key.tmp.${System.nanoTime()}")
             try {
