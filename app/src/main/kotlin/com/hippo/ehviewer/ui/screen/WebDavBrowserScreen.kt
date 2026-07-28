@@ -225,7 +225,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
         error = null
 
-        val password = WebDavPasswordStore.get(src.id)
+        // Password decrypt uses Android Keystore — keep it off Main (StrictMode).
+        val password = withIOContext { WebDavPasswordStore.get(src.id) }
         // On cancel (path change / new refreshToken), do NOT clear loading — goUp/enterDir or
         // the replacement effect already owns that flag. Clearing here caused empty+spinner
         // races and could leave a superseded load stuck spinning forever.

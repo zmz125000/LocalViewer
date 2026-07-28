@@ -2,6 +2,7 @@ package com.hippo.ehviewer.webdav
 
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.os.Looper
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.util.FileUtils
@@ -47,6 +48,8 @@ object WebDavCache {
         get() = appCtx.cacheDir.resolve("webdav_thumb_cache").toOkioPath().also { it.mkdirs() }
 
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
+    /** Paths known to exist after a successful write or off-main probe — avoids main-thread File I/O. */
+    private val knownPresent = ConcurrentHashMap.newKeySet<String>()
     private val trimScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val trimLock = Mutex()
     private val trimScheduled = AtomicBoolean(false)
@@ -87,12 +90,28 @@ object WebDavCache {
         return thumbRoot / "${sha256Hex(key)}.jpg"
     }
 
+    /**
+     * Fast cache presence check.
+     * - Memory hit → true (no disk)
+     * - Main thread + unknown → false (StrictMode-safe; caller must verify on IO)
+     * - Background → real [File.isFile] probe and remember hits
+     */
     fun isCached(path: Path): Boolean {
-        val f = File(path.toString())
-        return f.isFile && f.length() > 0L
+        val key = path.toString()
+        if (knownPresent.contains(key)) return true
+        if (Looper.getMainLooper().isCurrentThread) return false
+        val f = File(key)
+        val ok = f.isFile && f.length() > 0L
+        if (ok) knownPresent.add(key)
+        return ok
+    }
+
+    fun markPresent(path: Path) {
+        knownPresent.add(path.toString())
     }
 
     fun touch(path: Path) {
+        if (Looper.getMainLooper().isCurrentThread) return
         val f = File(path.toString())
         if (f.isFile) f.setLastModified(System.currentTimeMillis())
     }
@@ -103,7 +122,8 @@ object WebDavCache {
         download: suspend (OutputStream) -> Unit,
     ): Path = withContext(Dispatchers.IO) {
         val destPath = thumbCachePath(sourceId, remoteRelativeFile)
-        if (isCached(destPath)) {
+        // Always on IO here — allow real disk probe.
+        if (probeDisk(destPath)) {
             touch(destPath)
             return@withContext destPath
         }
@@ -111,27 +131,28 @@ object WebDavCache {
         val key = destPath.toString()
         val mutex = pathLocks.getOrPut(key) { Mutex() }
         mutex.withLock {
-            if (isCached(destPath)) {
+            if (probeDisk(destPath)) {
                 touch(destPath)
                 return@withContext destPath
             }
             thumbFetchSlots.withPermit {
-                if (isCached(destPath)) {
+                if (probeDisk(destPath)) {
                     touch(destPath)
                     return@withContext destPath
                 }
                 downloadIfNeeded(pagePath, download)
-                if (!isCached(pagePath)) error("WebDAV page cache empty for $remoteRelativeFile")
+                if (!probeDisk(pagePath)) error("WebDAV page cache empty for $remoteRelativeFile")
                 destPath.parent?.mkdirs()
                 val dest = File(key)
                 val jpgTmp = File("$key.jpg.${System.nanoTime()}")
                 try {
                     writeSubsampledJpeg(File(pagePath.toString()), jpgTmp, THUMB_DISK_EDGE, THUMB_JPEG_QUALITY)
                     commitTmp(jpgTmp, dest)
+                    markPresent(destPath)
                     touch(destPath)
                 } catch (e: Throwable) {
                     if (jpgTmp.exists()) jpgTmp.delete()
-                    if (isCached(destPath)) return@withContext destPath
+                    if (probeDisk(destPath)) return@withContext destPath
                     throw e
                 } finally {
                     if (jpgTmp.exists()) jpgTmp.delete()
@@ -143,14 +164,14 @@ object WebDavCache {
     }
 
     suspend fun downloadIfNeeded(path: Path, write: suspend (OutputStream) -> Unit) {
-        if (isCached(path)) {
+        if (probeDisk(path)) {
             touch(path)
             return
         }
         val key = path.toString()
         val mutex = pathLocks.getOrPut(key) { Mutex() }
         mutex.withLock {
-            if (isCached(path)) {
+            if (probeDisk(path)) {
                 touch(path)
                 return
             }
@@ -160,14 +181,25 @@ object WebDavCache {
             try {
                 FileOutputStream(tmp).use { out -> write(out) }
                 commitTmp(tmp, dest)
+                markPresent(path)
                 touch(path)
             } catch (e: Throwable) {
                 tmp.delete()
-                if (isCached(path)) return
+                if (probeDisk(path)) return
                 throw e
             }
         }
         scheduleTrim()
+    }
+
+    /** Unconditional disk probe (call only off main). */
+    private fun probeDisk(path: Path): Boolean {
+        val key = path.toString()
+        if (knownPresent.contains(key)) return true
+        val f = File(key)
+        val ok = f.isFile && f.length() > 0L
+        if (ok) knownPresent.add(key)
+        return ok
     }
 
     private fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {

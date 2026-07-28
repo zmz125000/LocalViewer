@@ -12,6 +12,7 @@ import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -109,6 +110,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     if (index !in 0 until size) return
                     val name = imageFileNames[index]
                     val cache = WebDavCache.cachePath(source.id, remoteDir, name)
+                    // Main-thread isCached only uses memory (no File I/O). Disk probe is on IO.
                     if (WebDavCache.isCached(cache)) {
                         onReady?.invoke()
                         dispatchReady(index)
@@ -117,15 +119,10 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     if (onReady != null) addReadyWaiter(index, onReady)
 
                     val existing = downloadJobs[index]
-                    if (existing != null && existing.isActive) {
-                        if (interactive) {
-                            // Promote: interactive slot will be taken when job body runs.
-                        }
-                        return
-                    }
+                    if (existing != null && existing.isActive) return
 
                     val slots = if (interactive) interactiveSlots else prefetchSlots
-                    val job = launch {
+                    val job = launch(Dispatchers.IO) {
                         try {
                             slots.withPermit {
                                 if (WebDavCache.isCached(cache)) {

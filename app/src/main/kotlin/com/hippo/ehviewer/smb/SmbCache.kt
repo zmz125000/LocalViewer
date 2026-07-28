@@ -2,6 +2,7 @@ package com.hippo.ehviewer.smb
 
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.os.Looper
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.util.FileUtils
@@ -78,6 +79,9 @@ object SmbCache {
     /** One lock per cache file so concurrent callers share one download/encode. */
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
 
+    /** Paths known present after write or off-main probe — avoids main-thread File I/O. */
+    private val knownPresent = ConcurrentHashMap.newKeySet<String>()
+
     private val trimScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val trimLock = Mutex()
     private val trimScheduled = AtomicBoolean(false)
@@ -140,14 +144,27 @@ object SmbCache {
         return thumbRoot / "${sha256Hex(key)}.jpg"
     }
 
-    /** Non-empty regular file on disk (Java File — reliable for app cache paths). */
+    /**
+     * Fast cache presence check.
+     * Memory hit → true; main + unknown → false (no disk); background → probe disk.
+     */
     fun isCached(path: Path): Boolean {
-        val f = File(path.toString())
-        return f.isFile && f.length() > 0L
+        val key = path.toString()
+        if (knownPresent.contains(key)) return true
+        if (Looper.getMainLooper().isCurrentThread) return false
+        val f = File(key)
+        val ok = f.isFile && f.length() > 0L
+        if (ok) knownPresent.add(key)
+        return ok
     }
 
-    /** Bump mtime so LRU eviction prefers colder files. Safe to call on list scroll hits. */
+    fun markPresent(path: Path) {
+        knownPresent.add(path.toString())
+    }
+
+    /** Bump mtime so LRU eviction prefers colder files. No-op on main (StrictMode). */
     fun touch(path: Path) {
+        if (Looper.getMainLooper().isCurrentThread) return
         val f = File(path.toString())
         if (f.isFile) f.setLastModified(System.currentTimeMillis())
     }
@@ -203,6 +220,7 @@ object SmbCache {
                         THUMB_JPEG_QUALITY,
                     )
                     commitTmp(jpgTmp, dest)
+                    markPresent(destPath)
                     touch(destPath)
                 } catch (e: Throwable) {
                     if (jpgTmp.exists()) jpgTmp.delete()
@@ -239,6 +257,7 @@ object SmbCache {
             try {
                 FileOutputStream(tmp).use { out -> write(out) }
                 commitTmp(tmp, dest)
+                markPresent(path)
                 touch(path)
             } catch (e: Throwable) {
                 tmp.delete()

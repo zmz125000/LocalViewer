@@ -1,15 +1,18 @@
 package com.hippo.ehviewer.smb
 
 import android.content.Context
+import android.os.Looper
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.ehviewer.core.util.logcat
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import com.ehviewer.core.util.logcat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import splitties.init.appCtx
 
 /**
@@ -34,24 +37,31 @@ object SmbPasswordStore {
         appCtx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     }
 
-    fun get(sourceId: Long): String {
-        val packed = prefs.getString(KEY_PREFIX + sourceId, null) ?: return ""
-        return runCatching { decrypt(packed) }.getOrElse { e ->
+    /** Keystore crypto must not run on the main thread (StrictMode). */
+    private inline fun <T> keystoreIo(crossinline block: () -> T): T {
+        if (Looper.getMainLooper().isCurrentThread) {
+            return runBlocking(Dispatchers.IO) { block() }
+        }
+        return block()
+    }
+
+    fun get(sourceId: Long): String = keystoreIo {
+        val packed = prefs.getString(KEY_PREFIX + sourceId, null) ?: return@keystoreIo ""
+        runCatching { decrypt(packed) }.getOrElse { e ->
             logcat(e)
             ""
         }
     }
 
-    fun set(sourceId: Long, password: String) {
+    fun set(sourceId: Long, password: String) = keystoreIo {
         if (password.isEmpty()) {
-            remove(sourceId)
-            return
+            prefs.edit().remove(KEY_PREFIX + sourceId).apply()
+            return@keystoreIo
         }
-        val packed = encrypt(password)
-        prefs.edit().putString(KEY_PREFIX + sourceId, packed).apply()
+        prefs.edit().putString(KEY_PREFIX + sourceId, encrypt(password)).apply()
     }
 
-    fun remove(sourceId: Long) {
+    fun remove(sourceId: Long) = keystoreIo {
         prefs.edit().remove(KEY_PREFIX + sourceId).apply()
     }
 
