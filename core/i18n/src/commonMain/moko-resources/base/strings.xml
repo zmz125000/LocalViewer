@@ -78,6 +78,18 @@
     <string name="network_save">Save</string>
     <string name="smb_archive_not_supported">Opening archives over SMB is not supported yet</string>
     <string name="smb_listing_error">Failed to list directory: %s</string>
+    <string name="webdav">WebDAV</string>
+    <string name="webdav_add">Add WebDAV</string>
+    <string name="webdav_edit">Edit WebDAV</string>
+    <string name="webdav_base_url">Base URL</string>
+    <string name="webdav_base_url_hint">https://host/remote.php/dav/files/user/</string>
+    <string name="webdav_path_prefix">Path prefix (optional)</string>
+    <string name="webdav_archive_not_supported">Opening archives over WebDAV is not supported yet</string>
+    <string name="webdav_listing_error">Failed to list directory: %s</string>
+    <string name="webdav_anonymous">Anonymous (no login)</string>
+    <string name="webdav_http_hint">Using HTTP (cleartext). Prefer HTTPS when possible.</string>
+    <string name="settings_advanced_webdav_insecure_tls">Allow insecure TLS for WebDAV</string>
+    <string name="settings_advanced_webdav_insecure_tls_summary">Trust any certificate (self-signed HTTPS).</string>
     <string name="site_e" translatable="false">e-hentai</string>
     <string name="site_ex" translatable="false">exhentai</string>
     <!-- Theme -->

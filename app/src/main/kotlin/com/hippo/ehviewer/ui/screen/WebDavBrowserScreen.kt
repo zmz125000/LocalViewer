@@ -50,7 +50,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.ehviewer.core.database.model.SmbSourceEntity
+import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
@@ -67,9 +67,9 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.stableGalleryId
-import com.hippo.ehviewer.smb.SmbGateway
-import com.hippo.ehviewer.smb.SmbPasswordStore
-import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.webdav.WebDavGateway
+import com.hippo.ehviewer.webdav.WebDavPasswordStore
+import com.hippo.ehviewer.webdav.WebDavRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.Screen
@@ -85,7 +85,7 @@ import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
-import com.hippo.ehviewer.ui.navToSmbFolderReader
+import com.hippo.ehviewer.ui.navToWebDavFolderReader
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -95,28 +95,28 @@ import moe.tarsin.string
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
-fun AnimatedVisibilityScope.SmbBrowserScreen(
+fun AnimatedVisibilityScope.WebDavBrowserScreen(
     sourceId: Long,
     initialRelativePath: String = "",
     fromHistory: Boolean = false,
     navigator: DestinationsNavigator,
 ) = Screen(navigator) {
     DrawerHandle(false)
-    var source by remember { mutableStateOf<SmbSourceEntity?>(null) }
+    var source by remember { mutableStateOf<WebDavSourceEntity?>(null) }
 
     // Session-scoped path. Empty list = share root and is *not* "unset":
     // do not fall back to initialRelativePath when session is empty, or returning from
     // the reader after climbing to root re-opens the History deep folder.
     var segments by remember {
-        val stored = BrowseSession.smbSegmentsOrNull(sourceId)
+        val stored = BrowseSession.webDavSegmentsOrNull(sourceId)
         val initial = stored ?: initialRelativePath.split('/').filter { it.isNotEmpty() }.also {
-            BrowseSession.setSmbSegments(sourceId, it)
+            BrowseSession.setWebDavSegments(sourceId, it)
         }
         mutableStateOf(initial)
     }
     fun updateSegments(new: List<String>) {
         segments = new
-        BrowseSession.setSmbSegments(sourceId, new)
+        BrowseSession.setWebDavSegments(sourceId, new)
     }
 
     var entries by remember { mutableStateOf<List<BrowseEntryRemote>>(emptyList()) }
@@ -160,7 +160,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
      * applying them here avoids empty+spinner while the path-keyed effect starts.
      */
     fun applyCachedListing(dir: String): Boolean {
-        val cached = BrowseSession.getSmbListing(sourceId, dir) ?: return false
+        val cached = BrowseSession.getWebDavListing(sourceId, dir) ?: return false
         entries = cached
         listedDir = dir
         loading = false
@@ -182,21 +182,21 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val force = forceNextLoad
         forceNextLoad = false
 
-        val src = withIOContext { SmbRepository.load(sourceId) }?.also { source = it } ?: run {
+        val src = withIOContext { WebDavRepository.load(sourceId) }?.also { source = it } ?: run {
             error = "Source missing"
             entries = emptyList()
             listedDir = targetDir
             loading = false
             return@LaunchedEffect
         }
-        val configKey = SmbGateway.sourceConfigKey(src)
+        val configKey = WebDavGateway.sourceConfigKey(src)
         val configChanged = lastConfigKey != null && lastConfigKey != configKey
         lastConfigKey = configKey
         if (configChanged) {
             // Path/share changed: drop stack (session already cleared by disconnect).
             if (segments.isNotEmpty()) {
                 segments = emptyList()
-                BrowseSession.setSmbSegments(sourceId, emptyList())
+                BrowseSession.setWebDavSegments(sourceId, emptyList())
             }
             entries = emptyList()
             listedDir = null
@@ -226,13 +226,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         error = null
 
         // Password decrypt uses Android Keystore — keep it off Main (StrictMode).
-        val password = withIOContext { SmbPasswordStore.get(src.id) }
+        val password = withIOContext { WebDavPasswordStore.get(src.id) }
         // On cancel (path change / new refreshToken), do NOT clear loading — goUp/enterDir or
         // the replacement effect already owns that flag. Clearing here caused empty+spinner
         // races and could leave a superseded load stuck spinning forever.
         try {
             // Process-scoped list job inside gateway; effect cancel only drops this await.
-            val result = SmbGateway.listDirectory(
+            val result = WebDavGateway.listDirectory(
                 src,
                 password,
                 loadDir,
@@ -241,7 +241,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             // Still the active effect for this path (not cancelled) → safe to commit.
             entries = result
             listedDir = loadDir
-            SmbRepository.markOk(src.id)
+            WebDavRepository.markOk(src.id)
             error = null
             loading = false
             refreshing = false
@@ -252,7 +252,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             error = e.message
             entries = emptyList()
             listedDir = loadDir
-            SmbRepository.markError(src.id, e.message ?: "error")
+            WebDavRepository.markError(src.id, e.message ?: "error")
             loading = false
             refreshing = false
         }
@@ -307,13 +307,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun openFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
         val src = source ?: return
-        ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
+        ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
         val remote = if (entry.relativeName.isEmpty()) {
             relativeDir
         } else {
-            SmbGateway.joinRelativePath(relativeDir, entry.relativeName)
+            WebDavGateway.joinRelative(relativeDir, entry.relativeName)
         }
-        val gid = stableGalleryId(src.id, "smb:$remote")
+        val gid = stableGalleryId(src.id, "webdav:$remote")
         val info = BaseGalleryInfo(
             gid = gid,
             token = LOCAL_GALLERY_TOKEN,
@@ -325,7 +325,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         launchIO {
             // Progress FK for reader; History stores the SMB folder path link.
             LocalHistory.ensureGalleryForProgress(info)
-            LocalHistory.recordSmbBrowseFolder(
+            LocalHistory.recordWebDavBrowseFolder(
                 sourceId = src.id,
                 relativePath = remote,
                 title = entry.name,
@@ -334,11 +334,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
         // When capped or partial, pass empty names so reader re-lists full set
         val names = if (entry.pageCountCapped) emptyList() else entry.imageFileNames
-        navToSmbFolderReader(src.id, remote, names, info)
+        navToWebDavFolderReader(src.id, remote, names, info)
     }
 
     fun openArchive(@Suppress("UNUSED_PARAMETER") entry: BrowseEntryRemote.ArchiveGallery) {
-        launch { snackbar(string(R.string.smb_archive_not_supported)) }
+        launch { snackbar(string(R.string.webdav_archive_not_supported)) }
     }
 
     Scaffold(
@@ -438,7 +438,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     }
                 }
                 error != null && entries.isEmpty() -> {
-                    BrowseEmptyHint(string(R.string.smb_listing_error, error!!))
+                    BrowseEmptyHint(string(R.string.webdav_listing_error, error!!))
                 }
                 entries.isEmpty() -> {
                     BrowseEmptyHint(stringResource(R.string.folder_empty))
@@ -461,19 +461,19 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             "a-${it.parentRelativeName}/${it.fileName}"
                         is BrowseEntryRemote.Directory -> "d-${it.name}"
                     }
-                    fun coverFor(entry: BrowseEntryRemote.FolderGallery): BrowseCover.Smb? = entry.coverFileName?.let { fileName ->
+                    fun coverFor(entry: BrowseEntryRemote.FolderGallery): BrowseCover.WebDav? = entry.coverFileName?.let { fileName ->
                         val remote = if (entry.relativeName.isEmpty()) {
-                            SmbGateway.joinRelativePath(relativeDir, fileName)
+                            WebDavGateway.joinRelative(relativeDir, fileName)
                         } else {
-                            SmbGateway.joinRelativePath(
-                                SmbGateway.joinRelativePath(relativeDir, entry.relativeName),
+                            WebDavGateway.joinRelative(
+                                WebDavGateway.joinRelative(relativeDir, entry.relativeName),
                                 fileName,
                             )
                         }
-                        BrowseCover.Smb(sourceId, remote)
+                        BrowseCover.WebDav(sourceId, remote)
                     }
                     if (useGrid) {
-                        val gridState = rememberSmbBrowseGridState(sourceId, dirKey, listMode)
+                        val gridState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey", listMode)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
                             columns = GalleryGridDefaults.columns(),
@@ -528,7 +528,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             }
                         }
                     } else {
-                        val listState = rememberSmbBrowseListState(sourceId, dirKey, listMode)
+                        val listState = rememberSmbBrowseListState(sourceId, "dav|$dirKey", listMode)
                         FastScrollLazyColumn(
                             state = listState,
                             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),

@@ -134,6 +134,16 @@ object Settings : DataStorePreferences(null) {
     val readCacheSize = intPref("read_cache_size_2", 640)
     val enableCronet = boolPref("enable_cronet", true)
     val enableQuic = boolPref("enable_quic", true)
+
+    /**
+     * WebDAV: trust any TLS certificate / skip hostname verify (self-signed LAN HTTPS).
+     * Default off — normal system trust for https://. Rebuilds [WebDavClient] on change.
+     * Cleartext http:// is controlled by network security config (explicit http URLs only).
+     */
+    val webDavInsecureTls = boolPref("webdav_insecure_tls", false).observed {
+        runCatching { com.hippo.ehviewer.webdav.WebDavClient.resetClient() }
+    }
+
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
     val animateItems = boolPref("animate_items", true)

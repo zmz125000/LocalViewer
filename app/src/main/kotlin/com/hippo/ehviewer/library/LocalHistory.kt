@@ -16,12 +16,16 @@ const val LOCAL_BROWSE_TOKEN = "local_browse"
 /** Browse SMB folder path link. Click → SmbBrowser at path. */
 const val SMB_BROWSE_TOKEN = "smb_browse"
 
+/** Browse WebDAV folder path link. Click → WebDavBrowser at path. */
+const val WEBDAV_BROWSE_TOKEN = "webdav_browse"
+
 private const val PATH_SEP = '\u0000'
 
 sealed interface LocalHistoryTarget {
     data class LibraryGallery(val galleryId: Long) : LocalHistoryTarget
     data class LocalBrowseFolder(val rootId: Long, val relativePath: String) : LocalHistoryTarget
     data class SmbBrowseFolder(val sourceId: Long, val relativePath: String) : LocalHistoryTarget
+    data class WebDavBrowseFolder(val sourceId: Long, val relativePath: String) : LocalHistoryTarget
 
     /** Old/unknown row — try library id or drop. */
     data class Orphan(val gid: Long) : LocalHistoryTarget
@@ -34,6 +38,8 @@ object LocalHistory {
             ?: LocalHistoryTarget.Orphan(info.gid)
         SMB_BROWSE_TOKEN -> decodeSmbBrowse(info.uploader)
             ?: LocalHistoryTarget.Orphan(info.gid)
+        WEBDAV_BROWSE_TOKEN -> decodeWebDavBrowse(info.uploader)
+            ?: LocalHistoryTarget.Orphan(info.gid)
         else -> LocalHistoryTarget.Orphan(info.gid)
     }
 
@@ -42,10 +48,11 @@ object LocalHistory {
             if (info.category == 1) KindLabel.Archive else KindLabel.Library
         LOCAL_BROWSE_TOKEN -> KindLabel.Folder
         SMB_BROWSE_TOKEN -> KindLabel.Smb
+        WEBDAV_BROWSE_TOKEN -> KindLabel.WebDav
         else -> KindLabel.Unknown
     }
 
-    enum class KindLabel { Library, Archive, Folder, Smb, Unknown }
+    enum class KindLabel { Library, Archive, Folder, Smb, WebDav, Unknown }
 
     suspend fun recordLibraryGallery(gallery: LocalGalleryEntity) {
         EhDB.putHistoryInfo(gallery.toBaseGalleryInfo())
@@ -99,6 +106,28 @@ object LocalHistory {
         EhDB.putHistoryInfo(info)
     }
 
+    suspend fun recordWebDavBrowseFolder(
+        sourceId: Long,
+        relativePath: String,
+        title: String,
+        coverPath: String? = null,
+        pages: Int = 0,
+    ) {
+        val rel = normalizeRel(relativePath)
+        val info = BaseGalleryInfo(
+            gid = stableGalleryId(sourceId, "webdav-browse:$rel"),
+            token = WEBDAV_BROWSE_TOKEN,
+            title = title.ifBlank { rel.substringAfterLast('/').ifEmpty { "WebDAV" } },
+            thumbKey = coverPath,
+            category = 3,
+            uploader = encodeWebDavBrowse(sourceId, rel),
+            rating = -1f,
+            pages = pages,
+            favoriteSlot = NOT_FAVORITED,
+        )
+        EhDB.putHistoryInfo(info)
+    }
+
     /** Ensure GALLERIES row exists for progress FK without bumping History for this gid. */
     suspend fun ensureGalleryForProgress(info: BaseGalleryInfo) {
         EhDB.putGalleryInfo(info.asEntity())
@@ -109,6 +138,8 @@ object LocalHistory {
     private fun encodeLocalBrowse(rootId: Long, relativePath: String): String = "$rootId$PATH_SEP$relativePath"
 
     private fun encodeSmbBrowse(sourceId: Long, relativePath: String): String = "$sourceId$PATH_SEP$relativePath"
+
+    private fun encodeWebDavBrowse(sourceId: Long, relativePath: String): String = "$sourceId$PATH_SEP$relativePath"
 
     private fun decodeLocalBrowse(encoded: String?): LocalHistoryTarget.LocalBrowseFolder? {
         if (encoded.isNullOrEmpty()) return null
@@ -126,6 +157,15 @@ object LocalHistory {
         val sourceId = encoded.substring(0, sep).toLongOrNull() ?: return null
         val rel = encoded.substring(sep + 1)
         return LocalHistoryTarget.SmbBrowseFolder(sourceId, rel)
+    }
+
+    private fun decodeWebDavBrowse(encoded: String?): LocalHistoryTarget.WebDavBrowseFolder? {
+        if (encoded.isNullOrEmpty()) return null
+        val sep = encoded.indexOf(PATH_SEP)
+        if (sep <= 0) return null
+        val sourceId = encoded.substring(0, sep).toLongOrNull() ?: return null
+        val rel = encoded.substring(sep + 1)
+        return LocalHistoryTarget.WebDavBrowseFolder(sourceId, rel)
     }
 }
 

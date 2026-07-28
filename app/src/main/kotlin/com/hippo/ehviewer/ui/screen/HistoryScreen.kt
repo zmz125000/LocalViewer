@@ -73,6 +73,8 @@ import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
+import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
+import com.hippo.ehviewer.webdav.WebDavRepository
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.HistoryGridItem
 import com.hippo.ehviewer.ui.main.HistoryListItem
@@ -166,6 +168,24 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     BrowseSession.setSmbSegments(source.id, segments)
                     navigate(
                         SmbBrowserScreenDestination(
+                            sourceId = source.id,
+                            initialRelativePath = target.relativePath,
+                            fromHistory = true,
+                        ),
+                    )
+                }
+                is LocalHistoryTarget.WebDavBrowseFolder -> {
+                    val source = withIOContext { WebDavRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                        historyData.refresh()
+                        return@launch
+                    }
+                    val segments = target.relativePath.split('/').filter { it.isNotEmpty() }
+                    BrowseSession.setWebDavSegments(source.id, segments)
+                    navigate(
+                        WebDavBrowserScreenDestination(
                             sourceId = source.id,
                             initialRelativePath = target.relativePath,
                             fromHistory = true,

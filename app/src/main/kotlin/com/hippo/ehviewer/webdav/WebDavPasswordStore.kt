@@ -1,4 +1,4 @@
-package com.hippo.ehviewer.smb
+package com.hippo.ehviewer.webdav
 
 import android.content.Context
 import android.os.Looper
@@ -15,29 +15,23 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import splitties.init.appCtx
 
-/**
- * SMB passwords encrypted with AES-GCM via Android Keystore.
- *
- * Replaces androidx.security EncryptedSharedPreferences (soft-deprecated).
- * Ciphertext is stored in a private SharedPreferences file as Base64(iv || ciphertext).
- *
- * Note: passwords previously stored only in EncryptedSharedPreferences (`smb_secrets`)
- * are not auto-migrated (that library was removed). Users re-enter SMB passwords once.
- */
-object SmbPasswordStore {
-    private const val PREFS = "smb_secrets_ks"
+/** WebDAV passwords: AES-GCM + Android Keystore (same pattern as SMB). */
+object WebDavPasswordStore {
+    private const val PREFS = "webdav_secrets_ks"
     private const val KEY_PREFIX = "pwd_"
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-    private const val KEY_ALIAS = "localviewer_smb_aes"
+    private const val KEY_ALIAS = "localviewer_webdav_aes"
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
     private const val GCM_TAG_BITS = 128
-    private const val IV_BYTES = 12
 
     private val prefs by lazy {
         appCtx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     }
 
-    /** Keystore crypto must not run on the main thread (StrictMode). */
+    /**
+     * Keystore crypto must not run on the main thread (StrictMode CustomViolation).
+     * Hop to [Dispatchers.IO] when called from main (e.g. Compose LaunchedEffect default).
+     */
     private inline fun <T> keystoreIo(crossinline block: () -> T): T {
         if (Looper.getMainLooper().isCurrentThread) {
             return runBlocking(Dispatchers.IO) { block() }
@@ -95,11 +89,10 @@ object SmbPasswordStore {
 
     private fun decrypt(packed: String): String {
         val all = Base64.decode(packed, Base64.NO_WRAP)
-        require(all.size > IV_BYTES) { "ciphertext too short" }
-        val iv = all.copyOfRange(0, IV_BYTES)
-        val ciphertext = all.copyOfRange(IV_BYTES, all.size)
+        val iv = all.copyOfRange(0, 12)
+        val ciphertext = all.copyOfRange(12, all.size)
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
-        return cipher.doFinal(ciphertext).toString(Charsets.UTF_8)
+        return String(cipher.doFinal(ciphertext), Charsets.UTF_8)
     }
 }

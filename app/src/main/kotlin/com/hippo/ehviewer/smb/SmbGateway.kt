@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.smb
 
+import android.net.TrafficStats
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
@@ -1047,6 +1048,8 @@ object SmbGateway {
             // Dedicated SMBClient per session so smbj's host Connection cache
             // cannot poison other pool slots / shares on half-open TCP.
             val smbClient = SMBClient(smbConfig())
+            val prevTag = TrafficStats.getThreadStatsTag()
+            TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
             try {
                 val connection = smbClient.connect(source.host, source.port)
                 try {
@@ -1059,6 +1062,12 @@ object SmbGateway {
             } catch (e: Throwable) {
                 runCatching { smbClient.close() }
                 throw e
+            } finally {
+                if (prevTag == -1) {
+                    TrafficStats.clearThreadStatsTag()
+                } else {
+                    TrafficStats.setThreadStatsTag(prevTag)
+                }
             }
         }
     }
@@ -1210,29 +1219,64 @@ private fun isIgnorableListError(e: SMBApiException): Boolean {
  * SO_KEEPALIVE lets the kernel detect dead peers; TCP_NODELAY reduces small-write delay.
  * SO_LINGER 0 sends RST on close so half-open VPN paths do not hang close() for SO timeout.
  * smbj owns protocol framing / credits / reconnect policy beyond this.
+ *
+ * TrafficStats: StrictMode [UntaggedSocketViolation] fires at native socket *create*,
+ * so [TrafficStats.setThreadStatsTag] must run **before** [SocketFactory.createSocket],
+ * not only [TrafficStats.tagSocket] afterward (too late).
  */
 private object KeepAliveSocketFactory : SocketFactory() {
+    /** Distinct app traffic tag for SMB (see TrafficStats.setThreadStatsTag). */
+    const val SMB_TRAFFIC_TAG = 0x534D42 // "SMB"
+
     private val defaultFactory: SocketFactory = getDefault()
 
+    private fun withSmbTrafficTag(create: () -> Socket): Socket {
+        val previous = TrafficStats.getThreadStatsTag()
+        TrafficStats.setThreadStatsTag(SMB_TRAFFIC_TAG)
+        return try {
+            create().configure()
+        } finally {
+            // Restore so we do not leak the tag onto unrelated work on this thread.
+            if (previous == -1) {
+                TrafficStats.clearThreadStatsTag()
+            } else {
+                TrafficStats.setThreadStatsTag(previous)
+            }
+        }
+    }
+
     private fun Socket.configure(): Socket = apply {
+        // Re-tag after create (connected sockets / some OEMs).
+        runCatching { TrafficStats.tagSocket(this) }
         keepAlive = true
         tcpNoDelay = true
         // Abortive close — important when EasyTier/VPN dies under active SMB I/O.
         runCatching { setSoLinger(true, 0) }
     }
 
-    override fun createSocket(): Socket = defaultFactory.createSocket().configure()
+    override fun createSocket(): Socket = withSmbTrafficTag {
+        defaultFactory.createSocket()
+    }
 
-    override fun createSocket(host: String, port: Int): Socket = defaultFactory.createSocket(host, port).configure()
+    override fun createSocket(host: String, port: Int): Socket = withSmbTrafficTag {
+        defaultFactory.createSocket(host, port)
+    }
 
-    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket = defaultFactory.createSocket(host, port, localHost, localPort).configure()
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
+        withSmbTrafficTag {
+            defaultFactory.createSocket(host, port, localHost, localPort)
+        }
 
-    override fun createSocket(host: InetAddress, port: Int): Socket = defaultFactory.createSocket(host, port).configure()
+    override fun createSocket(host: InetAddress, port: Int): Socket = withSmbTrafficTag {
+        defaultFactory.createSocket(host, port)
+    }
 
     override fun createSocket(
         address: InetAddress,
         port: Int,
         localAddress: InetAddress,
         localPort: Int,
-    ): Socket = defaultFactory.createSocket(address, port, localAddress, localPort).configure()
+    ): Socket = withSmbTrafficTag {
+        defaultFactory.createSocket(address, port, localAddress, localPort)
+    }
 }

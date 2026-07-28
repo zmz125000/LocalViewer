@@ -2,6 +2,7 @@ package com.hippo.ehviewer.smb
 
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.os.Looper
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.util.FileUtils
@@ -69,14 +70,25 @@ object SmbCache {
     /** Cap concurrent full-file SMB fetches for thumb generation (first paint). */
     private val thumbFetchSlots = Semaphore(3)
 
-    private val pageRoot: Path
-        get() = appCtx.cacheDir.resolve("smb_cache").toOkioPath().also { it.mkdirs() }
+    /**
+     * Cache roots as pure path math from [ApplicationInfo.dataDir] (string field — no disk).
+     * Avoid [Context.getCacheDir] + [mkdirs] on every path resolve (main-thread StrictMode
+     * when browse thumbs call [thumbCachePath] during composition).
+     * Directories are created only on write paths via [ensureRootDirs].
+     */
+    private val pageRoot: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        File(appCtx.applicationInfo.dataDir, "cache/smb_cache").toOkioPath()
+    }
 
-    private val thumbRoot: Path
-        get() = appCtx.cacheDir.resolve("smb_thumb_cache").toOkioPath().also { it.mkdirs() }
+    private val thumbRoot: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        File(appCtx.applicationInfo.dataDir, "cache/smb_thumb_cache").toOkioPath()
+    }
 
     /** One lock per cache file so concurrent callers share one download/encode. */
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
+
+    /** Paths known present after write or off-main probe — avoids main-thread File I/O. */
+    private val knownPresent = ConcurrentHashMap.newKeySet<String>()
 
     private val trimScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val trimLock = Mutex()
@@ -85,6 +97,12 @@ object SmbCache {
     private fun rootFor(kind: Kind): Path = when (kind) {
         Kind.Page -> pageRoot
         Kind.Thumb -> thumbRoot
+    }
+
+    /** Call only from IO write paths. */
+    private fun ensureRootDirs() {
+        File(pageRoot.toString()).mkdirs()
+        File(thumbRoot.toString()).mkdirs()
     }
 
     /**
@@ -140,14 +158,27 @@ object SmbCache {
         return thumbRoot / "${sha256Hex(key)}.jpg"
     }
 
-    /** Non-empty regular file on disk (Java File — reliable for app cache paths). */
+    /**
+     * Fast cache presence check.
+     * Memory hit → true; main + unknown → false (no disk); background → probe disk.
+     */
     fun isCached(path: Path): Boolean {
-        val f = File(path.toString())
-        return f.isFile && f.length() > 0L
+        val key = path.toString()
+        if (knownPresent.contains(key)) return true
+        if (Looper.getMainLooper().isCurrentThread) return false
+        val f = File(key)
+        val ok = f.isFile && f.length() > 0L
+        if (ok) knownPresent.add(key)
+        return ok
     }
 
-    /** Bump mtime so LRU eviction prefers colder files. Safe to call on list scroll hits. */
+    fun markPresent(path: Path) {
+        knownPresent.add(path.toString())
+    }
+
+    /** Bump mtime so LRU eviction prefers colder files. No-op on main (StrictMode). */
     fun touch(path: Path) {
+        if (Looper.getMainLooper().isCurrentThread) return
         val f = File(path.toString())
         if (f.isFile) f.setLastModified(System.currentTimeMillis())
     }
@@ -192,7 +223,8 @@ object SmbCache {
                 if (!isCached(pagePath)) {
                     error("SMB page cache empty after download for $remoteRelativeFile")
                 }
-                destPath.parent?.mkdirs()
+                ensureRootDirs()
+                File(destPath.parent!!.toString()).mkdirs()
                 val dest = File(key)
                 val jpgTmp = File("$key.jpg.${System.nanoTime()}")
                 try {
@@ -203,6 +235,7 @@ object SmbCache {
                         THUMB_JPEG_QUALITY,
                     )
                     commitTmp(jpgTmp, dest)
+                    markPresent(destPath)
                     touch(destPath)
                 } catch (e: Throwable) {
                     if (jpgTmp.exists()) jpgTmp.delete()
@@ -233,12 +266,14 @@ object SmbCache {
                 touch(path)
                 return
             }
-            path.parent?.mkdirs()
+            ensureRootDirs()
+            path.parent?.let { File(it.toString()).mkdirs() }
             val dest = File(key)
             val tmp = File("$key.tmp.${System.nanoTime()}")
             try {
                 FileOutputStream(tmp).use { out -> write(out) }
                 commitTmp(tmp, dest)
+                markPresent(path)
                 touch(path)
             } catch (e: Throwable) {
                 tmp.delete()

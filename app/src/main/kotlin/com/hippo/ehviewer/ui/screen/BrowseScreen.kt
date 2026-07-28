@@ -27,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -81,8 +82,11 @@ import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.LibrarySettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.easytier.EasyTierDialog
+import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.webdav.WebDavClient
+import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -94,8 +98,8 @@ import moe.tarsin.string
 private const val URI_FLAGS = FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE_URI_PERMISSION
 
 /**
- * Hub for library/folder SAF roots and SMB network sources.
- * Top bar: add library, add browse folder, add SMB, manage sources.
+ * Hub for library/folder SAF roots and SMB / WebDAV network sources.
+ * Top bar: add library, add browse folder, add SMB, add WebDAV, manage sources.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
@@ -103,6 +107,7 @@ private const val URI_FLAGS = FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE
 fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Screen(navigator) {
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
     val smbSources by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
+    val webDavSources by WebDavRepository.sourcesFlow().collectAsState(initial = emptyList())
     val gridView by Settings.gridView.collectAsState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val context = LocalContext.current
@@ -112,6 +117,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }
     var showEasyTierDialog by remember { mutableStateOf(false) }
     val easyTierState by EasyTierRuntime.state.collectAsState()
+    var webDavEditor by remember { mutableStateOf<WebDavEditorState?>(null) }
     // Pending role for the next OpenDocumentTree result.
     var pendingSafRole by remember { mutableIntStateOf(LIBRARY_ROOT_ROLE_LIBRARY) }
     var accessChooserRole by remember { mutableStateOf<Int?>(null) }
@@ -248,6 +254,64 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         navigate(SmbBrowserScreenDestination(source.id, ""))
     }
 
+    fun openWebDav(source: com.ehviewer.core.database.model.WebDavSourceEntity) {
+        BrowseSession.setWebDavSegments(source.id, emptyList())
+        navigate(WebDavBrowserScreenDestination(source.id, ""))
+    }
+
+    fun saveWebDav(saved: WebDavEditorState, password: String) {
+        launchIO {
+            if (saved.id == 0L) {
+                WebDavRepository.add(
+                    displayName = saved.resolvedDisplayName(),
+                    baseUrl = saved.baseUrl,
+                    pathPrefix = saved.pathPrefix,
+                    username = saved.username,
+                    password = password,
+                )
+            } else {
+                val existing = WebDavRepository.load(saved.id)
+                WebDavRepository.update(
+                    com.ehviewer.core.database.model.WebDavSourceEntity(
+                        id = saved.id,
+                        displayName = saved.resolvedDisplayName(),
+                        baseUrl = saved.baseUrl.trim(),
+                        pathPrefix = saved.pathPrefix,
+                        username = saved.username,
+                        addedAt = existing?.addedAt
+                            ?: Clock.System.now().toEpochMilliseconds(),
+                        lastOkAt = existing?.lastOkAt,
+                        lastError = existing?.lastError,
+                    ),
+                    password = password,
+                )
+            }
+        }
+        webDavEditor = null
+    }
+
+    fun testWebDav(testState: WebDavEditorState, password: String) {
+        launch {
+            val entity = com.ehviewer.core.database.model.WebDavSourceEntity(
+                id = testState.id,
+                displayName = testState.resolvedDisplayName(),
+                baseUrl = testState.baseUrl.trim(),
+                pathPrefix = testState.pathPrefix,
+                username = testState.username,
+                addedAt = 0L,
+            )
+            val result = WebDavClient.testConnection(entity, password)
+            if (result.isSuccess) {
+                if (testState.id != 0L) WebDavRepository.markOk(testState.id)
+                snackbar(string(R.string.network_test_ok))
+            } else {
+                val msg = result.exceptionOrNull()?.message ?: "error"
+                if (testState.id != 0L) WebDavRepository.markError(testState.id, msg)
+                snackbar(string(R.string.network_test_fail, msg))
+            }
+        }
+    }
+
     fun saveSmb(saved: SmbEditorState, password: String) {
         val (share, pathPrefix) = saved.resolvedShareAndPath()
         launchIO {
@@ -356,21 +420,21 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         )
                     }
                     IconButton(
-                        onClick = { launchAddLocalSource(LIBRARY_ROOT_ROLE_FOLDER) },
-                        shapes = IconButtonDefaults.shapes(),
-                    ) {
-                        Icon(
-                            Icons.Default.CreateNewFolder,
-                            contentDescription = stringResource(R.string.library_add_folder_source),
-                        )
-                    }
-                    IconButton(
                         onClick = { smbEditor = SmbEditorState() },
                         shapes = IconButtonDefaults.shapes(),
                     ) {
                         Icon(
                             Icons.Default.Lan,
                             contentDescription = stringResource(R.string.network_add_smb),
+                        )
+                    }
+                    IconButton(
+                        onClick = { webDavEditor = WebDavEditorState() },
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        Icon(
+                            Icons.Default.Cloud,
+                            contentDescription = stringResource(R.string.webdav_add),
                         )
                     }
                     IconButton(
@@ -387,7 +451,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
             )
         },
     ) { padding ->
-        val empty = roots.isEmpty() && smbSources.isEmpty()
+        val empty = roots.isEmpty() && smbSources.isEmpty() && webDavSources.isEmpty()
         if (empty) {
             BrowseEmptyHint(
                 text = stringResource(R.string.browse_empty),
@@ -404,7 +468,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (smbSources.isNotEmpty()) {
+                if (smbSources.isNotEmpty() || webDavSources.isNotEmpty()) {
                     item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, key = "hdr-net") {
                         BrowseSectionHeader(stringResource(R.string.network))
                     }
@@ -414,6 +478,14 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                             subtitle = smbSubtitle(source),
                             icon = { Icon(Icons.Default.Lan, contentDescription = null) },
                             onClick = { openSmb(source) },
+                        )
+                    }
+                    items(webDavSources, key = { "w-${it.id}" }) { source ->
+                        BrowseRootCard(
+                            title = source.displayName,
+                            subtitle = webDavSubtitle(source),
+                            icon = { Icon(Icons.Default.Cloud, contentDescription = null) },
+                            onClick = { openWebDav(source) },
                         )
                     }
                 }
@@ -453,7 +525,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     .nestedScroll(scrollBehavior.nestedScrollConnection)
                     .fillMaxSize(),
             ) {
-                if (smbSources.isNotEmpty()) {
+                if (smbSources.isNotEmpty() || webDavSources.isNotEmpty()) {
                     item(key = "hdr-net") {
                         BrowseSectionHeader(stringResource(R.string.network))
                     }
@@ -465,6 +537,16 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                                 Icon(Icons.Default.Lan, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             },
                             modifier = Modifier.fillMaxWidth().clickable { openSmb(source) },
+                        )
+                    }
+                    items(webDavSources, key = { "w-${it.id}" }) { source ->
+                        ListItem(
+                            headlineContent = { Text(source.displayName) },
+                            supportingContent = { Text(webDavSubtitle(source)) },
+                            leadingContent = {
+                                Icon(Icons.Default.Cloud, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            modifier = Modifier.fillMaxWidth().clickable { openWebDav(source) },
                         )
                     }
                 }
@@ -524,6 +606,28 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 navigate(EasyTierScreenDestination)
             },
         )
+    }
+    webDavEditor?.let { state ->
+        WebDavEditDialog(
+            state = state,
+            onDismiss = { webDavEditor = null },
+            onSave = { saved, password -> saveWebDav(saved, password) },
+            onTest = { testState, password -> testWebDav(testState, password) },
+            onDelete = {
+                launchIO {
+                    WebDavRepository.load(state.id)?.let { WebDavRepository.delete(it) }
+                }
+                webDavEditor = null
+            }.takeIf { state.id != 0L },
+        )
+    }
+}
+
+private fun webDavSubtitle(source: com.ehviewer.core.database.model.WebDavSourceEntity): String = buildString {
+    append(source.baseUrl.trimEnd('/'))
+    if (source.pathPrefix.isNotBlank()) {
+        append('/')
+        append(source.pathPrefix.trim('/'))
     }
 }
 

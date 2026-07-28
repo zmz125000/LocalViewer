@@ -52,12 +52,17 @@ import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.webdav.WebDavCache
+import com.hippo.ehviewer.webdav.WebDavClient
+import com.hippo.ehviewer.webdav.WebDavPasswordStore
+import com.hippo.ehviewer.webdav.WebDavRepository
 import okio.Path
 
-/** Cover source for browse list rows (local path or lazy SMB download). */
+/** Cover source for browse list rows (local path or lazy remote download). */
 sealed class BrowseCover {
     data class Local(val path: Path) : BrowseCover()
     data class Smb(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
+    data class WebDav(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
 }
 
 @Composable
@@ -296,11 +301,12 @@ fun BrowseCoverThumb(
     val resolvedDecodePx = decodeSizePx ?: CoverThumb.listDecodePx()
     val context = LocalContext.current
     // Stable keys: BrowseCover is a new instance per list paint; identity by fields.
-    val smbKey = when (cover) {
-        is BrowseCover.Smb -> "${cover.sourceId}\u0000${cover.remoteRelativeFile}"
+    val remoteKey = when (cover) {
+        is BrowseCover.Smb -> "smb\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
+        is BrowseCover.WebDav -> "dav\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
         else -> null
     }
-    var localPath by remember(smbKey, cover is BrowseCover.Local) {
+    var localPath by remember(remoteKey, cover is BrowseCover.Local) {
         mutableStateOf(
             when (cover) {
                 is BrowseCover.Local -> cover.path
@@ -308,31 +314,50 @@ fun BrowseCoverThumb(
                     val cache = SmbCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
                     cache.takeIf { SmbCache.isCached(it) }?.also { SmbCache.touch(it) }
                 }
+                is BrowseCover.WebDav -> {
+                    val cache = WebDavCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
+                    cache.takeIf { WebDavCache.isCached(it) }?.also { WebDavCache.touch(it) }
+                }
                 null -> null
             },
         )
     }
-    var fetchFailed by remember(smbKey) { mutableStateOf(false) }
+    var fetchFailed by remember(remoteKey) { mutableStateOf(false) }
     // Internal resume counter + external retryKey both re-run the download effect.
-    var resumeEpoch by remember(smbKey) { mutableIntStateOf(0) }
+    var resumeEpoch by remember(remoteKey) { mutableIntStateOf(0) }
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, smbKey) {
-        if (cover !is BrowseCover.Smb) {
+    DisposableEffect(lifecycleOwner, remoteKey) {
+        if (cover !is BrowseCover.Smb && cover !is BrowseCover.WebDav) {
             return@DisposableEffect onDispose { }
         }
-        val smb = cover
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                val cache = SmbCache.thumbCachePath(smb.sourceId, smb.remoteRelativeFile)
-                if (SmbCache.isCached(cache)) {
-                    SmbCache.touch(cache)
-                    localPath = cache
-                    fetchFailed = false
-                } else if (localPath == null || !SmbCache.isCached(localPath!!)) {
-                    // Pool sockets were closed on background; allow another 3-attempt cycle.
-                    localPath = null
-                    fetchFailed = false
-                    resumeEpoch++
+                when (cover) {
+                    is BrowseCover.Smb -> {
+                        val cache = SmbCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
+                        if (SmbCache.isCached(cache)) {
+                            SmbCache.touch(cache)
+                            localPath = cache
+                            fetchFailed = false
+                        } else if (localPath == null || !SmbCache.isCached(localPath!!)) {
+                            localPath = null
+                            fetchFailed = false
+                            resumeEpoch++
+                        }
+                    }
+                    is BrowseCover.WebDav -> {
+                        val cache = WebDavCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
+                        if (WebDavCache.isCached(cache)) {
+                            WebDavCache.touch(cache)
+                            localPath = cache
+                            fetchFailed = false
+                        } else if (localPath == null || !WebDavCache.isCached(localPath!!)) {
+                            localPath = null
+                            fetchFailed = false
+                            resumeEpoch++
+                        }
+                    }
+                    else -> Unit
                 }
             }
         }
@@ -341,41 +366,70 @@ fun BrowseCoverThumb(
     }
 
     // Lazy: only runs when this row is composed (in LazyColumn viewport).
-    // Disk cache is authoritative — scroll recycle / refreshToken must not re-hit SMB
-    // when the thumb file is already in smb_thumb_cache.
-    LaunchedEffect(smbKey, retryKey, resumeEpoch) {
-        val smb = cover as? BrowseCover.Smb ?: return@LaunchedEffect
-        val cache = SmbCache.thumbCachePath(smb.sourceId, smb.remoteRelativeFile)
-        // Small JPEG on disk → no SMB, no full-res decode.
-        if (SmbCache.isCached(cache)) {
-            SmbCache.touch(cache)
-            localPath = cache
-            fetchFailed = false
-            return@LaunchedEffect
-        }
-        fetchFailed = false
-        var lastError: Throwable? = null
-        repeat(3) { attempt ->
-            val result = runCatching {
-                val source = SmbRepository.load(smb.sourceId) ?: error("SMB source missing")
-                val password = SmbPasswordStore.get(smb.sourceId)
-                // Download once → write ~512px JPEG into smb_thumb_cache (not the original).
-                SmbCache.ensureBrowseThumb(smb.sourceId, smb.remoteRelativeFile) { out ->
-                    SmbGateway.downloadFile(source, password, smb.remoteRelativeFile, out)
+    // Disk cache is authoritative — scroll recycle / refreshToken must not re-hit network
+    // when the thumb file is already cached.
+    LaunchedEffect(remoteKey, retryKey, resumeEpoch) {
+        when (cover) {
+            is BrowseCover.Smb -> {
+                val cache = SmbCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
+                if (SmbCache.isCached(cache)) {
+                    SmbCache.touch(cache)
+                    localPath = cache
+                    fetchFailed = false
+                    return@LaunchedEffect
                 }
-            }
-            if (result.isSuccess) {
-                localPath = result.getOrNull()
                 fetchFailed = false
-                return@LaunchedEffect
+                var lastError: Throwable? = null
+                repeat(3) { attempt ->
+                    val result = runCatching {
+                        val source = SmbRepository.load(cover.sourceId) ?: error("SMB source missing")
+                        val password = SmbPasswordStore.get(cover.sourceId)
+                        SmbCache.ensureBrowseThumb(cover.sourceId, cover.remoteRelativeFile) { out ->
+                            SmbGateway.downloadFile(source, password, cover.remoteRelativeFile, out)
+                        }
+                    }
+                    if (result.isSuccess) {
+                        localPath = result.getOrNull()
+                        fetchFailed = false
+                        return@LaunchedEffect
+                    }
+                    lastError = result.exceptionOrNull()
+                    if (attempt < 2) kotlinx.coroutines.delay(150L * (attempt + 1))
+                }
+                lastError?.let { logcat(it) }
+                fetchFailed = true
             }
-            lastError = result.exceptionOrNull()
-            if (attempt < 2) {
-                kotlinx.coroutines.delay(150L * (attempt + 1))
+            is BrowseCover.WebDav -> {
+                val cache = WebDavCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
+                if (WebDavCache.isCached(cache)) {
+                    WebDavCache.touch(cache)
+                    localPath = cache
+                    fetchFailed = false
+                    return@LaunchedEffect
+                }
+                fetchFailed = false
+                var lastError: Throwable? = null
+                repeat(3) { attempt ->
+                    val result = runCatching {
+                        val source = WebDavRepository.load(cover.sourceId) ?: error("WebDAV source missing")
+                        val password = WebDavPasswordStore.get(cover.sourceId)
+                        WebDavCache.ensureBrowseThumb(cover.sourceId, cover.remoteRelativeFile) { out ->
+                            WebDavClient.downloadFile(source, password, cover.remoteRelativeFile, out)
+                        }
+                    }
+                    if (result.isSuccess) {
+                        localPath = result.getOrNull()
+                        fetchFailed = false
+                        return@LaunchedEffect
+                    }
+                    lastError = result.exceptionOrNull()
+                    if (attempt < 2) kotlinx.coroutines.delay(150L * (attempt + 1))
+                }
+                lastError?.let { logcat(it) }
+                fetchFailed = true
             }
+            else -> return@LaunchedEffect
         }
-        lastError?.let { logcat(it) }
-        fetchFailed = true
     }
 
     // Disk thumbs are already ~512px JPEG; Coil size request is a light second pass.
@@ -384,6 +438,8 @@ fun BrowseCoverThumb(
             val cacheKey = when (cover) {
                 is BrowseCover.Smb ->
                     "smb-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${SmbCache.THUMB_DISK_EDGE}"
+                is BrowseCover.WebDav ->
+                    "dav-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${WebDavCache.THUMB_DISK_EDGE}"
                 is BrowseCover.Local -> cover.path.toString()
                 null -> path.toString()
             }
