@@ -48,8 +48,21 @@ class CronetEngine(override val config: CronetConfig) : HttpClientEngineBase("Cr
 
     private val executor = dispatcher.limitedParallelism(1).asExecutor()
     private val pool = DirectByteBufferPool(32)
-    private val client by lazy {
+    private val clientLazy = lazy {
         with(config) { HttpEngine.Builder(context).apply(config).build() }
+    }
+    private val client get() = clientLazy.value
+
+    /**
+     * Release the underlying [HttpEngine] so its disk cache storage path can be reused.
+     * Without this, [HttpClient.close] leaves the Cronet storage lock held and a later
+     * engine with the same path fails with "Disk cache storage path already in use".
+     */
+    override fun close() {
+        super.close()
+        if (clientLazy.isInitialized()) {
+            runCatching { clientLazy.value.shutdown() }
+        }
     }
 
     @InternalAPI
