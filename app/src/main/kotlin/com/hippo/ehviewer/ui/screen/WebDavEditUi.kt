@@ -32,6 +32,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.i18n.R
+import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 
 data class WebDavEditorState(
@@ -135,6 +136,16 @@ fun WebDavEditDialog(
                         imeAction = ImeAction.Next,
                     ),
                     keyboardActions = KeyboardActions(onNext = { pathFocus.requestFocus() }),
+                    supportingText = if (WebDavClient.isExplicitHttp(baseUrl)) {
+                        {
+                            Text(
+                                stringResource(R.string.webdav_http_hint),
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
+                    } else {
+                        null
+                    },
                 )
                 OutlinedTextField(
                     value = pathPrefix,

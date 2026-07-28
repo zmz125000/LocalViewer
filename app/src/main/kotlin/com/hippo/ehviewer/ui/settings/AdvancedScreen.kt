@@ -237,6 +237,11 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                     }
                 }
             }
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_advanced_webdav_insecure_tls),
+                summary = stringResource(id = R.string.settings_advanced_webdav_insecure_tls_summary),
+                state = Settings.webDavInsecureTls.asMutableState(),
+            )
             IntSliderPreference(
                 maxValue = 16384,
                 step = 3,

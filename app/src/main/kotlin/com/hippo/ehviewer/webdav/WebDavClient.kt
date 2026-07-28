@@ -31,32 +31,35 @@ import io.ktor.http.takeFrom
 import io.ktor.utils.io.jvm.javaio.toInputStream
 import java.io.OutputStream
 import java.net.URLDecoder
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
 import java.util.Base64
-import kotlinx.coroutines.Dispatchers
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 
-/**
- * Thin read-only WebDAV client (PROPFIND + GET) on Ktor.
- * Engine: Cronet (HTTP/2 + optional HTTP/3) or platform Android fallback — no OkHttp.
- */
+// Read-only WebDAV (PROPFIND + GET). HTTPS: system trust (Cronet preferred).
+// Explicit http scheme: cleartext via network security config. Insecure TLS setting
+// uses Android engine + trust-all for self-signed LAN HTTPS.
 object WebDavClient {
     private val PropFind = HttpMethod("PROPFIND")
 
-    private val PropfindBody =
-        """<?xml version="1.0" encoding="utf-8" ?>
-        |<d:propfind xmlns:d="DAV:">
-        |  <d:prop>
-        |    <d:displayname/>
-        |    <d:resourcetype/>
-        |    <d:getcontentlength/>
-        |    <d:getcontenttype/>
-        |  </d:prop>
-        |</d:propfind>
-        """.trimMargin()
+    private val PropfindBody = "" +
+        "<?xml version=\"1.0\" encoding=\"utf-8\" ?>" +
+        "<d:propfind xmlns:d=\"DAV:\">" +
+        "<d:prop>" +
+        "<d:displayname/>" +
+        "<d:resourcetype/>" +
+        "<d:getcontentlength/>" +
+        "<d:getcontenttype/>" +
+        "</d:prop>" +
+        "</d:propfind>"
 
     /** Parallel list/peek concurrency (HTTP multiplexes; this only caps coroutine fan-out). */
     private val listSlots = Semaphore(6)
@@ -67,36 +70,75 @@ object WebDavClient {
     @Volatile
     private var client: HttpClient? = null
 
+    // True when client was built with insecure TLS trust-all.
+    @Volatile
+    private var clientInsecure: Boolean = false
+
+    private val trustAllManager = object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+    }
+
+    private val trustAllSslContext: SSLContext by lazy {
+        SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf<TrustManager>(trustAllManager), SecureRandom())
+        }
+    }
+
+    private val trustAllHostnameVerifier = HostnameVerifier { _, _ -> true }
+
     private fun http(): HttpClient {
-        client?.let { return it }
+        val wantInsecure = Settings.webDavInsecureTls.value
+        client?.let { existing ->
+            if (clientInsecure == wantInsecure) return existing
+            resetClient()
+        }
         synchronized(this) {
-            client?.let { return it }
-            val built = if (isCronetAvailable && Settings.enableCronet.value) {
-                HttpClient(Cronet) {
-                    engine { configureClient(Settings.enableQuic.value) }
-                    install(HttpTimeout) {
-                        requestTimeoutMillis = 120_000
-                        connectTimeoutMillis = 30_000
-                        socketTimeoutMillis = 120_000
-                    }
-                    expectSuccess = false
-                }
-            } else {
-                HttpClient(Android) {
-                    install(HttpTimeout) {
-                        requestTimeoutMillis = 120_000
-                        connectTimeoutMillis = 30_000
-                        socketTimeoutMillis = 120_000
-                    }
-                    expectSuccess = false
-                }
+            client?.let { existing ->
+                if (clientInsecure == wantInsecure) return existing
             }
+            val built = buildClient(wantInsecure)
             client = built
+            clientInsecure = wantInsecure
             return built
         }
     }
 
-    /** Rebuild client when Cronet/QUIC prefs change. */
+    private fun buildClient(insecureTls: Boolean): HttpClient {
+        // Insecure TLS needs HttpsURLConnection hooks — Cronet has no public trust override.
+        val useCronet = !insecureTls && isCronetAvailable && Settings.enableCronet.value
+        return if (useCronet) {
+            HttpClient(Cronet) {
+                engine { configureClient(Settings.enableQuic.value) }
+                install(HttpTimeout) {
+                    requestTimeoutMillis = 120_000
+                    connectTimeoutMillis = 30_000
+                    socketTimeoutMillis = 120_000
+                }
+                expectSuccess = false
+            }
+        } else {
+            HttpClient(Android) {
+                engine {
+                    if (insecureTls) {
+                        sslManager = { conn: HttpsURLConnection ->
+                            conn.sslSocketFactory = trustAllSslContext.socketFactory
+                            conn.hostnameVerifier = trustAllHostnameVerifier
+                        }
+                    }
+                }
+                install(HttpTimeout) {
+                    requestTimeoutMillis = 120_000
+                    connectTimeoutMillis = 30_000
+                    socketTimeoutMillis = 120_000
+                }
+                expectSuccess = false
+            }
+        }
+    }
+
+    // Rebuild client when Cronet/QUIC/insecure TLS prefs change.
     fun resetClient() {
         synchronized(this) {
             client?.close()
@@ -104,6 +146,17 @@ object WebDavClient {
         }
     }
 
+    fun isExplicitHttp(url: String): Boolean {
+        val t = url.trim().lowercase()
+        return t.startsWith("http://")
+    }
+
+    fun isExplicitHttps(url: String): Boolean {
+        val t = url.trim().lowercase()
+        return t.startsWith("https://")
+    }
+
+    // Explicit http or https kept; missing scheme defaults to https.
     fun normalizeBaseUrl(raw: String): String {
         var s = raw.trim()
         if (s.isEmpty()) return s
@@ -133,7 +186,6 @@ object WebDavClient {
             val basePath = encodedPath.trimEnd('/')
             val segs = rel.split('/').filter { it.isNotEmpty() }.joinToString("/") { encodePathSegment(it) }
             encodedPath = "$basePath/$segs"
-            // Files have no trailing slash; dirs often do — leave without for files.
         }.build()
     }
 
@@ -378,8 +430,6 @@ object WebDavClient {
         val absPath = abs.encodedPath.trimEnd('/')
         if (absPath == rootPath) return ""
         if (!absPath.startsWith(rootPath)) {
-            // Some servers return paths relative to host without dav prefix match —
-            // fall back to last segment only handled by caller filter.
             return absPath.trimStart('/').let { decodeHref(it) }
         }
         return absPath.removePrefix(rootPath).trimStart('/').let { decodeHref(it) }
