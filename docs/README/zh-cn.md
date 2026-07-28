@@ -16,7 +16,7 @@
 
 <h1 align="center">
   <img src="https://github.com/zmz125000/LocalViewer-art/blob/master/launcher_icon-web.svg" width="200" alt="EhViewer">
-  <br>EhViewer<br>
+  <br>LocalViewer<br>
 </h1>
 
 <p align="center">
