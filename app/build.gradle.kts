@@ -86,10 +86,12 @@ android {
         buildConfigField("String", "RELEASE_CHANNEL", "\"$releaseChannel\"")
         ndk {
             if (isRelease) {
-                // EasyTier ships arm64 native libs only (see releases.yml).
-                if (releaseChannel == "easytier") {
-                    abiFilters.add("arm64-v8a")
-                } else {
+                // AGP allows ndk.abiFilters together with ABI splits only when
+                // universalApk is true (filters then control the fat APK).
+                // EasyTier is arm64-only with isUniversalApk=false, so ABI
+                // selection must come solely from splits.abi — dual config fails:
+                // "Conflicting configuration : 'arm64-v8a' in ndk abiFilters..."
+                if (releaseChannel != "easytier") {
                     abiFilters.addAll(supportedAbis)
                 }
             }
