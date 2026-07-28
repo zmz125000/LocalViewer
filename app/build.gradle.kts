@@ -86,11 +86,6 @@ android {
         buildConfigField("String", "RELEASE_CHANNEL", "\"$releaseChannel\"")
         ndk {
             if (isRelease) {
-                // AGP allows ndk.abiFilters together with ABI splits only when
-                // universalApk is true (filters then control the fat APK).
-                // EasyTier is arm64-only with isUniversalApk=false, so ABI
-                // selection must come solely from splits.abi — dual config fails:
-                // "Conflicting configuration : 'arm64-v8a' in ndk abiFilters..."
                 if (releaseChannel != "easytier") {
                     abiFilters.addAll(supportedAbis)
                 }
@@ -103,7 +98,7 @@ android {
 
     productFlavors {
         create("default") {
-            minSdk = 32
+            minSdk = 31
         }
     }
 
