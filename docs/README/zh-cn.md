@@ -63,7 +63,7 @@
 
 # 描述
 
-高性能 Android SMB/WebDAV/LAN 图片查看器和漫画阅读器，多级文件夹智能分类，缩略图，看图双击跳转前后相册，最大两亿像素原图显示。
+基于 EhViewer 的高性能 Android SMB/WebDAV/LAN 图片查看器和漫画阅读器，多级文件夹智能分类，缩略图，看图双击跳转前后相册，最大两亿像素原图显示。
 
 致敬 Perfect Viewer 和 Kuro Reader.  
 
