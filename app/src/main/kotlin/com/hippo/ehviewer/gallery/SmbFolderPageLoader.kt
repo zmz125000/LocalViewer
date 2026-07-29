@@ -71,7 +71,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
 
                 override fun save(index: Int, file: Path): Boolean = runCatching {
                     val cached = SmbCache.cachePath(source.id, remoteDir, imageFileNames[index])
-                    check(SmbCache.isCached(cached)) { "Not cached" }
+                    check(SmbCache.isCachedOnDisk(cached)) { "Not cached" }
                     cached sendTo file
                     true
                 }.getOrDefault(false)
@@ -79,7 +79,8 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 override fun openSource(index: Int): ImageSource {
                     val name = imageFileNames[index]
                     val path = SmbCache.cachePath(source.id, remoteDir, name)
-                    check(SmbCache.isCached(path)) { "SMB page $index not downloaded" }
+                    // Always re-probe disk: knownPresent can outlive LRU eviction of cover pages.
+                    check(SmbCache.isCachedOnDisk(path)) { "SMB page $index not downloaded" }
                     return object : PathSource {
                         override val source = path
                         override val type by lazy {
@@ -141,7 +142,9 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     if (index !in 0 until size) return
                     val name = imageFileNames[index]
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
-                    if (SmbCache.isCached(cache)) {
+                    // Fast path only with a real file. Main-thread isCached/knownPresent can be
+                    // stale after page-cache LRU (covers write full files then trim deletes them).
+                    if (SmbCache.isCachedOnDisk(cache)) {
                         onReady?.invoke()
                         // Also flush any stale waiters from a prior race.
                         dispatchReady(index)
@@ -166,7 +169,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             slots.withPermit {
                                 downloadToCache(index)
                             }
-                            if (SmbCache.isCached(cache)) {
+                            if (SmbCache.isCachedOnDisk(cache)) {
                                 dispatchReady(index)
                             } else {
                                 val waiters = takeReadyWaiters(index)
@@ -210,7 +213,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 private suspend fun downloadToCache(index: Int) {
                     val name = imageFileNames[index]
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
-                    if (SmbCache.isCached(cache)) return
+                    if (SmbCache.isCachedOnDisk(cache)) return
                     val rel = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
                     // Per-path mutex: two connections never write the same cache file.
                     SmbCache.downloadIfNeeded(cache) { out ->

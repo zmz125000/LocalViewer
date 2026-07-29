@@ -55,7 +55,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
 
                 override fun save(index: Int, file: Path): Boolean = runCatching {
                     val cached = WebDavCache.cachePath(source.id, remoteDir, imageFileNames[index])
-                    check(WebDavCache.isCached(cached)) { "Not cached" }
+                    check(WebDavCache.isCachedOnDisk(cached)) { "Not cached" }
                     cached sendTo file
                     true
                 }.getOrDefault(false)
@@ -63,7 +63,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 override fun openSource(index: Int): ImageSource {
                     val name = imageFileNames[index]
                     val path = WebDavCache.cachePath(source.id, remoteDir, name)
-                    check(WebDavCache.isCached(path)) { "WebDAV page $index not downloaded" }
+                    check(WebDavCache.isCachedOnDisk(path)) { "WebDAV page $index not downloaded" }
                     return object : PathSource {
                         override val source = path
                         override val type by lazy {
@@ -110,8 +110,8 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     if (index !in 0 until size) return
                     val name = imageFileNames[index]
                     val cache = WebDavCache.cachePath(source.id, remoteDir, name)
-                    // Main-thread isCached only uses memory (no File I/O). Disk probe is on IO.
-                    if (WebDavCache.isCached(cache)) {
+                    // Require a real file — knownPresent can outlive page-cache LRU after covers.
+                    if (WebDavCache.isCachedOnDisk(cache)) {
                         onReady?.invoke()
                         dispatchReady(index)
                         return
@@ -125,7 +125,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     val job = launch(Dispatchers.IO) {
                         try {
                             slots.withPermit {
-                                if (WebDavCache.isCached(cache)) {
+                                if (WebDavCache.isCachedOnDisk(cache)) {
                                     dispatchReady(index)
                                     return@withPermit
                                 }
@@ -133,7 +133,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                 WebDavCache.downloadIfNeeded(cache) { out ->
                                     WebDavClient.downloadFile(source, password, remote, out)
                                 }
-                                if (WebDavCache.isCached(cache)) {
+                                if (WebDavCache.isCachedOnDisk(cache)) {
                                     dispatchReady(index)
                                 } else if (readyWaiters.containsKey(index)) {
                                     notifyPageFailed(index, "WebDAV download incomplete")

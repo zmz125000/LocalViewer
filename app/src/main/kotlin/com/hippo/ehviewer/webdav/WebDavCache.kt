@@ -103,23 +103,25 @@ object WebDavCache {
 
     /**
      * Fast cache presence check.
-     * Memory hit → true; main + unknown → false (no disk); background → probe disk.
-     * For “show if file exists” from Compose, use [isCachedOnDisk] on IO.
+     * - **Main**: memory only (no File I/O). May be stale after trim.
+     * - **Background**: always re-probes disk ([isCachedOnDisk]).
      */
     fun isCached(path: Path): Boolean {
-        val key = path.toString()
-        if (knownPresent.contains(key)) return true
-        if (Looper.getMainLooper().isCurrentThread) return false
+        if (Looper.getMainLooper().isCurrentThread) {
+            return knownPresent.contains(path.toString())
+        }
         return isCachedOnDisk(path)
     }
 
-    /** Real disk probe; updates [knownPresent] so later main-thread [isCached] works. */
+    /**
+     * Authoritative disk probe — never trusts [knownPresent] alone
+     * (LRU can delete full page files after cover gen).
+     */
     fun isCachedOnDisk(path: Path): Boolean {
         val key = path.toString()
-        if (knownPresent.contains(key)) return true
         val f = File(key)
         val ok = f.isFile && f.length() > 0L
-        if (ok) knownPresent.add(key)
+        if (ok) knownPresent.add(key) else knownPresent.remove(key)
         return ok
     }
 
@@ -182,14 +184,14 @@ object WebDavCache {
     }
 
     suspend fun downloadIfNeeded(path: Path, write: suspend (OutputStream) -> Unit) {
-        if (probeDisk(path)) {
+        if (isCachedOnDisk(path)) {
             touch(path)
             return
         }
         val key = path.toString()
         val mutex = pathLocks.getOrPut(key) { Mutex() }
         mutex.withLock {
-            if (probeDisk(path)) {
+            if (isCachedOnDisk(path)) {
                 touch(path)
                 return
             }
@@ -204,22 +206,15 @@ object WebDavCache {
                 touch(path)
             } catch (e: Throwable) {
                 tmp.delete()
-                if (probeDisk(path)) return
+                if (isCachedOnDisk(path)) return
                 throw e
             }
         }
         scheduleTrim()
     }
 
-    /** Unconditional disk probe (call only off main). */
-    private fun probeDisk(path: Path): Boolean {
-        val key = path.toString()
-        if (knownPresent.contains(key)) return true
-        val f = File(key)
-        val ok = f.isFile && f.length() > 0L
-        if (ok) knownPresent.add(key)
-        return ok
-    }
+    /** @see isCachedOnDisk */
+    private fun probeDisk(path: Path): Boolean = isCachedOnDisk(path)
 
     private fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {
         val decoded = ImageDecoder.decodeBitmap(ImageDecoder.createSource(source)) { decoder, info, _ ->
@@ -284,7 +279,13 @@ object WebDavCache {
         for (f in files) {
             if (total <= budget) break
             val len = f.length()
-            if (f.delete()) total -= len
+            if (f.delete()) {
+                total -= len
+                knownPresent.remove(f.absolutePath)
+                knownPresent.remove(f.path)
+                pathLocks.remove(f.absolutePath)
+                pathLocks.remove(f.path)
+            }
         }
     }
 
