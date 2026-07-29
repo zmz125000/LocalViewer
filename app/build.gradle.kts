@@ -245,8 +245,10 @@ dependencies {
 
     implementation(libs.telephoto.zoomable)
 
-    // Cronet (preferred) + Android HttpURLConnection fallback — no OkHttp.
+    // Cronet (app HTTP) + Android HUC fallback — no OkHttp.
     implementation(libs.ktor.client.android)
+    // WebDAV PROPFIND needs a pure engine: Cronet and Android HUC both reject PROPFIND.
+    implementation(libs.ktor.client.cio)
 
     implementation(libs.bundles.kotlinx.serialization)
 

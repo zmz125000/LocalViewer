@@ -102,6 +102,8 @@ ktlint = "com.pinterest.ktlint:ktlint-cli:1.8.0"
 
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-android = { module = "io.ktor:ktor-client-android", version.ref = "ktor" }
+# Pure-Kotlin engine for WebDAV (PROPFIND). Cronet/Android HUC reject non-standard methods.
+ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
 
 logcat = "com.squareup.logcat:logcat:0.4"
 
