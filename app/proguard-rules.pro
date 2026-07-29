@@ -5,6 +5,15 @@
 # EasyTier JNI: native symbols are Java_com_easytier_jni_EasyTierJNI_*
 -keep class com.easytier.jni.EasyTierJNI { *; }
 
+# archive.c openArchiveStream uses GetMethodID("nativeRead"/"nativeSeek") on the
+# Kotlin bridge. R8 must not rename/shrink these or release aborts with NoSuchMethodError
+# (debug has minify off). Cover thumbs open the stream when browsing network archives.
+-keep,allowoptimization class com.hippo.ehviewer.library.ArchiveStreamBridge {
+    <init>(...);
+    byte[] nativeRead(int);
+    long nativeSeek(long, int);
+}
+
 -keepclassmembers enum * {
     public static **[] values();
     public static ** valueOf(java.lang.String);

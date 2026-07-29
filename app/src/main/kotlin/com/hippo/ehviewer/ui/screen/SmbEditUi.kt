@@ -94,7 +94,7 @@ fun SmbSourceEntity.toEditorState(includePassword: Boolean = true) = SmbEditorSt
 /** Duplicate as a new source (id = 0) with same fields and password. */
 fun SmbSourceEntity.toDuplicateEditorState() = toEditorState(includePassword = true).copy(
     id = 0,
-    displayName = "$displayName",
+    displayName = "",
 )
 
 @Composable
