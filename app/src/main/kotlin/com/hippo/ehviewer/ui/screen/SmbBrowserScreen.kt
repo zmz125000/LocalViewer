@@ -71,6 +71,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
+import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
@@ -350,21 +351,29 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery) {
         val src = source ?: return
         // fileName is only the basename from the current listing — join with the folder we are in.
-        val remote = SmbGateway.joinRelativePath(
-            SmbGateway.joinRelativePath(relativeDir, entry.parentRelativeName),
-            entry.fileName,
-        )
+        val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
             try {
                 ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
                 // Stream ZIP/CBZ/TAR/CBT: range I/O + page image cache (no full archive DL).
                 if (isStreamableArchiveFileName(entry.fileName)) {
+                    val info = BaseGalleryInfo(
+                        gid = stableGalleryId(src.id, "smba:$remote"),
+                        token = LOCAL_GALLERY_TOKEN,
+                        title = entry.name,
+                        pages = 0,
+                        favoriteSlot = NOT_FAVORITED,
+                        rating = -1f,
+                    )
+                    LocalHistory.ensureGalleryForProgress(info)
+                    LocalHistory.recordSmbStreamArchive(src.id, remote, title = entry.name, info = info)
                     withUIContext {
                         navigator.navigate(
                             ReaderScreenDestination(
                                 ReaderScreenArgs.SmbStreamArchive(
                                     sourceId = src.id,
                                     remotePath = remote,
+                                    info = info,
                                 ),
                             ),
                         ) { launchSingleTop = true }
@@ -384,6 +393,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             onWillDownload = {
                                 snackbar(string(R.string.archive_downloading))
                             },
+                        )
+                        LocalHistory.recordLocalArchive(
+                            result.path.toString(),
+                            title = entry.name,
                         )
                         withUIContext {
                             navToReader(result.path.toString())

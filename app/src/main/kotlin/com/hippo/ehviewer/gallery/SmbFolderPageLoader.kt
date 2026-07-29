@@ -142,12 +142,9 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     if (index !in 0 until size) return
                     val name = imageFileNames[index]
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
-                    // Fast path only with a real file. Main-thread isCached/knownPresent can be
-                    // stale after page-cache LRU (covers write full files then trim deletes them).
-                    if (SmbCache.isCachedOnDisk(cache)) {
-                        onReady?.invoke()
-                        // Also flush any stale waiters from a prior race.
-                        dispatchReady(index)
+                    // Never probe disk here — onRequest/retryPage run on main (lifecycle
+                    // ON_RESUME). Memory-only skip for prefetch when known present.
+                    if (onReady == null && SmbCache.isCached(cache)) {
                         return
                     }
                     if (onReady != null) {
@@ -161,6 +158,11 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     val job = scope.launch(Dispatchers.IO) {
                         var needsInteractive = interactive
                         try {
+                            // Authoritative disk check on IO (StrictMode + LRU correctness).
+                            if (SmbCache.isCachedOnDisk(cache)) {
+                                dispatchReady(index)
+                                return@launch
+                            }
                             // Promote to interactive slot if the UI is waiting (joined mid-prefetch).
                             if (readyWaiters[index]?.isNotEmpty() == true) {
                                 needsInteractive = true

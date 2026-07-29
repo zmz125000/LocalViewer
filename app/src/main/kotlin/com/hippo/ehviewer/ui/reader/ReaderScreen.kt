@@ -296,6 +296,29 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
             .onCompletion { activity.requestedOrientation = orientation }
             .collect { activity.setOrientation(it) }
     }
+    // History for archive opens (browse/library may also record; upsert is fine).
+    LaunchedEffect(args) {
+        withIOContext {
+            when (args) {
+                is ReaderScreenArgs.Archive -> LocalHistory.recordLocalArchive(args.path)
+                is ReaderScreenArgs.SmbStreamArchive -> LocalHistory.recordSmbStreamArchive(
+                    sourceId = args.sourceId,
+                    remotePath = args.remotePath,
+                    title = args.info?.title,
+                    pages = args.info?.pages ?: 0,
+                    info = args.info,
+                )
+                is ReaderScreenArgs.WebDavStreamArchive -> LocalHistory.recordWebDavStreamArchive(
+                    sourceId = args.sourceId,
+                    remotePath = args.remotePath,
+                    title = args.info?.title,
+                    pages = args.info?.pages ?: 0,
+                    info = args.info,
+                )
+                else -> Unit
+            }
+        }
+    }
     LaunchedEffect(pageLoader) {
         with(Settings) {
             merge(
@@ -479,13 +502,28 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                                         pages = s.info?.pages ?: 0,
                                     )
                                 }
-                                is ReaderScreenArgs.SmbStreamArchive,
-                                is ReaderScreenArgs.WebDavStreamArchive,
-                                -> Unit
+                                is ReaderScreenArgs.SmbStreamArchive -> {
+                                    s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                                    LocalHistory.recordSmbStreamArchive(
+                                        sourceId = s.sourceId,
+                                        remotePath = s.remotePath,
+                                        title = s.info?.title,
+                                        pages = s.info?.pages ?: 0,
+                                        info = s.info,
+                                    )
+                                }
+                                is ReaderScreenArgs.WebDavStreamArchive -> {
+                                    s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                                    LocalHistory.recordWebDavStreamArchive(
+                                        sourceId = s.sourceId,
+                                        remotePath = s.remotePath,
+                                        title = s.info?.title,
+                                        pages = s.info?.pages ?: 0,
+                                        info = s.info,
+                                    )
+                                }
                                 is ReaderScreenArgs.Archive -> {
-                                    // Library archive playlist sibling — match by content path.
-                                    LocalLibrary.loadGalleryByContentPath(s.path)
-                                        ?.let { LocalHistory.recordLibraryGallery(it) }
+                                    LocalHistory.recordLocalArchive(s.path)
                                 }
                                 else -> Unit
                             }

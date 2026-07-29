@@ -962,8 +962,8 @@ object SmbGateway {
     }
 
     /**
-     * Random-access read for stream archives.
-     * @return bytes written into [buf] at [off], or -1 on error.
+     * One-shot random-access read (open → read → close). Prefer [withOpenFile] when
+     * issuing many ranges (stream archives).
      */
     suspend fun readRange(
         source: SmbSourceEntity,
@@ -985,6 +985,36 @@ object SmbGateway {
                 null,
             ).use { file ->
                 file.read(buf, fileOffset, off, len)
+            }
+        }
+    }
+
+    /**
+     * Hold one remote file open for the duration of [block] (keeps a host-pool op slot).
+     * Stream archives use this so EOCD/CD/page extracts do not pay CREATE+CLOSE per range.
+     *
+     * Uses the same smbj [DiskShare.openFile] API as folder downloads. Enum names are
+     * SMB2-* because SMB 3.x still speaks the SMB2 protocol family; dialect selection
+     * is the shared pool [buildSmbConfig] (SMB3 preferred when the server negotiates it).
+     */
+    suspend fun <T> withOpenFile(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
+    ): T = withIOContext {
+        withShare(source, password) { share ->
+            val path = remotePath(source, relativeFilePath)
+            share.openFile(
+                path,
+                EnumSet.of(AccessMask.GENERIC_READ),
+                null,
+                SMB2ShareAccess.ALL,
+                SMB2CreateDisposition.FILE_OPEN,
+                null,
+            ).use { file ->
+                val size = file.fileInformation.standardInformation.endOfFile
+                block(file, size)
             }
         }
     }

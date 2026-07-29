@@ -158,7 +158,7 @@ corrosion_link_libraries(ehviewer_rust android jnigraphics log webp webpdemux)
 # Build and link our app's native lib
 add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c)
 target_link_libraries(
-        ${PROJECT_NAME} archive_static ehviewer_rust
+        ${PROJECT_NAME} archive_static ehviewer_rust z
         -Wl,-u,JNI_OnLoad -Wl,--undefined-glob,Java_*
         -Wl,--version-script,${CMAKE_SOURCE_DIR}/libehviewer.map.txt
 )

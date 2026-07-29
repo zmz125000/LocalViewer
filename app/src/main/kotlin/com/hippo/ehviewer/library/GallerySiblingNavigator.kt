@@ -119,8 +119,9 @@ object GallerySiblingNavigator {
             } else {
                 SmbGateway.joinRelativePath(parentRel, e.relativeName)
             }
-            is BrowseEntryRemote.ArchiveGallery -> SmbGateway.joinRelativePath(
-                SmbGateway.joinRelativePath(parentRel, e.parentRelativeName),
+            is BrowseEntryRemote.ArchiveGallery -> joinRemoteArchivePath(
+                parentRel,
+                e.parentRelativeName,
                 e.fileName,
             )
             else -> ""
@@ -186,8 +187,9 @@ object GallerySiblingNavigator {
             } else {
                 WebDavGateway.joinRelative(parentRel, e.relativeName)
             }
-            is BrowseEntryRemote.ArchiveGallery -> WebDavGateway.joinRelative(
-                WebDavGateway.joinRelative(parentRel, e.parentRelativeName),
+            is BrowseEntryRemote.ArchiveGallery -> joinRemoteArchivePath(
+                parentRel,
+                e.parentRelativeName,
                 e.fileName,
             )
             else -> ""

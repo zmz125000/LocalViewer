@@ -72,6 +72,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
+import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
@@ -351,20 +352,28 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery) {
         val src = source ?: return
         // fileName is only the basename from the current listing — join with the folder we are in.
-        val remote = WebDavGateway.joinRelative(
-            WebDavGateway.joinRelative(relativeDir, entry.parentRelativeName),
-            entry.fileName,
-        )
+        val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
             try {
                 ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
                 if (isStreamableArchiveFileName(entry.fileName)) {
+                    val info = BaseGalleryInfo(
+                        gid = stableGalleryId(src.id, "dava:$remote"),
+                        token = LOCAL_GALLERY_TOKEN,
+                        title = entry.name,
+                        pages = 0,
+                        favoriteSlot = NOT_FAVORITED,
+                        rating = -1f,
+                    )
+                    LocalHistory.ensureGalleryForProgress(info)
+                    LocalHistory.recordWebDavStreamArchive(src.id, remote, title = entry.name, info = info)
                     withUIContext {
                         navigator.navigate(
                             ReaderScreenDestination(
                                 ReaderScreenArgs.WebDavStreamArchive(
                                     sourceId = src.id,
                                     remotePath = remote,
+                                    info = info,
                                 ),
                             ),
                         ) { launchSingleTop = true }
@@ -383,6 +392,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             onWillDownload = {
                                 snackbar(string(R.string.archive_downloading))
                             },
+                        )
+                        LocalHistory.recordLocalArchive(
+                            result.path.toString(),
+                            title = entry.name,
                         )
                         withUIContext {
                             navToReader(result.path.toString())

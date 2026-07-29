@@ -110,10 +110,8 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     if (index !in 0 until size) return
                     val name = imageFileNames[index]
                     val cache = WebDavCache.cachePath(source.id, remoteDir, name)
-                    // Require a real file — knownPresent can outlive page-cache LRU after covers.
-                    if (WebDavCache.isCachedOnDisk(cache)) {
-                        onReady?.invoke()
-                        dispatchReady(index)
+                    // Never probe disk here — onRequest/retryPage run on main (lifecycle).
+                    if (onReady == null && WebDavCache.isCached(cache)) {
                         return
                     }
                     if (onReady != null) addReadyWaiter(index, onReady)
@@ -124,6 +122,11 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     val slots = if (interactive) interactiveSlots else prefetchSlots
                     val job = launch(Dispatchers.IO) {
                         try {
+                            // Authoritative disk check on IO (StrictMode + LRU correctness).
+                            if (WebDavCache.isCachedOnDisk(cache)) {
+                                dispatchReady(index)
+                                return@launch
+                            }
                             slots.withPermit {
                                 if (WebDavCache.isCachedOnDisk(cache)) {
                                     dispatchReady(index)

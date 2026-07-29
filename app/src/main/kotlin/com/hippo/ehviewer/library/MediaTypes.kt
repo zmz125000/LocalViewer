@@ -41,6 +41,22 @@ fun isArchiveCacheFileName(name: String): Boolean {
 fun prefersArchiveCoverExtract(name: String): Boolean =
     isArchiveFileName(name) && !isSolidArchiveFileName(name)
 
+/**
+ * Remote path for an archive row in a browse listing.
+ * Must match open-archive navigation and [ReaderGalleryPlaylist] keys.
+ */
+fun joinRemoteArchivePath(
+    parentRelative: String,
+    parentRelativeName: String,
+    fileName: String,
+): String {
+    var p = parentRelative.trim('/')
+    val mid = parentRelativeName.trim('/').let { if (it == ".") "" else it }
+    if (mid.isNotEmpty()) p = if (p.isEmpty()) mid else "$p/$mid"
+    val name = fileName.trim('/')
+    return if (p.isEmpty()) name else "$p/$name"
+}
+
 fun isImageFileName(name: String): Boolean {
     if (name.startsWith('.')) return false
     val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false

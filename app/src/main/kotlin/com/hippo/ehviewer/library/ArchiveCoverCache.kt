@@ -2,6 +2,7 @@ package com.hippo.ehviewer.library
 
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.os.Looper
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
@@ -14,6 +15,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import okio.Path
@@ -34,6 +36,9 @@ object ArchiveCoverCache {
 
     private val extractSlots = Semaphore(1)
 
+    /** Paths known present on disk — main-thread [isCached] must not touch the filesystem. */
+    private val knownPresent = ConcurrentHashMap.newKeySet<String>()
+
     private val thumbRoot: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
         File(appCtx.applicationInfo.dataDir, "cache/archive_thumb").toOkioPath()
     }
@@ -43,9 +48,29 @@ object ArchiveCoverCache {
         return thumbRoot / "${sha256Hex(key)}.jpg"
     }
 
+    /**
+     * Fast cache presence check (matches [com.hippo.ehviewer.smb.SmbCache.isCached]).
+     * - **Main**: memory only — no [File] I/O / StrictMode.
+     * - **Background**: probes disk and updates [knownPresent].
+     */
     fun isCached(path: Path): Boolean {
-        val f = File(path.toString())
-        return f.isFile && f.length() > 0L
+        if (Looper.getMainLooper().isCurrentThread) {
+            return knownPresent.contains(path.toString())
+        }
+        return isCachedOnDisk(path)
+    }
+
+    /** Authoritative disk probe — call from IO or accept StrictMode if on main. */
+    fun isCachedOnDisk(path: Path): Boolean {
+        val key = path.toString()
+        val f = File(key)
+        val ok = f.isFile && f.length() > 0L
+        if (ok) knownPresent.add(key) else knownPresent.remove(key)
+        return ok
+    }
+
+    fun markPresent(path: Path) {
+        knownPresent.add(path.toString())
     }
 
     /**
@@ -62,15 +87,15 @@ object ArchiveCoverCache {
         val mtime = file.takeIf { it.isFile }?.lastModified() ?: 0L
         val size = file.takeIf { it.isFile }?.length() ?: 0L
         val dest = thumbPathFor(archivePath.toString(), mtime, size)
-        if (isCached(dest)) return@withIOContext dest
+        if (isCachedOnDisk(dest)) return@withIOContext dest
 
         extractSlots.withPermit {
-            if (isCached(dest)) return@withIOContext dest
+            if (isCachedOnDisk(dest)) return@withIOContext dest
             ArchiveAccess.tryWithArchive {
                 extractCoverLocked(archivePath, dest)
             } ?: return@withIOContext null
         }
-        dest.takeIf { isCached(it) }
+        dest.takeIf { isCachedOnDisk(it) }
     }
 
     /**
@@ -82,33 +107,51 @@ object ArchiveCoverCache {
         val base = archiveKey.substringAfterLast('/').substringAfterLast(':')
         if (base.isNotEmpty() && isSolidArchiveFileName(base)) return null
         val dest = thumbPathFor(archiveKey, destHintMtime, destHintSize)
-        if (isCached(dest)) return dest
+        if (isCachedOnDisk(dest)) return dest
         return runCatching {
             extractPage0ToJpeg(dest)
-            dest.takeIf { isCached(it) }
+            dest.takeIf { isCachedOnDisk(it) }
         }.onFailure { logcat(it) }.getOrNull()
     }
 
     /**
-     * Stream-open [source], extract page 0 cover, close. No full-archive download.
+     * Stream-open a remote archive, extract page 0 cover, close. No full-archive download.
+     *
+     * [openSource] is invoked **only after** the extract slot is held so SMB/WebDAV
+     * connections are not opened for every grid cell waiting in the queue.
+     * Cache key uses size=0 so hits work without a network size probe.
+     *
      * @return thumb path or null if busy/password/error/solid.
      */
-    suspend fun ensureStreamCover(source: ArchiveByteSource, cacheKey: String): Path? = withIOContext {
+    suspend fun ensureStreamCover(
+        cacheKey: String,
+        openSource: suspend () -> ArchiveByteSource,
+    ): Path? = withIOContext {
         val base = cacheKey.substringAfterLast('/').substringAfterLast(':')
         if (base.isNotEmpty() && isSolidArchiveFileName(base)) return@withIOContext null
-        val dest = thumbPathFor(cacheKey, 0L, source.size)
-        if (isCached(dest)) return@withIOContext dest
+        // Stable path without remote size (avoids opening the archive just to hash the key).
+        val dest = thumbPathFor(cacheKey, 0L, 0L)
+        if (isCachedOnDisk(dest)) return@withIOContext dest
         extractSlots.withPermit {
-            if (isCached(dest)) return@withIOContext dest
+            if (isCachedOnDisk(dest)) return@withIOContext dest
             ArchiveAccess.tryWithArchive {
-                val bridge = ArchiveStreamBridge(source)
-                try {
-                    val n = com.hippo.ehviewer.jni.openArchiveStream(bridge, source.size, true)
-                    if (n <= 0 || com.hippo.ehviewer.jni.needPassword()) return@tryWithArchive null
-                    writeCoverFromOpenArchive(cacheKey, 0L, source.size)
-                } finally {
-                    com.hippo.ehviewer.jni.closeArchive()
-                    bridge.close()
+                openSource().use { source ->
+                    val bridge = ArchiveStreamBridge(source)
+                    try {
+                        // coverOnly: ZIP natural-first only / TAR stop at first image (EOCD/headers).
+                        // Always pass coverOnly explicitly (no default on external JNI).
+                        val n = com.hippo.ehviewer.jni.openArchiveStream(
+                            bridge,
+                            source.size,
+                            /* sortEntries = */ false,
+                            /* coverOnly = */ true,
+                        )
+                        if (n <= 0 || com.hippo.ehviewer.jni.needPassword()) return@tryWithArchive null
+                        writeCoverFromOpenArchive(cacheKey, 0L, 0L)
+                    } finally {
+                        com.hippo.ehviewer.jni.closeArchive()
+                        bridge.close()
+                    }
                 }
             }
         }
@@ -127,7 +170,7 @@ object ArchiveCoverCache {
                 if (count <= 0) return null
                 if (needPassword()) return null
                 extractPage0ToJpeg(dest)
-                return dest.takeIf { isCached(it) }
+                return dest.takeIf { isCachedOnDisk(it) }
             } finally {
                 closeArchive()
             }
@@ -144,9 +187,13 @@ object ArchiveCoverCache {
             try {
                 writeBufferToFile(buffer, rawTmp)
                 writeSubsampledJpeg(rawTmp, jpgTmp, THUMB_EDGE, THUMB_JPEG_QUALITY)
-                if (!jpgTmp.renameTo(File(dest.toString()))) {
-                    jpgTmp.copyTo(File(dest.toString()), overwrite = true)
+                val destFile = File(dest.toString())
+                if (!jpgTmp.renameTo(destFile)) {
+                    jpgTmp.copyTo(destFile, overwrite = true)
                     jpgTmp.delete()
+                }
+                if (destFile.isFile && destFile.length() > 0L) {
+                    markPresent(dest)
                 }
             } finally {
                 rawTmp.delete()

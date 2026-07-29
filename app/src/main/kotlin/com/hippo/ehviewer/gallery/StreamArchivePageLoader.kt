@@ -19,19 +19,29 @@ import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.ArchiveStreamBridge
 import com.hippo.ehviewer.library.ArchiveStreamPageCache
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import moe.tarsin.kt.install
 import okio.Path
 
 /**
- * Stream-open a remote (or local) archive via [ArchiveByteSource] + libarchive seek/read.
+ * Stream-open a remote archive via [ArchiveByteSource] + libarchive seek/read.
  *
  * Local folder archives use mmap ([useArchivePageLoader]) and do **not** go through here.
- * SMB/WebDAV non-solid archives use this path: range reads + **extracted page image cache**
- * under [ArchiveStreamPageCache] (the archive file itself is never fully downloaded).
+ * SMB/WebDAV non-solid archives: range reads + **extracted page image cache** under
+ * [ArchiveStreamPageCache] (the archive file itself is never fully downloaded).
  *
- * Native stream I/O is single-threaded (shared position); extracts are serialized here too
- * so decode concurrency cannot race the engine.
+ * Prefetch / seek shape mirrors [useSmbFolderPageLoader]:
+ * - Extract jobs run on [Dispatchers.IO] (never block the UI `request()` path)
+ * - Native stream I/O is single-flight ([extractMutex]); jobs queue, not parallel-extract
+ * - Interactive page (user seek) cancels far-away prefetch jobs so it reaches the mutex sooner
+ * - UI waiters are registered so cancel/join races never leave a forever-spinner
  */
 suspend inline fun <T> useStreamArchivePageLoader(
     source: ArchiveByteSource,
@@ -52,7 +62,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
             )
             val pageCount = install(
                 {
-                    val n = openArchiveStream(bridge, archiveSizeBytes, true)
+                    val n = openArchiveStream(bridge, archiveSizeBytes, true, false)
                     check(n > 0) { "Archive have no content!" }
                     n
                 },
@@ -61,14 +71,17 @@ suspend inline fun <T> useStreamArchivePageLoader(
             if (needPassword() && archivePasswds.none(::providePassword)) {
                 archivePasswds += passwdProvider(::providePassword)
             }
-            // Stream cover: first page → archive_thumb (no full archive on disk).
             runCatching {
                 ArchiveCoverCache.writeCoverFromOpenArchive(cacheKey, 0L, archiveSizeBytes)
             }.onFailure { logcat(it) }
 
-            val extractLock = Any()
-            // In-flight / completed page paths so concurrent openSource+prefetch share work.
+            // Single-flight native extract (shared stream position / buffer).
+            val extractMutex = Mutex()
+            val extractJobs = ConcurrentHashMap<Int, Job>()
+            val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
             val pagePaths = ConcurrentHashMap<Int, Path>()
+            // Pages within this distance of the target keep running; farther jobs cancel.
+            val keepWindow = 4
 
             val loader = install(
                 object : PageLoader(
@@ -83,41 +96,158 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     override fun getImageExtension(index: Int) = getExtension(index)
 
                     override fun save(index: Int, file: Path): Boolean = runCatching {
-                        val ext = getExtension(index)
-                        val cached = ensurePageCached(index, ext) ?: return@runCatching false
-                        java.io.File(cached.toString()).copyTo(java.io.File(file.toString()), overwrite = true)
+                        val ext = getExtension(index) ?: return@runCatching false
+                        val path = pagePaths[index]
+                            ?.takeIf { ArchiveStreamPageCache.isCached(it) }
+                            ?: ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
+                                .takeIf { ArchiveStreamPageCache.isCached(it) }
+                            ?: error("Not cached")
+                        java.io.File(path.toString()).copyTo(java.io.File(file.toString()), overwrite = true)
                         true
                     }.getOrDefault(false)
 
                     override fun openSource(index: Int): ImageSource {
                         val ext = getExtension(index)
-                        val cached = ensurePageCached(index, ext)
-                            ?: error("Extract archive content $index failed!")
+                        val path = pagePaths[index]
+                            ?.takeIf { ArchiveStreamPageCache.isCached(it) }
+                            ?: ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
+                                .takeIf { ArchiveStreamPageCache.isCached(it) }
+                        checkNotNull(path) { "Stream archive page $index not extracted" }
+                        pagePaths[index] = path
                         return object : PathSource {
-                            override val source: Path = cached
+                            override val source: Path = path
                             override val type = ext
                             override fun close() = Unit
                         }
                     }
 
-                    /**
-                     * Extract once under [extractLock], write page image cache, reuse path.
-                     * Never returns a raw ByteBuffer to the decoder (avoids native races).
-                     */
-                    private fun ensurePageCached(index: Int, ext: String): Path? {
-                        pagePaths[index]?.let { if (ArchiveStreamPageCache.isCached(it)) return it }
+                    override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
+                        pages.forEach { index ->
+                            ensureExtract(index, interactive = false)
+                        }
+                    }
+
+                    override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
+                        cancelDistantExtracts(index)
+                        ensureExtract(index, interactive = true) {
+                            notifySourceReady(index, orgImg)
+                        }
+                    }
+
+                    override fun close() {
+                        extractJobs.values.forEach { it.cancel() }
+                        extractJobs.clear()
+                        readyWaiters.clear()
+                        super.close()
+                    }
+
+                    private fun cancelDistantExtracts(center: Int) {
+                        for ((idx, job) in extractJobs.entries.toList()) {
+                            if (kotlin.math.abs(idx - center) > keepWindow) {
+                                job.cancel()
+                            }
+                        }
+                    }
+
+                    private fun addReadyWaiter(index: Int, onReady: () -> Unit) {
+                        readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
+                    }
+
+                    private fun takeReadyWaiters(index: Int): List<() -> Unit> =
+                        readyWaiters.remove(index)?.toList().orEmpty()
+
+                    private fun dispatchReady(index: Int) {
+                        takeReadyWaiters(index).forEach { runCatching { it() } }
+                    }
+
+                    private fun isPageCached(index: Int): Boolean {
+                        pagePaths[index]?.let { if (ArchiveStreamPageCache.isCached(it)) return true }
+                        val ext = getExtension(index) ?: return false
                         val path = ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
                         if (ArchiveStreamPageCache.isCached(path)) {
                             pagePaths[index] = path
-                            return path
+                            return true
                         }
-                        return synchronized(extractLock) {
-                            pagePaths[index]?.let { if (ArchiveStreamPageCache.isCached(it)) return@synchronized it }
-                            if (ArchiveStreamPageCache.isCached(path)) {
-                                pagePaths[index] = path
-                                return@synchronized path
+                        return false
+                    }
+
+                    /**
+                     * Start or join an extract for [index].
+                     * Disk probes run only on [Dispatchers.IO] — onRequest/retryPage are main-thread.
+                     * - In-flight job → only register waiter
+                     * - Else launch IO job; extracts take [extractMutex] one at a time
+                     */
+                    private fun ensureExtract(
+                        index: Int,
+                        interactive: Boolean,
+                        onReady: (() -> Unit)? = null,
+                    ) {
+                        if (index !in 0 until size) return
+                        if (onReady != null) {
+                            addReadyWaiter(index, onReady)
+                        }
+                        val existing = extractJobs[index]
+                        if (existing != null && existing.isActive) {
+                            return
+                        }
+                        val job = scope.launch(Dispatchers.IO) {
+                            try {
+                                if (isPageCached(index)) {
+                                    dispatchReady(index)
+                                    return@launch
+                                }
+                                val path = extractToCache(index)
+                                if (path != null && ArchiveStreamPageCache.isCached(path)) {
+                                    dispatchReady(index)
+                                } else {
+                                    val waiters = takeReadyWaiters(index)
+                                    if (waiters.isNotEmpty()) {
+                                        notifyPageFailed(index, "Extract incomplete")
+                                    }
+                                }
+                            } catch (_: CancellationException) {
+                                val waiters = takeReadyWaiters(index)
+                                if (waiters.isNotEmpty()) {
+                                    // Seek cancelled this job while UI still needs the page —
+                                    // re-queue waiters and restart after map slot is released.
+                                    waiters.forEach { addReadyWaiter(index, it) }
+                                    scope.launch(Dispatchers.IO) {
+                                        ensureExtract(index, interactive = true)
+                                    }
+                                }
+                            } catch (e: Throwable) {
+                                logcat(e)
+                                val waiters = takeReadyWaiters(index)
+                                if (waiters.isNotEmpty() || interactive) {
+                                    notifyPageFailed(index, e.message)
+                                }
+                            } finally {
+                                extractJobs.remove(index, coroutineContext[Job])
                             }
-                            val buffer = extractToByteBuffer(index) ?: return@synchronized null
+                        }
+                        val prev = extractJobs.putIfAbsent(index, job)
+                        if (prev != null) {
+                            if (prev.isActive) {
+                                job.cancel()
+                            } else {
+                                extractJobs[index] = job
+                            }
+                        }
+                    }
+
+                    /** Single-flight extract → page image cache. */
+                    private suspend fun extractToCache(index: Int): Path? {
+                        if (isPageCached(index)) {
+                            return pagePaths[index]
+                                ?: getExtension(index)?.let { ArchiveStreamPageCache.pagePath(cacheKey, index, it) }
+                        }
+                        return extractMutex.withLock {
+                            if (isPageCached(index)) {
+                                return@withLock pagePaths[index]
+                                    ?: getExtension(index)?.let { ArchiveStreamPageCache.pagePath(cacheKey, index, it) }
+                            }
+                            val ext = getExtension(index) ?: return@withLock null
+                            val buffer = extractToByteBuffer(index) ?: return@withLock null
                             try {
                                 check(buffer.isDirect)
                                 val written = ArchiveStreamPageCache.writePage(cacheKey, index, ext, buffer)
@@ -128,19 +258,6 @@ suspend inline fun <T> useStreamArchivePageLoader(
                             }
                         }
                     }
-
-                    override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
-                        // Sequential: native stream extract is single-flight; parallel only queues.
-                        pages.take(3).forEach { idx ->
-                            runCatching {
-                                val ext = getExtension(idx) ?: return@runCatching
-                                ensurePageCached(idx, ext)
-                            }.onFailure { logcat(it) }
-                        }
-                    }
-
-                    override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) =
-                        notifySourceReady(index, orgImg)
                 },
             )
             block(loader)

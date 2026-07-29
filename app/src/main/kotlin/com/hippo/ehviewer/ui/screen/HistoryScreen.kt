@@ -71,6 +71,10 @@ import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
+import com.ehviewer.core.model.BaseGalleryInfo
+import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
+import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
+import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
@@ -80,6 +84,8 @@ import com.hippo.ehviewer.ui.main.HistoryGridItem
 import com.hippo.ehviewer.ui.main.HistoryListItem
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
+import com.hippo.ehviewer.ui.navToSmbStreamArchiveReader
+import com.hippo.ehviewer.ui.navToWebDavStreamArchiveReader
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -191,6 +197,47 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             fromHistory = true,
                         ),
                     )
+                }
+                is LocalHistoryTarget.LocalArchive -> {
+                    navToReader(target.path)
+                }
+                is LocalHistoryTarget.SmbStreamArchive -> {
+                    val source = withIOContext { SmbRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                        historyData.refresh()
+                        return@launch
+                    }
+                    val remote = target.remotePath.trim('/')
+                    val gi = BaseGalleryInfo(
+                        gid = stableGalleryId(source.id, "smba:$remote"),
+                        token = LOCAL_GALLERY_TOKEN,
+                        title = info.title ?: remote.substringAfterLast('/'),
+                        pages = info.pages,
+                        favoriteSlot = NOT_FAVORITED,
+                        rating = -1f,
+                    )
+                    navToSmbStreamArchiveReader(source.id, remote, gi)
+                }
+                is LocalHistoryTarget.WebDavStreamArchive -> {
+                    val source = withIOContext { WebDavRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                        historyData.refresh()
+                        return@launch
+                    }
+                    val remote = target.remotePath.trim('/')
+                    val gi = BaseGalleryInfo(
+                        gid = stableGalleryId(source.id, "dava:$remote"),
+                        token = LOCAL_GALLERY_TOKEN,
+                        title = info.title ?: remote.substringAfterLast('/'),
+                        pages = info.pages,
+                        favoriteSlot = NOT_FAVORITED,
+                        rating = -1f,
+                    )
+                    navToWebDavStreamArchiveReader(source.id, remote, gi)
                 }
                 is LocalHistoryTarget.Orphan -> {
                     // Legacy "local" browse rows without path metadata, or foreign EH history.

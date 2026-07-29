@@ -70,6 +70,22 @@ fun navToWebDavFolderReader(
     page: Int = -1,
 ) = navToReader(ReaderScreenArgs.WebDavFolder(sourceId, remoteDir, imageNames, page, info))
 
+context(_: DestinationsNavigator)
+fun navToSmbStreamArchiveReader(
+    sourceId: Long,
+    remotePath: String,
+    info: BaseGalleryInfo? = null,
+    page: Int = -1,
+) = navToReader(ReaderScreenArgs.SmbStreamArchive(sourceId, remotePath, page, info))
+
+context(_: DestinationsNavigator)
+fun navToWebDavStreamArchiveReader(
+    sourceId: Long,
+    remotePath: String,
+    info: BaseGalleryInfo? = null,
+    page: Int = -1,
+) = navToReader(ReaderScreenArgs.WebDavStreamArchive(sourceId, remotePath, page, info))
+
 context(nav: DestinationsNavigator)
 private fun navToReader(args: ReaderScreenArgs) = nav.navigate(ReaderScreenDestination(args)) { launchSingleTop = true }
 

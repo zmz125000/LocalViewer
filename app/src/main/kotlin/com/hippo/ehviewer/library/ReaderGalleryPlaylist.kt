@@ -134,9 +134,11 @@ object ReaderGalleryPlaylist {
                     // Only non-solid (streamable) archives participate in prev/next —
                     // solid formats full-download to a local path and break playlist keys.
                     if (!isStreamableArchiveFileName(e.fileName)) return@mapNotNull null
-                    val remote = listOf(parentRelative, e.parentRelativeName, e.fileName)
-                        .filter { it.isNotEmpty() }
-                        .joinToString("/")
+                    val remote = joinRemoteArchivePath(
+                        parentRelative,
+                        e.parentRelativeName,
+                        e.fileName,
+                    )
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(sourceId, "smba:$remote"),
                         token = LOCAL_GALLERY_TOKEN,
@@ -180,9 +182,11 @@ object ReaderGalleryPlaylist {
                 }
                 is BrowseEntryRemote.ArchiveGallery -> {
                     if (!isStreamableArchiveFileName(e.fileName)) return@mapNotNull null
-                    val remote = listOf(parentRelative, e.parentRelativeName, e.fileName)
-                        .filter { it.isNotEmpty() }
-                        .joinToString("/")
+                    val remote = joinRemoteArchivePath(
+                        parentRelative,
+                        e.parentRelativeName,
+                        e.fileName,
+                    )
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(sourceId, "dava:$remote"),
                         token = LOCAL_GALLERY_TOKEN,
