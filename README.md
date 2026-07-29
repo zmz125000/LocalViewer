@@ -87,6 +87,12 @@ Build with Grok 4.5.
 * Reader auto rotate image.
 * EasyTier support (ported from [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus)).
 
+### To use WebDAV
+WebDAV is faster than SMB over WAN.  
+
+``openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes``  
+```.\rclone.exe serve webdav "D:\" --addr :8443 --cert .\server.crt --key .\server.key --read-only --user admin --pass password```
+
 ### To use SMB3 encryption:
 `Get-SmbShare | Select-Object Name, EncryptData`  
 `Set-SmbShare -Name "Media" -EncryptData $true`   
