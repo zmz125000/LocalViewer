@@ -81,15 +81,75 @@ const char supportExt[SUPPORT_EXT_COUNT][5] = {
         "avif"
 };
 
+/** basename after last / or \ */
+static inline const char *archive_basename(const char *name) {
+    const char *base = name;
+    for (const char *p = name; *p; p++) {
+        if (*p == '/' || *p == '\\') base = p + 1;
+    }
+    return base;
+}
+
+static inline char ascii_lower(char c) {
+    return (c >= 'A' && c <= 'Z') ? (char) (c - 'A' + 'a') : c;
+}
+
+/**
+ * Skip macOS resource-fork junk from Finder "Compress" zips:
+ * - any path under __MACOSX/
+ * - AppleDouble files named ._*
+ * These often end in .jpg/.png but are not decodable images
+ * → ImageDecoder "unimplemented" / "Input contained an error".
+ */
+static inline bool filename_is_macos_junk(const char *name) {
+    if (!name || !*name) return true;
+    // Scan path segments for __MACOSX (case-insensitive)
+    const char *seg = name;
+    for (const char *p = name;; p++) {
+        if (*p == '/' || *p == '\\' || *p == '\0') {
+            size_t len = (size_t) (p - seg);
+            if (len == 8) {
+                static const char mac[] = "__macosx";
+                int match = 1;
+                for (size_t i = 0; i < 8; i++) {
+                    if (ascii_lower(seg[i]) != mac[i]) {
+                        match = 0;
+                        break;
+                    }
+                }
+                if (match) return true;
+            }
+            if (*p == '\0') break;
+            seg = p + 1;
+        }
+    }
+    const char *base = archive_basename(name);
+    // AppleDouble: ._filename.jpg
+    if (base[0] == '.' && base[1] == '_') return true;
+    if (!*base || strcmp(base, ".") == 0 || strcmp(base, "..") == 0) return true;
+    return false;
+}
+
 static inline int filename_is_playable_file(const char *name) {
-    if (!name)
+    if (!name || filename_is_macos_junk(name))
         return false;
     const char *dotptr = strrchr(name, '.');
-    if (!dotptr++)
+    if (!dotptr || !dotptr[1])
         return false;
+    dotptr++; // skip '.'
+    char ext[8];
+    size_t n = 0;
+    for (; dotptr[n] && n < sizeof(ext) - 1; n++) {
+        char c = ascii_lower(dotptr[n]);
+        // Extension must be alnum only
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) break;
+        ext[n] = c;
+    }
+    ext[n] = '\0';
+    if (!n) return false;
     int i;
     for (i = 0; i < SUPPORT_EXT_COUNT; i++)
-        if (strcmp(dotptr, supportExt[i]) == 0)
+        if (strcmp(ext, supportExt[i]) == 0)
             return true;
     return false;
 }
