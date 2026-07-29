@@ -210,11 +210,8 @@ fun WebDavEditDialog(
             }
         },
         dismissButton = {
-            Row {
-                if (onDelete != null && state.id != 0L) {
-                    TextButton(onClick = onDelete) {
-                        Text(stringResource(R.string.network_delete))
-                    }
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(android.R.string.cancel))
                 }
                 TextButton(
                     onClick = {
@@ -225,10 +222,6 @@ fun WebDavEditDialog(
                 ) {
                     Text(stringResource(R.string.network_test))
                 }
-                TextButton(onClick = onDismiss) {
-                    Text(stringResource(android.R.string.cancel))
-                }
-            }
         },
     )
 }
