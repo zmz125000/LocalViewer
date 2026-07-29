@@ -6,7 +6,6 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings.archivePasswds
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
-import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.jni.closeArchive
 import com.hippo.ehviewer.jni.extractToByteBuffer
 import com.hippo.ehviewer.jni.getExtension
@@ -19,14 +18,20 @@ import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.ArchiveStreamBridge
 import com.hippo.ehviewer.library.ArchiveStreamPageCache
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.coroutineScope
 import moe.tarsin.kt.install
 import okio.Path
 
 /**
  * Stream-open a remote (or local) archive via [ArchiveByteSource] + libarchive seek/read.
- * Extracted page **images** are cached under [ArchiveStreamPageCache]; the archive file
- * itself is never fully downloaded to disk.
+ *
+ * Local folder archives use mmap ([useArchivePageLoader]) and do **not** go through here.
+ * SMB/WebDAV non-solid archives use this path: range reads + **extracted page image cache**
+ * under [ArchiveStreamPageCache] (the archive file itself is never fully downloaded).
+ *
+ * Native stream I/O is single-threaded (shared position); extracts are serialized here too
+ * so decode concurrency cannot race the engine.
  */
 suspend inline fun <T> useStreamArchivePageLoader(
     source: ArchiveByteSource,
@@ -61,6 +66,10 @@ suspend inline fun <T> useStreamArchivePageLoader(
                 ArchiveCoverCache.writeCoverFromOpenArchive(cacheKey, 0L, archiveSizeBytes)
             }.onFailure { logcat(it) }
 
+            val extractLock = Any()
+            // In-flight / completed page paths so concurrent openSource+prefetch share work.
+            val pagePaths = ConcurrentHashMap<Int, Path>()
+
             val loader = install(
                 object : PageLoader(
                     this,
@@ -83,38 +92,50 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     override fun openSource(index: Int): ImageSource {
                         val ext = getExtension(index)
                         val cached = ensurePageCached(index, ext)
-                        if (cached != null) {
-                            val pagePath: Path = cached
-                            return object : PathSource {
-                                override val source: Path = pagePath
-                                override val type = ext
-                                override fun close() = Unit
-                            }
+                            ?: error("Extract archive content $index failed!")
+                        return object : PathSource {
+                            override val source: Path = cached
+                            override val type = ext
+                            override fun close() = Unit
                         }
-                        val buffer = extractToByteBuffer(index)
-                        checkNotNull(buffer) { "Extract archive content $index failed!" }
-                        check(buffer.isDirect)
-                        return byteBufferSource(buffer) { releaseByteBuffer(buffer) }
                     }
 
+                    /**
+                     * Extract once under [extractLock], write page image cache, reuse path.
+                     * Never returns a raw ByteBuffer to the decoder (avoids native races).
+                     */
                     private fun ensurePageCached(index: Int, ext: String): Path? {
+                        pagePaths[index]?.let { if (ArchiveStreamPageCache.isCached(it)) return it }
                         val path = ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
-                        if (ArchiveStreamPageCache.isCached(path)) return path
-                        val buffer = extractToByteBuffer(index) ?: return null
-                        return try {
-                            check(buffer.isDirect)
-                            ArchiveStreamPageCache.writePage(cacheKey, index, ext, buffer)
-                        } finally {
-                            releaseByteBuffer(buffer)
+                        if (ArchiveStreamPageCache.isCached(path)) {
+                            pagePaths[index] = path
+                            return path
+                        }
+                        return synchronized(extractLock) {
+                            pagePaths[index]?.let { if (ArchiveStreamPageCache.isCached(it)) return@synchronized it }
+                            if (ArchiveStreamPageCache.isCached(path)) {
+                                pagePaths[index] = path
+                                return@synchronized path
+                            }
+                            val buffer = extractToByteBuffer(index) ?: return@synchronized null
+                            try {
+                                check(buffer.isDirect)
+                                val written = ArchiveStreamPageCache.writePage(cacheKey, index, ext, buffer)
+                                pagePaths[index] = written
+                                written
+                            } finally {
+                                releaseByteBuffer(buffer)
+                            }
                         }
                     }
 
                     override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
+                        // Sequential: native stream extract is single-flight; parallel only queues.
                         pages.take(3).forEach { idx ->
                             runCatching {
-                                val ext = getExtension(idx)
+                                val ext = getExtension(idx) ?: return@runCatching
                                 ensurePageCached(idx, ext)
-                            }
+                            }.onFailure { logcat(it) }
                         }
                     }
 
