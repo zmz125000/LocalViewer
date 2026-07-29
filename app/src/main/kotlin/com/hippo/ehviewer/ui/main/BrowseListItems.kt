@@ -70,6 +70,9 @@ sealed class BrowseCover {
     data class LocalArchive(val archivePath: Path) : BrowseCover()
     data class Smb(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
     data class WebDav(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
+    /** Stream-open remote archive for first-page cover (no full zip download). */
+    data class SmbArchive(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
+    data class WebDavArchive(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
 }
 
 @Composable
@@ -324,6 +327,8 @@ fun BrowseCoverThumb(
     val remoteKey = when (cover) {
         is BrowseCover.Smb -> "smb\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
         is BrowseCover.WebDav -> "dav\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
+        is BrowseCover.SmbArchive -> "smba\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
+        is BrowseCover.WebDavArchive -> "dava\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
         is BrowseCover.LocalArchive -> "arch\u0000${cover.archivePath}"
         is BrowseCover.Local -> "local\u0000${cover.path}"
         null -> null
@@ -335,6 +340,16 @@ fun BrowseCoverThumb(
                 is BrowseCover.Local -> cover.path
                 is BrowseCover.LocalArchive -> {
                     val cache = ArchiveCoverCache.thumbPathFor(cover.archivePath.toString())
+                    cache.takeIf { ArchiveCoverCache.isCached(it) }
+                }
+                is BrowseCover.SmbArchive -> {
+                    val key = "smb:${cover.sourceId}:${cover.remoteRelativeFile}"
+                    val cache = ArchiveCoverCache.thumbPathFor(key)
+                    cache.takeIf { ArchiveCoverCache.isCached(it) }
+                }
+                is BrowseCover.WebDavArchive -> {
+                    val key = "webdav:${cover.sourceId}:${cover.remoteRelativeFile}"
+                    val cache = ArchiveCoverCache.thumbPathFor(key)
                     cache.takeIf { ArchiveCoverCache.isCached(it) }
                 }
                 is BrowseCover.Smb -> {
@@ -354,7 +369,10 @@ fun BrowseCoverThumb(
     var resumeEpoch by remember(remoteKey) { mutableIntStateOf(0) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, remoteKey) {
-        if (cover !is BrowseCover.Smb && cover !is BrowseCover.WebDav && cover !is BrowseCover.LocalArchive) {
+        if (cover !is BrowseCover.Smb && cover !is BrowseCover.WebDav &&
+            cover !is BrowseCover.LocalArchive && cover !is BrowseCover.SmbArchive &&
+            cover !is BrowseCover.WebDavArchive
+        ) {
             return@DisposableEffect onDispose { }
         }
         val observer = LifecycleEventObserver { _, event ->
@@ -374,6 +392,42 @@ fun BrowseCoverThumb(
         when (cover) {
             is BrowseCover.LocalArchive -> {
                 val thumb = withIOContext { ArchiveCoverCache.ensureCover(cover.archivePath) }
+                if (thumb != null) {
+                    localPath = thumb
+                    fetchFailed = false
+                }
+            }
+            is BrowseCover.SmbArchive -> {
+                if (!downloadRemoteThumbs) return@LaunchedEffect
+                val key = "smb:${cover.sourceId}:${cover.remoteRelativeFile}"
+                val thumb = withIOContext {
+                    val source = SmbRepository.load(cover.sourceId) ?: return@withIOContext null
+                    val password = SmbPasswordStore.get(cover.sourceId)
+                    val byteSource = com.hippo.ehviewer.smb.SmbArchiveByteSource(
+                        source,
+                        password,
+                        cover.remoteRelativeFile,
+                    )
+                    ArchiveCoverCache.ensureStreamCover(byteSource, key)
+                }
+                if (thumb != null) {
+                    localPath = thumb
+                    fetchFailed = false
+                }
+            }
+            is BrowseCover.WebDavArchive -> {
+                if (!downloadRemoteThumbs) return@LaunchedEffect
+                val key = "webdav:${cover.sourceId}:${cover.remoteRelativeFile}"
+                val thumb = withIOContext {
+                    val source = WebDavRepository.load(cover.sourceId) ?: return@withIOContext null
+                    val password = WebDavPasswordStore.get(cover.sourceId)
+                    val byteSource = com.hippo.ehviewer.webdav.WebDavArchiveByteSource(
+                        source,
+                        password,
+                        cover.remoteRelativeFile,
+                    )
+                    ArchiveCoverCache.ensureStreamCover(byteSource, key)
+                }
                 if (thumb != null) {
                     localPath = thumb
                     fetchFailed = false
@@ -460,6 +514,10 @@ fun BrowseCoverThumb(
                     "smb-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${SmbCache.THUMB_DISK_EDGE}"
                 is BrowseCover.WebDav ->
                     "dav-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${WebDavCache.THUMB_DISK_EDGE}"
+                is BrowseCover.SmbArchive ->
+                    "smba-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${ArchiveCoverCache.THUMB_EDGE}"
+                is BrowseCover.WebDavArchive ->
+                    "dava-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${ArchiveCoverCache.THUMB_EDGE}"
                 is BrowseCover.LocalArchive ->
                     "arch-thumb:${cover.archivePath}@${ArchiveCoverCache.THUMB_EDGE}"
                 is BrowseCover.Local -> cover.path.toString()

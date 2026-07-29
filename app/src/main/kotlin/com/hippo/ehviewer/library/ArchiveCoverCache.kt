@@ -76,15 +76,42 @@ object ArchiveCoverCache {
     /**
      * Write cover from an **already open** archive (reader holds [ArchiveAccess]).
      * Extracts page 0 without reopening.
+     * [archiveKey] may be a local path or a remote stream key (`smb:id:path`).
      */
-    fun writeCoverFromOpenArchive(archivePath: String, destHintMtime: Long = 0L, destHintSize: Long = 0L): Path? {
-        if (!prefersArchiveCoverExtract(File(archivePath).name)) return null
-        val dest = thumbPathFor(archivePath, destHintMtime, destHintSize)
+    fun writeCoverFromOpenArchive(archiveKey: String, destHintMtime: Long = 0L, destHintSize: Long = 0L): Path? {
+        val base = archiveKey.substringAfterLast('/').substringAfterLast(':')
+        if (base.isNotEmpty() && isSolidArchiveFileName(base)) return null
+        val dest = thumbPathFor(archiveKey, destHintMtime, destHintSize)
         if (isCached(dest)) return dest
         return runCatching {
             extractPage0ToJpeg(dest)
             dest.takeIf { isCached(it) }
         }.onFailure { logcat(it) }.getOrNull()
+    }
+
+    /**
+     * Stream-open [source], extract page 0 cover, close. No full-archive download.
+     * @return thumb path or null if busy/password/error/solid.
+     */
+    suspend fun ensureStreamCover(source: ArchiveByteSource, cacheKey: String): Path? = withIOContext {
+        val base = cacheKey.substringAfterLast('/').substringAfterLast(':')
+        if (base.isNotEmpty() && isSolidArchiveFileName(base)) return@withIOContext null
+        val dest = thumbPathFor(cacheKey, 0L, source.size)
+        if (isCached(dest)) return@withIOContext dest
+        extractSlots.withPermit {
+            if (isCached(dest)) return@withIOContext dest
+            ArchiveAccess.tryWithArchive {
+                val bridge = ArchiveStreamBridge(source)
+                try {
+                    val n = com.hippo.ehviewer.jni.openArchiveStream(bridge, source.size, true)
+                    if (n <= 0 || com.hippo.ehviewer.jni.needPassword()) return@tryWithArchive null
+                    writeCoverFromOpenArchive(cacheKey, 0L, source.size)
+                } finally {
+                    com.hippo.ehviewer.jni.closeArchive()
+                    bridge.close()
+                }
+            }
+        }
     }
 
     private fun extractCoverLocked(archivePath: Path, dest: Path): Path? {

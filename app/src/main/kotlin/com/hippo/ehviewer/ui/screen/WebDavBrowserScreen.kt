@@ -71,6 +71,7 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
+import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
@@ -80,6 +81,7 @@ import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
+import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseArchiveGridItem
 import com.hippo.ehviewer.ui.main.BrowseCover
@@ -92,6 +94,7 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToWebDavFolderReader
+import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -354,6 +357,20 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         )
         launchIO {
             try {
+                ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
+                if (isStreamableArchiveFileName(entry.fileName)) {
+                    withUIContext {
+                        navigator.navigate(
+                            ReaderScreenDestination(
+                                ReaderScreenArgs.WebDavStreamArchive(
+                                    sourceId = src.id,
+                                    remotePath = remote,
+                                ),
+                            ),
+                        ) { launchSingleTop = true }
+                    }
+                    return@launchIO
+                }
                 val password = WebDavPasswordStore.get(src.id)
                 var allowLarge = false
                 while (true) {
@@ -368,7 +385,6 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             },
                         )
                         withUIContext {
-                            ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
                             navToReader(result.path.toString())
                         }
                         return@launchIO
@@ -519,6 +535,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         }
                         BrowseCover.WebDav(sourceId, remote)
                     }
+                    fun archiveCoverFor(entry: BrowseEntryRemote.ArchiveGallery): BrowseCover? {
+                        if (!isStreamableArchiveFileName(entry.fileName)) return null
+                        val remote = WebDavGateway.joinRelative(
+                            WebDavGateway.joinRelative(relativeDir, entry.parentRelativeName),
+                            entry.fileName,
+                        )
+                        return BrowseCover.WebDavArchive(sourceId, remote)
+                    }
                     if (useGrid) {
                         val gridState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey", listMode)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
@@ -567,6 +591,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         is BrowseEntryRemote.ArchiveGallery ->
                                             BrowseArchiveGridItem(
                                                 name = entry.name,
+                                                cover = archiveCoverFor(entry),
+                                                thumbRetryKey = refreshToken,
                                                 onClick = { openArchive(entry) },
                                             )
                                         is BrowseEntryRemote.Directory -> Unit
@@ -606,6 +632,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         is BrowseEntryRemote.ArchiveGallery ->
                                             BrowseArchiveGalleryRow(
                                                 name = entry.name,
+                                                cover = archiveCoverFor(entry),
+                                                thumbRetryKey = refreshToken,
                                                 onClick = { openArchive(entry) },
                                             )
                                         is BrowseEntryRemote.Directory -> Unit

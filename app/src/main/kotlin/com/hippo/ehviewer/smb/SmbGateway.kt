@@ -961,6 +961,34 @@ object SmbGateway {
         }.getOrNull()
     }
 
+    /**
+     * Random-access read for stream archives.
+     * @return bytes written into [buf] at [off], or -1 on error.
+     */
+    suspend fun readRange(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        fileOffset: Long,
+        buf: ByteArray,
+        off: Int,
+        len: Int,
+    ): Int = withIOContext {
+        withShare(source, password) { share ->
+            val path = remotePath(source, relativeFilePath)
+            share.openFile(
+                path,
+                EnumSet.of(AccessMask.GENERIC_READ),
+                null,
+                SMB2ShareAccess.ALL,
+                SMB2CreateDisposition.FILE_OPEN,
+                null,
+            ).use { file ->
+                file.read(buf, fileOffset, off, len)
+            }
+        }
+    }
+
     suspend fun downloadFile(
         source: SmbSourceEntity,
         password: String,

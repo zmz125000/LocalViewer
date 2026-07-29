@@ -160,6 +160,8 @@ object ReaderGalleryPlaylist {
         is ReaderScreenArgs.SmbFolder -> "smb:${args.sourceId}:${args.remoteDir.trim('/')}"
         is ReaderScreenArgs.WebDavFolder -> "webdav:${args.sourceId}:${args.remoteDir.trim('/')}"
         is ReaderScreenArgs.Archive -> "archive:${args.path}"
+        is ReaderScreenArgs.SmbStreamArchive -> "smba:${args.sourceId}:${args.remotePath.trim('/')}"
+        is ReaderScreenArgs.WebDavStreamArchive -> "dava:${args.sourceId}:${args.remotePath.trim('/')}"
     }
 
     private fun keyOf(item: Item): String = when (item) {
