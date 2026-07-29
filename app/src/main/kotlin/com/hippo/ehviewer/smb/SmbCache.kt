@@ -375,22 +375,24 @@ object SmbCache {
 
     private fun trimDir(dir: File, maxBytes: Long) {
         if (!dir.isDirectory) return
+        // Snapshot mtime/size — concurrent touch() during sortBy { lastModified() } breaks TimSort.
+        data class Entry(val file: File, val mtime: Long, val size: Long)
         val files = dir.listFiles { f ->
             f.isFile && !f.name.contains(".tmp.") && !f.name.contains(".full.") && !f.name.contains(".jpg.")
-        }?.toMutableList() ?: return
-        var total = files.sumOf { it.length() }
+        }?.map { f -> Entry(f, f.lastModified(), f.length()) }
+            ?.sortedWith(compareBy<Entry> { it.mtime }.thenBy { it.file.name })
+            ?: return
+        var total = files.sumOf { it.size }
         if (total <= maxBytes) return
-        files.sortBy { it.lastModified() }
-        for (f in files) {
+        for (e in files) {
             if (total <= maxBytes) break
-            val len = f.length()
-            if (f.delete()) {
-                total -= len
+            if (e.file.delete()) {
+                total -= e.size
                 // Drop memory hit so reader re-downloads instead of ENOENT.
-                knownPresent.remove(f.absolutePath)
-                knownPresent.remove(f.path)
-                pathLocks.remove(f.absolutePath)
-                pathLocks.remove(f.path)
+                knownPresent.remove(e.file.absolutePath)
+                knownPresent.remove(e.file.path)
+                pathLocks.remove(e.file.absolutePath)
+                pathLocks.remove(e.file.path)
             }
         }
     }

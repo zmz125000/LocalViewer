@@ -274,17 +274,25 @@ object WebDavCache {
 
     private fun trimDir(dir: File, budget: Long) {
         if (!dir.isDirectory) return
-        val files = dir.listFiles()?.filter { it.isFile }?.sortedBy { it.lastModified() } ?: return
-        var total = files.sumOf { it.length() }
-        for (f in files) {
+        // Snapshot mtime/size before sort — concurrent touch() during sortBy { lastModified() }
+        // mutates the comparison key mid-TimSort → "Comparison method violates its general contract".
+        data class Entry(val file: File, val mtime: Long, val size: Long)
+        val files = dir.listFiles()
+            ?.mapNotNull { f ->
+                if (!f.isFile) return@mapNotNull null
+                Entry(f, f.lastModified(), f.length())
+            }
+            ?.sortedWith(compareBy<Entry> { it.mtime }.thenBy { it.file.name })
+            ?: return
+        var total = files.sumOf { it.size }
+        for (e in files) {
             if (total <= budget) break
-            val len = f.length()
-            if (f.delete()) {
-                total -= len
-                knownPresent.remove(f.absolutePath)
-                knownPresent.remove(f.path)
-                pathLocks.remove(f.absolutePath)
-                pathLocks.remove(f.path)
+            if (e.file.delete()) {
+                total -= e.size
+                knownPresent.remove(e.file.absolutePath)
+                knownPresent.remove(e.file.path)
+                pathLocks.remove(e.file.absolutePath)
+                pathLocks.remove(e.file.path)
             }
         }
     }
