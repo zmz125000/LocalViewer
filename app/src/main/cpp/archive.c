@@ -49,7 +49,7 @@ typedef struct {
     int index;
     ssize_t size;
     void *addr;
-    /** ZIP CD-index path only (stream remote zip). */
+    /** Stream direct-index: ZIP local header off, or TAR member data off. */
     int64_t local_header_offset;
     int64_t compressed_size;
     uint16_t compression_method;
@@ -70,9 +70,11 @@ static size_t archiveSize = 0;
 static entry *entries = NULL;
 static size_t entryCount = 0;
 static ssize_t max_file_size = 0;
-/** Stream ZIP opened via central-directory parse (no local-header walk). */
+/** Stream ZIP opened via EOCD + central-directory parse. */
 static bool use_zip_cd_index = false;
-/** Bytes actually pulled through stream_read_cb (diagnostics). */
+/** Stream TAR opened via header-only walk (seek past bodies). */
+static bool use_tar_index = false;
+/** Bytes actually pulled through stream I/O (diagnostics). */
 static int64_t stream_bytes_read = 0;
 
 static inline int filename_is_playable_file(const char *name);
@@ -80,7 +82,7 @@ static inline int compare_entries(const void *a, const void *b);
 
 // --- Stream I/O via Kotlin ArchiveStreamBridge (remote ZIP/TAR) ---
 // Single position + buffer; serialize extracts with stream_mutex.
-// ZIP listing/extract uses CD index when possible; TAR uses libarchive + skip→seek.
+// ZIP: EOCD+CD index; TAR: 512-byte headers only (seek past member data).
 // Do NOT define JNI_OnLoad here — Rust libehviewer already exports it.
 static JavaVM *g_vm = NULL;
 static bool use_stream_io = false;
@@ -456,6 +458,268 @@ static int zip_stream_extract_entry(entry *e, void *out, size_t out_cap) {
     return 0;
 }
 
+// --- TAR header-only stream index (analog of ZIP EOCD/CD) ---
+// ustar/GNU/pax: read 512-byte headers, advance past padded bodies without reading them.
+
+#define TAR_BLOCK 512
+
+static int64_t tar_parse_octal(const uint8_t *p, size_t n) {
+    int64_t v = 0;
+    size_t i = 0;
+    while (i < n && (p[i] == ' ' || p[i] == '\0')) i++;
+    for (; i < n && p[i] >= '0' && p[i] <= '7'; i++) {
+        v = (v << 3) + (p[i] - '0');
+    }
+    return v;
+}
+
+/** GNU base-256 size (high bit of first byte set) or classic octal. */
+static int64_t tar_parse_size_field(const uint8_t *p) {
+    if (p[0] & 0x80) {
+        uint64_t uv = 0;
+        for (int i = 1; i < 12; i++) {
+            uv = (uv << 8) | p[i];
+        }
+        return (int64_t) uv;
+    }
+    return tar_parse_octal(p, 12);
+}
+
+static int tar_header_is_zero(const uint8_t *h) {
+    for (int i = 0; i < TAR_BLOCK; i++) {
+        if (h[i] != 0) return 0;
+    }
+    return 1;
+}
+
+/** Validate ustar/GNU checksum (unsigned sum; spaces in chksum field). */
+static int tar_checksum_ok(const uint8_t *h) {
+    unsigned sum = 0;
+    for (int i = 0; i < TAR_BLOCK; i++) {
+        sum += (i >= 148 && i < 156) ? (unsigned) ' ' : h[i];
+    }
+    int64_t stored = tar_parse_octal(h + 148, 8);
+    return stored == (int64_t) sum;
+}
+
+static int64_t tar_padded_size(int64_t size) {
+    if (size <= 0) return 0;
+    return (size + TAR_BLOCK - 1) & ~(int64_t) (TAR_BLOCK - 1);
+}
+
+/** Build path from ustar name + prefix (or pending long/pax name). */
+static char *tar_make_name(const uint8_t *h, const char *override_name) {
+    if (override_name && override_name[0]) {
+        return strdup(override_name);
+    }
+    char name[100 + 1];
+    char prefix[155 + 1];
+    memcpy(name, h, 100);
+    name[100] = '\0';
+    // Trim embedded NULs already; strip trailing spaces sometimes seen.
+    for (int i = 99; i >= 0 && (name[i] == '\0' || name[i] == ' '); i--) name[i] = '\0';
+    memcpy(prefix, h + 345, 155);
+    prefix[155] = '\0';
+    for (int i = 154; i >= 0 && (prefix[i] == '\0' || prefix[i] == ' '); i--) prefix[i] = '\0';
+    if (prefix[0] == '\0') {
+        return strdup(name);
+    }
+    size_t pl = strlen(prefix);
+    size_t nl = strlen(name);
+    char *full = (char *) malloc(pl + 1 + nl + 1);
+    if (!full) return NULL;
+    memcpy(full, prefix, pl);
+    full[pl] = '/';
+    memcpy(full + pl + 1, name, nl + 1);
+    return full;
+}
+
+/** Read pax body and return path= value if present (caller frees). */
+static char *tar_pax_extract_path(const uint8_t *body, size_t len) {
+    size_t i = 0;
+    while (i < len) {
+        // "LEN key=value\n"
+        size_t start = i;
+        size_t rec_len = 0;
+        while (i < len && body[i] >= '0' && body[i] <= '9') {
+            rec_len = rec_len * 10 + (size_t) (body[i] - '0');
+            i++;
+        }
+        if (i >= len || body[i] != ' ' || rec_len == 0) break;
+        i++; // space
+        if (start + rec_len > len) break;
+        const uint8_t *kv = body + i;
+        size_t kv_len = rec_len - (i - start);
+        if (kv_len > 0 && kv[kv_len - 1] == '\n') kv_len--;
+        if (kv_len > 5 && memcmp(kv, "path=", 5) == 0) {
+            size_t vlen = kv_len - 5;
+            char *path = (char *) malloc(vlen + 1);
+            if (!path) return NULL;
+            memcpy(path, kv + 5, vlen);
+            path[vlen] = '\0';
+            return path;
+        }
+        i = start + rec_len;
+    }
+    return NULL;
+}
+
+/**
+ * Open stream TAR by walking 512-byte headers only (seek/advance past bodies).
+ * Same idea as ZIP EOCD+CD: listing traffic ≈ header blocks, not member data.
+ * Supports ustar, GNU longname ('L'), and pax path ('x'). Store only (cbt).
+ * @return entry count, or 0 if not a tar / parse failed (caller falls back).
+ */
+static jint tar_stream_open_from_headers(jboolean sort_entries) {
+    if (archiveSize < TAR_BLOCK) return 0;
+    stream_bytes_read = 0;
+
+    uint8_t hdr[TAR_BLOCK];
+    if (stream_pread(hdr, 0, TAR_BLOCK) != TAR_BLOCK) return 0;
+    if (tar_header_is_zero(hdr) || !tar_checksum_ok(hdr)) return 0;
+
+    size_t cap = 64;
+    entries = calloc(cap, sizeof(entry));
+    if (!entries) return 0;
+    entryCount = 0;
+    max_file_size = 0;
+    need_encrypt = false;
+
+    char *pending_name = NULL;
+    la_int64_t pos = 0;
+    int zero_blocks = 0;
+
+    while ((size_t) pos + TAR_BLOCK <= archiveSize) {
+        if (stream_pread(hdr, pos, TAR_BLOCK) != TAR_BLOCK) break;
+        if (tar_header_is_zero(hdr)) {
+            zero_blocks++;
+            if (zero_blocks >= 2) break;
+            pos += TAR_BLOCK;
+            continue;
+        }
+        zero_blocks = 0;
+        if (!tar_checksum_ok(hdr)) {
+            // Corrupt or not tar after a valid start — stop; keep whatever we have.
+            break;
+        }
+
+        int64_t size = tar_parse_size_field(hdr + 124);
+        if (size < 0) break;
+        char typeflag = (char) hdr[156];
+        int64_t data_off = pos + TAR_BLOCK;
+        int64_t padded = tar_padded_size(size);
+        if ((uint64_t) data_off + (uint64_t) padded > (uint64_t) archiveSize + TAR_BLOCK) {
+            // Allow last member without full pad if size fits.
+            if ((uint64_t) data_off + (uint64_t) size > (uint64_t) archiveSize) break;
+            padded = tar_padded_size(size);
+            if ((uint64_t) data_off + (uint64_t) size > (uint64_t) archiveSize) break;
+        }
+
+        // GNU long name: next header's name is in this member's data.
+        if (typeflag == 'L' || typeflag == 'K') {
+            if (typeflag == 'L' && size > 0 && size < 64 * 1024) {
+                free(pending_name);
+                pending_name = (char *) malloc((size_t) size + 1);
+                if (pending_name &&
+                    stream_pread((uint8_t *) pending_name, data_off, (size_t) size) == (int) size) {
+                    pending_name[size] = '\0';
+                    // GNU longname is NUL-terminated inside payload; trim extra NULs.
+                    size_t nlen = strnlen(pending_name, (size_t) size);
+                    pending_name[nlen] = '\0';
+                } else {
+                    free(pending_name);
+                    pending_name = NULL;
+                }
+            }
+            pos = data_off + padded;
+            continue;
+        }
+
+        // pax extended header ('x') may carry path=; global 'g' is ignored for path.
+        if (typeflag == 'x' || typeflag == 'g') {
+            if (typeflag == 'x' && size > 0 && size < 64 * 1024) {
+                uint8_t *body = (uint8_t *) malloc((size_t) size);
+                if (body && stream_pread(body, data_off, (size_t) size) == (int) size) {
+                    char *path = tar_pax_extract_path(body, (size_t) size);
+                    if (path) {
+                        free(pending_name);
+                        pending_name = path;
+                    }
+                }
+                free(body);
+            }
+            pos = data_off + padded;
+            continue;
+        }
+
+        // Regular files: '0', '\0', or GNU '7' contiguous.
+        bool is_reg = (typeflag == '0' || typeflag == '\0' || typeflag == '7');
+        size_t name_nlen = strnlen((const char *) hdr, 100);
+        bool is_dir = (typeflag == '5') ||
+                      (name_nlen > 0 && ((const char *) hdr)[name_nlen - 1] == '/');
+
+        if (is_reg && !is_dir && size > 0 && size < (1ll << 31)) {
+            char *name = tar_make_name(hdr, pending_name);
+            free(pending_name);
+            pending_name = NULL;
+            if (name && filename_is_playable_file(name)) {
+                if (entryCount >= cap) {
+                    size_t ncap = cap * 2;
+                    entry *grown = realloc(entries, ncap * sizeof(entry));
+                    if (!grown) {
+                        free(name);
+                        break;
+                    }
+                    memset(grown + cap, 0, (ncap - cap) * sizeof(entry));
+                    entries = grown;
+                    cap = ncap;
+                }
+                entries[entryCount].filename = name;
+                entries[entryCount].index = (int) entryCount;
+                entries[entryCount].size = (ssize_t) size;
+                entries[entryCount].addr = NULL;
+                // Data payload offset (unlike ZIP local-header offset).
+                entries[entryCount].local_header_offset = data_off;
+                entries[entryCount].compressed_size = size;
+                entries[entryCount].compression_method = 0; // tar store
+                max_file_size = max((ssize_t) size, max_file_size);
+                entryCount++;
+            } else {
+                free(name);
+            }
+        } else {
+            free(pending_name);
+            pending_name = NULL;
+        }
+
+        // Advance past body without reading it (seek-equivalent via absolute pos).
+        pos = data_off + padded;
+    }
+    free(pending_name);
+
+    if (!entryCount) {
+        free(entries);
+        entries = NULL;
+        return 0;
+    }
+    if (sort_entries) qsort(entries, entryCount, sizeof(entry), compare_entries);
+    use_tar_index = true;
+    LOGI("Found %zu images in archive (TAR headers, %lld bytes net)",
+         entryCount, (long long) stream_bytes_read);
+    return (int) entryCount;
+}
+
+/** Store-only extract from TAR member data offset. */
+static int tar_stream_extract_entry(entry *e, void *out, size_t out_cap) {
+    if (!e || !out || e->size <= 0 || (size_t) e->size > out_cap) return -1;
+    if (e->local_header_offset < 0) return -1;
+    if ((size_t) e->local_header_offset + (size_t) e->size > archiveSize) return -1;
+    if (stream_pread((uint8_t *) out, e->local_header_offset, (size_t) e->size) != (int) e->size) {
+        return -1;
+    }
+    return 0;
+}
+
 /** SEEK_END uses [archiveSize] from open (stat/HEAD), not a scan. */
 static la_int64_t stream_seek_cb(struct archive *a, void *client_data, la_int64_t offset, int whence) {
     EH_UNUSED(a);
@@ -529,6 +793,7 @@ static void stream_bridge_clear(JNIEnv *env) {
     g_stream_pos = 0;
     use_stream_io = false;
     use_zip_cd_index = false;
+    use_tar_index = false;
     stream_bytes_read = 0;
 }
 
@@ -887,17 +1152,22 @@ static int archive_get_ctx(archive_ctx **ctxptr, int idx) {
 }
 
 /**
- * Stream open: ZIP uses EOCD+CD only; TAR falls back to libarchive + seek skip.
+ * Stream open: ZIP EOCD+CD, then TAR header-only index; libarchive as last resort.
  */
 static jint archive_open_stream_single_pass(jboolean sort_entries) {
     use_zip_cd_index = false;
+    use_tar_index = false;
     stream_bytes_read = 0;
 
-    // Prefer ZIP central-directory index (no member walk, tiny network).
+    // ZIP central-directory index (no member walk).
     jint zip_n = zip_stream_open_from_cd(sort_entries);
     if (zip_n > 0) return zip_n;
 
-    // TAR / non-zip: libarchive with skip→seek (must not read file bodies).
+    // TAR: 512-byte headers only (seek past bodies — same idea as ZIP CD).
+    jint tar_n = tar_stream_open_from_headers(sort_entries);
+    if (tar_n > 0) return tar_n;
+
+    // Fallback: libarchive with skip→seek (odd formats / edge cases).
     archive_ctx *ctx = archive_alloc_ctx();
     if (!ctx) return 0;
 
@@ -1086,6 +1356,13 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_extractToByteBuffer(JNIEnv *env, jclass th
             LOGE("%s%d", "ZIP stream extract failed for index ", index);
             release_decode_buffer(addr);
         }
+    } else if (use_stream_io && use_tar_index) {
+        if (tar_stream_extract_entry(entry, addr, (size_t) size) == 0) {
+            result = (*env)->NewDirectByteBuffer(env, addr, size);
+        } else {
+            LOGE("%s%d", "TAR stream extract failed for index ", index);
+            release_decode_buffer(addr);
+        }
     } else {
         archive_ctx *ctx = NULL;
         if (!archive_get_ctx(&ctx, entry->index)) {
@@ -1124,6 +1401,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_closeArchive(JNIEnv *env, jclass thiz) {
     passwd = NULL;
     need_encrypt = false;
     use_zip_cd_index = false;
+    use_tar_index = false;
     stream_bytes_read = 0;
     if (archiveAddr != MAP_FAILED) {
         munmap(archiveAddr, archiveSize);
