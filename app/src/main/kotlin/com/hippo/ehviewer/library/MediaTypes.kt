@@ -54,34 +54,54 @@ fun humanizePathName(raw: String): String {
 
 /**
  * Natural-order comparison for file names (digit runs compared as integers).
+ *
+ * Must be a total order for [java.util.TimSort] (transitive, antisymetric).
+ * The previous implementation used [Char.isDigit] (Unicode) but only stripped ASCII
+ * `'0'`, and treated case-insensitive equal chars as fully equal without a
+ * case-sensitive tie-break — both can throw
+ * `Comparison method violates its general contract` on large WebDAV/SMB lists.
  */
 fun naturalCompare(a: String, b: String): Int {
     var i = 0
     var j = 0
-    while (i < a.length && j < b.length) {
+    val na = a.length
+    val nb = b.length
+    while (i < na && j < nb) {
         val ca = a[i]
         val cb = b[j]
-        if (ca.isDigit() && cb.isDigit()) {
-            while (i < a.length && a[i] == '0') i++
-            while (j < b.length && b[j] == '0') j++
-            var zi = i
-            var zj = j
-            while (zi < a.length && a[zi].isDigit()) zi++
-            while (zj < b.length && b[zj].isDigit()) zj++
-            val lenDiff = (zi - i) - (zj - j)
-            if (lenDiff != 0) return lenDiff
-            while (i < zi) {
-                val d = a[i].compareTo(b[j])
+        val da = ca.isAsciiDigit()
+        val db = cb.isAsciiDigit()
+        if (da && db) {
+            // Full digit runs (including leading zeros).
+            val iRun = i
+            val jRun = j
+            while (i < na && a[i].isAsciiDigit()) i++
+            while (j < nb && b[j].isAsciiDigit()) j++
+            // Significant digits (skip leading zeros; all-zero → one zero).
+            var iSig = iRun
+            var jSig = jRun
+            while (iSig < i - 1 && a[iSig] == '0') iSig++
+            while (jSig < j - 1 && b[jSig] == '0') jSig++
+            val lenA = i - iSig
+            val lenB = j - jSig
+            if (lenA != lenB) return lenA.compareTo(lenB)
+            for (k in 0 until lenA) {
+                val d = a[iSig + k].compareTo(b[jSig + k])
                 if (d != 0) return d
-                i++
-                j++
             }
+            // Same numeric value: shorter digit spelling first ("1" before "01"), then done.
+            val runLen = (i - iRun).compareTo(j - jRun)
+            if (runLen != 0) return runLen
         } else {
+            // Case-insensitive primary; case-sensitive tie-break for total order.
             val d = ca.lowercaseChar().compareTo(cb.lowercaseChar())
             if (d != 0) return d
+            if (ca != cb) return ca.compareTo(cb)
             i++
             j++
         }
     }
-    return a.length - b.length
+    return (na - i).compareTo(nb - j)
 }
+
+private fun Char.isAsciiDigit(): Boolean = this in '0'..'9'
