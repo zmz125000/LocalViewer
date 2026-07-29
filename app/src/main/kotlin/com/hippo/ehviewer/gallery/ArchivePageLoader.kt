@@ -19,6 +19,7 @@ import arrow.autoCloseScope
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
+import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings.archivePasswds
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.byteBufferSource
@@ -30,8 +31,12 @@ import com.hippo.ehviewer.jni.needPassword
 import com.hippo.ehviewer.jni.openArchive
 import com.hippo.ehviewer.jni.providePassword
 import com.hippo.ehviewer.jni.releaseByteBuffer
+import com.hippo.ehviewer.library.ArchiveAccess
+import com.hippo.ehviewer.library.ArchiveCoverCache
+import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.displayName
+import java.io.File
 import kotlinx.coroutines.coroutineScope
 import moe.tarsin.kt.install
 import okio.Path
@@ -46,51 +51,72 @@ suspend inline fun <T> useArchivePageLoader(
     hasAds: Boolean = false,
     crossinline passwdProvider: PasswdProvider,
     crossinline block: suspend (PageLoader) -> T,
-) = autoCloseScope {
-    coroutineScope {
-        val pfd = install(file.openFileDescriptor("r"))
-        val size = install(
-            { openArchive(pfd.fd, pfd.statSize, info == null || file.name.endsWith(".zip")) },
-            { _, _ -> closeArchive() },
-        )
-        check(size > 0) { "Archive have no content!" }
-        if (needPassword() && archivePasswds.none(::providePassword)) {
-            archivePasswds += passwdProvider(::providePassword)
-        }
-        val loader = install(
-            object : PageLoader(this, info, startPage, size, hasAds) {
-                override val title by lazy {
-                    if (info != null) {
-                        info.title ?: ""
+) = ArchiveAccess.withArchive {
+    autoCloseScope {
+        coroutineScope {
+            val pfd = install(file.openFileDescriptor("r"))
+            val size = install(
+                { openArchive(pfd.fd, pfd.statSize, info == null || file.name.endsWith(".zip")) },
+                { _, _ -> closeArchive() },
+            )
+            check(size > 0) { "Archive have no content!" }
+            if (needPassword() && archivePasswds.none(::providePassword)) {
+                archivePasswds += passwdProvider(::providePassword)
+            }
+            // Persist page count + first-page cover for library/browse (skip solid 7z covers).
+            runCatching {
+                val pathStr = file.toString()
+                val f = File(pathStr)
+                val cover = ArchiveCoverCache.writeCoverFromOpenArchive(
+                    pathStr,
+                    f.takeIf { it.isFile }?.lastModified() ?: 0L,
+                    f.takeIf { it.isFile }?.length() ?: 0L,
+                )
+                val coverStr = cover?.toString()
+                val gid = info?.gid
+                withIOContext {
+                    if (gid != null && gid != 0L) {
+                        LocalLibrary.updateGalleryPageAndCover(gid, size, coverStr)
                     } else {
-                        FileUtils.getNameFromFilename(file.displayName)!!
+                        LocalLibrary.updateGalleryPageAndCoverByContentPath(pathStr, size, coverStr)
                     }
                 }
-
-                override fun getImageExtension(index: Int) = getExtension(index)
-
-                override fun save(index: Int, file: Path) = runCatching {
-                    file.openFileDescriptor("w").use {
-                        extractToFd(index, it.fd)
+            }.onFailure { logcat(it) }
+            val loader = install(
+                object : PageLoader(this, info, startPage, size, hasAds) {
+                    override val title by lazy {
+                        if (info != null) {
+                            info.title ?: ""
+                        } else {
+                            FileUtils.getNameFromFilename(file.displayName)!!
+                        }
                     }
-                }.getOrElse {
-                    logcat(it)
-                    false
-                }
 
-                override fun openSource(index: Int): ImageSource {
-                    val buffer = extractToByteBuffer(index)
-                    checkNotNull(buffer) { "Extract archive content $index failed!" }
-                    check(buffer.isDirect)
-                    return byteBufferSource(buffer) { releaseByteBuffer(buffer) }
-                }
+                    override fun getImageExtension(index: Int) = getExtension(index)
 
-                override fun prefetchPages(pages: List<Int>, bounds: IntRange) = Unit
+                    override fun save(index: Int, file: Path) = runCatching {
+                        file.openFileDescriptor("w").use {
+                            extractToFd(index, it.fd)
+                        }
+                    }.getOrElse {
+                        logcat(it)
+                        false
+                    }
 
-                override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) =
-                    notifySourceReady(index, orgImg)
-            },
-        )
-        block(loader)
+                    override fun openSource(index: Int): ImageSource {
+                        val buffer = extractToByteBuffer(index)
+                        checkNotNull(buffer) { "Extract archive content $index failed!" }
+                        check(buffer.isDirect)
+                        return byteBufferSource(buffer) { releaseByteBuffer(buffer) }
+                    }
+
+                    override fun prefetchPages(pages: List<Int>, bounds: IntRange) = Unit
+
+                    override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) =
+                        notifySourceReady(index, orgImg)
+                },
+            )
+            block(loader)
+        }
     }
 }

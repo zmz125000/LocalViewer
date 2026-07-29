@@ -77,6 +77,10 @@
     <string name="network_browse">Browse</string>
     <string name="network_save">Save</string>
     <string name="smb_archive_not_supported">Opening archives over SMB is not supported yet</string>
+    <string name="archive_downloading">Downloading archive…</string>
+    <string name="archive_download_failed">Archive download failed: %s</string>
+    <string name="archive_large_title">Large archive</string>
+    <string name="archive_large_message">This archive is about %1$d MiB (over %2$d MiB). Download and open it?</string>
     <string name="smb_listing_error">Failed to list directory: %s</string>
     <string name="webdav">WebDAV</string>
     <string name="webdav_add">Add WebDAV</string>

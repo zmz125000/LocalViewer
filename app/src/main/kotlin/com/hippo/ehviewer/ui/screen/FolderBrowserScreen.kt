@@ -451,6 +451,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         )
                                         is BrowseEntry.ArchiveGallery -> BrowseArchiveGridItem(
                                             name = entry.name,
+                                            cover = BrowseCover.LocalArchive(entry.path),
                                             onClick = { openArchive(entry) },
                                         )
                                         is BrowseEntry.Directory -> Unit
@@ -496,6 +497,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         )
                                         is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(
                                             name = entry.name,
+                                            cover = BrowseCover.LocalArchive(entry.path),
                                             onClick = { openArchive(entry) },
                                         )
                                         is BrowseEntry.Directory -> Unit

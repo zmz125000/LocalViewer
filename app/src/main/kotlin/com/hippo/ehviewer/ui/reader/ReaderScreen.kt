@@ -92,6 +92,7 @@ import com.hippo.ehviewer.gallery.unblock
 import com.hippo.ehviewer.gallery.useArchivePageLoader
 import com.hippo.ehviewer.gallery.useFolderPageLoader
 import com.hippo.ehviewer.gallery.useSmbFolderPageLoader
+import com.hippo.ehviewer.gallery.useStreamArchivePageLoader
 import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
@@ -100,6 +101,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.MainActivity
 import com.hippo.ehviewer.ui.Screen
@@ -166,6 +168,27 @@ sealed interface ReaderScreenArgs {
         val sourceId: Long,
         val remoteDir: String,
         val imageNames: List<String>,
+        val page: Int = -1,
+        val info: BaseGalleryInfo? = null,
+    ) : ReaderScreenArgs
+
+    /**
+     * Stream-open SMB archive (ZIP/CBZ/TAR/CBT): range reads + extract pages to image cache.
+     * Does not download the whole archive.
+     */
+    @Serializable
+    data class SmbStreamArchive(
+        val sourceId: Long,
+        val remotePath: String,
+        val page: Int = -1,
+        val info: BaseGalleryInfo? = null,
+    ) : ReaderScreenArgs
+
+    /** Stream-open WebDAV archive (ZIP/CBZ/TAR/CBT). */
+    @Serializable
+    data class WebDavStreamArchive(
+        val sourceId: Long,
+        val remotePath: String,
         val page: Int = -1,
         val info: BaseGalleryInfo? = null,
     ) : ReaderScreenArgs
@@ -252,6 +275,8 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                     is ReaderScreenArgs.LocalFolder -> args.info
                     is ReaderScreenArgs.SmbFolder -> args.info
                     is ReaderScreenArgs.WebDavFolder -> args.info
+                    is ReaderScreenArgs.SmbStreamArchive -> args.info
+                    is ReaderScreenArgs.WebDavStreamArchive -> args.info
                     is ReaderScreenArgs.Archive -> null
                 }
                 key(loader) {
@@ -318,7 +343,9 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
         val observer = LifecycleEventObserver { _, event ->
             if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
             val remote = currentArgs is ReaderScreenArgs.SmbFolder ||
-                currentArgs is ReaderScreenArgs.WebDavFolder
+                currentArgs is ReaderScreenArgs.WebDavFolder ||
+                currentArgs is ReaderScreenArgs.SmbStreamArchive ||
+                currentArgs is ReaderScreenArgs.WebDavStreamArchive
             if (!remote) return@LifecycleEventObserver
             val loader = currentLoader
             if (loader.size <= 0) return@LifecycleEventObserver
@@ -452,6 +479,9 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                                         pages = s.info?.pages ?: 0,
                                     )
                                 }
+                                is ReaderScreenArgs.SmbStreamArchive,
+                                is ReaderScreenArgs.WebDavStreamArchive,
+                                -> Unit
                                 is ReaderScreenArgs.Archive -> {
                                     // Library archive playlist sibling — match by content path.
                                     LocalLibrary.loadGalleryByContentPath(s.path)
@@ -724,6 +754,66 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
         },
         block = block,
     )
+    is ReaderScreenArgs.SmbStreamArchive -> {
+        val source = requireNotNull(SmbRepository.load(args.sourceId)) { "SMB source not found" }
+        val password = SmbPasswordStore.get(source.id)
+        val info = args.info
+        val page = when {
+            args.page != -1 -> args.page
+            info != null -> EhDB.getReadProgress(info.gid)
+            else -> 0
+        }
+        val remote = args.remotePath
+        val byteSource = com.hippo.ehviewer.smb.SmbArchiveByteSource(source, password, remote)
+        useStreamArchivePageLoader(
+            source = byteSource,
+            cacheKey = "smb:${source.id}:$remote",
+            titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName },
+            info = info,
+            startPage = page,
+            passwdProvider = { invalidator ->
+                awaitInputText(
+                    title = string(R.string.archive_need_passwd),
+                    hint = string(R.string.archive_passwd),
+                    onUserDismiss = { nav.popBackStack() },
+                ) { text ->
+                    ensure(text.isNotBlank()) { string(R.string.passwd_cannot_be_empty) }
+                    ensure(invalidator(text)) { string(R.string.passwd_wrong) }
+                }
+            },
+            block = block,
+        )
+    }
+    is ReaderScreenArgs.WebDavStreamArchive -> {
+        val source = requireNotNull(WebDavRepository.load(args.sourceId)) { "WebDAV source not found" }
+        val password = WebDavPasswordStore.get(source.id)
+        val info = args.info
+        val page = when {
+            args.page != -1 -> args.page
+            info != null -> EhDB.getReadProgress(info.gid)
+            else -> 0
+        }
+        val remote = args.remotePath
+        val byteSource = com.hippo.ehviewer.webdav.WebDavArchiveByteSource(source, password, remote)
+        useStreamArchivePageLoader(
+            source = byteSource,
+            cacheKey = "webdav:${source.id}:$remote",
+            titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName },
+            info = info,
+            startPage = page,
+            passwdProvider = { invalidator ->
+                awaitInputText(
+                    title = string(R.string.archive_need_passwd),
+                    hint = string(R.string.archive_passwd),
+                    onUserDismiss = { nav.popBackStack() },
+                ) { text ->
+                    ensure(text.isNotBlank()) { string(R.string.passwd_cannot_be_empty) }
+                    ensure(invalidator(text)) { string(R.string.passwd_wrong) }
+                }
+            },
+            block = block,
+        )
+    }
 }
 
 @Composable

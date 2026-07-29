@@ -59,6 +59,15 @@ object LocalLibrary {
     suspend fun loadGalleryByContentPath(path: String): LocalGalleryEntity? =
         db.localGalleryDao().loadByContentPath(path)
 
+    suspend fun updateGalleryPageAndCover(id: Long, pageCount: Int, coverPath: String?) =
+        db.localGalleryDao().updatePageAndCover(id, pageCount, coverPath)
+
+    suspend fun updateGalleryPageAndCoverByContentPath(
+        contentPath: String,
+        pageCount: Int,
+        coverPath: String?,
+    ) = db.localGalleryDao().updatePageAndCoverByContentPath(contentPath, pageCount, coverPath)
+
     suspend fun loadRoot(id: Long): LibraryRootEntity? = db.libraryRootDao().load(id)
 
     /**

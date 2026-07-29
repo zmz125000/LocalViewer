@@ -380,6 +380,79 @@ object WebDavClient {
         }
     }
 
+    /** Content-Length via HEAD (or GET with Range 0-0). Null if unknown. */
+    suspend fun fileSizeOrNull(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeFilePath: String,
+    ): Long? = withIOContext {
+        runCatching {
+            downloadSlots.withPermit {
+                withTransportRetry {
+                    val url = absoluteUrl(source, relativeFilePath)
+                    val auth = basicAuthHeader(source.username, password)
+                    val response = http().request(url) {
+                        method = HttpMethod.Head
+                        timeout {
+                            connectTimeoutMillis = LIST_CONNECT_MS
+                            requestTimeoutMillis = LIST_REQUEST_MS
+                            socketTimeoutMillis = LIST_SOCKET_MS
+                        }
+                        auth?.let { header(HttpHeaders.Authorization, it) }
+                    }
+                    if (response.status.value !in 200..299) return@withTransportRetry null
+                    response.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+                        ?: response.headers["Content-Length"]?.toLongOrNull()
+                }
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * HTTP Range read for stream archives.
+     * @return bytes copied into [buf], or -1 on error.
+     */
+    suspend fun readRange(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        fileOffset: Long,
+        buf: ByteArray,
+        off: Int,
+        len: Int,
+    ): Int = withIOContext {
+        downloadSlots.withPermit {
+            withTransportRetry {
+                val url = absoluteUrl(source, relativeFilePath)
+                val auth = basicAuthHeader(source.username, password)
+                val end = fileOffset + len - 1
+                http().prepareGet(url) {
+                    timeout {
+                        connectTimeoutMillis = DL_CONNECT_MS
+                        requestTimeoutMillis = DL_REQUEST_MS
+                        socketTimeoutMillis = DL_SOCKET_MS
+                    }
+                    auth?.let { header(HttpHeaders.Authorization, it) }
+                    header(HttpHeaders.Range, "bytes=$fileOffset-$end")
+                }.execute { response ->
+                    val code = response.status.value
+                    if (code != 206 && code !in 200..299) {
+                        error("WebDAV Range GET $code for $relativeFilePath")
+                    }
+                    response.bodyAsChannel().toInputStream().use { input ->
+                        var total = 0
+                        while (total < len) {
+                            val n = input.read(buf, off + total, len - total)
+                            if (n < 0) break
+                            total += n
+                        }
+                        total
+                    }
+                }
+            }
+        }
+    }
+
     private suspend fun propfindChildren(
         source: WebDavSourceEntity,
         password: String,

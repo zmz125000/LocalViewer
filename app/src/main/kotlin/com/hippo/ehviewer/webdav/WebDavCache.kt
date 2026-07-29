@@ -88,7 +88,12 @@ object WebDavCache {
     }
 
     fun cachePathForRemoteFile(sourceId: Long, remoteRelativeFile: String, kind: Kind = Kind.Page): Path {
-        val normalized = remoteRelativeFile.replace('\\', '/').trimStart('/')
+        val normalized = remoteRelativeFile
+            .replace('\\', '/')
+            .split('/')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && it != "." }
+            .joinToString("/")
         if (kind == Kind.Thumb) return thumbCachePath(sourceId, normalized)
         val name = normalized.substringAfterLast('/')
         val parent = normalized.substringBeforeLast('/', missingDelimiterValue = "")
@@ -287,6 +292,8 @@ object WebDavCache {
         var total = files.sumOf { it.size }
         for (e in files) {
             if (total <= budget) break
+            // Keep comic archives — reopen must not re-download large zips.
+            if (com.hippo.ehviewer.library.isArchiveCacheFileName(e.file.name)) continue
             if (e.file.delete()) {
                 total -= e.size
                 knownPresent.remove(e.file.absolutePath)

@@ -18,6 +18,7 @@
  */
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -65,6 +66,116 @@ static entry *entries = NULL;
 static size_t entryCount = 0;
 static ssize_t max_file_size = 0;
 
+// --- Stream I/O (random-access remote / non-mmap) via Kotlin ArchiveStreamBridge ---
+// Do NOT define JNI_OnLoad here — Rust libehviewer already exports it.
+//
+// Stream mode shares a single file position + read buffer. The mmap ctx pool
+// (parallel skip/extract) must NOT run concurrently on that state — it corrupts
+// ZIP headers ("Truncated ZIP file header") and can SIGSEGV. All stream extracts
+// take stream_mutex and keep at most one live archive_ctx.
+static JavaVM *g_vm = NULL;
+static bool use_stream_io = false;
+static jobject g_stream_bridge = NULL;
+static jmethodID g_mid_read = NULL;
+static jmethodID g_mid_seek = NULL;
+static uint8_t *g_stream_buf = NULL;
+static size_t g_stream_buf_cap = 0;
+static pthread_mutex_t stream_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void archive_cache_vm(JNIEnv *env) {
+    if (!g_vm && env) {
+        (*env)->GetJavaVM(env, &g_vm);
+    }
+}
+
+static JNIEnv *archive_get_env(void) {
+    if (!g_vm) return NULL;
+    JNIEnv *env = NULL;
+    jint st = (*g_vm)->GetEnv(g_vm, (void **) &env, JNI_VERSION_1_6);
+    if (st == JNI_OK) return env;
+    if (st == JNI_EDETACHED) {
+        if ((*g_vm)->AttachCurrentThread(g_vm, &env, NULL) == 0) return env;
+    }
+    return NULL;
+}
+
+static la_ssize_t stream_read_cb(struct archive *a, void *client_data, const void **buff) {
+    EH_UNUSED(a);
+    EH_UNUSED(client_data);
+    JNIEnv *env = archive_get_env();
+    if (!env || !g_stream_bridge || !g_mid_read) return ARCHIVE_FATAL;
+    const jint chunk = 256 * 1024;
+    jbyteArray arr = (*env)->CallObjectMethod(env, g_stream_bridge, g_mid_read, chunk);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+        return ARCHIVE_FATAL;
+    }
+    if (!arr) {
+        *buff = NULL;
+        return 0;
+    }
+    jsize n = (*env)->GetArrayLength(env, arr);
+    if (n <= 0) {
+        (*env)->DeleteLocalRef(env, arr);
+        *buff = NULL;
+        return 0;
+    }
+    if ((size_t) n > g_stream_buf_cap) {
+        free(g_stream_buf);
+        g_stream_buf = (uint8_t *) malloc((size_t) n);
+        g_stream_buf_cap = (size_t) n;
+        if (!g_stream_buf) {
+            (*env)->DeleteLocalRef(env, arr);
+            g_stream_buf_cap = 0;
+            return ARCHIVE_FATAL;
+        }
+    }
+    (*env)->GetByteArrayRegion(env, arr, 0, n, (jbyte *) g_stream_buf);
+    (*env)->DeleteLocalRef(env, arr);
+    *buff = g_stream_buf;
+    return (la_ssize_t) n;
+}
+
+static la_int64_t stream_seek_cb(struct archive *a, void *client_data, la_int64_t offset, int whence) {
+    EH_UNUSED(a);
+    EH_UNUSED(client_data);
+    JNIEnv *env = archive_get_env();
+    if (!env || !g_stream_bridge || !g_mid_seek) return ARCHIVE_FATAL;
+    jlong pos = (*env)->CallLongMethod(env, g_stream_bridge, g_mid_seek, (jlong) offset, (jint) whence);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+        return ARCHIVE_FATAL;
+    }
+    return (la_int64_t) pos;
+}
+
+static int stream_open_cb(struct archive *a, void *client_data) {
+    EH_UNUSED(a);
+    EH_UNUSED(client_data);
+    return ARCHIVE_OK;
+}
+
+static int stream_close_cb(struct archive *a, void *client_data) {
+    EH_UNUSED(a);
+    EH_UNUSED(client_data);
+    return ARCHIVE_OK;
+}
+
+static void stream_bridge_clear(JNIEnv *env) {
+    if (g_stream_bridge && env) {
+        (*env)->DeleteGlobalRef(env, g_stream_bridge);
+    }
+    g_stream_bridge = NULL;
+    g_mid_read = NULL;
+    g_mid_seek = NULL;
+    free(g_stream_buf);
+    g_stream_buf = NULL;
+    g_stream_buf_cap = 0;
+    use_stream_io = false;
+}
+
 #define SUPPORT_EXT_COUNT 11
 
 const char supportExt[SUPPORT_EXT_COUNT][5] = {
@@ -81,15 +192,75 @@ const char supportExt[SUPPORT_EXT_COUNT][5] = {
         "avif"
 };
 
+/** basename after last / or \ */
+static inline const char *archive_basename(const char *name) {
+    const char *base = name;
+    for (const char *p = name; *p; p++) {
+        if (*p == '/' || *p == '\\') base = p + 1;
+    }
+    return base;
+}
+
+static inline char ascii_lower(char c) {
+    return (c >= 'A' && c <= 'Z') ? (char) (c - 'A' + 'a') : c;
+}
+
+/**
+ * Skip macOS resource-fork junk from Finder "Compress" zips:
+ * - any path under __MACOSX/
+ * - AppleDouble files named ._*
+ * These often end in .jpg/.png but are not decodable images
+ * → ImageDecoder "unimplemented" / "Input contained an error".
+ */
+static inline bool filename_is_macos_junk(const char *name) {
+    if (!name || !*name) return true;
+    // Scan path segments for __MACOSX (case-insensitive)
+    const char *seg = name;
+    for (const char *p = name;; p++) {
+        if (*p == '/' || *p == '\\' || *p == '\0') {
+            size_t len = (size_t) (p - seg);
+            if (len == 8) {
+                static const char mac[] = "__macosx";
+                int match = 1;
+                for (size_t i = 0; i < 8; i++) {
+                    if (ascii_lower(seg[i]) != mac[i]) {
+                        match = 0;
+                        break;
+                    }
+                }
+                if (match) return true;
+            }
+            if (*p == '\0') break;
+            seg = p + 1;
+        }
+    }
+    const char *base = archive_basename(name);
+    // AppleDouble: ._filename.jpg
+    if (base[0] == '.' && base[1] == '_') return true;
+    if (!*base || strcmp(base, ".") == 0 || strcmp(base, "..") == 0) return true;
+    return false;
+}
+
 static inline int filename_is_playable_file(const char *name) {
-    if (!name)
+    if (!name || filename_is_macos_junk(name))
         return false;
     const char *dotptr = strrchr(name, '.');
-    if (!dotptr++)
+    if (!dotptr || !dotptr[1])
         return false;
+    dotptr++; // skip '.'
+    char ext[8];
+    size_t n = 0;
+    for (; dotptr[n] && n < sizeof(ext) - 1; n++) {
+        char c = ascii_lower(dotptr[n]);
+        // Extension must be alnum only
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) break;
+        ext[n] = c;
+    }
+    ext[n] = '\0';
+    if (!n) return false;
     int i;
     for (i = 0; i < SUPPORT_EXT_COUNT; i++)
-        if (strcmp(dotptr, supportExt[i]) == 0)
+        if (strcmp(ext, supportExt[i]) == 0)
             return true;
     return false;
 }
@@ -123,7 +294,8 @@ static bool fill_entry_zero_copy(struct archive *arc, entry *entry) {
 
 static void archive_map_entries_index(archive_ctx *ctx, bool sort) {
     int count = 0;
-    bool zero_copy = true;
+    // Stream I/O cannot zero-copy (no file mapping); skip data_block probes.
+    bool zero_copy = !use_stream_io;
     while (archive_read_next_header(ctx->arc, &ctx->entry) == ARCHIVE_OK) {
         const char *name = archive_entry_pathname(ctx->entry);
         if (archive_entry_is_file(ctx->entry) && filename_is_playable_file(name)) {
@@ -132,6 +304,7 @@ static void archive_map_entries_index(archive_ctx *ctx, bool sort) {
             ssize_t size = archive_entry_size(ctx->entry);
             max_file_size = max(size, max_file_size);
             entries[count].size = size;
+            entries[count].addr = NULL;
             // We don't expect zero copy if first content can't do zero copy
             if (zero_copy) zero_copy = fill_entry_zero_copy(ctx->arc, &entries[count]);
             count++;
@@ -198,7 +371,14 @@ static archive_ctx *archive_alloc_ctx() {
     archive_read_set_option(ctx->arc, "zip", "ignorecrc32", "1");
     if (passwd)
         archive_read_add_passphrase(ctx->arc, passwd);
-    int err = archive_read_open_memory(ctx->arc, archiveAddr, archiveSize);
+    int err;
+    if (use_stream_io) {
+        // Random-access callbacks for remote ZIP/TAR (no full mmap).
+        archive_read_set_seek_callback(ctx->arc, stream_seek_cb);
+        err = archive_read_open(ctx->arc, NULL, stream_open_cb, stream_read_cb, stream_close_cb);
+    } else {
+        err = archive_read_open_memory(ctx->arc, archiveAddr, archiveSize);
+    }
     if (err < ARCHIVE_OK) {
         LOGE("%s%s", "Open archive failed: ", archive_error_string(ctx->arc));
         archive_read_free(ctx->arc);
@@ -219,7 +399,71 @@ static int archive_skip_to_index(archive_ctx *ctx, int index) {
     return ARCHIVE_FATAL;
 }
 
+/** Remove [ctx] from the pool (if present) and free it. */
+static void archive_drop_ctx(archive_ctx *ctx) {
+    if (!ctx) return;
+    if (ctx_pool) {
+        pthread_mutex_lock(&ctx_pool_mutex);
+        for (int i = 0; i < CTX_POOL_SIZE; i++) {
+            if (ctx_pool[i] == ctx) {
+                ctx_pool[i] = NULL;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&ctx_pool_mutex);
+    }
+    archive_release_ctx(ctx);
+}
+
+/**
+ * Stream mode: single live ctx, shared position/buffer. Caller must hold stream_mutex.
+ * Reuses the ctx when it can only skip forward; otherwise reopens from the start.
+ */
+static int archive_get_ctx_stream(archive_ctx **ctxptr, int idx) {
+    archive_ctx *ctx = NULL;
+    pthread_mutex_lock(&ctx_pool_mutex);
+    if (ctx_pool && ctx_pool[0] && !ctx_pool[0]->using && ctx_pool[0]->next_index <= idx) {
+        ctx = ctx_pool[0];
+        ctx->using = 1;
+    }
+    pthread_mutex_unlock(&ctx_pool_mutex);
+
+    if (!ctx) {
+        // Drop any leftover stream contexts (at most one should exist).
+        if (ctx_pool) {
+            for (int i = 0; i < CTX_POOL_SIZE; i++) {
+                archive_ctx *old = NULL;
+                pthread_mutex_lock(&ctx_pool_mutex);
+                old = ctx_pool[i];
+                ctx_pool[i] = NULL;
+                pthread_mutex_unlock(&ctx_pool_mutex);
+                archive_release_ctx(old);
+            }
+        }
+        ctx = archive_alloc_ctx();
+        if (!ctx) return ARCHIVE_FATAL;
+        pthread_mutex_lock(&ctx_pool_mutex);
+        if (ctx_pool) ctx_pool[0] = ctx;
+        pthread_mutex_unlock(&ctx_pool_mutex);
+    }
+
+    int ret = archive_skip_to_index(ctx, idx);
+    if (ret != idx) {
+        LOGE("Skip to index failed: %s", archive_error_string(ctx->arc));
+        int err = archive_errno(ctx->arc);
+        archive_drop_ctx(ctx);
+        return err != 0 ? err : ARCHIVE_FATAL;
+    }
+    *ctxptr = ctx;
+    return 0;
+}
+
 static int archive_get_ctx(archive_ctx **ctxptr, int idx) {
+    if (use_stream_io) {
+        // stream_mutex is held by extract entry points
+        return archive_get_ctx_stream(ctxptr, idx);
+    }
+
     int ret;
     archive_ctx *ctx = NULL;
     pthread_mutex_lock(&ctx_pool_mutex);
@@ -244,6 +488,7 @@ static int archive_get_ctx(archive_ctx **ctxptr, int idx) {
         int victimIdx = 0;
         int replace = 1;
         ctx = archive_alloc_ctx();
+        if (!ctx) return ARCHIVE_FATAL;
         pthread_mutex_lock(&ctx_pool_mutex);
         for (int i = 0; i < CTX_POOL_SIZE; i++) {
             if (!ctx_pool[i]) {
@@ -266,24 +511,16 @@ static int archive_get_ctx(archive_ctx **ctxptr, int idx) {
     if (ret != idx) {
         ret = archive_errno(ctx->arc);
         LOGE("Skip to index failed: %s", archive_error_string(ctx->arc));
-        archive_release_ctx(ctx);
-        return ret;
+        // Previously freed without clearing the pool slot → UAF / SIGSEGV.
+        archive_drop_ctx(ctx);
+        return ret != 0 ? ret : ARCHIVE_FATAL;
     }
     *ctxptr = ctx;
     return 0;
 }
 
-JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_ArchiveKt_openArchive(JNIEnv *env, jclass thiz, jint fd, jlong size, jboolean sort_entries) {
-    EH_UNUSED(env);
-    EH_UNUSED(thiz);
+static jint archive_open_common(JNIEnv *env, jboolean sort_entries) {
     archive_ctx *ctx = NULL;
-    archiveAddr = mmap(0, size, PROT_READ, MAP_PRIVATE, fd, 0);
-    if (archiveAddr == MAP_FAILED) {
-        LOGE("%s%s", "mmap failed with error ", strerror(errno));
-        return 0;
-    }
-    archiveSize = size;
     ctx_pool = calloc(CTX_POOL_SIZE, sizeof(archive_ctx **));
     ctx = archive_alloc_ctx();
     if (!ctx) return 0;
@@ -307,16 +544,18 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchive(JNIEnv *env, jclass thiz, jint
             need_encrypt = false;
     }
 
-    int format = archive_format(ctx->arc);
-    switch (format) {
-        case ARCHIVE_FORMAT_ZIP:
-        case ARCHIVE_FORMAT_RAR_V5:
-            madvise_log_if_error(archiveAddr, archiveSize, MADV_SEQUENTIAL);
-            break;
-        case ARCHIVE_FORMAT_7ZIP: // Seek is bad
-            madvise_log_if_error(archiveAddr, archiveSize, MADV_RANDOM);
-            break;
-        default:;
+    if (!use_stream_io && archiveAddr != MAP_FAILED) {
+        int format = archive_format(ctx->arc);
+        switch (format) {
+            case ARCHIVE_FORMAT_ZIP:
+            case ARCHIVE_FORMAT_RAR_V5:
+                madvise_log_if_error(archiveAddr, archiveSize, MADV_SEQUENTIAL);
+                break;
+            case ARCHIVE_FORMAT_7ZIP: // Seek is bad
+                madvise_log_if_error(archiveAddr, archiveSize, MADV_RANDOM);
+                break;
+            default:;
+        }
     }
     archive_release_ctx(ctx);
 
@@ -328,38 +567,97 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchive(JNIEnv *env, jclass thiz, jint
     return (int) entryCount;
 }
 
+JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_openArchive(JNIEnv *env, jclass thiz, jint fd, jlong size, jboolean sort_entries) {
+    EH_UNUSED(thiz);
+    archive_cache_vm(env);
+    stream_bridge_clear(env);
+    use_stream_io = false;
+    archiveAddr = mmap(0, (size_t) size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (archiveAddr == MAP_FAILED) {
+        LOGE("%s%s", "mmap failed with error ", strerror(errno));
+        return 0;
+    }
+    archiveSize = (size_t) size;
+    return archive_open_common(env, sort_entries);
+}
+
+/**
+ * Open archive via Kotlin [ArchiveStreamBridge] (random read/seek — SMB/WebDAV stream).
+ * Does not mmap; extracts always go through decode buffers.
+ */
+JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(JNIEnv *env, jclass thiz, jobject bridge, jlong size, jboolean sort_entries) {
+    EH_UNUSED(thiz);
+    if (!bridge || size <= 0) return 0;
+    archive_cache_vm(env);
+    stream_bridge_clear(env);
+    if (archiveAddr != MAP_FAILED) {
+        munmap(archiveAddr, archiveSize);
+        archiveAddr = MAP_FAILED;
+        archiveSize = 0;
+    }
+    use_stream_io = true;
+    archiveSize = (size_t) size;
+    archiveAddr = MAP_FAILED;
+    g_stream_bridge = (*env)->NewGlobalRef(env, bridge);
+    jclass cls = (*env)->GetObjectClass(env, bridge);
+    g_mid_read = (*env)->GetMethodID(env, cls, "nativeRead", "(I)[B");
+    g_mid_seek = (*env)->GetMethodID(env, cls, "nativeSeek", "(JI)J");
+    (*env)->DeleteLocalRef(env, cls);
+    if (!g_mid_read || !g_mid_seek) {
+        LOGE("%s", "ArchiveStreamBridge methods missing");
+        stream_bridge_clear(env);
+        return 0;
+    }
+    return archive_open_common(env, sort_entries);
+}
+
 JNIEXPORT jobject JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_extractToByteBuffer(JNIEnv *env, jclass thiz, jint index) {
     EH_UNUSED(env);
     EH_UNUSED(thiz);
+    if (index < 0 || (size_t) index >= entryCount || !entries) return 0;
     entry *entry = &entries[index];
     ssize_t size = entry->size;
     if (entry->addr) {
         return (*env)->NewDirectByteBuffer(env, entry->addr, size);
-    } else {
-        archive_ctx *ctx = NULL;
-        if (!archive_get_ctx(&ctx, entry->index)) {
-            void *addr = acquire_decode_buffer();
+    }
+
+    if (use_stream_io) pthread_mutex_lock(&stream_mutex);
+
+    archive_ctx *ctx = NULL;
+    jobject result = 0;
+    if (!archive_get_ctx(&ctx, entry->index)) {
+        void *addr = acquire_decode_buffer();
+        if (!addr) {
+            LOGE("%s", "Decode buffer alloc failed");
+            // Leave ctx marked using so it is not reused mid-failure; drop it.
+            archive_drop_ctx(ctx);
+        } else {
             ssize_t bytes = archive_read_data(ctx->arc, addr, size);
-            ctx->using = 0;
             if (bytes == size) {
-                return (*env)->NewDirectByteBuffer(env, addr, size);
+                ctx->using = 0;
+                result = (*env)->NewDirectByteBuffer(env, addr, size);
             } else {
                 if (bytes < 0) {
                     LOGE("%s%s", "Archive read failed: ", archive_error_string(ctx->arc));
                 } else {
                     LOGE("%s", "No enough data read, WTF?");
                 }
+                // Stream/ctx is in a bad state after a partial/failed read.
+                archive_drop_ctx(ctx);
+                release_decode_buffer(addr);
             }
-            release_decode_buffer(addr);
         }
     }
-    return 0;
+
+    if (use_stream_io) pthread_mutex_unlock(&stream_mutex);
+    return result;
 }
 
 JNIEXPORT void JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_closeArchive(JNIEnv *env, jclass thiz) {
-    EH_UNUSED(env);
     EH_UNUSED(thiz);
     if (ctx_pool) {
         for (int i = 0; i < CTX_POOL_SIZE; i++)
@@ -374,6 +672,8 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_closeArchive(JNIEnv *env, jclass thiz) {
         munmap(archiveAddr, archiveSize);
         archiveAddr = MAP_FAILED;
     }
+    archiveSize = 0;
+    stream_bridge_clear(env);
     for (int i = 0; i < MAX_PARALLEL_DECOMP; ++i) {
         free(decode_buffer[i]);
         decode_buffer[i] = NULL;
@@ -386,6 +686,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_closeArchive(JNIEnv *env, jclass thiz) {
         free(entries);
         entries = NULL;
     }
+    entryCount = 0;
 }
 
 JNIEXPORT jboolean JNICALL
@@ -434,14 +735,20 @@ JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_extractToFd(JNIEnv *env, jclass thiz, jint index, jint fd) {
     EH_UNUSED(env);
     EH_UNUSED(thiz);
-    index = entries[index].index;
+    if (index < 0 || (size_t) index >= entryCount || !entries) return JNI_FALSE;
+    int arcIndex = entries[index].index;
+    if (use_stream_io) pthread_mutex_lock(&stream_mutex);
     archive_ctx *ctx = NULL;
-    int ret;
-    ret = archive_get_ctx(&ctx, index);
+    int ret = archive_get_ctx(&ctx, arcIndex);
     if (!ret) {
         ret = archive_read_data_into_fd(ctx->arc, fd);
-        ctx->using = 0;
+        if (ret == ARCHIVE_OK) {
+            ctx->using = 0;
+        } else {
+            archive_drop_ctx(ctx);
+        }
     }
+    if (use_stream_io) pthread_mutex_unlock(&stream_mutex);
     return ret == ARCHIVE_OK;
 }
 

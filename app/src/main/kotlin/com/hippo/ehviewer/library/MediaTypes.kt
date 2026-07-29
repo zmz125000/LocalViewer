@@ -12,7 +12,34 @@ val ARCHIVE_EXTENSIONS = setOf(
     "rar",
     "cbr",
     "7z",
+    "cbt",
+    "tar",
 )
+
+/**
+ * Solid / poor-seek archives: skip first-page cover extract (expensive full decompress).
+ * RAR/CBR often solid; 7z typically solid. Stream reading later skips these too.
+ */
+val SOLID_ARCHIVE_EXTENSIONS = setOf("7z", "rar", "cbr")
+
+/** Warn before downloading a remote archive larger than this (128 MiB). */
+const val ARCHIVE_DOWNLOAD_WARN_BYTES = 128L * 1024L * 1024L
+
+fun isSolidArchiveFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in SOLID_ARCHIVE_EXTENSIONS
+}
+
+/** True if [name] looks like a cached comic archive (protect from page-cache LRU). */
+fun isArchiveCacheFileName(name: String): Boolean {
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in ARCHIVE_EXTENSIONS
+}
+
+/** Prefer cover extract for stream-friendly comic archives (not solid 7z). */
+fun prefersArchiveCoverExtract(name: String): Boolean =
+    isArchiveFileName(name) && !isSolidArchiveFileName(name)
 
 fun isImageFileName(name: String): Boolean {
     if (name.startsWith('.')) return false
