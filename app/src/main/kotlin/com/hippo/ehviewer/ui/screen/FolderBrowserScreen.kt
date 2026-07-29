@@ -267,7 +267,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 entries = entries,
             )
         }
-        navToReader(entry.path.toString())
+        val path = entry.path.toString()
+        launchIO {
+            LocalHistory.recordLocalArchive(path, title = entry.name)
+        }
+        navToReader(path)
     }
 
     Scaffold(
