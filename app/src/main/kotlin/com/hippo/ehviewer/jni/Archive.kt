@@ -23,6 +23,13 @@ external fun openArchiveStream(
 external fun extractToByteBuffer(index: Int): ByteBuffer?
 external fun extractToFd(index: Int, fd: Int): Boolean
 external fun getExtension(index: Int): String
+
+/** Stream ZIP/TAR index: member local-header (ZIP) or data (TAR) offset; -1 if N/A. */
+external fun getStreamMemberOffset(index: Int): Long
+
+/** Stream ZIP/TAR index: compressed/raw member length for readahead warm; -1 if N/A. */
+external fun getStreamMemberLength(index: Int): Long
+
 external fun needPassword(): Boolean
 external fun providePassword(str: String): Boolean
 external fun closeArchive()

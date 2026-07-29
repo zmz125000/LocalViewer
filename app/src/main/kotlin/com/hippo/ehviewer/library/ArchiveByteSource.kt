@@ -13,6 +13,12 @@ interface ArchiveByteSource : AutoCloseable {
      */
     fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int
 
+    /**
+     * Optional readahead fill at [offset] (next page / sequential warm).
+     * Default no-op; [ReadAheadArchiveByteSource] implements it.
+     */
+    fun warm(offset: Long, length: Int = ReadAheadArchiveByteSource.SEQUENTIAL_WINDOW) = Unit
+
     override fun close()
 }
 

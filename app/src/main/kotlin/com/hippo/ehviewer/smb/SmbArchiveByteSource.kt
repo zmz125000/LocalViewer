@@ -38,6 +38,8 @@ class SmbArchiveByteSource(
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int =
         inner.readAt(offset, buf, off, len)
 
+    override fun warm(offset: Long, length: Int) = inner.warm(offset, length)
+
     override fun close() = inner.close()
 }
 
