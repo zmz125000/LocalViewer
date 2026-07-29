@@ -56,16 +56,21 @@ import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
+import androidx.compose.material3.Text
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
+import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
+import com.hippo.ehviewer.library.ArchiveTooLargeException
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
@@ -85,10 +90,13 @@ import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToWebDavFolderReader
+import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import kotlinx.coroutines.CancellationException
 import moe.tarsin.snackbar
 import moe.tarsin.string
 
@@ -337,8 +345,45 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         navToWebDavFolderReader(src.id, remote, names, info)
     }
 
-    fun openArchive(@Suppress("UNUSED_PARAMETER") entry: BrowseEntryRemote.ArchiveGallery) {
-        launch { snackbar(string(R.string.webdav_archive_not_supported)) }
+    fun openArchive(entry: BrowseEntryRemote.ArchiveGallery) {
+        val src = source ?: return
+        // fileName is only the basename from the current listing — join with the folder we are in.
+        val remote = WebDavGateway.joinRelative(
+            WebDavGateway.joinRelative(relativeDir, entry.parentRelativeName),
+            entry.fileName,
+        )
+        launchIO {
+            try {
+                val password = WebDavPasswordStore.get(src.id)
+                var allowLarge = false
+                while (true) {
+                    try {
+                        snackbar(string(R.string.archive_downloading))
+                        val local = RemoteArchiveOpen.ensureWebDavArchive(
+                            source = src,
+                            password = password,
+                            remoteRelativeFile = remote,
+                            allowLarge = allowLarge,
+                        )
+                        withUIContext {
+                            ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
+                            navToReader(local.toString())
+                        }
+                        return@launchIO
+                    } catch (e: ArchiveTooLargeException) {
+                        val miB = (e.sizeBytes / (1024 * 1024)).toInt()
+                        val limit = (ARCHIVE_DOWNLOAD_WARN_BYTES / (1024 * 1024)).toInt()
+                        awaitConfirmationOrCancel(title = R.string.archive_large_title) {
+                            Text(string(R.string.archive_large_message, miB, limit))
+                        }
+                        allowLarge = true
+                    }
+                }
+            } catch (_: CancellationException) {
+            } catch (e: Throwable) {
+                snackbar(string(R.string.archive_download_failed, e.message ?: e.toString()))
+            }
+        }
     }
 
     Scaffold(

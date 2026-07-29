@@ -24,9 +24,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,11 +49,15 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.ui.component.CrystalCard
 import com.ehviewer.core.ui.component.ElevatedCard
+import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
+import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.ui.screen.collectListThumbSizeAsState
+import okio.Path.Companion.toPath
 
 /** Kind / page-count chip — text on secondaryContainer, used on list cards. */
 @Composable
@@ -92,7 +99,28 @@ private fun CoverImage(
     sizePx: Int,
     placeholder: ImageVector,
     modifier: Modifier = Modifier,
+    /** When set and [coverPath] is empty, extract first page from this local archive. */
+    archiveContentPath: String? = null,
 ) {
+    var resolvedCover by remember(coverPath, archiveContentPath) {
+        mutableStateOf(coverPath)
+    }
+    LaunchedEffect(coverPath, archiveContentPath) {
+        if (!coverPath.isNullOrBlank()) {
+            resolvedCover = coverPath
+            return@LaunchedEffect
+        }
+        val arch = archiveContentPath ?: return@LaunchedEffect
+        val thumb = withIOContext {
+            ArchiveCoverCache.ensureCover(arch.toPath())
+        }
+        if (thumb != null) {
+            resolvedCover = thumb.toString()
+            withIOContext {
+                LocalLibrary.updateGalleryPageAndCoverByContentPath(arch, 0, thumb.toString())
+            }
+        }
+    }
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Icon(
             imageVector = placeholder,
@@ -100,7 +128,7 @@ private fun CoverImage(
             modifier = Modifier.size(48.dp),
             tint = MaterialTheme.colorScheme.primary,
         )
-        val request = coverRequest(coverPath, sizePx)
+        val request = coverRequest(resolvedCover, sizePx)
         if (request != null) {
             AsyncImage(
                 model = request,
@@ -135,6 +163,9 @@ fun LocalGalleryListItem(
                 Icons.Default.Inventory2
             } else {
                 Icons.Default.Folder
+            },
+            archiveContentPath = gallery.contentPath.takeIf {
+                gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
             },
             modifier = Modifier
                 .aspectRatio(1f, matchHeightConstraintsFirst = true)
@@ -402,6 +433,9 @@ fun LocalGalleryGridItem(
                 CoverImage(
                     coverPath = gallery.coverPath,
                     sizePx = gridDecodePx,
+                    archiveContentPath = gallery.contentPath.takeIf {
+                        gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
+                    },
                     placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
                         Icons.Default.Inventory2
                     } else {

@@ -31,6 +31,26 @@ interface LocalGalleryDao {
     @Query("DELETE FROM LOCAL_GALLERIES")
     suspend fun deleteAll()
 
+    @Query(
+        """
+        UPDATE LOCAL_GALLERIES SET
+            PAGE_COUNT = CASE WHEN :pageCount > 0 THEN :pageCount ELSE PAGE_COUNT END,
+            COVER_PATH = COALESCE(:coverPath, COVER_PATH)
+        WHERE ID = :id
+        """,
+    )
+    suspend fun updatePageAndCover(id: Long, pageCount: Int, coverPath: String?)
+
+    @Query(
+        """
+        UPDATE LOCAL_GALLERIES SET
+            PAGE_COUNT = CASE WHEN :pageCount > 0 THEN :pageCount ELSE PAGE_COUNT END,
+            COVER_PATH = COALESCE(:coverPath, COVER_PATH)
+        WHERE CONTENT_PATH = :contentPath
+        """,
+    )
+    suspend fun updatePageAndCoverByContentPath(contentPath: String, pageCount: Int, coverPath: String?)
+
     @Transaction
     suspend fun replaceForRoot(rootId: Long, galleries: List<LocalGalleryEntity>) {
         deleteByRootId(rootId)

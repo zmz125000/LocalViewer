@@ -47,10 +47,12 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
+import androidx.compose.ui.graphics.vector.ImageVector
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
@@ -64,6 +66,8 @@ import okio.Path
 /** Cover source for browse list rows (local path or lazy remote download). */
 sealed class BrowseCover {
     data class Local(val path: Path) : BrowseCover()
+    /** Local comic archive — first page extracted to [ArchiveCoverCache] (skips solid 7z). */
+    data class LocalArchive(val archivePath: Path) : BrowseCover()
     data class Smb(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
     data class WebDav(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
 }
@@ -125,15 +129,22 @@ fun BrowseArchiveGalleryRow(
     name: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    cover: BrowseCover? = null,
+    thumbRetryKey: Any? = null,
 ) {
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = { Text(stringResource(R.string.library_gallery_archive)) },
         leadingContent = {
-            Icon(
-                Icons.AutoMirrored.Filled.InsertDriveFile,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.tertiary,
+            BrowseCoverThumb(
+                cover = cover,
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(ShapeDefaults.Medium),
+                placeholderSize = 32.dp,
+                decodeSizePx = CoverThumb.listDecodePx(),
+                retryKey = thumbRetryKey,
+                placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
             )
         },
         modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -221,23 +232,27 @@ fun BrowseArchiveGridItem(
     name: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    cover: BrowseCover? = null,
+    thumbRetryKey: Any? = null,
 ) {
     BrowseGridCell(
         name = name,
         onClick = onClick,
         modifier = modifier,
         thumb = {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.InsertDriveFile,
-                    contentDescription = null,
-                    modifier = Modifier.size(40.dp),
-                    tint = MaterialTheme.colorScheme.tertiary,
-                )
-            }
+            BrowseCoverThumb(
+                cover = cover,
+                modifier = Modifier.fillMaxSize().clip(ShapeDefaults.Medium),
+                placeholderSize = 40.dp,
+                decodeSizePx = CoverThumb.gridDecodePx(
+                    screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                    columns = GalleryGridDefaults.columnCount(),
+                    margin = GalleryGridDefaults.margin(),
+                    gutter = GalleryGridDefaults.gutter(),
+                ),
+                retryKey = thumbRetryKey,
+                placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
+            )
         },
     )
 }
@@ -300,6 +315,7 @@ fun BrowseCoverThumb(
      * **only when disk cache is missing**. Cache hits never re-download.
      */
     retryKey: Any? = null,
+    placeholderIcon: ImageVector = Icons.Default.PhotoLibrary,
 ) {
     val resolvedDecodePx = decodeSizePx ?: CoverThumb.listDecodePx()
     val context = LocalContext.current
@@ -308,14 +324,19 @@ fun BrowseCoverThumb(
     val remoteKey = when (cover) {
         is BrowseCover.Smb -> "smb\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
         is BrowseCover.WebDav -> "dav\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
-        else -> null
+        is BrowseCover.LocalArchive -> "arch\u0000${cover.archivePath}"
+        is BrowseCover.Local -> "local\u0000${cover.path}"
+        null -> null
     }
-    // Local covers set immediately; remote paths are filled by LaunchedEffect after IO disk probe
-    // (main-thread isCached only sees memory — cold process would miss real cache files).
-    var localPath by remember(remoteKey, cover is BrowseCover.Local) {
+    // Local image paths set immediately; archive/remote filled by LaunchedEffect after IO.
+    var localPath by remember(remoteKey) {
         mutableStateOf(
             when (cover) {
                 is BrowseCover.Local -> cover.path
+                is BrowseCover.LocalArchive -> {
+                    val cache = ArchiveCoverCache.thumbPathFor(cover.archivePath.toString())
+                    cache.takeIf { ArchiveCoverCache.isCached(it) }
+                }
                 is BrowseCover.Smb -> {
                     val cache = SmbCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
                     cache.takeIf { SmbCache.isCached(it) }
@@ -333,7 +354,7 @@ fun BrowseCoverThumb(
     var resumeEpoch by remember(remoteKey) { mutableIntStateOf(0) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, remoteKey) {
-        if (cover !is BrowseCover.Smb && cover !is BrowseCover.WebDav) {
+        if (cover !is BrowseCover.Smb && cover !is BrowseCover.WebDav && cover !is BrowseCover.LocalArchive) {
             return@DisposableEffect onDispose { }
         }
         val observer = LifecycleEventObserver { _, event ->
@@ -351,6 +372,13 @@ fun BrowseCoverThumb(
     // Always probe disk on IO first so cached thumbs show even when download is off.
     LaunchedEffect(remoteKey, retryKey, resumeEpoch, downloadRemoteThumbs) {
         when (cover) {
+            is BrowseCover.LocalArchive -> {
+                val thumb = withIOContext { ArchiveCoverCache.ensureCover(cover.archivePath) }
+                if (thumb != null) {
+                    localPath = thumb
+                    fetchFailed = false
+                }
+            }
             is BrowseCover.Smb -> {
                 val cache = SmbCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
                 val onDisk = withIOContext { SmbCache.isCachedOnDisk(cache) }
@@ -432,6 +460,8 @@ fun BrowseCoverThumb(
                     "smb-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${SmbCache.THUMB_DISK_EDGE}"
                 is BrowseCover.WebDav ->
                     "dav-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${WebDavCache.THUMB_DISK_EDGE}"
+                is BrowseCover.LocalArchive ->
+                    "arch-thumb:${cover.archivePath}@${ArchiveCoverCache.THUMB_EDGE}"
                 is BrowseCover.Local -> cover.path.toString()
                 null -> path.toString()
             }
@@ -452,7 +482,7 @@ fun BrowseCoverThumb(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            Icons.Default.PhotoLibrary,
+            placeholderIcon,
             contentDescription = null,
             modifier = Modifier.size(placeholderSize),
             tint = MaterialTheme.colorScheme.secondary,

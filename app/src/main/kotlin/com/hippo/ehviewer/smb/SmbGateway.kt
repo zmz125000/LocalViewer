@@ -938,6 +938,29 @@ object SmbGateway {
         }
     }
 
+    /** Remote file size in bytes, or null if unavailable. */
+    suspend fun fileSizeOrNull(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+    ): Long? = withIOContext {
+        runCatching {
+            withShare(source, password) { share ->
+                val path = remotePath(source, relativeFilePath)
+                share.openFile(
+                    path,
+                    EnumSet.of(AccessMask.GENERIC_READ),
+                    null,
+                    SMB2ShareAccess.ALL,
+                    SMB2CreateDisposition.FILE_OPEN,
+                    null,
+                ).use { file ->
+                    file.fileInformation.standardInformation.endOfFile
+                }
+            }
+        }.getOrNull()
+    }
+
     suspend fun downloadFile(
         source: SmbSourceEntity,
         password: String,
