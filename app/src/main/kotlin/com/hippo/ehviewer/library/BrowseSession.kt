@@ -107,6 +107,11 @@ object BrowseSession {
         }
     }
 
+    /** Drop all WebDAV listing cache (network path change / app background). */
+    fun invalidateAllWebDavListings() {
+        webDavListings.keys.filter { it.startsWith("dav:") }.forEach { webDavListings.remove(it) }
+    }
+
     fun pathKey(path: Path): String = path.toString()
 
     // --- Browse list scroll (per directory; process lifetime) ---
