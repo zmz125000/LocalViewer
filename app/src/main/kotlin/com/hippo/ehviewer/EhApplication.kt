@@ -64,6 +64,7 @@ import com.hippo.ehviewer.ktor.configureCommon
 import com.hippo.ehviewer.ktor.isCronetAvailable
 import com.hippo.ehviewer.easytier.EasyTierRuntime
 import com.hippo.ehviewer.smb.SmbGateway
+import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
 import com.hippo.ehviewer.ui.tools.dataStateFlow
 import com.hippo.ehviewer.util.AppConfig
@@ -106,18 +107,17 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         // onCreate body is `with(lifecycleScope)` — use Application receiver explicitly.
         EasyTierRuntime.init(this@EhApplication)
         System.loadLibrary("ehviewer")
-        // SMB: drop half-open sockets when app is backgrounded (power button / switch apps).
-        // smbj used to keep a host-level dead Connection that broke every share until restart.
+        // SMB + WebDAV: drop half-open sockets when app is backgrounded (power / switch apps).
         lifecycle.addObserver(
             LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_STOP) {
                     SmbGateway.onAppBackgrounded()
+                    WebDavClient.onAppBackgrounded()
                 }
             },
         )
-        // SMB: any path change (Wi‑Fi, 5G, Ethernet, VPN up/down) can half-open pooled
-        // sockets — drop them before list/reader hangs on soTimeout.
-        registerSmbNetworkCallback()
+        // Path change (Wi‑Fi, cell, VPN/EasyTier) can leave dead keep-alives — reset pools/clients.
+        registerNetworkPathCallbacks()
         launchIO {
             @Suppress("UNUSED_EXPRESSION")
             launch { EhDB }
@@ -159,19 +159,21 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
     }
 
     /**
-     * SMB path-change watch — **only real network identity changes**, not routine LAN noise.
+     * Network path watch for **SMB + WebDAV** — only real identity changes, not LAN noise.
      *
-     * Important: [ConnectivityManager.NetworkCallback.onLinkPropertiesChanged] and
-     * “any INTERNET network” callbacks fire constantly on a stable LAN (IPv6 RA, DNS,
-     * DHCP renew, scored secondary nets). Treating those as path changes was closing every
-     * pooled SMB session within seconds — Windows logs looked like keep-alive failure, but
-     * the client was actively disconnecting.
+     * Avoid [ConnectivityManager.NetworkCallback.onLinkPropertiesChanged] / “any INTERNET”
+     * (IPv6 RA, DNS, DHCP churn) — those used to thrash SMB pools.
      *
-     * We only drop sessions when:
+     * We only reset when:
      * - The **default** network object changes or is lost (Wi‑Fi↔cell, full-tunnel VPN, offline)
-     * - A **VPN** network appears or disappears (split-tunnel into a LAN share)
+     * - A **VPN** network appears or disappears (split-tunnel / EasyTier)
      */
-    private fun registerSmbNetworkCallback() {
+    private fun registerNetworkPathCallbacks() {
+        fun notifyPath(reason: String) {
+            SmbGateway.onNetworkPathChanged(reason)
+            WebDavClient.onNetworkPathChanged(reason)
+        }
+
         // Track default network identity; ignore repeated callbacks for the same Network.
         var defaultNetwork: Network? = null
         runCatching {
@@ -183,18 +185,18 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                         when {
                             prev == null ->
                                 // Coming online (or first callback). Drop any half-open leftovers.
-                                SmbGateway.onNetworkPathChanged("default-up")
+                                notifyPath("default-up")
                             prev != network ->
                                 // Actual default switch (Wi‑Fi → cell, VPN default, etc.).
-                                SmbGateway.onNetworkPathChanged("default-switch")
-                            // same Network instance: DHCP/IPv6/DNS churn — do NOT drop SMB
+                                notifyPath("default-switch")
+                            // same Network instance: DHCP/IPv6/DNS churn — do NOT drop
                         }
                     }
 
                     override fun onLost(network: Network) {
                         if (defaultNetwork == null || defaultNetwork == network) {
                             defaultNetwork = null
-                            SmbGateway.onNetworkPathChanged("default-lost")
+                            notifyPath("default-lost")
                         }
                     }
                 },
@@ -202,7 +204,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         }.onFailure {
             logcat(it)
         }
-        // Split-tunnel VPN is often not the default network but carries LAN SMB traffic.
+        // Split-tunnel VPN is often not the default network but carries LAN SMB/WebDAV.
         runCatching {
             val vpnOnly = NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
@@ -212,11 +214,11 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                 vpnOnly,
                 object : ConnectivityManager.NetworkCallback() {
                     override fun onAvailable(network: Network) {
-                        SmbGateway.onNetworkPathChanged("vpn-up")
+                        notifyPath("vpn-up")
                     }
 
                     override fun onLost(network: Network) {
-                        SmbGateway.onNetworkPathChanged("vpn-down")
+                        notifyPath("vpn-down")
                     }
                 },
             )

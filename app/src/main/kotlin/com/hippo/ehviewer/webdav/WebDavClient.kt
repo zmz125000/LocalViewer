@@ -4,12 +4,15 @@ import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.naturalCompare
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
 import io.ktor.client.request.request
@@ -26,10 +29,16 @@ import io.ktor.http.contentType
 import io.ktor.http.encodedPath
 import io.ktor.http.takeFrom
 import io.ktor.utils.io.jvm.javaio.toInputStream
+import java.io.IOException
 import java.io.OutputStream
+import java.net.ConnectException
+import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.net.URLDecoder
+import java.net.UnknownHostException
 import java.security.cert.X509Certificate
 import java.util.Base64
+import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.X509TrustManager
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -39,15 +48,15 @@ import org.xmlpull.v1.XmlPullParserFactory
 /**
  * Read-only WebDAV (PROPFIND + GET).
  *
- * **Engine: Ktor CIO** (pure Kotlin sockets) — not Cronet, not Android HttpURLConnection.
+ * **Engine: Ktor CIO** (pure Kotlin sockets) — not Cronet / Android HUC (they reject PROPFIND).
  *
- * Both Cronet and platform HUC only allow a fixed method set and reject `PROPFIND`
- * with: "Expected one of [OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE, PATCH]
- * but was PROPFIND" (Cronet often backs HUC when Play Services Cronet is present).
- * That broke every WebDAV host while Cronet/HUC was used.
+ * Lifecycle (aligned with SMB):
+ * - [onAppBackgrounded] / [onNetworkPathChanged] → [resetClient] + clear listing cache
+ * - Transport / timeout errors → reset client + **one** retry
  *
- * TLS: system trust by default. [Settings.webDavInsecureTls] → trust-all for
- * self-signed LAN certs (rclone serve with custom cert). Cleartext `http://` via NSC.
+ * Timeouts: list/PROPFIND shorter; GET downloads longer (per-request [timeout]).
+ *
+ * TLS: system trust by default. [Settings.webDavInsecureTls] → trust-all for self-signed LAN.
  */
 object WebDavClient {
     private val PropFind = HttpMethod("PROPFIND")
@@ -63,7 +72,19 @@ object WebDavClient {
         "</d:prop>" +
         "</d:propfind>"
 
-    /** Parallel list/peek concurrency (HTTP/1.1 pipeline + multi-connection). */
+    // List / PROPFIND — fail faster on dead path (EasyTier stop, Wi‑Fi flip).
+    private const val LIST_CONNECT_MS = 15_000L
+    private const val LIST_REQUEST_MS = 45_000L
+    private const val LIST_SOCKET_MS = 45_000L
+
+    // Page / thumb GET — large studio files over LAN/VPN.
+    private const val DL_CONNECT_MS = 30_000L
+    private const val DL_REQUEST_MS = 120_000L
+    private const val DL_SOCKET_MS = 120_000L
+
+    private const val PATH_CHANGE_DEBOUNCE_MS = 1_500L
+
+    /** Parallel list/peek concurrency (HTTP/1.1 multi-connection). */
     private val listSlots = Semaphore(6)
 
     /** Parallel file downloads (pages + thumbs). */
@@ -75,6 +96,8 @@ object WebDavClient {
     // True when client was built with insecure TLS trust-all.
     @Volatile
     private var clientInsecure: Boolean = false
+
+    private val lastPathChangeMs = AtomicLong(0L)
 
     private val trustAllManager = object : X509TrustManager {
         override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
@@ -102,7 +125,8 @@ object WebDavClient {
     private fun buildClient(insecureTls: Boolean): HttpClient =
         HttpClient(CIO) {
             engine {
-                requestTimeout = 120_000
+                // Ceiling; per-call [timeout] plugin overrides for list vs download.
+                requestTimeout = DL_REQUEST_MS
                 maxConnectionsCount = 32
                 if (insecureTls) {
                     https {
@@ -111,19 +135,89 @@ object WebDavClient {
                 }
             }
             install(HttpTimeout) {
-                requestTimeoutMillis = 120_000
-                connectTimeoutMillis = 30_000
-                socketTimeoutMillis = 120_000
+                requestTimeoutMillis = DL_REQUEST_MS
+                connectTimeoutMillis = DL_CONNECT_MS
+                socketTimeoutMillis = DL_SOCKET_MS
             }
             expectSuccess = false
         }
 
-    /** Rebuild when insecure TLS (or related) prefs change. */
+    /**
+     * Close CIO client (drops keep-alive sockets). Safe from any thread.
+     * Next request opens a fresh client.
+     */
     fun resetClient() {
         synchronized(this) {
-            client?.close()
+            val old = client
             client = null
+            runCatching { old?.close() }
         }
+    }
+
+    /** App background — drop half-open HTTP sockets + stale directory listings. */
+    fun onAppBackgrounded() {
+        logcat { "WebDavClient: app background — reset client + listings" }
+        resetClient()
+        BrowseSession.invalidateAllWebDavListings()
+    }
+
+    /**
+     * Network identity change (Wi‑Fi/cell/VPN/EasyTier). Debounced like SMB.
+     * Drops CIO pool so the next PROPFIND/GET does not hang on a dead keep-alive.
+     */
+    fun onNetworkPathChanged(reason: String) {
+        val now = System.currentTimeMillis()
+        val prev = lastPathChangeMs.getAndSet(now)
+        if (prev != 0L && now - prev < PATH_CHANGE_DEBOUNCE_MS) return
+        logcat { "WebDavClient: network path changed ($reason) — reset client + listings" }
+        resetClient()
+        BrowseSession.invalidateAllWebDavListings()
+    }
+
+    /**
+     * Run [block]; on transport/timeout, [resetClient] and retry **once**.
+     * Auth / 4xx-style failures are not retried (they rethrow immediately).
+     */
+    private suspend fun <T> withTransportRetry(block: suspend () -> T): T {
+        try {
+            return block()
+        } catch (e: Throwable) {
+            if (!isRetryableTransport(e)) throw e
+            logcat { "WebDavClient: transport error — reset + one retry: ${e.message}" }
+            resetClient()
+            return block()
+        }
+    }
+
+    private fun isRetryableTransport(t: Throwable): Boolean {
+        var cur: Throwable? = t
+        while (cur != null) {
+            when (cur) {
+                is SocketException,
+                is SocketTimeoutException,
+                is ConnectException,
+                is UnknownHostException,
+                is HttpRequestTimeoutException,
+                is IOException,
+                -> return true
+            }
+            val msg = cur.message.orEmpty()
+            if (msg.contains("timeout", ignoreCase = true) ||
+                msg.contains("Broken pipe", ignoreCase = true) ||
+                msg.contains("Connection reset", ignoreCase = true) ||
+                msg.contains("Connection refused", ignoreCase = true) ||
+                msg.contains("Software caused connection abort", ignoreCase = true)
+            ) {
+                return true
+            }
+            // Explicit HTTP status from our own errors — do not retry 401/403/404.
+            if (msg.contains("WebDAV PROPFIND") || msg.contains("WebDAV GET")) {
+                val code = Regex("""\b([45]\d\d)\b""").find(msg)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                if (code != null && code in 400..499) return false
+            }
+            cur = cur.cause
+        }
+        return false
     }
 
     fun isExplicitHttp(url: String): Boolean {
@@ -196,6 +290,7 @@ object WebDavClient {
 
     /**
      * List direct children of [relativeDir] (not including self).
+     * Only successful results are returned — callers must not cache on failure.
      */
     suspend fun listChildren(
         source: WebDavSourceEntity,
@@ -203,7 +298,9 @@ object WebDavClient {
         relativeDir: String,
     ): List<RemoteChild> = withIOContext {
         listSlots.withPermit {
-            propfindChildren(source, password, relativeDir)
+            withTransportRetry {
+                propfindChildren(source, password, relativeDir)
+            }
         }
     }
 
@@ -223,16 +320,23 @@ object WebDavClient {
         out: OutputStream,
     ) = withIOContext {
         downloadSlots.withPermit {
-            val url = absoluteUrl(source, relativeFilePath)
-            val auth = basicAuthHeader(source.username, password)
-            http().prepareGet(url) {
-                auth?.let { header(HttpHeaders.Authorization, it) }
-            }.execute { response ->
-                if (response.status.value !in 200..299) {
-                    error("WebDAV GET ${response.status} for $relativeFilePath")
-                }
-                response.bodyAsChannel().toInputStream().use { input ->
-                    input.copyTo(out)
+            withTransportRetry {
+                val url = absoluteUrl(source, relativeFilePath)
+                val auth = basicAuthHeader(source.username, password)
+                http().prepareGet(url) {
+                    timeout {
+                        connectTimeoutMillis = DL_CONNECT_MS
+                        requestTimeoutMillis = DL_REQUEST_MS
+                        socketTimeoutMillis = DL_SOCKET_MS
+                    }
+                    auth?.let { header(HttpHeaders.Authorization, it) }
+                }.execute { response ->
+                    if (response.status.value !in 200..299) {
+                        error("WebDAV GET ${response.status.value} for $relativeFilePath")
+                    }
+                    response.bodyAsChannel().toInputStream().use { input ->
+                        input.copyTo(out)
+                    }
                 }
             }
         }
@@ -248,6 +352,11 @@ object WebDavClient {
         val response = try {
             http().request(url) {
                 method = PropFind
+                timeout {
+                    connectTimeoutMillis = LIST_CONNECT_MS
+                    requestTimeoutMillis = LIST_REQUEST_MS
+                    socketTimeoutMillis = LIST_SOCKET_MS
+                }
                 header("Depth", "1")
                 auth?.let { header(HttpHeaders.Authorization, it) }
                 contentType(ContentType.Application.Xml)
@@ -256,7 +365,6 @@ object WebDavClient {
         } catch (e: Throwable) {
             val msg = e.message.orEmpty()
             if (msg.contains("PROPFIND", ignoreCase = true) && msg.contains("Expected one of", ignoreCase = true)) {
-                // Should not happen with CIO; keep a clear breadcrumb if a wrong engine is used.
                 error("WebDAV client rejected PROPFIND (engine must support custom methods). $msg")
             }
             throw e

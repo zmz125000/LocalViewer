@@ -79,7 +79,8 @@ Build with Grok 4.5.
 * Material Design 3 Navigation bar.
 * Optimized navigation flow for deep folder path.
 * High performance smbj client with concurrent connections support.
-* Cronet WebDAV client with HTTP/2 and QUIC support.
+* // Cronet WebDAV client with HTTP/2 and QUIC support.
+* Ktor CIO WebDAV client with HTTP/1.1 and TLS support.
 * Network gallery folders recognition with fast cover loading.
 * High performance reader with cache from EhViewer.
 * Reader allow full size image decode.
