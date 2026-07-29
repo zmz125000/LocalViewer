@@ -358,16 +358,18 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 var allowLarge = false
                 while (true) {
                     try {
-                        snackbar(string(R.string.archive_downloading))
-                        val local = RemoteArchiveOpen.ensureWebDavArchive(
+                        val result = RemoteArchiveOpen.ensureWebDavArchive(
                             source = src,
                             password = password,
                             remoteRelativeFile = remote,
                             allowLarge = allowLarge,
+                            onWillDownload = {
+                                snackbar(string(R.string.archive_downloading))
+                            },
                         )
                         withUIContext {
                             ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
-                            navToReader(local.toString())
+                            navToReader(result.path.toString())
                         }
                         return@launchIO
                     } catch (e: ArchiveTooLargeException) {

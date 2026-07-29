@@ -31,6 +31,12 @@ fun isSolidArchiveFileName(name: String): Boolean {
     return ext in SOLID_ARCHIVE_EXTENSIONS
 }
 
+/** True if [name] looks like a cached comic archive (protect from page-cache LRU). */
+fun isArchiveCacheFileName(name: String): Boolean {
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in ARCHIVE_EXTENSIONS
+}
+
 /** Prefer cover extract for stream-friendly comic archives (not solid 7z). */
 fun prefersArchiveCoverExtract(name: String): Boolean =
     isArchiveFileName(name) && !isSolidArchiveFileName(name)

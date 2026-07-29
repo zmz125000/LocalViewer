@@ -144,7 +144,13 @@ object SmbCache {
         remoteRelativeFile: String,
         kind: Kind,
     ): Path {
-        val normalized = remoteRelativeFile.replace('\\', '/').trimStart('/')
+        // Same normalization as RemoteArchiveOpen so reopen hits the same file.
+        val normalized = remoteRelativeFile
+            .replace('\\', '/')
+            .split('/')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && it != "." }
+            .joinToString("/")
         if (kind == Kind.Thumb) return thumbCachePath(sourceId, normalized)
         val name = normalized.substringAfterLast('/')
         val parent = normalized.substringBeforeLast('/', missingDelimiterValue = "")
@@ -386,6 +392,8 @@ object SmbCache {
         if (total <= maxBytes) return
         for (e in files) {
             if (total <= maxBytes) break
+            // Keep comic archives on disk — reopening should not re-download multi‑100MB zips.
+            if (com.hippo.ehviewer.library.isArchiveCacheFileName(e.file.name)) continue
             if (e.file.delete()) {
                 total -= e.size
                 // Drop memory hit so reader re-downloads instead of ENOENT.

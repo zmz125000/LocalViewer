@@ -357,16 +357,18 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 var allowLarge = false
                 while (true) {
                     try {
-                        snackbar(string(R.string.archive_downloading))
-                        val local = RemoteArchiveOpen.ensureSmbArchive(
+                        val result = RemoteArchiveOpen.ensureSmbArchive(
                             source = src,
                             password = password,
                             remoteRelativeFile = remote,
                             allowLarge = allowLarge,
+                            onWillDownload = {
+                                snackbar(string(R.string.archive_downloading))
+                            },
                         )
                         withUIContext {
                             ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
-                            navToReader(local.toString())
+                            navToReader(result.path.toString())
                         }
                         return@launchIO
                     } catch (e: ArchiveTooLargeException) {
