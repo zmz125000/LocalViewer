@@ -67,6 +67,7 @@ static size_t entryCount = 0;
 static ssize_t max_file_size = 0;
 
 // --- Stream I/O (random-access remote / non-mmap) via Kotlin ArchiveStreamBridge ---
+// Do NOT define JNI_OnLoad here — Rust libehviewer already exports it.
 static JavaVM *g_vm = NULL;
 static bool use_stream_io = false;
 static jobject g_stream_bridge = NULL;
@@ -75,10 +76,10 @@ static jmethodID g_mid_seek = NULL;
 static uint8_t *g_stream_buf = NULL;
 static size_t g_stream_buf_cap = 0;
 
-JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
-    EH_UNUSED(reserved);
-    g_vm = vm;
-    return JNI_VERSION_1_6;
+static void archive_cache_vm(JNIEnv *env) {
+    if (!g_vm && env) {
+        (*env)->GetJavaVM(env, &g_vm);
+    }
 }
 
 static JNIEnv *archive_get_env(void) {
@@ -495,6 +496,7 @@ static jint archive_open_common(JNIEnv *env, jboolean sort_entries) {
 JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_openArchive(JNIEnv *env, jclass thiz, jint fd, jlong size, jboolean sort_entries) {
     EH_UNUSED(thiz);
+    archive_cache_vm(env);
     stream_bridge_clear(env);
     use_stream_io = false;
     archiveAddr = mmap(0, (size_t) size, PROT_READ, MAP_PRIVATE, fd, 0);
@@ -514,6 +516,7 @@ JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(JNIEnv *env, jclass thiz, jobject bridge, jlong size, jboolean sort_entries) {
     EH_UNUSED(thiz);
     if (!bridge || size <= 0) return 0;
+    archive_cache_vm(env);
     stream_bridge_clear(env);
     if (archiveAddr != MAP_FAILED) {
         munmap(archiveAddr, archiveSize);
