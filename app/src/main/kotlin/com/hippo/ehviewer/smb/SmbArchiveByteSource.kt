@@ -18,10 +18,9 @@ import kotlinx.coroutines.runBlocking
 /**
  * Blocking random-access reads of one remote SMB archive for stream open.
  *
- * **Keeps a single SMB file handle open** for the whole reader session and serves
- * reads from a 2 MiB readahead window. The previous path opened/closed the remote
- * file on every libarchive chunk (~256 KiB) — each CREATE+CLOSE is a full RTT and
- * made CD scan + first-page extract extremely slow.
+ * Keeps a single SMB file handle open. Sequential runs use a 2 MiB window filled
+ * with looped SMB2 READs (same idea as folder download streaming). Random seeks
+ * (EOCD / local headers) use a small window so listing does not re-download the zip.
  */
 class SmbArchiveByteSource(
     private val source: SmbSourceEntity,
@@ -32,7 +31,7 @@ class SmbArchiveByteSource(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val closed = AtomicBoolean(false)
     private val sizeReady = CompletableDeferred<Long>()
-    private val ops = Channel<Op>(capacity = 32)
+    private val ops = Channel<Op>(capacity = 64)
     private val worker: Job
 
     private data class Op(
@@ -48,7 +47,6 @@ class SmbArchiveByteSource(
             try {
                 SmbGateway.withOpenFile(source, password, remote) { file, fileSize ->
                     sizeReady.complete(fileSize)
-                    // Readahead lives on the worker thread that owns [file].
                     var winStart = -1L
                     var winLen = 0
                     var win: ByteArray? = null
@@ -86,7 +84,6 @@ class SmbArchiveByteSource(
             } catch (e: Throwable) {
                 logcat(e)
                 if (!sizeReady.isCompleted) sizeReady.completeExceptionally(e)
-                // Drain pending ops so callers do not hang.
                 for (op in ops) {
                     op.result.completeExceptionally(e)
                 }
@@ -104,21 +101,11 @@ class SmbArchiveByteSource(
         if (offset >= fileSize) return 0
         val toRead = minOf(len.toLong(), fileSize - offset).toInt()
         val result = CompletableDeferred<Int>()
-        val ok = ops.trySend(Op(offset, buf, off, toRead, result))
-        if (ok.isFailure) {
-            // Channel closed or full — fall back to blocking send.
-            return try {
-                runBlocking {
-                    ops.send(Op(offset, buf, off, toRead, result))
-                    result.await()
-                }
-            } catch (e: Throwable) {
-                logcat(e)
-                -1
-            }
-        }
         return try {
-            runBlocking { result.await() }
+            runBlocking {
+                ops.send(Op(offset, buf, off, toRead, result))
+                result.await()
+            }
         } catch (e: Throwable) {
             logcat(e)
             -1
@@ -133,7 +120,32 @@ class SmbArchiveByteSource(
     }
 
     private companion object {
-        const val WINDOW = 2 * 1024 * 1024
+        /** Match folder-gallery sequential throughput (large SMB2 READs). */
+        const val SEQUENTIAL_WINDOW = 2 * 1024 * 1024
+
+        /** EOCD / ZIP local headers only. */
+        const val RANDOM_WINDOW = 64 * 1024
+
+        /** Cap per SMB2 READ (negotiated buffer is often ≤1 MiB). */
+        const val SMB_READ_CHUNK = 1024 * 1024
+
+        /** Fill [buf] with looped [File.read] — one call may return less than requested. */
+        private fun readFully(
+            file: File,
+            fileOffset: Long,
+            buf: ByteArray,
+            off: Int,
+            len: Int,
+        ): Int {
+            var total = 0
+            while (total < len) {
+                val chunk = minOf(SMB_READ_CHUNK, len - total)
+                val n = file.read(buf, fileOffset + total, off + total, chunk)
+                if (n <= 0) break
+                total += n
+            }
+            return total
+        }
 
         private fun readWithWindow(
             file: File,
@@ -156,9 +168,11 @@ class SmbArchiveByteSource(
                 System.arraycopy(w, (offset - ws).toInt(), buf, off, want)
                 return want
             }
-            val fetch = minOf(WINDOW.toLong(), fileSize - offset).toInt().coerceAtLeast(want)
+            val sequential = w != null && offset == ws + wl
+            val window = if (sequential) SEQUENTIAL_WINDOW else RANDOM_WINDOW
+            val fetch = minOf(window.toLong(), fileSize - offset).toInt().coerceAtLeast(want)
             val fresh = ByteArray(fetch)
-            val got = file.read(fresh, offset, 0, fetch)
+            val got = readFully(file, offset, fresh, 0, fetch)
             if (got <= 0) {
                 setWindow(-1L, null, 0)
                 return got

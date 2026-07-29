@@ -3,13 +3,20 @@ package com.hippo.ehviewer.library
 /**
  * Windowed readahead over an [ArchiveByteSource].
  *
- * libarchive stream I/O issues many sequential ~256–512 KiB reads (and seeks into
- * ZIP central / local headers). Without a window, each becomes a separate network
- * RTT. This serves hits from a [windowSize] RAM buffer and only refills on miss.
+ * libarchive issues a mix of:
+ * - **Random** seeks (EOCD tail, central directory, each local header)
+ * - **Sequential** runs (compressed page payload, CD body)
+ *
+ * Blindly readahead 2 MiB on every miss is disastrous for ZIP listing: each local
+ * header is ~100 bytes but we would pull 2 MiB of the following compressed member
+ * (× N images ≈ full archive download). So:
+ * - sequential hit (offset == end of window) → large window
+ * - random seek → small window (header-sized region only)
  */
 class ReadAheadArchiveByteSource(
     private val inner: ArchiveByteSource,
-    private val windowSize: Int = DEFAULT_WINDOW,
+    private val sequentialWindow: Int = SEQUENTIAL_WINDOW,
+    private val randomWindow: Int = RANDOM_WINDOW,
 ) : ArchiveByteSource {
     private val lock = Any()
     private var winStart: Long = -1L
@@ -23,14 +30,13 @@ class ReadAheadArchiveByteSource(
         if (offset >= size) return 0
         val want = minOf(len.toLong(), size - offset).toInt()
         synchronized(lock) {
-            // Fast path: fully inside window.
             if (win != null && offset >= winStart && offset + want <= winStart + winLen) {
-                val from = (offset - winStart).toInt()
-                System.arraycopy(win!!, from, buf, off, want)
+                System.arraycopy(win!!, (offset - winStart).toInt(), buf, off, want)
                 return want
             }
-            // Refill window at [offset] (prefer large sequential runs after seeks).
-            val fetch = minOf(windowSize.toLong(), size - offset).toInt().coerceAtLeast(want)
+            val sequential = win != null && offset == winStart + winLen
+            val window = if (sequential) sequentialWindow else randomWindow
+            val fetch = minOf(window.toLong(), size - offset).toInt().coerceAtLeast(want)
             val fresh = ByteArray(fetch)
             val got = inner.readAt(offset, fresh, 0, fetch)
             if (got <= 0) {
@@ -58,7 +64,13 @@ class ReadAheadArchiveByteSource(
     }
 
     companion object {
-        /** 2 MiB — covers typical ZIP CD + several local headers / compressed pages. */
-        const val DEFAULT_WINDOW = 2 * 1024 * 1024
+        /** Sequential compressed payload / CD body (align with SMB folder throughput). */
+        const val SEQUENTIAL_WINDOW = 2 * 1024 * 1024
+
+        /**
+         * After a seek (EOCD, local headers). Large enough for a header + extras,
+         * small enough that N headers do not download the zip.
+         */
+        const val RANDOM_WINDOW = 64 * 1024
     }
 }

@@ -27,6 +27,7 @@
 
 #include <jni.h>
 #include <android/log.h>
+#include <zlib.h>
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -48,6 +49,10 @@ typedef struct {
     int index;
     ssize_t size;
     void *addr;
+    /** ZIP CD-index path only (stream remote zip). */
+    int64_t local_header_offset;
+    int64_t compressed_size;
+    uint16_t compression_method;
 } entry;
 
 #define CTX_POOL_SIZE 20
@@ -65,6 +70,13 @@ static size_t archiveSize = 0;
 static entry *entries = NULL;
 static size_t entryCount = 0;
 static ssize_t max_file_size = 0;
+/** Stream ZIP opened via central-directory parse (no local-header walk). */
+static bool use_zip_cd_index = false;
+/** Bytes actually pulled through stream_read_cb (diagnostics). */
+static int64_t stream_bytes_read = 0;
+
+static inline int filename_is_playable_file(const char *name);
+static inline int compare_entries(const void *a, const void *b);
 
 // --- Stream I/O (random-access remote / non-mmap) via Kotlin ArchiveStreamBridge ---
 // Do NOT define JNI_OnLoad here — Rust libehviewer already exports it.
@@ -81,6 +93,8 @@ static jmethodID g_mid_seek = NULL;
 static uint8_t *g_stream_buf = NULL;
 static size_t g_stream_buf_cap = 0;
 static pthread_mutex_t stream_mutex = PTHREAD_MUTEX_INITIALIZER;
+/** Logical stream cursor (kept in sync with Kotlin [ArchiveStreamBridge]). */
+static la_int64_t g_stream_pos = 0;
 
 static void archive_cache_vm(JNIEnv *env) {
     if (!g_vm && env) {
@@ -99,11 +113,28 @@ static JNIEnv *archive_get_env(void) {
     return NULL;
 }
 
+/** Sync Kotlin bridge position to absolute [pos] (SEEK_SET). */
+static int stream_sync_java_pos(JNIEnv *env, la_int64_t pos) {
+    if (!env || !g_stream_bridge || !g_mid_seek) return -1;
+    jlong r = (*env)->CallLongMethod(env, g_stream_bridge, g_mid_seek, (jlong) pos, (jint) 0);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+        return -1;
+    }
+    if (r < 0) return -1;
+    return 0;
+}
+
 static la_ssize_t stream_read_cb(struct archive *a, void *client_data, const void **buff) {
     EH_UNUSED(a);
     EH_UNUSED(client_data);
     JNIEnv *env = archive_get_env();
     if (!env || !g_stream_bridge || !g_mid_read) return ARCHIVE_FATAL;
+    if ((size_t) g_stream_pos >= archiveSize) {
+        *buff = NULL;
+        return 0;
+    }
     // Larger chunks → fewer JNI/network round-trips (Kotlin side also readaheads 2 MiB).
     const jint chunk = 512 * 1024;
     jbyteArray arr = (*env)->CallObjectMethod(env, g_stream_bridge, g_mid_read, chunk);
@@ -134,22 +165,360 @@ static la_ssize_t stream_read_cb(struct archive *a, void *client_data, const voi
     }
     (*env)->GetByteArrayRegion(env, arr, 0, n, (jbyte *) g_stream_buf);
     (*env)->DeleteLocalRef(env, arr);
+    g_stream_pos += n;
+    stream_bytes_read += n;
     *buff = g_stream_buf;
     return (la_ssize_t) n;
 }
 
+/** Absolute pread for ZIP CD indexing / direct extract (counts toward stream_bytes_read). */
+static int stream_pread(uint8_t *dst, la_int64_t off, size_t len) {
+    if (!dst || len == 0) return 0;
+    if (off < 0 || (size_t) off > archiveSize) return -1;
+    size_t max = archiveSize - (size_t) off;
+    if (len > max) len = max;
+    JNIEnv *env = archive_get_env();
+    if (!env || !g_stream_bridge || !g_mid_read || !g_mid_seek) return -1;
+    g_stream_pos = off;
+    if (stream_sync_java_pos(env, off) != 0) return -1;
+    size_t got = 0;
+    while (got < len) {
+        jint chunk = (jint) ((len - got) > (size_t) (1024 * 1024)
+                ? (1024 * 1024)
+                : (len - got));
+        jbyteArray arr = (*env)->CallObjectMethod(env, g_stream_bridge, g_mid_read, chunk);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionDescribe(env);
+            (*env)->ExceptionClear(env);
+            return -1;
+        }
+        if (!arr) break;
+        jsize n = (*env)->GetArrayLength(env, arr);
+        if (n <= 0) {
+            (*env)->DeleteLocalRef(env, arr);
+            break;
+        }
+        if ((size_t) n > len - got) n = (jsize) (len - got);
+        (*env)->GetByteArrayRegion(env, arr, 0, n, (jbyte *) (dst + got));
+        (*env)->DeleteLocalRef(env, arr);
+        got += (size_t) n;
+        g_stream_pos = off + (la_int64_t) got;
+        stream_bytes_read += n;
+        if ((size_t) n < (size_t) chunk) break;
+    }
+    return (int) got;
+}
+
+static uint16_t zip_u16(const uint8_t *p) {
+    return (uint16_t) (p[0] | (p[1] << 8));
+}
+
+static uint32_t zip_u32(const uint8_t *p) {
+    return (uint32_t) (p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
+}
+
+static uint64_t zip_u64(const uint8_t *p) {
+    return (uint64_t) zip_u32(p) | ((uint64_t) zip_u32(p + 4) << 32);
+}
+
+/**
+ * Open stream ZIP by EOCD + central directory only (no local-header / member walk).
+ * Typical comic zip: ~64–128 KiB network vs tens–hundreds of MiB when libarchive
+ * walks every local header (even with seek skips + readahead).
+ * @return entry count, or 0 if not a zip / parse failed (caller falls back).
+ */
+static jint zip_stream_open_from_cd(jboolean sort_entries) {
+    if (archiveSize < 22) return 0;
+    stream_bytes_read = 0;
+
+    // EOCD is in the last 22..65557 bytes (22 + max comment).
+    size_t tail_len = archiveSize < (size_t) (65535 + 22) ? archiveSize : (size_t) (65535 + 22);
+    uint8_t *tail = (uint8_t *) malloc(tail_len);
+    if (!tail) return 0;
+    if (stream_pread(tail, (la_int64_t) (archiveSize - tail_len), tail_len) != (int) tail_len) {
+        free(tail);
+        return 0;
+    }
+
+    // Find last EOCD signature PK\x05\x06
+    ssize_t eocd = -1;
+    for (ssize_t i = (ssize_t) tail_len - 22; i >= 0; i--) {
+        if (tail[i] == 'P' && tail[i + 1] == 'K' && tail[i + 2] == 5 && tail[i + 3] == 6) {
+            eocd = i;
+            break;
+        }
+    }
+    if (eocd < 0) {
+        free(tail);
+        return 0;
+    }
+
+    uint32_t cd_size32 = zip_u32(tail + eocd + 12);
+    uint32_t cd_off32 = zip_u32(tail + eocd + 16);
+    uint64_t cd_size = cd_size32;
+    uint64_t cd_off = cd_off32;
+    uint64_t total_entries = zip_u16(tail + eocd + 10);
+
+    // ZIP64: locator sits immediately before EOCD when fields are 0xFFFF/0xFFFFFFFF.
+    if (cd_off32 == 0xFFFFFFFFu || cd_size32 == 0xFFFFFFFFu ||
+        zip_u16(tail + eocd + 8) == 0xFFFFu || zip_u16(tail + eocd + 10) == 0xFFFFu) {
+        if (eocd >= 20 &&
+            tail[eocd - 20] == 'P' && tail[eocd - 19] == 'K' &&
+            tail[eocd - 18] == 6 && tail[eocd - 17] == 7) {
+            uint64_t eocd64_off = zip_u64(tail + eocd - 20 + 8);
+            uint8_t eocd64[56];
+            if (stream_pread(eocd64, (la_int64_t) eocd64_off, 56) == 56 &&
+                eocd64[0] == 'P' && eocd64[1] == 'K' && eocd64[2] == 6 && eocd64[3] == 6) {
+                total_entries = zip_u64(eocd64 + 32);
+                cd_size = zip_u64(eocd64 + 40);
+                cd_off = zip_u64(eocd64 + 48);
+            }
+        }
+    }
+    free(tail);
+
+    if (cd_size == 0 || cd_off >= archiveSize || cd_size > archiveSize ||
+        cd_off + cd_size > archiveSize || cd_size > 64ull * 1024 * 1024) {
+        return 0;
+    }
+
+    uint8_t *cd = (uint8_t *) malloc((size_t) cd_size);
+    if (!cd) return 0;
+    if (stream_pread(cd, (la_int64_t) cd_off, (size_t) cd_size) != (int) cd_size) {
+        free(cd);
+        return 0;
+    }
+
+    size_t cap = total_entries > 0 && total_entries < 100000 ? (size_t) total_entries : 64;
+    if (cap < 16) cap = 16;
+    entries = calloc(cap, sizeof(entry));
+    if (!entries) {
+        free(cd);
+        return 0;
+    }
+    entryCount = 0;
+    max_file_size = 0;
+    need_encrypt = false;
+
+    size_t pos = 0;
+    while (pos + 46 <= (size_t) cd_size) {
+        if (cd[pos] != 'P' || cd[pos + 1] != 'K' || cd[pos + 2] != 1 || cd[pos + 3] != 2)
+            break;
+        uint16_t gp_flag = zip_u16(cd + pos + 8);
+        uint16_t method = zip_u16(cd + pos + 10);
+        uint32_t comp32 = zip_u32(cd + pos + 20);
+        uint32_t uncomp32 = zip_u32(cd + pos + 24);
+        uint16_t name_len = zip_u16(cd + pos + 28);
+        uint16_t extra_len = zip_u16(cd + pos + 30);
+        uint16_t comment_len = zip_u16(cd + pos + 32);
+        uint32_t local32 = zip_u32(cd + pos + 42);
+        uint64_t comp_size = comp32;
+        uint64_t uncomp_size = uncomp32;
+        uint64_t local_off = local32;
+
+        size_t name_off = pos + 46;
+        size_t extra_off = name_off + name_len;
+        size_t next = extra_off + extra_len + comment_len;
+        if (next > (size_t) cd_size || name_off + name_len > (size_t) cd_size) break;
+
+        // ZIP64 extra (0x0001)
+        if ((comp32 == 0xFFFFFFFFu || uncomp32 == 0xFFFFFFFFu || local32 == 0xFFFFFFFFu) &&
+            extra_len >= 4) {
+            size_t ex = 0;
+            while (ex + 4 <= extra_len) {
+                uint16_t tag = zip_u16(cd + extra_off + ex);
+                uint16_t sz = zip_u16(cd + extra_off + ex + 2);
+                if (ex + 4 + sz > extra_len) break;
+                if (tag == 0x0001) {
+                    size_t o = ex + 4;
+                    if (uncomp32 == 0xFFFFFFFFu && o + 8 <= ex + 4 + sz) {
+                        uncomp_size = zip_u64(cd + extra_off + o);
+                        o += 8;
+                    }
+                    if (comp32 == 0xFFFFFFFFu && o + 8 <= ex + 4 + sz) {
+                        comp_size = zip_u64(cd + extra_off + o);
+                        o += 8;
+                    }
+                    if (local32 == 0xFFFFFFFFu && o + 8 <= ex + 4 + sz) {
+                        local_off = zip_u64(cd + extra_off + o);
+                    }
+                    break;
+                }
+                ex += 4 + sz;
+            }
+        }
+
+        if (gp_flag & 1) need_encrypt = true;
+
+        char *name = (char *) malloc(name_len + 1);
+        if (!name) break;
+        memcpy(name, cd + name_off, name_len);
+        name[name_len] = '\0';
+
+        // Skip directories (name ends with /) and non-images / mac junk.
+        bool is_dir = name_len > 0 && name[name_len - 1] == '/';
+        if (!is_dir && filename_is_playable_file(name) &&
+            (method == 0 || method == 8) && uncomp_size > 0 && uncomp_size < (1ull << 31)) {
+            if (entryCount >= cap) {
+                size_t ncap = cap * 2;
+                entry *grown = realloc(entries, ncap * sizeof(entry));
+                if (!grown) {
+                    free(name);
+                    break;
+                }
+                memset(grown + cap, 0, (ncap - cap) * sizeof(entry));
+                entries = grown;
+                cap = ncap;
+            }
+            entries[entryCount].filename = name;
+            entries[entryCount].index = (int) entryCount;
+            entries[entryCount].size = (ssize_t) uncomp_size;
+            entries[entryCount].addr = NULL;
+            entries[entryCount].local_header_offset = (int64_t) local_off;
+            entries[entryCount].compressed_size = (int64_t) comp_size;
+            entries[entryCount].compression_method = method;
+            max_file_size = max((ssize_t) uncomp_size, max_file_size);
+            entryCount++;
+        } else {
+            free(name);
+        }
+        pos = next;
+    }
+    free(cd);
+
+    if (!entryCount) {
+        free(entries);
+        entries = NULL;
+        return 0;
+    }
+    if (sort_entries) qsort(entries, entryCount, sizeof(entry), compare_entries);
+    use_zip_cd_index = true;
+    LOGI("Found %zu images in archive (ZIP CD, %lld bytes net)",
+         entryCount, (long long) stream_bytes_read);
+    return (int) entryCount;
+}
+
+/** Inflate (method 8) or store (method 0) one ZIP member using CD sizes. */
+static int zip_stream_extract_entry(entry *e, void *out, size_t out_cap) {
+    if (!e || !out || e->size <= 0 || (size_t) e->size > out_cap) return -1;
+    if (e->local_header_offset < 0) return -1;
+
+    uint8_t lh[30];
+    if (stream_pread(lh, e->local_header_offset, 30) != 30) return -1;
+    if (lh[0] != 'P' || lh[1] != 'K' || lh[2] != 3 || lh[3] != 4) {
+        LOGE("%s", "ZIP local header signature mismatch");
+        return -1;
+    }
+    uint16_t name_len = zip_u16(lh + 26);
+    uint16_t extra_len = zip_u16(lh + 28);
+    int64_t data_off = e->local_header_offset + 30 + name_len + extra_len;
+    if (data_off < 0 || (size_t) data_off > archiveSize) return -1;
+
+    int64_t csz = e->compressed_size;
+    if (csz < 0 || (size_t) (data_off + csz) > archiveSize) return -1;
+
+    if (e->compression_method == 0) {
+        if (csz != e->size) return -1;
+        if (stream_pread((uint8_t *) out, data_off, (size_t) e->size) != (int) e->size) return -1;
+        return 0;
+    }
+    if (e->compression_method != 8) {
+        LOGE("ZIP method %u not supported for stream extract", e->compression_method);
+        return -1;
+    }
+
+    uint8_t *comp = (uint8_t *) malloc((size_t) csz);
+    if (!comp) return -1;
+    if (stream_pread(comp, data_off, (size_t) csz) != (int) csz) {
+        free(comp);
+        return -1;
+    }
+
+    z_stream zs;
+    memset(&zs, 0, sizeof(zs));
+    // Negative windowBits = raw DEFLATE (ZIP).
+    if (inflateInit2(&zs, -MAX_WBITS) != Z_OK) {
+        free(comp);
+        return -1;
+    }
+    zs.next_in = comp;
+    zs.avail_in = (uInt) csz;
+    zs.next_out = (Bytef *) out;
+    zs.avail_out = (uInt) e->size;
+    int zret = inflate(&zs, Z_FINISH);
+    inflateEnd(&zs);
+    free(comp);
+    if (zret != Z_STREAM_END && zret != Z_OK) {
+        LOGE("ZIP inflate failed: %d", zret);
+        return -1;
+    }
+    if (zs.total_out != (uLong) e->size) {
+        LOGE("ZIP inflate size mismatch %lu vs %zd", zs.total_out, e->size);
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ * Seek for remote ZIP: libarchive's **seekable** ZIP bidder does
+ *   SEEK_END → scan last 16 KiB for EOCD → seek to central directory.
+ * That must NOT fall back to streamable ZIP (which walks every local header and
+ * often decompresses whole members — i.e. downloads the entire archive).
+ *
+ * SEEK_END uses [archiveSize] known at open (from remote HEAD/stat), not a scan.
+ */
 static la_int64_t stream_seek_cb(struct archive *a, void *client_data, la_int64_t offset, int whence) {
     EH_UNUSED(a);
     EH_UNUSED(client_data);
+    la_int64_t next;
+    switch (whence) {
+        case SEEK_SET:
+            next = offset;
+            break;
+        case SEEK_CUR:
+            next = g_stream_pos + offset;
+            break;
+        case SEEK_END:
+            next = (la_int64_t) archiveSize + offset;
+            break;
+        default:
+            return ARCHIVE_FATAL;
+    }
+    if (next < 0 || (uint64_t) next > (uint64_t) archiveSize) {
+        // Match memory_read_seek: out-of-range is FAILED, not FATAL.
+        return ARCHIVE_FAILED;
+    }
+    g_stream_pos = next;
     JNIEnv *env = archive_get_env();
-    if (!env || !g_stream_bridge || !g_mid_seek) return ARCHIVE_FATAL;
-    jlong pos = (*env)->CallLongMethod(env, g_stream_bridge, g_mid_seek, (jlong) offset, (jint) whence);
-    if ((*env)->ExceptionCheck(env)) {
-        (*env)->ExceptionDescribe(env);
-        (*env)->ExceptionClear(env);
+    if (stream_sync_java_pos(env, next) != 0) {
         return ARCHIVE_FATAL;
     }
-    return (la_int64_t) pos;
+    return next;
+}
+
+/**
+ * Forward skip via seek (never download).
+ *
+ * libarchive's default without a skipper: skips ≤64 KiB are done by **read+discard**,
+ * and seekable ZIP listing uses __archive_read_consume between local headers to jump
+ * over each member's compressed payload. Without this callback that becomes a full
+ * sequential download of the zip while building the entry list / seeking to a page.
+ */
+static la_int64_t stream_skip_cb(struct archive *a, void *client_data, la_int64_t request) {
+    EH_UNUSED(a);
+    EH_UNUSED(client_data);
+    if (request <= 0) return 0;
+    if (g_stream_pos < 0) return 0;
+    la_int64_t remaining = (la_int64_t) archiveSize - g_stream_pos;
+    if (remaining <= 0) return 0;
+    if (request > remaining) request = remaining;
+    la_int64_t next = g_stream_pos + request;
+    g_stream_pos = next;
+    JNIEnv *env = archive_get_env();
+    if (stream_sync_java_pos(env, next) != 0) {
+        return ARCHIVE_FATAL;
+    }
+    return request;
 }
 
 static int stream_open_cb(struct archive *a, void *client_data) {
@@ -174,7 +543,10 @@ static void stream_bridge_clear(JNIEnv *env) {
     free(g_stream_buf);
     g_stream_buf = NULL;
     g_stream_buf_cap = 0;
+    g_stream_pos = 0;
     use_stream_io = false;
+    use_zip_cd_index = false;
+    stream_bytes_read = 0;
 }
 
 #define SUPPORT_EXT_COUNT 11
@@ -363,18 +735,35 @@ static archive_ctx *archive_alloc_ctx() {
     archive_ctx *ctx = calloc(1, sizeof(archive_ctx));
     ctx->arc = archive_read_new();
     ctx->using = 1;
-    archive_read_support_format_tar(ctx->arc);
-    archive_read_support_format_7zip(ctx->arc);
-    archive_read_support_format_rar5(ctx->arc);
-    archive_read_support_format_zip(ctx->arc);
-    archive_read_support_filter_gzip(ctx->arc);
-    archive_read_support_filter_xz(ctx->arc);
+    if (use_stream_io) {
+        // Stream/remote path: ONLY seekable ZIP (+ tar for .tar/.cbt).
+        // archive_read_support_format_zip() also registers the *streamable* bidder,
+        // which wins if SEEK_END fails and then walks every local header — often
+        // decompressing whole members (full-archive download). Force seekable so
+        // libarchive does SEEK_END → last 16KiB EOCD → central directory only.
+        archive_read_support_format_zip_seekable(ctx->arc);
+        archive_read_support_format_tar(ctx->arc);
+        archive_read_support_filter_gzip(ctx->arc);
+        archive_read_support_filter_xz(ctx->arc);
+    } else {
+        archive_read_support_format_tar(ctx->arc);
+        archive_read_support_format_7zip(ctx->arc);
+        archive_read_support_format_rar5(ctx->arc);
+        archive_read_support_format_zip(ctx->arc);
+        archive_read_support_filter_gzip(ctx->arc);
+        archive_read_support_filter_xz(ctx->arc);
+    }
     archive_read_set_option(ctx->arc, "zip", "ignorecrc32", "1");
     if (passwd)
         archive_read_add_passphrase(ctx->arc, passwd);
     int err;
     if (use_stream_io) {
-        // Random-access callbacks for remote ZIP/TAR (no full mmap).
+        // Reset cursor so a fresh libarchive handle starts at EOF seek cleanly.
+        g_stream_pos = 0;
+        JNIEnv *env = archive_get_env();
+        stream_sync_java_pos(env, 0);
+        // skip → seek (critical): listing/extract must not read compressed members to skip them.
+        archive_read_set_skip_callback(ctx->arc, stream_skip_cb);
         archive_read_set_seek_callback(ctx->arc, stream_seek_cb);
         err = archive_read_open(ctx->arc, NULL, stream_open_cb, stream_read_cb, stream_close_cb);
     } else {
@@ -385,6 +774,11 @@ static archive_ctx *archive_alloc_ctx() {
         archive_read_free(ctx->arc);
         free(ctx);
         return NULL;
+    }
+    if (use_stream_io) {
+        LOGI("Stream archive format: %s (pos=%lld size=%zu)",
+             archive_format_name(ctx->arc) ? archive_format_name(ctx->arc) : "?",
+             (long long) g_stream_pos, archiveSize);
     }
     return ctx;
 }
@@ -521,10 +915,17 @@ static int archive_get_ctx(archive_ctx **ctxptr, int idx) {
 }
 
 /**
- * Stream open: single pass over headers (no zero-copy). Avoids a second full
- * archive_alloc_ctx which re-fetched the ZIP central directory over the network.
+ * Stream open: ZIP uses EOCD+CD only; TAR falls back to libarchive + seek skip.
  */
 static jint archive_open_stream_single_pass(jboolean sort_entries) {
+    use_zip_cd_index = false;
+    stream_bytes_read = 0;
+
+    // Prefer ZIP central-directory index (no member walk, tiny network).
+    jint zip_n = zip_stream_open_from_cd(sort_entries);
+    if (zip_n > 0) return zip_n;
+
+    // TAR / non-zip: libarchive with skip→seek (must not read file bodies).
     archive_ctx *ctx = archive_alloc_ctx();
     if (!ctx) return 0;
 
@@ -557,11 +958,15 @@ static jint archive_open_stream_single_pass(jboolean sort_entries) {
         entries[entryCount].index = (int) entryCount;
         entries[entryCount].size = archive_entry_size(ctx->entry);
         entries[entryCount].addr = NULL;
+        entries[entryCount].local_header_offset = -1;
+        entries[entryCount].compressed_size = -1;
+        entries[entryCount].compression_method = 0;
         max_file_size = max(entries[entryCount].size, max_file_size);
         entryCount++;
     }
 
-    LOGI("%s%zu%s", "Found ", entryCount, " images in archive");
+    LOGI("Found %zu images in archive (libarchive, %lld bytes net)",
+         entryCount, (long long) stream_bytes_read);
     if (!entryCount) {
         LOGE("%s%s", "Archive read failed: ", archive_error_string(ctx->arc));
         archive_release_ctx(ctx);
@@ -666,6 +1071,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(JNIEnv *env, jclass thiz
     use_stream_io = true;
     archiveSize = (size_t) size;
     archiveAddr = MAP_FAILED;
+    g_stream_pos = 0;
     g_stream_bridge = (*env)->NewGlobalRef(env, bridge);
     jclass cls = (*env)->GetObjectClass(env, bridge);
     g_mid_read = (*env)->GetMethodID(env, cls, "nativeRead", "(I)[B");
@@ -692,15 +1098,25 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_extractToByteBuffer(JNIEnv *env, jclass th
 
     if (use_stream_io) pthread_mutex_lock(&stream_mutex);
 
-    archive_ctx *ctx = NULL;
     jobject result = 0;
-    if (!archive_get_ctx(&ctx, entry->index)) {
-        void *addr = acquire_decode_buffer();
-        if (!addr) {
-            LOGE("%s", "Decode buffer alloc failed");
-            // Leave ctx marked using so it is not reused mid-failure; drop it.
-            archive_drop_ctx(ctx);
+    void *addr = acquire_decode_buffer();
+    if (!addr) {
+        LOGE("%s", "Decode buffer alloc failed");
+        if (use_stream_io) pthread_mutex_unlock(&stream_mutex);
+        return 0;
+    }
+
+    if (use_stream_io && use_zip_cd_index) {
+        // Direct range-read + inflate — one member only (no archive re-scan).
+        if (zip_stream_extract_entry(entry, addr, (size_t) size) == 0) {
+            result = (*env)->NewDirectByteBuffer(env, addr, size);
         } else {
+            LOGE("%s%d", "ZIP stream extract failed for index ", index);
+            release_decode_buffer(addr);
+        }
+    } else {
+        archive_ctx *ctx = NULL;
+        if (!archive_get_ctx(&ctx, entry->index)) {
             ssize_t bytes = archive_read_data(ctx->arc, addr, size);
             if (bytes == size) {
                 ctx->using = 0;
@@ -711,10 +1127,11 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_extractToByteBuffer(JNIEnv *env, jclass th
                 } else {
                     LOGE("%s", "No enough data read, WTF?");
                 }
-                // Stream/ctx is in a bad state after a partial/failed read.
                 archive_drop_ctx(ctx);
                 release_decode_buffer(addr);
             }
+        } else {
+            release_decode_buffer(addr);
         }
     }
 
@@ -734,6 +1151,8 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_closeArchive(JNIEnv *env, jclass thiz) {
     free(passwd);
     passwd = NULL;
     need_encrypt = false;
+    use_zip_cd_index = false;
+    stream_bytes_read = 0;
     if (archiveAddr != MAP_FAILED) {
         munmap(archiveAddr, archiveSize);
         archiveAddr = MAP_FAILED;
