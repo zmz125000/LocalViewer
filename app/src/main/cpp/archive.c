@@ -224,9 +224,10 @@ static uint64_t zip_u64(const uint8_t *p) {
  * Open stream ZIP by EOCD + central directory only (no local-header / member walk).
  * Typical comic zip: ~64–128 KiB network vs tens–hundreds of MiB when libarchive
  * walks every local header (even with seek skips + readahead).
+ * @param cover_only keep only the natural-first playable entry (browse thumbs).
  * @return entry count, or 0 if not a zip / parse failed (caller falls back).
  */
-static jint zip_stream_open_from_cd(jboolean sort_entries) {
+static jint zip_stream_open_from_cd(jboolean sort_entries, bool cover_only) {
     if (archiveSize < 22) return 0;
     stream_bytes_read = 0;
 
@@ -288,8 +289,9 @@ static jint zip_stream_open_from_cd(jboolean sort_entries) {
         return 0;
     }
 
-    size_t cap = total_entries > 0 && total_entries < 100000 ? (size_t) total_entries : 64;
-    if (cap < 16) cap = 16;
+    size_t cap = cover_only ? 1
+                            : (total_entries > 0 && total_entries < 100000 ? (size_t) total_entries : 64);
+    if (!cover_only && cap < 16) cap = 16;
     entries = calloc(cap, sizeof(entry));
     if (!entries) {
         free(cd);
@@ -358,26 +360,51 @@ static jint zip_stream_open_from_cd(jboolean sort_entries) {
         bool is_dir = name_len > 0 && name[name_len - 1] == '/';
         if (!is_dir && filename_is_playable_file(name) &&
             (method == 0 || method == 8) && uncomp_size > 0 && uncomp_size < (1ull << 31)) {
-            if (entryCount >= cap) {
-                size_t ncap = cap * 2;
-                entry *grown = realloc(entries, ncap * sizeof(entry));
-                if (!grown) {
+            if (cover_only) {
+                // Keep natural-first only (full CD still in RAM; no multi-entry table).
+                if (entryCount == 0) {
+                    entries[0].filename = name;
+                    entries[0].index = 0;
+                    entries[0].size = (ssize_t) uncomp_size;
+                    entries[0].addr = NULL;
+                    entries[0].local_header_offset = (int64_t) local_off;
+                    entries[0].compressed_size = (int64_t) comp_size;
+                    entries[0].compression_method = method;
+                    max_file_size = (ssize_t) uncomp_size;
+                    entryCount = 1;
+                } else if (strnatcmp(name, entries[0].filename) < 0) {
+                    free((void *) entries[0].filename);
+                    entries[0].filename = name;
+                    entries[0].size = (ssize_t) uncomp_size;
+                    entries[0].local_header_offset = (int64_t) local_off;
+                    entries[0].compressed_size = (int64_t) comp_size;
+                    entries[0].compression_method = method;
+                    max_file_size = (ssize_t) uncomp_size;
+                } else {
                     free(name);
-                    break;
                 }
-                memset(grown + cap, 0, (ncap - cap) * sizeof(entry));
-                entries = grown;
-                cap = ncap;
+            } else {
+                if (entryCount >= cap) {
+                    size_t ncap = cap * 2;
+                    entry *grown = realloc(entries, ncap * sizeof(entry));
+                    if (!grown) {
+                        free(name);
+                        break;
+                    }
+                    memset(grown + cap, 0, (ncap - cap) * sizeof(entry));
+                    entries = grown;
+                    cap = ncap;
+                }
+                entries[entryCount].filename = name;
+                entries[entryCount].index = (int) entryCount;
+                entries[entryCount].size = (ssize_t) uncomp_size;
+                entries[entryCount].addr = NULL;
+                entries[entryCount].local_header_offset = (int64_t) local_off;
+                entries[entryCount].compressed_size = (int64_t) comp_size;
+                entries[entryCount].compression_method = method;
+                max_file_size = max((ssize_t) uncomp_size, max_file_size);
+                entryCount++;
             }
-            entries[entryCount].filename = name;
-            entries[entryCount].index = (int) entryCount;
-            entries[entryCount].size = (ssize_t) uncomp_size;
-            entries[entryCount].addr = NULL;
-            entries[entryCount].local_header_offset = (int64_t) local_off;
-            entries[entryCount].compressed_size = (int64_t) comp_size;
-            entries[entryCount].compression_method = method;
-            max_file_size = max((ssize_t) uncomp_size, max_file_size);
-            entryCount++;
         } else {
             free(name);
         }
@@ -390,10 +417,10 @@ static jint zip_stream_open_from_cd(jboolean sort_entries) {
         entries = NULL;
         return 0;
     }
-    if (sort_entries) qsort(entries, entryCount, sizeof(entry), compare_entries);
+    if (!cover_only && sort_entries) qsort(entries, entryCount, sizeof(entry), compare_entries);
     use_zip_cd_index = true;
-    LOGI("Found %zu images in archive (ZIP CD, %lld bytes net)",
-         entryCount, (long long) stream_bytes_read);
+    LOGI("Found %zu images in archive (ZIP CD%s, %lld bytes net)",
+         entryCount, cover_only ? " cover" : "", (long long) stream_bytes_read);
     return (int) entryCount;
 }
 
@@ -568,9 +595,10 @@ static char *tar_pax_extract_path(const uint8_t *body, size_t len) {
  * Open stream TAR by walking 512-byte headers only (seek/advance past bodies).
  * Same idea as ZIP EOCD+CD: listing traffic ≈ header blocks, not member data.
  * Supports ustar, GNU longname ('L'), and pax path ('x'). Store only (cbt).
+ * @param cover_only stop after the first playable image (browse thumbs).
  * @return entry count, or 0 if not a tar / parse failed (caller falls back).
  */
-static jint tar_stream_open_from_headers(jboolean sort_entries) {
+static jint tar_stream_open_from_headers(jboolean sort_entries, bool cover_only) {
     if (archiveSize < TAR_BLOCK) return 0;
     stream_bytes_read = 0;
 
@@ -684,6 +712,12 @@ static jint tar_stream_open_from_headers(jboolean sort_entries) {
                 entries[entryCount].compression_method = 0; // tar store
                 max_file_size = max((ssize_t) size, max_file_size);
                 entryCount++;
+                if (cover_only) {
+                    // First playable image is enough for a thumb — do not seek past remaining members.
+                    free(pending_name);
+                    pending_name = NULL;
+                    break;
+                }
             } else {
                 free(name);
             }
@@ -702,10 +736,10 @@ static jint tar_stream_open_from_headers(jboolean sort_entries) {
         entries = NULL;
         return 0;
     }
-    if (sort_entries) qsort(entries, entryCount, sizeof(entry), compare_entries);
+    if (!cover_only && sort_entries) qsort(entries, entryCount, sizeof(entry), compare_entries);
     use_tar_index = true;
-    LOGI("Found %zu images in archive (TAR headers, %lld bytes net)",
-         entryCount, (long long) stream_bytes_read);
+    LOGI("Found %zu images in archive (TAR headers%s, %lld bytes net)",
+         entryCount, cover_only ? " cover" : "", (long long) stream_bytes_read);
     return (int) entryCount;
 }
 
@@ -1153,25 +1187,26 @@ static int archive_get_ctx(archive_ctx **ctxptr, int idx) {
 
 /**
  * Stream open: ZIP EOCD+CD, then TAR header-only index; libarchive as last resort.
+ * @param cover_only thumb path: one natural-first ZIP entry / first TAR image only.
  */
-static jint archive_open_stream_single_pass(jboolean sort_entries) {
+static jint archive_open_stream_single_pass(jboolean sort_entries, bool cover_only) {
     use_zip_cd_index = false;
     use_tar_index = false;
     stream_bytes_read = 0;
 
     // ZIP central-directory index (no member walk).
-    jint zip_n = zip_stream_open_from_cd(sort_entries);
+    jint zip_n = zip_stream_open_from_cd(sort_entries, cover_only);
     if (zip_n > 0) return zip_n;
 
     // TAR: 512-byte headers only (seek past bodies — same idea as ZIP CD).
-    jint tar_n = tar_stream_open_from_headers(sort_entries);
+    jint tar_n = tar_stream_open_from_headers(sort_entries, cover_only);
     if (tar_n > 0) return tar_n;
 
     // Fallback: libarchive with skip→seek (odd formats / edge cases).
     archive_ctx *ctx = archive_alloc_ctx();
     if (!ctx) return 0;
 
-    size_t cap = 64;
+    size_t cap = cover_only ? 1 : 64;
     entries = calloc(cap, sizeof(entry));
     if (!entries) {
         archive_release_ctx(ctx);
@@ -1185,6 +1220,7 @@ static jint archive_open_stream_single_pass(jboolean sort_entries) {
         if (!archive_entry_is_file(ctx->entry) || !filename_is_playable_file(name))
             continue;
         if (entryCount >= cap) {
+            if (cover_only) break;
             size_t ncap = cap * 2;
             entry *grown = realloc(entries, ncap * sizeof(entry));
             if (!grown) {
@@ -1205,6 +1241,7 @@ static jint archive_open_stream_single_pass(jboolean sort_entries) {
         entries[entryCount].compression_method = 0;
         max_file_size = max(entries[entryCount].size, max_file_size);
         entryCount++;
+        if (cover_only) break;
     }
 
     LOGI("Found %zu images in archive (libarchive, %lld bytes net)",
@@ -1225,14 +1262,14 @@ static jint archive_open_stream_single_pass(jboolean sort_entries) {
     return (int) entryCount;
 }
 
-static jint archive_open_common(JNIEnv *env, jboolean sort_entries) {
+static jint archive_open_common(JNIEnv *env, jboolean sort_entries, bool cover_only) {
     EH_UNUSED(env);
     archive_ctx *ctx = NULL;
     ctx_pool = calloc(CTX_POOL_SIZE, sizeof(archive_ctx **));
 
     // Stream: one header pass only (see above).
     if (use_stream_io) {
-        return archive_open_stream_single_pass(sort_entries);
+        return archive_open_stream_single_pass(sort_entries, cover_only);
     }
 
     ctx = archive_alloc_ctx();
@@ -1292,15 +1329,17 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchive(JNIEnv *env, jclass thiz, jint
         return 0;
     }
     archiveSize = (size_t) size;
-    return archive_open_common(env, sort_entries);
+    return archive_open_common(env, sort_entries, false);
 }
 
 /**
  * Open archive via Kotlin [ArchiveStreamBridge] (random read/seek — SMB/WebDAV stream).
  * Does not mmap; extracts always go through decode buffers.
+ * @param cover_only if true, index only the cover page (natural-first ZIP / first TAR image).
  */
 JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(JNIEnv *env, jclass thiz, jobject bridge, jlong size, jboolean sort_entries) {
+Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(
+        JNIEnv *env, jclass thiz, jobject bridge, jlong size, jboolean sort_entries, jboolean cover_only) {
     EH_UNUSED(thiz);
     if (!bridge || size <= 0) return 0;
     archive_cache_vm(env);
@@ -1324,7 +1363,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(JNIEnv *env, jclass thiz
         stream_bridge_clear(env);
         return 0;
     }
-    return archive_open_common(env, sort_entries);
+    return archive_open_common(env, sort_entries, cover_only == JNI_TRUE);
 }
 
 JNIEXPORT jobject JNICALL

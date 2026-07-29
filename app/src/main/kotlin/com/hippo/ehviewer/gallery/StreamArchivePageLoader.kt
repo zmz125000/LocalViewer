@@ -62,7 +62,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
             )
             val pageCount = install(
                 {
-                    val n = openArchiveStream(bridge, archiveSizeBytes, true)
+                    val n = openArchiveStream(bridge, archiveSizeBytes, true, false)
                     check(n > 0) { "Archive have no content!" }
                     n
                 },

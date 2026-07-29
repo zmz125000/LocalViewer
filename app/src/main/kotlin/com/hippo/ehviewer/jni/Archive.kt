@@ -8,8 +8,18 @@ external fun openArchive(fd: Int, size: Long, sortEntries: Boolean): Int
 /**
  * Open archive via [com.hippo.ehviewer.library.ArchiveStreamBridge] (seek/read callbacks).
  * Does not mmap the full file — for remote ZIP/CBZ/TAR/CBT stream open.
+ *
+ * **No default args** — `external` + defaults can leave callers linked to a missing
+ * 3-arg JVM method ([NoSuchMethodError] on reader open).
+ *
+ * @param coverOnly if true, only index the cover page (natural-first ZIP / first TAR image).
  */
-external fun openArchiveStream(bridge: Any, size: Long, sortEntries: Boolean): Int
+external fun openArchiveStream(
+    bridge: Any,
+    size: Long,
+    sortEntries: Boolean,
+    coverOnly: Boolean,
+): Int
 external fun extractToByteBuffer(index: Int): ByteBuffer?
 external fun extractToFd(index: Int, fd: Int): Boolean
 external fun getExtension(index: Int): String
