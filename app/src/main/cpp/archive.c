@@ -1505,6 +1505,31 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_getExtension(JNIEnv *env, jclass thiz, jin
     return (*env)->NewStringUTF(env, ext);
 }
 
+/**
+ * Stream direct-index: ZIP local-header offset or TAR data offset for [index].
+ * Used for next-page readahead warm. Returns -1 if unavailable.
+ */
+JNIEXPORT jlong JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamMemberOffset(JNIEnv *env, jclass thiz, jint index) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    if (!use_stream_io || !entries || index < 0 || (size_t) index >= entryCount) return -1;
+    if (!(use_zip_cd_index || use_tar_index)) return -1;
+    return entries[index].local_header_offset;
+}
+
+/**
+ * Compressed (ZIP) or raw (TAR) byte length for stream warm. -1 if unknown.
+ */
+JNIEXPORT jlong JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamMemberLength(JNIEnv *env, jclass thiz, jint index) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    if (!use_stream_io || !entries || index < 0 || (size_t) index >= entryCount) return -1;
+    if (!(use_zip_cd_index || use_tar_index)) return -1;
+    return entries[index].compressed_size;
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_extractToFd(JNIEnv *env, jclass thiz, jint index, jint fd) {
     EH_UNUSED(env);
