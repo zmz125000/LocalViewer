@@ -79,7 +79,8 @@
 * 双击跳转到下一个文件夹
 * 隐私模式和历史记录
 * 高性能 smbj 客户端，支持并发连接，图片丝滑加载
-* Cronet WebDAV 客户端，支持 HTTP/2 和 QUIC
+* Ktor CIO WebDAV client 客户端 支持 HTTP/1.1 和 TLS.
+* // Cronet WebDAV 客户端，支持 HTTP/2 和 QUIC
 * HQ 模式支持原图解码显示 (HW 位图最大支持两亿像素)
 * 自适应 Material Design 3 导航条和侧边栏
 * 针对深层文件夹路径优化的导航流程
