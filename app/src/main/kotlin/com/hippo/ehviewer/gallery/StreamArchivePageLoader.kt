@@ -173,7 +173,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
 
                     /**
                      * Start or join an extract for [index].
-                     * - Cached → fire [onReady] immediately
+                     * Disk probes run only on [Dispatchers.IO] — onRequest/retryPage are main-thread.
                      * - In-flight job → only register waiter
                      * - Else launch IO job; extracts take [extractMutex] one at a time
                      */
@@ -183,11 +183,6 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         onReady: (() -> Unit)? = null,
                     ) {
                         if (index !in 0 until size) return
-                        if (isPageCached(index)) {
-                            onReady?.invoke()
-                            dispatchReady(index)
-                            return
-                        }
                         if (onReady != null) {
                             addReadyWaiter(index, onReady)
                         }
@@ -197,6 +192,10 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         }
                         val job = scope.launch(Dispatchers.IO) {
                             try {
+                                if (isPageCached(index)) {
+                                    dispatchReady(index)
+                                    return@launch
+                                }
                                 val path = extractToCache(index)
                                 if (path != null && ArchiveStreamPageCache.isCached(path)) {
                                     dispatchReady(index)
