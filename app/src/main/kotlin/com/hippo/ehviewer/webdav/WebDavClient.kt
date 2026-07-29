@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.webdav
 
+import android.net.TrafficStats
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
@@ -38,8 +39,12 @@ import java.net.URLDecoder
 import java.net.UnknownHostException
 import java.security.cert.X509Certificate
 import java.util.Base64
+import java.util.concurrent.Executors
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.X509TrustManager
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.xmlpull.v1.XmlPullParser
@@ -84,11 +89,42 @@ object WebDavClient {
 
     private const val PATH_CHANGE_DEBOUNCE_MS = 1_500L
 
+    /**
+     * TrafficStats tag for WebDAV sockets ("WDV1").
+     * CIO opens NIO channels on its own threads; StrictMode requires the **opening
+     * thread** to have a stats tag — set once on each pool thread below.
+     */
+    private const val TRAFFIC_TAG = 0x57445631
+
     /** Parallel list/peek concurrency (HTTP/1.1 multi-connection). */
     private val listSlots = Semaphore(6)
 
     /** Parallel file downloads (pages + thumbs). */
     private val downloadSlots = Semaphore(4)
+
+    /**
+     * Dedicated CIO workers with [TrafficStats] tag set for the whole thread lifetime
+     * so [SocketChannel] opens are not UntaggedSocketViolation in debug StrictMode.
+     */
+    private val cioThreadSeq = AtomicInteger(0)
+    private val cioExecutor = Executors.newFixedThreadPool(
+        8,
+        ThreadFactory { runnable ->
+            Thread(
+                {
+                    TrafficStats.setThreadStatsTag(TRAFFIC_TAG)
+                    try {
+                        runnable.run()
+                    } finally {
+                        // Leave tag set for thread reuse; clear only if the worker exits.
+                        TrafficStats.clearThreadStatsTag()
+                    }
+                },
+                "webdav-cio-${cioThreadSeq.incrementAndGet()}",
+            ).apply { isDaemon = true }
+        },
+    )
+    private val cioDispatcher = cioExecutor.asCoroutineDispatcher()
 
     @Volatile
     private var client: HttpClient? = null
@@ -125,6 +161,8 @@ object WebDavClient {
     private fun buildClient(insecureTls: Boolean): HttpClient =
         HttpClient(CIO) {
             engine {
+                // Run connect/read on tagged threads (see cioExecutor).
+                dispatcher = cioDispatcher
                 // Ceiling; per-call [timeout] plugin overrides for list vs download.
                 requestTimeout = DL_REQUEST_MS
                 maxConnectionsCount = 32
