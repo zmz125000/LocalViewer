@@ -964,6 +964,9 @@ object SmbGateway {
     /**
      * Random-access read for stream archives.
      * @return bytes written into [buf] at [off], or -1 on error.
+     *
+     * Prefer [withOpenFile] for stream archives — this open/read/close path pays a
+     * full CREATE+CLOSE RTT **per call** and is extremely slow over Wi‑Fi/VPN.
      */
     suspend fun readRange(
         source: SmbSourceEntity,
@@ -985,6 +988,34 @@ object SmbGateway {
                 null,
             ).use { file ->
                 file.read(buf, fileOffset, off, len)
+            }
+        }
+    }
+
+    /**
+     * Hold one SMB file open for the duration of [block] (keeps a pool op slot).
+     * Used by stream-archive readers so libarchive's many small range reads do not
+     * each pay CREATE/CLOSE. [block] runs on the IO dispatcher and must not escape
+     * the [com.hierynomus.smbj.share.File] after return.
+     */
+    suspend fun <T> withOpenFile(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
+    ): T = withIOContext {
+        withShare(source, password) { share ->
+            val path = remotePath(source, relativeFilePath)
+            share.openFile(
+                path,
+                EnumSet.of(AccessMask.GENERIC_READ),
+                null,
+                SMB2ShareAccess.ALL,
+                SMB2CreateDisposition.FILE_OPEN,
+                null,
+            ).use { file ->
+                val size = file.fileInformation.standardInformation.endOfFile
+                block(file, size)
             }
         }
     }

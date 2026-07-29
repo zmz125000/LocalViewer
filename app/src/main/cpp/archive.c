@@ -104,7 +104,8 @@ static la_ssize_t stream_read_cb(struct archive *a, void *client_data, const voi
     EH_UNUSED(client_data);
     JNIEnv *env = archive_get_env();
     if (!env || !g_stream_bridge || !g_mid_read) return ARCHIVE_FATAL;
-    const jint chunk = 256 * 1024;
+    // Larger chunks → fewer JNI/network round-trips (Kotlin side also readaheads 2 MiB).
+    const jint chunk = 512 * 1024;
     jbyteArray arr = (*env)->CallObjectMethod(env, g_stream_bridge, g_mid_read, chunk);
     if ((*env)->ExceptionCheck(env)) {
         (*env)->ExceptionDescribe(env);
@@ -519,9 +520,74 @@ static int archive_get_ctx(archive_ctx **ctxptr, int idx) {
     return 0;
 }
 
+/**
+ * Stream open: single pass over headers (no zero-copy). Avoids a second full
+ * archive_alloc_ctx which re-fetched the ZIP central directory over the network.
+ */
+static jint archive_open_stream_single_pass(jboolean sort_entries) {
+    archive_ctx *ctx = archive_alloc_ctx();
+    if (!ctx) return 0;
+
+    size_t cap = 64;
+    entries = calloc(cap, sizeof(entry));
+    if (!entries) {
+        archive_release_ctx(ctx);
+        return 0;
+    }
+    entryCount = 0;
+    max_file_size = 0;
+
+    while (archive_read_next_header(ctx->arc, &ctx->entry) == ARCHIVE_OK) {
+        const char *name = archive_entry_pathname(ctx->entry);
+        if (!archive_entry_is_file(ctx->entry) || !filename_is_playable_file(name))
+            continue;
+        if (entryCount >= cap) {
+            size_t ncap = cap * 2;
+            entry *grown = realloc(entries, ncap * sizeof(entry));
+            if (!grown) {
+                LOGE("%s", "entries realloc failed");
+                archive_release_ctx(ctx);
+                return 0;
+            }
+            entries = grown;
+            memset(entries + cap, 0, (ncap - cap) * sizeof(entry));
+            cap = ncap;
+        }
+        entries[entryCount].filename = strdup(name);
+        entries[entryCount].index = (int) entryCount;
+        entries[entryCount].size = archive_entry_size(ctx->entry);
+        entries[entryCount].addr = NULL;
+        max_file_size = max(entries[entryCount].size, max_file_size);
+        entryCount++;
+    }
+
+    LOGI("%s%zu%s", "Found ", entryCount, " images in archive");
+    if (!entryCount) {
+        LOGE("%s%s", "Archive read failed: ", archive_error_string(ctx->arc));
+        archive_release_ctx(ctx);
+        free(entries);
+        entries = NULL;
+        return 0;
+    }
+
+    int encryptRet = archive_read_has_encrypted_entries(ctx->arc);
+    need_encrypt = (encryptRet == 1);
+
+    if (sort_entries) qsort(entries, entryCount, sizeof(entry), compare_entries);
+    archive_release_ctx(ctx);
+    return (int) entryCount;
+}
+
 static jint archive_open_common(JNIEnv *env, jboolean sort_entries) {
+    EH_UNUSED(env);
     archive_ctx *ctx = NULL;
     ctx_pool = calloc(CTX_POOL_SIZE, sizeof(archive_ctx **));
+
+    // Stream: one header pass only (see above).
+    if (use_stream_io) {
+        return archive_open_stream_single_pass(sort_entries);
+    }
+
     ctx = archive_alloc_ctx();
     if (!ctx) return 0;
 
@@ -544,7 +610,7 @@ static jint archive_open_common(JNIEnv *env, jboolean sort_entries) {
             need_encrypt = false;
     }
 
-    if (!use_stream_io && archiveAddr != MAP_FAILED) {
+    if (archiveAddr != MAP_FAILED) {
         int format = archive_format(ctx->arc);
         switch (format) {
             case ARCHIVE_FORMAT_ZIP:
