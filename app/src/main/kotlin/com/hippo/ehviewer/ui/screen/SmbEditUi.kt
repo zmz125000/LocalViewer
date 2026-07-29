@@ -284,6 +284,9 @@ fun SmbEditDialog(
             }
         },
         dismissButton = {
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(android.R.string.cancel))
+                }
                 TextButton(
                     onClick = {
                         clearFocus()
@@ -292,9 +295,6 @@ fun SmbEditDialog(
                     enabled = host.isNotBlank() && sharePath.isNotBlank(),
                 ) {
                     Text(stringResource(R.string.network_test))
-                }
-                TextButton(onClick = onDismiss) {
-                    Text(stringResource(android.R.string.cancel))
                 }
         },
     )
