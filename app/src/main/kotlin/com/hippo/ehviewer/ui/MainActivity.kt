@@ -134,6 +134,7 @@ import com.hippo.ehviewer.ui.destinations.PrivacyScreenDestination
 import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
 import com.hippo.ehviewer.ui.destinations.SettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
+import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.settings.showNewVersion
 import com.hippo.ehviewer.ui.tools.DialogState
@@ -218,10 +219,11 @@ private val settingsNestedDestinations: Set<DestinationSpec> = setOf(
     EasyTierScreenDestination,
 )
 
-/** Folder / SMB / network browse stack (not the main Browse hub). */
+/** Folder / SMB / WebDAV / network browse stack (not the main Browse hub). */
 private val browseNestedDestinations: Set<DestinationSpec> = setOf(
     FolderBrowserScreenDestination,
     SmbBrowserScreenDestination,
+    WebDavBrowserScreenDestination,
     NetworkScreenDestination,
     LibrarySettingsScreenDestination,
 )
@@ -243,7 +245,7 @@ private fun selectedMainTab(
         HistoryScreenDestination -> HistoryScreenDestination
         SettingsScreenDestination -> SettingsScreenDestination
         ReaderScreenDestination -> null
-        FolderBrowserScreenDestination, SmbBrowserScreenDestination -> {
+        FolderBrowserScreenDestination, SmbBrowserScreenDestination, WebDavBrowserScreenDestination -> {
             if (fromHistory) HistoryScreenDestination else BrowseScreenDestination
         }
         NetworkScreenDestination -> BrowseScreenDestination
@@ -414,6 +416,10 @@ class MainActivity : AppCompatActivity() {
                 SmbBrowserScreenDestination ->
                     navBackStackEntry?.arguments
                         ?.let { SmbBrowserScreenDestination.argsFrom(it).fromHistory }
+                        ?: false
+                WebDavBrowserScreenDestination ->
+                    navBackStackEntry?.arguments
+                        ?.let { WebDavBrowserScreenDestination.argsFrom(it).fromHistory }
                         ?: false
                 else -> false
             }

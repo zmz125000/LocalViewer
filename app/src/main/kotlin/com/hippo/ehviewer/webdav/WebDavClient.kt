@@ -4,14 +4,11 @@ import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
-import com.hippo.ehviewer.ktor.Cronet
-import com.hippo.ehviewer.ktor.configureClient
-import com.hippo.ehviewer.ktor.isCronetAvailable
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.naturalCompare
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.android.Android
+import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
@@ -31,22 +28,27 @@ import io.ktor.http.takeFrom
 import io.ktor.utils.io.jvm.javaio.toInputStream
 import java.io.OutputStream
 import java.net.URLDecoder
-import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.Base64
-import javax.net.ssl.HostnameVerifier
-import javax.net.ssl.HttpsURLConnection
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 
-// Read-only WebDAV (PROPFIND + GET). HTTPS: system trust (Cronet preferred).
-// Explicit http scheme: cleartext via network security config. Insecure TLS setting
-// uses Android engine + trust-all for self-signed LAN HTTPS.
+/**
+ * Read-only WebDAV (PROPFIND + GET).
+ *
+ * **Engine: Ktor CIO** (pure Kotlin sockets) — not Cronet, not Android HttpURLConnection.
+ *
+ * Both Cronet and platform HUC only allow a fixed method set and reject `PROPFIND`
+ * with: "Expected one of [OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE, PATCH]
+ * but was PROPFIND" (Cronet often backs HUC when Play Services Cronet is present).
+ * That broke every WebDAV host while Cronet/HUC was used.
+ *
+ * TLS: system trust by default. [Settings.webDavInsecureTls] → trust-all for
+ * self-signed LAN certs (rclone serve with custom cert). Cleartext `http://` via NSC.
+ */
 object WebDavClient {
     private val PropFind = HttpMethod("PROPFIND")
 
@@ -61,7 +63,7 @@ object WebDavClient {
         "</d:prop>" +
         "</d:propfind>"
 
-    /** Parallel list/peek concurrency (HTTP multiplexes; this only caps coroutine fan-out). */
+    /** Parallel list/peek concurrency (HTTP/1.1 pipeline + multi-connection). */
     private val listSlots = Semaphore(6)
 
     /** Parallel file downloads (pages + thumbs). */
@@ -80,14 +82,6 @@ object WebDavClient {
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
 
-    private val trustAllSslContext: SSLContext by lazy {
-        SSLContext.getInstance("TLS").apply {
-            init(null, arrayOf<TrustManager>(trustAllManager), SecureRandom())
-        }
-    }
-
-    private val trustAllHostnameVerifier = HostnameVerifier { _, _ -> true }
-
     private fun http(): HttpClient {
         val wantInsecure = Settings.webDavInsecureTls.value
         client?.let { existing ->
@@ -105,42 +99,26 @@ object WebDavClient {
         }
     }
 
-    private fun buildClient(insecureTls: Boolean): HttpClient {
-        // Insecure TLS needs HttpsURLConnection hooks — Cronet has no public trust override.
-        val useCronet = !insecureTls && isCronetAvailable && Settings.enableCronet.value
-        return if (useCronet) {
-            HttpClient(Cronet) {
-                // Distinct from EhApplication.ktorClient's "http_cache" — Cronet forbids
-                // two HttpEngines sharing one disk cache storage path.
-                engine { configureClient(Settings.enableQuic.value, storageDirName = "http_cache_webdav") }
-                install(HttpTimeout) {
-                    requestTimeoutMillis = 120_000
-                    connectTimeoutMillis = 30_000
-                    socketTimeoutMillis = 120_000
-                }
-                expectSuccess = false
-            }
-        } else {
-            HttpClient(Android) {
-                engine {
-                    if (insecureTls) {
-                        sslManager = { conn: HttpsURLConnection ->
-                            conn.sslSocketFactory = trustAllSslContext.socketFactory
-                            conn.hostnameVerifier = trustAllHostnameVerifier
-                        }
+    private fun buildClient(insecureTls: Boolean): HttpClient =
+        HttpClient(CIO) {
+            engine {
+                requestTimeout = 120_000
+                maxConnectionsCount = 32
+                if (insecureTls) {
+                    https {
+                        trustManager = trustAllManager
                     }
                 }
-                install(HttpTimeout) {
-                    requestTimeoutMillis = 120_000
-                    connectTimeoutMillis = 30_000
-                    socketTimeoutMillis = 120_000
-                }
-                expectSuccess = false
             }
+            install(HttpTimeout) {
+                requestTimeoutMillis = 120_000
+                connectTimeoutMillis = 30_000
+                socketTimeoutMillis = 120_000
+            }
+            expectSuccess = false
         }
-    }
 
-    // Rebuild client when Cronet/QUIC/insecure TLS prefs change.
+    /** Rebuild when insecure TLS (or related) prefs change. */
     fun resetClient() {
         synchronized(this) {
             client?.close()
@@ -267,12 +245,21 @@ object WebDavClient {
     ): List<RemoteChild> {
         val url = dirUrl(source, relativeDir)
         val auth = basicAuthHeader(source.username, password)
-        val response = http().request(url) {
-            method = PropFind
-            header("Depth", "1")
-            auth?.let { header(HttpHeaders.Authorization, it) }
-            contentType(ContentType.Application.Xml)
-            setBody(PropfindBody)
+        val response = try {
+            http().request(url) {
+                method = PropFind
+                header("Depth", "1")
+                auth?.let { header(HttpHeaders.Authorization, it) }
+                contentType(ContentType.Application.Xml)
+                setBody(PropfindBody)
+            }
+        } catch (e: Throwable) {
+            val msg = e.message.orEmpty()
+            if (msg.contains("PROPFIND", ignoreCase = true) && msg.contains("Expected one of", ignoreCase = true)) {
+                // Should not happen with CIO; keep a clear breadcrumb if a wrong engine is used.
+                error("WebDAV client rejected PROPFIND (engine must support custom methods). $msg")
+            }
+            throw e
         }
         val code = response.status
         // 207 Multi-Status is success for PROPFIND

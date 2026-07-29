@@ -160,31 +160,40 @@ object SmbCache {
 
     /**
      * Fast cache presence check.
-     * Memory hit → true; main + unknown → false (no disk); background → probe disk.
-     * For “show if file exists” from Compose, use [isCachedOnDisk] on [Dispatchers.IO].
+     * - **Main**: memory only (no File I/O / StrictMode). May be stale after trim —
+     *   IO callers must use [isCachedOnDisk] or this off-main (revalidates).
+     * - **Background**: always re-probes disk and syncs [knownPresent].
      */
     fun isCached(path: Path): Boolean {
-        val key = path.toString()
-        if (knownPresent.contains(key)) return true
-        if (Looper.getMainLooper().isCurrentThread) return false
+        if (Looper.getMainLooper().isCurrentThread) {
+            return knownPresent.contains(path.toString())
+        }
         return isCachedOnDisk(path)
     }
 
     /**
-     * Real disk probe; safe on any thread but prefer IO from UI.
-     * Updates [knownPresent] so later main-thread [isCached] hits memory.
+     * Authoritative disk probe. Prefer [Dispatchers.IO] from UI.
+     * Always checks the file — never trusts [knownPresent] alone (trim can delete
+     * pages after cover gen while memory still says “present” → reader ENOENT).
      */
     fun isCachedOnDisk(path: Path): Boolean {
         val key = path.toString()
-        if (knownPresent.contains(key)) return true
         val f = File(key)
         val ok = f.isFile && f.length() > 0L
-        if (ok) knownPresent.add(key)
+        if (ok) {
+            knownPresent.add(key)
+        } else {
+            knownPresent.remove(key)
+        }
         return ok
     }
 
     fun markPresent(path: Path) {
         knownPresent.add(path.toString())
+    }
+
+    fun markAbsent(path: Path) {
+        knownPresent.remove(path.toString())
     }
 
     /** Bump mtime so LRU eviction prefers colder files. No-op on main (StrictMode). */
@@ -212,7 +221,7 @@ object SmbCache {
         download: suspend (OutputStream) -> Unit,
     ): Path = withContext(Dispatchers.IO) {
         val destPath = thumbCachePath(sourceId, remoteRelativeFile)
-        if (isCached(destPath)) {
+        if (isCachedOnDisk(destPath)) {
             touch(destPath)
             return@withContext destPath
         }
@@ -220,18 +229,18 @@ object SmbCache {
         val key = destPath.toString()
         val mutex = pathLocks.getOrPut(key) { Mutex() }
         mutex.withLock {
-            if (isCached(destPath)) {
+            if (isCachedOnDisk(destPath)) {
                 touch(destPath)
                 return@withContext destPath
             }
             thumbFetchSlots.withPermit {
-                if (isCached(destPath)) {
+                if (isCachedOnDisk(destPath)) {
                     touch(destPath)
                     return@withContext destPath
                 }
                 // Full original → smb_cache (same key as reader pages for this file).
                 downloadIfNeeded(pagePath, download)
-                if (!isCached(pagePath)) {
+                if (!isCachedOnDisk(pagePath)) {
                     error("SMB page cache empty after download for $remoteRelativeFile")
                 }
                 ensureRootDirs()
@@ -250,7 +259,7 @@ object SmbCache {
                     touch(destPath)
                 } catch (e: Throwable) {
                     if (jpgTmp.exists()) jpgTmp.delete()
-                    if (isCached(destPath)) return@withContext destPath
+                    if (isCachedOnDisk(destPath)) return@withContext destPath
                     throw e
                 } finally {
                     if (jpgTmp.exists()) jpgTmp.delete()
@@ -266,14 +275,15 @@ object SmbCache {
      * Do **not** use for browse covers — use [ensureBrowseThumb].
      */
     suspend fun downloadIfNeeded(path: Path, write: suspend (OutputStream) -> Unit) {
-        if (isCached(path)) {
+        // Always revalidate on disk (never skip download on stale knownPresent).
+        if (isCachedOnDisk(path)) {
             touch(path)
             return
         }
         val key = path.toString()
         val mutex = pathLocks.getOrPut(key) { Mutex() }
         mutex.withLock {
-            if (isCached(path)) {
+            if (isCachedOnDisk(path)) {
                 touch(path)
                 return
             }
@@ -288,7 +298,7 @@ object SmbCache {
                 touch(path)
             } catch (e: Throwable) {
                 tmp.delete()
-                if (isCached(path)) return
+                if (isCachedOnDisk(path)) return
                 throw e
             }
         }
@@ -376,7 +386,11 @@ object SmbCache {
             val len = f.length()
             if (f.delete()) {
                 total -= len
+                // Drop memory hit so reader re-downloads instead of ENOENT.
+                knownPresent.remove(f.absolutePath)
+                knownPresent.remove(f.path)
                 pathLocks.remove(f.absolutePath)
+                pathLocks.remove(f.path)
             }
         }
     }
