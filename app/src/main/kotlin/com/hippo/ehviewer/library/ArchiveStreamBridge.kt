@@ -1,12 +1,16 @@
 package com.hippo.ehviewer.library
 
+import androidx.annotation.Keep
+
 /**
  * JNI-facing bridge for libarchive stream I/O.
  *
- * Keeps a file position; [nativeRead] / [nativeSeek] are called from native threads.
+ * Keeps a file position; [nativeRead] / [nativeSeek] are called from native via
+ * [GetMethodID] with fixed names — must not be renamed/shrunk by R8 (release).
  * Methods are synchronized: stream mode uses one shared position (native also holds
  * a mutex so only one extract runs at a time).
  */
+@Keep
 class ArchiveStreamBridge(
     private val source: ArchiveByteSource,
 ) {
@@ -15,7 +19,8 @@ class ArchiveStreamBridge(
     val size: Long get() = source.size
 
     /** Called from JNI: read up to [maxLen] bytes from current position. Empty = EOF. */
-    @Suppress("unused") // JNI
+    @Keep
+    @Suppress("unused") // JNI GetMethodID "nativeRead" "(I)[B"
     @Synchronized
     fun nativeRead(maxLen: Int): ByteArray {
         if (maxLen <= 0) return ByteArray(0)
@@ -34,7 +39,8 @@ class ArchiveStreamBridge(
      * Called from JNI. [whence]: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END.
      * @return new absolute position, or negative on failure ([ARCHIVE_FATAL] path).
      */
-    @Suppress("unused") // JNI
+    @Keep
+    @Suppress("unused") // JNI GetMethodID "nativeSeek" "(JI)J"
     @Synchronized
     fun nativeSeek(offset: Long, whence: Int): Long {
         val fileSize = source.size
