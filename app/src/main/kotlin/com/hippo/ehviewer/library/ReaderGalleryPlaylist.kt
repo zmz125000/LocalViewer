@@ -35,6 +35,20 @@ object ReaderGalleryPlaylist {
         ) : Item
 
         data class Archive(val path: String) : Item
+
+        /** Stream-open SMB non-solid archive (zip/cbz/tar/cbt). */
+        data class SmbStreamArchive(
+            val sourceId: Long,
+            val remotePath: String,
+            val info: BaseGalleryInfo? = null,
+        ) : Item
+
+        /** Stream-open WebDAV non-solid archive (zip/cbz/tar/cbt). */
+        data class WebDavStreamArchive(
+            val sourceId: Long,
+            val remotePath: String,
+            val info: BaseGalleryInfo? = null,
+        ) : Item
     }
 
     @Volatile
@@ -116,9 +130,24 @@ object ReaderGalleryPlaylist {
                     val names = if (e.pageCountCapped) emptyList() else e.imageFileNames
                     Item.SmbFolder(sourceId, remote, names, info)
                 }
+                is BrowseEntryRemote.ArchiveGallery -> {
+                    // Only non-solid (streamable) archives participate in prev/next —
+                    // solid formats full-download to a local path and break playlist keys.
+                    if (!isStreamableArchiveFileName(e.fileName)) return@mapNotNull null
+                    val remote = listOf(parentRelative, e.parentRelativeName, e.fileName)
+                        .filter { it.isNotEmpty() }
+                        .joinToString("/")
+                    val info = BaseGalleryInfo(
+                        gid = stableGalleryId(sourceId, "smba:$remote"),
+                        token = LOCAL_GALLERY_TOKEN,
+                        title = e.name,
+                        pages = 0,
+                        favoriteSlot = com.ehviewer.core.model.GalleryInfo.NOT_FAVORITED,
+                        rating = -1f,
+                    )
+                    Item.SmbStreamArchive(sourceId, remote, info)
+                }
                 is BrowseEntryRemote.Directory -> null
-                // archives on SMB not modeled as openable gallery in browse yet
-                else -> null
             }
         }
     }
@@ -149,8 +178,22 @@ object ReaderGalleryPlaylist {
                     val names = if (e.pageCountCapped) emptyList() else e.imageFileNames
                     Item.WebDavFolder(sourceId, remote, names, info)
                 }
+                is BrowseEntryRemote.ArchiveGallery -> {
+                    if (!isStreamableArchiveFileName(e.fileName)) return@mapNotNull null
+                    val remote = listOf(parentRelative, e.parentRelativeName, e.fileName)
+                        .filter { it.isNotEmpty() }
+                        .joinToString("/")
+                    val info = BaseGalleryInfo(
+                        gid = stableGalleryId(sourceId, "dava:$remote"),
+                        token = LOCAL_GALLERY_TOKEN,
+                        title = e.name,
+                        pages = 0,
+                        favoriteSlot = com.ehviewer.core.model.GalleryInfo.NOT_FAVORITED,
+                        rating = -1f,
+                    )
+                    Item.WebDavStreamArchive(sourceId, remote, info)
+                }
                 is BrowseEntryRemote.Directory -> null
-                else -> null
             }
         }
     }
@@ -169,6 +212,8 @@ object ReaderGalleryPlaylist {
         is Item.SmbFolder -> "smb:${item.sourceId}:${item.remoteDir.trim('/')}"
         is Item.WebDavFolder -> "webdav:${item.sourceId}:${item.remoteDir.trim('/')}"
         is Item.Archive -> "archive:${item.path}"
+        is Item.SmbStreamArchive -> "smba:${item.sourceId}:${item.remotePath.trim('/')}"
+        is Item.WebDavStreamArchive -> "dava:${item.sourceId}:${item.remotePath.trim('/')}"
     }
 
     private fun Item.toArgs(): ReaderScreenArgs = when (this) {
@@ -176,6 +221,8 @@ object ReaderGalleryPlaylist {
         is Item.SmbFolder -> ReaderScreenArgs.SmbFolder(sourceId, remoteDir, imageNames, page = -1, info = info)
         is Item.WebDavFolder -> ReaderScreenArgs.WebDavFolder(sourceId, remoteDir, imageNames, page = -1, info = info)
         is Item.Archive -> ReaderScreenArgs.Archive(path)
+        is Item.SmbStreamArchive -> ReaderScreenArgs.SmbStreamArchive(sourceId, remotePath, page = -1, info = info)
+        is Item.WebDavStreamArchive -> ReaderScreenArgs.WebDavStreamArchive(sourceId, remotePath, page = -1, info = info)
     }
 
     /**
