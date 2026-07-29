@@ -962,11 +962,8 @@ object SmbGateway {
     }
 
     /**
-     * Random-access read for stream archives.
-     * @return bytes written into [buf] at [off], or -1 on error.
-     *
-     * Prefer [withOpenFile] for stream archives — this open/read/close path pays a
-     * full CREATE+CLOSE RTT **per call** and is extremely slow over Wi‑Fi/VPN.
+     * One-shot random-access read (open → read → close). Prefer [withOpenFile] when
+     * issuing many ranges (stream archives).
      */
     suspend fun readRange(
         source: SmbSourceEntity,
@@ -993,10 +990,12 @@ object SmbGateway {
     }
 
     /**
-     * Hold one SMB file open for the duration of [block] (keeps a pool op slot).
-     * Used by stream-archive readers so libarchive's many small range reads do not
-     * each pay CREATE/CLOSE. [block] runs on the IO dispatcher and must not escape
-     * the [com.hierynomus.smbj.share.File] after return.
+     * Hold one remote file open for the duration of [block] (keeps a host-pool op slot).
+     * Stream archives use this so EOCD/CD/page extracts do not pay CREATE+CLOSE per range.
+     *
+     * Uses the same smbj [DiskShare.openFile] API as folder downloads. Enum names are
+     * SMB2-* because SMB 3.x still speaks the SMB2 protocol family; dialect selection
+     * is the shared pool [buildSmbConfig] (SMB3 preferred when the server negotiates it).
      */
     suspend fun <T> withOpenFile(
         source: SmbSourceEntity,

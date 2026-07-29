@@ -1,17 +1,13 @@
 package com.hippo.ehviewer.library
 
 /**
- * Windowed readahead over an [ArchiveByteSource].
+ * Windowed readahead for archive stream I/O (SMB keep-open or WebDAV Range).
  *
- * libarchive issues a mix of:
- * - **Random** seeks (EOCD tail, central directory, each local header)
- * - **Sequential** runs (compressed page payload, CD body)
+ * - **Sequential** (offset continues prior window) → large fetch (payload / CD body)
+ * - **Random** (seek / miss) → small fetch (EOCD tail, local headers)
  *
- * Blindly readahead 2 MiB on every miss is disastrous for ZIP listing: each local
- * header is ~100 bytes but we would pull 2 MiB of the following compressed member
- * (× N images ≈ full archive download). So:
- * - sequential hit (offset == end of window) → large window
- * - random seek → small window (header-sized region only)
+ * Blind large readahead on every miss re-downloads zip members during header walks;
+ * ZIP open now uses CD-only indexing, but extract still benefits from this split.
  */
 class ReadAheadArchiveByteSource(
     private val inner: ArchiveByteSource,
@@ -64,13 +60,7 @@ class ReadAheadArchiveByteSource(
     }
 
     companion object {
-        /** Sequential compressed payload / CD body (align with SMB folder throughput). */
         const val SEQUENTIAL_WINDOW = 2 * 1024 * 1024
-
-        /**
-         * After a seek (EOCD, local headers). Large enough for a header + extras,
-         * small enough that N headers do not download the zip.
-         */
         const val RANDOM_WINDOW = 64 * 1024
     }
 }

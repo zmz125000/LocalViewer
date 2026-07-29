@@ -9,10 +9,8 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.runBlocking
 
 /**
- * Blocking HTTP Range reads for one remote WebDAV archive (stream open).
- *
- * Wraps a raw range source in [ReadAheadArchiveByteSource] so sequential libarchive
- * chunks coalesce into 2 MiB Range GETs instead of one request per 256 KiB.
+ * Random-access WebDAV archive source for stream open (HTTP Range).
+ * Same [ReadAheadArchiveByteSource] windowing as SMB; each miss is one Range GET.
  */
 class WebDavArchiveByteSource(
     source: WebDavSourceEntity,

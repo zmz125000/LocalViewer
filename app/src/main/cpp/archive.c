@@ -78,13 +78,10 @@ static int64_t stream_bytes_read = 0;
 static inline int filename_is_playable_file(const char *name);
 static inline int compare_entries(const void *a, const void *b);
 
-// --- Stream I/O (random-access remote / non-mmap) via Kotlin ArchiveStreamBridge ---
+// --- Stream I/O via Kotlin ArchiveStreamBridge (remote ZIP/TAR) ---
+// Single position + buffer; serialize extracts with stream_mutex.
+// ZIP listing/extract uses CD index when possible; TAR uses libarchive + skip→seek.
 // Do NOT define JNI_OnLoad here — Rust libehviewer already exports it.
-//
-// Stream mode shares a single file position + read buffer. The mmap ctx pool
-// (parallel skip/extract) must NOT run concurrently on that state — it corrupts
-// ZIP headers ("Truncated ZIP file header") and can SIGSEGV. All stream extracts
-// take stream_mutex and keep at most one live archive_ctx.
 static JavaVM *g_vm = NULL;
 static bool use_stream_io = false;
 static jobject g_stream_bridge = NULL;
@@ -135,7 +132,7 @@ static la_ssize_t stream_read_cb(struct archive *a, void *client_data, const voi
         *buff = NULL;
         return 0;
     }
-    // Larger chunks → fewer JNI/network round-trips (Kotlin side also readaheads 2 MiB).
+    // Chunk size; Kotlin ReadAhead coalesces sequential ranges further.
     const jint chunk = 512 * 1024;
     jbyteArray arr = (*env)->CallObjectMethod(env, g_stream_bridge, g_mid_read, chunk);
     if ((*env)->ExceptionCheck(env)) {
@@ -459,14 +456,7 @@ static int zip_stream_extract_entry(entry *e, void *out, size_t out_cap) {
     return 0;
 }
 
-/**
- * Seek for remote ZIP: libarchive's **seekable** ZIP bidder does
- *   SEEK_END → scan last 16 KiB for EOCD → seek to central directory.
- * That must NOT fall back to streamable ZIP (which walks every local header and
- * often decompresses whole members — i.e. downloads the entire archive).
- *
- * SEEK_END uses [archiveSize] known at open (from remote HEAD/stat), not a scan.
- */
+/** SEEK_END uses [archiveSize] from open (stat/HEAD), not a scan. */
 static la_int64_t stream_seek_cb(struct archive *a, void *client_data, la_int64_t offset, int whence) {
     EH_UNUSED(a);
     EH_UNUSED(client_data);
@@ -496,14 +486,7 @@ static la_int64_t stream_seek_cb(struct archive *a, void *client_data, la_int64_
     return next;
 }
 
-/**
- * Forward skip via seek (never download).
- *
- * libarchive's default without a skipper: skips ≤64 KiB are done by **read+discard**,
- * and seekable ZIP listing uses __archive_read_consume between local headers to jump
- * over each member's compressed payload. Without this callback that becomes a full
- * sequential download of the zip while building the entry list / seeking to a page.
- */
+/** Skip by seek (never read+discard). Needed for TAR listing/extract over stream I/O. */
 static la_int64_t stream_skip_cb(struct archive *a, void *client_data, la_int64_t request) {
     EH_UNUSED(a);
     EH_UNUSED(client_data);
@@ -736,11 +719,7 @@ static archive_ctx *archive_alloc_ctx() {
     ctx->arc = archive_read_new();
     ctx->using = 1;
     if (use_stream_io) {
-        // Stream/remote path: ONLY seekable ZIP (+ tar for .tar/.cbt).
-        // archive_read_support_format_zip() also registers the *streamable* bidder,
-        // which wins if SEEK_END fails and then walks every local header — often
-        // decompressing whole members (full-archive download). Force seekable so
-        // libarchive does SEEK_END → last 16KiB EOCD → central directory only.
+        // Stream: seekable ZIP + TAR only (no streamable-zip / 7z / rar).
         archive_read_support_format_zip_seekable(ctx->arc);
         archive_read_support_format_tar(ctx->arc);
         archive_read_support_filter_gzip(ctx->arc);
@@ -758,11 +737,9 @@ static archive_ctx *archive_alloc_ctx() {
         archive_read_add_passphrase(ctx->arc, passwd);
     int err;
     if (use_stream_io) {
-        // Reset cursor so a fresh libarchive handle starts at EOF seek cleanly.
         g_stream_pos = 0;
         JNIEnv *env = archive_get_env();
         stream_sync_java_pos(env, 0);
-        // skip → seek (critical): listing/extract must not read compressed members to skip them.
         archive_read_set_skip_callback(ctx->arc, stream_skip_cb);
         archive_read_set_seek_callback(ctx->arc, stream_seek_cb);
         err = archive_read_open(ctx->arc, NULL, stream_open_cb, stream_read_cb, stream_close_cb);
@@ -774,11 +751,6 @@ static archive_ctx *archive_alloc_ctx() {
         archive_read_free(ctx->arc);
         free(ctx);
         return NULL;
-    }
-    if (use_stream_io) {
-        LOGI("Stream archive format: %s (pos=%lld size=%zu)",
-             archive_format_name(ctx->arc) ? archive_format_name(ctx->arc) : "?",
-             (long long) g_stream_pos, archiveSize);
     }
     return ctx;
 }
