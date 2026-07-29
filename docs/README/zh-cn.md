@@ -101,6 +101,37 @@
 <img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
 </a>
 
+### To use WebDAV
+
+``openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes``  
+```.\rclone.exe serve webdav "D:\" --addr :8443 --cert .\server.crt --key .\server.key --read-only --user admin --pass password```
+
+### To use SMB3 encryption:
+`Get-SmbShare | Select-Object Name, EncryptData`  
+`Set-SmbShare -Name "Media" -EncryptData $true`   
+`Set-SmbServerConfiguration -RejectUnencryptedAccess $false -Force`
+
+```
+while ($true) {
+    Clear-Host
+    $config = Get-SmbServerConfiguration
+    $sessions = Get-SmbSession
+
+    Write-Host "--- SMB SERVER ENCRYPTION STATUS ---" -ForegroundColor Cyan
+    Write-Host "Global Server Encryption Enabled : $($config.EncryptData)"
+    Write-Host "Reject Unencrypted Access       : $($config.RejectUnencryptedAccess)"
+    Write-Host "Active Sessions                 : $(($sessions).Count)"
+    Write-Host "Timestamp                       : $(Get-Date -Format 'HH:mm:ss')"
+    Write-Host "------------------------------------`n"
+
+    if ($sessions) {
+        $sessions | Select-Object ClientComputerName, ClientUserName, Dialect, NumOpens | Format-Table -AutoSize
+    }
+
+    Start-Sleep -Seconds 1
+}
+```
+
 # 截图
 
 ![screenshots-01](https://github.com/zmz125000/LocalViewer-art/blob/master/screenshots-01.webp)
