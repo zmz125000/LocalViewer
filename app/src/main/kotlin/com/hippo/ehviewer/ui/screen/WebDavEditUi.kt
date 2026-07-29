@@ -63,7 +63,7 @@ fun WebDavSourceEntity.toEditorState(includePassword: Boolean = true) = WebDavEd
 
 fun WebDavSourceEntity.toDuplicateEditorState() = toEditorState(includePassword = true).copy(
     id = 0,
-    displayName = displayName,
+    displayName = "",
 )
 
 @Composable
@@ -118,7 +118,7 @@ fun WebDavEditDialog(
                 OutlinedTextField(
                     value = displayName,
                     onValueChange = { displayName = it },
-                    label = { Text(stringResource(R.string.network_display_name)) },
+                    label = { Text(stringResource(R.string.network_display_name_optional)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
