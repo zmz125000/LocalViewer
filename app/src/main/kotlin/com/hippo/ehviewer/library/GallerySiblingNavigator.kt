@@ -12,13 +12,13 @@ import com.hippo.ehviewer.webdav.WebDavRepository
 import okio.Path.Companion.toPath
 
 /**
- * Resolve prev/next gallery for folder/SMB/WebDAV/archive readers.
+ * Resolve prev/next gallery for folder/SMB/WebDAV/archive/document readers.
  *
  * Prefer [ReaderGalleryPlaylist] (the Library/Browse list the user opened from).
  * Fall back to filesystem parent siblings when no playlist is set (e.g. History).
  *
- * Non-solid (streamable) archives participate in prev/next; solid remote archives
- * that download to a local cache path are not parent-listed as remote siblings.
+ * ZIP/TAR, solid RAR/7z, and PDF/EPUB all participate in prev/next (playlist and
+ * parent listing). Format only picks the open path (stream / solid / document extract).
  */
 object GallerySiblingNavigator {
     /**

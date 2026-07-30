@@ -36,7 +36,7 @@ import moe.tarsin.kt.install
 import okio.Path
 
 /**
- * Image-only document reader (EPUB now; PDF later): index + extract pages into
+ * Image-only document reader (PDF/EPUB): index + extract pages into
  * [DocumentExtractCache], same delivery model as solid/stream.
  *
  * Does **not** hold [com.hippo.ehviewer.library.ArchiveAccess] (pure Kotlin ZIP / PDF).

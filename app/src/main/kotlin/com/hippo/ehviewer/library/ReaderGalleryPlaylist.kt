@@ -36,14 +36,14 @@ object ReaderGalleryPlaylist {
 
         data class Archive(val path: String) : Item
 
-        /** Stream-open SMB non-solid archive (zip/cbz/tar/cbt). */
+        /** SMB archive or document (ZIP/TAR stream, solid RAR/7z, PDF/EPUB). */
         data class SmbStreamArchive(
             val sourceId: Long,
             val remotePath: String,
             val info: BaseGalleryInfo? = null,
         ) : Item
 
-        /** Stream-open WebDAV non-solid archive (zip/cbz/tar/cbt). */
+        /** WebDAV archive or document (ZIP/TAR stream, solid RAR/7z, PDF/EPUB). */
         data class WebDavStreamArchive(
             val sourceId: Long,
             val remotePath: String,

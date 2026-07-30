@@ -252,7 +252,7 @@ object ArchiveCoverCache {
     }
 
     /**
-     * Network/local-stream document cover (EPUB image extract; PDF when engine ships).
+     * Network/local-stream document cover (PDF/EPUB image extract).
      * Does not use libarchive / [ArchiveAccess].
      */
     suspend fun ensureDocumentStreamCover(
