@@ -56,13 +56,21 @@ object DocumentExtractCache {
 
     @Serializable
     data class Index(
-        val v: Int = 1,
+        /**
+         * v1: early indexes; cover-only extract could persist a 1-member list and poison open.
+         * v2+: page list is always from a full structure walk (reader), never coverOnly.
+         */
+        val v: Int = INDEX_VERSION,
         val cacheKey: String,
         val remoteSize: Long = 0L,
         val format: String = "unknown",
         val complete: Boolean = false,
         val members: List<Member> = emptyList(),
     )
+
+    /** Minimum [Index.v] trusted for openFromIndex / complete-and-ready. */
+    const val INDEX_VERSION: Int = 2
+    const val MIN_USABLE_INDEX_VERSION: Int = 2
 
     fun dirFor(cacheKey: String): Path = root / sha256Hex(cacheKey)
 
@@ -121,6 +129,7 @@ object DocumentExtractCache {
      */
     fun isCompleteAndReady(cacheKey: String, remoteSize: Long = 0L): Index? {
         val idx = loadIndex(cacheKey) ?: return null
+        if (idx.v < MIN_USABLE_INDEX_VERSION) return null
         if (remoteSize > 0L && idx.remoteSize > 0L && idx.remoteSize != remoteSize) {
             purge(cacheKey)
             return null
@@ -133,9 +142,15 @@ object DocumentExtractCache {
         return idx
     }
 
-    /** Index with full member list and matching size — enough to skip structure re-parse. */
+    /**
+     * Index with a trustworthy page list and matching size — enough to skip structure re-parse.
+     *
+     * Rejects v1 indexes (cover-only could persist a 1-member list that made multi-page PDFs
+     * open as 1 page via openFromIndex). One full re-parse upgrades to [INDEX_VERSION].
+     */
     fun loadUsableIndex(cacheKey: String, remoteSize: Long = 0L): Index? {
         val idx = loadIndex(cacheKey) ?: return null
+        if (idx.v < MIN_USABLE_INDEX_VERSION) return null
         if (idx.members.isEmpty()) return null
         if (remoteSize > 0L && idx.remoteSize > 0L && idx.remoteSize != remoteSize) {
             purge(cacheKey)
