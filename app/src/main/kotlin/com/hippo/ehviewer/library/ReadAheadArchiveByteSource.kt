@@ -11,7 +11,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * - **Pipeline**: after a sequential fill, prefetch the **next** window on a worker so
  *   decompress / page-write can overlap network. Without this, solid extract shows
  *   sawtooth traffic (burst → idle → burst), especially on SMB where each range has
- *   higher startup cost than a warm WebDAV GET stream.
+ *   higher startup cost than a warm WebDAV GET stream. Consumers that hit the next
+ *   window wait for that in-flight fetch to finish (no short timeout) so slow links
+ *   do not issue a duplicate range for the same 8 MiB.
  * - **[warm]** explicit next-page fill (up to [SEQUENTIAL_WINDOW])
  *
  * Blind large readahead on every miss re-downloads zip members during header walks;
@@ -69,40 +71,13 @@ class ReadAheadArchiveByteSource(
                 }
             }
 
-            // Wait if the next window is already being fetched for this offset
-            // (avoid a second SMB/WebDAV range for the same 8 MiB).
-            if (pipeline) {
-                val deadline = System.nanoTime() + PREFETCH_WAIT_NS
-                while (System.nanoTime() < deadline) {
-                    val wait: Boolean
-                    synchronized(lock) {
-                        if (closed) return -1
-                        if (tryPromotePrefetchLocked(offset, want)) {
-                            System.arraycopy(win!!, (offset - winStart).toInt(), buf, off, want)
-                            maybeKickPrefetchLocked(fileSize)
-                            return want
-                        }
-                        wait = prefInFlight && prefFlightOff == offset
-                        if (wait) {
-                            val remainingMs =
-                                ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(1L)
-                            try {
-                                (lock as Object).wait(remainingMs.coerceAtMost(50L))
-                            } catch (_: InterruptedException) {
-                                Thread.currentThread().interrupt()
-                            }
-                        }
-                    }
-                    if (!wait) break
-                }
-                synchronized(lock) {
-                    if (tryPromotePrefetchLocked(offset, want)) {
-                        System.arraycopy(win!!, (offset - winStart).toInt(), buf, off, want)
-                        maybeKickPrefetchLocked(fileSize)
-                        return want
-                    }
-                }
+            // Wait out an in-flight prefetch for this offset so we never issue a second
+            // SMB/WebDAV range for the same 8 MiB window (slow links used to time out at
+            // 3 s and double-fetch).
+            if (pipeline && awaitSameOffsetPrefetch(offset, want, fileSize, buf, off)) {
+                return want
             }
+            if (closed) return -1
 
             val window = chooseWindow(offset)
             val fetch = minOf(window.toLong(), fileSize - offset).toInt().coerceAtLeast(want)
@@ -137,9 +112,55 @@ class ReadAheadArchiveByteSource(
                     return
                 }
             }
+            // Same as readAt: do not race a pipeline fill for this offset.
+            if (pipeline && awaitSameOffsetPrefetch(offset, want, fileSize)) {
+                return
+            }
+            if (closed) return
             fillWindowSync(offset, want, 0, null, 0, fileSize)
         } catch (_: Throwable) {
             // Network blip during warm — ignore.
+        }
+    }
+
+    /**
+     * Block until an in-flight next-window prefetch for [offset] finishes, then promote
+     * if it covers [want]. Returns true when the window is ready (and [copyBuf] was
+     * filled when non-null). Returns false when there is nothing to wait for (caller
+     * should [fillWindowSync]).
+     *
+     * Waits until completion — no short timeout that re-issues the same range on slow
+     * VPN/hotspot. [close] notifies waiters so this cannot hang past source teardown.
+     */
+    private fun awaitSameOffsetPrefetch(
+        offset: Long,
+        want: Int,
+        fileSize: Long,
+        copyBuf: ByteArray? = null,
+        copyOff: Int = 0,
+    ): Boolean {
+        while (true) {
+            val wait: Boolean
+            synchronized(lock) {
+                if (closed) return false
+                if (tryPromotePrefetchLocked(offset, want)) {
+                    if (copyBuf != null) {
+                        System.arraycopy(win!!, (offset - winStart).toInt(), copyBuf, copyOff, want)
+                        maybeKickPrefetchLocked(fileSize)
+                    }
+                    return true
+                }
+                wait = prefInFlight && prefFlightOff == offset
+                if (wait) {
+                    try {
+                        (lock as Object).wait(50L)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return false
+                    }
+                }
+            }
+            if (!wait) return false
         }
     }
 
@@ -245,14 +266,16 @@ class ReadAheadArchiveByteSource(
         val fetch = minOf(sequentialWindow.toLong(), fileSize - nextOff).toInt()
         PREFETCH_EXECUTOR.execute {
             try {
-                if (closed || epoch != prefEpoch.get()) return@execute
+                if (closed || epoch != prefEpoch.get()) {
+                    // Dropped before network: clear in-flight so waiters do not hang.
+                    clearPrefetchFlight(nextOff)
+                    return@execute
+                }
                 val buf = ByteArray(fetch)
                 val got = inner.readAt(nextOff, buf, 0, fetch)
                 synchronized(lock) {
                     if (closed || epoch != prefEpoch.get()) {
-                        prefInFlight = false
-                        prefFlightOff = -1L
-                        (lock as Object).notifyAll()
+                        clearPrefetchFlightLocked(nextOff)
                         return@synchronized
                     }
                     if (got > 0) {
@@ -281,6 +304,22 @@ class ReadAheadArchiveByteSource(
         }
     }
 
+    /** Clear in-flight flag for [flightOff] if we still own that flight (notifies waiters). */
+    private fun clearPrefetchFlight(flightOff: Long) {
+        synchronized(lock) {
+            clearPrefetchFlightLocked(flightOff)
+        }
+    }
+
+    /** Caller holds [lock]. */
+    private fun clearPrefetchFlightLocked(flightOff: Long) {
+        if (prefInFlight && prefFlightOff == flightOff) {
+            prefInFlight = false
+            prefFlightOff = -1L
+        }
+        (lock as Object).notifyAll()
+    }
+
     override fun close() {
         synchronized(lock) {
             closed = true
@@ -302,12 +341,6 @@ class ReadAheadArchiveByteSource(
         /** Large enough for solid member spans; still bounded for RAM (2 windows max). */
         const val SEQUENTIAL_WINDOW = 8 * 1024 * 1024
         const val RANDOM_WINDOW = 64 * 1024
-
-        /**
-         * Wait for an in-flight next-window prefetch before issuing a duplicate range.
-         * 8 MiB @ ~50 Mbps ≈ 1.3 s — keep a generous cap.
-         */
-        private const val PREFETCH_WAIT_NS = 3_000_000_000L // 3 s
 
         private val PREFETCH_EXECUTOR = Executors.newCachedThreadPool { r ->
             Thread(r, "archive-readahead").apply { isDaemon = true }
