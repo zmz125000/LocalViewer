@@ -550,9 +550,16 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         BrowseCover.WebDav(sourceId, remote)
                     }
                     fun archiveCoverFor(entry: BrowseEntryRemote.ArchiveGallery): BrowseCover? {
-                        if (!isStreamableArchiveFileName(entry.fileName)) return null
-                        val remote = WebDavGateway.joinRelative(
-                            WebDavGateway.joinRelative(relativeDir, entry.parentRelativeName),
+                        // ZIP/TAR stream + solid RAR/7z (lazy first-page extract).
+                        if (!isStreamableArchiveFileName(entry.fileName) &&
+                            !isSolidArchiveFileName(entry.fileName)
+                        ) {
+                            return null
+                        }
+                        // Same path identity as openArchive / reader cacheKey.
+                        val remote = joinRemoteArchivePath(
+                            relativeDir,
+                            entry.parentRelativeName,
                             entry.fileName,
                         )
                         return BrowseCover.WebDavArchive(sourceId, remote)

@@ -53,10 +53,13 @@ import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ArchiveCoverCache
+import com.hippo.ehviewer.library.isSolidArchiveFileName
+import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
 import com.hippo.ehviewer.webdav.WebDavCache
 import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
@@ -70,7 +73,7 @@ sealed class BrowseCover {
     data class LocalArchive(val archivePath: Path) : BrowseCover()
     data class Smb(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
     data class WebDav(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
-    /** Stream-open remote archive for first-page cover (no full zip download). */
+    /** Remote archive first-page cover (ZIP/TAR stream or solid sequential page 0). */
     data class SmbArchive(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
     data class WebDavArchive(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
 }
@@ -398,18 +401,38 @@ fun BrowseCoverThumb(
                 }
             }
             is BrowseCover.SmbArchive -> {
-                if (!downloadRemoteThumbs) return@LaunchedEffect
                 val key = "smb:${cover.sourceId}:${cover.remoteRelativeFile}"
+                val name = cover.remoteRelativeFile.substringAfterLast('/')
+                    .substringAfterLast('\\')
+                val solid = isSolidArchiveFileName(name)
+                // Always probe disk (thumb JPEG or solid extract page 0) even if download is off.
+                val diskOnly = withIOContext { ArchiveCoverCache.tryDiskCover(key) }
+                if (diskOnly != null) {
+                    localPath = diskOnly
+                    fetchFailed = false
+                    return@LaunchedEffect
+                }
+                if (!downloadRemoteThumbs) return@LaunchedEffect
                 val thumb = withIOContext {
-                    ArchiveCoverCache.ensureStreamCover(key) {
-                        val source = SmbRepository.load(cover.sourceId)
-                            ?: error("SMB source missing")
-                        val password = SmbPasswordStore.get(cover.sourceId)
-                        com.hippo.ehviewer.smb.SmbArchiveByteSource(
-                            source,
-                            password,
-                            cover.remoteRelativeFile,
-                        )
+                    if (solid) {
+                        ArchiveCoverCache.ensureSolidStreamCover(key) {
+                            val source = SmbRepository.load(cover.sourceId)
+                                ?: error("SMB source missing")
+                            val password = SmbPasswordStore.get(cover.sourceId)
+                            SmbArchiveByteSource(
+                                source,
+                                password,
+                                cover.remoteRelativeFile,
+                                preferSequential = true,
+                            )
+                        }
+                    } else {
+                        ArchiveCoverCache.ensureStreamCover(key) {
+                            val source = SmbRepository.load(cover.sourceId)
+                                ?: error("SMB source missing")
+                            val password = SmbPasswordStore.get(cover.sourceId)
+                            SmbArchiveByteSource(source, password, cover.remoteRelativeFile)
+                        }
                     }
                 }
                 if (thumb != null) {
@@ -418,18 +441,37 @@ fun BrowseCoverThumb(
                 }
             }
             is BrowseCover.WebDavArchive -> {
-                if (!downloadRemoteThumbs) return@LaunchedEffect
                 val key = "webdav:${cover.sourceId}:${cover.remoteRelativeFile}"
+                val name = cover.remoteRelativeFile.substringAfterLast('/')
+                    .substringAfterLast('\\')
+                val solid = isSolidArchiveFileName(name)
+                val diskOnly = withIOContext { ArchiveCoverCache.tryDiskCover(key) }
+                if (diskOnly != null) {
+                    localPath = diskOnly
+                    fetchFailed = false
+                    return@LaunchedEffect
+                }
+                if (!downloadRemoteThumbs) return@LaunchedEffect
                 val thumb = withIOContext {
-                    ArchiveCoverCache.ensureStreamCover(key) {
-                        val source = WebDavRepository.load(cover.sourceId)
-                            ?: error("WebDAV source missing")
-                        val password = WebDavPasswordStore.get(cover.sourceId)
-                        com.hippo.ehviewer.webdav.WebDavArchiveByteSource(
-                            source,
-                            password,
-                            cover.remoteRelativeFile,
-                        )
+                    if (solid) {
+                        ArchiveCoverCache.ensureSolidStreamCover(key) {
+                            val source = WebDavRepository.load(cover.sourceId)
+                                ?: error("WebDAV source missing")
+                            val password = WebDavPasswordStore.get(cover.sourceId)
+                            WebDavArchiveByteSource(
+                                source,
+                                password,
+                                cover.remoteRelativeFile,
+                                preferSequential = true,
+                            )
+                        }
+                    } else {
+                        ArchiveCoverCache.ensureStreamCover(key) {
+                            val source = WebDavRepository.load(cover.sourceId)
+                                ?: error("WebDAV source missing")
+                            val password = WebDavPasswordStore.get(cover.sourceId)
+                            WebDavArchiveByteSource(source, password, cover.remoteRelativeFile)
+                        }
                     }
                 }
                 if (thumb != null) {

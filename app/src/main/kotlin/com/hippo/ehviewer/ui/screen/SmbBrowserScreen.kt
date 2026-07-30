@@ -552,9 +552,16 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         BrowseCover.Smb(sourceId, remote)
                     }
                     fun archiveCoverFor(entry: BrowseEntryRemote.ArchiveGallery): BrowseCover? {
-                        if (!isStreamableArchiveFileName(entry.fileName)) return null
-                        val remote = SmbGateway.joinRelativePath(
-                            SmbGateway.joinRelativePath(relativeDir, entry.parentRelativeName),
+                        // ZIP/TAR stream + solid RAR/7z (lazy first-page extract).
+                        if (!isStreamableArchiveFileName(entry.fileName) &&
+                            !isSolidArchiveFileName(entry.fileName)
+                        ) {
+                            return null
+                        }
+                        // Same path identity as openArchive / reader cacheKey.
+                        val remote = joinRemoteArchivePath(
+                            relativeDir,
+                            entry.parentRelativeName,
                             entry.fileName,
                         )
                         return BrowseCover.SmbArchive(sourceId, remote)

@@ -19,7 +19,7 @@ val ARCHIVE_EXTENSIONS = setOf(
 /**
  * Solid / poor-seek archives: no ZIP-style range stream.
  * Network open uses fake-stream sequential extract ([useSolidExtractPageLoader]);
- * browse cover extract without open is still skipped (expensive).
+ * browse lazy thumbs use sequential first-page extract ([ArchiveCoverCache.ensureSolidStreamCover]).
  */
 val SOLID_ARCHIVE_EXTENSIONS = setOf("7z", "rar", "cbr")
 
