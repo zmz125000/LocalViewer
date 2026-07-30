@@ -88,6 +88,23 @@ object SolidExtractCache {
         return f.isFile && f.length() > 0L
     }
 
+    /**
+     * One readdir of `pages/` → set of page indices present (no per-file [File.length]).
+     * Used to fast-forward solid skip without O(n) stats before new extracts.
+     */
+    fun cachedPageIndices(cacheKey: String): Set<Int> {
+        val pages = File((dirFor(cacheKey) / "pages").toString())
+        if (!pages.isDirectory) return emptySet()
+        val list = pages.list() ?: return emptySet()
+        val out = HashSet<Int>(list.size)
+        for (name in list) {
+            if (name.contains(".tmp.")) continue
+            val base = name.substringBefore('.')
+            base.toIntOrNull()?.let { out.add(it) }
+        }
+        return out
+    }
+
     fun loadIndex(cacheKey: String): Index? {
         val f = File(indexPath(cacheKey).toString())
         if (!f.isFile || f.length() == 0L) return null
