@@ -27,12 +27,14 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -103,6 +105,9 @@ suspend inline fun <T> useSolidExtractPageLoader(
             val extractJobs = ConcurrentHashMap<Int, Job>()
             val coverWritten = AtomicBoolean(false)
             val hostScope = this
+            val prefetchN = Settings.preloadImage.value.coerceAtLeast(1)
+            /** High-water extract target; advanced as the user moves so list grows past init+prefetch. */
+            val extractTarget = AtomicInteger((startPage + prefetchN).coerceAtLeast(0))
 
             val loader = install(
                 object : PageLoader(
@@ -115,8 +120,6 @@ suspend inline fun <T> useSolidExtractPageLoader(
                     override val title by lazy { info?.title ?: titleHint }
 
                     init {
-                        // Capture loader for callbacks — must not rely on protected this access
-                        // from inlined synthetic classes in another package.
                         val self = this
                         engine.onListed = { count -> self.growTo(count) }
                     }
@@ -151,9 +154,11 @@ suspend inline fun <T> useSolidExtractPageLoader(
 
                     override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
                         pages.forEach { ensureExtract(it, interactive = false) }
+                        pages.maxOrNull()?.let { bumpTarget(it) }
                     }
 
                     override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
+                        bumpTarget(index)
                         ensureExtract(index, interactive = true) {
                             notifySourceReady(index, orgImg)
                         }
@@ -165,6 +170,11 @@ suspend inline fun <T> useSolidExtractPageLoader(
                         readyWaiters.clear()
                         engine.persistIndex(complete = engine.isComplete)
                         super.close()
+                    }
+
+                    private fun bumpTarget(index: Int) {
+                        val want = index + prefetchN
+                        extractTarget.updateAndGet { cur -> maxOf(cur, want) }
                     }
 
                     private fun dispatchReady(index: Int) {
@@ -196,6 +206,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
                         val existing = extractJobs[index]
                         if (existing != null && existing.isActive) return
                         val self = this
+                        // Always pull through index so this page is on disk; grow target separately.
                         val job = hostScope.launch(Dispatchers.IO) {
                             try {
                                 if (isPageReady(index)) {
@@ -215,13 +226,19 @@ suspend inline fun <T> useSolidExtractPageLoader(
                                     }
                                 }
                             } catch (_: CancellationException) {
-                                val waiters = readyWaiters.remove(index).orEmpty()
-                                waiters.forEach {
-                                    readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(it)
-                                }
-                                if (waiters.isNotEmpty()) {
-                                    hostScope.launch(Dispatchers.IO) {
-                                        ensureExtract(index, interactive = true)
+                                // Only re-queue waiters if we still own this slot (lost putIfAbsent
+                                // must not steal waiters from the winner).
+                                if (extractJobs[index] == coroutineContext[Job] ||
+                                    extractJobs[index] == null
+                                ) {
+                                    val waiters = readyWaiters.remove(index).orEmpty()
+                                    waiters.forEach {
+                                        readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(it)
+                                    }
+                                    if (waiters.isNotEmpty()) {
+                                        hostScope.launch(Dispatchers.IO) {
+                                            ensureExtract(index, interactive = true)
+                                        }
                                     }
                                 }
                             } catch (e: Throwable) {
@@ -252,14 +269,25 @@ suspend inline fun <T> useSolidExtractPageLoader(
                 },
             )
 
-            // PageLoader.prefetch only requests indices < size. After page 0, size may be 1
-            // so nothing can pull page 1+ until we grow. Warm the first prefetch window here.
-            val prefetch = Settings.preloadImage.value.coerceAtLeast(1)
+            // Sequential extract ahead of [extractTarget]. User advances raise the target so
+            // the lazy list grows past the initial start+prefetch window within one session.
             hostScope.launch(Dispatchers.IO) {
                 try {
-                    val target = (startPage + prefetch).coerceAtLeast(0)
-                    engine.ensureThrough(target)
-                    loader.growTo(engine.listedCount())
+                    var lastTarget = -1
+                    while (!engine.isComplete) {
+                        val target = extractTarget.get()
+                        if (target != lastTarget) {
+                            engine.ensureThrough(target)
+                            loader.growTo(engine.listedCount())
+                            lastTarget = target
+                        } else {
+                            delay(50)
+                        }
+                        if (engine.isComplete) {
+                            loader.growTo(engine.listedCount())
+                            break
+                        }
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {

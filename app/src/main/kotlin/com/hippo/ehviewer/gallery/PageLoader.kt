@@ -233,6 +233,7 @@ abstract class PageLoader(
     }
 
     fun request(index: Int) {
+        if (index !in 0 until size) return
         val prefetchRange = if (index >= prevIndex.load()) {
             index + 1..(index + prefetchPageCount).coerceAtMost(size - 1)
         } else {
@@ -254,13 +255,21 @@ abstract class PageLoader(
                 else -> false
             }
         }
-        val start = if (prefetchRange.step > 0) prefetchRange.first else prefetchRange.last
-        val end = if (prefetchRange.step > 0) prefetchRange.last else prefetchRange.first
-        prefetchPages(pagesAbsent, start - 5..end + 5)
+        if (pagesAbsent.isNotEmpty()) {
+            val start = if (prefetchRange.step > 0) prefetchRange.first else prefetchRange.last
+            val end = if (prefetchRange.step > 0) prefetchRange.last else prefetchRange.first
+            prefetchPages(pagesAbsent, start - 5..end + 5)
+        }
     }
 
+    /**
+     * Cancel an in-flight decode. Removes the job first so a concurrent
+     * [notifySourceReady] is not blocked by a cancelling-but-still-active job
+     * (that race left pages in [PageStatus.Queued] forever with the file already cached).
+     */
     fun cancelRequest(index: Int) {
-        jobs[index]?.cancel()
+        val job = synchronized(jobs) { jobs.remove(index) }
+        job?.cancel()
     }
 
     abstract fun save(index: Int, file: Path): Boolean
@@ -270,24 +279,41 @@ abstract class PageLoader(
      * @param orgImg one-shot full-res (page sheet "View original"); otherwise
      *   [Settings.readerDecodeSize] controls Coil target size.
      */
-    fun notifySourceReady(index: Int, orgImg: Boolean = false) = synchronized(jobs) {
-        if (jobs[index]?.isActive != true) {
-            jobs[index] = scope.launch {
+    fun notifySourceReady(index: Int, orgImg: Boolean = false) {
+        if (index !in 0 until size) return
+        synchronized(jobs) {
+            val existing = jobs[index]
+            if (existing?.isActive == true) return
+            val job = scope.launch {
                 try {
                     mutex.withLock(index) {
                         semaphore.withPermit {
                             atomicallyDecodeAndUpdate(index, forceOriginal = orgImg)
                         }
                     }
+                } catch (e: CancellationException) {
+                    // Composition dispose / supersede — do not mark Error (shows retry UI).
+                    // Leave Queued so a still-visible page can re-request; drop(1) alone
+                    // may not re-fire if status was already Queued.
+                    val page = pages.getOrNull(index)
+                    if (page != null) {
+                        when (page.status) {
+                            is PageStatus.Ready, is PageStatus.Blocked -> Unit
+                            else -> page.reset()
+                        }
+                    }
+                    throw e
                 } catch (e: Throwable) {
-                    if (e is CancellationException) {
-                        notifyPageFailed(index, null)
-                        throw e
-                    } else {
-                        notifyPageFailed(index, e.displayString())
+                    notifyPageFailed(index, e.displayString())
+                } finally {
+                    synchronized(jobs) {
+                        if (jobs[index] === coroutineContext[Job]) {
+                            jobs.remove(index)
+                        }
                     }
                 }
             }
+            jobs[index] = job
         }
     }
 

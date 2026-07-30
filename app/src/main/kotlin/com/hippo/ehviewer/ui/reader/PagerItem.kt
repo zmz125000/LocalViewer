@@ -74,16 +74,19 @@ fun PagerItem(
     contentModifier: Modifier = Modifier,
     viewportSize: Size = Size.Zero,
 ) {
-    LaunchedEffect(Unit) {
+    LaunchedEffect(page.index, pageLoader) {
         pageLoader.request(page.index)
-        // In case page loader restart
-        page.statusFlow.drop(1).collect {
-            if (page.statusFlow.value == PageStatus.Queued) {
-                pageLoader.request(page.index)
+        // Skip initial status; re-request on reset to Queued (cancel race / restart) or
+        // legacy cancel-as-Error(null). StateFlow does not re-emit equal Queued values.
+        page.statusFlow.drop(1).collect { status ->
+            when (status) {
+                PageStatus.Queued -> pageLoader.request(page.index)
+                is PageStatus.Error -> if (status.message == null) pageLoader.request(page.index)
+                else -> Unit
             }
         }
     }
-    DisposableEffect(Unit) {
+    DisposableEffect(page.index, pageLoader) {
         onDispose {
             pageLoader.cancelRequest(page.index)
         }

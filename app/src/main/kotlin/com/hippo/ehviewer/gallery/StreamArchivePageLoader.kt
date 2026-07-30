@@ -209,13 +209,17 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                     }
                                 }
                             } catch (_: CancellationException) {
-                                val waiters = takeReadyWaiters(index)
-                                if (waiters.isNotEmpty()) {
-                                    // Seek cancelled this job while UI still needs the page —
-                                    // re-queue waiters and restart after map slot is released.
-                                    waiters.forEach { addReadyWaiter(index, it) }
-                                    scope.launch(Dispatchers.IO) {
-                                        ensureExtract(index, interactive = true)
+                                // Only the map owner may re-queue waiters. A lost putIfAbsent
+                                // race cancels the loser — must not steal waiters from the winner
+                                // (left pages spinning forever with the file already on disk).
+                                val owns = extractJobs[index] == coroutineContext[Job]
+                                if (owns) {
+                                    val waiters = takeReadyWaiters(index)
+                                    if (waiters.isNotEmpty()) {
+                                        waiters.forEach { addReadyWaiter(index, it) }
+                                        scope.launch(Dispatchers.IO) {
+                                            ensureExtract(index, interactive = true)
+                                        }
                                     }
                                 }
                             } catch (e: Throwable) {
