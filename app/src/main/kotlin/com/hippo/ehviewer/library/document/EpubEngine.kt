@@ -36,6 +36,7 @@ class EpubEngine private constructor(
 
     override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index =
         DocumentExtractCache.Index(
+            v = DocumentExtractCache.INDEX_VERSION,
             cacheKey = cacheKey,
             remoteSize = remoteSize,
             format = "epub",

@@ -271,9 +271,11 @@ object ArchiveCoverCache {
                     val engine = openDocumentCoverEngine(cacheKey, source, size)
                         ?: return@use CoverEnsureResult.Skip
                     if (engine.pageCount <= 0) return@use CoverEnsureResult.NoImages
+                    // Extract page 0 only (coverOnly engine). Do **not** saveIndex:
+                    // a 1-member incomplete index is treated as a full page list by
+                    // openFromIndex and makes multi-page PDFs/EPUBs open as 1 page.
                     val page = engine.extractToCache(cacheKey, 0)
                         ?: return@use CoverEnsureResult.Skip
-                    DocumentExtractCache.saveIndex(engine.toIndex(cacheKey, complete = false))
                     val thumb = writeCoverFromExtractedPage(cacheKey, page)
                     if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
                 }
@@ -297,9 +299,10 @@ object ArchiveCoverCache {
                         val engine = openDocumentCoverEngine(key, source, pfd.statSize)
                             ?: return@withPermit CoverEnsureResult.Skip
                         if (engine.pageCount <= 0) return@withPermit CoverEnsureResult.NoImages
+                        // Extract page 0 only; never persist coverOnly as document index
+                        // (would pin multi-page docs to 1 page via openFromIndex).
                         val page = engine.extractToCache(key, 0)
                             ?: return@withPermit CoverEnsureResult.Skip
-                        DocumentExtractCache.saveIndex(engine.toIndex(key, complete = false))
                         val thumb = writeCoverFromExtractedPage(key, page)
                         if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
                     }
