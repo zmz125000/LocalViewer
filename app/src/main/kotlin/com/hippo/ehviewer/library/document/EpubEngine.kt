@@ -21,20 +21,20 @@ class EpubEngine private constructor(
     private val zip: ZipCentralDirectory,
     private val pages: List<PageRef>,
     private val remoteSize: Long,
-) {
+) : DocumentImageEngine {
     data class PageRef(
         val zipName: String,
         val ext: String,
         val uncSize: Long,
     )
 
-    val pageCount: Int get() = pages.size
+    override val pageCount: Int get() = pages.size
 
     fun memberName(index: Int): String? = pages.getOrNull(index)?.zipName
 
-    fun extOf(index: Int): String? = pages.getOrNull(index)?.ext
+    override fun extOf(index: Int): String? = pages.getOrNull(index)?.ext
 
-    fun toIndex(cacheKey: String, complete: Boolean = true): DocumentExtractCache.Index =
+    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index =
         DocumentExtractCache.Index(
             cacheKey = cacheKey,
             remoteSize = remoteSize,
@@ -51,7 +51,7 @@ class EpubEngine private constructor(
         )
 
     /** Extract page [index] into [DocumentExtractCache]; returns path or null. */
-    fun extractToCache(cacheKey: String, index: Int): Path? {
+    override fun extractToCache(cacheKey: String, index: Int): Path? {
         val page = pages.getOrNull(index) ?: return null
         val ext = page.ext
         if (DocumentExtractCache.isPageCached(cacheKey, index, ext)) {

@@ -13,7 +13,9 @@ import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.PfdArchiveByteSource
+import com.hippo.ehviewer.library.document.DocumentImageEngine
 import com.hippo.ehviewer.library.document.EpubEngine
+import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.util.FileUtils
@@ -79,26 +81,13 @@ suspend inline fun <T> useDocumentExtractPageLoader(
 
         check(sizeHint > 0L) { "Cannot open document (size unknown): $cacheKey" }
 
-        val engine = when {
-            formatHint == "epub" || isEpubFileName(titleHint) || isEpubFileName(cacheKey) -> {
-                EpubEngine.open(source, remoteSize = sizeHint, coverOnly = false)
-                    ?: error("Not a readable EPUB/ZIP")
-            }
-            formatHint == "pdf" || isPdfFileName(titleHint) || isPdfFileName(cacheKey) -> {
-                error("PDF image extract not implemented yet")
-            }
-            else -> {
-                // Path-based format from cache key suffix.
-                when {
-                    cacheKey.endsWith(".epub", ignoreCase = true) ||
-                        titleHint.endsWith(".epub", ignoreCase = true) -> {
-                        EpubEngine.open(source, remoteSize = sizeHint, coverOnly = false)
-                            ?: error("Not a readable EPUB/ZIP")
-                    }
-                    else -> error("Unsupported document format: $formatHint")
-                }
-            }
-        }
+        val engine: DocumentImageEngine = openDocumentEngine(
+            source = source,
+            sizeHint = sizeHint,
+            formatHint = formatHint,
+            titleHint = titleHint,
+            cacheKey = cacheKey,
+        )
 
         check(engine.pageCount > 0) { "Document has no playable images" }
 
@@ -323,6 +312,33 @@ suspend inline fun <T> useLocalDocumentExtractPageLoader(
         localPathForLibrary = pathStr,
         block = block,
     )
+}
+
+@PublishedApi
+internal fun openDocumentEngine(
+    source: ArchiveByteSource,
+    sizeHint: Long,
+    formatHint: String,
+    titleHint: String,
+    cacheKey: String,
+): DocumentImageEngine {
+    val isEpub = formatHint == "epub" ||
+        isEpubFileName(titleHint) ||
+        isEpubFileName(cacheKey) ||
+        cacheKey.endsWith(".epub", ignoreCase = true) ||
+        titleHint.endsWith(".epub", ignoreCase = true)
+    val isPdf = formatHint == "pdf" ||
+        isPdfFileName(titleHint) ||
+        isPdfFileName(cacheKey) ||
+        cacheKey.endsWith(".pdf", ignoreCase = true) ||
+        titleHint.endsWith(".pdf", ignoreCase = true)
+    return when {
+        isEpub -> EpubEngine.open(source, remoteSize = sizeHint, coverOnly = false)
+            ?: error("Not a readable EPUB/ZIP")
+        isPdf -> PdfImageEngine.open(source, remoteSize = sizeHint, coverOnly = false)
+            ?: error("Not a readable PDF (encrypted or unsupported)")
+        else -> error("Unsupported document format: $formatHint")
+    }
 }
 
 @PublishedApi

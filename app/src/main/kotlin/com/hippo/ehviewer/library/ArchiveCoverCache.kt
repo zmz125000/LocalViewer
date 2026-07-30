@@ -262,22 +262,14 @@ object ArchiveCoverCache {
         val dest = thumbPathFor(cacheKey, 0L, 0L)
         if (isCachedOnDisk(dest)) return@withIOContext CoverEnsureResult.Hit(dest)
         coverFromDocumentExtractCache(cacheKey)?.let { return@withIOContext CoverEnsureResult.Hit(it) }
-        val base = cacheKey.substringAfterLast('/').substringAfterLast(':')
-        if (isPdfFileName(base)) {
-            // PDF engine not implemented yet — keep row, do not mark NoImages.
-            return@withIOContext CoverEnsureResult.Skip
-        }
         extractSlots.withPermit {
             if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
             coverFromDocumentExtractCache(cacheKey)?.let { return@withPermit CoverEnsureResult.Hit(it) }
             try {
                 openSource().use { source ->
-                    val engine = com.hippo.ehviewer.library.document.EpubEngine.open(
-                        source,
-                        remoteSize = runCatching { source.size }.getOrDefault(0L),
-                        coverOnly = true,
-                    )
-                    if (engine == null) return@use CoverEnsureResult.Skip
+                    val size = runCatching { source.size }.getOrDefault(0L)
+                    val engine = openDocumentCoverEngine(cacheKey, source, size)
+                        ?: return@use CoverEnsureResult.Skip
                     if (engine.pageCount <= 0) return@use CoverEnsureResult.NoImages
                     val page = engine.extractToCache(cacheKey, 0)
                         ?: return@use CoverEnsureResult.Skip
@@ -296,19 +288,14 @@ object ArchiveCoverCache {
         val dest = thumbPathFor(key, 0L, 0L)
         if (isCachedOnDisk(dest)) return CoverEnsureResult.Hit(dest)
         coverFromDocumentExtractCache(key)?.let { return CoverEnsureResult.Hit(it) }
-        if (isPdfFileName(archivePath.name)) return CoverEnsureResult.Skip
         return extractSlots.withPermit {
             if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
             coverFromDocumentExtractCache(key)?.let { return@withPermit CoverEnsureResult.Hit(it) }
             try {
                 archivePath.openFileDescriptor("r").use { pfd ->
                     PfdArchiveByteSource(pfd, ownsPfd = false).use { source ->
-                        val engine = com.hippo.ehviewer.library.document.EpubEngine.open(
-                            source,
-                            remoteSize = pfd.statSize,
-                            coverOnly = true,
-                        )
-                        if (engine == null) return@withPermit CoverEnsureResult.Skip
+                        val engine = openDocumentCoverEngine(key, source, pfd.statSize)
+                            ?: return@withPermit CoverEnsureResult.Skip
                         if (engine.pageCount <= 0) return@withPermit CoverEnsureResult.NoImages
                         val page = engine.extractToCache(key, 0)
                             ?: return@withPermit CoverEnsureResult.Skip
@@ -321,6 +308,23 @@ object ArchiveCoverCache {
                 logcat("ArchiveCover", e)
                 CoverEnsureResult.Skip
             }
+        }
+    }
+
+    private fun openDocumentCoverEngine(
+        cacheKey: String,
+        source: ArchiveByteSource,
+        size: Long,
+    ): com.hippo.ehviewer.library.document.DocumentImageEngine? {
+        val base = cacheKey.substringAfterLast('/').substringAfterLast(':')
+        return when {
+            isEpubFileName(base) || cacheKey.endsWith(".epub", ignoreCase = true) ->
+                com.hippo.ehviewer.library.document.EpubEngine.open(source, size, coverOnly = true)
+            isPdfFileName(base) || cacheKey.endsWith(".pdf", ignoreCase = true) ->
+                com.hippo.ehviewer.library.document.PdfImageEngine.open(source, size, coverOnly = true)
+            else ->
+                com.hippo.ehviewer.library.document.EpubEngine.open(source, size, coverOnly = true)
+                    ?: com.hippo.ehviewer.library.document.PdfImageEngine.open(source, size, coverOnly = true)
         }
     }
 
