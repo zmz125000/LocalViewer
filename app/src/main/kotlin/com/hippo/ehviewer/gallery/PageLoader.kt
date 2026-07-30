@@ -93,7 +93,10 @@ abstract class PageLoader(
     private val cache = SieveCache<Int, Image>(
         maxSize = imageCacheMaxBytes,
         sizeOf = { _, v -> cacheWeightOf(v) },
-        onEntryRemoved = { k, o, n, _ -> if (o.unpin()) n ?: notifyPageWait(k) },
+        // Only drop the cache ref. Do NOT notifyPageWait here — that forced Queued while a
+        // still-composed page might have no active decode job (forever spinner). Reload is
+        // driven by request() when the page is shown / pin fails.
+        onEntryRemoved = { _, o, _, _ -> o.unpin() },
     )
 
     private fun cacheWeightOf(image: Image): Int {
@@ -240,32 +243,61 @@ abstract class PageLoader(
             index - 1 downTo (index - prefetchPageCount).coerceAtLeast(0)
         }
         prevIndex.store(index)
-        val image = lock.read { cache[index] }
-        if (image != null) {
-            notifyPageSucceed(index, image, false)
-        } else {
-            notifyPageWait(index)
-            onRequest(index)
+
+        val page = pages.getOrNull(index) ?: return
+        when (val st = page.status) {
+            is PageStatus.Ready -> {
+                // Keep showing a live decode; only reload if bitmap was recycled.
+                if (st.image.innerImage != null) {
+                    prefetchAbsent(prefetchRange)
+                    return
+                }
+            }
+            is PageStatus.Blocked -> {
+                prefetchAbsent(prefetchRange)
+                return
+            }
+            else -> Unit
         }
 
-        // Prefetch to disk
+        val image = lock.read { cache[index] }
+        if (image != null && image.innerImage != null) {
+            // Re-insert so cache stays coherent after partial eviction.
+            notifyPageSucceed(index, image, replaceCache = true)
+            prefetchAbsent(prefetchRange)
+            return
+        }
+
+        // Already decoding this page — do not reset to Queued (that caused forever spinners
+        // when a second request no-op'd notifySourceReady while wiping Ready/progress).
+        val decoding = synchronized(jobs) { jobs[index]?.isActive == true }
+        if (decoding) {
+            prefetchAbsent(prefetchRange)
+            return
+        }
+
+        notifyPageWait(index)
+        onRequest(index)
+        prefetchAbsent(prefetchRange)
+    }
+
+    private fun prefetchAbsent(prefetchRange: IntProgression) {
+        if (prefetchRange.isEmpty()) return
         val pagesAbsent = prefetchRange.filter {
-            when (pages[it].status) {
+            it in 0 until size && when (pages[it].status) {
                 PageStatus.Queued, is PageStatus.Error -> true
                 else -> false
             }
         }
-        if (pagesAbsent.isNotEmpty()) {
-            val start = if (prefetchRange.step > 0) prefetchRange.first else prefetchRange.last
-            val end = if (prefetchRange.step > 0) prefetchRange.last else prefetchRange.first
-            prefetchPages(pagesAbsent, start - 5..end + 5)
-        }
+        if (pagesAbsent.isEmpty()) return
+        val start = if (prefetchRange.step > 0) prefetchRange.first else prefetchRange.last
+        val end = if (prefetchRange.step > 0) prefetchRange.last else prefetchRange.first
+        prefetchPages(pagesAbsent, start - 5..end + 5)
     }
 
     /**
-     * Cancel an in-flight decode. Removes the job first so a concurrent
-     * [notifySourceReady] is not blocked by a cancelling-but-still-active job
-     * (that race left pages in [PageStatus.Queued] forever with the file already cached).
+     * Optional cancel of an in-flight decode (e.g. reader close). Prefer not cancelling
+     * on pager dispose — let decode finish into memory cache to avoid Queued/no-job races.
      */
     fun cancelRequest(index: Int) {
         val job = synchronized(jobs) { jobs.remove(index) }
@@ -281,6 +313,11 @@ abstract class PageLoader(
      */
     fun notifySourceReady(index: Int, orgImg: Boolean = false) {
         if (index !in 0 until size) return
+        // Already have a live Ready image — skip redundant decode.
+        val st = pages.getOrNull(index)?.status
+        if (st is PageStatus.Ready && st.image.innerImage != null && !orgImg) return
+        if (st is PageStatus.Blocked && !orgImg) return
+
         synchronized(jobs) {
             val existing = jobs[index]
             if (existing?.isActive == true) return
@@ -292,16 +329,8 @@ abstract class PageLoader(
                         }
                     }
                 } catch (e: CancellationException) {
-                    // Composition dispose / supersede — do not mark Error (shows retry UI).
-                    // Leave Queued so a still-visible page can re-request; drop(1) alone
-                    // may not re-fire if status was already Queued.
-                    val page = pages.getOrNull(index)
-                    if (page != null) {
-                        when (page.status) {
-                            is PageStatus.Ready, is PageStatus.Blocked -> Unit
-                            else -> page.reset()
-                        }
-                    }
+                    // Do not force Queued/Error — page may still be visible; a later
+                    // request()/notifySourceReady will start a fresh job.
                     throw e
                 } catch (e: Throwable) {
                     notifyPageFailed(index, e.displayString())

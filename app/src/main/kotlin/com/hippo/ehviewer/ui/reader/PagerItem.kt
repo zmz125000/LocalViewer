@@ -21,7 +21,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -74,21 +73,18 @@ fun PagerItem(
     contentModifier: Modifier = Modifier,
     viewportSize: Size = Size.Zero,
 ) {
+    // Do NOT cancelRequest on dispose — that raced with notifySourceReady and left pages
+    // in Queued with no active decode job (forever spinner) even when the file was cached.
+    // Decodes are semaphore-limited and finish into the memory cache for revisit.
     LaunchedEffect(page.index, pageLoader) {
         pageLoader.request(page.index)
-        // Skip initial status; re-request on reset to Queued (cancel race / restart) or
-        // legacy cancel-as-Error(null). StateFlow does not re-emit equal Queued values.
+        // Re-request when status falls back to Queued (eviction / restart) or blank Error.
         page.statusFlow.drop(1).collect { status ->
             when (status) {
                 PageStatus.Queued -> pageLoader.request(page.index)
                 is PageStatus.Error -> if (status.message == null) pageLoader.request(page.index)
                 else -> Unit
             }
-        }
-    }
-    DisposableEffect(page.index, pageLoader) {
-        onDispose {
-            pageLoader.cancelRequest(page.index)
         }
     }
     val defaultError = stringResource(id = R.string.decode_image_error)
@@ -120,15 +116,20 @@ fun PagerItem(
             val image = state.image
             var painter by remember { mutableStateOf<Painter?>(null) }
             LaunchedEffect(image) {
-                if (image.pin()) {
-                    painter = image.toPainter()
-                    try {
-                        awaitCancellation()
-                    } finally {
-                        if (image.unpin()) {
-                            pageLoader.notifyPageWait(page.index)
-                        }
-                    }
+                if (!image.pin()) {
+                    // Recycled / dead image still marked Ready — force a clean reload.
+                    painter = null
+                    pageLoader.notifyPageWait(page.index)
+                    pageLoader.request(page.index)
+                    return@LaunchedEffect
+                }
+                painter = image.toPainter()
+                try {
+                    awaitCancellation()
+                } finally {
+                    // Drop display pin only. Do not notifyPageWait — that turned visible
+                    // pages into forever-Queued when the cache also released its pin.
+                    image.unpin()
                 }
             }
             painter?.let { painter ->
