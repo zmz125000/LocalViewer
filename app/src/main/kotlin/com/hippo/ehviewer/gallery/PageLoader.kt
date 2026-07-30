@@ -51,8 +51,22 @@ private fun pageImageCacheMaxBytes(): Int {
     return target.coerceIn(min, max.coerceAtLeast(min))
 }
 
-abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, startPage: Int, val size: Int, val hasAds: Boolean = false) : AutoCloseable {
-    var startPage = startPage.coerceIn(0, size - 1)
+abstract class PageLoader(
+    val scope: CoroutineScope,
+    val info: GalleryInfo?,
+    startPage: Int,
+    initialSize: Int,
+    val hasAds: Boolean = false,
+) : AutoCloseable {
+    /**
+     * Page count. For solid fake-stream loaders this grows with the lazy member list
+     * (seek bar only lands on listed indices). Fixed for ZIP/folder loaders.
+     */
+    @Volatile
+    var size: Int = initialSize.coerceAtLeast(0)
+        protected set
+
+    var startPage = if (size <= 0) 0 else startPage.coerceIn(0, size - 1)
 
     private val jobs = mutableIntObjectMapOf<Job>()
     private val mutex = NamedMutex<Int>()
@@ -102,7 +116,26 @@ abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, sta
 
     private val lock = ReentrantReadWriteLock()
 
-    val pages = (0 until size).map { Page(it) }
+    private val pageList = ArrayList<Page>(initialSize.coerceAtLeast(1)).apply {
+        repeat(initialSize.coerceAtLeast(0)) { add(Page(it)) }
+    }
+
+    /** Live page slots; grows with [growTo] for solid lazy lists. */
+    val pages: List<Page> get() = pageList
+
+    /**
+     * Expand lazy list to [newSize] (seek bar max). Only grows; never shrinks.
+     * Safe for solid extract: list can advance as members are discovered.
+     */
+    protected fun growTo(newSize: Int) {
+        if (newSize <= size) return
+        synchronized(pageList) {
+            while (pageList.size < newSize) {
+                pageList.add(Page(pageList.size))
+            }
+            size = pageList.size
+        }
+    }
 
     private val prefetchPageCount = Settings.preloadImage.value
 

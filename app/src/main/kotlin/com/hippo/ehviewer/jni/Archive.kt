@@ -20,6 +20,24 @@ external fun openArchiveStream(
     sortEntries: Boolean,
     coverOnly: Boolean,
 ): Int
+
+/**
+ * Open RAR/7z for sequential pull extract via [com.hippo.ehviewer.library.ArchiveStreamBridge].
+ * @return 1 on success, 0 on failure.
+ */
+external fun openSolidSequential(bridge: Any, size: Long): Int
+
+/**
+ * Next playable image member for solid sequential session.
+ * @return index (>=0), -1 EOF, -2 error. Idempotent until extract/skip.
+ */
+external fun solidNextPlayable(): Int
+external fun solidCurrentExtension(): String
+external fun solidCurrentName(): String
+external fun solidCurrentUncSize(): Long
+external fun solidExtractCurrentToFd(fd: Int): Boolean
+external fun solidSkipCurrent(): Boolean
+
 external fun extractToByteBuffer(index: Int): ByteBuffer?
 external fun extractToFd(index: Int, fd: Int): Boolean
 external fun getExtension(index: Int): String

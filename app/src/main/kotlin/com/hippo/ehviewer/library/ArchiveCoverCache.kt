@@ -115,6 +115,37 @@ object ArchiveCoverCache {
     }
 
     /**
+     * Cover from an already-extracted page file (solid fake-stream page 0).
+     * Allows solid remote keys that [writeCoverFromOpenArchive] would skip.
+     */
+    fun writeCoverFromExtractedPage(archiveKey: String, pageFile: Path): Path? {
+        val dest = thumbPathFor(archiveKey, 0L, 0L)
+        if (isCachedOnDisk(dest)) return dest
+        return runCatching {
+            val src = File(pageFile.toString())
+            if (!src.isFile || src.length() == 0L) return null
+            File(dest.parent!!.toString()).mkdirs()
+            val jpgTmp = File("${dest}.jpg.${System.nanoTime()}")
+            try {
+                writeSubsampledJpeg(src, jpgTmp, THUMB_EDGE, THUMB_JPEG_QUALITY)
+                val destFile = File(dest.toString())
+                if (!jpgTmp.renameTo(destFile)) {
+                    jpgTmp.copyTo(destFile, overwrite = true)
+                    jpgTmp.delete()
+                }
+                if (destFile.isFile && destFile.length() > 0L) {
+                    markPresent(dest)
+                    dest
+                } else {
+                    null
+                }
+            } finally {
+                if (jpgTmp.exists()) jpgTmp.delete()
+            }
+        }.onFailure { logcat(it) }.getOrNull()
+    }
+
+    /**
      * Stream-open a remote archive, extract page 0 cover, close. No full-archive download.
      *
      * [openSource] is invoked **only after** the extract slot is held so SMB/WebDAV

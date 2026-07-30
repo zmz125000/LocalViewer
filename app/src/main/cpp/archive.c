@@ -95,6 +95,17 @@ static pthread_mutex_t stream_mutex = PTHREAD_MUTEX_INITIALIZER;
 /** Logical stream cursor (kept in sync with Kotlin [ArchiveStreamBridge]). */
 static la_int64_t g_stream_pos = 0;
 
+// --- Solid sequential extract (RAR/CBR/7z fake-stream) ---
+// Pull API: open → nextPlayable → extract/skip → … → close.
+// Helpers live after stream callbacks (see archive_alloc_solid_seq_ctx).
+static bool use_solid_seq = false;
+static archive_ctx *solid_ctx = NULL;
+static int solid_next_index = 0;
+static int solid_have_current = 0;
+static char solid_ext[16];
+static char solid_name[512];
+static int64_t solid_unc_size = 0;
+
 static void archive_cache_vm(JNIEnv *env) {
     if (!g_vm && env) {
         (*env)->GetJavaVM(env, &g_vm);
@@ -1013,6 +1024,62 @@ static void archive_release_ctx(archive_ctx *ctx) {
     }
 }
 
+static void solid_seq_reset_state(void) {
+    if (solid_ctx) {
+        archive_release_ctx(solid_ctx);
+        solid_ctx = NULL;
+    }
+    use_solid_seq = false;
+    solid_next_index = 0;
+    solid_have_current = 0;
+    solid_ext[0] = 0;
+    solid_name[0] = 0;
+    solid_unc_size = 0;
+}
+
+static void solid_fill_ext_from_name(const char *name) {
+    solid_ext[0] = 0;
+    if (!name) return;
+    const char *dot = strrchr(name, '.');
+    if (!dot || !dot[1]) return;
+    size_t n = 0;
+    for (const char *p = dot + 1; *p && n < sizeof(solid_ext) - 1; p++) {
+        char c = ascii_lower(*p);
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) break;
+        solid_ext[n++] = c;
+    }
+    solid_ext[n] = 0;
+}
+
+/** Sequential solid open over stream bridge (RAR/7z; seek kept for 7z EOF headers). */
+static archive_ctx *archive_alloc_solid_seq_ctx(void) {
+    archive_ctx *ctx = calloc(1, sizeof(archive_ctx));
+    if (!ctx) return NULL;
+    ctx->arc = archive_read_new();
+    ctx->using = 1;
+    archive_read_support_format_rar5(ctx->arc);
+    archive_read_support_format_rar(ctx->arc);
+    archive_read_support_format_7zip(ctx->arc);
+    archive_read_support_format_zip(ctx->arc);
+    archive_read_support_filter_gzip(ctx->arc);
+    archive_read_support_filter_xz(ctx->arc);
+    if (passwd)
+        archive_read_add_passphrase(ctx->arc, passwd);
+    g_stream_pos = 0;
+    JNIEnv *env = archive_get_env();
+    stream_sync_java_pos(env, 0);
+    archive_read_set_skip_callback(ctx->arc, stream_skip_cb);
+    archive_read_set_seek_callback(ctx->arc, stream_seek_cb);
+    int err = archive_read_open(ctx->arc, NULL, stream_open_cb, stream_read_cb, stream_close_cb);
+    if (err < ARCHIVE_OK) {
+        LOGE("%s%s", "Solid sequential open failed: ", archive_error_string(ctx->arc));
+        archive_read_free(ctx->arc);
+        free(ctx);
+        return NULL;
+    }
+    return ctx;
+}
+
 static archive_ctx *archive_alloc_ctx() {
     archive_ctx *ctx = calloc(1, sizeof(archive_ctx));
     ctx->arc = archive_read_new();
@@ -1321,6 +1388,7 @@ JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_openArchive(JNIEnv *env, jclass thiz, jint fd, jlong size, jboolean sort_entries) {
     EH_UNUSED(thiz);
     archive_cache_vm(env);
+    solid_seq_reset_state();
     stream_bridge_clear(env);
     use_stream_io = false;
     archiveAddr = mmap(0, (size_t) size, PROT_READ, MAP_PRIVATE, fd, 0);
@@ -1343,6 +1411,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(
     EH_UNUSED(thiz);
     if (!bridge || size <= 0) return 0;
     archive_cache_vm(env);
+    solid_seq_reset_state();
     stream_bridge_clear(env);
     if (archiveAddr != MAP_FAILED) {
         munmap(archiveAddr, archiveSize);
@@ -1364,6 +1433,166 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(
         return 0;
     }
     return archive_open_common(env, sort_entries, cover_only == JNI_TRUE);
+}
+
+/**
+ * Open RAR/7z (and friends) for sequential pull extract over [ArchiveStreamBridge].
+ * Returns 1 on success, 0 on failure. Does not build a full entry list.
+ */
+JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_openSolidSequential(
+        JNIEnv *env, jclass thiz, jobject bridge, jlong size) {
+    EH_UNUSED(thiz);
+    if (!bridge || size <= 0) return 0;
+    archive_cache_vm(env);
+    // Tear down any prior archive session (mmap / zip stream / solid).
+    if (ctx_pool) {
+        for (int i = 0; i < CTX_POOL_SIZE; i++)
+            archive_release_ctx(ctx_pool[i]);
+        free(ctx_pool);
+        ctx_pool = NULL;
+    }
+    if (entries) {
+        for (int i = 0; i < (int) entryCount; ++i)
+            free((void *) entries[i].filename);
+        free(entries);
+        entries = NULL;
+        entryCount = 0;
+    }
+    if (archiveAddr != MAP_FAILED) {
+        munmap(archiveAddr, archiveSize);
+        archiveAddr = MAP_FAILED;
+    }
+    solid_seq_reset_state();
+    stream_bridge_clear(env);
+
+    use_stream_io = true;
+    use_zip_cd_index = false;
+    use_tar_index = false;
+    archiveSize = (size_t) size;
+    archiveAddr = MAP_FAILED;
+    need_encrypt = false;
+    g_stream_pos = 0;
+    g_stream_bridge = (*env)->NewGlobalRef(env, bridge);
+    jclass cls = (*env)->GetObjectClass(env, bridge);
+    g_mid_read = (*env)->GetMethodID(env, cls, "nativeRead", "(I)[B");
+    g_mid_seek = (*env)->GetMethodID(env, cls, "nativeSeek", "(JI)J");
+    (*env)->DeleteLocalRef(env, cls);
+    if (!g_mid_read || !g_mid_seek) {
+        LOGE("%s", "ArchiveStreamBridge methods missing (solid)");
+        stream_bridge_clear(env);
+        return 0;
+    }
+    solid_ctx = archive_alloc_solid_seq_ctx();
+    if (!solid_ctx) {
+        stream_bridge_clear(env);
+        use_stream_io = false;
+        return 0;
+    }
+    use_solid_seq = true;
+    LOGI("Solid sequential open ok (size=%lld)", (long long) size);
+    return 1;
+}
+
+/**
+ * Advance to next playable image member.
+ * @return index (>=0), -1 EOF, -2 error. Idempotent if current not yet extracted/skipped.
+ */
+JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_solidNextPlayable(JNIEnv *env, jclass thiz) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    if (!use_solid_seq || !solid_ctx) return -2;
+    if (solid_have_current) return solid_next_index;
+
+    pthread_mutex_lock(&stream_mutex);
+    int r;
+    while ((r = archive_read_next_header(solid_ctx->arc, &solid_ctx->entry)) == ARCHIVE_OK) {
+        if (archive_entry_is_encrypted(solid_ctx->entry))
+            need_encrypt = true;
+        if (!archive_entry_is_playable(solid_ctx->entry)) {
+            // Consume non-image bodies so solid stream advances.
+            archive_read_data_skip(solid_ctx->arc);
+            continue;
+        }
+        const char *name = archive_entry_pathname(solid_ctx->entry);
+        if (!name) name = "";
+        size_t nlen = strlen(name);
+        if (nlen >= sizeof(solid_name)) nlen = sizeof(solid_name) - 1;
+        memcpy(solid_name, name, nlen);
+        solid_name[nlen] = 0;
+        solid_fill_ext_from_name(name);
+        solid_unc_size = archive_entry_size(solid_ctx->entry);
+        solid_have_current = 1;
+        pthread_mutex_unlock(&stream_mutex);
+        return solid_next_index;
+    }
+    pthread_mutex_unlock(&stream_mutex);
+    if (r == ARCHIVE_EOF) return -1;
+    LOGE("%s%s", "solidNextPlayable: ", archive_error_string(solid_ctx->arc));
+    return -2;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_solidCurrentExtension(JNIEnv *env, jclass thiz) {
+    EH_UNUSED(thiz);
+    if (!use_solid_seq || !solid_have_current || !solid_ext[0])
+        return (*env)->NewStringUTF(env, "bin");
+    return (*env)->NewStringUTF(env, solid_ext);
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_solidCurrentName(JNIEnv *env, jclass thiz) {
+    EH_UNUSED(thiz);
+    if (!use_solid_seq || !solid_have_current)
+        return (*env)->NewStringUTF(env, "");
+    return (*env)->NewStringUTF(env, solid_name);
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_solidCurrentUncSize(JNIEnv *env, jclass thiz) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    if (!use_solid_seq || !solid_have_current) return 0;
+    return (jlong) solid_unc_size;
+}
+
+/** Extract current playable member into [fd]. Advances playable cursor on success. */
+JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_solidExtractCurrentToFd(JNIEnv *env, jclass thiz, jint fd) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    if (!use_solid_seq || !solid_ctx || !solid_have_current || fd < 0) return JNI_FALSE;
+    pthread_mutex_lock(&stream_mutex);
+    int ret = archive_read_data_into_fd(solid_ctx->arc, fd);
+    if (ret == ARCHIVE_OK) {
+        solid_have_current = 0;
+        solid_next_index++;
+        pthread_mutex_unlock(&stream_mutex);
+        return JNI_TRUE;
+    }
+    LOGE("%s%s", "solidExtractCurrentToFd: ", archive_error_string(solid_ctx->arc));
+    pthread_mutex_unlock(&stream_mutex);
+    return JNI_FALSE;
+}
+
+/** Skip current playable body without writing (still decompresses solid). Advances cursor. */
+JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_solidSkipCurrent(JNIEnv *env, jclass thiz) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    if (!use_solid_seq || !solid_ctx || !solid_have_current) return JNI_FALSE;
+    pthread_mutex_lock(&stream_mutex);
+    int ret = archive_read_data_skip(solid_ctx->arc);
+    if (ret == ARCHIVE_OK || ret == ARCHIVE_EOF) {
+        solid_have_current = 0;
+        solid_next_index++;
+        pthread_mutex_unlock(&stream_mutex);
+        return JNI_TRUE;
+    }
+    LOGE("%s%s", "solidSkipCurrent: ", archive_error_string(solid_ctx->arc));
+    pthread_mutex_unlock(&stream_mutex);
+    return JNI_FALSE;
 }
 
 JNIEXPORT jobject JNICALL
@@ -1430,6 +1659,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_extractToByteBuffer(JNIEnv *env, jclass th
 JNIEXPORT void JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_closeArchive(JNIEnv *env, jclass thiz) {
     EH_UNUSED(thiz);
+    solid_seq_reset_state();
     if (ctx_pool) {
         for (int i = 0; i < CTX_POOL_SIZE; i++)
             archive_release_ctx(ctx_pool[i]);
@@ -1480,6 +1710,41 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_providePassword(JNIEnv *env, jclass thiz, 
     passwd = realloc(passwd, len + 1);
     (*env)->GetStringUTFRegion(env, str, 0, len, passwd);
     passwd[len] = 0;
+
+    // Solid sequential: recreate session from start with passphrase.
+    if (use_solid_seq) {
+        if (solid_ctx) {
+            archive_release_ctx(solid_ctx);
+            solid_ctx = NULL;
+        }
+        solid_next_index = 0;
+        solid_have_current = 0;
+        solid_ctx = archive_alloc_solid_seq_ctx();
+        if (!solid_ctx) return JNI_FALSE;
+        // Probe first encrypted playable.
+        char tmpBuf[4096];
+        while (archive_read_next_header(solid_ctx->arc, &solid_ctx->entry) == ARCHIVE_OK) {
+            if (!archive_entry_is_playable(solid_ctx->entry)) {
+                archive_read_data_skip(solid_ctx->arc);
+                continue;
+            }
+            if (archive_entry_is_encrypted(solid_ctx->entry)) {
+                if (archive_read_data(solid_ctx->arc, tmpBuf, sizeof(tmpBuf)) < ARCHIVE_OK) {
+                    LOGE("%s%s", "Solid password probe failed: ", archive_error_string(solid_ctx->arc));
+                    ret = false;
+                }
+            }
+            break;
+        }
+        // Re-open clean for pull API after probe.
+        archive_release_ctx(solid_ctx);
+        solid_ctx = archive_alloc_solid_seq_ctx();
+        solid_next_index = 0;
+        solid_have_current = 0;
+        need_encrypt = false;
+        return ret && solid_ctx != NULL;
+    }
+
     ctx = archive_alloc_ctx();
     char tmpBuf[4096];
     while (archive_read_next_header(ctx->arc, &entry) == ARCHIVE_OK) {

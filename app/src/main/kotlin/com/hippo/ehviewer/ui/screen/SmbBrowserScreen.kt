@@ -70,6 +70,7 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
+import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.stableGalleryId
@@ -355,8 +356,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         launchIO {
             try {
                 ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
-                // Stream ZIP/CBZ/TAR/CBT: range I/O + page image cache (no full archive DL).
-                if (isStreamableArchiveFileName(entry.fileName)) {
+                // Stream ZIP/CBZ/TAR/CBT, or solid RAR/CBR/7z fake-stream extract.
+                if (isStreamableArchiveFileName(entry.fileName) || isSolidArchiveFileName(entry.fileName)) {
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(src.id, "smba:$remote"),
                         token = LOCAL_GALLERY_TOKEN,
@@ -380,7 +381,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     }
                     return@launchIO
                 }
-                // Solid / non-stream: download whole archive then open as local.
+                // Other archive types: download whole archive then open as local.
                 val password = SmbPasswordStore.get(src.id)
                 var allowLarge = false
                 while (true) {

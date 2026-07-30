@@ -107,7 +107,9 @@ object GallerySiblingNavigator {
             when (e) {
                 is BrowseEntryRemote.FolderGallery -> e
                 is BrowseEntryRemote.ArchiveGallery ->
-                    e.takeIf { isStreamableArchiveFileName(it.fileName) }
+                    e.takeIf {
+                        isStreamableArchiveFileName(it.fileName) || isSolidArchiveFileName(it.fileName)
+                    }
                 else -> null
             }
         }
@@ -175,7 +177,9 @@ object GallerySiblingNavigator {
             when (e) {
                 is BrowseEntryRemote.FolderGallery -> e
                 is BrowseEntryRemote.ArchiveGallery ->
-                    e.takeIf { isStreamableArchiveFileName(it.fileName) }
+                    e.takeIf {
+                        isStreamableArchiveFileName(it.fileName) || isSolidArchiveFileName(it.fileName)
+                    }
                 else -> null
             }
         }
