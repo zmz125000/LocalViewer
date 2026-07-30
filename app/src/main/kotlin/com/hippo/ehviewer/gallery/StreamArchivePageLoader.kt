@@ -60,6 +60,8 @@ suspend inline fun <T> useStreamArchivePageLoader(
 ) = ArchiveAccess.withArchive {
     autoCloseScope {
         coroutineScope {
+            ArchiveStreamPageCache.pin(cacheKey)
+            install({ }, { _, _ -> ArchiveStreamPageCache.unpin(cacheKey) })
             val archiveSizeBytes = source.size
             val bridge = install(
                 { ArchiveStreamBridge(source) },

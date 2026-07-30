@@ -52,6 +52,11 @@ import okio.Path
  * listed count. Seek bar only lands on listed indices (never past unknown pages).
  * Bodies are written as members are processed so list and disk stay aligned for the
  * processed prefix.
+ *
+ * **Resume:** `index.json` seeds the member list; complete+all-pages → offline
+ * [cachedSolidLoader]; partial → sequential from byte 0 with skip-write for pages already
+ * on disk. remoteSize mismatch purges the extract dir. Cache budget is independent of
+ * SMB/WebDAV page cache (same [Settings.readCacheSize] value, own pool).
  */
 suspend inline fun <T> useSolidExtractPageLoader(
     source: ArchiveByteSource,
@@ -67,8 +72,14 @@ suspend inline fun <T> useSolidExtractPageLoader(
     autoCloseScope {
         coroutineScope {
             val sizeHint = remoteSize.takeIf { it > 0L } ?: source.size
+            // Hard invalidate before any resume/cold path; pin while reader owns this key.
+            SolidExtractCache.invalidateIfRemoteSizeMismatch(cacheKey, sizeHint)
+            SolidExtractCache.pin(cacheKey)
+            install({ }, { _, _ -> SolidExtractCache.unpin(cacheKey) })
+
             val ready = SolidExtractCache.isCompleteAndReady(cacheKey, remoteSize = sizeHint)
             if (ready != null) {
+                SolidExtractCache.touch(cacheKey)
                 val loader = install(
                     cachedSolidLoader(
                         scope = this,
@@ -97,7 +108,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
 
             val engine = SolidExtractEngine(
                 cacheKey = cacheKey,
-                remoteSize = source.size,
+                remoteSize = sizeHint,
             )
             engine.seedFromDiskIndex()
             engine.ensureThrough(0)
@@ -422,8 +433,9 @@ class SolidExtractEngine(
 
     /** Restore partial list from a previous session's index.json. */
     fun seedFromDiskIndex() {
+        // Hard purge if remote was replaced; never seed stale members/pages.
+        if (SolidExtractCache.invalidateIfRemoteSizeMismatch(cacheKey, remoteSize)) return
         val idx = SolidExtractCache.loadIndex(cacheKey) ?: return
-        if (remoteSize > 0L && idx.remoteSize > 0L && idx.remoteSize != remoteSize) return
         members.clear()
         members.addAll(idx.members.sortedBy { it.i })
         if (idx.complete && SolidExtractCache.allPagesPresent(cacheKey, idx)) {
@@ -534,6 +546,8 @@ class SolidExtractEngine(
                 tmp.copyTo(File(dest.toString()), overwrite = true)
                 tmp.delete()
             }
+            SolidExtractCache.touch(cacheKey)
+            SolidExtractCache.scheduleTrim()
         } finally {
             if (tmp.exists()) tmp.delete()
         }

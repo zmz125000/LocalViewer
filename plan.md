@@ -297,16 +297,21 @@ Mirror `StreamArchivePageLoader`:
 - Enable 7z in sequential path; hybrid full-file fallback into same extract cache.
 - Large-file warn + progress.
 
-### S3 — Resume / invalidation polish
+### S3 — Resume / invalidation polish ✅
 
-- Partial resume skip-write from 0.
-- remoteSize invalidation.
-- LRU trim of `solid_extract` (complete archives preferred retention; incomplete younger?).
-- Optional: non-solid RAR promote to seek stream later.
+- Partial resume skip-write from 0 (shipped earlier; kept).
+- remoteSize **hard** invalidation (purge extract dir on mismatch).
+- Independent LRU budgets (same `readCacheSize` value, **own** pools — not shared with smb/thumb):
+  - thumb: fixed 512 MiB
+  - smb_cache / webdav pages: readCacheSize
+  - `solid_extract`: readCacheSize
+  - `archive_pages` (ZIP/TAR stream extract): readCacheSize
+- Pin open archive keys against eviction; incomplete dirs evicted before complete.
+- Optional: non-solid RAR promote to seek stream later (deferred).
 
-### Out of scope (separate tracks)
+### Out of scope / future tracks
 
-- EPUB/PDF covers/readers (prior plan).
+- **EPUB / PDF extract-read (plan only):** same product model as solid/stream fake-read when opened from network — early reader, progressive extract into durable page cache + index, cold reopen offline, independent archive-cache budget. Not implemented in S3.
 - Browse-grid solid cover without ever opening (budgeted cover-only).
 - True parallel multi-archive solid extract.
 

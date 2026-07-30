@@ -1,9 +1,19 @@
 package com.hippo.ehviewer.library
 
+import com.hippo.ehviewer.Settings
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okio.Path
@@ -21,6 +31,10 @@ import splitties.init.appCtx
  * ```
  *
  * Index is the lazy member list (no central directory). Seek bar max = listed members only.
+ *
+ * **Budget:** independent of [SmbCache] / WebDAV page cache and of fixed thumb stores.
+ * Size limit = [Settings.readCacheSize] MiB (same numeric pref, **own** disk pool — e.g.
+ * Advanced 1 GiB ⇒ smb_cache 1 GiB **and** solid_extract another 1 GiB).
  */
 object SolidExtractCache {
     private val json = Json {
@@ -31,6 +45,13 @@ object SolidExtractCache {
     private val root: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
         File(appCtx.applicationInfo.dataDir, "cache/solid_extract").toOkioPath()
     }
+
+    private val trimScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val trimLock = Mutex()
+    private val trimScheduled = AtomicBoolean(false)
+
+    /** Open reader sessions — never evict these hash dirs. */
+    private val pinnedKeys = ConcurrentHashMap.newKeySet<String>()
 
     @Serializable
     data class Member(
@@ -88,6 +109,7 @@ object SolidExtractCache {
         } finally {
             if (tmp.exists()) tmp.delete()
         }
+        touch(index.cacheKey)
     }
 
     fun allPagesPresent(cacheKey: String, index: Index): Boolean {
@@ -95,12 +117,57 @@ object SolidExtractCache {
         return index.members.all { m -> isPageCached(cacheKey, m.i, m.ext) }
     }
 
+    /**
+     * Complete offline open: index marked complete, remoteSize matches (when known),
+     * and every listed page file is present.
+     */
     fun isCompleteAndReady(cacheKey: String, remoteSize: Long = 0L): Index? {
+        invalidateIfRemoteSizeMismatch(cacheKey, remoteSize)
         val idx = loadIndex(cacheKey) ?: return null
         if (!idx.complete) return null
         if (remoteSize > 0L && idx.remoteSize > 0L && idx.remoteSize != remoteSize) return null
         if (!allPagesPresent(cacheKey, idx)) return null
         return idx
+    }
+
+    /**
+     * If [remoteSize] is known and differs from a stored index, purge the whole extract dir
+     * so skip-write cannot mix old pages with a replaced remote file.
+     *
+     * @return true if a purge ran
+     */
+    fun invalidateIfRemoteSizeMismatch(cacheKey: String, remoteSize: Long): Boolean {
+        if (remoteSize <= 0L) return false
+        val idx = loadIndex(cacheKey) ?: return false
+        if (idx.remoteSize <= 0L || idx.remoteSize == remoteSize) return false
+        purge(cacheKey)
+        return true
+    }
+
+    /** Delete index + pages for [cacheKey]. No-op if missing. */
+    fun purge(cacheKey: String) {
+        val dir = File(dirFor(cacheKey).toString())
+        if (dir.exists()) dir.deleteRecursively()
+    }
+
+    /** Mark archive open — excluded from LRU until [unpin]. */
+    fun pin(cacheKey: String) {
+        pinnedKeys.add(cacheKey)
+        touch(cacheKey)
+    }
+
+    fun unpin(cacheKey: String) {
+        pinnedKeys.remove(cacheKey)
+        scheduleTrim()
+    }
+
+    /** Bump dir / index mtime so LRU prefers colder archives. */
+    fun touch(cacheKey: String) {
+        val now = System.currentTimeMillis()
+        val dir = File(dirFor(cacheKey).toString())
+        if (dir.isDirectory) dir.setLastModified(now)
+        val idx = File(indexPath(cacheKey).toString())
+        if (idx.isFile) idx.setLastModified(now)
     }
 
     fun writePage(cacheKey: String, index: Int, ext: String, buffer: ByteBuffer): Path {
@@ -120,6 +187,8 @@ object SolidExtractCache {
         } finally {
             if (tmp.exists()) tmp.delete()
         }
+        touch(cacheKey)
+        scheduleTrim()
         return dest
     }
 
@@ -136,6 +205,8 @@ object SolidExtractCache {
         } finally {
             if (tmp.exists()) tmp.delete()
         }
+        touch(cacheKey)
+        scheduleTrim()
         return dest
     }
 
@@ -149,6 +220,84 @@ object SolidExtractCache {
             ?.name
             ?.substringAfterLast('.', missingDelimiterValue = "")
             ?.takeIf { it.isNotEmpty() }
+    }
+
+    fun scheduleTrim() {
+        if (!trimScheduled.compareAndSet(false, true)) return
+        trimScope.launch {
+            try {
+                trimToMaxSize()
+            } finally {
+                trimScheduled.set(false)
+            }
+        }
+    }
+
+    /**
+     * Evict whole archive extract dirs until under budget.
+     * Preference: incomplete first, then oldest mtime; skip [pinnedKeys].
+     * Budget = [Settings.readCacheSize] MiB — **independent** of smb/webdav page cache.
+     */
+    suspend fun trimToMaxSize() = withContext(Dispatchers.IO) {
+        trimLock.withLock {
+            val budget = Settings.readCacheSize.value.coerceIn(320, 5120).toLong() * 1024L * 1024L
+            val rootDir = File(root.toString())
+            if (!rootDir.isDirectory) return@withLock
+
+            data class Entry(
+                val dir: File,
+                val hash: String,
+                val complete: Boolean,
+                val mtime: Long,
+                val size: Long,
+            )
+
+            val pinnedHashes = pinnedKeys.mapTo(HashSet()) { sha256Hex(it) }
+            val entries = rootDir.listFiles()
+                ?.filter { it.isDirectory }
+                ?.mapNotNull { dir ->
+                    val hash = dir.name
+                    if (hash in pinnedHashes) return@mapNotNull null
+                    val size = dirSize(dir)
+                    if (size <= 0L) return@mapNotNull null
+                    val idxFile = File(dir, "index.json")
+                    val complete = if (idxFile.isFile && idxFile.length() > 0L) {
+                        runCatching {
+                            json.decodeFromString(Index.serializer(), idxFile.readText()).complete
+                        }.getOrDefault(false)
+                    } else {
+                        false
+                    }
+                    val mtime = maxOf(dir.lastModified(), idxFile.lastModified())
+                    Entry(dir, hash, complete, mtime, size)
+                }
+                // Incomplete first (false < true), then older first.
+                ?.sortedWith(compareBy<Entry> { it.complete }.thenBy { it.mtime }.thenBy { it.hash })
+                ?: return@withLock
+
+            var total = entries.sumOf { it.size } +
+                pinnedKeys.sumOf { k ->
+                    val d = File(dirFor(k).toString())
+                    if (d.isDirectory) dirSize(d) else 0L
+                }
+            if (total <= budget) return@withLock
+
+            for (e in entries) {
+                if (total <= budget) break
+                if (e.dir.deleteRecursively()) {
+                    total -= e.size
+                }
+            }
+        }
+    }
+
+    private fun dirSize(dir: File): Long {
+        if (!dir.isDirectory) return if (dir.isFile) dir.length() else 0L
+        var sum = 0L
+        dir.walkTopDown().forEach { f ->
+            if (f.isFile && !f.name.contains(".tmp.")) sum += f.length()
+        }
+        return sum
     }
 
     private fun sha256Hex(s: String): String {
