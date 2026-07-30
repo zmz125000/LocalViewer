@@ -33,6 +33,7 @@ import com.hippo.ehviewer.download.downloadLocation
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.LicenseScreenDestination
 import com.hippo.ehviewer.ui.main.NavigationIcon
+import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.updater.AppUpdater
@@ -69,6 +70,7 @@ fun AnimatedVisibilityScope.AboutScreen(navigator: DestinationsNavigator) = Scre
         topBar = {
             TopAppBar(
                 title = { Text(text = stringResource(id = R.string.settings_about)) },
+                colors = adaptiveTopAppBarColors(),
                 navigationIcon = { NavigationIcon() },
                 scrollBehavior = scrollBehavior,
             )

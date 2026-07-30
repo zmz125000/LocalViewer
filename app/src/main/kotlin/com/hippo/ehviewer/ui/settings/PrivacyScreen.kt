@@ -27,6 +27,7 @@ import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.isAuthenticationSupported
 import com.hippo.ehviewer.ui.main.NavigationIcon
+import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -42,6 +43,7 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
         topBar = {
             TopAppBar(
                 title = { Text(text = stringResource(id = R.string.settings_privacy)) },
+                colors = adaptiveTopAppBarColors(),
                 navigationIcon = { NavigationIcon() },
                 scrollBehavior = scrollBehavior,
             )

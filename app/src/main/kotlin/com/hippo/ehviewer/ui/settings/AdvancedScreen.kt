@@ -44,6 +44,7 @@ import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.ktor.isCronetAvailable
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.NavigationIcon
+import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.hippo.ehviewer.ui.showRestartDialog
 import com.hippo.ehviewer.util.AdsPlaceholderFile
 import com.hippo.ehviewer.util.AppConfig
@@ -108,6 +109,7 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
         topBar = {
             TopAppBar(
                 title = { Text(text = stringResource(id = R.string.settings_advanced)) },
+                colors = adaptiveTopAppBarColors(),
                 navigationIcon = { NavigationIcon() },
                 scrollBehavior = scrollBehavior,
             )

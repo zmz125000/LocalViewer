@@ -401,6 +401,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 title = { Text(stringResource(R.string.browse)) },
                 // Only status-bar top; start/end are handled by the rail / content edge.
                 windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
+                colors = adaptiveTopAppBarColors(),
                 actions = {
                     IconButton(
                         onClick = { showEasyTierDialog = true },
