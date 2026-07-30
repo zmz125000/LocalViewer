@@ -311,7 +311,7 @@ Mirror `StreamArchivePageLoader`:
 
 ### Out of scope / future tracks
 
-- **EPUB / PDF extract-read (plan only):** same product model as solid/stream fake-read when opened from network — early reader, progressive extract into durable page cache + index, cold reopen offline, independent archive-cache budget. Not implemented in S3.
+- **EPUB / PDF extract-read:** image-only extract-cache (see session plan). **D0 started:** `DocumentExtractCache`, `EpubEngine` (OPF spine images), local+remote reader/cover wiring; PDF engine still D2/D3.
 - Browse-grid solid cover without ever opening (budgeted cover-only).
 - True parallel multi-archive solid extract.
 - Optional: unify cache/index *plumbing* (shared helpers / one “archive page cache” API, optional ZIP/TAR `index.json` for offline open without re-fetching CD). **Not** a merge of extract engines — see note below.

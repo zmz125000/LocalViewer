@@ -133,7 +133,8 @@ object ReaderGalleryPlaylist {
                 is BrowseEntryRemote.ArchiveGallery -> {
                     // Stream ZIP/TAR + solid RAR/7z fake-stream share SmbStreamArchive keys.
                     if (!isStreamableArchiveFileName(e.fileName) &&
-                        !isSolidArchiveFileName(e.fileName)
+                        !isSolidArchiveFileName(e.fileName) &&
+                        !isDocumentFileName(e.fileName)
                     ) {
                         return@mapNotNull null
                     }
@@ -185,7 +186,8 @@ object ReaderGalleryPlaylist {
                 }
                 is BrowseEntryRemote.ArchiveGallery -> {
                     if (!isStreamableArchiveFileName(e.fileName) &&
-                        !isSolidArchiveFileName(e.fileName)
+                        !isSolidArchiveFileName(e.fileName) &&
+                        !isDocumentFileName(e.fileName)
                     ) {
                         return@mapNotNull null
                     }

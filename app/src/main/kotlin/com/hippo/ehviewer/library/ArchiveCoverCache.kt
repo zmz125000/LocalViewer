@@ -112,10 +112,14 @@ object ArchiveCoverCache {
             if (!isArchiveFileName(name)) return@runCatching CoverEnsureResult.Skip
 
             val solid = isSolidArchiveFileName(name)
-            // Solid thumbs share the 0/0 key with [writeCoverFromOpenArchive] / [tryDiskCover].
+            val document = isDocumentFileName(name)
+            // Solid / document thumbs share the 0/0 key with tryDiskCover / reader writes.
             val key = archivePath.toString()
-            if (solid) {
+            if (solid || document) {
                 tryDiskCover(key)?.let { return@runCatching CoverEnsureResult.Hit(it) }
+            }
+            if (document) {
+                return@runCatching ensureLocalDocumentCover(archivePath, key)
             }
 
             val file = File(key)
@@ -198,7 +202,8 @@ object ArchiveCoverCache {
      * connections are not opened for every grid cell waiting in the queue.
      * Cache key uses size=0 so hits work without a network size probe.
      *
-     * Solid formats: use [ensureSolidStreamCover] (this method returns [CoverEnsureResult.Skip] for solid names).
+     * Solid formats: use [ensureSolidStreamCover].
+     * Documents (EPUB/PDF): use [ensureDocumentStreamCover].
      */
     suspend fun ensureStreamCover(
         cacheKey: String,
@@ -206,6 +211,9 @@ object ArchiveCoverCache {
     ): CoverEnsureResult = withIOContext {
         val base = cacheKey.substringAfterLast('/').substringAfterLast(':')
         if (base.isNotEmpty() && isSolidArchiveFileName(base)) return@withIOContext CoverEnsureResult.Skip
+        if (base.isNotEmpty() && isDocumentFileName(base)) {
+            return@withIOContext ensureDocumentStreamCover(cacheKey, openSource)
+        }
         // Stable path without remote size (avoids opening the archive just to hash the key).
         val dest = thumbPathFor(cacheKey, 0L, 0L)
         if (isCachedOnDisk(dest)) return@withIOContext CoverEnsureResult.Hit(dest)
@@ -240,6 +248,79 @@ object ArchiveCoverCache {
                     }
                 }
             } ?: CoverEnsureResult.Skip
+        }
+    }
+
+    /**
+     * Network/local-stream document cover (EPUB image extract; PDF when engine ships).
+     * Does not use libarchive / [ArchiveAccess].
+     */
+    suspend fun ensureDocumentStreamCover(
+        cacheKey: String,
+        openSource: suspend () -> ArchiveByteSource,
+    ): CoverEnsureResult = withIOContext {
+        val dest = thumbPathFor(cacheKey, 0L, 0L)
+        if (isCachedOnDisk(dest)) return@withIOContext CoverEnsureResult.Hit(dest)
+        coverFromDocumentExtractCache(cacheKey)?.let { return@withIOContext CoverEnsureResult.Hit(it) }
+        val base = cacheKey.substringAfterLast('/').substringAfterLast(':')
+        if (isPdfFileName(base)) {
+            // PDF engine not implemented yet — keep row, do not mark NoImages.
+            return@withIOContext CoverEnsureResult.Skip
+        }
+        extractSlots.withPermit {
+            if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
+            coverFromDocumentExtractCache(cacheKey)?.let { return@withPermit CoverEnsureResult.Hit(it) }
+            try {
+                openSource().use { source ->
+                    val engine = com.hippo.ehviewer.library.document.EpubEngine.open(
+                        source,
+                        remoteSize = runCatching { source.size }.getOrDefault(0L),
+                        coverOnly = true,
+                    )
+                    if (engine == null) return@use CoverEnsureResult.Skip
+                    if (engine.pageCount <= 0) return@use CoverEnsureResult.NoImages
+                    val page = engine.extractToCache(cacheKey, 0)
+                        ?: return@use CoverEnsureResult.Skip
+                    DocumentExtractCache.saveIndex(engine.toIndex(cacheKey, complete = false))
+                    val thumb = writeCoverFromExtractedPage(cacheKey, page)
+                    if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
+                }
+            } catch (e: Throwable) {
+                logcat("ArchiveCover", e)
+                CoverEnsureResult.Skip
+            }
+        }
+    }
+
+    private suspend fun ensureLocalDocumentCover(archivePath: Path, key: String): CoverEnsureResult {
+        val dest = thumbPathFor(key, 0L, 0L)
+        if (isCachedOnDisk(dest)) return CoverEnsureResult.Hit(dest)
+        coverFromDocumentExtractCache(key)?.let { return CoverEnsureResult.Hit(it) }
+        if (isPdfFileName(archivePath.name)) return CoverEnsureResult.Skip
+        return extractSlots.withPermit {
+            if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
+            coverFromDocumentExtractCache(key)?.let { return@withPermit CoverEnsureResult.Hit(it) }
+            try {
+                archivePath.openFileDescriptor("r").use { pfd ->
+                    PfdArchiveByteSource(pfd, ownsPfd = false).use { source ->
+                        val engine = com.hippo.ehviewer.library.document.EpubEngine.open(
+                            source,
+                            remoteSize = pfd.statSize,
+                            coverOnly = true,
+                        )
+                        if (engine == null) return@withPermit CoverEnsureResult.Skip
+                        if (engine.pageCount <= 0) return@withPermit CoverEnsureResult.NoImages
+                        val page = engine.extractToCache(key, 0)
+                            ?: return@withPermit CoverEnsureResult.Skip
+                        DocumentExtractCache.saveIndex(engine.toIndex(key, complete = false))
+                        val thumb = writeCoverFromExtractedPage(key, page)
+                        if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
+                    }
+                }
+            } catch (e: Throwable) {
+                logcat("ArchiveCover", e)
+                CoverEnsureResult.Skip
+            }
         }
     }
 
@@ -334,13 +415,13 @@ object ArchiveCoverCache {
     }
 
     /**
-     * Disk-only cover resolve (no network): existing JPEG thumb, or solid extract page 0.
-     * Used by browse rows when "download network archive covers" is off or before extract.
+     * Disk-only cover resolve (no network): existing JPEG thumb, or extract page 0
+     * (solid / document). Used by browse rows when network covers are off or before extract.
      */
     fun tryDiskCover(cacheKey: String): Path? {
         val dest = thumbPathFor(cacheKey, 0L, 0L)
         if (isCachedOnDisk(dest)) return dest
-        return coverFromSolidExtractCache(cacheKey)
+        return coverFromSolidExtractCache(cacheKey) ?: coverFromDocumentExtractCache(cacheKey)
     }
 
     /** Cover from solid_extract pages/000000.* if present. */
@@ -348,6 +429,14 @@ object ArchiveCoverCache {
         val ext = SolidExtractCache.extensionFor(cacheKey, 0) ?: return null
         val page = SolidExtractCache.pagePath(cacheKey, 0, ext)
         if (!SolidExtractCache.isCachedFile(page)) return null
+        return writeCoverFromExtractedPage(cacheKey, page)
+    }
+
+    /** Cover from document_extract pages/000000.* if present. */
+    private fun coverFromDocumentExtractCache(cacheKey: String): Path? {
+        val ext = DocumentExtractCache.extensionFor(cacheKey, 0) ?: return null
+        val page = DocumentExtractCache.pagePath(cacheKey, 0, ext)
+        if (!DocumentExtractCache.isCachedFile(page)) return null
         return writeCoverFromExtractedPage(cacheKey, page)
     }
 
