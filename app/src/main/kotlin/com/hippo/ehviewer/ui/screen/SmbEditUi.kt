@@ -39,6 +39,8 @@ data class SmbEditorState(
     val displayName: String = "",
     val host: String = "",
     val port: String = "445",
+    /** Optional EasyTier virtual IP/hostname (connect-only when EasyTier is up). */
+    val easytierHost: String = "",
     /** Combined share + optional subpath, e.g. `Media` or `Media/Books`. Empty = server/share root. */
     val sharePath: String = "",
     val username: String = "",
@@ -85,6 +87,7 @@ fun SmbSourceEntity.toEditorState(includePassword: Boolean = true) = SmbEditorSt
     displayName = displayName,
     host = host,
     port = port.toString(),
+    easytierHost = easytierHost,
     sharePath = formatSharePath(share, pathPrefix),
     username = username,
     domain = domain,
@@ -108,6 +111,7 @@ fun SmbEditDialog(
     var displayName by remember { mutableStateOf(state.displayName) }
     var host by remember { mutableStateOf(state.host) }
     var port by remember { mutableStateOf(state.port) }
+    var easytierHost by remember { mutableStateOf(state.easytierHost) }
     var sharePath by remember { mutableStateOf(state.sharePath) }
     var username by remember { mutableStateOf(state.username) }
     var domain by remember { mutableStateOf(state.domain) }
@@ -123,6 +127,7 @@ fun SmbEditDialog(
     val focusManager = LocalFocusManager.current
     val hostFocus = remember { FocusRequester() }
     val portFocus = remember { FocusRequester() }
+    val easytierHostFocus = remember { FocusRequester() }
     val shareFocus = remember { FocusRequester() }
     val userFocus = remember { FocusRequester() }
     val passFocus = remember { FocusRequester() }
@@ -136,6 +141,7 @@ fun SmbEditDialog(
             displayName = displayName,
             host = host,
             port = port,
+            easytierHost = easytierHost,
             sharePath = sharePath,
             username = if (anon) "" else username,
             domain = if (anon) "" else domain,
@@ -186,11 +192,23 @@ fun SmbEditDialog(
                         keyboardType = KeyboardType.Number,
                         imeAction = ImeAction.Next,
                     ),
-                    keyboardActions = KeyboardActions(onNext = { shareFocus.requestFocus() }),
+                    keyboardActions = KeyboardActions(onNext = { easytierHostFocus.requestFocus() }),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
                         .focusRequester(portFocus),
+                )
+                OutlinedTextField(
+                    value = easytierHost,
+                    onValueChange = { easytierHost = it },
+                    label = { Text(stringResource(R.string.network_easytier_host)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { shareFocus.requestFocus() }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .focusRequester(easytierHostFocus),
                 )
                 OutlinedTextField(
                     value = sharePath,

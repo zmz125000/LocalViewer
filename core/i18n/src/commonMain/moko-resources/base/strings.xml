@@ -58,6 +58,8 @@
     <string name="network_display_name">Display name</string>
     <string name="network_display_name_optional">Display name (optional)</string>
     <string name="network_host">Host</string>
+    <string name="network_easytier_host">EasyTier host (optional)</string>
+    <string name="network_easytier_host_hint">Host used while EasyTier is connected.</string>
     <string name="network_port">Port</string>
     <string name="network_share">Share</string>
     <string name="network_path">Path (optional)</string>

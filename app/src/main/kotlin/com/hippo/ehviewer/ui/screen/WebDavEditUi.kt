@@ -39,6 +39,8 @@ data class WebDavEditorState(
     val id: Long = 0,
     val displayName: String = "",
     val baseUrl: String = "",
+    /** Optional EasyTier virtual IP/hostname (connect-only when EasyTier is up). */
+    val easytierHost: String = "",
     val pathPrefix: String = "",
     val username: String = "",
     val password: String = "",
@@ -56,6 +58,7 @@ fun WebDavSourceEntity.toEditorState(includePassword: Boolean = true) = WebDavEd
     id = id,
     displayName = displayName,
     baseUrl = baseUrl,
+    easytierHost = easytierHost,
     pathPrefix = pathPrefix,
     username = username,
     password = if (includePassword) WebDavPasswordStore.get(id) else "",
@@ -76,6 +79,7 @@ fun WebDavEditDialog(
 ) {
     var displayName by remember(state.id) { mutableStateOf(state.displayName) }
     var baseUrl by remember(state.id) { mutableStateOf(state.baseUrl) }
+    var easytierHost by remember(state.id) { mutableStateOf(state.easytierHost) }
     var pathPrefix by remember(state.id) { mutableStateOf(state.pathPrefix) }
     var username by remember(state.id) { mutableStateOf(state.username) }
     var password by remember(state.id) { mutableStateOf(state.password) }
@@ -84,6 +88,7 @@ fun WebDavEditDialog(
     }
     val focusManager = LocalFocusManager.current
     val baseFocus = remember { FocusRequester() }
+    val easytierHostFocus = remember { FocusRequester() }
     val pathFocus = remember { FocusRequester() }
     val userFocus = remember { FocusRequester() }
     val passFocus = remember { FocusRequester() }
@@ -92,6 +97,7 @@ fun WebDavEditDialog(
         id = state.id,
         displayName = displayName,
         baseUrl = baseUrl,
+        easytierHost = easytierHost,
         pathPrefix = pathPrefix,
         username = if (anonymous) "" else username,
         password = if (anonymous) "" else password,
@@ -135,7 +141,7 @@ fun WebDavEditDialog(
                         keyboardType = KeyboardType.Uri,
                         imeAction = ImeAction.Next,
                     ),
-                    keyboardActions = KeyboardActions(onNext = { pathFocus.requestFocus() }),
+                    keyboardActions = KeyboardActions(onNext = { easytierHostFocus.requestFocus() }),
                     supportingText = if (WebDavClient.isExplicitHttp(baseUrl)) {
                         {
                             Text(
@@ -146,6 +152,15 @@ fun WebDavEditDialog(
                     } else {
                         null
                     },
+                )
+                OutlinedTextField(
+                    value = easytierHost,
+                    onValueChange = { easytierHost = it },
+                    label = { Text(stringResource(R.string.network_easytier_host)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().focusRequester(easytierHostFocus),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { pathFocus.requestFocus() }),
                 )
                 OutlinedTextField(
                     value = pathPrefix,

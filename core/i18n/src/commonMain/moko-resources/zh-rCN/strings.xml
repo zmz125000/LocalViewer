@@ -649,6 +649,8 @@
     <!-- Tachiyomi Reader End-->
 
     <!-- EasyTier -->
+    <string name="network_easytier_host">EasyTier 主机（可选）</string>
+    <string name="network_easytier_host_hint">仅在 EasyTier 已连接时使用的虚拟 IP/域名；缓存仍按常规主机区分。</string>
     <string name="settings_easytier">EasyTier</string>
     <string name="easytier_panel_title">EasyTier</string>
     <string name="easytier_status_running">运行中</string>
