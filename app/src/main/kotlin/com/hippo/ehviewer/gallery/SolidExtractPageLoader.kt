@@ -126,6 +126,9 @@ suspend inline fun <T> useSolidExtractPageLoader(
                     init {
                         val self = this
                         engine.onListed = { count -> self.growTo(count) }
+                        // Progressive UI: decode each page as it hits disk, not after the
+                        // whole ensureThrough(target) batch (avoids long spinner then pop-in).
+                        engine.onPageReady = { index -> self.markPageExtracted(index) }
                     }
 
                     override fun getImageExtension(index: Int) = engine.extOf(index)
@@ -186,10 +189,6 @@ suspend inline fun <T> useSolidExtractPageLoader(
                         extractTarget.updateAndGet { cur -> maxOf(cur, want) }
                     }
 
-                    private fun dispatchReady(index: Int) {
-                        readyWaiters.remove(index)?.forEach { runCatching { it() } }
-                    }
-
                     private fun isPageReady(index: Int): Boolean {
                         pagePaths[index]?.let {
                             if (SolidExtractCache.isCachedFile(it)) return true
@@ -203,6 +202,24 @@ suspend inline fun <T> useSolidExtractPageLoader(
                         return false
                     }
 
+                    /**
+                     * Page [index] is on disk — grow list, optional cover, and fire decode
+                     * waiters immediately (even while ensureThrough continues past this index).
+                     */
+                    fun markPageExtracted(index: Int) {
+                        val ext = engine.extOf(index) ?: return
+                        val path = SolidExtractCache.pagePath(cacheKey, index, ext)
+                        if (!SolidExtractCache.isCachedFile(path)) return
+                        pagePaths[index] = path
+                        growTo(engine.listedCount())
+                        if (index == 0 && coverWritten.compareAndSet(false, true)) {
+                            runCatching {
+                                ArchiveCoverCache.writeCoverFromExtractedPage(cacheKey, path)
+                            }.onFailure { logcat("SolidExtract", it) }
+                        }
+                        readyWaiters.remove(index)?.forEach { runCatching { it() } }
+                    }
+
                     private fun ensureExtract(
                         index: Int,
                         interactive: Boolean,
@@ -211,23 +228,27 @@ suspend inline fun <T> useSolidExtractPageLoader(
                         if (index < 0) return
                         if (onReady != null) {
                             readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
+                            // Already on disk (bg extract finished this index first) — decode now.
+                            if (isPageReady(index)) {
+                                markPageExtracted(index)
+                                return
+                            }
                         }
                         val existing = extractJobs[index]
                         if (existing != null && existing.isActive) return
-                        val self = this
                         // Always pull through index so this page is on disk; grow target separately.
                         val job = hostScope.launch(Dispatchers.IO) {
                             try {
                                 if (isPageReady(index)) {
-                                    self.growTo(engine.listedCount())
-                                    dispatchReady(index)
+                                    markPageExtracted(index)
                                     return@launch
                                 }
+                                // May run behind bg ensureThrough(target); onPageReady fires
+                                // waiters for intermediate pages as each lands — do not wait
+                                // for the whole batch before decoding the visible page.
                                 engine.ensureThrough(index)
-                                self.growTo(engine.listedCount())
                                 if (isPageReady(index)) {
-                                    maybeWriteCover(index)
-                                    dispatchReady(index)
+                                    markPageExtracted(index)
                                 } else {
                                     val waiters = readyWaiters.remove(index).orEmpty()
                                     if (waiters.isNotEmpty()) {
@@ -266,16 +287,6 @@ suspend inline fun <T> useSolidExtractPageLoader(
                         if (prev != null) {
                             if (prev.isActive) job.cancel() else extractJobs[index] = job
                         }
-                    }
-
-                    private fun maybeWriteCover(index: Int) {
-                        if (index != 0 || !coverWritten.compareAndSet(false, true)) return
-                        runCatching {
-                            val ext = engine.extOf(0) ?: return
-                            val page = SolidExtractCache.pagePath(cacheKey, 0, ext)
-                            if (!SolidExtractCache.isCachedFile(page)) return
-                            ArchiveCoverCache.writeCoverFromExtractedPage(cacheKey, page)
-                        }.onFailure { logcat("SolidExtract", it) }
                     }
                 },
             )
@@ -389,6 +400,12 @@ class SolidExtractEngine(
     private val aborted = AtomicBoolean(false)
     private val error = AtomicReferenceError()
     var onListed: ((Int) -> Unit)? = null
+    /**
+     * Invoked after each playable member is on disk (extract or skip-write).
+     * Used so the reader can decode page N as soon as it lands, not after
+     * [ensureThrough] finishes the entire high-water target batch.
+     */
+    var onPageReady: ((Int) -> Unit)? = null
 
     val isComplete: Boolean get() = complete.get()
     val isAborted: Boolean get() = aborted.get()
@@ -456,7 +473,12 @@ class SolidExtractEngine(
                             error.fail(IllegalStateException("solidSkipCurrent failed at $n"))
                             error.throwIfAny()
                         }
-                        persistIndex(complete = false)
+                        // Notify per-page so UI can decode before the rest of the batch.
+                        runCatching { onPageReady?.invoke(n) }
+                        // Persist every few pages to cut IO stalls between members.
+                        if (n % 4 == 0 || n == index) {
+                            persistIndex(complete = false)
+                        }
                     }
                 }
             }
@@ -464,6 +486,8 @@ class SolidExtractEngine(
             if (!isPageOnDisk(index) && complete.get()) {
                 error("Page $index not in archive")
             }
+            // Flush index after a batch stretch (incremental saves above).
+            persistIndex(complete = complete.get())
         } // mutex.withLock
     }
 
