@@ -22,6 +22,7 @@ import com.hippo.ehviewer.library.ArchiveAccess
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.ArchiveStreamBridge
+import com.hippo.ehviewer.library.CachePagePublish
 import com.hippo.ehviewer.library.SolidExtractCache
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -116,15 +117,17 @@ suspend inline fun <T> useSolidExtractPageLoader(
             )
             engine.seedFromDiskIndex()
             // Skip sequential walk when seed already has page 0 on disk (resume fast path).
-            val page0Ready = engine.extOf(0)?.let { ext ->
-                SolidExtractCache.isPageCached(cacheKey, 0, ext)
-            } == true
-            if (!page0Ready) {
+            if (!engine.isKnownOnDisk(0)) {
                 engine.ensureThrough(0)
             }
             check(engine.listedCount() > 0) { "Solid archive has no playable images" }
 
             val pagePaths = ConcurrentHashMap<Int, Path>()
+            // Pre-map half-cache pages so onRequest hits memory, not File.stat / ensureThrough.
+            for (i in engine.onDiskIndices()) {
+                val ext = engine.extOf(i) ?: continue
+                pagePaths[i] = SolidExtractCache.pagePath(cacheKey, i, ext)
+            }
             val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
             val extractJobs = ConcurrentHashMap<Int, Job>()
             val coverWritten = AtomicBoolean(false)
@@ -212,12 +215,12 @@ suspend inline fun <T> useSolidExtractPageLoader(
                     /** In-memory only — safe on main / onRequest. */
                     private fun isPageMapped(index: Int): Boolean = pagePaths.containsKey(index)
 
-                    /** Disk probe; call only from [Dispatchers.IO]. */
+                    /** Disk probe; call only from [Dispatchers.IO]. Prefers engine readdir set. */
                     private fun probePageOnDisk(index: Int): Boolean {
                         if (pagePaths.containsKey(index)) return true
                         val ext = engine.extOf(index) ?: return false
                         val p = SolidExtractCache.pagePath(cacheKey, index, ext)
-                        if (SolidExtractCache.isCachedFile(p)) {
+                        if (engine.isKnownOnDisk(index) || SolidExtractCache.isCachedFile(p)) {
                             pagePaths[index] = p
                             return true
                         }
@@ -413,6 +416,11 @@ fun cachedSolidLoader(
  * is on disk (or EOF). Listed members grow on each header; bodies always written
  * so seek-bar targets are extractable.
  *
+ * **Half-cache resume:** already-extracted pages are tracked via one readdir into
+ * [onDisk] — skip walk does **not** per-page [File.length] or index.json writes.
+ * (Solid formats still must decompress past skipped members on the wire; that cost
+ * is inherent. Kotlin/JNI/index overhead on the skip path is not.)
+ *
  * [abort] stops further members so reader exit / prev-next can release [ArchiveAccess]
  * without finishing the rest of the archive.
  */
@@ -422,6 +430,14 @@ class SolidExtractEngine(
 ) {
     private val mutex = Mutex()
     private val members = CopyOnWriteArrayList<SolidExtractCache.Member>()
+    /** O(1) ext lookup — avoid linear scan + [SolidExtractCache.extensionFor] disk. */
+    private val memberExt = ConcurrentHashMap<Int, String>()
+    private val memberUnc = ConcurrentHashMap<Int, Long>()
+    /**
+     * Pages known present under `pages/` (readdir once at seed + updated on extract).
+     * Skip path trusts this — no File.stat per member.
+     */
+    private val onDisk = ConcurrentHashMap.newKeySet<Int>()
     private val complete = AtomicBoolean(false)
     private val aborted = AtomicBoolean(false)
     private val error = AtomicReferenceError()
@@ -438,22 +454,51 @@ class SolidExtractEngine(
 
     fun listedCount(): Int = members.size
 
-    fun extOf(index: Int): String? = members.firstOrNull { it.i == index }?.ext
-        ?: SolidExtractCache.extensionFor(cacheKey, index)
+    fun extOf(index: Int): String? = memberExt[index]
+
+    /** True if page was found at seed readdir or written this session (no File.stat). */
+    fun isKnownOnDisk(index: Int): Boolean = index in onDisk
+
+    /** Snapshot of pages already on disk (for pre-mapping into the page loader). */
+    fun onDiskIndices(): Set<Int> = onDisk.toSet()
 
     /** Stop extract ASAP (reader closed or session preempted). */
     fun abort() {
         aborted.set(true)
     }
 
-    /** Restore partial list from a previous session's index.json. */
+    /** Restore partial list from a previous session's index.json + one pages/ readdir. */
     fun seedFromDiskIndex() {
         // Hard purge if remote was replaced; never seed stale members/pages.
         if (SolidExtractCache.invalidateIfRemoteSizeMismatch(cacheKey, remoteSize)) return
         val idx = SolidExtractCache.loadIndex(cacheKey) ?: return
         members.clear()
-        members.addAll(idx.members.sortedBy { it.i })
-        if (idx.complete && SolidExtractCache.allPagesPresent(cacheKey, idx)) {
+        memberExt.clear()
+        memberUnc.clear()
+        onDisk.clear()
+        val sorted = idx.members.sortedBy { it.i }
+        members.addAll(sorted)
+        for (m in sorted) {
+            memberExt[m.i] = m.ext
+            if (m.uncSize > 0L) memberUnc[m.i] = m.uncSize
+        }
+        // One readdir; when index has uncSize, drop truncated half-images from aborted exits
+        // (stat only those with known size — not a full magic pass over every page).
+        for (i in SolidExtractCache.cachedPageIndices(cacheKey)) {
+            val expect = memberUnc[i] ?: 0L
+            if (expect <= 0L) {
+                onDisk.add(i)
+                continue
+            }
+            val ext = memberExt[i] ?: continue
+            val f = File(SolidExtractCache.pagePath(cacheKey, i, ext).toString())
+            if (f.isFile && f.length() >= expect) {
+                onDisk.add(i)
+            } else if (f.exists()) {
+                f.delete()
+            }
+        }
+        if (idx.complete && sorted.isNotEmpty() && sorted.all { it.i in onDisk }) {
             complete.set(true)
         }
         onListed?.invoke(members.size)
@@ -464,11 +509,13 @@ class SolidExtractEngine(
             error.throwIfAny()
             throwIfAborted()
             currentCoroutineContext().ensureActive()
-            if (isPageOnDisk(index)) return
+            if (index in onDisk) return
             if (complete.get() && index >= members.size) {
                 error("Page $index past end (${members.size})")
             }
-            while (!isPageOnDisk(index) && !complete.get()) {
+            var extractedAny = false
+            var listedDirty = false
+            while (index !in onDisk && !complete.get()) {
                 throwIfAborted()
                 currentCoroutineContext().ensureActive()
                 error.throwIfAny()
@@ -484,38 +531,57 @@ class SolidExtractEngine(
                         }
                         break
                     }
+                    n in onDisk -> {
+                        // Already extracted last session — advance solid cursor only.
+                        // No File.stat, no index write, no JNI name/ext (meta from seed).
+                        if (!memberExt.containsKey(n)) {
+                            val ext = solidCurrentExtension().ifBlank { "bin" }
+                            rememberMember(
+                                n,
+                                name = solidCurrentName(),
+                                ext = ext,
+                                unc = solidCurrentUncSize(),
+                            )
+                            listedDirty = true
+                        }
+                        if (!solidSkipCurrent()) {
+                            error.fail(IllegalStateException("solidSkipCurrent failed at $n"))
+                            error.throwIfAny()
+                        }
+                        runCatching { onPageReady?.invoke(n) }
+                    }
                     else -> {
                         val ext = solidCurrentExtension().ifBlank { "bin" }
                         val name = solidCurrentName()
                         val unc = solidCurrentUncSize()
-                        if (members.none { it.i == n }) {
-                            members.add(
-                                SolidExtractCache.Member(i = n, name = name, ext = ext, uncSize = unc),
-                            )
-                            onListed?.invoke(members.size)
+                        if (!memberExt.containsKey(n)) {
+                            rememberMember(n, name, ext, unc)
+                            listedDirty = true
                         }
-                        if (!isPageOnDisk(n)) {
-                            extractCurrentToCache(n, ext)
-                        } else if (!solidSkipCurrent()) {
-                            error.fail(IllegalStateException("solidSkipCurrent failed at $n"))
-                            error.throwIfAny()
-                        }
-                        // Notify per-page so UI can decode before the rest of the batch.
+                        extractCurrentToCache(n, ext, expectedSize = unc)
+                        onDisk.add(n)
+                        extractedAny = true
                         runCatching { onPageReady?.invoke(n) }
-                        // Persist every few pages to cut IO stalls between members.
-                        if (n % 4 == 0 || n == index) {
-                            persistIndex(complete = false)
-                        }
                     }
                 }
             }
             if (aborted.get()) throw CancellationException("Solid extract aborted")
-            if (!isPageOnDisk(index) && complete.get()) {
+            if (index !in onDisk && complete.get()) {
                 error("Page $index not in archive")
             }
-            // Flush index after a batch stretch (incremental saves above).
-            persistIndex(complete = complete.get())
+            // Persist once per ensureThrough after real work — never every skipped page.
+            if (extractedAny || listedDirty || complete.get()) {
+                persistIndex(complete = complete.get(), async = !complete.get())
+            }
         } // mutex.withLock
+    }
+
+    private fun rememberMember(i: Int, name: String, ext: String, unc: Long) {
+        val m = SolidExtractCache.Member(i = i, name = name, ext = ext, uncSize = unc)
+        members.add(m)
+        memberExt[i] = ext
+        memberUnc[i] = unc
+        onListed?.invoke(members.size)
     }
 
     private fun throwIfAborted() {
@@ -539,15 +605,15 @@ class SolidExtractEngine(
         }.onFailure { logcat(it) }
     }
 
-    private fun isPageOnDisk(index: Int): Boolean {
-        val ext = members.firstOrNull { it.i == index }?.ext
-            ?: SolidExtractCache.extensionFor(cacheKey, index)
-            ?: return false
-        return SolidExtractCache.isPageCached(cacheKey, index, ext)
-    }
-
-    private fun extractCurrentToCache(index: Int, ext: String) {
+    /**
+     * Extract current solid member to a temp file; publish only if complete.
+     * Reader exit closes the network mid-[solidExtractCurrentToFd] — native may still
+     * return success with a truncated body; we refuse to rename half images into cache.
+     */
+    private fun extractCurrentToCache(index: Int, ext: String, expectedSize: Long) {
+        throwIfAborted()
         val dest = SolidExtractCache.pagePath(cacheKey, index, ext)
+        val destFile = File(dest.toString())
         File(dest.parent!!.toString()).mkdirs()
         val tmp = File("${dest}.tmp.${System.nanoTime()}")
         try {
@@ -558,14 +624,41 @@ class SolidExtractEngine(
                     ParcelFileDescriptor.MODE_TRUNCATE,
             ).use { pfd ->
                 val ok = solidExtractCurrentToFd(pfd.fd)
+                // Abort / source.close() during extract: discard even if JNI returned true.
+                if (aborted.get()) {
+                    throw CancellationException("Solid extract aborted during page $index")
+                }
                 if (!ok) error("solidExtractCurrentToFd failed at $index")
             }
-            if (!tmp.renameTo(File(dest.toString()))) {
-                tmp.copyTo(File(dest.toString()), overwrite = true)
-                tmp.delete()
+            if (aborted.get()) {
+                throw CancellationException("Solid extract aborted during page $index")
             }
-            SolidExtractCache.touch(cacheKey)
-            SolidExtractCache.scheduleTrim()
+            val expect = expectedSize.takeIf { it > 0L }
+                ?: memberUnc[index]?.takeIf { it > 0L }
+                ?: 0L
+            if (!CachePagePublish.publishTmp(
+                    tmp = tmp,
+                    dest = destFile,
+                    expectedSize = expect,
+                    ext = ext,
+                )
+            ) {
+                destFile.delete()
+                error("Incomplete solid page $index (truncated or bad header)")
+            }
+        } catch (e: Throwable) {
+            // Never leave a partial final path after cancel / failure.
+            if (destFile.exists() &&
+                !CachePagePublish.isCompleteCachedFile(
+                    destFile,
+                    expectedSize = expectedSize,
+                    ext = ext,
+                )
+            ) {
+                destFile.delete()
+            }
+            if (tmp.exists()) tmp.delete()
+            throw e
         } finally {
             if (tmp.exists()) tmp.delete()
         }
