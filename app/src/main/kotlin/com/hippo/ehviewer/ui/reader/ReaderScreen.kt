@@ -282,6 +282,13 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                     is ReaderScreenArgs.WebDavStreamArchive -> args.info
                     is ReaderScreenArgs.Archive -> null
                 }
+                // Explicit dispose path: system back / pop also abort archive extract so
+                // ArchiveAccess is not held after the reader leaves.
+                DisposableEffect(loader) {
+                    onDispose {
+                        runCatching { loader.close() }
+                    }
+                }
                 key(loader) {
                     ReaderScreen(pageLoader = loader, info = info, args = args)
                 }
@@ -533,6 +540,9 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                             }
                         }
                     }
+                    // Stop this archive extract before replace so the next reader can
+                    // preempt ArchiveAccess without waiting on solid decompress.
+                    runCatching { pageLoader.close() }
                     // Replace current reader so back still returns to folder browser once
                     nav.navigate(ReaderScreenDestination(sibling)) {
                         launchSingleTop = true

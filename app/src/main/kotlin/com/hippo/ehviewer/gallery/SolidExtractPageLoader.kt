@@ -34,7 +34,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -108,6 +111,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
             val prefetchN = Settings.preloadImage.value.coerceAtLeast(1)
             /** High-water extract target; advanced as the user moves so list grows past init+prefetch. */
             val extractTarget = AtomicInteger((startPage + prefetchN).coerceAtLeast(0))
+            val bgExtractJob = AtomicReference<Job?>(null)
 
             val loader = install(
                 object : PageLoader(
@@ -165,9 +169,14 @@ suspend inline fun <T> useSolidExtractPageLoader(
                     }
 
                     override fun close() {
+                        // Abort sequential extract immediately so ArchiveAccess can hand off
+                        // to the next reader (exit / double-tap prev-next).
+                        engine.abort()
+                        bgExtractJob.getAndSet(null)?.cancel()
                         extractJobs.values.forEach { it.cancel() }
                         extractJobs.clear()
                         readyWaiters.clear()
+                        // Flush partial/full index for resume (abort does not clear isComplete).
                         engine.persistIndex(complete = engine.isComplete)
                         super.close()
                     }
@@ -225,11 +234,12 @@ suspend inline fun <T> useSolidExtractPageLoader(
                                         notifyPageFailed(index, "Extract incomplete")
                                     }
                                 }
-                            } catch (_: CancellationException) {
-                                // Only re-queue waiters if we still own this slot (lost putIfAbsent
-                                // must not steal waiters from the winner).
-                                if (extractJobs[index] == coroutineContext[Job] ||
-                                    extractJobs[index] == null
+                            } catch (e: CancellationException) {
+                                // Re-queue only for in-session job races (lost putIfAbsent).
+                                // On reader exit / archive preempt, hostScope is cancelled — do not restart.
+                                if (hostScope.isActive &&
+                                    (extractJobs[index] == coroutineContext[Job] ||
+                                        extractJobs[index] == null)
                                 ) {
                                     val waiters = readyWaiters.remove(index).orEmpty()
                                     waiters.forEach {
@@ -241,6 +251,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
                                         }
                                     }
                                 }
+                                throw e
                             } catch (e: Throwable) {
                                 logcat("SolidExtract", e)
                                 val waiters = readyWaiters.remove(index).orEmpty()
@@ -271,31 +282,43 @@ suspend inline fun <T> useSolidExtractPageLoader(
 
             // Sequential extract ahead of [extractTarget]. User advances raise the target so
             // the lazy list grows past the initial start+prefetch window within one session.
-            hostScope.launch(Dispatchers.IO) {
-                try {
-                    var lastTarget = -1
-                    while (!engine.isComplete) {
-                        val target = extractTarget.get()
-                        if (target != lastTarget) {
-                            engine.ensureThrough(target)
-                            loader.growTo(engine.listedCount())
-                            lastTarget = target
-                        } else {
-                            delay(50)
+            // Cancelled from [PageLoader.close] / ArchiveAccess preempt so next archive can start.
+            bgExtractJob.set(
+                hostScope.launch(Dispatchers.IO) {
+                    try {
+                        var lastTarget = -1
+                        while (isActive && !engine.isComplete && !engine.isAborted) {
+                            val target = extractTarget.get()
+                            if (target != lastTarget) {
+                                engine.ensureThrough(target)
+                                loader.growTo(engine.listedCount())
+                                lastTarget = target
+                            } else {
+                                delay(50)
+                            }
+                            if (engine.isComplete) {
+                                loader.growTo(engine.listedCount())
+                                break
+                            }
                         }
-                        if (engine.isComplete) {
-                            loader.growTo(engine.listedCount())
-                            break
-                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        if (!engine.isAborted) logcat("SolidExtract", e)
                     }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    logcat("SolidExtract", e)
-                }
-            }
+                },
+            )
 
-            block(loader)
+            try {
+                block(loader)
+            } finally {
+                // Reader exited or session preempted: stop extract + release network/JNI ASAP.
+                engine.abort()
+                bgExtractJob.getAndSet(null)?.cancel()
+                extractJobs.values.forEach { it.cancel() }
+                extractJobs.clear()
+                runCatching { source.close() }
+            }
         }
     }
 }
@@ -352,6 +375,9 @@ fun cachedSolidLoader(
  * Single-flight sequential extract cursor. [ensureThrough] advances until [index]
  * is on disk (or EOF). Listed members grow on each header; bodies always written
  * so seek-bar targets are extractable.
+ *
+ * [abort] stops further members so reader exit / prev-next can release [ArchiveAccess]
+ * without finishing the rest of the archive.
  */
 class SolidExtractEngine(
     private val cacheKey: String,
@@ -360,15 +386,22 @@ class SolidExtractEngine(
     private val mutex = Mutex()
     private val members = CopyOnWriteArrayList<SolidExtractCache.Member>()
     private val complete = AtomicBoolean(false)
+    private val aborted = AtomicBoolean(false)
     private val error = AtomicReferenceError()
     var onListed: ((Int) -> Unit)? = null
 
     val isComplete: Boolean get() = complete.get()
+    val isAborted: Boolean get() = aborted.get()
 
     fun listedCount(): Int = members.size
 
     fun extOf(index: Int): String? = members.firstOrNull { it.i == index }?.ext
         ?: SolidExtractCache.extensionFor(cacheKey, index)
+
+    /** Stop extract ASAP (reader closed or session preempted). */
+    fun abort() {
+        aborted.set(true)
+    }
 
     /** Restore partial list from a previous session's index.json. */
     fun seedFromDiskIndex() {
@@ -384,49 +417,58 @@ class SolidExtractEngine(
 
     suspend fun ensureThrough(index: Int) {
         mutex.withLock {
-        error.throwIfAny()
-        if (isPageOnDisk(index)) return
-        if (complete.get() && index >= members.size) {
-            error("Page $index past end (${members.size})")
-        }
-        while (!isPageOnDisk(index) && !complete.get()) {
             error.throwIfAny()
-            val n = solidNextPlayable()
-            when {
-                n < 0 -> {
-                    if (n == -1) {
-                        complete.set(true)
-                        persistIndex(complete = true)
-                    } else {
-                        error.fail(IllegalStateException("solidNextPlayable failed ($n)"))
-                        error.throwIfAny()
+            throwIfAborted()
+            currentCoroutineContext().ensureActive()
+            if (isPageOnDisk(index)) return
+            if (complete.get() && index >= members.size) {
+                error("Page $index past end (${members.size})")
+            }
+            while (!isPageOnDisk(index) && !complete.get()) {
+                throwIfAborted()
+                currentCoroutineContext().ensureActive()
+                error.throwIfAny()
+                val n = solidNextPlayable()
+                when {
+                    n < 0 -> {
+                        if (n == -1) {
+                            complete.set(true)
+                            persistIndex(complete = true)
+                        } else {
+                            error.fail(IllegalStateException("solidNextPlayable failed ($n)"))
+                            error.throwIfAny()
+                        }
+                        break
                     }
-                    break
-                }
-                else -> {
-                    val ext = solidCurrentExtension().ifBlank { "bin" }
-                    val name = solidCurrentName()
-                    val unc = solidCurrentUncSize()
-                    if (members.none { it.i == n }) {
-                        members.add(
-                            SolidExtractCache.Member(i = n, name = name, ext = ext, uncSize = unc),
-                        )
-                        onListed?.invoke(members.size)
+                    else -> {
+                        val ext = solidCurrentExtension().ifBlank { "bin" }
+                        val name = solidCurrentName()
+                        val unc = solidCurrentUncSize()
+                        if (members.none { it.i == n }) {
+                            members.add(
+                                SolidExtractCache.Member(i = n, name = name, ext = ext, uncSize = unc),
+                            )
+                            onListed?.invoke(members.size)
+                        }
+                        if (!isPageOnDisk(n)) {
+                            extractCurrentToCache(n, ext)
+                        } else if (!solidSkipCurrent()) {
+                            error.fail(IllegalStateException("solidSkipCurrent failed at $n"))
+                            error.throwIfAny()
+                        }
+                        persistIndex(complete = false)
                     }
-                    if (!isPageOnDisk(n)) {
-                        extractCurrentToCache(n, ext)
-                    } else if (!solidSkipCurrent()) {
-                        error.fail(IllegalStateException("solidSkipCurrent failed at $n"))
-                        error.throwIfAny()
-                    }
-                    persistIndex(complete = false)
                 }
             }
-        }
-        if (!isPageOnDisk(index) && complete.get()) {
-            error("Page $index not in archive")
-        }
+            if (aborted.get()) throw CancellationException("Solid extract aborted")
+            if (!isPageOnDisk(index) && complete.get()) {
+                error("Page $index not in archive")
+            }
         } // mutex.withLock
+    }
+
+    private fun throwIfAborted() {
+        if (aborted.get()) throw CancellationException("Solid extract aborted")
     }
 
     fun persistIndex(complete: Boolean) {
