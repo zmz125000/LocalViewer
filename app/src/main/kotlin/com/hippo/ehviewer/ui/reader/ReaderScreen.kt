@@ -91,11 +91,15 @@ import com.hippo.ehviewer.gallery.PasswdProvider
 import com.hippo.ehviewer.gallery.status
 import com.hippo.ehviewer.gallery.unblock
 import com.hippo.ehviewer.gallery.useArchivePageLoader
+import com.hippo.ehviewer.gallery.useDocumentExtractPageLoader
 import com.hippo.ehviewer.gallery.useFolderPageLoader
+import com.hippo.ehviewer.gallery.useLocalDocumentExtractPageLoader
 import com.hippo.ehviewer.gallery.useSmbFolderPageLoader
 import com.hippo.ehviewer.gallery.useSolidExtractPageLoader
 import com.hippo.ehviewer.gallery.useStreamArchivePageLoader
 import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
+import com.hippo.ehviewer.library.isDocumentFileName
+import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
@@ -792,20 +796,27 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
         }
         useWebDavFolderPageLoader(source, args.remoteDir, names, info, page, block)
     }
-    is ReaderScreenArgs.Archive -> useArchivePageLoader(
-        args.path.toPath(),
-        passwdProvider = { invalidator ->
-            awaitInputText(
-                title = string(R.string.archive_need_passwd),
-                hint = string(R.string.archive_passwd),
-                onUserDismiss = { nav.popBackStack() },
-            ) { text ->
-                ensure(text.isNotBlank()) { string(R.string.passwd_cannot_be_empty) }
-                ensure(invalidator(text)) { string(R.string.passwd_wrong) }
-            }
-        },
-        block = block,
-    )
+    is ReaderScreenArgs.Archive -> {
+        val path = args.path.toPath()
+        if (isDocumentFileName(path.name)) {
+            useLocalDocumentExtractPageLoader(path, block = block)
+        } else {
+            useArchivePageLoader(
+                path,
+                passwdProvider = { invalidator ->
+                    awaitInputText(
+                        title = string(R.string.archive_need_passwd),
+                        hint = string(R.string.archive_passwd),
+                        onUserDismiss = { nav.popBackStack() },
+                    ) { text ->
+                        ensure(text.isNotBlank()) { string(R.string.passwd_cannot_be_empty) }
+                        ensure(invalidator(text)) { string(R.string.passwd_wrong) }
+                    }
+                },
+                block = block,
+            )
+        }
+    }
     is ReaderScreenArgs.SmbStreamArchive -> {
         val source = requireNotNull(SmbRepository.load(args.sourceId)) { "SMB source not found" }
         val password = SmbPasswordStore.get(source.id)
@@ -817,6 +828,7 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
         }
         val remote = args.remotePath
         val solid = isSolidArchiveFileName(remote)
+        val document = isDocumentFileName(remote)
         val byteSource = com.hippo.ehviewer.smb.SmbArchiveByteSource(
             source,
             password,
@@ -836,7 +848,18 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 ensure(invalidator(text)) { string(R.string.passwd_wrong) }
             }
         }
-        if (solid) {
+        if (document) {
+            useDocumentExtractPageLoader(
+                source = byteSource,
+                cacheKey = cacheKey,
+                titleHint = titleHint,
+                formatHint = if (isEpubFileName(remote)) "epub" else "pdf",
+                info = info,
+                startPage = page,
+                remoteSize = runCatching { byteSource.size }.getOrDefault(0L),
+                block = block,
+            )
+        } else if (solid) {
             // RAR/CBR/7z: sequential extract to solid_extract cache (fake stream).
             // On open failure (e.g. awkward 7z), fall back to full download + local open.
             try {
@@ -889,6 +912,7 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
         }
         val remote = args.remotePath
         val solid = isSolidArchiveFileName(remote)
+        val document = isDocumentFileName(remote)
         val byteSource = com.hippo.ehviewer.webdav.WebDavArchiveByteSource(
             source,
             password,
@@ -907,7 +931,18 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 ensure(invalidator(text)) { string(R.string.passwd_wrong) }
             }
         }
-        if (solid) {
+        if (document) {
+            useDocumentExtractPageLoader(
+                source = byteSource,
+                cacheKey = cacheKey,
+                titleHint = titleHint,
+                formatHint = if (isEpubFileName(remote)) "epub" else "pdf",
+                info = info,
+                startPage = page,
+                remoteSize = runCatching { byteSource.size }.getOrDefault(0L),
+                block = block,
+            )
+        } else if (solid) {
             try {
                 useSolidExtractPageLoader(
                     source = byteSource,

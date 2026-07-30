@@ -12,7 +12,7 @@ import me.saket.telephoto.zoomable.ZoomableState
 /**
  * Double-tap handler.
  * - [Settings.doubleTapToZoom] on → zoom in/out (original behavior).
- * - off → prev/next **gallery** (folder or non-solid archive) on edge zones;
+ * - off → prev/next **gallery** (folder, archive, or document) on edge zones;
  *   **MENU (center)** acts like system back.
  */
 fun doubleTapAction(

@@ -36,14 +36,14 @@ object ReaderGalleryPlaylist {
 
         data class Archive(val path: String) : Item
 
-        /** Stream-open SMB non-solid archive (zip/cbz/tar/cbt). */
+        /** SMB archive or document (ZIP/TAR stream, solid RAR/7z, PDF/EPUB). */
         data class SmbStreamArchive(
             val sourceId: Long,
             val remotePath: String,
             val info: BaseGalleryInfo? = null,
         ) : Item
 
-        /** Stream-open WebDAV non-solid archive (zip/cbz/tar/cbt). */
+        /** WebDAV archive or document (ZIP/TAR stream, solid RAR/7z, PDF/EPUB). */
         data class WebDavStreamArchive(
             val sourceId: Long,
             val remotePath: String,
@@ -133,7 +133,8 @@ object ReaderGalleryPlaylist {
                 is BrowseEntryRemote.ArchiveGallery -> {
                     // Stream ZIP/TAR + solid RAR/7z fake-stream share SmbStreamArchive keys.
                     if (!isStreamableArchiveFileName(e.fileName) &&
-                        !isSolidArchiveFileName(e.fileName)
+                        !isSolidArchiveFileName(e.fileName) &&
+                        !isDocumentFileName(e.fileName)
                     ) {
                         return@mapNotNull null
                     }
@@ -185,7 +186,8 @@ object ReaderGalleryPlaylist {
                 }
                 is BrowseEntryRemote.ArchiveGallery -> {
                     if (!isStreamableArchiveFileName(e.fileName) &&
-                        !isSolidArchiveFileName(e.fileName)
+                        !isSolidArchiveFileName(e.fileName) &&
+                        !isDocumentFileName(e.fileName)
                     ) {
                         return@mapNotNull null
                     }

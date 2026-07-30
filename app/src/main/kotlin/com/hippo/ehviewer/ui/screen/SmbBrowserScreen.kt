@@ -72,6 +72,7 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
+import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.joinRemoteArchivePath
@@ -364,8 +365,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         launchIO {
             try {
                 ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
-                // Stream ZIP/CBZ/TAR/CBT, or solid RAR/CBR/7z fake-stream extract.
-                if (isStreamableArchiveFileName(entry.fileName) || isSolidArchiveFileName(entry.fileName)) {
+                // Stream ZIP/CBZ/TAR/CBT/EPUB, solid RAR/CBR/7z, or document extract.
+                if (isStreamableArchiveFileName(entry.fileName) ||
+                    isSolidArchiveFileName(entry.fileName) ||
+                    isDocumentFileName(entry.fileName)
+                ) {
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(src.id, "smba:$remote"),
                         token = LOCAL_GALLERY_TOKEN,
@@ -560,9 +564,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         BrowseCover.Smb(sourceId, remote)
                     }
                     fun archiveCoverFor(entry: BrowseEntryRemote.ArchiveGallery): BrowseCover? {
-                        // ZIP/TAR stream + solid RAR/7z (lazy first-page extract).
+                        // ZIP/TAR/EPUB stream + solid RAR/7z + documents (lazy first-page extract).
                         if (!isStreamableArchiveFileName(entry.fileName) &&
-                            !isSolidArchiveFileName(entry.fileName)
+                            !isSolidArchiveFileName(entry.fileName) &&
+                            !isDocumentFileName(entry.fileName)
                         ) {
                             return null
                         }

@@ -14,7 +14,16 @@ val ARCHIVE_EXTENSIONS = setOf(
     "7z",
     "cbt",
     "tar",
+    // Image-only document extract (see DocumentExtractCache / EpubEngine / PdfImageEngine).
+    "epub",
+    "pdf",
 )
+
+/**
+ * PDF / EPUB — comic-style image extract, not text reflow.
+ * Listed like archives; reader uses [DocumentExtractCache], not libarchive solid/stream.
+ */
+val DOCUMENT_EXTENSIONS = setOf("epub", "pdf")
 
 /**
  * Solid / poor-seek archives: no ZIP-style range stream.
@@ -32,6 +41,22 @@ fun isSolidArchiveFileName(name: String): Boolean {
     return ext in SOLID_ARCHIVE_EXTENSIONS
 }
 
+fun isDocumentFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in DOCUMENT_EXTENSIONS
+}
+
+fun isEpubFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    return FileUtils.getExtensionFromFilename(name)?.lowercase() == "epub"
+}
+
+fun isPdfFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    return FileUtils.getExtensionFromFilename(name)?.lowercase() == "pdf"
+}
+
 /** True if [name] looks like a cached comic archive (protect from page-cache LRU). */
 fun isArchiveCacheFileName(name: String): Boolean {
     val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
@@ -41,9 +66,10 @@ fun isArchiveCacheFileName(name: String): Boolean {
 /**
  * Prefer mmap page-0 cover extract ([ArchiveCoverCache.ensureCover] non-solid branch).
  * Solid RAR/7z still get covers via sequential first-page extract in the same API.
+ * Documents use [ArchiveCoverCache] document branch (not libarchive page-0).
  */
 fun prefersArchiveCoverExtract(name: String): Boolean =
-    isArchiveFileName(name) && !isSolidArchiveFileName(name)
+    isArchiveFileName(name) && !isSolidArchiveFileName(name) && !isDocumentFileName(name)
 
 /**
  * Remote path for an archive row in a browse listing.

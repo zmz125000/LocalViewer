@@ -72,11 +72,11 @@ import okio.Path
 /** Cover source for browse list rows (local path or lazy remote download). */
 sealed class BrowseCover {
     data class Local(val path: Path) : BrowseCover()
-    /** Local comic archive — first page extracted to [ArchiveCoverCache] (skips solid 7z). */
+    /** Local archive or document — first page via [ArchiveCoverCache] (ZIP/TAR, solid RAR/7z, PDF/EPUB). */
     data class LocalArchive(val archivePath: Path) : BrowseCover()
     data class Smb(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
     data class WebDav(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
-    /** Remote archive first-page cover (ZIP/TAR stream or solid sequential page 0). */
+    /** Remote archive/document cover (ZIP/TAR stream, solid sequential page 0, or PDF/EPUB extract). */
     data class SmbArchive(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
     data class WebDavArchive(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
 }

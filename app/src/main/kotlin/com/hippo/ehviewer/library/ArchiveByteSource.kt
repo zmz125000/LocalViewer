@@ -30,4 +30,5 @@ fun isStreamableArchiveFileName(name: String): Boolean {
     return ext in STREAMABLE_ARCHIVE_EXTENSIONS
 }
 
-val STREAMABLE_ARCHIVE_EXTENSIONS = setOf("zip", "cbz", "tar", "cbt")
+/** ZIP-family + EPUB (ZIP container). PDF uses document range extract separately. */
+val STREAMABLE_ARCHIVE_EXTENSIONS = setOf("zip", "cbz", "tar", "cbt", "epub")

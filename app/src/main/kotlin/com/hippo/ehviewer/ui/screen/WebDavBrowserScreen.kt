@@ -73,6 +73,7 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
+import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.joinRemoteArchivePath
@@ -365,7 +366,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         launchIO {
             try {
                 ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
-                if (isStreamableArchiveFileName(entry.fileName) || isSolidArchiveFileName(entry.fileName)) {
+                if (isStreamableArchiveFileName(entry.fileName) ||
+                    isSolidArchiveFileName(entry.fileName) ||
+                    isDocumentFileName(entry.fileName)
+                ) {
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(src.id, "dava:$remote"),
                         token = LOCAL_GALLERY_TOKEN,
@@ -558,9 +562,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         BrowseCover.WebDav(sourceId, remote)
                     }
                     fun archiveCoverFor(entry: BrowseEntryRemote.ArchiveGallery): BrowseCover? {
-                        // ZIP/TAR stream + solid RAR/7z (lazy first-page extract).
+                        // ZIP/TAR/EPUB stream + solid RAR/7z + documents.
                         if (!isStreamableArchiveFileName(entry.fileName) &&
-                            !isSolidArchiveFileName(entry.fileName)
+                            !isSolidArchiveFileName(entry.fileName) &&
+                            !isDocumentFileName(entry.fileName)
                         ) {
                             return null
                         }
