@@ -31,7 +31,8 @@ import splitties.init.appCtx
  * First-page JPEG thumbs for archive galleries (library + folder / network browse).
  * Long edge [THUMB_EDGE] matches SMB/WebDAV browse thumbs (768).
  *
- * - Local non-solid: mmap extract page 0
+ * - Local archives (ZIP/TAR/RAR/7z, incl. SAF `content://`): [openFileDescriptor] +
+ *   libarchive page 0 — never [FileArchiveByteSource] (that only works on real file paths)
  * - Network ZIP/TAR: [ensureStreamCover] (range + coverOnly)
  * - Network RAR/7z: [ensureSolidStreamCover] (sequential first playable only)
  * - After solid reader: [writeCoverFromExtractedPage] from extract cache page 0
@@ -83,39 +84,62 @@ object ArchiveCoverCache {
     }
 
     /**
-     * Ensure a small cover JPEG exists for [archivePath].
-     * @return thumb path, or null if skipped (solid/password/busy/error).
+     * Ensure a small cover JPEG exists for a **local** [archivePath] (real file or SAF).
+     *
+     * Uses [Path.openFileDescriptor] so `content://` tree documents work. Solid RAR/7z
+     * are opened the same way as the local reader ([openArchive] + page 0) — not via
+     * [FileArchiveByteSource], which only accepts filesystem paths and crashes on SAF.
+     *
+     * @return thumb path, or null if skipped (password/busy/error/unsupported).
      */
     suspend fun ensureCover(archivePath: Path): Path? = withIOContext {
-        val name = archivePath.name
-        if (!prefersArchiveCoverExtract(name)) return@withIOContext null
-        val file = File(archivePath.toString())
-        if (!file.isFile || file.length() == 0L) {
-            // SAF paths may not be plain File — still try openFileDescriptor below.
-        }
-        val mtime = file.takeIf { it.isFile }?.lastModified() ?: 0L
-        val size = file.takeIf { it.isFile }?.length() ?: 0L
-        val dest = thumbPathFor(archivePath.toString(), mtime, size)
-        if (isCachedOnDisk(dest)) return@withIOContext dest
+        runCatching {
+            val name = archivePath.name
+            if (!isArchiveFileName(name)) return@runCatching null
 
-        extractSlots.withPermit {
-            if (isCachedOnDisk(dest)) return@withIOContext dest
-            ArchiveAccess.tryWithArchive {
-                extractCoverLocked(archivePath, dest)
-            } ?: return@withIOContext null
-        }
-        dest.takeIf { isCachedOnDisk(it) }
+            val solid = isSolidArchiveFileName(name)
+            // Solid thumbs share the 0/0 key with [writeCoverFromOpenArchive] / [tryDiskCover].
+            val key = archivePath.toString()
+            if (solid) {
+                tryDiskCover(key)?.let { return@runCatching it }
+            }
+
+            val file = File(key)
+            val mtime = if (solid) 0L else file.takeIf { it.isFile }?.lastModified() ?: 0L
+            val size = if (solid) 0L else file.takeIf { it.isFile }?.length() ?: 0L
+            val dest = thumbPathFor(key, mtime, size)
+            if (isCachedOnDisk(dest)) return@runCatching dest
+
+            extractSlots.withPermit {
+                if (isCachedOnDisk(dest)) return@withPermit dest
+                ArchiveAccess.tryWithArchive {
+                    extractCoverLocked(archivePath, dest)
+                }
+            } ?: return@runCatching null
+            dest.takeIf { isCachedOnDisk(it) }
+        }.onFailure { logcat("ArchiveCover", it) }.getOrNull()
     }
 
     /**
      * Write cover from an **already open** archive (reader holds [ArchiveAccess]).
-     * Extracts page 0 without reopening.
+     * Extracts page 0 without reopening ([extractToByteBuffer]).
+     *
+     * Works for local solid after [openArchive] full index. Network solid stream
+     * readers should use [writeCoverFromExtractedPage] instead (different extract API).
+     *
+     * Solid keys always use mtime/size = 0 so browse [ensureCover] / [tryDiskCover] hit
+     * the same path as the reader-written thumb.
+     *
      * [archiveKey] may be a local path or a remote stream key (`smb:id:path`).
      */
     fun writeCoverFromOpenArchive(archiveKey: String, destHintMtime: Long = 0L, destHintSize: Long = 0L): Path? {
-        val base = archiveKey.substringAfterLast('/').substringAfterLast(':')
-        if (base.isNotEmpty() && isSolidArchiveFileName(base)) return null
-        val dest = thumbPathFor(archiveKey, destHintMtime, destHintSize)
+        val base = archiveKey.substringAfterLast('/').substringAfterLast('\\').substringAfterLast(':')
+        val solid = base.isNotEmpty() && isSolidArchiveFileName(base)
+        val dest = thumbPathFor(
+            archiveKey,
+            if (solid) 0L else destHintMtime,
+            if (solid) 0L else destHintSize,
+        )
         if (isCachedOnDisk(dest)) return dest
         return runCatching {
             extractPage0ToJpeg(dest)

@@ -396,10 +396,14 @@ fun BrowseCoverThumb(
     LaunchedEffect(remoteKey, retryKey, resumeEpoch, downloadRemoteThumbs, downloadNetworkArchiveThumbs) {
         when (cover) {
             is BrowseCover.LocalArchive -> {
+                // ZIP/TAR mmap page 0; RAR/CBR/7z sequential first-page (same as network solid).
                 val thumb = withIOContext { ArchiveCoverCache.ensureCover(cover.archivePath) }
                 if (thumb != null) {
                     localPath = thumb
                     fetchFailed = false
+                } else {
+                    // Leave placeholder; ON_RESUME retries (ArchiveAccess busy while reader open).
+                    fetchFailed = localPath == null
                 }
             }
             is BrowseCover.SmbArchive -> {

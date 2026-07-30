@@ -38,7 +38,10 @@ fun isArchiveCacheFileName(name: String): Boolean {
     return ext in ARCHIVE_EXTENSIONS
 }
 
-/** Prefer cover extract for stream-friendly comic archives (not solid 7z). */
+/**
+ * Prefer mmap page-0 cover extract ([ArchiveCoverCache.ensureCover] non-solid branch).
+ * Solid RAR/7z still get covers via sequential first-page extract in the same API.
+ */
 fun prefersArchiveCoverExtract(name: String): Boolean =
     isArchiveFileName(name) && !isSolidArchiveFileName(name)
 
