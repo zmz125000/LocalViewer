@@ -40,69 +40,76 @@ class ReadAheadArchiveByteSource(
     private var closed = false
     private val prefEpoch = AtomicInteger(0)
 
-    override val size: Long get() = inner.size
+    override val size: Long
+        get() = runCatching { inner.size }.getOrDefault(-1L)
 
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
         if (len <= 0) return 0
-        if (offset >= size) return 0
-        val want = minOf(len.toLong(), size - offset).toInt()
+        return try {
+            val fileSize = size
+            if (fileSize <= 0L) return -1
+            if (offset >= fileSize) return 0
+            val want = minOf(len.toLong(), fileSize - offset).toInt()
 
-        // Fast path: current window hit (no network).
-        synchronized(lock) {
-            if (closed) return -1
-            win?.let { w ->
-                if (offset >= winStart && offset + want <= winStart + winLen) {
-                    System.arraycopy(w, (offset - winStart).toInt(), buf, off, want)
-                    maybeKickPrefetchLocked()
-                    return want
-                }
-            }
-            // Promote completed prefetch if it covers this read.
-            if (tryPromotePrefetchLocked(offset, want)) {
-                System.arraycopy(win!!, (offset - winStart).toInt(), buf, off, want)
-                maybeKickPrefetchLocked()
-                return want
-            }
-        }
-
-        // Wait if the next window is already being fetched for this offset
-        // (avoid a second SMB/WebDAV range for the same 8 MiB).
-        if (pipeline) {
-            val deadline = System.nanoTime() + PREFETCH_WAIT_NS
-            while (System.nanoTime() < deadline) {
-                val wait: Boolean
-                synchronized(lock) {
-                    if (closed) return -1
-                    if (tryPromotePrefetchLocked(offset, want)) {
-                        System.arraycopy(win!!, (offset - winStart).toInt(), buf, off, want)
-                        maybeKickPrefetchLocked()
+            // Fast path: current window hit (no network).
+            synchronized(lock) {
+                if (closed) return -1
+                win?.let { w ->
+                    if (offset >= winStart && offset + want <= winStart + winLen) {
+                        System.arraycopy(w, (offset - winStart).toInt(), buf, off, want)
+                        maybeKickPrefetchLocked(fileSize)
                         return want
                     }
-                    wait = prefInFlight && prefFlightOff == offset
-                    if (wait) {
-                        val remainingMs =
-                            ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(1L)
-                        try {
-                            (lock as Object).wait(remainingMs.coerceAtMost(50L))
-                        } catch (_: InterruptedException) {
-                            Thread.currentThread().interrupt()
-                        }
-                    }
                 }
-                if (!wait) break
-            }
-            synchronized(lock) {
+                // Promote completed prefetch if it covers this read.
                 if (tryPromotePrefetchLocked(offset, want)) {
                     System.arraycopy(win!!, (offset - winStart).toInt(), buf, off, want)
-                    maybeKickPrefetchLocked()
+                    maybeKickPrefetchLocked(fileSize)
                     return want
                 }
             }
-        }
 
-        val window = chooseWindow(offset)
-        val fetch = minOf(window.toLong(), size - offset).toInt().coerceAtLeast(want)
-        return fillWindowSync(offset, fetch, want, buf, off)
+            // Wait if the next window is already being fetched for this offset
+            // (avoid a second SMB/WebDAV range for the same 8 MiB).
+            if (pipeline) {
+                val deadline = System.nanoTime() + PREFETCH_WAIT_NS
+                while (System.nanoTime() < deadline) {
+                    val wait: Boolean
+                    synchronized(lock) {
+                        if (closed) return -1
+                        if (tryPromotePrefetchLocked(offset, want)) {
+                            System.arraycopy(win!!, (offset - winStart).toInt(), buf, off, want)
+                            maybeKickPrefetchLocked(fileSize)
+                            return want
+                        }
+                        wait = prefInFlight && prefFlightOff == offset
+                        if (wait) {
+                            val remainingMs =
+                                ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(1L)
+                            try {
+                                (lock as Object).wait(remainingMs.coerceAtMost(50L))
+                            } catch (_: InterruptedException) {
+                                Thread.currentThread().interrupt()
+                            }
+                        }
+                    }
+                    if (!wait) break
+                }
+                synchronized(lock) {
+                    if (tryPromotePrefetchLocked(offset, want)) {
+                        System.arraycopy(win!!, (offset - winStart).toInt(), buf, off, want)
+                        maybeKickPrefetchLocked(fileSize)
+                        return want
+                    }
+                }
+            }
+
+            val window = chooseWindow(offset)
+            val fetch = minOf(window.toLong(), fileSize - offset).toInt().coerceAtLeast(want)
+            fillWindowSync(offset, fetch, want, buf, off, fileSize)
+        } catch (_: Throwable) {
+            -1
+        }
     }
 
     /**
@@ -112,23 +119,28 @@ class ReadAheadArchiveByteSource(
      */
     override fun warm(offset: Long, length: Int) {
         if (offset < 0L || length <= 0) return
-        if (offset >= size) return
-        val want = minOf(
-            length.toLong(),
-            sequentialWindow.toLong(),
-            size - offset,
-        ).toInt()
-        if (want <= 0) return
-        synchronized(lock) {
-            if (closed) return
-            if (win != null && offset >= winStart && offset + want <= winStart + winLen) {
-                return
+        try {
+            val fileSize = size
+            if (fileSize <= 0L || offset >= fileSize) return
+            val want = minOf(
+                length.toLong(),
+                sequentialWindow.toLong(),
+                fileSize - offset,
+            ).toInt()
+            if (want <= 0) return
+            synchronized(lock) {
+                if (closed) return
+                if (win != null && offset >= winStart && offset + want <= winStart + winLen) {
+                    return
+                }
+                if (tryPromotePrefetchLocked(offset, want)) {
+                    return
+                }
             }
-            if (tryPromotePrefetchLocked(offset, want)) {
-                return
-            }
+            fillWindowSync(offset, want, 0, null, 0, fileSize)
+        } catch (_: Throwable) {
+            // Network blip during warm — ignore.
         }
-        fillWindowSync(offset, want, 0, null, 0)
     }
 
     /**
@@ -163,9 +175,14 @@ class ReadAheadArchiveByteSource(
         copyLen: Int,
         copyBuf: ByteArray?,
         copyOff: Int,
+        fileSize: Long = size,
     ): Int {
         val fresh = ByteArray(fetch)
-        val got = inner.readAt(offset, fresh, 0, fetch)
+        val got = try {
+            inner.readAt(offset, fresh, 0, fetch)
+        } catch (_: Throwable) {
+            -1
+        }
         synchronized(lock) {
             if (closed) return -1
             if (got <= 0) {
@@ -183,7 +200,7 @@ class ReadAheadArchiveByteSource(
                 prefLen = 0
                 prefStart = -1L
             }
-            maybeKickPrefetchLocked()
+            maybeKickPrefetchLocked(fileSize)
             if (copyBuf != null && copyLen > 0) {
                 val n = minOf(copyLen, got)
                 System.arraycopy(fresh, 0, copyBuf, copyOff, n)
@@ -211,11 +228,12 @@ class ReadAheadArchiveByteSource(
      * on a background worker (overlaps solid decompress / disk write).
      * Caller holds [lock].
      */
-    private fun maybeKickPrefetchLocked() {
+    private fun maybeKickPrefetchLocked(fileSize: Long = size) {
         if (!pipeline || closed) return
         if (win == null || winLen <= 0) return
+        if (fileSize <= 0L) return
         val nextOff = winStart + winLen
-        if (nextOff >= size) return
+        if (nextOff >= fileSize) return
         if (prefInFlight) return
         if (pref != null && prefStart == nextOff) return
         // Only pipeline when we are consuming a full-size sequential window (not tiny random).
@@ -224,7 +242,7 @@ class ReadAheadArchiveByteSource(
         prefInFlight = true
         prefFlightOff = nextOff
         val epoch = prefEpoch.incrementAndGet()
-        val fetch = minOf(sequentialWindow.toLong(), size - nextOff).toInt()
+        val fetch = minOf(sequentialWindow.toLong(), fileSize - nextOff).toInt()
         PREFETCH_EXECUTOR.execute {
             try {
                 if (closed || epoch != prefEpoch.get()) return@execute

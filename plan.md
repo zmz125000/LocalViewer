@@ -314,6 +314,59 @@ Mirror `StreamArchivePageLoader`:
 - **EPUB / PDF extract-read (plan only):** same product model as solid/stream fake-read when opened from network — early reader, progressive extract into durable page cache + index, cold reopen offline, independent archive-cache budget. Not implemented in S3.
 - Browse-grid solid cover without ever opening (budgeted cover-only).
 - True parallel multi-archive solid extract.
+- Optional: unify cache/index *plumbing* (shared helpers / one “archive page cache” API, optional ZIP/TAR `index.json` for offline open without re-fetching CD). **Not** a merge of extract engines — see note below.
+
+---
+
+## Note: ZIP/TAR native stream vs solid lazy-extract
+
+**Question:** solid lazy extract-to-cache is reliable; is native ZIP/TAR stream an outdated workaround?
+
+**Answer: no.** Both paths already share the *reader delivery* model (pages land in a durable extract folder; reopen hits disk). What differs is the *byte/fetch engine*, which is format-dependent.
+
+### Shared product layer (keep)
+
+| Concern | ZIP/TAR | RAR/7z |
+|---------|---------|--------|
+| Early reader open | yes | yes |
+| Page images on disk | `archive_pages/` | `solid_extract/` |
+| Reopen known pages | disk, no re-extract | disk |
+| Full archive blob | not required (happy path) | not required (happy path) |
+| Cache budget | own pool = `readCacheSize` | own pool = `readCacheSize` |
+
+### Distinct engines (do not merge)
+
+| | **Native stream** (ZIP/CBZ/TAR/CBT) | **Solid sequential** (RAR/CBR/7z) |
+|--|--------------------------------------|-------------------------------------|
+| Open / TOC | ZIP: EOCD + CD ranges; TAR: header walk, seek past bodies | Progressive headers as data is walked |
+| Page N cold | Range-read that member only (+ inflate if ZIP deflate) | Must process 0…N (decompress/skip-write) |
+| Seek bar / last page | True random access after index | Catch-up sequential extract |
+| Prefetch cancel | Cancel distant single-member jobs | Abort after current member only |
+| Offline complete open | Today: still needs CD/header probe for list; pages from disk | `index.json` + all pages → fully offline |
+| Code | `openArchiveStream` + CD/TAR index + `extractToByteBuffer` | `openSolidSequential` + `SolidExtractEngine` |
+
+### Why stream is not a workaround
+
+- The **old** workaround was full-download → mmap for network ZIP/TAR. Range stream **replaced** that.
+- Lazy extract cache is **already** how stream feeds the reader (`ArchiveStreamPageCache`). Solid copied that *product* pattern for formats that **cannot** random-access decompress.
+- Routing ZIP/TAR through solid-style sequential extract would regress open-to-page-N, scrub, cover-only, and cancel-distant-extract for the common store/independent-deflate comic case.
+
+### Rule of thumb
+
+- **Cache folder** = how the reader is fed (unified product model).
+- **Stream vs sequential** = how bytes are fetched (format capability; keep both).
+
+### Optional later (plumbing only)
+
+- Shared helpers / single facade over `archive_pages` + `solid_extract` (still separate roots & budgets).
+- Persist ZIP/TAR member index for cold open when all pages are cached (parity with solid offline, **without** dropping range extract).
+- EPUB/PDF: extract-read UX like solid/stream; own budget when implemented.
+
+### Do not
+
+- Merge solid into ZIP CD / TAR stream extract code.
+- Drop `openArchiveStream` for network ZIP/TAR in favor of sequential-only extract.
+- Share one disk pie across thumb / smb_cache / solid_extract / archive_pages (each pool counts its own limit).
 
 ---
 
@@ -329,6 +382,7 @@ Mirror `StreamArchivePageLoader`:
 | User quits mid-extract | Cancel session; keep partial pages + incomplete index |
 | Passworded solid | Same passwd provider as local archive open |
 | smbj InputStream vs read-at | Prefer keep-open sequential `read` at advancing offset (already proven in download/stream) |
+| “Unify paths” pressure after solid works | Keep engines split; only share cache/index plumbing if needed |
 
 ---
 
@@ -340,14 +394,14 @@ Mirror `StreamArchivePageLoader`:
 4. Page 0 → durable thumb for browse/history.
 5. Second open of fully read archive → offline from extract cache + index.
 6. 7z either sequential or graceful full-file fallback without a third code path for the reader UI.
+7. Network ZIP/TAR keep random member extract + page cache (not sequential solid engine).
 
 ---
 
 ## Recommended decision
 
 - **Yes:** fake-stream solid extract is the right product model for network RAR/CBR (and 7z with hybrid).
-- **Ship order:** S0 → S1 (RAR/CBR) → S2 (7z) → S3 (resume polish).
-- **Keep** true ZIP/TAR stream as-is; **do not** merge solid into ZIP CD code.
+- **Ship order:** S0 → S1 (RAR/CBR) → S2 (7z) → S3 (resume polish) — **done**.
+- **Keep** true ZIP/TAR stream as-is; **do not** merge solid into ZIP CD / TAR stream code (see note above).
 - Full-archive download path remains **fallback** (7z / failure), not the primary RAR path.
-
-No implementation until this plan is approved (especially: growable page count vs MVP-0 spinner, and 7z hybrid policy).
+- Optional next: EPUB/PDF extract-read plan, or cache/index plumbing unify — not engine unify.

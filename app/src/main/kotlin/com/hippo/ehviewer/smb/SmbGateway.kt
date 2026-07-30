@@ -227,14 +227,28 @@ object SmbGateway {
             get() = !retired.get() && connection.isConnected
 
         fun hasShare(shareName: String): Boolean = synchronized(shareLock) {
-            shares.containsKey(shareName)
+            shares[shareName]?.let { it.isConnected } == true
         }
 
+        /**
+         * Cached tree connect. Reopens if the share was closed under us (common after
+         * archive keep-open teardown / idle kill) so folder list never sticks on
+         * "DiskShare has already been closed" until process death.
+         */
         fun diskShare(shareName: String): DiskShare = synchronized(shareLock) {
-            shares[shareName]?.let { return it }
+            shares[shareName]?.let { existing ->
+                if (existing.isConnected) return existing
+                runCatching { existing.close() }
+                shares.remove(shareName)
+            }
             val opened = session.connectShare(shareName) as DiskShare
             shares[shareName] = opened
             opened
+        }
+
+        /** Drop a dead tree without retiring the whole TCP session. */
+        fun dropShare(shareName: String) = synchronized(shareLock) {
+            shares.remove(shareName)?.let { runCatching { it.close() } }
         }
 
         /**
@@ -570,7 +584,14 @@ object SmbGateway {
                     ps.lastUsedMs.set(System.currentTimeMillis())
                     return result
                 } catch (e: Throwable) {
-                    killSession = isTransportError(e) || isSessionRejectError(e) || !ps.isConnected
+                    if (isShareClosedError(e)) {
+                        // Tree dead; drop cached DiskShare. Retire session if transport also gone.
+                        ps.dropShare(shareName)
+                    }
+                    killSession = isTransportError(e) ||
+                        isSessionRejectError(e) ||
+                        isShareClosedError(e) ||
+                        !ps.isConnected
                     throw e
                 } finally {
                     releaseOp(ps, killSession = killSession || closed.get())
@@ -1156,7 +1177,26 @@ object SmbGateway {
     }
 }
 
+/**
+ * smbj [com.hierynomus.smbj.share.Share] throws [com.hierynomus.smbj.common.SMBRuntimeException]
+ * ("DiskShare has already been closed") when a cached tree was closed but left in the pool map.
+ */
+private fun isShareClosedError(t: Throwable): Boolean {
+    var cur: Throwable? = t
+    while (cur != null) {
+        val msg = cur.message.orEmpty()
+        if (msg.contains("has already been closed", ignoreCase = true) &&
+            (msg.contains("DiskShare", ignoreCase = true) || msg.contains("Share", ignoreCase = true))
+        ) {
+            return true
+        }
+        cur = cur.cause
+    }
+    return false
+}
+
 private fun isTransportError(t: Throwable): Boolean {
+    if (isShareClosedError(t)) return true
     var cur: Throwable? = t
     while (cur != null) {
         when (cur) {
@@ -1181,7 +1221,8 @@ private fun isTransportError(t: Throwable): Boolean {
             msg.contains("ENETUNREACH", ignoreCase = true) ||
             msg.contains("EHOSTUNREACH", ignoreCase = true) ||
             msg.contains("Network is unreachable", ignoreCase = true) ||
-            msg.contains("transport is disconnected", ignoreCase = true)
+            msg.contains("transport is disconnected", ignoreCase = true) ||
+            msg.contains("Transport is closed", ignoreCase = true)
         ) {
             return true
         }

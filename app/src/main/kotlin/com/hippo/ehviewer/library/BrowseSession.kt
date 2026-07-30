@@ -58,6 +58,42 @@ object BrowseSession {
         if (pathKey == null) localListings.clear() else localListings.remove(pathKey)
     }
 
+    /**
+     * Drop a known-empty archive from every cached listing so the row stays gone
+     * without requiring pull-to-refresh (process lifetime).
+     *
+     * [archiveKey] is a local content path, or `smb:id:rel` / `webdav:id:rel`.
+     */
+    fun stripArchiveFromListings(archiveKey: String) {
+        if (archiveKey.isEmpty()) return
+        for ((k, list) in localListings) {
+            val filtered = list.filterNot {
+                it is BrowseEntry.ArchiveGallery && it.path.toString() == archiveKey
+            }
+            if (filtered.size != list.size) localListings[k] = filtered
+        }
+        val remoteRel = when {
+            archiveKey.startsWith("smb:") ->
+                archiveKey.removePrefix("smb:").substringAfter(':', missingDelimiterValue = "")
+            archiveKey.startsWith("webdav:") ->
+                archiveKey.removePrefix("webdav:").substringAfter(':', missingDelimiterValue = "")
+            else -> null
+        }
+        if (remoteRel.isNullOrEmpty()) return
+        fun stripRemote(map: ConcurrentHashMap<String, List<BrowseEntryRemote>>) {
+            for ((k, list) in map) {
+                val dir = k.substringAfterLast('|')
+                val filtered = list.filterNot { e ->
+                    e is BrowseEntryRemote.ArchiveGallery &&
+                        joinRemoteArchivePath(dir, e.parentRelativeName, e.fileName) == remoteRel
+                }
+                if (filtered.size != list.size) map[k] = filtered
+            }
+        }
+        stripRemote(smbListings)
+        stripRemote(webDavListings)
+    }
+
     fun smbListingKey(sourceId: Long, relativeDir: String) = "$sourceId|$relativeDir"
 
     fun getSmbListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? = smbListings[smbListingKey(sourceId, relativeDir)]

@@ -74,6 +74,9 @@ object LibraryScanner {
         }
 
         for (archive in archives.sortedWith { a, b -> naturalCompare(a.name, b.name) }) {
+            val contentPath = archive.path.toString()
+            // Skip archives already confirmed empty (lazy cover open / prior hide).
+            if (EmptyArchiveRegistry.isMarked(contentPath)) continue
             val rel = if (relativePath.isEmpty()) {
                 archive.name
             } else {
@@ -88,7 +91,7 @@ object LibraryScanner {
                 kind = LOCAL_GALLERY_KIND_ARCHIVE,
                 pageCount = 0, // unknown until open
                 coverPath = null,
-                contentPath = archive.path.toString(),
+                contentPath = contentPath,
                 mtime = mtime,
             )
         }

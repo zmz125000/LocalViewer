@@ -63,7 +63,7 @@ suspend inline fun <T> useArchivePageLoader(
             if (needPassword() && archivePasswds.none(::providePassword)) {
                 archivePasswds += passwdProvider(::providePassword)
             }
-            // Persist page count + first-page cover for library/browse (skip solid 7z covers).
+            // Persist page count + first-page cover for library/browse (incl. local solid).
             runCatching {
                 val pathStr = file.toString()
                 val f = File(pathStr)

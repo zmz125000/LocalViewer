@@ -28,6 +28,9 @@ interface LocalGalleryDao {
     @Query("DELETE FROM LOCAL_GALLERIES WHERE ROOT_ID = :rootId")
     suspend fun deleteByRootId(rootId: Long)
 
+    @Query("DELETE FROM LOCAL_GALLERIES WHERE CONTENT_PATH = :contentPath")
+    suspend fun deleteByContentPath(contentPath: String)
+
     @Query("DELETE FROM LOCAL_GALLERIES")
     suspend fun deleteAll()
 

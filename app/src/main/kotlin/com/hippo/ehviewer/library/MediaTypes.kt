@@ -19,7 +19,7 @@ val ARCHIVE_EXTENSIONS = setOf(
 /**
  * Solid / poor-seek archives: no ZIP-style range stream.
  * Network open uses fake-stream sequential extract ([useSolidExtractPageLoader]);
- * browse cover extract without open is still skipped (expensive).
+ * browse lazy thumbs use sequential first-page extract ([ArchiveCoverCache.ensureSolidStreamCover]).
  */
 val SOLID_ARCHIVE_EXTENSIONS = setOf("7z", "rar", "cbr")
 
@@ -38,7 +38,10 @@ fun isArchiveCacheFileName(name: String): Boolean {
     return ext in ARCHIVE_EXTENSIONS
 }
 
-/** Prefer cover extract for stream-friendly comic archives (not solid 7z). */
+/**
+ * Prefer mmap page-0 cover extract ([ArchiveCoverCache.ensureCover] non-solid branch).
+ * Solid RAR/7z still get covers via sequential first-page extract in the same API.
+ */
 fun prefersArchiveCoverExtract(name: String): Boolean =
     isArchiveFileName(name) && !isSolidArchiveFileName(name)
 

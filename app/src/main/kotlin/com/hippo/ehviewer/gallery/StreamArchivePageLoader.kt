@@ -62,7 +62,11 @@ suspend inline fun <T> useStreamArchivePageLoader(
         coroutineScope {
             ArchiveStreamPageCache.pin(cacheKey)
             install({ }, { _, _ -> ArchiveStreamPageCache.unpin(cacheKey) })
-            val archiveSizeBytes = source.size
+            // Soft-fail remote size (WebDAV restart): IOException → open fails cleanly, no process crash.
+            val archiveSizeBytes = runCatching { source.size }.getOrDefault(-1L)
+            check(archiveSizeBytes > 0L) {
+                "Cannot open stream archive (size unknown): $cacheKey"
+            }
             val bridge = install(
                 { ArchiveStreamBridge(source) },
                 { b, _ -> b.close() },

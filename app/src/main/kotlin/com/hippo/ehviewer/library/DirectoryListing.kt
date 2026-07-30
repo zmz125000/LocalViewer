@@ -64,11 +64,14 @@ fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
                     }
                 }
             }
-            isArchiveFileName(child.name) ->
-                archives += BrowseEntry.ArchiveGallery(
-                    name = child.name.substringBeforeLast('.').ifEmpty { child.name },
-                    path = child.path,
-                )
+            isArchiveFileName(child.name) -> {
+                if (!EmptyArchiveRegistry.isMarked(child.path.toString())) {
+                    archives += BrowseEntry.ArchiveGallery(
+                        name = child.name.substringBeforeLast('.').ifEmpty { child.name },
+                        path = child.path,
+                    )
+                }
+            }
         }
         true // always continue — need full dir set for parent
     }
@@ -241,11 +244,14 @@ private fun classifyChildDirectory(sub: Path): ChildDirKind {
                     imagesCapped = true
                 }
             }
-            isArchiveFileName(child.name) ->
-                archives += BrowseEntry.ArchiveGallery(
-                    name = child.name.substringBeforeLast('.').ifEmpty { child.name },
-                    path = child.path,
-                )
+            isArchiveFileName(child.name) -> {
+                if (!EmptyArchiveRegistry.isMarked(child.path.toString())) {
+                    archives += BrowseEntry.ArchiveGallery(
+                        name = child.name.substringBeforeLast('.').ifEmpty { child.name },
+                        path = child.path,
+                    )
+                }
+            }
         }
         true
     }
