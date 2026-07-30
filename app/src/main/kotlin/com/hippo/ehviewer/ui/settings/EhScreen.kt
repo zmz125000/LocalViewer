@@ -3,7 +3,12 @@ package com.hippo.ehviewer.ui.settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Scaffold
@@ -33,9 +38,12 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(navigator) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text(text = stringResource(id = R.string.settings_general)) },
+                windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 colors = adaptiveTopAppBarColors(),
                 navigationIcon = { NavigationIcon() },
                 scrollBehavior = scrollBehavior,
@@ -44,9 +52,9 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
     ) { paddingValues ->
         Column(
             modifier = Modifier
-                .nestedScroll(scrollBehavior.nestedScrollConnection)
-                .verticalScroll(rememberScrollState())
-                .padding(paddingValues),
+                .fillMaxSize()
+                .padding(paddingValues)
+                .verticalScroll(rememberScrollState()),
         ) {
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.dark_theme),

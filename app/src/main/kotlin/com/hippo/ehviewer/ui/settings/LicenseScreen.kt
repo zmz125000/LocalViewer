@@ -2,6 +2,11 @@ package com.hippo.ehviewer.ui.settings
 
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -31,9 +36,12 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 fun AnimatedVisibilityScope.LicenseScreen(navigator: DestinationsNavigator) = Screen(navigator) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text(text = stringResource(id = R.string.license)) },
+                windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 colors = adaptiveTopAppBarColors(),
                 navigationIcon = { NavigationIcon() },
                 scrollBehavior = scrollBehavior,
@@ -44,7 +52,7 @@ fun AnimatedVisibilityScope.LicenseScreen(navigator: DestinationsNavigator) = Sc
         val libraries by produceLibraries(com.hippo.ehviewer.R.raw.aboutlibraries)
         LibrariesContainer(
             libraries = libraries,
-            modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+            modifier = Modifier.fillMaxSize(),
             contentPadding = paddingValues,
             padding = LibraryDefaults.libraryPadding(licensePadding = LibraryDefaults.chipPadding(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp))),
             textStyles = LibraryDefaults.libraryTextStyles(licensesTextStyle = MaterialTheme.typography.labelSmall),

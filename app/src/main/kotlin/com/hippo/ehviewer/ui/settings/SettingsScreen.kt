@@ -4,9 +4,12 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Adb
 import androidx.compose.material.icons.filled.Download
@@ -45,7 +48,9 @@ fun AnimatedVisibilityScope.SettingsScreen(navigator: DestinationsNavigator) = S
     // Zero content insets: NavigationRail already sits in a sibling Row, so default
     // Scaffold safeDrawing would re-apply the start system inset as a huge left gap.
     // Library/History (SearchBarScreen) already use contentWindowInsets = 0.
+    // nestedScroll on Scaffold (M3): list must be able to scroll in short rail/landscape height.
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
@@ -57,8 +62,13 @@ fun AnimatedVisibilityScope.SettingsScreen(navigator: DestinationsNavigator) = S
                 scrollBehavior = scrollBehavior,
             )
         },
-    ) {
-        Column(modifier = Modifier.padding(it).nestedScroll(scrollBehavior.nestedScrollConnection)) {
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .verticalScroll(rememberScrollState()),
+        ) {
             PreferenceHeader(
                 icon = Icons.Default.Settings,
                 title = R.string.settings_general,

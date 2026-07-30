@@ -9,8 +9,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -218,9 +222,12 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
     }
 
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text(text = stringResource(id = R.string.browse_manage_sources)) },
+                windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 colors = adaptiveTopAppBarColors(),
                 navigationIcon = { NavigationIcon() },
                 actions = {
@@ -237,10 +244,8 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
         },
     ) { paddingValues ->
         LazyColumn(
-            modifier = Modifier
-                .padding(paddingValues)
-                .nestedScroll(scrollBehavior.nestedScrollConnection)
-                .fillMaxSize(),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = paddingValues,
         ) {
             item(key = "hdr-library") {
                 BrowseSectionHeader(stringResource(R.string.library))

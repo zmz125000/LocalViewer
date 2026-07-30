@@ -13,7 +13,12 @@ import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Scaffold
@@ -106,16 +111,24 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     fun launchSnackbar(message: String) = launch { snackbar(message) }
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text(text = stringResource(id = R.string.settings_advanced)) },
+                windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 colors = adaptiveTopAppBarColors(),
                 navigationIcon = { NavigationIcon() },
                 scrollBehavior = scrollBehavior,
             )
         },
     ) { paddingValues ->
-        Column(modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).verticalScroll(rememberScrollState()).padding(paddingValues)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .verticalScroll(rememberScrollState()),
+        ) {
             val stripAds = Settings.stripExtraneousAds.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_block_extraneous_ads),
