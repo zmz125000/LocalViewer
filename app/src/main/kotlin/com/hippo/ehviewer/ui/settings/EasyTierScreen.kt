@@ -8,9 +8,13 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -34,11 +38,11 @@ import com.ehviewer.core.util.launch
 import com.hippo.ehviewer.easytier.EasyTierRuntime
 import com.hippo.ehviewer.easytier.EasyTierUiTab
 import com.hippo.ehviewer.ui.Screen
-import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.hippo.ehviewer.ui.easytier.EasyTierConfigContent
 import com.hippo.ehviewer.ui.easytier.EasyTierStatusContent
 import com.hippo.ehviewer.ui.easytier.EasyTierTabRow
 import com.hippo.ehviewer.ui.main.NavigationIcon
+import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -91,21 +95,25 @@ fun AnimatedVisibilityScope.EasyTierScreen(navigator: DestinationsNavigator) = S
         }
     }
 
+    // Match other settings screens: nestedScroll on Scaffold, rail-safe zero content insets,
+    // top-only app bar insets. Tab bodies already verticalScroll inside weight(1f).
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings_easytier)) },
+                windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 colors = adaptiveTopAppBarColors(),
                 navigationIcon = { NavigationIcon() },
                 scrollBehavior = scrollBehavior,
             )
         },
-    ) { padding ->
+    ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                .padding(paddingValues)
                 .padding(horizontal = 16.dp),
         ) {
             Text(
@@ -128,7 +136,7 @@ fun AnimatedVisibilityScope.EasyTierScreen(navigator: DestinationsNavigator) = S
 
             if (!runtimeState.supported) {
                 Text(stringResource(R.string.easytier_unsupported_abi))
-                return@Scaffold
+                return@Column
             }
 
             EasyTierTabRow(selected = tab, onSelect = { tab = it })
@@ -143,6 +151,7 @@ fun AnimatedVisibilityScope.EasyTierScreen(navigator: DestinationsNavigator) = S
                     },
                     modifier = Modifier
                         .weight(1f)
+                        .fillMaxWidth()
                         .padding(top = 8.dp),
                 )
                 EasyTierUiTab.CONFIG -> EasyTierConfigContent(
@@ -152,6 +161,7 @@ fun AnimatedVisibilityScope.EasyTierScreen(navigator: DestinationsNavigator) = S
                     onAdvancedExpandedChange = { advanced = it },
                     modifier = Modifier
                         .weight(1f)
+                        .fillMaxWidth()
                         .padding(top = 8.dp),
                 )
             }
