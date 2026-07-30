@@ -64,6 +64,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseEntry
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
@@ -112,6 +113,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     var entries by remember { mutableStateOf<List<BrowseEntry>>(emptyList()) }
+    // Lazy-drop non-image archives when cover open reports 0 pages (EmptyArchiveRegistry).
+    val emptyArchiveRev by EmptyArchiveRegistry.revision.collectAsState()
+    val displayEntries = remember(entries, emptyArchiveRev) {
+        EmptyArchiveRegistry.filterLocalEntries(entries)
+    }
 
     /** Path the current [entries] belong to — avoids showing the wrong dir during reload. */
     var listedPath by remember { mutableStateOf<String?>(null) }
@@ -386,23 +392,23 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         }
                     }
                 }
-                loading && (entries.isEmpty() || listedPath != currentPath) -> {
+                loading && (displayEntries.isEmpty() || listedPath != currentPath) -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularWavyProgressIndicator()
                     }
                 }
-                error != null && entries.isEmpty() -> {
+                error != null && displayEntries.isEmpty() -> {
                     BrowseEmptyHint(error!!)
                 }
-                entries.isEmpty() -> {
+                displayEntries.isEmpty() -> {
                     BrowseEmptyHint(stringResource(R.string.folder_empty))
                 }
                 else -> {
                     // List only composes when this path's entries are ready. State is keyed by
                     // path+mode so parent/child never share one LazyList scroll index.
                     val pathKey = listedPath ?: currentPath!!
-                    val dirs = entries.filterIsInstance<BrowseEntry.Directory>()
-                    val galleries = entries.filter { it !is BrowseEntry.Directory }
+                    val dirs = displayEntries.filterIsInstance<BrowseEntry.Directory>()
+                    val galleries = displayEntries.filter { it !is BrowseEntry.Directory }
                     if (useGrid) {
                         val gridState = rememberBrowseGridState(pathKey, listMode)
                         val gridSpacing = GalleryGridDefaults.spacedBy()

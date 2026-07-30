@@ -28,6 +28,19 @@ import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
 
 /**
+ * Result of lazy archive cover extract.
+ * [NoImages] means the archive was opened and has no playable pages — safe to hide from listings.
+ * [Skip] is transient (busy, password, I/O) — keep the row.
+ */
+sealed interface CoverEnsureResult {
+    data class Hit(val path: Path) : CoverEnsureResult
+    data object NoImages : CoverEnsureResult
+    data object Skip : CoverEnsureResult
+
+    val pathOrNull: Path? get() = (this as? Hit)?.path
+}
+
+/**
  * First-page JPEG thumbs for archive galleries (library + folder / network browse).
  * Long edge [THUMB_EDGE] matches SMB/WebDAV browse thumbs (768).
  *
@@ -90,34 +103,34 @@ object ArchiveCoverCache {
      * are opened the same way as the local reader ([openArchive] + page 0) — not via
      * [FileArchiveByteSource], which only accepts filesystem paths and crashes on SAF.
      *
-     * @return thumb path, or null if skipped (password/busy/error/unsupported).
+     * [CoverEnsureResult.NoImages] when libarchive reports 0 playable images (same log as
+     * "Found 0 images in archive") — callers should hide the row from library/browse.
      */
-    suspend fun ensureCover(archivePath: Path): Path? = withIOContext {
+    suspend fun ensureCover(archivePath: Path): CoverEnsureResult = withIOContext {
         runCatching {
             val name = archivePath.name
-            if (!isArchiveFileName(name)) return@runCatching null
+            if (!isArchiveFileName(name)) return@runCatching CoverEnsureResult.Skip
 
             val solid = isSolidArchiveFileName(name)
             // Solid thumbs share the 0/0 key with [writeCoverFromOpenArchive] / [tryDiskCover].
             val key = archivePath.toString()
             if (solid) {
-                tryDiskCover(key)?.let { return@runCatching it }
+                tryDiskCover(key)?.let { return@runCatching CoverEnsureResult.Hit(it) }
             }
 
             val file = File(key)
             val mtime = if (solid) 0L else file.takeIf { it.isFile }?.lastModified() ?: 0L
             val size = if (solid) 0L else file.takeIf { it.isFile }?.length() ?: 0L
             val dest = thumbPathFor(key, mtime, size)
-            if (isCachedOnDisk(dest)) return@runCatching dest
+            if (isCachedOnDisk(dest)) return@runCatching CoverEnsureResult.Hit(dest)
 
             extractSlots.withPermit {
-                if (isCachedOnDisk(dest)) return@withPermit dest
+                if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
                 ArchiveAccess.tryWithArchive {
                     extractCoverLocked(archivePath, dest)
-                }
-            } ?: return@runCatching null
-            dest.takeIf { isCachedOnDisk(it) }
-        }.onFailure { logcat("ArchiveCover", it) }.getOrNull()
+                } ?: CoverEnsureResult.Skip
+            }
+        }.onFailure { logcat("ArchiveCover", it) }.getOrElse { CoverEnsureResult.Skip }
     }
 
     /**
@@ -185,21 +198,19 @@ object ArchiveCoverCache {
      * connections are not opened for every grid cell waiting in the queue.
      * Cache key uses size=0 so hits work without a network size probe.
      *
-     * Solid formats: use [ensureSolidStreamCover] (this method returns null for solid names).
-     *
-     * @return thumb path or null if busy/password/error/solid.
+     * Solid formats: use [ensureSolidStreamCover] (this method returns [CoverEnsureResult.Skip] for solid names).
      */
     suspend fun ensureStreamCover(
         cacheKey: String,
         openSource: suspend () -> ArchiveByteSource,
-    ): Path? = withIOContext {
+    ): CoverEnsureResult = withIOContext {
         val base = cacheKey.substringAfterLast('/').substringAfterLast(':')
-        if (base.isNotEmpty() && isSolidArchiveFileName(base)) return@withIOContext null
+        if (base.isNotEmpty() && isSolidArchiveFileName(base)) return@withIOContext CoverEnsureResult.Skip
         // Stable path without remote size (avoids opening the archive just to hash the key).
         val dest = thumbPathFor(cacheKey, 0L, 0L)
-        if (isCachedOnDisk(dest)) return@withIOContext dest
+        if (isCachedOnDisk(dest)) return@withIOContext CoverEnsureResult.Hit(dest)
         extractSlots.withPermit {
-            if (isCachedOnDisk(dest)) return@withIOContext dest
+            if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
             ArchiveAccess.tryWithArchive {
                 openSource().use { source ->
                     val bridge = ArchiveStreamBridge(source)
@@ -212,14 +223,23 @@ object ArchiveCoverCache {
                             /* sortEntries = */ false,
                             /* coverOnly = */ true,
                         )
-                        if (n <= 0 || com.hippo.ehviewer.jni.needPassword()) return@tryWithArchive null
-                        writeCoverFromOpenArchive(cacheKey, 0L, 0L)
+                        when {
+                            n <= 0 -> CoverEnsureResult.NoImages
+                            com.hippo.ehviewer.jni.needPassword() -> CoverEnsureResult.Skip
+                            else -> {
+                                val thumb = writeCoverFromOpenArchive(cacheKey, 0L, 0L)
+                                if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
+                            }
+                        }
+                    } catch (e: Throwable) {
+                        logcat("ArchiveCover", e)
+                        CoverEnsureResult.Skip
                     } finally {
                         com.hippo.ehviewer.jni.closeArchive()
                         bridge.close()
                     }
                 }
-            }
+            } ?: CoverEnsureResult.Skip
         }
     }
 
@@ -235,16 +255,16 @@ object ArchiveCoverCache {
     suspend fun ensureSolidStreamCover(
         cacheKey: String,
         openSource: suspend () -> ArchiveByteSource,
-    ): Path? = withIOContext {
+    ): CoverEnsureResult = withIOContext {
         val dest = thumbPathFor(cacheKey, 0L, 0L)
-        if (isCachedOnDisk(dest)) return@withIOContext dest
+        if (isCachedOnDisk(dest)) return@withIOContext CoverEnsureResult.Hit(dest)
 
         // Prefer page already extracted by a prior solid reader session.
-        coverFromSolidExtractCache(cacheKey)?.let { return@withIOContext it }
+        coverFromSolidExtractCache(cacheKey)?.let { return@withIOContext CoverEnsureResult.Hit(it) }
 
         extractSlots.withPermit {
-            if (isCachedOnDisk(dest)) return@withIOContext dest
-            coverFromSolidExtractCache(cacheKey)?.let { return@withIOContext it }
+            if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
+            coverFromSolidExtractCache(cacheKey)?.let { return@withPermit CoverEnsureResult.Hit(it) }
             val locked = ArchiveAccess.tryWithArchive {
                 openSource().use { source ->
                     val bridge = ArchiveStreamBridge(source)
@@ -252,19 +272,21 @@ object ArchiveCoverCache {
                         val opened = openSolidSequential(bridge, source.size)
                         if (opened == 0) {
                             logcat("SolidCover") { "openSolidSequential failed key=$cacheKey" }
-                            return@tryWithArchive null
+                            return@tryWithArchive CoverEnsureResult.Skip
                         }
                         // Password only known after headers; don't check needPassword() pre-walk.
                         val idx = solidNextPlayable()
                         if (idx < 0) {
-                            logcat("SolidCover") {
-                                "no playable member idx=$idx needPw=${needPassword()} key=$cacheKey"
+                            if (needPassword()) {
+                                logcat("SolidCover") { "passworded solid skipped key=$cacheKey" }
+                                return@tryWithArchive CoverEnsureResult.Skip
                             }
-                            return@tryWithArchive null
+                            logcat("SolidCover") { "no playable member key=$cacheKey" }
+                            return@tryWithArchive CoverEnsureResult.NoImages
                         }
                         if (needPassword()) {
                             logcat("SolidCover") { "passworded solid skipped key=$cacheKey" }
-                            return@tryWithArchive null
+                            return@tryWithArchive CoverEnsureResult.Skip
                         }
                         val ext = solidCurrentExtension().ifBlank { "bin" }.take(8)
                         val tmp = File(
@@ -280,21 +302,24 @@ object ArchiveCoverCache {
                             ).use { pfd ->
                                 if (!solidExtractCurrentToFd(pfd.fd)) {
                                     logcat("SolidCover") { "extract page0 failed key=$cacheKey" }
-                                    return@tryWithArchive null
+                                    return@tryWithArchive CoverEnsureResult.Skip
                                 }
                             }
-                            if (!tmp.isFile || tmp.length() == 0L) return@tryWithArchive null
+                            if (!tmp.isFile || tmp.length() == 0L) {
+                                return@tryWithArchive CoverEnsureResult.Skip
+                            }
                             // Also seed solid extract page 0 so reader cold-open can reuse.
                             runCatching {
                                 SolidExtractCache.writePageFromFdCopy(cacheKey, 0, ext, tmp)
                             }
-                            writeCoverFromExtractedPage(cacheKey, tmp.toOkioPath())
+                            val thumb = writeCoverFromExtractedPage(cacheKey, tmp.toOkioPath())
+                            if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
                         } finally {
                             tmp.delete()
                         }
                     } catch (e: Throwable) {
                         logcat("SolidCover", e)
-                        null
+                        CoverEnsureResult.Skip
                     } finally {
                         closeArchive()
                         bridge.close()
@@ -302,9 +327,9 @@ object ArchiveCoverCache {
                 }
             }
             if (locked == null) {
-                logcat("SolidCover") { "archive busy or failed key=$cacheKey" }
+                logcat("SolidCover") { "archive busy key=$cacheKey" }
             }
-            locked
+            locked ?: CoverEnsureResult.Skip
         }
     }
 
@@ -326,20 +351,22 @@ object ArchiveCoverCache {
         return writeCoverFromExtractedPage(cacheKey, page)
     }
 
-    private fun extractCoverLocked(archivePath: Path, dest: Path): Path? {
+    private fun extractCoverLocked(archivePath: Path, dest: Path): CoverEnsureResult {
         val pfd = try {
             archivePath.openFileDescriptor("r")
         } catch (e: Throwable) {
             logcat(e)
-            return null
+            return CoverEnsureResult.Skip
         }
         pfd.use { fd ->
             val count = openArchive(fd.fd, fd.statSize, true)
             try {
-                if (count <= 0) return null
-                if (needPassword()) return null
+                // count == 0 logs "Found 0 images in archive" in native code.
+                if (count <= 0) return CoverEnsureResult.NoImages
+                if (needPassword()) return CoverEnsureResult.Skip
                 extractPage0ToJpeg(dest)
-                return dest.takeIf { isCachedOnDisk(it) }
+                return dest.takeIf { isCachedOnDisk(it) }?.let { CoverEnsureResult.Hit(it) }
+                    ?: CoverEnsureResult.Skip
             } finally {
                 closeArchive()
             }

@@ -38,6 +38,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +68,7 @@ import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
 import com.hippo.ehviewer.library.ArchiveTooLargeException
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
@@ -150,6 +152,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     val relativeDir = segments.joinToString("/")
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
+    val emptyArchiveRev by EmptyArchiveRegistry.revision.collectAsState()
+    val displayEntries = remember(entries, emptyArchiveRev, relativeDir, sourceId) {
+        EmptyArchiveRegistry.filterRemoteEntries(entries) { arch ->
+            "webdav:$sourceId:${joinRemoteArchivePath(relativeDir, arch.parentRelativeName, arch.fileName)}"
+        }
+    }
 
     // Show the bar again when entering a different folder.
     LaunchedEffect(relativeDir) {
@@ -514,16 +522,16 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         CircularWavyProgressIndicator()
                     }
                 }
-                error != null && entries.isEmpty() -> {
+                error != null && displayEntries.isEmpty() -> {
                     BrowseEmptyHint(string(R.string.webdav_listing_error, error!!))
                 }
-                entries.isEmpty() -> {
+                displayEntries.isEmpty() -> {
                     BrowseEmptyHint(stringResource(R.string.folder_empty))
                 }
                 else -> {
                     val dirKey = listedDir ?: relativeDir
-                    val dirs = entries.filterIsInstance<BrowseEntryRemote.Directory>()
-                    val galleries = entries.filter { it !is BrowseEntryRemote.Directory }
+                    val dirs = displayEntries.filterIsInstance<BrowseEntryRemote.Directory>()
+                    val galleries = displayEntries.filter { it !is BrowseEntryRemote.Directory }
 
                     // Keys must stay unique when dual-list + "this folder as gallery" share a name
                     // (e.g. parent/ff has images and a child dir also named ff → g-self vs g-child-ff).

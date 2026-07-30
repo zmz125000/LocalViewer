@@ -54,6 +54,7 @@ import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.library.ArchiveCoverCache
+import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.ui.screen.collectListThumbSizeAsState
@@ -111,14 +112,22 @@ private fun CoverImage(
             return@LaunchedEffect
         }
         val arch = archiveContentPath ?: return@LaunchedEffect
-        val thumb = withIOContext {
-            ArchiveCoverCache.ensureCover(arch.toPath())
-        }
-        if (thumb != null) {
-            resolvedCover = thumb.toString()
-            withIOContext {
-                LocalLibrary.updateGalleryPageAndCoverByContentPath(arch, 0, thumb.toString())
+        when (val result = withIOContext { ArchiveCoverCache.ensureCover(arch.toPath()) }) {
+            is CoverEnsureResult.Hit -> {
+                resolvedCover = result.path.toString()
+                withIOContext {
+                    LocalLibrary.updateGalleryPageAndCoverByContentPath(
+                        arch,
+                        0,
+                        result.path.toString(),
+                    )
+                }
             }
+            CoverEnsureResult.NoImages -> {
+                // Confirmed empty (native "Found 0 images") — drop from library listing.
+                withIOContext { LocalLibrary.hideEmptyArchive(arch) }
+            }
+            CoverEnsureResult.Skip -> Unit
         }
     }
     Box(modifier = modifier, contentAlignment = Alignment.Center) {

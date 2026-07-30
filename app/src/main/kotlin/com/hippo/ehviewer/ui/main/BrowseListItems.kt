@@ -53,6 +53,9 @@ import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ArchiveCoverCache
+import com.hippo.ehviewer.library.CoverEnsureResult
+import com.hippo.ehviewer.library.EmptyArchiveRegistry
+import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbCache
@@ -396,14 +399,22 @@ fun BrowseCoverThumb(
     LaunchedEffect(remoteKey, retryKey, resumeEpoch, downloadRemoteThumbs, downloadNetworkArchiveThumbs) {
         when (cover) {
             is BrowseCover.LocalArchive -> {
-                // ZIP/TAR mmap page 0; RAR/CBR/7z sequential first-page (same as network solid).
-                val thumb = withIOContext { ArchiveCoverCache.ensureCover(cover.archivePath) }
-                if (thumb != null) {
-                    localPath = thumb
-                    fetchFailed = false
-                } else {
-                    // Leave placeholder; ON_RESUME retries (ArchiveAccess busy while reader open).
-                    fetchFailed = localPath == null
+                // ZIP/TAR mmap page 0; RAR/CBR/7z first-page (same open as local reader).
+                when (val result = withIOContext { ArchiveCoverCache.ensureCover(cover.archivePath) }) {
+                    is CoverEnsureResult.Hit -> {
+                        localPath = result.path
+                        fetchFailed = false
+                    }
+                    CoverEnsureResult.NoImages -> {
+                        // Native "Found 0 images" — hide from library + folder browse.
+                        withIOContext {
+                            LocalLibrary.hideEmptyArchive(cover.archivePath.toString())
+                        }
+                    }
+                    CoverEnsureResult.Skip -> {
+                        // Leave placeholder; ON_RESUME retries (ArchiveAccess busy while reader open).
+                        fetchFailed = localPath == null
+                    }
                 }
             }
             is BrowseCover.SmbArchive -> {
@@ -419,7 +430,7 @@ fun BrowseCoverThumb(
                     return@LaunchedEffect
                 }
                 if (!downloadNetworkArchiveThumbs) return@LaunchedEffect
-                val thumb = withIOContext {
+                val result = withIOContext {
                     if (solid) {
                         ArchiveCoverCache.ensureSolidStreamCover(key) {
                             val source = SmbRepository.load(cover.sourceId)
@@ -441,9 +452,13 @@ fun BrowseCoverThumb(
                         }
                     }
                 }
-                if (thumb != null) {
-                    localPath = thumb
-                    fetchFailed = false
+                when (result) {
+                    is CoverEnsureResult.Hit -> {
+                        localPath = result.path
+                        fetchFailed = false
+                    }
+                    CoverEnsureResult.NoImages -> EmptyArchiveRegistry.mark(key)
+                    CoverEnsureResult.Skip -> Unit
                 }
             }
             is BrowseCover.WebDavArchive -> {
@@ -458,7 +473,7 @@ fun BrowseCoverThumb(
                     return@LaunchedEffect
                 }
                 if (!downloadNetworkArchiveThumbs) return@LaunchedEffect
-                val thumb = withIOContext {
+                val result = withIOContext {
                     if (solid) {
                         ArchiveCoverCache.ensureSolidStreamCover(key) {
                             val source = WebDavRepository.load(cover.sourceId)
@@ -480,9 +495,13 @@ fun BrowseCoverThumb(
                         }
                     }
                 }
-                if (thumb != null) {
-                    localPath = thumb
-                    fetchFailed = false
+                when (result) {
+                    is CoverEnsureResult.Hit -> {
+                        localPath = result.path
+                        fetchFailed = false
+                    }
+                    CoverEnsureResult.NoImages -> EmptyArchiveRegistry.mark(key)
+                    CoverEnsureResult.Skip -> Unit
                 }
             }
             is BrowseCover.Smb -> {
