@@ -149,8 +149,8 @@ suspend inline fun <T> useSolidExtractPageLoader(
 
                     override fun save(index: Int, file: Path): Boolean = runCatching {
                         val ext = engine.extOf(index) ?: return@runCatching false
+                        // Prefer in-memory map (no File.stat on caller thread).
                         val path = pagePaths[index]
-                            ?.takeIf { SolidExtractCache.isCachedFile(it) }
                             ?: SolidExtractCache.pagePath(cacheKey, index, ext)
                                 .takeIf { SolidExtractCache.isCachedFile(it) }
                             ?: error("Not cached")
@@ -160,12 +160,10 @@ suspend inline fun <T> useSolidExtractPageLoader(
 
                     override fun openSource(index: Int): ImageSource {
                         val ext = engine.extOf(index) ?: "bin"
+                        // notifySourceReady only after markPageExtracted mapped the path —
+                        // do not File.length() here (decode may run on main-ish scope).
                         val path = pagePaths[index]
-                            ?.takeIf { SolidExtractCache.isCachedFile(it) }
-                            ?: SolidExtractCache.pagePath(cacheKey, index, ext)
-                                .takeIf { SolidExtractCache.isCachedFile(it) }
-                        checkNotNull(path) { "Solid page $index not extracted" }
-                        pagePaths[index] = path
+                            ?: error("Solid page $index not extracted")
                         return object : PathSource {
                             override val source: Path = path
                             override val type: String = ext
@@ -193,8 +191,9 @@ suspend inline fun <T> useSolidExtractPageLoader(
                         extractJobs.values.forEach { it.cancel() }
                         extractJobs.clear()
                         readyWaiters.clear()
-                        // Flush partial/full index for resume (abort does not clear isComplete).
-                        engine.persistIndex(complete = engine.isComplete)
+                        // Flush index off main (onDispose / StrictMode); use cache scope so it
+                        // outlives hostScope cancellation.
+                        engine.persistIndex(complete = engine.isComplete, async = true)
                         super.close()
                     }
 
@@ -203,10 +202,12 @@ suspend inline fun <T> useSolidExtractPageLoader(
                         extractTarget.updateAndGet { cur -> maxOf(cur, want) }
                     }
 
-                    private fun isPageReady(index: Int): Boolean {
-                        pagePaths[index]?.let {
-                            if (SolidExtractCache.isCachedFile(it)) return true
-                        }
+                    /** In-memory only — safe on main / onRequest. */
+                    private fun isPageMapped(index: Int): Boolean = pagePaths.containsKey(index)
+
+                    /** Disk probe; call only from [Dispatchers.IO]. */
+                    private fun probePageOnDisk(index: Int): Boolean {
+                        if (pagePaths.containsKey(index)) return true
                         val ext = engine.extOf(index) ?: return false
                         val p = SolidExtractCache.pagePath(cacheKey, index, ext)
                         if (SolidExtractCache.isCachedFile(p)) {
@@ -217,19 +218,21 @@ suspend inline fun <T> useSolidExtractPageLoader(
                     }
 
                     /**
-                     * Page [index] is on disk — grow list, optional cover, and fire decode
-                     * waiters immediately (even while ensureThrough continues past this index).
+                     * Page [index] is ready — map path, grow list, optional cover, fire decode
+                     * waiters. Does **not** File.stat (StrictMode); callers already extracted
+                     * or [probePageOnDisk]'d on IO.
                      */
                     fun markPageExtracted(index: Int) {
                         val ext = engine.extOf(index) ?: return
                         val path = SolidExtractCache.pagePath(cacheKey, index, ext)
-                        if (!SolidExtractCache.isCachedFile(path)) return
                         pagePaths[index] = path
                         growTo(engine.listedCount())
                         if (index == 0 && coverWritten.compareAndSet(false, true)) {
-                            runCatching {
-                                ArchiveCoverCache.writeCoverFromExtractedPage(cacheKey, path)
-                            }.onFailure { logcat("SolidExtract", it) }
+                            hostScope.launch(Dispatchers.IO) {
+                                runCatching {
+                                    ArchiveCoverCache.writeCoverFromExtractedPage(cacheKey, path)
+                                }.onFailure { logcat("SolidExtract", it) }
+                            }
                         }
                         readyWaiters.remove(index)?.forEach { runCatching { it() } }
                     }
@@ -242,18 +245,20 @@ suspend inline fun <T> useSolidExtractPageLoader(
                         if (index < 0) return
                         if (onReady != null) {
                             readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
-                            // Already on disk (bg extract finished this index first) — decode now.
-                            if (isPageReady(index)) {
+                            // Already mapped (bg extract finished) — decode now, no disk I/O.
+                            if (isPageMapped(index)) {
                                 markPageExtracted(index)
                                 return
                             }
+                        } else if (isPageMapped(index)) {
+                            return
                         }
                         val existing = extractJobs[index]
                         if (existing != null && existing.isActive) return
                         // Always pull through index so this page is on disk; grow target separately.
                         val job = hostScope.launch(Dispatchers.IO) {
                             try {
-                                if (isPageReady(index)) {
+                                if (probePageOnDisk(index)) {
                                     markPageExtracted(index)
                                     return@launch
                                 }
@@ -261,7 +266,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
                                 // waiters for intermediate pages as each lands — do not wait
                                 // for the whole batch before decoding the visible page.
                                 engine.ensureThrough(index)
-                                if (isPageReady(index)) {
+                                if (probePageOnDisk(index) || isPageMapped(index)) {
                                     markPageExtracted(index)
                                 } else {
                                     val waiters = readyWaiters.remove(index).orEmpty()
@@ -510,17 +515,20 @@ class SolidExtractEngine(
         if (aborted.get()) throw CancellationException("Solid extract aborted")
     }
 
-    fun persistIndex(complete: Boolean) {
+    fun persistIndex(complete: Boolean, async: Boolean = false) {
+        val index = SolidExtractCache.Index(
+            cacheKey = cacheKey,
+            remoteSize = remoteSize,
+            format = "solid",
+            complete = complete,
+            members = members.toList(),
+        )
         runCatching {
-            SolidExtractCache.saveIndex(
-                SolidExtractCache.Index(
-                    cacheKey = cacheKey,
-                    remoteSize = remoteSize,
-                    format = "solid",
-                    complete = complete,
-                    members = members.toList(),
-                ),
-            )
+            if (async) {
+                SolidExtractCache.saveIndexAsync(index)
+            } else {
+                SolidExtractCache.saveIndex(index)
+            }
         }.onFailure { logcat(it) }
     }
 
