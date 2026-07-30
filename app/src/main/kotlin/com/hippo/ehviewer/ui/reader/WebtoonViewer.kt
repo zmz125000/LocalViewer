@@ -51,6 +51,8 @@ fun WebtoonViewer(
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
+    // Snapshot size drives item count; do not capture a stale pages list length.
+    val pageCount = pageLoader.size
     val items = pageLoader.pages
     val zoomableState = rememberZoomableState(zoomSpec = WebtoonZoomSpec)
     val density = LocalDensity.current
@@ -129,7 +131,11 @@ fun WebtoonViewer(
         contentPadding = PaddingValues(horizontal = sidePadding),
         verticalArrangement = Arrangement.spacedBy(if (withGaps) 15.dp else 0.dp),
     ) {
-        items(items, key = { it.index }) { page ->
+        items(
+            count = pageCount,
+            key = { index -> items.getOrNull(index)?.index ?: index },
+        ) { index ->
+            val page = items.getOrNull(index) ?: return@items
             val viewport = lazyListState.layoutInfo.viewportSize.toSize()
             PagerItem(
                 page = page,

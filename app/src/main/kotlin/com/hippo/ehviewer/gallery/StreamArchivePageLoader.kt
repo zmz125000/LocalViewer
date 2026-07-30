@@ -27,6 +27,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -58,6 +60,8 @@ suspend inline fun <T> useStreamArchivePageLoader(
 ) = ArchiveAccess.withArchive {
     autoCloseScope {
         coroutineScope {
+            ArchiveStreamPageCache.pin(cacheKey)
+            install({ }, { _, _ -> ArchiveStreamPageCache.unpin(cacheKey) })
             val archiveSizeBytes = source.size
             val bridge = install(
                 { ArchiveStreamBridge(source) },
@@ -138,11 +142,15 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     }
 
                     override fun close() {
+                        // Drop in-flight extracts so ArchiveAccess can hand off (exit / prev-next).
                         extractJobs.values.forEach { it.cancel() }
                         extractJobs.clear()
                         readyWaiters.clear()
+                        // Unblock any JNI read waiting on the network source.
+                        runCatching { source.close() }
                         super.close()
                     }
+
 
                     private fun cancelDistantExtracts(center: Int) {
                         for ((idx, job) in extractJobs.entries.toList()) {
@@ -208,16 +216,20 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                         notifyPageFailed(index, "Extract incomplete")
                                     }
                                 }
-                            } catch (_: CancellationException) {
-                                val waiters = takeReadyWaiters(index)
-                                if (waiters.isNotEmpty()) {
-                                    // Seek cancelled this job while UI still needs the page —
-                                    // re-queue waiters and restart after map slot is released.
-                                    waiters.forEach { addReadyWaiter(index, it) }
-                                    scope.launch(Dispatchers.IO) {
-                                        ensureExtract(index, interactive = true)
+                            } catch (e: CancellationException) {
+                                // Re-queue only for in-session job races. On reader exit /
+                                // ArchiveAccess preempt, scope is cancelled — do not restart.
+                                val owns = extractJobs[index] == coroutineContext[Job]
+                                if (scope.isActive && owns) {
+                                    val waiters = takeReadyWaiters(index)
+                                    if (waiters.isNotEmpty()) {
+                                        waiters.forEach { addReadyWaiter(index, it) }
+                                        scope.launch(Dispatchers.IO) {
+                                            ensureExtract(index, interactive = true)
+                                        }
                                     }
                                 }
+                                throw e
                             } catch (e: Throwable) {
                                 logcat(e)
                                 val waiters = takeReadyWaiters(index)
@@ -240,11 +252,13 @@ suspend inline fun <T> useStreamArchivePageLoader(
 
                     /** Single-flight extract → page image cache. */
                     private suspend fun extractToCache(index: Int): Path? {
+                        ensureActive()
                         if (isPageCached(index)) {
                             return pagePaths[index]
                                 ?: getExtension(index)?.let { ArchiveStreamPageCache.pagePath(cacheKey, index, it) }
                         }
                         return extractMutex.withLock {
+                            ensureActive()
                             if (isPageCached(index)) {
                                 return@withLock pagePaths[index]
                                     ?: getExtension(index)?.let { ArchiveStreamPageCache.pagePath(cacheKey, index, it) }
@@ -285,7 +299,13 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     }
                 },
             )
-            block(loader)
+            try {
+                block(loader)
+            } finally {
+                extractJobs.values.forEach { it.cancel() }
+                extractJobs.clear()
+                runCatching { source.close() }
+            }
         }
     }
 }

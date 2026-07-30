@@ -17,8 +17,9 @@ val ARCHIVE_EXTENSIONS = setOf(
 )
 
 /**
- * Solid / poor-seek archives: skip first-page cover extract (expensive full decompress).
- * RAR/CBR often solid; 7z typically solid. Stream reading later skips these too.
+ * Solid / poor-seek archives: no ZIP-style range stream.
+ * Network open uses fake-stream sequential extract ([useSolidExtractPageLoader]);
+ * browse cover extract without open is still skipped (expensive).
  */
 val SOLID_ARCHIVE_EXTENSIONS = setOf("7z", "rar", "cbr")
 

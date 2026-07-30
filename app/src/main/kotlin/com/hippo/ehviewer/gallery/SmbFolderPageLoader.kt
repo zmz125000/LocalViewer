@@ -180,14 +180,15 @@ suspend inline fun <T> useSmbFolderPageLoader(
                                 }
                             }
                         } catch (_: kotlinx.coroutines.CancellationException) {
-                            val waiters = takeReadyWaiters(index)
-                            if (waiters.isNotEmpty()) {
-                                // Seek cancelled this job while the page UI still needs the file.
-                                // Re-queue waiters and restart after this job releases its map slot
-                                // (do not ensureDownload here — finally would remove the new job).
-                                waiters.forEach { addReadyWaiter(index, it) }
-                                scope.launch(Dispatchers.IO) {
-                                    ensureDownload(index, interactive = true)
+                            // Lost putIfAbsent must not steal waiters from the in-flight owner.
+                            val owns = downloadJobs[index] == coroutineContext[Job]
+                            if (owns) {
+                                val waiters = takeReadyWaiters(index)
+                                if (waiters.isNotEmpty()) {
+                                    waiters.forEach { addReadyWaiter(index, it) }
+                                    scope.launch(Dispatchers.IO) {
+                                        ensureDownload(index, interactive = true)
+                                    }
                                 }
                             }
                         } catch (e: Throwable) {

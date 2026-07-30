@@ -71,6 +71,7 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
+import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.stableGalleryId
@@ -356,7 +357,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         launchIO {
             try {
                 ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
-                if (isStreamableArchiveFileName(entry.fileName)) {
+                if (isStreamableArchiveFileName(entry.fileName) || isSolidArchiveFileName(entry.fileName)) {
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(src.id, "dava:$remote"),
                         token = LOCAL_GALLERY_TOKEN,

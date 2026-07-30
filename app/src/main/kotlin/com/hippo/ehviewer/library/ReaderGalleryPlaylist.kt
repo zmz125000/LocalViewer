@@ -131,9 +131,12 @@ object ReaderGalleryPlaylist {
                     Item.SmbFolder(sourceId, remote, names, info)
                 }
                 is BrowseEntryRemote.ArchiveGallery -> {
-                    // Only non-solid (streamable) archives participate in prev/next —
-                    // solid formats full-download to a local path and break playlist keys.
-                    if (!isStreamableArchiveFileName(e.fileName)) return@mapNotNull null
+                    // Stream ZIP/TAR + solid RAR/7z fake-stream share SmbStreamArchive keys.
+                    if (!isStreamableArchiveFileName(e.fileName) &&
+                        !isSolidArchiveFileName(e.fileName)
+                    ) {
+                        return@mapNotNull null
+                    }
                     val remote = joinRemoteArchivePath(
                         parentRelative,
                         e.parentRelativeName,
@@ -181,7 +184,11 @@ object ReaderGalleryPlaylist {
                     Item.WebDavFolder(sourceId, remote, names, info)
                 }
                 is BrowseEntryRemote.ArchiveGallery -> {
-                    if (!isStreamableArchiveFileName(e.fileName)) return@mapNotNull null
+                    if (!isStreamableArchiveFileName(e.fileName) &&
+                        !isSolidArchiveFileName(e.fileName)
+                    ) {
+                        return@mapNotNull null
+                    }
                     val remote = joinRemoteArchivePath(
                         parentRelative,
                         e.parentRelativeName,

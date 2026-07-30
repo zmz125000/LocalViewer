@@ -87,13 +87,16 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.Page
 import com.hippo.ehviewer.gallery.PageLoader
 import com.hippo.ehviewer.gallery.PageStatus
+import com.hippo.ehviewer.gallery.PasswdProvider
 import com.hippo.ehviewer.gallery.status
 import com.hippo.ehviewer.gallery.unblock
 import com.hippo.ehviewer.gallery.useArchivePageLoader
 import com.hippo.ehviewer.gallery.useFolderPageLoader
 import com.hippo.ehviewer.gallery.useSmbFolderPageLoader
+import com.hippo.ehviewer.gallery.useSolidExtractPageLoader
 import com.hippo.ehviewer.gallery.useStreamArchivePageLoader
 import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
+import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
@@ -279,6 +282,13 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                     is ReaderScreenArgs.WebDavStreamArchive -> args.info
                     is ReaderScreenArgs.Archive -> null
                 }
+                // Explicit dispose path: system back / pop also abort archive extract so
+                // ArchiveAccess is not held after the reader leaves.
+                DisposableEffect(loader) {
+                    onDispose {
+                        runCatching { loader.close() }
+                    }
+                }
                 key(loader) {
                     ReaderScreen(pageLoader = loader, info = info, args = args)
                 }
@@ -350,7 +360,8 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     // Immersive enter/exit is owned by the outer ReaderScreen destination so loading
     // placeholders and sibling replace do not drop fullscreen. Only sync chrome here.
     val lazyListState = rememberLazyListState(LazyLayoutCacheWindow(SCROLL_FRACTION, SCROLL_FRACTION), pageLoader.startPage)
-    val pagerState = rememberPagerState(pageLoader.startPage) { pageLoader.size }
+    // Snapshot-backed [PageLoader.size] so pager pageCount tracks solid lazy-list growth.
+    val pagerState = rememberPagerState(pageLoader.startPage) { pageLoader.size.coerceAtLeast(1) }
     val syncState = rememberSliderPagerDoubleSyncState(lazyListState, pagerState, pageLoader)
     var appbarVisible by remember { mutableStateOf(false) }
     val isWebtoon by rememberUpdatedState(ReadingModeType.isWebtoon(readingMode))
@@ -529,6 +540,9 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                             }
                         }
                     }
+                    // Stop this archive extract before replace so the next reader can
+                    // preempt ArchiveAccess without waiting on solid decompress.
+                    runCatching { pageLoader.close() }
                     // Replace current reader so back still returns to folder browser once
                     nav.navigate(ReaderScreenDestination(sibling)) {
                         launchSingleTop = true
@@ -802,25 +816,67 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             else -> 0
         }
         val remote = args.remotePath
-        val byteSource = com.hippo.ehviewer.smb.SmbArchiveByteSource(source, password, remote)
-        useStreamArchivePageLoader(
-            source = byteSource,
-            cacheKey = "smb:${source.id}:$remote",
-            titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName },
-            info = info,
-            startPage = page,
-            passwdProvider = { invalidator ->
-                awaitInputText(
-                    title = string(R.string.archive_need_passwd),
-                    hint = string(R.string.archive_passwd),
-                    onUserDismiss = { nav.popBackStack() },
-                ) { text ->
-                    ensure(text.isNotBlank()) { string(R.string.passwd_cannot_be_empty) }
-                    ensure(invalidator(text)) { string(R.string.passwd_wrong) }
-                }
-            },
-            block = block,
+        val solid = isSolidArchiveFileName(remote)
+        val byteSource = com.hippo.ehviewer.smb.SmbArchiveByteSource(
+            source,
+            password,
+            remote,
+            // Solid sequential extract: large windows + pipeline keep SMB saturated.
+            preferSequential = solid,
         )
+        val cacheKey = "smb:${source.id}:$remote"
+        val titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName }
+        val passwdProvider: PasswdProvider = { invalidator ->
+            awaitInputText(
+                title = string(R.string.archive_need_passwd),
+                hint = string(R.string.archive_passwd),
+                onUserDismiss = { nav.popBackStack() },
+            ) { text ->
+                ensure(text.isNotBlank()) { string(R.string.passwd_cannot_be_empty) }
+                ensure(invalidator(text)) { string(R.string.passwd_wrong) }
+            }
+        }
+        if (solid) {
+            // RAR/CBR/7z: sequential extract to solid_extract cache (fake stream).
+            // On open failure (e.g. awkward 7z), fall back to full download + local open.
+            try {
+                useSolidExtractPageLoader(
+                    source = byteSource,
+                    cacheKey = cacheKey,
+                    titleHint = titleHint,
+                    info = info,
+                    startPage = page,
+                    passwdProvider = passwdProvider,
+                    block = block,
+                )
+            } catch (e: Throwable) {
+                com.ehviewer.core.util.logcat("SolidExtract", e)
+                runCatching { byteSource.close() }
+                val local = com.hippo.ehviewer.library.RemoteArchiveOpen.ensureSmbArchive(
+                    source = source,
+                    password = password,
+                    remoteRelativeFile = remote,
+                    allowLarge = true,
+                )
+                useArchivePageLoader(
+                    local.path,
+                    info = info,
+                    startPage = page,
+                    passwdProvider = passwdProvider,
+                    block = block,
+                )
+            }
+        } else {
+            useStreamArchivePageLoader(
+                source = byteSource,
+                cacheKey = cacheKey,
+                titleHint = titleHint,
+                info = info,
+                startPage = page,
+                passwdProvider = passwdProvider,
+                block = block,
+            )
+        }
     }
     is ReaderScreenArgs.WebDavStreamArchive -> {
         val source = requireNotNull(WebDavRepository.load(args.sourceId)) { "WebDAV source not found" }
@@ -832,25 +888,64 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             else -> 0
         }
         val remote = args.remotePath
-        val byteSource = com.hippo.ehviewer.webdav.WebDavArchiveByteSource(source, password, remote)
-        useStreamArchivePageLoader(
-            source = byteSource,
-            cacheKey = "webdav:${source.id}:$remote",
-            titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName },
-            info = info,
-            startPage = page,
-            passwdProvider = { invalidator ->
-                awaitInputText(
-                    title = string(R.string.archive_need_passwd),
-                    hint = string(R.string.archive_passwd),
-                    onUserDismiss = { nav.popBackStack() },
-                ) { text ->
-                    ensure(text.isNotBlank()) { string(R.string.passwd_cannot_be_empty) }
-                    ensure(invalidator(text)) { string(R.string.passwd_wrong) }
-                }
-            },
-            block = block,
+        val solid = isSolidArchiveFileName(remote)
+        val byteSource = com.hippo.ehviewer.webdav.WebDavArchiveByteSource(
+            source,
+            password,
+            remote,
+            preferSequential = solid,
         )
+        val cacheKey = "webdav:${source.id}:$remote"
+        val titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName }
+        val passwdProvider: PasswdProvider = { invalidator ->
+            awaitInputText(
+                title = string(R.string.archive_need_passwd),
+                hint = string(R.string.archive_passwd),
+                onUserDismiss = { nav.popBackStack() },
+            ) { text ->
+                ensure(text.isNotBlank()) { string(R.string.passwd_cannot_be_empty) }
+                ensure(invalidator(text)) { string(R.string.passwd_wrong) }
+            }
+        }
+        if (solid) {
+            try {
+                useSolidExtractPageLoader(
+                    source = byteSource,
+                    cacheKey = cacheKey,
+                    titleHint = titleHint,
+                    info = info,
+                    startPage = page,
+                    passwdProvider = passwdProvider,
+                    block = block,
+                )
+            } catch (e: Throwable) {
+                com.ehviewer.core.util.logcat("SolidExtract", e)
+                runCatching { byteSource.close() }
+                val local = com.hippo.ehviewer.library.RemoteArchiveOpen.ensureWebDavArchive(
+                    source = source,
+                    password = password,
+                    remoteRelativeFile = remote,
+                    allowLarge = true,
+                )
+                useArchivePageLoader(
+                    local.path,
+                    info = info,
+                    startPage = page,
+                    passwdProvider = passwdProvider,
+                    block = block,
+                )
+            }
+        } else {
+            useStreamArchivePageLoader(
+                source = byteSource,
+                cacheKey = cacheKey,
+                titleHint = titleHint,
+                info = info,
+                startPage = page,
+                passwdProvider = passwdProvider,
+                block = block,
+            )
+        }
     }
 }
 

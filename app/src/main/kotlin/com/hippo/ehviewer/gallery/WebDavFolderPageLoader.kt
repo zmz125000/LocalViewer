@@ -144,10 +144,13 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                 }
                             }
                         } catch (e: kotlinx.coroutines.CancellationException) {
-                            val waiters = takeReadyWaiters(index)
-                            if (waiters.isNotEmpty()) {
-                                waiters.forEach { addReadyWaiter(index, it) }
-                                ensureDownload(index, interactive = true)
+                            val owns = downloadJobs[index] == coroutineContext[Job]
+                            if (owns) {
+                                val waiters = takeReadyWaiters(index)
+                                if (waiters.isNotEmpty()) {
+                                    waiters.forEach { addReadyWaiter(index, it) }
+                                    ensureDownload(index, interactive = true)
+                                }
                             }
                             throw e
                         } catch (e: Throwable) {

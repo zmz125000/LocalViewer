@@ -68,6 +68,8 @@ fun PagerViewer(
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
+    // Read Snapshot size so pager recomposes when solid extract grows the list.
+    val pageCount = pageLoader.size
     val items = pageLoader.pages
     val scaleType by Settings.imageScaleType.collectAsState()
     val landscapeZoom by Settings.landscapeZoom.collectAsState()
@@ -98,9 +100,10 @@ fun PagerViewer(
             state = pagerState,
             modifier = modifier,
             beyondViewportPageCount = 1,
+            userScrollEnabled = pageCount > 0,
             key = { it },
         ) { index ->
-            val page = items[index]
+            val page = items.getOrNull(index) ?: return@VerticalPager
             PageContainer(
                 page = page,
                 pageLoader = pageLoader,
@@ -125,9 +128,10 @@ fun PagerViewer(
             modifier = modifier,
             beyondViewportPageCount = 1,
             reverseLayout = isRtl xor isRtlLayout,
+            userScrollEnabled = pageCount > 0,
             key = { it },
         ) { index ->
-            val page = items[index]
+            val page = items.getOrNull(index) ?: return@HorizontalPager
             PageContainer(
                 page = page,
                 pageLoader = pageLoader,

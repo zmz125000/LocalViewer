@@ -70,6 +70,39 @@ object LocalLibrary {
 
     suspend fun loadRoot(id: Long): LibraryRootEntity? = db.libraryRootDao().load(id)
 
+    suspend fun listRoots(): List<LibraryRootEntity> = db.libraryRootDao().list()
+
+    /**
+     * Find the browse root that contains [archivePath] and the parent directory
+     * relative path (for History → archive: land under parent with fromHistory).
+     * Prefers the longest matching root prefix. Returns null when the file is not
+     * under any configured local browse root (e.g. downloaded solid cache).
+     */
+    suspend fun resolveArchiveBrowseParent(archivePath: String): ArchiveBrowseParent? {
+        val archive = resolveBrowsePath(archivePath.toPath()).toString().trimEnd('/')
+        if (archive.isEmpty()) return null
+        var best: ArchiveBrowseParent? = null
+        var bestRootLen = -1
+        for (root in listRoots()) {
+            val rp = rootPath(root) ?: continue
+            val rootStr = rp.toString().trimEnd('/')
+            if (rootStr.isEmpty()) continue
+            if (!archive.startsWith("$rootStr/")) continue
+            if (rootStr.length < bestRootLen) continue
+            val relFile = archive.removePrefix("$rootStr/").trimStart('/')
+            if (relFile.isEmpty()) continue
+            val parentRel = if (relFile.contains('/')) relFile.substringBeforeLast('/') else ""
+            bestRootLen = rootStr.length
+            best = ArchiveBrowseParent(
+                rootId = root.id,
+                rootDisplayName = root.displayName,
+                rootPath = rp,
+                parentRelativePath = parentRel,
+            )
+        }
+        return best
+    }
+
     /**
      * Add a SAF tree as [LIBRARY_ROOT_ROLE_LIBRARY] (scan + browse) or
      * [LIBRARY_ROOT_ROLE_FOLDER] (browse only).
@@ -247,6 +280,15 @@ object LocalLibrary {
     /** Prefer MediaStore for gallery open when permission allows; SAF content path is backup. */
     fun contentPath(gallery: LocalGalleryEntity): Path = resolveBrowsePath(gallery.contentPath.toPath())
 }
+
+/** Parent browse folder for a local archive under a configured root. */
+data class ArchiveBrowseParent(
+    val rootId: Long,
+    val rootDisplayName: String,
+    val rootPath: Path,
+    /** Relative path from root to the archive's parent dir; empty = root. */
+    val parentRelativePath: String,
+)
 
 fun Context.displayNameForTreeUri(treeUri: String): String {
     if (isMediaStoreRootUri(treeUri)) return displayNameForMediaStoreTree(treeUri)
