@@ -67,6 +67,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.buildLocalBrowseStack
+import com.hippo.ehviewer.library.parentRelativeOfFile
 import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
@@ -199,6 +200,20 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     )
                 }
                 is LocalHistoryTarget.LocalArchive -> {
+                    // Align with folder gallery: back from reader → parent browse path
+                    // (fromHistory FAB still jumps straight to History).
+                    val parent = withIOContext {
+                        LocalLibrary.resolveArchiveBrowseParent(target.path)
+                    }
+                    if (parent != null) {
+                        BrowseSession.localStack = buildLocalBrowseStack(
+                            rootId = parent.rootId,
+                            rootDisplayName = parent.rootDisplayName,
+                            rootPath = parent.rootPath,
+                            relativePath = parent.parentRelativePath,
+                        )
+                        navigate(FolderBrowserScreenDestination(fromHistory = true))
+                    }
                     navToReader(target.path)
                 }
                 is LocalHistoryTarget.SmbStreamArchive -> {
@@ -210,6 +225,16 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         return@launch
                     }
                     val remote = target.remotePath.trim('/')
+                    val parentRel = parentRelativeOfFile(remote)
+                    val segments = parentRel.split('/').filter { it.isNotEmpty() }
+                    BrowseSession.setSmbSegments(source.id, segments)
+                    navigate(
+                        SmbBrowserScreenDestination(
+                            sourceId = source.id,
+                            initialRelativePath = parentRel,
+                            fromHistory = true,
+                        ),
+                    )
                     val gi = BaseGalleryInfo(
                         gid = stableGalleryId(source.id, "smba:$remote"),
                         token = LOCAL_GALLERY_TOKEN,
@@ -229,6 +254,16 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         return@launch
                     }
                     val remote = target.remotePath.trim('/')
+                    val parentRel = parentRelativeOfFile(remote)
+                    val segments = parentRel.split('/').filter { it.isNotEmpty() }
+                    BrowseSession.setWebDavSegments(source.id, segments)
+                    navigate(
+                        WebDavBrowserScreenDestination(
+                            sourceId = source.id,
+                            initialRelativePath = parentRel,
+                            fromHistory = true,
+                        ),
+                    )
                     val gi = BaseGalleryInfo(
                         gid = stableGalleryId(source.id, "dava:$remote"),
                         token = LOCAL_GALLERY_TOKEN,

@@ -317,3 +317,10 @@ fun buildLocalBrowseStack(
     }
     return frames
 }
+
+/** Parent directory of a remote archive path (`a/b/c.zip` → `a/b`; `c.zip` → `""`). */
+fun parentRelativeOfFile(remotePath: String): String {
+    val rel = remotePath.trim('/').let { if (it == ".") "" else it }
+    if (rel.isEmpty() || !rel.contains('/')) return ""
+    return rel.substringBeforeLast('/')
+}
