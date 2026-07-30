@@ -81,12 +81,15 @@ suspend inline fun <T> useDocumentExtractPageLoader(
 
         check(sizeHint > 0L) { "Cannot open document (size unknown): $cacheKey" }
 
+        // Prefer durable page list: skip PDF page-tree / EPUB OPF on reopen.
+        val cachedIdx = DocumentExtractCache.loadUsableIndex(cacheKey, remoteSize = sizeHint)
         val engine: DocumentImageEngine = openDocumentEngine(
             source = source,
             sizeHint = sizeHint,
             formatHint = formatHint,
             titleHint = titleHint,
             cacheKey = cacheKey,
+            cachedIndex = cachedIdx,
         )
 
         check(engine.pageCount > 0) { "Document has no playable images" }
@@ -318,22 +321,37 @@ internal fun openDocumentEngine(
     formatHint: String,
     titleHint: String,
     cacheKey: String,
+    cachedIndex: DocumentExtractCache.Index? = null,
 ): DocumentImageEngine {
     val isEpub = formatHint == "epub" ||
         isEpubFileName(titleHint) ||
         isEpubFileName(cacheKey) ||
         cacheKey.endsWith(".epub", ignoreCase = true) ||
-        titleHint.endsWith(".epub", ignoreCase = true)
+        titleHint.endsWith(".epub", ignoreCase = true) ||
+        cachedIndex?.format == "epub"
     val isPdf = formatHint == "pdf" ||
         isPdfFileName(titleHint) ||
         isPdfFileName(cacheKey) ||
         cacheKey.endsWith(".pdf", ignoreCase = true) ||
-        titleHint.endsWith(".pdf", ignoreCase = true)
+        titleHint.endsWith(".pdf", ignoreCase = true) ||
+        cachedIndex?.format == "pdf"
     return when {
-        isEpub -> EpubEngine.open(source, remoteSize = sizeHint, coverOnly = false)
-            ?: error("Not a readable EPUB/ZIP")
-        isPdf -> PdfImageEngine.open(source, remoteSize = sizeHint, coverOnly = false)
-            ?: error("Not a readable PDF (encrypted or unsupported)")
+        isEpub -> {
+            if (cachedIndex != null) {
+                EpubEngine.openFromIndex(source, cachedIndex, remoteSize = sizeHint)
+                    ?: EpubEngine.open(source, remoteSize = sizeHint, coverOnly = false)
+            } else {
+                EpubEngine.open(source, remoteSize = sizeHint, coverOnly = false)
+            } ?: error("Not a readable EPUB/ZIP")
+        }
+        isPdf -> {
+            if (cachedIndex != null) {
+                PdfImageEngine.openFromIndex(source, cachedIndex, remoteSize = sizeHint)
+                    ?: PdfImageEngine.open(source, remoteSize = sizeHint, coverOnly = false)
+            } else {
+                PdfImageEngine.open(source, remoteSize = sizeHint, coverOnly = false)
+            } ?: error("Not a readable PDF (encrypted or unsupported)")
+        }
         else -> error("Unsupported document format: $formatHint")
     }
 }

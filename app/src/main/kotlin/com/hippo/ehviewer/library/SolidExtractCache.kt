@@ -234,9 +234,9 @@ object SolidExtractCache {
     }
 
     /**
-     * Evict whole archive extract dirs until under budget.
-     * Preference: incomplete first, then oldest mtime; skip [pinnedKeys].
-     * Budget = [Settings.readCacheSize] MiB — **independent** of smb/webdav page cache.
+     * Free page bytes until under budget. **Never deletes [index.json]** — only strips
+     * `pages/` (and any other non-index files). Incomplete first, then oldest mtime.
+     * Skip [pinnedKeys]. Budget = [Settings.readCacheSize] MiB (own pool).
      */
     suspend fun trimToMaxSize() = withContext(Dispatchers.IO) {
         trimLock.withLock {
@@ -249,7 +249,7 @@ object SolidExtractCache {
                 val hash: String,
                 val complete: Boolean,
                 val mtime: Long,
-                val size: Long,
+                val pageBytes: Long,
             )
 
             val pinnedHashes = pinnedKeys.mapTo(HashSet()) { sha256Hex(it) }
@@ -258,8 +258,8 @@ object SolidExtractCache {
                 ?.mapNotNull { dir ->
                     val hash = dir.name
                     if (hash in pinnedHashes) return@mapNotNull null
-                    val size = dirSize(dir)
-                    if (size <= 0L) return@mapNotNull null
+                    val pageBytes = pageBytesOf(dir)
+                    if (pageBytes <= 0L) return@mapNotNull null // index-only: keep forever
                     val idxFile = File(dir, "index.json")
                     val complete = if (idxFile.isFile && idxFile.length() > 0L) {
                         runCatching {
@@ -269,33 +269,89 @@ object SolidExtractCache {
                         false
                     }
                     val mtime = maxOf(dir.lastModified(), idxFile.lastModified())
-                    Entry(dir, hash, complete, mtime, size)
+                    Entry(dir, hash, complete, mtime, pageBytes)
                 }
                 // Incomplete first (false < true), then older first.
                 ?.sortedWith(compareBy<Entry> { it.complete }.thenBy { it.mtime }.thenBy { it.hash })
                 ?: return@withLock
 
-            var total = entries.sumOf { it.size } +
+            var total = entries.sumOf { it.pageBytes } +
                 pinnedKeys.sumOf { k ->
                     val d = File(dirFor(k).toString())
-                    if (d.isDirectory) dirSize(d) else 0L
+                    if (d.isDirectory) pageBytesOf(d) else 0L
                 }
             if (total <= budget) return@withLock
 
             for (e in entries) {
                 if (total <= budget) break
-                if (e.dir.deleteRecursively()) {
-                    total -= e.size
-                }
+                val freed = stripPagesKeepIndex(e.dir)
+                if (freed > 0L) total -= freed
             }
         }
     }
 
-    private fun dirSize(dir: File): Long {
-        if (!dir.isDirectory) return if (dir.isFile) dir.length() else 0L
+    /**
+     * Delete extracted page files; rewrite index with `complete = false` when present.
+     * @return bytes freed
+     */
+    private fun stripPagesKeepIndex(dir: File): Long {
+        var freed = 0L
+        val pagesDir = File(dir, "pages")
+        if (pagesDir.isDirectory) {
+            pagesDir.walkTopDown().forEach { f ->
+                if (f.isFile && !f.name.contains(".tmp.")) {
+                    freed += f.length()
+                    f.delete()
+                }
+            }
+            pagesDir.deleteRecursively()
+        }
+        // Leftover non-index files at root (legacy / stray).
+        dir.listFiles()?.forEach { f ->
+            if (f.isFile && f.name != "index.json" && !f.name.startsWith("index.json.") &&
+                !f.name.contains(".tmp.")
+            ) {
+                freed += f.length()
+                f.delete()
+            }
+        }
+        val idxFile = File(dir, "index.json")
+        if (idxFile.isFile && idxFile.length() > 0L) {
+            runCatching {
+                val idx = json.decodeFromString(Index.serializer(), idxFile.readText())
+                if (idx.complete) {
+                    val dest = idxFile
+                    val tmp = File("${dest.path}.tmp.${System.nanoTime()}")
+                    try {
+                        tmp.writeText(
+                            json.encodeToString(
+                                Index.serializer(),
+                                idx.copy(complete = false),
+                            ),
+                        )
+                        if (!tmp.renameTo(dest)) {
+                            tmp.copyTo(dest, overwrite = true)
+                            tmp.delete()
+                        }
+                    } finally {
+                        if (tmp.exists()) tmp.delete()
+                    }
+                }
+            }
+        }
+        return freed
+    }
+
+    /** Page payload only (excludes index.json). */
+    private fun pageBytesOf(dir: File): Long {
+        if (!dir.isDirectory) return 0L
         var sum = 0L
         dir.walkTopDown().forEach { f ->
-            if (f.isFile && !f.name.contains(".tmp.")) sum += f.length()
+            if (f.isFile && f.name != "index.json" && !f.name.startsWith("index.json.") &&
+                !f.name.contains(".tmp.")
+            ) {
+                sum += f.length()
+            }
         }
         return sum
     }
