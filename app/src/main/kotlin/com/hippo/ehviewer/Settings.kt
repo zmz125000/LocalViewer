@@ -88,11 +88,21 @@ object Settings : DataStorePreferences(null) {
     val thumbColumns = intPref("thumb_columns", 3)
 
     /**
-     * When false, SMB/WebDAV browse covers are not downloaded over the network
+     * When false, SMB/WebDAV **folder gallery** image covers are not downloaded
      * (already-cached thumbs still show). Useful for remote / metered access.
      * Default true (download covers as usual).
+     *
+     * Archive file covers (ZIP/RAR/7z first page) use [downloadNetworkArchiveThumbs].
      */
     val downloadRemoteThumbs = boolPref("download_remote_thumbs", true)
+
+    /**
+     * When false, SMB/WebDAV **archive** browse thumbs are not extracted over the network
+     * (cached JPEG / solid_extract page 0 still show). Separate from [downloadRemoteThumbs]
+     * so solid first-page extract can stay off without disabling folder image covers.
+     * Default true.
+     */
+    val downloadNetworkArchiveThumbs = boolPref("download_network_archive_thumbs", true)
 
     val showGalleryPages = boolPref("show_gallery_pages", true)
     val showReadingProgress = boolPref("show_reading_progress", false)

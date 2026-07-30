@@ -286,7 +286,7 @@ object ArchiveCoverCache {
 
     /**
      * Disk-only cover resolve (no network): existing JPEG thumb, or solid extract page 0.
-     * Used by browse rows when "download remote thumbs" is off or before opening solid.
+     * Used by browse rows when "download network archive covers" is off or before extract.
      */
     fun tryDiskCover(cacheKey: String): Path? {
         val dest = thumbPathFor(cacheKey, 0L, 0L)

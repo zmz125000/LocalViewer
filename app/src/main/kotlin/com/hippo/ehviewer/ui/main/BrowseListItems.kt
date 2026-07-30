@@ -326,6 +326,7 @@ fun BrowseCoverThumb(
     val resolvedDecodePx = decodeSizePx ?: CoverThumb.listDecodePx()
     val context = LocalContext.current
     val downloadRemoteThumbs by Settings.downloadRemoteThumbs.collectAsState()
+    val downloadNetworkArchiveThumbs by Settings.downloadNetworkArchiveThumbs.collectAsState()
     // Stable keys: BrowseCover is a new instance per list paint; identity by fields.
     val remoteKey = when (cover) {
         is BrowseCover.Smb -> "smb\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
@@ -391,7 +392,8 @@ fun BrowseCoverThumb(
 
     // Lazy: only runs when this row is composed (in LazyColumn viewport).
     // Always probe disk on IO first so cached thumbs show even when download is off.
-    LaunchedEffect(remoteKey, retryKey, resumeEpoch, downloadRemoteThumbs) {
+    // Folder image covers use [downloadRemoteThumbs]; archive first-page uses [downloadNetworkArchiveThumbs].
+    LaunchedEffect(remoteKey, retryKey, resumeEpoch, downloadRemoteThumbs, downloadNetworkArchiveThumbs) {
         when (cover) {
             is BrowseCover.LocalArchive -> {
                 val thumb = withIOContext { ArchiveCoverCache.ensureCover(cover.archivePath) }
@@ -412,7 +414,7 @@ fun BrowseCoverThumb(
                     fetchFailed = false
                     return@LaunchedEffect
                 }
-                if (!downloadRemoteThumbs) return@LaunchedEffect
+                if (!downloadNetworkArchiveThumbs) return@LaunchedEffect
                 val thumb = withIOContext {
                     if (solid) {
                         ArchiveCoverCache.ensureSolidStreamCover(key) {
@@ -451,7 +453,7 @@ fun BrowseCoverThumb(
                     fetchFailed = false
                     return@LaunchedEffect
                 }
-                if (!downloadRemoteThumbs) return@LaunchedEffect
+                if (!downloadNetworkArchiveThumbs) return@LaunchedEffect
                 val thumb = withIOContext {
                     if (solid) {
                         ArchiveCoverCache.ensureSolidStreamCover(key) {
