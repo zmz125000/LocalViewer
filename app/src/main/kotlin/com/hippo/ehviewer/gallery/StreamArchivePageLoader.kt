@@ -61,16 +61,36 @@ suspend inline fun <T> useStreamArchivePageLoader(
 ) = ArchiveAccess.withArchive {
     autoCloseScope {
         coroutineScope {
+            ArchiveStreamPageCache.pin(cacheKey)
+            install({ }, { _, _ -> ArchiveStreamPageCache.unpin(cacheKey) })
+
+            // Offline-first: fully cached ZIP/TAR must not wait on remote size/stat
+            // (SMB/WebDAV HEAD) or re-run EOCD/TAR header index.
+            val offlineReady = ArchiveStreamPageCache.isCompleteAndReady(cacheKey, remoteSize = 0L)
+            if (offlineReady != null) {
+                ArchiveStreamPageCache.touchAsync(cacheKey)
+                val loader = install(
+                    cachedStreamLoader(
+                        scope = this,
+                        cacheKey = cacheKey,
+                        streamIndex = offlineReady,
+                        titleHint = titleHint,
+                        info = info,
+                        startPage = startPage,
+                        hasAds = hasAds,
+                    ),
+                )
+                install({ source }, { s, _ -> s.close() })
+                return@coroutineScope block(loader)
+            }
+
             // Soft-fail remote size (WebDAV restart): IOException → open fails cleanly, no process crash.
             val archiveSizeBytes = runCatching { source.size }.getOrDefault(-1L)
             check(archiveSizeBytes > 0L) {
                 "Cannot open stream archive (size unknown): $cacheKey"
             }
             ArchiveStreamPageCache.invalidateIfRemoteSizeMismatch(cacheKey, archiveSizeBytes)
-            ArchiveStreamPageCache.pin(cacheKey)
-            install({ }, { _, _ -> ArchiveStreamPageCache.unpin(cacheKey) })
-
-            // Full offline: all pages on disk + index → skip libarchive / network open.
+            // Re-check after size match (index may have been purged on mismatch).
             val ready = ArchiveStreamPageCache.isCompleteAndReady(cacheKey, remoteSize = archiveSizeBytes)
             if (ready != null) {
                 ArchiveStreamPageCache.touchAsync(cacheKey)
@@ -189,9 +209,12 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         extractJobs.values.forEach { it.cancel() }
                         extractJobs.clear()
                         readyWaiters.clear()
-                        // Trust in-memory map only — no disk stats on main/onDispose.
-                        val complete = pageCount > 0 &&
-                            (0 until pageCount).all { pagePaths.containsKey(it) }
+                        // Prefer pagePaths (no disk). Fall back to readdir count so a session
+                        // that only touched the last missing pages still flips complete.
+                        val complete = pageCount > 0 && (
+                            (0 until pageCount).all { pagePaths.containsKey(it) } ||
+                                ArchiveStreamPageCache.countPageFiles(cacheKey) >= pageCount
+                            )
                         ArchiveStreamPageCache.saveIndexAsync(
                             ArchiveStreamPageCache.Index(
                                 cacheKey = cacheKey,
@@ -305,18 +328,43 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         }
                     }
 
+                    private fun markCompleteIfReady() {
+                        // Hot path: only session map (no readdir). Disk-complete repair is
+                        // handled on next open via [ArchiveStreamPageCache.isCompleteAndReady].
+                        if (pageCount <= 0 || pagePaths.size < pageCount) return
+                        ArchiveStreamPageCache.saveIndexAsync(
+                            ArchiveStreamPageCache.Index(
+                                cacheKey = cacheKey,
+                                remoteSize = archiveSizeBytes,
+                                format = "stream",
+                                complete = true,
+                                members = streamMembers,
+                            ),
+                        )
+                    }
+
                     /** Single-flight extract → page image cache. */
                     private suspend fun extractToCache(index: Int): Path? {
                         ensureActive()
                         if (isPageCached(index)) {
-                            return pagePaths[index]
+                            val hit = pagePaths[index]
                                 ?: getExtension(index)?.let { ArchiveStreamPageCache.pagePath(cacheKey, index, it) }
+                            if (hit != null) {
+                                pagePaths[index] = hit
+                                markCompleteIfReady()
+                            }
+                            return hit
                         }
                         return extractMutex.withLock {
                             ensureActive()
                             if (isPageCached(index)) {
-                                return@withLock pagePaths[index]
+                                val hit = pagePaths[index]
                                     ?: getExtension(index)?.let { ArchiveStreamPageCache.pagePath(cacheKey, index, it) }
+                                if (hit != null) {
+                                    pagePaths[index] = hit
+                                    markCompleteIfReady()
+                                }
+                                return@withLock hit
                             }
                             val ext = getExtension(index) ?: return@withLock null
                             val buffer = extractToByteBuffer(index) ?: return@withLock null
@@ -329,17 +377,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 pagePaths[index] = written
                                 // Promote to offline-capable as soon as every page is mapped
                                 // (don't wait for close — close often only saw a subset in pagePaths).
-                                if (pagePaths.size >= pageCount) {
-                                    ArchiveStreamPageCache.saveIndexAsync(
-                                        ArchiveStreamPageCache.Index(
-                                            cacheKey = cacheKey,
-                                            remoteSize = archiveSizeBytes,
-                                            format = "stream",
-                                            complete = true,
-                                            members = streamMembers,
-                                        ),
-                                    )
-                                }
+                                markCompleteIfReady()
                                 // While still on the archive IO path, warm next page so sequential
                                 // flip/prefetch hits readahead instead of a cold Range/SMB seek.
                                 warmNextPage(index + 1)

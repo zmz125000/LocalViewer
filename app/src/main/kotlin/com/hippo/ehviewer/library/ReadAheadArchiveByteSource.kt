@@ -18,6 +18,8 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * Blind large readahead on every miss re-downloads zip members during header walks;
  * ZIP open uses CD-only indexing; solid / page extract use the sequential path.
+ * Sparse probes (`want` ≤ [RANDOM_WINDOW], non-solid) stay at the small window so
+ * TAR 512‑byte header walks do not pull multi‑MiB member bodies.
  */
 class ReadAheadArchiveByteSource(
     private val inner: ArchiveByteSource,
@@ -79,7 +81,7 @@ class ReadAheadArchiveByteSource(
             }
             if (closed) return -1
 
-            val window = chooseWindow(offset)
+            val window = chooseWindow(offset, want)
             val fetch = minOf(window.toLong(), fileSize - offset).toInt().coerceAtLeast(want)
             fillWindowSync(offset, fetch, want, buf, off, fileSize)
         } catch (_: Throwable) {
@@ -165,10 +167,20 @@ class ReadAheadArchiveByteSource(
     }
 
     /**
-     * Pick fetch size. Start-of-file and forward continuation use the large window so
-     * solid sequential extract does not thrash on 64 KiB random windows between members.
+     * Pick fetch size.
+     *
+     * Solid ([preferSequential]) always uses the large window so decompress stays saturated.
+     *
+     * Sparse probes ([want] ≤ [randomWindow]) — TAR 512‑byte headers, ZIP local 30‑byte
+     * headers — must **not** expand to 8 MiB. Otherwise TAR header walk treats each
+     * multi‑MiB body gap as "forward sequential" and downloads nearly the whole archive
+     * just to list members.
      */
-    private fun chooseWindow(offset: Long): Int {
+    private fun chooseWindow(offset: Long, want: Int): Int {
+        // Index / header probes: cap at random window (never pull image bodies).
+        if (!preferSequential && want > 0 && want <= randomWindow) {
+            return randomWindow
+        }
         synchronized(lock) {
             if (win == null) {
                 // First open is almost always sequential from 0 (solid) or a deliberate seek.

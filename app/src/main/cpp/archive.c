@@ -243,24 +243,45 @@ static jint zip_stream_open_from_cd(jboolean sort_entries, bool cover_only) {
     if (archiveSize < 22) return 0;
     stream_bytes_read = 0;
 
-    // EOCD is in the last 22..65557 bytes (22 + max comment).
-    size_t tail_len = archiveSize < (size_t) (65535 + 22) ? archiveSize : (size_t) (65535 + 22);
-    uint8_t *tail = (uint8_t *) malloc(tail_len);
-    if (!tail) return 0;
-    if (stream_pread(tail, (la_int64_t) (archiveSize - tail_len), tail_len) != (int) tail_len) {
-        free(tail);
-        return 0;
-    }
-
-    // Find last EOCD signature PK\x05\x06
+    // Progressive EOCD tail: most zips have empty/short comments (EOCD in last 22–1 KiB).
+    // Avoid always pulling the full 64 KiB+22 max-comment window over SMB/WebDAV.
+    // Grow: 1 KiB → 16 KiB (libarchive-style) → full 65535+22.
+    static const size_t eocd_try_lens[] = { 1024u, 16u * 1024u, 65535u + 22u };
+    uint8_t *tail = NULL;
+    size_t tail_len = 0;
     ssize_t eocd = -1;
-    for (ssize_t i = (ssize_t) tail_len - 22; i >= 0; i--) {
-        if (tail[i] == 'P' && tail[i + 1] == 'K' && tail[i + 2] == 5 && tail[i + 3] == 6) {
-            eocd = i;
-            break;
+    for (size_t t = 0; t < sizeof(eocd_try_lens) / sizeof(eocd_try_lens[0]); t++) {
+        size_t want = eocd_try_lens[t];
+        if (want > archiveSize) want = archiveSize;
+        if (want < 22) {
+            free(tail);
+            return 0;
         }
+        if (want <= tail_len && eocd >= 0) break;
+        if (want <= tail_len) continue;
+        uint8_t *grown = (uint8_t *) realloc(tail, want);
+        if (!grown) {
+            free(tail);
+            return 0;
+        }
+        tail = grown;
+        // Full re-read of the larger end-window (prefix changes when expanding).
+        if (stream_pread(tail, (la_int64_t) (archiveSize - want), want) != (int) want) {
+            free(tail);
+            return 0;
+        }
+        tail_len = want;
+
+        eocd = -1;
+        for (ssize_t i = (ssize_t) tail_len - 22; i >= 0; i--) {
+            if (tail[i] == 'P' && tail[i + 1] == 'K' && tail[i + 2] == 5 && tail[i + 3] == 6) {
+                eocd = i;
+                break;
+            }
+        }
+        if (eocd >= 0) break;
     }
-    if (eocd < 0) {
+    if (eocd < 0 || !tail) {
         free(tail);
         return 0;
     }
