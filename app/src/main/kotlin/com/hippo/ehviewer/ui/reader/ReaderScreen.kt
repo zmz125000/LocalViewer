@@ -816,7 +816,14 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             else -> 0
         }
         val remote = args.remotePath
-        val byteSource = com.hippo.ehviewer.smb.SmbArchiveByteSource(source, password, remote)
+        val solid = isSolidArchiveFileName(remote)
+        val byteSource = com.hippo.ehviewer.smb.SmbArchiveByteSource(
+            source,
+            password,
+            remote,
+            // Solid sequential extract: large windows + pipeline keep SMB saturated.
+            preferSequential = solid,
+        )
         val cacheKey = "smb:${source.id}:$remote"
         val titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName }
         val passwdProvider: PasswdProvider = { invalidator ->
@@ -829,7 +836,7 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 ensure(invalidator(text)) { string(R.string.passwd_wrong) }
             }
         }
-        if (isSolidArchiveFileName(remote)) {
+        if (solid) {
             // RAR/CBR/7z: sequential extract to solid_extract cache (fake stream).
             // On open failure (e.g. awkward 7z), fall back to full download + local open.
             try {
@@ -881,7 +888,13 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             else -> 0
         }
         val remote = args.remotePath
-        val byteSource = com.hippo.ehviewer.webdav.WebDavArchiveByteSource(source, password, remote)
+        val solid = isSolidArchiveFileName(remote)
+        val byteSource = com.hippo.ehviewer.webdav.WebDavArchiveByteSource(
+            source,
+            password,
+            remote,
+            preferSequential = solid,
+        )
         val cacheKey = "webdav:${source.id}:$remote"
         val titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName }
         val passwdProvider: PasswdProvider = { invalidator ->
@@ -894,7 +907,7 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 ensure(invalidator(text)) { string(R.string.passwd_wrong) }
             }
         }
-        if (isSolidArchiveFileName(remote)) {
+        if (solid) {
             try {
                 useSolidExtractPageLoader(
                     source = byteSource,

@@ -16,9 +16,13 @@ class WebDavArchiveByteSource(
     source: WebDavSourceEntity,
     password: String,
     remoteRelativeFile: String,
+    /** Solid fake-stream: large sequential windows + pipeline (see SMB twin). */
+    preferSequential: Boolean = false,
 ) : ArchiveByteSource {
     private val inner = ReadAheadArchiveByteSource(
-        RawWebDavArchiveByteSource(source, password, remoteRelativeFile),
+        inner = RawWebDavArchiveByteSource(source, password, remoteRelativeFile),
+        preferSequential = preferSequential,
+        pipeline = true,
     )
 
     override val size: Long get() = inner.size

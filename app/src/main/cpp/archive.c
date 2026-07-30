@@ -146,7 +146,8 @@ static la_ssize_t stream_read_cb(struct archive *a, void *client_data, const voi
         return 0;
     }
     // Chunk size; Kotlin ReadAhead coalesces sequential ranges further.
-    const jint chunk = 512 * 1024;
+    // 1 MiB reduces JNI / bridge round-trips during solid sequential extract.
+    const jint chunk = 1024 * 1024;
     jbyteArray arr = (*env)->CallObjectMethod(env, g_stream_bridge, g_mid_read, chunk);
     if ((*env)->ExceptionCheck(env)) {
         (*env)->ExceptionDescribe(env);

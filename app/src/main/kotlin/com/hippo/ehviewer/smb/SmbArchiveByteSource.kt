@@ -33,9 +33,16 @@ class SmbArchiveByteSource(
     source: SmbSourceEntity,
     password: String,
     remoteRelativeFile: String,
+    /**
+     * Solid fake-stream: always large sequential windows + aggressive pipeline prefetch
+     * so SMB traffic stays saturated while libarchive decompresses.
+     */
+    preferSequential: Boolean = false,
 ) : ArchiveByteSource {
     private val inner = ReadAheadArchiveByteSource(
-        KeepOpenSmbFileSource(source, password, remoteRelativeFile),
+        inner = KeepOpenSmbFileSource(source, password, remoteRelativeFile),
+        preferSequential = preferSequential,
+        pipeline = true,
     )
 
     override val size: Long get() = inner.size
@@ -156,8 +163,11 @@ private class KeepOpenSmbFileSource(
     }
 
     private companion object {
-        /** Per-op size; negotiated buffer is often ≤1 MiB. Loop for larger windows. */
-        const val READ_CHUNK = 1024 * 1024
+        /**
+         * Per-op size for smbj. Use a large chunk so an 8 MiB readahead window is only a
+         * few READ requests (keeps multi-credit SMB3 busy instead of 64 KiB chatter).
+         */
+        const val READ_CHUNK = 2 * 1024 * 1024
 
         private fun readFully(
             file: File,
