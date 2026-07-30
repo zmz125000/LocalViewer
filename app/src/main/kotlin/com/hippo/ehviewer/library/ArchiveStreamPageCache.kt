@@ -2,7 +2,6 @@ package com.hippo.ehviewer.library
 
 import com.hippo.ehviewer.Settings
 import java.io.File
-import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -78,13 +77,13 @@ object ArchiveStreamPageCache {
         return dir / "$index.$safeExt"
     }
 
-    fun isCached(path: Path): Boolean {
+    fun isCached(path: Path, ext: String = ""): Boolean {
         val f = File(path.toString())
-        return f.isFile && f.length() > 0L
+        return CachePagePublish.isCompleteCachedFile(f, ext = ext)
     }
 
     fun isPageCached(cacheKey: String, index: Int, ext: String): Boolean =
-        isCached(pagePath(cacheKey, index, ext))
+        isCached(pagePath(cacheKey, index, ext), ext = ext)
 
     fun loadIndex(cacheKey: String): Index? {
         val f = File(indexPath(cacheKey).toString())
@@ -201,21 +200,16 @@ object ArchiveStreamPageCache {
 
     fun writePage(cacheKey: String, index: Int, ext: String, buffer: ByteBuffer): Path {
         val dest = pagePath(cacheKey, index, ext)
-        File(dest.parent!!.toString()).mkdirs()
         val tmp = File("${dest}.tmp.${System.nanoTime()}")
-        try {
-            val dup = buffer.duplicate()
-            dup.clear()
-            FileOutputStream(tmp).channel.use { ch ->
-                while (dup.hasRemaining()) ch.write(dup)
-            }
-            if (!tmp.renameTo(File(dest.toString()))) {
-                tmp.copyTo(File(dest.toString()), overwrite = true)
-                tmp.delete()
-            }
-        } finally {
-            if (tmp.exists()) tmp.delete()
-        }
+        CachePagePublish.writeBufferToTmp(tmp, buffer)
+        check(
+            CachePagePublish.publishTmp(
+                tmp = tmp,
+                dest = File(dest.toString()),
+                expectedSize = 0L,
+                ext = ext,
+            ),
+        ) { "Failed to publish stream cache page $index" }
         touch(cacheKey)
         scheduleTrim()
         return dest

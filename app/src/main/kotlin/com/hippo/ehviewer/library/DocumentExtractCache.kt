@@ -2,7 +2,6 @@ package com.hippo.ehviewer.library
 
 import com.hippo.ehviewer.Settings
 import java.io.File
-import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -75,11 +74,11 @@ object DocumentExtractCache {
     }
 
     fun isPageCached(cacheKey: String, index: Int, ext: String): Boolean =
-        isCachedFile(pagePath(cacheKey, index, ext))
+        isCachedFile(pagePath(cacheKey, index, ext), ext = ext)
 
-    fun isCachedFile(path: Path): Boolean {
+    fun isCachedFile(path: Path, ext: String = ""): Boolean {
         val f = File(path.toString())
-        return f.isFile && f.length() > 0L
+        return CachePagePublish.isCompleteCachedFile(f, ext = ext)
     }
 
     fun loadIndex(cacheKey: String): Index? {
@@ -193,17 +192,16 @@ object DocumentExtractCache {
 
     fun writePage(cacheKey: String, index: Int, ext: String, bytes: ByteArray): Path {
         val dest = pagePath(cacheKey, index, ext)
-        File(dest.parent!!.toString()).mkdirs()
         val tmp = File("${dest}.tmp.${System.nanoTime()}")
-        try {
-            tmp.writeBytes(bytes)
-            if (!tmp.renameTo(File(dest.toString()))) {
-                tmp.copyTo(File(dest.toString()), overwrite = true)
-                tmp.delete()
-            }
-        } finally {
-            if (tmp.exists()) tmp.delete()
-        }
+        CachePagePublish.writeBytesToTmp(tmp, bytes)
+        check(
+            CachePagePublish.publishTmp(
+                tmp = tmp,
+                dest = File(dest.toString()),
+                expectedSize = bytes.size.toLong(),
+                ext = ext,
+            ),
+        ) { "Failed to publish document cache page $index" }
         touch(cacheKey)
         scheduleTrim()
         return dest
@@ -211,21 +209,16 @@ object DocumentExtractCache {
 
     fun writePage(cacheKey: String, index: Int, ext: String, buffer: ByteBuffer): Path {
         val dest = pagePath(cacheKey, index, ext)
-        File(dest.parent!!.toString()).mkdirs()
         val tmp = File("${dest}.tmp.${System.nanoTime()}")
-        try {
-            val dup = buffer.duplicate()
-            dup.clear()
-            FileOutputStream(tmp).channel.use { ch ->
-                while (dup.hasRemaining()) ch.write(dup)
-            }
-            if (!tmp.renameTo(File(dest.toString()))) {
-                tmp.copyTo(File(dest.toString()), overwrite = true)
-                tmp.delete()
-            }
-        } finally {
-            if (tmp.exists()) tmp.delete()
-        }
+        CachePagePublish.writeBufferToTmp(tmp, buffer)
+        check(
+            CachePagePublish.publishTmp(
+                tmp = tmp,
+                dest = File(dest.toString()),
+                expectedSize = 0L,
+                ext = ext,
+            ),
+        ) { "Failed to publish document cache page $index" }
         touch(cacheKey)
         scheduleTrim()
         return dest
@@ -233,17 +226,16 @@ object DocumentExtractCache {
 
     fun writePageFromFile(cacheKey: String, index: Int, ext: String, srcFile: File): Path {
         val dest = pagePath(cacheKey, index, ext)
-        File(dest.parent!!.toString()).mkdirs()
         val tmp = File("${dest}.tmp.${System.nanoTime()}")
-        try {
-            srcFile.copyTo(tmp, overwrite = true)
-            if (!tmp.renameTo(File(dest.toString()))) {
-                tmp.copyTo(File(dest.toString()), overwrite = true)
-                tmp.delete()
-            }
-        } finally {
-            if (tmp.exists()) tmp.delete()
-        }
+        srcFile.copyTo(tmp, overwrite = true)
+        check(
+            CachePagePublish.publishTmp(
+                tmp = tmp,
+                dest = File(dest.toString()),
+                expectedSize = srcFile.length().takeIf { it > 0L } ?: 0L,
+                ext = ext,
+            ),
+        ) { "Failed to publish document cache page $index from file" }
         touch(cacheKey)
         scheduleTrim()
         return dest

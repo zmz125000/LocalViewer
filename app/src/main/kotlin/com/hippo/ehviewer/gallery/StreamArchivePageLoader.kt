@@ -321,6 +321,9 @@ suspend inline fun <T> useStreamArchivePageLoader(
                             val ext = getExtension(index) ?: return@withLock null
                             val buffer = extractToByteBuffer(index) ?: return@withLock null
                             try {
+                                // Reader exit may cancel while native extract was finishing —
+                                // do not publish a buffer we no longer own the session for.
+                                ensureActive()
                                 check(buffer.isDirect)
                                 val written = ArchiveStreamPageCache.writePage(cacheKey, index, ext, buffer)
                                 pagePaths[index] = written

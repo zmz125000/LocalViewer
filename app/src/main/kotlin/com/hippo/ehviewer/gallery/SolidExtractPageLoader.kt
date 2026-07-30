@@ -22,6 +22,7 @@ import com.hippo.ehviewer.library.ArchiveAccess
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.ArchiveStreamBridge
+import com.hippo.ehviewer.library.CachePagePublish
 import com.hippo.ehviewer.library.SolidExtractCache
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -431,6 +432,7 @@ class SolidExtractEngine(
     private val members = CopyOnWriteArrayList<SolidExtractCache.Member>()
     /** O(1) ext lookup — avoid linear scan + [SolidExtractCache.extensionFor] disk. */
     private val memberExt = ConcurrentHashMap<Int, String>()
+    private val memberUnc = ConcurrentHashMap<Int, Long>()
     /**
      * Pages known present under `pages/` (readdir once at seed + updated on extract).
      * Skip path trusts this — no File.stat per member.
@@ -472,12 +474,30 @@ class SolidExtractEngine(
         val idx = SolidExtractCache.loadIndex(cacheKey) ?: return
         members.clear()
         memberExt.clear()
+        memberUnc.clear()
         onDisk.clear()
         val sorted = idx.members.sortedBy { it.i }
         members.addAll(sorted)
-        for (m in sorted) memberExt[m.i] = m.ext
-        // One readdir — not N File.length — so skip-to-new-page is not O(n) stats.
-        onDisk.addAll(SolidExtractCache.cachedPageIndices(cacheKey))
+        for (m in sorted) {
+            memberExt[m.i] = m.ext
+            if (m.uncSize > 0L) memberUnc[m.i] = m.uncSize
+        }
+        // One readdir; when index has uncSize, drop truncated half-images from aborted exits
+        // (stat only those with known size — not a full magic pass over every page).
+        for (i in SolidExtractCache.cachedPageIndices(cacheKey)) {
+            val expect = memberUnc[i] ?: 0L
+            if (expect <= 0L) {
+                onDisk.add(i)
+                continue
+            }
+            val ext = memberExt[i] ?: continue
+            val f = File(SolidExtractCache.pagePath(cacheKey, i, ext).toString())
+            if (f.isFile && f.length() >= expect) {
+                onDisk.add(i)
+            } else if (f.exists()) {
+                f.delete()
+            }
+        }
         if (idx.complete && sorted.isNotEmpty() && sorted.all { it.i in onDisk }) {
             complete.set(true)
         }
@@ -538,7 +558,7 @@ class SolidExtractEngine(
                             rememberMember(n, name, ext, unc)
                             listedDirty = true
                         }
-                        extractCurrentToCache(n, ext)
+                        extractCurrentToCache(n, ext, expectedSize = unc)
                         onDisk.add(n)
                         extractedAny = true
                         runCatching { onPageReady?.invoke(n) }
@@ -560,6 +580,7 @@ class SolidExtractEngine(
         val m = SolidExtractCache.Member(i = i, name = name, ext = ext, uncSize = unc)
         members.add(m)
         memberExt[i] = ext
+        memberUnc[i] = unc
         onListed?.invoke(members.size)
     }
 
@@ -584,8 +605,15 @@ class SolidExtractEngine(
         }.onFailure { logcat(it) }
     }
 
-    private fun extractCurrentToCache(index: Int, ext: String) {
+    /**
+     * Extract current solid member to a temp file; publish only if complete.
+     * Reader exit closes the network mid-[solidExtractCurrentToFd] — native may still
+     * return success with a truncated body; we refuse to rename half images into cache.
+     */
+    private fun extractCurrentToCache(index: Int, ext: String, expectedSize: Long) {
+        throwIfAborted()
         val dest = SolidExtractCache.pagePath(cacheKey, index, ext)
+        val destFile = File(dest.toString())
         File(dest.parent!!.toString()).mkdirs()
         val tmp = File("${dest}.tmp.${System.nanoTime()}")
         try {
@@ -596,13 +624,41 @@ class SolidExtractEngine(
                     ParcelFileDescriptor.MODE_TRUNCATE,
             ).use { pfd ->
                 val ok = solidExtractCurrentToFd(pfd.fd)
+                // Abort / source.close() during extract: discard even if JNI returned true.
+                if (aborted.get()) {
+                    throw CancellationException("Solid extract aborted during page $index")
+                }
                 if (!ok) error("solidExtractCurrentToFd failed at $index")
             }
-            if (!tmp.renameTo(File(dest.toString()))) {
-                tmp.copyTo(File(dest.toString()), overwrite = true)
-                tmp.delete()
+            if (aborted.get()) {
+                throw CancellationException("Solid extract aborted during page $index")
             }
-            // Defer touch/trim — avoid disk meta storm while skipping a long cached prefix.
+            val expect = expectedSize.takeIf { it > 0L }
+                ?: memberUnc[index]?.takeIf { it > 0L }
+                ?: 0L
+            if (!CachePagePublish.publishTmp(
+                    tmp = tmp,
+                    dest = destFile,
+                    expectedSize = expect,
+                    ext = ext,
+                )
+            ) {
+                destFile.delete()
+                error("Incomplete solid page $index (truncated or bad header)")
+            }
+        } catch (e: Throwable) {
+            // Never leave a partial final path after cancel / failure.
+            if (destFile.exists() &&
+                !CachePagePublish.isCompleteCachedFile(
+                    destFile,
+                    expectedSize = expectedSize,
+                    ext = ext,
+                )
+            ) {
+                destFile.delete()
+            }
+            if (tmp.exists()) tmp.delete()
+            throw e
         } finally {
             if (tmp.exists()) tmp.delete()
         }
