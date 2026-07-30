@@ -105,6 +105,31 @@ class EpubEngine private constructor(
             return EpubEngine(zip, pages, sizeHint)
         }
 
+        /**
+         * Reuse durable member list (skip OPF/spine walk). Still needs ZIP central directory
+         * for local-header offsets when extracting uncached pages.
+         */
+        fun openFromIndex(
+            source: ArchiveByteSource,
+            index: DocumentExtractCache.Index,
+            remoteSize: Long = 0L,
+        ): EpubEngine? {
+            if (index.members.isEmpty()) return null
+            val zip = ZipCentralDirectory.open(source) ?: return null
+            val sizeHint = remoteSize.takeIf { it > 0L }
+                ?: index.remoteSize.takeIf { it > 0L }
+                ?: runCatching { source.size }.getOrDefault(0L)
+            val pages = index.members.sortedBy { it.i }.map { m ->
+                PageRef(
+                    zipName = m.name,
+                    ext = m.ext.ifBlank { "bin" },
+                    uncSize = m.uncSize,
+                )
+            }
+            logcat("Epub") { "openFromIndex ok pages=${pages.size}" }
+            return EpubEngine(zip, pages, sizeHint)
+        }
+
         private fun buildPageList(zip: ZipCentralDirectory, coverOnly: Boolean): List<PageRef> {
             val parsed = runCatching { parseOpf(zip) }.onFailure { logcat("Epub", it) }.getOrNull()
             val pages = if (parsed != null && parsed.pages.isNotEmpty()) {

@@ -89,6 +89,50 @@ class PdfImageEngine private constructor(
                 PdfImageEngine(parser, images, size)
             }.onFailure { logcat("PdfImage", it) }.getOrNull()
         }
+
+        /**
+         * Bootstrap xref only; rebuild page image refs from a durable [DocumentExtractCache.Index]
+         * (skips catalog / page-tree / XObject walk — big network win on reopen).
+         */
+        fun openFromIndex(
+            source: ArchiveByteSource,
+            index: DocumentExtractCache.Index,
+            remoteSize: Long = 0L,
+        ): PdfImageEngine? {
+            val size = remoteSize.takeIf { it > 0L }
+                ?: index.remoteSize.takeIf { it > 0L }
+                ?: runCatching { source.size }.getOrDefault(-1L)
+            if (size < 32L || index.members.isEmpty()) return null
+            return runCatching {
+                val parser = PdfParser(source, size)
+                if (!parser.bootstrap()) {
+                    logcat("PdfImage") { "openFromIndex bootstrap failed size=$size" }
+                    return null
+                }
+                if (parser.encrypted) {
+                    logcat("PdfImage") { "openFromIndex encrypted, skip" }
+                    return null
+                }
+                val images = index.members.sortedBy { it.i }.mapNotNull { m ->
+                    val parts = m.name.split('_')
+                    val objNum = parts.getOrNull(0)?.toIntOrNull() ?: return@mapNotNull null
+                    val gen = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                    ImageRef(
+                        objNum = objNum,
+                        gen = gen,
+                        ext = m.ext.ifBlank { "bin" },
+                        width = 0,
+                        height = 0,
+                        streamLen = m.uncSize,
+                    )
+                }
+                if (images.isEmpty()) return null
+                logcat("PdfImage") {
+                    "openFromIndex ok pages=${images.size} xref=${parser.xrefCount}"
+                }
+                PdfImageEngine(parser, images, size)
+            }.onFailure { logcat("PdfImage", it) }.getOrNull()
+        }
     }
 }
 

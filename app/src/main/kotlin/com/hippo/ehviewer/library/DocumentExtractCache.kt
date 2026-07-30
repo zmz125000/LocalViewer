@@ -116,12 +116,26 @@ object DocumentExtractCache {
         return index.members.all { m -> isPageCached(cacheKey, m.i, m.ext) }
     }
 
+    /**
+     * Offline open when every listed page file is present.
+     * Document indexes always list the full page set after first open, so
+     * [Index.complete] is not required (trim may clear the flag when stripping pages).
+     */
     fun isCompleteAndReady(cacheKey: String, remoteSize: Long = 0L): Index? {
         invalidateIfRemoteSizeMismatch(cacheKey, remoteSize)
         val idx = loadIndex(cacheKey) ?: return null
-        if (!idx.complete) return null
+        if (idx.members.isEmpty()) return null
         if (remoteSize > 0L && idx.remoteSize > 0L && idx.remoteSize != remoteSize) return null
         if (!allPagesPresent(cacheKey, idx)) return null
+        return idx
+    }
+
+    /** Index with full member list and matching size — enough to skip structure re-parse. */
+    fun loadUsableIndex(cacheKey: String, remoteSize: Long = 0L): Index? {
+        invalidateIfRemoteSizeMismatch(cacheKey, remoteSize)
+        val idx = loadIndex(cacheKey) ?: return null
+        if (idx.members.isEmpty()) return null
+        if (remoteSize > 0L && idx.remoteSize > 0L && idx.remoteSize != remoteSize) return null
         return idx
     }
 
@@ -237,6 +251,10 @@ object DocumentExtractCache {
         }
     }
 
+    /**
+     * Free page bytes until under budget. **Never deletes [index.json]** — only strips
+     * page files so PDF/EPUB can reopen with a cached page list without re-parse.
+     */
     suspend fun trimToMaxSize() = withContext(Dispatchers.IO) {
         trimLock.withLock {
             val budget = Settings.readCacheSize.value.coerceIn(320, 5120).toLong() * 1024L * 1024L
@@ -248,7 +266,7 @@ object DocumentExtractCache {
                 val hash: String,
                 val complete: Boolean,
                 val mtime: Long,
-                val size: Long,
+                val pageBytes: Long,
             )
 
             val pinnedHashes = pinnedKeys.mapTo(HashSet()) { sha256Hex(it) }
@@ -257,8 +275,8 @@ object DocumentExtractCache {
                 ?.mapNotNull { dir ->
                     val hash = dir.name
                     if (hash in pinnedHashes) return@mapNotNull null
-                    val size = dirSize(dir)
-                    if (size <= 0L) return@mapNotNull null
+                    val pageBytes = pageBytesOf(dir)
+                    if (pageBytes <= 0L) return@mapNotNull null // index-only: keep
                     val idxFile = File(dir, "index.json")
                     val complete = if (idxFile.isFile && idxFile.length() > 0L) {
                         runCatching {
@@ -268,30 +286,78 @@ object DocumentExtractCache {
                         false
                     }
                     val mtime = maxOf(dir.lastModified(), idxFile.lastModified())
-                    Entry(dir, hash, complete, mtime, size)
+                    Entry(dir, hash, complete, mtime, pageBytes)
                 }
                 ?.sortedWith(compareBy<Entry> { it.complete }.thenBy { it.mtime }.thenBy { it.hash })
                 ?: return@withLock
 
-            var total = entries.sumOf { it.size } +
+            var total = entries.sumOf { it.pageBytes } +
                 pinnedKeys.sumOf { k ->
                     val d = File(dirFor(k).toString())
-                    if (d.isDirectory) dirSize(d) else 0L
+                    if (d.isDirectory) pageBytesOf(d) else 0L
                 }
             if (total <= budget) return@withLock
 
             for (e in entries) {
                 if (total <= budget) break
-                if (e.dir.deleteRecursively()) total -= e.size
+                val freed = stripPagesKeepIndex(e.dir)
+                if (freed > 0L) total -= freed
             }
         }
     }
 
-    private fun dirSize(dir: File): Long {
-        if (!dir.isDirectory) return if (dir.isFile) dir.length() else 0L
+    private fun stripPagesKeepIndex(dir: File): Long {
+        var freed = 0L
+        val pagesDir = File(dir, "pages")
+        if (pagesDir.isDirectory) {
+            pagesDir.walkTopDown().forEach { f ->
+                if (f.isFile && !f.name.contains(".tmp.")) {
+                    freed += f.length()
+                    f.delete()
+                }
+            }
+            pagesDir.deleteRecursively()
+        }
+        dir.listFiles()?.forEach { f ->
+            if (f.isFile && f.name != "index.json" && !f.name.startsWith("index.json.") &&
+                !f.name.contains(".tmp.")
+            ) {
+                freed += f.length()
+                f.delete()
+            }
+        }
+        val idxFile = File(dir, "index.json")
+        if (idxFile.isFile && idxFile.length() > 0L) {
+            runCatching {
+                val idx = json.decodeFromString(Index.serializer(), idxFile.readText())
+                if (idx.complete) {
+                    val tmp = File("${idxFile.path}.tmp.${System.nanoTime()}")
+                    try {
+                        tmp.writeText(
+                            json.encodeToString(Index.serializer(), idx.copy(complete = false)),
+                        )
+                        if (!tmp.renameTo(idxFile)) {
+                            tmp.copyTo(idxFile, overwrite = true)
+                            tmp.delete()
+                        }
+                    } finally {
+                        if (tmp.exists()) tmp.delete()
+                    }
+                }
+            }
+        }
+        return freed
+    }
+
+    private fun pageBytesOf(dir: File): Long {
+        if (!dir.isDirectory) return 0L
         var sum = 0L
         dir.walkTopDown().forEach { f ->
-            if (f.isFile && !f.name.contains(".tmp.")) sum += f.length()
+            if (f.isFile && f.name != "index.json" && !f.name.startsWith("index.json.") &&
+                !f.name.contains(".tmp.")
+            ) {
+                sum += f.length()
+            }
         }
         return sum
     }
