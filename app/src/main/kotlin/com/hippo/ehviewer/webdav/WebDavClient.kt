@@ -380,7 +380,14 @@ object WebDavClient {
         }
     }
 
-    /** Content-Length via HEAD (or GET with Range 0-0). Null if unknown. */
+    /**
+     * Remote file size for stream archives.
+     *
+     * 1. HEAD Content-Length
+     * 2. Range GET `bytes=0-0` → Content-Range total (some servers restart and drop HEAD briefly)
+     *
+     * Null if unknown / unreachable. Never throws to callers (transport blips return null).
+     */
     suspend fun fileSizeOrNull(
         source: WebDavSourceEntity,
         password: String,
@@ -391,21 +398,57 @@ object WebDavClient {
                 withTransportRetry {
                     val url = absoluteUrl(source, relativeFilePath)
                     val auth = basicAuthHeader(source.username, password)
-                    val response = http().request(url) {
-                        method = HttpMethod.Head
+                    // HEAD first (cheap).
+                    runCatching {
+                        val response = http().request(url) {
+                            method = HttpMethod.Head
+                            timeout {
+                                connectTimeoutMillis = LIST_CONNECT_MS
+                                requestTimeoutMillis = LIST_REQUEST_MS
+                                socketTimeoutMillis = LIST_SOCKET_MS
+                            }
+                            auth?.let { header(HttpHeaders.Authorization, it) }
+                        }
+                        if (response.status.value in 200..299) {
+                            response.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+                                ?: response.headers["Content-Length"]?.toLongOrNull()
+                        } else {
+                            null
+                        }
+                    }.getOrNull()?.takeIf { it > 0L }?.let { return@withTransportRetry it }
+
+                    // Fallback: 1-byte Range — works when HEAD is unsupported/broken after restart.
+                    val response = http().prepareGet(url) {
                         timeout {
                             connectTimeoutMillis = LIST_CONNECT_MS
                             requestTimeoutMillis = LIST_REQUEST_MS
                             socketTimeoutMillis = LIST_SOCKET_MS
                         }
                         auth?.let { header(HttpHeaders.Authorization, it) }
+                        header(HttpHeaders.Range, "bytes=0-0")
+                    }.execute { resp ->
+                        val code = resp.status.value
+                        if (code != 206 && code !in 200..299) return@execute null
+                        parseContentRangeTotal(resp.headers[HttpHeaders.ContentRange])
+                            ?: parseContentRangeTotal(resp.headers["Content-Range"])
+                            ?: resp.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+                            ?: resp.headers["Content-Length"]?.toLongOrNull()
                     }
-                    if (response.status.value !in 200..299) return@withTransportRetry null
-                    response.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-                        ?: response.headers["Content-Length"]?.toLongOrNull()
+                    response?.takeIf { it > 0L }
                 }
             }
-        }.getOrNull()
+        }.onFailure { logcat("WebDavSize", it) }.getOrNull()
+    }
+
+    /** Parse Content-Range total length (RFC 7233 complete-length after the slash). */
+    private fun parseContentRangeTotal(header: String?): Long? {
+        if (header.isNullOrBlank()) return null
+        // RFC 7233: bytes <range-spec>/<complete-length> | bytes */<complete-length>
+        val slash = header.lastIndexOf('/')
+        if (slash < 0 || slash >= header.length - 1) return null
+        val total = header.substring(slash + 1).trim()
+        if (total == "*") return null
+        return total.toLongOrNull()?.takeIf { it > 0L }
     }
 
     /**

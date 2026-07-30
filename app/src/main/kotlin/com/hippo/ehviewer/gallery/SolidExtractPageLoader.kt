@@ -71,7 +71,9 @@ suspend inline fun <T> useSolidExtractPageLoader(
 ): T = ArchiveAccess.withArchive {
     autoCloseScope {
         coroutineScope {
-            val sizeHint = remoteSize.takeIf { it > 0L } ?: source.size
+            // Soft-fail remote size (WebDAV restart): do not crash; fall back to 0 and open checks.
+            val sizeHint = remoteSize.takeIf { it > 0L }
+                ?: runCatching { source.size }.getOrDefault(0L)
             // Hard invalidate before any resume/cold path; pin while reader owns this key.
             SolidExtractCache.invalidateIfRemoteSizeMismatch(cacheKey, sizeHint)
             SolidExtractCache.pin(cacheKey)
@@ -94,11 +96,12 @@ suspend inline fun <T> useSolidExtractPageLoader(
                 return@coroutineScope block(loader)
             }
 
+            check(sizeHint > 0L) { "Cannot open solid archive (size unknown): $cacheKey" }
             val bridge = install(
                 { ArchiveStreamBridge(source) },
                 { b, _ -> b.close() },
             )
-            val opened = openSolidSequential(bridge, source.size)
+            val opened = openSolidSequential(bridge, sizeHint)
             check(opened > 0) { "Solid sequential open failed" }
             install({ }, { _, _ -> closeArchive() })
 
