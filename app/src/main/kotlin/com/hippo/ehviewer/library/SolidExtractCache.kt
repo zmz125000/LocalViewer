@@ -91,15 +91,30 @@ object SolidExtractCache {
      * One readdir of `pages/` → set of page indices present (no per-file [File.length]).
      * Used to fast-forward solid skip without O(n) stats before new extracts.
      */
-    fun cachedPageIndices(cacheKey: String): Set<Int> {
+    fun cachedPageIndices(cacheKey: String): Set<Int> =
+        listCachedPages(cacheKey).keys
+
+    /**
+     * `pages/%06d.ext` → (index → ext). Skips tmp files. Used to resume half-cache even
+     * when `index.json` is missing or incomplete.
+     */
+    fun listCachedPages(cacheKey: String): Map<Int, String> {
         val pages = File((dirFor(cacheKey) / "pages").toString())
-        if (!pages.isDirectory) return emptySet()
-        val list = pages.list() ?: return emptySet()
-        val out = HashSet<Int>(list.size)
+        if (!pages.isDirectory) return emptyMap()
+        val list = pages.list() ?: return emptyMap()
+        val out = HashMap<Int, String>(list.size)
         for (name in list) {
-            if (name.contains(".tmp.")) continue
-            val base = name.substringBefore('.')
-            base.toIntOrNull()?.let { out.add(it) }
+            if (name.contains(".tmp.") || name.contains(".pub.")) continue
+            val dot = name.lastIndexOf('.')
+            if (dot <= 0) continue
+            val idx = name.substring(0, dot).toIntOrNull() ?: continue
+            val ext = name.substring(dot + 1).ifBlank { "bin" }
+            // Prefer non-empty length; first wins if duplicates.
+            if (idx in out) continue
+            val f = File(pages, name)
+            if (f.isFile && f.length() >= CachePagePublish.MIN_PAGE_BYTES) {
+                out[idx] = ext
+            }
         }
         return out
     }

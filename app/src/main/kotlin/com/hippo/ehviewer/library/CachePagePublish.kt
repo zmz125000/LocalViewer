@@ -103,7 +103,11 @@ object CachePagePublish {
         ext: String,
     ): Boolean {
         if (length < MIN_PAGE_BYTES) return false
-        if (expectedSize > 0L && length < expectedSize) return false
+        // Solid RAR/7z often reports wrong/zero sizes. Only treat as truncated when the
+        // file is clearly short of the declared size (< half) — exact match is not required.
+        if (expectedSize > 0L && length < expectedSize && length * 2L < expectedSize) {
+            return false
+        }
         // Magic check when we can open the file (skip if only length known).
         if (file != null && file.isFile && !looksLikeImage(file, ext)) return false
         return true
