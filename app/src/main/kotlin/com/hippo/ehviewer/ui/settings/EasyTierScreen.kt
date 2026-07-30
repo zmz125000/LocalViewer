@@ -34,6 +34,7 @@ import com.ehviewer.core.util.launch
 import com.hippo.ehviewer.easytier.EasyTierRuntime
 import com.hippo.ehviewer.easytier.EasyTierUiTab
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.hippo.ehviewer.ui.easytier.EasyTierConfigContent
 import com.hippo.ehviewer.ui.easytier.EasyTierStatusContent
 import com.hippo.ehviewer.ui.easytier.EasyTierTabRow
@@ -94,6 +95,7 @@ fun AnimatedVisibilityScope.EasyTierScreen(navigator: DestinationsNavigator) = S
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings_easytier)) },
+                colors = adaptiveTopAppBarColors(),
                 navigationIcon = { NavigationIcon() },
                 scrollBehavior = scrollBehavior,
             )
