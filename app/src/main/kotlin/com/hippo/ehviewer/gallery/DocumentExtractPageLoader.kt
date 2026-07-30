@@ -144,10 +144,10 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 override fun save(index: Int, file: Path): Boolean = runCatching {
                     val ext = engine.extOf(index) ?: return@runCatching false
                     val path = pagePaths[index]
-                        ?.takeIf { DocumentExtractCache.isCachedFile(it) }
                         ?: DocumentExtractCache.pagePath(cacheKey, index, ext)
                             .takeIf { DocumentExtractCache.isCachedFile(it) }
                         ?: error("Not cached")
+                    pagePaths[index] = path
                     File(path.toString()).copyTo(File(file.toString()), overwrite = true)
                     true
                 }.getOrDefault(false)
@@ -155,7 +155,6 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 override fun openSource(index: Int): ImageSource {
                     val ext = engine.extOf(index) ?: "bin"
                     val path = pagePaths[index]
-                        ?.takeIf { DocumentExtractCache.isCachedFile(it) }
                         ?: DocumentExtractCache.pagePath(cacheKey, index, ext)
                             .takeIf { DocumentExtractCache.isCachedFile(it) }
                     checkNotNull(path) { "Document page $index not extracted" }
@@ -185,22 +184,21 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     extractJobs.values.forEach { it.cancel() }
                     extractJobs.clear()
                     readyWaiters.clear()
-                    // Mark complete if every page is on disk.
-                    val idx = engine.toIndex(
-                        cacheKey,
-                        complete = (0 until pageCount).all { i ->
-                            val ext = engine.extOf(i) ?: return@all false
-                            DocumentExtractCache.isPageCached(cacheKey, i, ext)
-                        },
+                    // Trust in-memory extract map only — never stat/write on main (onDispose).
+                    val complete = pageCount > 0 &&
+                        (0 until pageCount).all { pagePaths.containsKey(it) }
+                    DocumentExtractCache.saveIndexAsync(
+                        engine.toIndex(cacheKey, complete = complete),
                     )
-                    DocumentExtractCache.saveIndex(idx)
                     super.close()
                 }
 
-                private fun isPageReady(index: Int): Boolean {
-                    pagePaths[index]?.let {
-                        if (DocumentExtractCache.isCachedFile(it)) return true
-                    }
+                /** In-memory only — safe on main / onDispose. */
+                private fun isPageMapped(index: Int): Boolean = pagePaths.containsKey(index)
+
+                /** Disk probe; call only from [Dispatchers.IO]. */
+                private fun probePageOnDisk(index: Int): Boolean {
+                    if (pagePaths.containsKey(index)) return true
                     val ext = engine.extOf(index) ?: return false
                     val p = DocumentExtractCache.pagePath(cacheKey, index, ext)
                     if (DocumentExtractCache.isCachedFile(p)) {
@@ -211,10 +209,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 }
 
                 private fun markReady(index: Int) {
-                    val ext = engine.extOf(index) ?: return
-                    val path = DocumentExtractCache.pagePath(cacheKey, index, ext)
-                    if (!DocumentExtractCache.isCachedFile(path)) return
-                    pagePaths[index] = path
+                    val path = pagePaths[index] ?: return
                     if (index == 0 && coverWritten.compareAndSet(false, true)) {
                         runCatching {
                             ArchiveCoverCache.writeCoverFromExtractedPage(cacheKey, path)
@@ -231,27 +226,29 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     if (index !in 0 until pageCount) return
                     if (onReady != null) {
                         readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
-                        if (isPageReady(index)) {
+                        if (isPageMapped(index)) {
                             markReady(index)
                             return
                         }
+                    } else if (isPageMapped(index)) {
+                        return
                     }
                     val existing = extractJobs[index]
                     if (existing != null && existing.isActive) return
                     val job = hostScope.launch(Dispatchers.IO) {
                         try {
                             ensureActive()
-                            if (isPageReady(index)) {
+                            if (probePageOnDisk(index)) {
                                 markReady(index)
                                 return@launch
                             }
                             extractMutex.withLock {
                                 ensureActive()
-                                if (!isPageReady(index)) {
-                                    engine.extractToCache(cacheKey, index)
+                                if (!probePageOnDisk(index)) {
+                                    engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
                                 }
                             }
-                            if (isPageReady(index)) {
+                            if (probePageOnDisk(index)) {
                                 markReady(index)
                             } else {
                                 val waiters = readyWaiters.remove(index).orEmpty()
