@@ -268,6 +268,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     pathPrefix = saved.pathPrefix,
                     username = saved.username,
                     password = password,
+                    easytierHost = saved.easytierHost,
                 )
             } else {
                 val existing = WebDavRepository.load(saved.id)
@@ -276,6 +277,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         id = saved.id,
                         displayName = saved.resolvedDisplayName(),
                         baseUrl = saved.baseUrl.trim(),
+                        easytierHost = saved.easytierHost.trim(),
                         pathPrefix = saved.pathPrefix,
                         username = saved.username,
                         addedAt = existing?.addedAt
@@ -296,6 +298,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 id = testState.id,
                 displayName = testState.resolvedDisplayName(),
                 baseUrl = testState.baseUrl.trim(),
+                easytierHost = testState.easytierHost.trim(),
                 pathPrefix = testState.pathPrefix,
                 username = testState.username,
                 addedAt = 0L,
@@ -325,6 +328,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     username = saved.username,
                     domain = saved.domain,
                     password = password,
+                    easytierHost = saved.easytierHost,
                 )
             } else {
                 val existing = SmbRepository.load(saved.id)
@@ -334,6 +338,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         displayName = saved.resolvedDisplayName(),
                         host = saved.host.trim(),
                         port = saved.port.toIntOrNull() ?: 445,
+                        easytierHost = saved.easytierHost.trim(),
                         share = share,
                         pathPrefix = pathPrefix,
                         username = saved.username,
@@ -358,6 +363,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 displayName = testState.resolvedDisplayName(),
                 host = testState.host.trim(),
                 port = testState.port.toIntOrNull() ?: 445,
+                easytierHost = testState.easytierHost.trim(),
                 share = share,
                 pathPrefix = pathPrefix,
                 username = testState.username,

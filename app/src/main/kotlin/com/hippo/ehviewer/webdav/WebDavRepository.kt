@@ -20,6 +20,7 @@ object WebDavRepository {
         pathPrefix: String,
         username: String,
         password: String,
+        easytierHost: String = "",
     ): Long = withIOContext {
         val normalized = WebDavClient.normalizeBaseUrl(baseUrl)
         val id = dao.insert(
@@ -28,6 +29,7 @@ object WebDavRepository {
                     runCatching { java.net.URI(normalized).host }.getOrNull().orEmpty().ifBlank { normalized }
                 },
                 baseUrl = normalized,
+                easytierHost = easytierHost.trim(),
                 pathPrefix = pathPrefix.trim().trim('/'),
                 username = username,
                 addedAt = Clock.System.now().toEpochMilliseconds(),
@@ -40,6 +42,7 @@ object WebDavRepository {
     suspend fun update(source: WebDavSourceEntity, password: String?) = withIOContext {
         val normalized = source.copy(
             baseUrl = WebDavClient.normalizeBaseUrl(source.baseUrl),
+            easytierHost = source.easytierHost.trim(),
             pathPrefix = source.pathPrefix.trim().trim('/'),
         )
         dao.update(normalized)

@@ -21,6 +21,10 @@ import kotlinx.coroutines.sync.withPermit
 object WebDavGateway {
     private val peekSlots = Semaphore(6)
 
+    /**
+     * Stable identity for browse config / content (regular base URL only).
+     * EasyTier alternate host is connect-path only and must not fork cache keys.
+     */
     fun sourceConfigKey(source: WebDavSourceEntity): String =
         "${source.id}|${source.baseUrl}|${source.pathPrefix}|${source.username}"
 

@@ -20,6 +20,13 @@ data class WebDavSourceEntity(
     @ColumnInfo(name = "BASE_URL")
     val baseUrl: String,
 
+    /**
+     * Optional EasyTier virtual IP/hostname swapped into [baseUrl] only while EasyTier
+     * is connected. Empty = always use [baseUrl] host. Cache keys stay on [baseUrl].
+     */
+    @ColumnInfo(name = "EASYTIER_HOST", defaultValue = "")
+    val easytierHost: String = "",
+
     /** Optional subpath under [baseUrl], no leading slash. */
     @ColumnInfo(name = "PATH_PREFIX")
     val pathPrefix: String = "",

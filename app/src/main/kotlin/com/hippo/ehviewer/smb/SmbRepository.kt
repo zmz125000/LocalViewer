@@ -22,12 +22,14 @@ object SmbRepository {
         username: String,
         domain: String,
         password: String,
+        easytierHost: String = "",
     ): Long = withIOContext {
         val id = dao.insert(
             SmbSourceEntity(
                 displayName = displayName.ifBlank { host },
                 host = host.trim(),
                 port = port,
+                easytierHost = easytierHost.trim(),
                 share = share.trim().trim('/'),
                 pathPrefix = pathPrefix.trim().trim('/'),
                 username = username,

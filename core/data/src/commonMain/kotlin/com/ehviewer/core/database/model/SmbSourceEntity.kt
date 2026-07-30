@@ -19,6 +19,13 @@ data class SmbSourceEntity(
     @ColumnInfo(name = "PORT")
     val port: Int = 445,
 
+    /**
+     * Optional EasyTier virtual IP/hostname used only while EasyTier is connected.
+     * Empty = always use [host]. Disk cache / config identity stay keyed by [host].
+     */
+    @ColumnInfo(name = "EASYTIER_HOST", defaultValue = "")
+    val easytierHost: String = "",
+
     @ColumnInfo(name = "SHARE")
     val share: String,
 

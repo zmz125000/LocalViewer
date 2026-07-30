@@ -5,6 +5,7 @@ import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.easytier.EasyTierPath
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.isImageFileName
@@ -277,8 +278,64 @@ object WebDavClient {
         return s
     }
 
+    /**
+     * Replace host (and optional `:port`) in [baseUrl], keeping scheme/path/query.
+     * [hostOrHostPort] is host, `host:port`, or bare IPv4/IPv6 for EasyTier.
+     */
+    fun withHost(baseUrl: String, hostOrHostPort: String): String {
+        val base = normalizeBaseUrl(baseUrl)
+        val trimmed = hostOrHostPort.trim()
+        if (trimmed.isEmpty()) return base
+        return try {
+            val builder = URLBuilder().takeFrom(base)
+            val (host, port) = parseHostPort(trimmed)
+            builder.host = host
+            if (port != null) {
+                builder.port = port
+            }
+            val out = builder.buildString()
+            if (out.endsWith('/')) out else "$out/"
+        } catch (_: Exception) {
+            base
+        }
+    }
+
+    private fun parseHostPort(raw: String): Pair<String, Int?> {
+        val s = raw.trim()
+        if (s.startsWith('[')) {
+            // [ipv6] or [ipv6]:port
+            val end = s.indexOf(']')
+            if (end > 0) {
+                val host = s.substring(1, end)
+                val rest = s.substring(end + 1)
+                val port = rest.removePrefix(":").toIntOrNull()
+                return host to port
+            }
+        }
+        // host:port — only when a single colon and the tail is numeric (not bare IPv6)
+        val colon = s.lastIndexOf(':')
+        if (colon > 0 && s.indexOf(':') == colon) {
+            val port = s.substring(colon + 1).toIntOrNull()
+            if (port != null) {
+                return s.substring(0, colon) to port
+            }
+        }
+        return s to null
+    }
+
+    /**
+     * Base URL used for HTTP connect. Swaps host when EasyTier is up and
+     * [WebDavSourceEntity.easytierHost] is set; [WebDavSourceEntity.baseUrl] stays
+     * the stable identity for config/cache keys.
+     */
+    fun connectBaseUrl(source: WebDavSourceEntity): String {
+        val alt = source.easytierHost.trim()
+        if (alt.isEmpty() || !EasyTierPath.isActive()) return source.baseUrl
+        return withHost(source.baseUrl, alt)
+    }
+
     fun rootUrl(source: WebDavSourceEntity): Url {
-        val base = normalizeBaseUrl(source.baseUrl)
+        val base = normalizeBaseUrl(connectBaseUrl(source))
         val prefix = source.pathPrefix.trim().trim('/')
         return if (prefix.isEmpty()) {
             Url(base)

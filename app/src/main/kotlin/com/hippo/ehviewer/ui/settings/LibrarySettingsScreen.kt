@@ -448,6 +448,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                             username = saved.username,
                             domain = saved.domain,
                             password = password,
+                            easytierHost = saved.easytierHost,
                         )
                     } else {
                         val existing = SmbRepository.load(saved.id)
@@ -457,6 +458,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                                 displayName = saved.resolvedDisplayName(),
                                 host = saved.host.trim(),
                                 port = saved.port.toIntOrNull() ?: 445,
+                                easytierHost = saved.easytierHost.trim(),
                                 share = share,
                                 pathPrefix = pathPrefix,
                                 username = saved.username,
@@ -486,6 +488,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                         displayName = testState.resolvedDisplayName(),
                         host = testState.host.trim(),
                         port = testState.port.toIntOrNull() ?: 445,
+                        easytierHost = testState.easytierHost.trim(),
                         share = share,
                         pathPrefix = pathPrefix,
                         username = testState.username,
@@ -519,6 +522,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                             pathPrefix = saved.pathPrefix,
                             username = saved.username,
                             password = password,
+                            easytierHost = saved.easytierHost,
                         )
                     } else {
                         val existing = WebDavRepository.load(saved.id)
@@ -527,6 +531,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                                 id = saved.id,
                                 displayName = saved.resolvedDisplayName(),
                                 baseUrl = saved.baseUrl.trim(),
+                                easytierHost = saved.easytierHost.trim(),
                                 pathPrefix = saved.pathPrefix,
                                 username = saved.username,
                                 addedAt = existing?.addedAt
@@ -546,6 +551,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                         id = testState.id,
                         displayName = testState.resolvedDisplayName(),
                         baseUrl = testState.baseUrl.trim(),
+                        easytierHost = testState.easytierHost.trim(),
                         pathPrefix = testState.pathPrefix,
                         username = testState.username,
                         addedAt = 0L,
