@@ -112,6 +112,11 @@ object SolidExtractCache {
         touch(index.cacheKey)
     }
 
+    /** Persist index off the main thread (e.g. PageLoader.close / Compose onDispose). */
+    fun saveIndexAsync(index: Index) {
+        trimScope.launch { saveIndex(index) }
+    }
+
     fun allPagesPresent(cacheKey: String, index: Index): Boolean {
         if (index.members.isEmpty()) return false
         return index.members.all { m -> isPageCached(cacheKey, m.i, m.ext) }
