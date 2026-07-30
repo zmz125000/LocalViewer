@@ -115,7 +115,10 @@ suspend inline fun <T> useSolidExtractPageLoader(
                     override val title by lazy { info?.title ?: titleHint }
 
                     init {
-                        engine.onListed = { count -> growTo(count) }
+                        // Capture loader for callbacks — must not rely on protected this access
+                        // from inlined synthetic classes in another package.
+                        val self = this
+                        engine.onListed = { count -> self.growTo(count) }
                     }
 
                     override fun getImageExtension(index: Int) = engine.extOf(index)
@@ -192,14 +195,16 @@ suspend inline fun <T> useSolidExtractPageLoader(
                         }
                         val existing = extractJobs[index]
                         if (existing != null && existing.isActive) return
+                        val self = this
                         val job = hostScope.launch(Dispatchers.IO) {
                             try {
                                 if (isPageReady(index)) {
+                                    self.growTo(engine.listedCount())
                                     dispatchReady(index)
                                     return@launch
                                 }
                                 engine.ensureThrough(index)
-                                growTo(engine.listedCount())
+                                self.growTo(engine.listedCount())
                                 if (isPageReady(index)) {
                                     maybeWriteCover(index)
                                     dispatchReady(index)
@@ -220,7 +225,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
                                     }
                                 }
                             } catch (e: Throwable) {
-                                logcat(e)
+                                logcat("SolidExtract", e)
                                 val waiters = readyWaiters.remove(index).orEmpty()
                                 if (waiters.isNotEmpty() || interactive) {
                                     notifyPageFailed(index, e.message)
@@ -242,16 +247,24 @@ suspend inline fun <T> useSolidExtractPageLoader(
                             val page = SolidExtractCache.pagePath(cacheKey, 0, ext)
                             if (!SolidExtractCache.isCachedFile(page)) return
                             ArchiveCoverCache.writeCoverFromExtractedPage(cacheKey, page)
-                        }.onFailure { logcat(it) }
+                        }.onFailure { logcat("SolidExtract", it) }
                     }
                 },
             )
 
-            val prefetch = Settings.preloadImage.value
+            // PageLoader.prefetch only requests indices < size. After page 0, size may be 1
+            // so nothing can pull page 1+ until we grow. Warm the first prefetch window here.
+            val prefetch = Settings.preloadImage.value.coerceAtLeast(1)
             hostScope.launch(Dispatchers.IO) {
-                runCatching {
-                    engine.ensureThrough((startPage + prefetch).coerceAtLeast(0))
-                }.onFailure { logcat(it) }
+                try {
+                    val target = (startPage + prefetch).coerceAtLeast(0)
+                    engine.ensureThrough(target)
+                    loader.growTo(engine.listedCount())
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    logcat("SolidExtract", e)
+                }
             }
 
             block(loader)

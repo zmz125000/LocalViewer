@@ -1,7 +1,10 @@
 package com.hippo.ehviewer.gallery
 
+import android.os.Handler
+import android.os.Looper
 import androidx.collection.SieveCache
 import androidx.collection.mutableIntObjectMapOf
+import androidx.compose.runtime.mutableIntStateOf
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.bracketCase
 import com.ehviewer.core.model.GalleryInfo
@@ -33,6 +36,9 @@ import okio.Path
 
 private val progressScope = CoroutineScope(Dispatchers.IO)
 
+/** Publish [PageLoader] size Snapshot updates onto the main looper. */
+private val pageLoaderMainHandler = Handler(Looper.getMainLooper())
+
 /**
  * Bound decoded-page cache to the **Java heap**, not device RAM.
  *
@@ -59,12 +65,14 @@ abstract class PageLoader(
     val hasAds: Boolean = false,
 ) : AutoCloseable {
     /**
-     * Page count. For solid fake-stream loaders this grows with the lazy member list
-     * (seek bar only lands on listed indices). Fixed for ZIP/folder loaders.
+     * Page count. Snapshot-backed so Compose pager/list recompose when solid extract
+     * grows the lazy list. [growTo] publishes on the main thread.
      */
-    @Volatile
-    var size: Int = initialSize.coerceAtLeast(0)
-        protected set
+    private val sizeState = mutableIntStateOf(initialSize.coerceAtLeast(0))
+
+    /** Observable page count (Compose Snapshot). Seek bar / pager must read this. */
+    val size: Int
+        get() = sizeState.intValue
 
     var startPage = if (size <= 0) 0 else startPage.coerceIn(0, size - 1)
 
@@ -124,16 +132,32 @@ abstract class PageLoader(
     val pages: List<Page> get() = pageList
 
     /**
-     * Expand lazy list to [newSize] (seek bar max). Only grows; never shrinks.
-     * Safe for solid extract: list can advance as members are discovered.
+     * Expand lazy list to [newSize] (seek bar + pager max). Only grows; never shrinks.
+     *
+     * Public: solid extract is inlined into the reader; coroutines must call this without
+     * protected cross-package access. Size is published on the main looper so Compose
+     * Snapshot invalidates HorizontalPager / LazyColumn (IO-thread writes alone do not).
      */
-    protected fun growTo(newSize: Int) {
-        if (newSize <= size) return
+    fun growTo(newSize: Int) {
+        if (newSize <= pageList.size && newSize <= sizeState.intValue) return
+        val published: Int
         synchronized(pageList) {
             while (pageList.size < newSize) {
                 pageList.add(Page(pageList.size))
             }
-            size = pageList.size
+            published = pageList.size
+        }
+        publishSize(published)
+    }
+
+    private fun publishSize(n: Int) {
+        if (n <= sizeState.intValue) return
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            if (n > sizeState.intValue) sizeState.intValue = n
+        } else {
+            pageLoaderMainHandler.post {
+                if (n > sizeState.intValue) sizeState.intValue = n
+            }
         }
     }
 

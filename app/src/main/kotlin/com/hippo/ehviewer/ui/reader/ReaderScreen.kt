@@ -353,16 +353,8 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     // Immersive enter/exit is owned by the outer ReaderScreen destination so loading
     // placeholders and sibling replace do not drop fullscreen. Only sync chrome here.
     val lazyListState = rememberLazyListState(LazyLayoutCacheWindow(SCROLL_FRACTION, SCROLL_FRACTION), pageLoader.startPage)
-    // Solid fake-stream: size grows with lazy member list; seek bar max = listed only.
-    var pageCount by remember(pageLoader) { mutableIntStateOf(pageLoader.size.coerceAtLeast(1)) }
-    LaunchedEffect(pageLoader) {
-        while (true) {
-            val n = pageLoader.size.coerceAtLeast(1)
-            if (n != pageCount) pageCount = n
-            kotlinx.coroutines.delay(100)
-        }
-    }
-    val pagerState = rememberPagerState(pageLoader.startPage) { pageCount }
+    // Snapshot-backed [PageLoader.size] so pager pageCount tracks solid lazy-list growth.
+    val pagerState = rememberPagerState(pageLoader.startPage) { pageLoader.size.coerceAtLeast(1) }
     val syncState = rememberSliderPagerDoubleSyncState(lazyListState, pagerState, pageLoader)
     var appbarVisible by remember { mutableStateOf(false) }
     val isWebtoon by rememberUpdatedState(ReadingModeType.isWebtoon(readingMode))
