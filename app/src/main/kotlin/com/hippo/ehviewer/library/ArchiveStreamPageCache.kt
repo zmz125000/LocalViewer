@@ -121,6 +121,13 @@ object ArchiveStreamPageCache {
     /**
      * Full offline open — **O(1) disk checks** (complete + first page + readdir count).
      * Per-page [File.length] on open made fully-cached reopen slower than cold network.
+     *
+     * If [index.json] still says `complete=false` but every page file is present (common
+     * when the last session exited before [saveIndexAsync] flipped the flag), repair
+     * `complete=true` and still take the offline path — avoids re-running TAR header
+     * walk / ZIP CD open over the network.
+     *
+     * Pass [remoteSize] = 0 to skip remote-size match (offline-first before network stat).
      */
     fun isCompleteAndReady(cacheKey: String, remoteSize: Long = 0L): Index? {
         val idx = loadIndex(cacheKey) ?: return null
@@ -128,12 +135,16 @@ object ArchiveStreamPageCache {
             purge(cacheKey)
             return null
         }
-        if (!idx.complete || idx.members.isEmpty()) return null
+        if (idx.members.isEmpty()) return null
         val first = idx.members.minBy { it.i }
         if (!isPageCached(cacheKey, first.i, first.ext)) return null
         val nFiles = countPageFiles(cacheKey)
         if (nFiles >= 0 && nFiles < idx.members.size) return null
-        return idx
+        if (!idx.complete) {
+            // Disk has a full page set; promote so next open skips the repair check path.
+            saveIndexAsync(idx.copy(complete = true))
+        }
+        return if (idx.complete) idx else idx.copy(complete = true)
     }
 
     /** Non-index page files in the archive dir. -1 if unlistable. */
