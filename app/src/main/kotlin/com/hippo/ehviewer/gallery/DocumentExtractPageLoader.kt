@@ -4,7 +4,6 @@ import arrow.autoCloseScope
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
-import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
@@ -64,7 +63,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
 
         val ready = DocumentExtractCache.isCompleteAndReady(cacheKey, remoteSize = sizeHint)
         if (ready != null) {
-            DocumentExtractCache.touch(cacheKey)
+            DocumentExtractCache.touchAsync(cacheKey)
             val loader = install(
                 cachedDocumentLoader(
                     scope = this,
@@ -106,7 +105,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         val prefetchN = Settings.preloadImage.value.coerceAtLeast(1)
         val pageCount = engine.pageCount
 
-        // Seed page 0 so open is useful immediately.
+        // Seed page 0 so open is useful immediately (hits cache if already extracted).
         extractMutex.withLock {
             engine.extractToCache(cacheKey, 0)?.let { pagePaths[0] = it }
         }
@@ -116,10 +115,11 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         pagePaths[0] = pagePaths[0]
             ?: DocumentExtractCache.pagePath(cacheKey, 0, engine.extOf(0) ?: "bin")
 
-        runCatching {
-            ArchiveCoverCache.writeCoverFromExtractedPage(cacheKey, pagePaths[0]!!)
-            localPathForLibrary?.let { pathStr ->
-                withIOContext {
+        // Cover + library update off the open critical path when page 0 was already cached.
+        hostScope.launch(Dispatchers.IO) {
+            runCatching {
+                ArchiveCoverCache.writeCoverFromExtractedPage(cacheKey, pagePaths[0]!!)
+                localPathForLibrary?.let { pathStr ->
                     val cover = ArchiveCoverCache.tryDiskCover(cacheKey) ?: ArchiveCoverCache.tryDiskCover(pathStr)
                     val coverStr = cover?.toString()
                     val gid = info?.gid
@@ -129,8 +129,8 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                         LocalLibrary.updateGalleryPageAndCoverByContentPath(pathStr, pageCount, coverStr)
                     }
                 }
-            }
-        }.onFailure { logcat("DocumentExtract", it) }
+            }.onFailure { logcat("DocumentExtract", it) }
+        }
 
         val loader = install(
             object : PageLoader(
@@ -253,6 +253,11 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                             }
                             if (probePageOnDisk(index)) {
                                 markReady(index)
+                                if (pagePaths.size >= pageCount) {
+                                    DocumentExtractCache.saveIndexAsync(
+                                        engine.toIndex(cacheKey, complete = true),
+                                    )
+                                }
                             } else {
                                 val waiters = readyWaiters.remove(index).orEmpty()
                                 if (waiters.isNotEmpty()) {
@@ -367,11 +372,7 @@ internal fun cachedDocumentLoader(
     hasAds: Boolean,
 ): PageLoader {
     val pageCount = docIndex.members.size
-    val pagePaths = ConcurrentHashMap<Int, Path>()
-    docIndex.members.forEach { m ->
-        val p = DocumentExtractCache.pagePath(cacheKey, m.i, m.ext)
-        if (DocumentExtractCache.isCachedFile(p)) pagePaths[m.i] = p
-    }
+    val exts = docIndex.members.associate { it.i to it.ext }
     return object : PageLoader(
         scope,
         info,
@@ -381,23 +382,19 @@ internal fun cachedDocumentLoader(
     ) {
         override val title by lazy { info?.title ?: titleHint }
 
-        override fun getImageExtension(index: Int) =
-            docIndex.members.firstOrNull { it.i == index }?.ext
-                ?: DocumentExtractCache.extensionFor(cacheKey, index)
+        override fun getImageExtension(index: Int) = exts[index]
 
         override fun save(index: Int, file: Path): Boolean = runCatching {
-            val ext = getImageExtension(index) ?: return@runCatching false
-            val path = pagePaths[index]
-                ?: DocumentExtractCache.pagePath(cacheKey, index, ext)
+            val ext = exts[index] ?: return@runCatching false
+            val path = DocumentExtractCache.pagePath(cacheKey, index, ext)
             File(path.toString()).copyTo(File(file.toString()), overwrite = true)
             true
         }.getOrDefault(false)
 
         override fun openSource(index: Int): ImageSource {
-            val ext = getImageExtension(index) ?: "bin"
-            val path = pagePaths[index]
-                ?: DocumentExtractCache.pagePath(cacheKey, index, ext)
-            check(DocumentExtractCache.isCachedFile(path)) { "Missing cached page $index" }
+            // Index already verified complete — construct path, no open-time File.stat.
+            val ext = exts[index] ?: "bin"
+            val path = DocumentExtractCache.pagePath(cacheKey, index, ext)
             return object : PathSource {
                 override val source: Path = path
                 override val type: String = ext

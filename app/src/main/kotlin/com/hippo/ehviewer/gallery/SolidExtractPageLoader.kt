@@ -81,7 +81,8 @@ suspend inline fun <T> useSolidExtractPageLoader(
 
             val ready = SolidExtractCache.isCompleteAndReady(cacheKey, remoteSize = sizeHint)
             if (ready != null) {
-                SolidExtractCache.touch(cacheKey)
+                // LRU bump off the open critical path (setLastModified is disk I/O).
+                SolidExtractCache.touchAsync(cacheKey)
                 val loader = install(
                     cachedSolidLoader(
                         scope = this,
@@ -114,7 +115,13 @@ suspend inline fun <T> useSolidExtractPageLoader(
                 remoteSize = sizeHint,
             )
             engine.seedFromDiskIndex()
-            engine.ensureThrough(0)
+            // Skip sequential walk when seed already has page 0 on disk (resume fast path).
+            val page0Ready = engine.extOf(0)?.let { ext ->
+                SolidExtractCache.isPageCached(cacheKey, 0, ext)
+            } == true
+            if (!page0Ready) {
+                engine.ensureThrough(0)
+            }
             check(engine.listedCount() > 0) { "Solid archive has no playable images" }
 
             val pagePaths = ConcurrentHashMap<Int, Path>()
@@ -384,9 +391,9 @@ fun cachedSolidLoader(
         }.getOrDefault(false)
 
         override fun openSource(index: Int): ImageSource {
+            // Paths are known from index — no File.stat (open-path O(n) was killing resume).
             val ext = exts[index] ?: "bin"
             val path = SolidExtractCache.pagePath(cacheKey, index, ext)
-            check(SolidExtractCache.isCachedFile(path)) { "Missing solid cache page $index" }
             return object : PathSource {
                 override val source: Path = path
                 override val type: String = ext

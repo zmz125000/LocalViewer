@@ -73,7 +73,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
             // Full offline: all pages on disk + index → skip libarchive / network open.
             val ready = ArchiveStreamPageCache.isCompleteAndReady(cacheKey, remoteSize = archiveSizeBytes)
             if (ready != null) {
-                ArchiveStreamPageCache.touch(cacheKey)
+                ArchiveStreamPageCache.touchAsync(cacheKey)
                 val loader = install(
                     cachedStreamLoader(
                         scope = this,
@@ -108,13 +108,14 @@ suspend inline fun <T> useStreamArchivePageLoader(
                 ArchiveCoverCache.writeCoverFromOpenArchive(cacheKey, 0L, archiveSizeBytes)
             }.onFailure { logcat(it) }
 
-            // Persist member list early (extensions for resume / offline when complete).
-            // Note: local fun is illegal inside inline; build members inline.
-            val streamMembers = (0 until pageCount).map { i ->
+            // Member list for offline reopen — build + write async so open is not blocked
+            // by N getExtension + index.json write (was making "resume" feel slower than cold).
+            val streamMembers = ArrayList<ArchiveStreamPageCache.Member>(pageCount)
+            for (i in 0 until pageCount) {
                 val ext = getExtension(i)?.ifBlank { null } ?: "bin"
-                ArchiveStreamPageCache.Member(i = i, name = "", ext = ext, uncSize = 0L)
+                streamMembers += ArchiveStreamPageCache.Member(i = i, name = "", ext = ext, uncSize = 0L)
             }
-            ArchiveStreamPageCache.saveIndex(
+            ArchiveStreamPageCache.saveIndexAsync(
                 ArchiveStreamPageCache.Index(
                     cacheKey = cacheKey,
                     remoteSize = archiveSizeBytes,
@@ -323,6 +324,19 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 check(buffer.isDirect)
                                 val written = ArchiveStreamPageCache.writePage(cacheKey, index, ext, buffer)
                                 pagePaths[index] = written
+                                // Promote to offline-capable as soon as every page is mapped
+                                // (don't wait for close — close often only saw a subset in pagePaths).
+                                if (pagePaths.size >= pageCount) {
+                                    ArchiveStreamPageCache.saveIndexAsync(
+                                        ArchiveStreamPageCache.Index(
+                                            cacheKey = cacheKey,
+                                            remoteSize = archiveSizeBytes,
+                                            format = "stream",
+                                            complete = true,
+                                            members = streamMembers,
+                                        ),
+                                    )
+                                }
                                 // While still on the archive IO path, warm next page so sequential
                                 // flip/prefetch hits readahead instead of a cold Range/SMB seek.
                                 warmNextPage(index + 1)
@@ -375,11 +389,7 @@ internal fun cachedStreamLoader(
     hasAds: Boolean,
 ): PageLoader {
     val pageCount = streamIndex.members.size
-    val pagePaths = ConcurrentHashMap<Int, Path>()
-    streamIndex.members.forEach { m ->
-        val p = ArchiveStreamPageCache.pagePath(cacheKey, m.i, m.ext)
-        if (ArchiveStreamPageCache.isCached(p)) pagePaths[m.i] = p
-    }
+    val exts = streamIndex.members.associate { it.i to it.ext }
     return object : PageLoader(
         scope,
         info,
@@ -389,23 +399,19 @@ internal fun cachedStreamLoader(
     ) {
         override val title by lazy { info?.title ?: titleHint }
 
-        override fun getImageExtension(index: Int) =
-            streamIndex.members.firstOrNull { it.i == index }?.ext
-                ?: ArchiveStreamPageCache.extensionFor(cacheKey, index)
+        override fun getImageExtension(index: Int) = exts[index]
 
         override fun save(index: Int, file: Path): Boolean = runCatching {
-            val ext = getImageExtension(index) ?: return@runCatching false
-            val path = pagePaths[index]
-                ?: ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
+            val ext = exts[index] ?: return@runCatching false
+            val path = ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
             java.io.File(path.toString()).copyTo(java.io.File(file.toString()), overwrite = true)
             true
         }.getOrDefault(false)
 
         override fun openSource(index: Int): ImageSource {
-            val ext = getImageExtension(index) ?: "bin"
-            val path = pagePaths[index]
-                ?: ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
-            check(ArchiveStreamPageCache.isCached(path)) { "Missing stream cache page $index" }
+            // Complete index already verified — no open-time File.stat of every page.
+            val ext = exts[index] ?: "bin"
+            val path = ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
             return object : PathSource {
                 override val source: Path = path
                 override val type: String = ext

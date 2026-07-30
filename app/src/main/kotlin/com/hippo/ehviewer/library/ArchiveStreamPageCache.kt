@@ -120,16 +120,36 @@ object ArchiveStreamPageCache {
     }
 
     /**
-     * Full offline open: every listed page on disk (stream member list is complete after
-     * first native open). [Index.complete] is not required after a page-strip trim.
+     * Full offline open — **O(1) disk checks** (complete + first page + readdir count).
+     * Per-page [File.length] on open made fully-cached reopen slower than cold network.
      */
     fun isCompleteAndReady(cacheKey: String, remoteSize: Long = 0L): Index? {
-        invalidateIfRemoteSizeMismatch(cacheKey, remoteSize)
         val idx = loadIndex(cacheKey) ?: return null
-        if (idx.members.isEmpty()) return null
-        if (remoteSize > 0L && idx.remoteSize > 0L && idx.remoteSize != remoteSize) return null
-        if (!allPagesPresent(cacheKey, idx)) return null
+        if (remoteSize > 0L && idx.remoteSize > 0L && idx.remoteSize != remoteSize) {
+            purge(cacheKey)
+            return null
+        }
+        if (!idx.complete || idx.members.isEmpty()) return null
+        val first = idx.members.minBy { it.i }
+        if (!isPageCached(cacheKey, first.i, first.ext)) return null
+        val nFiles = countPageFiles(cacheKey)
+        if (nFiles >= 0 && nFiles < idx.members.size) return null
         return idx
+    }
+
+    /** Non-index page files in the archive dir. -1 if unlistable. */
+    fun countPageFiles(cacheKey: String): Int {
+        val dir = File(dirFor(cacheKey).toString())
+        if (!dir.isDirectory) return -1
+        val list = dir.list() ?: return -1
+        var n = 0
+        for (name in list) {
+            if (name == "index.json" || name.startsWith("index.json.") || name.contains(".tmp.")) {
+                continue
+            }
+            n++
+        }
+        return n
     }
 
     fun invalidateIfRemoteSizeMismatch(cacheKey: String, remoteSize: Long): Boolean {
@@ -161,6 +181,10 @@ object ArchiveStreamPageCache {
         if (dir.isDirectory) dir.setLastModified(now)
         val idx = File(indexPath(cacheKey).toString())
         if (idx.isFile) idx.setLastModified(now)
+    }
+
+    fun touchAsync(cacheKey: String) {
+        trimScope.launch { touch(cacheKey) }
     }
 
     fun extensionFor(cacheKey: String, index: Int): String? {

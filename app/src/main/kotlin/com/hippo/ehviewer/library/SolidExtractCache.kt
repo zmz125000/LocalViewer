@@ -123,16 +123,44 @@ object SolidExtractCache {
     }
 
     /**
-     * Complete offline open: index marked complete, remoteSize matches (when known),
-     * and every listed page file is present.
+     * Complete offline open — **O(1) disk checks**, not per-page [File.length].
+     * Trusts [Index.complete] + first page + page-file count (one readdir).
+     * Per-page probing made fully-cached reopen slower than a cold network open.
      */
     fun isCompleteAndReady(cacheKey: String, remoteSize: Long = 0L): Index? {
-        invalidateIfRemoteSizeMismatch(cacheKey, remoteSize)
+        if (remoteSize > 0L) {
+            // Inline size check without full invalidate re-read when sizes match.
+            val idx = loadIndex(cacheKey) ?: return null
+            if (idx.remoteSize > 0L && idx.remoteSize != remoteSize) {
+                purge(cacheKey)
+                return null
+            }
+            return readyIfComplete(cacheKey, idx)
+        }
         val idx = loadIndex(cacheKey) ?: return null
-        if (!idx.complete) return null
-        if (remoteSize > 0L && idx.remoteSize > 0L && idx.remoteSize != remoteSize) return null
-        if (!allPagesPresent(cacheKey, idx)) return null
+        return readyIfComplete(cacheKey, idx)
+    }
+
+    private fun readyIfComplete(cacheKey: String, idx: Index): Index? {
+        if (!idx.complete || idx.members.isEmpty()) return null
+        val first = idx.members.minBy { it.i }
+        if (!isPageCached(cacheKey, first.i, first.ext)) return null
+        val nFiles = countPageFiles(cacheKey)
+        // readdir failed → still trust complete + first page (avoid O(n) fallback).
+        if (nFiles >= 0 && nFiles < idx.members.size) return null
         return idx
+    }
+
+    /** Page files under `pages/` (excludes index / tmp). -1 if dir missing / unlistable. */
+    fun countPageFiles(cacheKey: String): Int {
+        val pages = File((dirFor(cacheKey) / "pages").toString())
+        if (!pages.isDirectory) return -1
+        val list = pages.list() ?: return -1
+        var n = 0
+        for (name in list) {
+            if (!name.contains(".tmp.") && name != "index.json") n++
+        }
+        return n
     }
 
     /**
@@ -173,6 +201,11 @@ object SolidExtractCache {
         if (dir.isDirectory) dir.setLastModified(now)
         val idx = File(indexPath(cacheKey).toString())
         if (idx.isFile) idx.setLastModified(now)
+    }
+
+    /** LRU bump without blocking the reader open path. */
+    fun touchAsync(cacheKey: String) {
+        trimScope.launch { touch(cacheKey) }
     }
 
     fun writePage(cacheKey: String, index: Int, ext: String, buffer: ByteBuffer): Path {
