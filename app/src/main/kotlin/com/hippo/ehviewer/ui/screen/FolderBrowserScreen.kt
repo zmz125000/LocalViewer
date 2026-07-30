@@ -286,6 +286,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             TopAppBar(
                 title = { Text(title) },
                 windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
+                colors = adaptiveTopAppBarColors(),
                 navigationIcon = {
                     IconButton(onClick = { goUp() }, shapes = IconButtonDefaults.shapes()) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)

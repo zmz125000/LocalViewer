@@ -60,6 +60,7 @@ import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.NavigationIcon
+import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.hippo.ehviewer.ui.screen.SmbEditDialog
 import com.hippo.ehviewer.ui.screen.SmbEditorState
 import com.hippo.ehviewer.ui.screen.WebDavEditDialog
@@ -220,6 +221,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
         topBar = {
             TopAppBar(
                 title = { Text(text = stringResource(id = R.string.browse_manage_sources)) },
+                colors = adaptiveTopAppBarColors(),
                 navigationIcon = { NavigationIcon() },
                 actions = {
                     IconButton(

@@ -31,6 +31,7 @@ import com.hippo.ehviewer.ui.destinations.EhScreenDestination
 import com.hippo.ehviewer.ui.destinations.LibrarySettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.PrivacyScreenDestination
 import com.hippo.ehviewer.ui.main.NavigationIcon
+import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -49,6 +50,7 @@ fun AnimatedVisibilityScope.SettingsScreen(navigator: DestinationsNavigator) = S
                 title = { Text(text = stringResource(id = R.string.settings)) },
                 // Only status-bar top; start/end are handled by the rail / content edge.
                 windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
+                colors = adaptiveTopAppBarColors(),
                 navigationIcon = { NavigationIcon() },
                 scrollBehavior = scrollBehavior,
             )
