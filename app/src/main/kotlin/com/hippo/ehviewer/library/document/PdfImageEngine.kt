@@ -73,9 +73,19 @@ class PdfImageEngine private constructor(
             if (size < 32L) return null
             return runCatching {
                 val parser = PdfParser(source, size)
-                if (!parser.bootstrap()) return null
-                if (parser.encrypted) return null
+                if (!parser.bootstrap()) {
+                    logcat("PdfImage") { "bootstrap failed size=$size" }
+                    return null
+                }
+                if (parser.encrypted) {
+                    logcat("PdfImage") { "encrypted PDF, skip" }
+                    return null
+                }
                 val images = parser.collectPageImages(coverOnly)
+                logcat("PdfImage") {
+                    "open ok pages=${images.size} coverOnly=$coverOnly " +
+                        "xref=${parser.xrefCount} objStm=${parser.objStreamMemberCount}"
+                }
                 PdfImageEngine(parser, images, size)
             }.onFailure { logcat("PdfImage", it) }.getOrNull()
         }
@@ -98,6 +108,8 @@ internal class PdfParser(
     private var rootRef: PdfRef? = null
     var encrypted: Boolean = false
         private set
+    val xrefCount: Int get() = xref.size
+    val objStreamMemberCount: Int get() = objStreamOf.size
 
     fun bootstrap(): Boolean {
         // Header
@@ -112,11 +124,18 @@ internal class PdfParser(
     }
 
     fun collectPageImages(coverOnly: Boolean): List<PdfImageEngine.ImageRef> {
-        val root = rootRef?.let { resolve(it) as? PdfDict } ?: return emptyList()
-        val pagesNode = root["/Pages"]?.let { resolveValue(it) } as? PdfDict ?: return emptyList()
+        val root = rootRef?.let { resolve(it) as? PdfDict } ?: run {
+            logcat("PdfImage") { "collectPageImages: no root dict (rootRef=$rootRef)" }
+            return emptyList()
+        }
+        val pagesNode = root["/Pages"]?.let { resolveValue(it) } as? PdfDict ?: run {
+            logcat("PdfImage") { "collectPageImages: no /Pages under catalog" }
+            return emptyList()
+        }
         val pageDicts = ArrayList<PdfDict>()
         collectPages(pagesNode, pageDicts, depth = 0)
         val out = ArrayList<PdfImageEngine.ImageRef>()
+        var pagesWithoutImage = 0
         for (page in pageDicts) {
             val images = ArrayList<PdfImageEngine.ImageRef>()
             collectImagesFromResources(page["/Resources"]?.let { resolveValue(it) }, images, depth = 0)
@@ -128,7 +147,13 @@ internal class PdfParser(
             if (best != null) {
                 out += best
                 if (coverOnly) break
+            } else {
+                pagesWithoutImage++
             }
+        }
+        logcat("PdfImage") {
+            "collectPageImages: pageDicts=${pageDicts.size} withImage=${out.size} " +
+                "withoutImage=$pagesWithoutImage coverOnly=$coverOnly"
         }
         return out
     }
@@ -657,7 +682,10 @@ internal class PdfParser(
         } ?: return false
         val dict = stream.dict
         if (dict["/Encrypt"] != null) encrypted = true
-        rootRef = dict["/Root"] as? PdfRef
+        // Prefer the most recent trailer Root (load older /Prev after this).
+        if (rootRef == null) {
+            rootRef = dict["/Root"] as? PdfRef
+        }
         val size = dict.intValue("/Size") ?: return false
         val wArr = dict["/W"] as? PdfArray ?: return false
         val w = wArr.items.mapNotNull { (it as? PdfNumber)?.value?.toInt() }
@@ -675,10 +703,15 @@ internal class PdfParser(
                 else -> return false
             }
         }
+        // Corel / many PDF 1.5+ producers: xref stream uses PNG predictor (Predictor 10–15).
+        // Without this, every object offset is garbage → 0 page images (NoImages).
+        data = applyStreamPredictor(dict, data) ?: return false
         val entrySize = w1 + w2 + w3
         if (entrySize <= 0) return false
         var di = 0
         var ii = 0
+        var type1 = 0
+        var type2 = 0
         while (ii + 1 < indexArr.size) {
             val start = indexArr[ii]
             val count = indexArr[ii + 1]
@@ -699,22 +732,51 @@ internal class PdfParser(
                 val objNum = start + n
                 when (type.toInt()) {
                     0 -> Unit // free
-                    1 -> xref[objNum] = XRefEntry(offset = f2, gen = f3.toInt(), free = false)
+                    1 -> {
+                        xref[objNum] = XRefEntry(offset = f2, gen = f3.toInt(), free = false)
+                        type1++
+                    }
                     2 -> {
                         // object stream: f2 = stream obj, f3 = index — mark special
                         xref[objNum] = XRefEntry(offset = 0L, gen = f3.toInt(), free = false)
                         // Store stream obj in high bits via side map
                         objStreamOf[objNum] = f2.toInt()
+                        type2++
                     }
                 }
                 di += entrySize
             }
+        }
+        logcat("PdfImage") {
+            "xref stream @ $offset size=$size W=$w entries=${type1 + type2} " +
+                "type1=$type1 type2=$type2 root=$rootRef"
         }
         val prev = dict.intValue("/Prev")?.toLong()
         if (prev != null && prev > 0 && prev != offset) {
             loadXref(prev)
         }
         return rootRef != null
+    }
+
+    /**
+     * Undo PNG / TIFF predictors from stream DecodeParms after filter decode.
+     * Required for many xref streams (e.g. Corel PDF Engine: Predictor 12, Columns = sum(W)).
+     */
+    private fun applyStreamPredictor(dict: PdfDict, data: ByteArray): ByteArray? {
+        val params = dict["/DecodeParms"]?.let { resolveValue(it) } as? PdfDict
+            ?: (dict["/DecodeParms"] as? PdfArray)?.items?.lastOrNull()?.let { resolveValue(it) } as? PdfDict
+            ?: return data
+        val predictor = params.intValue("/Predictor") ?: 1
+        if (predictor <= 1) return data
+        val columns = params.intValue("/Columns") ?: return data
+        val colors = params.intValue("/Colors") ?: 1
+        val bits = params.intValue("/BitsPerComponent") ?: 8
+        return when {
+            predictor >= 10 -> undoPngPredictor(data, columns, colors, bits)
+            // TIFF predictor 2 (horizontal differencing) — uncommon on xref; skip for now
+            predictor == 2 -> data
+            else -> data
+        }
     }
 
     private val objStreamOf = HashMap<Int, Int>() // objNum → object stream number
