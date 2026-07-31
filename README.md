@@ -87,6 +87,7 @@ Build with Grok 4.5.
 * High performance reader with cache from EhViewer.
 * Reader allow full size image decode.
 * Reader auto rotate image.
+* E-Ink mode support (ported from [venera-next](https://github.com/cyrilpeng/venera-next)).
 * EasyTier support (ported from [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus)).
 
 ### To use WebDAV
