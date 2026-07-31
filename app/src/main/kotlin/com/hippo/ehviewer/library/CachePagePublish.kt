@@ -5,6 +5,8 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * Atomic page publish for extract caches.
@@ -14,6 +16,47 @@ import java.nio.channels.FileChannel
  * final file so the next open re-extracts instead of showing a truncated image.
  */
 object CachePagePublish {
+    /**
+     * Atomically replace [dest] with [tmp]'s contents. Never throws for missing tmp
+     * races (concurrent writers / purge). Prefer [Files.move] REPLACE_EXISTING;
+     * [File.copyTo] is avoided — it throws "The source file doesn't exist" when a
+     * concurrent rename wins the race after a failed [File.renameTo].
+     *
+     * @return true if [dest] exists after the attempt
+     */
+    fun atomicReplaceFile(tmp: File, dest: File): Boolean {
+        if (!tmp.isFile) return dest.isFile
+        dest.parentFile?.mkdirs()
+        // 1) Atomic move+replace (same filesystem — normal app cache case).
+        val atomic = runCatching {
+            Files.move(
+                tmp.toPath(),
+                dest.toPath(),
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE,
+            )
+            true
+        }.getOrDefault(false)
+        if (atomic) return dest.isFile
+        // 2) Non-atomic replace (cross-device / ATOMIC_MOVE unsupported).
+        val replaced = runCatching {
+            Files.move(
+                tmp.toPath(),
+                dest.toPath(),
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+            true
+        }.getOrDefault(false)
+        if (replaced) return dest.isFile
+        // 3) Byte copy fallback — only if tmp still present (no File.copyTo throw).
+        if (tmp.isFile) {
+            runCatching {
+                dest.writeBytes(tmp.readBytes())
+            }
+        }
+        return dest.isFile
+    }
+
     /** Reject empty / tiny garbage left by aborted extracts. */
     const val MIN_PAGE_BYTES = 32L
 

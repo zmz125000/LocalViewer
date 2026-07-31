@@ -206,7 +206,9 @@ suspend inline fun <T> useStreamArchivePageLoader(
 
                     override fun close() {
                         // Drop in-flight extracts so ArchiveAccess can hand off (exit / prev-next).
-                        extractJobs.values.forEach { it.cancel() }
+                        // Snapshot: cancel handlers remove from extractJobs concurrently
+                        // (live CHM.values iter on main → NoSuchElementException).
+                        extractJobs.values.toList().forEach { it.cancel() }
                         extractJobs.clear()
                         readyWaiters.clear()
                         // Prefer pagePaths (no disk). Fall back to readdir count so a session
@@ -411,7 +413,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
             try {
                 block(loader)
             } finally {
-                extractJobs.values.forEach { it.cancel() }
+                extractJobs.values.toList().forEach { it.cancel() }
                 extractJobs.clear()
                 runCatching { source.close() }
             }

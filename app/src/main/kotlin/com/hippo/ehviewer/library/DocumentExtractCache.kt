@@ -97,20 +97,24 @@ object DocumentExtractCache {
         }.getOrNull()
     }
 
+    private val indexWriteLocks = ConcurrentHashMap<String, Any>()
+
     fun saveIndex(index: Index) {
-        val dest = File(indexPath(index.cacheKey).toString())
-        dest.parentFile?.mkdirs()
-        val tmp = File("${dest.path}.tmp.${System.nanoTime()}")
-        try {
-            tmp.writeText(json.encodeToString(Index.serializer(), index))
-            if (!tmp.renameTo(dest)) {
-                tmp.copyTo(dest, overwrite = true)
+        val lock = indexWriteLocks.computeIfAbsent(index.cacheKey) { Any() }
+        synchronized(lock) {
+            val dest = File(indexPath(index.cacheKey).toString())
+            dest.parentFile?.mkdirs()
+            val tmp = File("${dest.path}.tmp.${System.nanoTime()}")
+            try {
+                tmp.writeText(json.encodeToString(Index.serializer(), index))
+                CachePagePublish.atomicReplaceFile(tmp, dest)
+            } catch (_: Throwable) {
+                // Index persist must never crash the reader.
+            } finally {
                 tmp.delete()
             }
-        } finally {
-            if (tmp.exists()) tmp.delete()
+            touch(index.cacheKey)
         }
-        touch(index.cacheKey)
     }
 
     /** Persist index off the main thread (e.g. PageLoader.close / Compose onDispose). */
@@ -364,12 +368,11 @@ object DocumentExtractCache {
                         tmp.writeText(
                             json.encodeToString(Index.serializer(), idx.copy(complete = false)),
                         )
-                        if (!tmp.renameTo(idxFile)) {
-                            tmp.copyTo(idxFile, overwrite = true)
-                            tmp.delete()
-                        }
+                        CachePagePublish.atomicReplaceFile(tmp, idxFile)
+                    } catch (_: Throwable) {
+                        // Best-effort rewrite during trim.
                     } finally {
-                        if (tmp.exists()) tmp.delete()
+                        tmp.delete()
                     }
                 }
             }

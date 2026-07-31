@@ -184,7 +184,9 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 }
 
                 override fun close() {
-                    extractJobs.values.forEach { it.cancel() }
+                    // Snapshot: cancel handlers remove from extractJobs concurrently
+                    // (live CHM.values iter on main → NoSuchElementException).
+                    extractJobs.values.toList().forEach { it.cancel() }
                     extractJobs.clear()
                     readyWaiters.clear()
                     // Trust in-memory extract map only — never stat/write on main (onDispose).
