@@ -28,11 +28,18 @@ class PdfImageEngine private constructor(
         val width: Int,
         val height: Int,
         val streamLen: Long,
-    )
+        /** File offset of stream payload after `stream` keyword; -1 if unknown. */
+        val streamOffset: Long = -1L,
+    ) {
+        val hasSeek: Boolean get() = streamOffset >= 0L && streamLen > 0L
+    }
 
     override val pageCount: Int get() = pages.size
 
     override fun extOf(index: Int): String? = pages.getOrNull(index)?.ext
+
+    /** File offset of page image stream for high-water ordering; -1 if unknown. */
+    fun streamOffsetOf(index: Int): Long = pages.getOrNull(index)?.streamOffset ?: -1L
 
     override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index =
         DocumentExtractCache.Index(
@@ -47,6 +54,7 @@ class PdfImageEngine private constructor(
                     name = "${p.objNum}_${p.gen}",
                     ext = p.ext,
                     uncSize = p.streamLen,
+                    offset = p.streamOffset,
                 )
             },
         )
@@ -56,7 +64,12 @@ class PdfImageEngine private constructor(
         if (DocumentExtractCache.isPageCached(cacheKey, index, ref.ext)) {
             return DocumentExtractCache.pagePath(cacheKey, index, ref.ext)
         }
-        val bytes = parser.extractImageBytes(ref.objNum, ref.gen) ?: return null
+        val bytes = if (ref.hasSeek) {
+            parser.extractImageBytesAt(ref.streamOffset, ref.streamLen, ref.objNum, ref.gen)
+                ?: parser.extractImageBytes(ref.objNum, ref.gen)
+        } else {
+            parser.extractImageBytes(ref.objNum, ref.gen)
+        } ?: return null
         return DocumentExtractCache.writePage(cacheKey, index, ref.ext, bytes)
     }
 
@@ -125,6 +138,7 @@ class PdfImageEngine private constructor(
                         width = 0,
                         height = 0,
                         streamLen = m.uncSize,
+                        streamOffset = m.offset,
                     )
                 }
                 if (images.isEmpty()) return null
@@ -208,6 +222,40 @@ internal class PdfParser(
         return decodeImageStream(stream)
     }
 
+    /**
+     * Direct Range extract when [streamOffset]/[streamLen] are known from index.
+     * Small dict probe + one exact payload Range (no 1 MiB/16 MiB ladder).
+     */
+    fun extractImageBytesAt(
+        streamOffset: Long,
+        streamLen: Long,
+        objNum: Int,
+        gen: Int,
+    ): ByteArray? {
+        if (streamOffset < 0L || streamLen <= 0L) return null
+        if (streamOffset + streamLen > fileSize) return null
+        val entry = xref[objNum]
+        val dictOff = entry?.offset?.takeIf { it > 0L } ?: (streamOffset - 512).coerceAtLeast(0L)
+        val dictLen = (streamOffset - dictOff).toInt().coerceIn(64, 32 * 1024)
+        val probe = readBytes(dictOff, dictLen) ?: return null
+        val dict = parseDictOnly(probe, objNum, gen) ?: return null
+        // Exact payload — single read of streamLen bytes.
+        val data = readBytes(streamOffset, streamLen.toInt()) ?: return null
+        return decodeImageStream(StreamObj(dict, data))
+    }
+
+    /** Parse object dict from a header probe that may not include the full stream body. */
+    private fun parseDictOnly(raw: ByteArray, objNum: Int, gen: Int): PdfDict? {
+        val text = String(raw, Charsets.ISO_8859_1)
+        val objMatch = Regex("""(\d+)\s+(\d+)\s+obj""").find(text) ?: return null
+        val dictStart = text.indexOf("<<", objMatch.range.last)
+        if (dictStart < 0) return null
+        val (dict, _) = parseDict(raw, dictStart) ?: return null
+        dict.objNum = objNum
+        dict.gen = gen
+        return dict
+    }
+
     // --- page / image walk ---
 
     private fun collectPages(node: PdfDict, out: ArrayList<PdfDict>, depth: Int) {
@@ -272,6 +320,7 @@ internal class PdfParser(
             filter.isEmpty() -> "png"
             else -> return null // CCITT, JBIG2, etc.
         }
+        val streamOffset = locateStreamDataOffset(objNum) ?: -1L
         return PdfImageEngine.ImageRef(
             objNum = objNum,
             gen = gen,
@@ -279,7 +328,30 @@ internal class PdfParser(
             width = w,
             height = h,
             streamLen = length,
+            streamOffset = streamOffset,
         )
+    }
+
+    /**
+     * File offset of the stream payload for [objNum] using a small header probe
+     * (no full image body download during index walk).
+     */
+    private fun locateStreamDataOffset(objNum: Int): Long? {
+        val entry = xref[objNum] ?: return null
+        if (entry.free || entry.offset <= 0L) return null
+        val probe = readBytes(entry.offset, minOf(16 * 1024, (fileSize - entry.offset).toInt()))
+            ?: return null
+        val text = String(probe, Charsets.ISO_8859_1)
+        val streamIdx = text.indexOf("stream")
+        if (streamIdx < 0) return null
+        var i = streamIdx + "stream".length
+        if (i < probe.size && probe[i] == '\r'.code.toByte()) {
+            i++
+            if (i < probe.size && probe[i] == '\n'.code.toByte()) i++
+        } else if (i < probe.size && probe[i] == '\n'.code.toByte()) {
+            i++
+        }
+        return entry.offset + i
     }
 
     private fun filterNames(v: PdfValue?): List<String> {
@@ -344,10 +416,11 @@ internal class PdfParser(
         val length = resolveLength(dict["/Length"])
             ?: return null
         if (length < 0 || i + length > raw.size) {
-            // Length may extend beyond our read window — re-read full stream
+            // Length extends past probe: one exact re-read of object header + body (capped).
             val entry = xref[objNum] ?: return null
-            val full = readBytes(entry.offset, minOf(fileSize - entry.offset, length + 8192L).toInt())
-                ?: return null
+            val need = (length + 8192L).coerceAtMost(fileSize - entry.offset).toInt()
+            if (need <= raw.size) return null
+            val full = readBytes(entry.offset, need) ?: return null
             return parseStreamAt(full, objNum, gen)
         }
         val data = raw.copyOfRange(i, i + length.toInt())
@@ -914,21 +987,43 @@ internal class PdfParser(
     }
 
     private fun readObjectBytes(offset: Long): ByteArray? {
-        // Read up to 1 MiB or until endobj; expand if stream Length requires
-        val max = minOf(fileSize - offset, 1024L * 1024L).toInt().coerceAtLeast(64)
-        var data = readBytes(offset, max) ?: return null
+        // Small header probe first — never jump 1 MiB → 16 MiB on every object.
+        val probeCap = minOf(fileSize - offset, 16L * 1024L).toInt().coerceAtLeast(64)
+        var data = readBytes(offset, probeCap) ?: return null
         val s = String(data, Charsets.ISO_8859_1)
-        if ("endobj" !in s && "endstream" !in s && max.toLong() < fileSize - offset) {
-            val bigger = minOf(fileSize - offset, 16L * 1024 * 1024).toInt()
-            data = readBytes(offset, bigger) ?: data
-        }
-        // If stream with Length, ensure we have enough
-        val lenMatch = Regex("""/Length\s+(\d+)""").find(String(data, Charsets.ISO_8859_1))
+
+        // Stream with known /Length: one exact-sized read (dict + stream keyword + body).
+        val lenMatch = Regex("""/Length\s+(\d+)""").find(s)
         if (lenMatch != null) {
             val len = lenMatch.groupValues[1].toLong()
-            val need = len + 4096
-            if (data.size < need && offset + need <= fileSize) {
-                data = readBytes(offset, need.toInt().coerceAtMost((fileSize - offset).toInt())) ?: data
+            // Object header + dict + "stream\n" + body + "\nendstream" slack
+            val need = (len + 8192L).coerceAtMost(fileSize - offset).toInt()
+            if (need > data.size) {
+                data = readBytes(offset, need) ?: data
+            }
+            return data
+        }
+
+        // Non-stream or indirect Length: grow once to find endobj (cap 256 KiB).
+        if ("endobj" !in s && probeCap.toLong() < fileSize - offset) {
+            val bigger = minOf(fileSize - offset, 256L * 1024L).toInt()
+            if (bigger > data.size) {
+                data = readBytes(offset, bigger) ?: data
+            }
+        }
+        // Indirect /Length N 0 R — resolve and re-read exact once.
+        val indLen = Regex("""/Length\s+(\d+)\s+(\d+)\s+R""").find(String(data, Charsets.ISO_8859_1))
+        if (indLen != null) {
+            val objN = indLen.groupValues[1].toIntOrNull()
+            if (objN != null) {
+                val len = (resolve(PdfRef(objN, indLen.groupValues[2].toIntOrNull() ?: 0)) as? PdfNumber)
+                    ?.value?.toLong()
+                if (len != null && len > 0L) {
+                    val need = (len + 8192L).coerceAtMost(fileSize - offset).toInt()
+                    if (need > data.size) {
+                        data = readBytes(offset, need) ?: data
+                    }
+                }
             }
         }
         return data

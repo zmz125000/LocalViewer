@@ -51,13 +51,21 @@ object DocumentExtractCache {
         val name: String = "",
         val ext: String,
         val uncSize: Long = 0L,
-    )
+        /**
+         * File offset of the raw image stream payload (after `stream` keyword), or -1 unknown.
+         * v3+: enables one Range extract without re-walking the PDF object graph.
+         */
+        val offset: Long = -1L,
+    ) {
+        val hasSeek: Boolean get() = offset >= 0L && uncSize > 0L
+    }
 
     @Serializable
     data class Index(
         /**
          * v1: early indexes; cover-only extract could persist a 1-member list and poison open.
          * v2+: page list is always from a full structure walk (reader), never coverOnly.
+         * v3+: optional [Member.offset] for direct stream Range extract.
          */
         val v: Int = INDEX_VERSION,
         val cacheKey: String,
@@ -68,7 +76,7 @@ object DocumentExtractCache {
     )
 
     /** Minimum [Index.v] trusted for openFromIndex / complete-and-ready. */
-    const val INDEX_VERSION: Int = 2
+    const val INDEX_VERSION: Int = 3
     const val MIN_USABLE_INDEX_VERSION: Int = 2
 
     fun dirFor(cacheKey: String): Path = root / sha256Hex(cacheKey)
