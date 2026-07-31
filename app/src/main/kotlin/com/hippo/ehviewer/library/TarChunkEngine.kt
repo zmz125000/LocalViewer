@@ -11,12 +11,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * TAR/CBT network reader: **one fixed readahead window** feeds both header parse and
- * store-body extract (no separate sparse header walk).
+ * TAR/CBT network reader: fixed readahead windows feed header parse + store extract.
  *
- * Sequential cursor advances through the archive; [preferSequential] readahead on
- * [source] pulls fixed 8 MiB (or cover 2 MiB) windows so image bodies in the same
- * window are not re-fetched after listing.
+ * **Cold open:** sequential chunk pass (headers + bodies in the same windows).
+ *
+ * **Reopen half-cache:** [seedFromDisk] + header walk that **skips bodies** for pages
+ * already on disk until [ensureThrough] reaches the first miss / resume page — does not
+ * re-download cached images. Full seek index → random [extractByOffset] only.
  *
  * Seek bar grows via [onListed] as playable members are discovered (discovery order).
  */
@@ -36,6 +37,8 @@ class TarChunkEngine(
     private var cursor = 0L
     private var zeroBlocks = 0
     private var pendingName: String? = null
+    /** Next page index to assign when discovering (continues after seed). */
+    private var nextPageIndex = 0
 
     var onListed: ((Int) -> Unit)? = null
     var onPageReady: ((Int) -> Unit)? = null
@@ -56,37 +59,93 @@ class TarChunkEngine(
     }
 
     /**
-     * Seed from disk seek index (reopen). Does not open native; random extract via
-     * [ensureMemberExtracted] using stored offsets.
+     * Seed from disk index + `pages/` readdir (half-cache reopen).
+     * - Full seek index → list complete; missing pages via [extractByOffset]
+     * - Contiguous 0..k with offsets → [cursor] after k (no re-walk of that prefix)
+     * - Otherwise header-walk from 0; **skip body download** for pages already on disk
      */
-    fun seedFromSeekIndex(idx: ArchiveStreamPageCache.Index) {
+    fun seedFromDisk(idx: ArchiveStreamPageCache.Index?) {
         members.clear()
         onDisk.clear()
         maxIndex.set(-1)
-        for (m in idx.members.sortedBy { it.i }) {
-            members.add(m)
-            noteIndex(m.i)
-            if (ArchiveStreamPageCache.isPageCached(cacheKey, m.i, m.ext)) {
-                onDisk.add(m.i)
-            }
+        nextPageIndex = 0
+        cursor = 0L
+        zeroBlocks = 0
+        pendingName = null
+        complete.set(false)
+
+        val diskPages = ArchiveStreamPageCache.listCachedPages(cacheKey)
+        for ((i, _) in diskPages) {
+            onDisk.add(i)
+            noteIndex(i)
         }
-        if (idx.hasFullSeekIndex() && idx.members.isNotEmpty()) {
-            // Offsets known — walk finished in a prior session.
+
+        if (idx != null && idx.hasFullSeekIndex() && idx.members.isNotEmpty()) {
+            for (m in idx.members.sortedBy { it.i }) {
+                members.add(m)
+                noteIndex(m.i)
+                if (m.i in diskPages ||
+                    ArchiveStreamPageCache.isPageCached(cacheKey, m.i, m.ext)
+                ) {
+                    onDisk.add(m.i)
+                }
+            }
             complete.set(true)
             cursor = archiveSize
+            nextPageIndex = listedCount()
+            onListed?.invoke(listedCount())
+            return
+        }
+
+        // Prefer members that have seek offsets (partial prior walk).
+        val withSeek = idx?.members?.filter { it.hasSeek }?.sortedBy { it.i }.orEmpty()
+        if (withSeek.isNotEmpty() && withSeek.first().i == 0) {
+            var cont = 0
+            while (cont < withSeek.size && withSeek[cont].i == cont) cont++
+            for (j in 0 until cont) {
+                val m = withSeek[j]
+                members.add(m)
+                noteIndex(m.i)
+                if (m.i in diskPages ||
+                    ArchiveStreamPageCache.isPageCached(cacheKey, m.i, m.ext)
+                ) {
+                    onDisk.add(m.i)
+                }
+            }
+            val last = withSeek[cont - 1]
+            cursor = last.offset + paddedSize(last.uncSize.coerceAtLeast(0L))
+            nextPageIndex = cont
+            // Keep any later index entries (non-contiguous) for extractByOffset if they have seek.
+            for (j in cont until withSeek.size) {
+                val m = withSeek[j]
+                if (members.none { it.i == m.i }) {
+                    members.add(m)
+                    noteIndex(m.i)
+                }
+            }
+        } else {
+            // No usable offset prefix — header-walk from 0; onDisk skips body re-fetch.
+            nextPageIndex = 0
+            cursor = 0L
+            // Provisional seek bar max from cached files until walk catches up.
+            if (diskPages.isNotEmpty()) {
+                noteIndex(diskPages.keys.max())
+            }
         }
         onListed?.invoke(listedCount())
     }
 
     /**
-     * Advance sequential parse+extract until [targetIndex] is on disk, or EOF.
-     * Also lists any members discovered along the way (seek bar growth).
+     * Advance until [targetIndex] is on disk, or EOF.
+     * Reopen: header-walk skips bodies for pages already cached until the miss.
      */
     suspend fun ensureThrough(targetIndex: Int) {
         if (targetIndex in onDisk) return
-        // Random extract path when seek index already complete.
+        // Full seek index: random extract only.
         if (complete.get()) {
-            extractByOffset(targetIndex)
+            mutex.withLock {
+                if (targetIndex !in onDisk) extractByOffset(targetIndex)
+            }
             return
         }
         mutex.withLock {
@@ -97,13 +156,19 @@ class TarChunkEngine(
                 extractByOffset(targetIndex)
                 return
             }
+            // Already listed with offset (seeded) but body missing → random extract.
+            val known = members.firstOrNull { it.i == targetIndex }
+            if (known != null && known.hasSeek) {
+                extractByOffset(targetIndex)
+                if (targetIndex in onDisk) return
+            }
             while (targetIndex !in onDisk && !complete.get()) {
                 throwIfAborted()
                 currentCoroutineContext().ensureActive()
-                if (!stepOneMember()) break
+                // Skip-extract mode while walking past pages already on disk before target.
+                if (!stepOneMember(targetIndex)) break
             }
-            if (targetIndex !in onDisk && complete.get()) {
-                // Listed but body not written (e.g. skip non-image then stop) — try offset.
+            if (targetIndex !in onDisk) {
                 extractByOffset(targetIndex)
             }
             if (targetIndex !in onDisk && complete.get()) {
@@ -137,10 +202,12 @@ class TarChunkEngine(
     }
 
     /**
-     * Parse next header at [cursor]; if playable image, extract body via sequential
-     * [source.readAt] (readahead fixed window). Returns false at EOF/error.
+     * Parse next header at [cursor].
+     * @param targetIndex resume page — bodies for indices `< target` that are already
+     *   cached are **skipped** (header-only advance); [targetIndex] and later extract.
+     * @return false at EOF/error
      */
-    private fun stepOneMember(): Boolean {
+    private fun stepOneMember(targetIndex: Int): Boolean {
         if (cursor + BLOCK > archiveSize) {
             markComplete()
             return false
@@ -181,7 +248,7 @@ class TarChunkEngine(
             padded = paddedSize(size)
         }
 
-        // GNU long name
+        // GNU long name — small; always read (needed for names).
         if (typeflag == 'L' || typeflag == 'K') {
             if (typeflag == 'L' && size in 1 until 64 * 1024) {
                 val body = ByteArray(size.toInt())
@@ -215,43 +282,50 @@ class TarChunkEngine(
         }
 
         if (isReg && !isDir && size > 0 && size < (1L shl 31) && isPlayable(name)) {
-            val pageIndex = members.size
+            val pageIndex = nextPageIndex
             val ext = name.substringAfterLast('.', missingDelimiterValue = "bin")
                 .lowercase().ifBlank { "bin" }.take(8)
+            val existing = members.firstOrNull { it.i == pageIndex }
             val m = ArchiveStreamPageCache.Member(
                 i = pageIndex,
                 name = name,
-                ext = ext,
+                ext = existing?.ext?.takeIf { it.isNotBlank() } ?: ext,
                 uncSize = size,
                 offset = dataOff,
                 compSize = size,
                 method = 0,
             )
+            if (existing != null) {
+                members.removeAll { it.i == pageIndex }
+            }
             members.add(m)
+            nextPageIndex = pageIndex + 1
             noteIndex(pageIndex)
             onListed?.invoke(listedCount())
 
-            // Extract body with sequential reads — same readahead windows as headers.
-            if (pageIndex !in onDisk) {
-                if (!ArchiveStreamPageCache.isPageCached(cacheKey, pageIndex, ext)) {
-                    val body = ByteArray(size.toInt())
-                    if (readFully(dataOff, body) != body.size) {
-                        cursor = dataOff + padded
-                        return true
-                    }
-                    throwIfAborted()
-                    runCatching {
-                        ArchiveStreamPageCache.writePageBytes(cacheKey, pageIndex, ext, body)
-                        onDisk.add(pageIndex)
-                        onPageReady?.invoke(pageIndex)
-                    }.onFailure { logcat("TarChunk", it) }
-                } else {
+            val cached = pageIndex in onDisk ||
+                ArchiveStreamPageCache.isPageCached(cacheKey, pageIndex, m.ext)
+            if (cached) {
+                // Reopen / hole fill: header only — advance cursor past body, no re-download.
+                onDisk.add(pageIndex)
+                onPageReady?.invoke(pageIndex)
+            } else {
+                // Cold or cache miss: extract body via sequential readAt (fixed readahead).
+                val body = ByteArray(size.toInt())
+                if (readFully(dataOff, body) != body.size) {
+                    cursor = dataOff + padded
+                    return true
+                }
+                throwIfAborted()
+                runCatching {
+                    ArchiveStreamPageCache.writePageBytes(cacheKey, pageIndex, m.ext, body)
                     onDisk.add(pageIndex)
                     onPageReady?.invoke(pageIndex)
-                }
+                }.onFailure { logcat("TarChunk", it) }
             }
         }
 
+        // Always advance past body without requiring a body read when skipped.
         cursor = dataOff + padded
         return true
     }

@@ -91,9 +91,8 @@ suspend inline fun <T> useTarChunkPageLoader(
             val engine = TarChunkEngine(source, cacheKey, archiveSize)
             val diskIndex = ArchiveStreamPageCache.loadIndex(cacheKey)
                 ?.takeIf { it.remoteSize <= 0L || it.remoteSize == archiveSize }
-            if (diskIndex != null && diskIndex.members.isNotEmpty()) {
-                engine.seedFromSeekIndex(diskIndex)
-            }
+            // Half-cache reopen: seed pages/ + index; header-walk skips cached bodies.
+            engine.seedFromDisk(diskIndex)
 
             // Need at least page 0 listed+extracted for open.
             if (!engine.isKnownOnDisk(0)) {
@@ -101,7 +100,7 @@ suspend inline fun <T> useTarChunkPageLoader(
             }
             check(engine.listedCount() > 0) { "TAR has no playable images" }
 
-            // Resume start page: walk until listed (same sequential pass).
+            // Resume: header-walk (skip cached) to startPage, extract only misses.
             if (startPage > 0 && !engine.isKnownOnDisk(startPage)) {
                 engine.ensureThrough(startPage)
             }
@@ -116,9 +115,15 @@ suspend inline fun <T> useTarChunkPageLoader(
             }.onFailure { logcat(it) }
 
             val pagePaths = ConcurrentHashMap<Int, Path>()
+            // Map every cached page (index members and/or readdir) for instant resume.
             for (m in engine.membersSnapshot()) {
                 if (engine.isKnownOnDisk(m.i)) {
                     pagePaths[m.i] = ArchiveStreamPageCache.pagePath(cacheKey, m.i, m.ext)
+                }
+            }
+            for ((i, ext) in ArchiveStreamPageCache.listCachedPages(cacheKey)) {
+                if (!pagePaths.containsKey(i)) {
+                    pagePaths[i] = ArchiveStreamPageCache.pagePath(cacheKey, i, ext)
                 }
             }
             val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()

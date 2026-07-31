@@ -110,6 +110,34 @@ object ArchiveStreamPageCache {
     fun isPageCached(cacheKey: String, index: Int, ext: String): Boolean =
         isCached(pagePath(cacheKey, index, ext), ext = ext)
 
+    /**
+     * One readdir of extract dir → index → ext for present page files (skip tmp/index).
+     * Used to resume half-cache TAR without re-downloading bodies.
+     */
+    fun listCachedPages(cacheKey: String): Map<Int, String> {
+        val dir = File(dirFor(cacheKey).toString())
+        if (!dir.isDirectory) return emptyMap()
+        val list = dir.list() ?: return emptyMap()
+        val out = HashMap<Int, String>(list.size)
+        for (name in list) {
+            if (name == "index.json" || name.startsWith("index.json.") ||
+                name.contains(".tmp.") || name.contains(".pub.")
+            ) {
+                continue
+            }
+            val dot = name.lastIndexOf('.')
+            if (dot <= 0) continue
+            val idx = name.substring(0, dot).toIntOrNull() ?: continue
+            val ext = name.substring(dot + 1).ifBlank { "bin" }
+            if (idx in out) continue
+            val f = File(dir, name)
+            if (f.isFile && f.length() >= CachePagePublish.MIN_PAGE_BYTES) {
+                out[idx] = ext
+            }
+        }
+        return out
+    }
+
     fun loadIndex(cacheKey: String): Index? {
         val f = File(indexPath(cacheKey).toString())
         if (!f.isFile || f.length() == 0L) return null
