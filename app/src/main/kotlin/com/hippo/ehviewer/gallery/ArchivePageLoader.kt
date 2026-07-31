@@ -55,8 +55,16 @@ suspend inline fun <T> useArchivePageLoader(
     autoCloseScope {
         coroutineScope {
             val pfd = install(file.openFileDescriptor("r"))
+            // sortEntries: EH downloads with real gallery info keep pack order; local / zip sort by name.
+            // Must not key only on info==null — local archives now pass GalleryInfo for read progress.
+            val sortEntries = info == null ||
+                file.name.endsWith(".zip", ignoreCase = true) ||
+                info.token == com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN ||
+                info.token == com.hippo.ehviewer.library.LOCAL_ARCHIVE_TOKEN ||
+                info.token == com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN ||
+                info.token == com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
             val size = install(
-                { openArchive(pfd.fd, pfd.statSize, info == null || file.name.endsWith(".zip")) },
+                { openArchive(pfd.fd, pfd.statSize, sortEntries) },
                 { _, _ -> closeArchive() },
             )
             check(size > 0) { "Archive have no content!" }

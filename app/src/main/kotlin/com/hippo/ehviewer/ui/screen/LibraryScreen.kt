@@ -106,7 +106,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         val info = gallery.toBaseGalleryInfo()
         launchIO { LocalHistory.recordLibraryGallery(gallery) }
         if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-            navToReader(gallery.contentPath)
+            // Pass info so read progress uses library id (same as progress chip).
+            navToReader(gallery.contentPath, info)
         } else {
             navToLocalFolderReader(gallery.contentPath, info)
         }

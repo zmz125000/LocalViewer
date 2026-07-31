@@ -233,7 +233,7 @@ object ReaderGalleryPlaylist {
         is Item.LocalFolder -> ReaderScreenArgs.LocalFolder(path, page = -1, info = info)
         is Item.SmbFolder -> ReaderScreenArgs.SmbFolder(sourceId, remoteDir, imageNames, page = -1, info = info)
         is Item.WebDavFolder -> ReaderScreenArgs.WebDavFolder(sourceId, remoteDir, imageNames, page = -1, info = info)
-        is Item.Archive -> ReaderScreenArgs.Archive(path)
+        is Item.Archive -> ReaderScreenArgs.Archive(path, page = -1, info = null)
         is Item.SmbStreamArchive -> ReaderScreenArgs.SmbStreamArchive(sourceId, remotePath, page = -1, info = info)
         is Item.WebDavStreamArchive -> ReaderScreenArgs.WebDavStreamArchive(sourceId, remotePath, page = -1, info = info)
     }

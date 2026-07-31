@@ -148,8 +148,13 @@ private val activeReaderSessions = AtomicInteger(0)
 
 @Serializable
 sealed interface ReaderScreenArgs {
+    /** Local archive file (ZIP/RAR/7z/PDF/EPUB). [info]/[page] optional; resolved on open. */
     @Serializable
-    data class Archive(val path: String) : ReaderScreenArgs
+    data class Archive(
+        val path: String,
+        val page: Int = -1,
+        val info: BaseGalleryInfo? = null,
+    ) : ReaderScreenArgs
 
     /** Local image folder (direct children only). */
     @Serializable
@@ -284,7 +289,9 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                     is ReaderScreenArgs.WebDavFolder -> args.info
                     is ReaderScreenArgs.SmbStreamArchive -> args.info
                     is ReaderScreenArgs.WebDavStreamArchive -> args.info
-                    is ReaderScreenArgs.Archive -> null
+                    // Prefer args.info; PageLoader also carries resolved local-archive info.
+                    is ReaderScreenArgs.Archive -> args.info
+                        ?: (loader.info as? BaseGalleryInfo)
                 }
                 // Explicit dispose path: system back / pop also abort archive extract so
                 // ArchiveAccess is not held after the reader leaves.
@@ -798,11 +805,26 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
     }
     is ReaderScreenArgs.Archive -> {
         val path = args.path.toPath()
+        // Same progress path as network archives: GalleryInfo on PageLoader → putReadProgress on close.
+        val info = args.info
+            ?: LocalHistory.galleryInfoForLocalArchive(args.path)
+        LocalHistory.ensureGalleryForProgress(info)
+        val page = when {
+            args.page != -1 -> args.page
+            else -> EhDB.getReadProgress(info.gid)
+        }
         if (isDocumentFileName(path.name)) {
-            useLocalDocumentExtractPageLoader(path, block = block)
+            useLocalDocumentExtractPageLoader(
+                path,
+                info = info,
+                startPage = page,
+                block = block,
+            )
         } else {
             useArchivePageLoader(
                 path,
+                info = info,
+                startPage = page,
                 passwdProvider = { invalidator ->
                     awaitInputText(
                         title = string(R.string.archive_need_passwd),
