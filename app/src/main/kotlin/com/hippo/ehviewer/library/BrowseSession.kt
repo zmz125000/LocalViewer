@@ -21,6 +21,11 @@ object BrowseSession {
         val path: String,
         val title: String,
         val relativePath: String,
+        /**
+         * When true, SAF paths may be rewritten to MediaStore for this root.
+         * When false, keep file access so archives remain visible.
+         */
+        val preferMediaStore: Boolean = true,
     )
 
     @Volatile

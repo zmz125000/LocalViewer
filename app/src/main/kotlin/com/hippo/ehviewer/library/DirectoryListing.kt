@@ -29,19 +29,26 @@ sealed interface BrowseEntry {
     ) : BrowseEntry
 }
 
-fun listLocalDirectory(dir: Path, useCache: Boolean = true): List<BrowseEntry> {
-    // Dynamic SAF → MediaStore upgrade when media permission is available.
-    val effective = resolveBrowsePath(dir)
+fun listLocalDirectory(
+    dir: Path,
+    useCache: Boolean = true,
+    preferMediaStore: Boolean = MediaPermissions.prefersSafMediaUpgrade(),
+): List<BrowseEntry> {
+    // Per-root: media mode may rewrite SAF → MediaStore; media+archive keeps file access.
+    val effective = resolveBrowsePath(dir, preferMediaStore = preferMediaStore)
     val key = BrowseSession.pathKey(effective)
     if (useCache) {
         BrowseSession.getLocalListing(key)?.let { return it }
     }
-    val result = listLocalDirectoryUncached(effective)
+    val result = listLocalDirectoryUncached(effective, preferMediaStore = preferMediaStore)
     BrowseSession.putLocalListing(key, result)
     return result
 }
 
-fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
+fun listLocalDirectoryUncached(
+    dir: Path,
+    preferMediaStore: Boolean = MediaPermissions.prefersSafMediaUpgrade(),
+): List<BrowseEntry> {
     val childDirs = ArrayList<BrowseChild>()
     var coverPath: Path? = null
     var imageCount = 0
@@ -80,7 +87,7 @@ fun listLocalDirectoryUncached(dir: Path): List<BrowseEntry> {
     val leafGalleries = ArrayList<BrowseEntry.FolderGallery>()
 
     // SAF peeks are one ContentResolver query each — run them in parallel.
-    for ((sub, kind) in classifyChildrenParallel(childDirs)) {
+    for ((sub, kind) in classifyChildrenParallel(childDirs, preferMediaStore)) {
         when (kind) {
             is ChildDirKind.Navigable -> {
                 dirs += BrowseEntry.Directory(sub.name, sub.path)
@@ -154,13 +161,14 @@ private val peekThreadSeq = AtomicInteger(0)
 
 private fun classifyChildrenParallel(
     childDirs: List<BrowseChild>,
+    preferMediaStore: Boolean,
 ): List<Pair<BrowseChild, ChildDirKind>> {
     if (childDirs.isEmpty()) return emptyList()
     if (childDirs.size == 1) {
-        return listOf(childDirs[0] to classifyChildDirectory(childDirs[0].path))
+        return listOf(childDirs[0] to classifyChildDirectory(childDirs[0].path, preferMediaStore))
     }
     val futures = childDirs.map { sub ->
-        peekPool.submit(Callable { sub to classifyChildDirectory(sub.path) })
+        peekPool.submit(Callable { sub to classifyChildDirectory(sub.path, preferMediaStore) })
     }
     return futures.map { it.get() }
 }
@@ -189,9 +197,9 @@ private const val PEEK_MAX_ENTRIES = BROWSE_IMAGE_SCAN_CAP
  * - MediaStore paths: full exact counts (no cap / no early row budget).
  * - Early-exit once classification is known — never scan whole leaf galleries.
  */
-private fun classifyChildDirectory(sub: Path): ChildDirKind {
-    // Prefer MediaStore for this subfolder when permission allows (SAF stays as fallback).
-    val path = resolveBrowsePath(sub)
+private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildDirKind {
+    // Prefer MediaStore for this subfolder when the owning root wants media mode.
+    val path = resolveBrowsePath(sub, preferMediaStore = preferMediaStore)
     var coverPath: Path? = null
     var imageCount = 0
     var imagesCapped = false

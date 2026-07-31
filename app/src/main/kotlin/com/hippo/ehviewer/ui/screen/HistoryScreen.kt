@@ -160,6 +160,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         rootDisplayName = root.displayName,
                         rootPath = rootPath,
                         relativePath = target.relativePath,
+                        preferMediaStore = root.prefersMediaStore,
                     )
                     navigate(FolderBrowserScreenDestination(fromHistory = true))
                 }
@@ -206,11 +207,13 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         LocalLibrary.resolveArchiveBrowseParent(target.path)
                     }
                     if (parent != null) {
+                        val root = withIOContext { LocalLibrary.loadRoot(parent.rootId) }
                         BrowseSession.localStack = buildLocalBrowseStack(
                             rootId = parent.rootId,
                             rootDisplayName = parent.rootDisplayName,
                             rootPath = parent.rootPath,
                             relativePath = parent.parentRelativePath,
+                            preferMediaStore = root?.prefersMediaStore ?: false,
                         )
                         navigate(FolderBrowserScreenDestination(fromHistory = true))
                     }

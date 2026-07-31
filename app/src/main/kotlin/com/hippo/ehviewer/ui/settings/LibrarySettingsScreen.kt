@@ -22,6 +22,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,10 +46,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import com.ehviewer.core.database.model.LIBRARY_ROOT_ACCESS_MEDIA
+import com.ehviewer.core.database.model.LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_FOLDER
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
+import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.toOkioPath
@@ -113,6 +118,8 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
     var accessChooserRole by remember { mutableStateOf<Int?>(null) }
     var mediaDenied by remember { mutableStateOf(false) }
     var openSafAfterMediaPerm by remember { mutableStateOf(false) }
+    /** After media permission grant, switch this SAF root to MediaStore mode. */
+    var pendingMediaModeRootId by remember { mutableLongStateOf(-1L) }
 
     androidx.compose.runtime.LaunchedEffect(mediaDenied) {
         if (!mediaDenied) return@LaunchedEffect
@@ -167,7 +174,13 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
 
     val mediaPermission = com.hippo.ehviewer.ui.screen.rememberMediaPermissionLauncher(
         onGranted = { role ->
-            if (openSafAfterMediaPerm) {
+            val pendingRootId = pendingMediaModeRootId
+            if (pendingRootId >= 0L) {
+                pendingMediaModeRootId = -1L
+                launchIO {
+                    LocalLibrary.setRootAccessMode(pendingRootId, LIBRARY_ROOT_ACCESS_MEDIA)
+                }
+            } else if (openSafAfterMediaPerm) {
                 openSafAfterMediaPerm = false
                 openSafPicker()
             } else {
@@ -175,7 +188,10 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
             }
         },
         onDenied = {
-            if (openSafAfterMediaPerm) {
+            if (pendingMediaModeRootId >= 0L) {
+                pendingMediaModeRootId = -1L
+                mediaDenied = true
+            } else if (openSafAfterMediaPerm) {
                 openSafAfterMediaPerm = false
                 openSafPicker()
             } else {
@@ -183,6 +199,26 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
             }
         },
     )
+
+    fun toggleRootAccessMode(root: LibraryRootEntity) {
+        // Pure device-media roots have no SAF tree — always MediaStore.
+        if (isMediaStoreRootUri(root.treeUri)) return
+        if (root.includesArchives) {
+            // Switch to MediaStore — need media permission first.
+            if (MediaPermissions.hasImageAccess(context)) {
+                launchIO {
+                    LocalLibrary.setRootAccessMode(root.id, LIBRARY_ROOT_ACCESS_MEDIA)
+                }
+            } else {
+                pendingMediaModeRootId = root.id
+                mediaPermission.request(root.role)
+            }
+        } else {
+            launchIO {
+                LocalLibrary.setRootAccessMode(root.id, LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE)
+            }
+        }
+    }
 
     fun launchSafPicker(role: Int) {
         pendingSafRole = role
@@ -255,7 +291,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                     headlineContent = { Text(root.displayName) },
                     supportingContent = {
                         Text(
-                            text = if (com.hippo.ehviewer.library.isMediaStoreRootUri(root.treeUri)) {
+                            text = if (isMediaStoreRootUri(root.treeUri)) {
                                 stringResource(R.string.source_access_device_media)
                             } else {
                                 root.treeUri.toUri().displayPath ?: root.treeUri
@@ -263,15 +299,11 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                         )
                     },
                     trailingContent = {
-                        IconButton(
-                            onClick = { launchIO { LocalLibrary.removeRoot(root) } },
-                            shapes = IconButtonDefaults.shapes(),
-                        ) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = stringResource(R.string.library_remove_root),
-                            )
-                        }
+                        LocalRootTrailingActions(
+                            root = root,
+                            onToggleAccessMode = { toggleRootAccessMode(root) },
+                            onDelete = { launchIO { LocalLibrary.removeRoot(root) } },
+                        )
                     },
                 )
             }
@@ -290,7 +322,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                     headlineContent = { Text(root.displayName) },
                     supportingContent = {
                         Text(
-                            text = if (com.hippo.ehviewer.library.isMediaStoreRootUri(root.treeUri)) {
+                            text = if (isMediaStoreRootUri(root.treeUri)) {
                                 stringResource(R.string.source_access_device_media)
                             } else {
                                 root.treeUri.toUri().displayPath ?: root.treeUri
@@ -298,15 +330,11 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                         )
                     },
                     trailingContent = {
-                        IconButton(
-                            onClick = { launchIO { LocalLibrary.removeRoot(root) } },
-                            shapes = IconButtonDefaults.shapes(),
-                        ) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = stringResource(R.string.library_remove_root),
-                            )
-                        }
+                        LocalRootTrailingActions(
+                            root = root,
+                            onToggleAccessMode = { toggleRootAccessMode(root) },
+                            onDelete = { launchIO { LocalLibrary.removeRoot(root) } },
+                        )
                     },
                 )
             }
@@ -575,6 +603,45 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
                 webDavEditor = null
             }.takeIf { state.id != 0L },
         )
+    }
+}
+
+@Composable
+private fun LocalRootTrailingActions(
+    root: LibraryRootEntity,
+    onToggleAccessMode: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val isDeviceMedia = isMediaStoreRootUri(root.treeUri)
+    val mediaMode = root.prefersMediaStore
+    Row {
+        // Pic = MediaStore only; archive box = file access (images + local archives).
+        // Device-media roots have no SAF backup — button shows media icon, disabled.
+        IconButton(
+            onClick = onToggleAccessMode,
+            enabled = !isDeviceMedia,
+            shapes = IconButtonDefaults.shapes(),
+        ) {
+            Icon(
+                imageVector = if (mediaMode) Icons.Default.PhotoLibrary else Icons.Default.Inventory2,
+                contentDescription = stringResource(
+                    if (mediaMode) {
+                        R.string.source_access_mode_media
+                    } else {
+                        R.string.source_access_mode_media_archive
+                    },
+                ),
+            )
+        }
+        IconButton(
+            onClick = onDelete,
+            shapes = IconButtonDefaults.shapes(),
+        ) {
+            Icon(
+                Icons.Default.Delete,
+                contentDescription = stringResource(R.string.library_remove_root),
+            )
+        }
     }
 }
 

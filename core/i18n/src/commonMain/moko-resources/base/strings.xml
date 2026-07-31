@@ -34,6 +34,9 @@
     <string name="source_access_device_media_summary">Read images via system media permission. Archives not included.</string>
     <string name="source_device_media_name">Device media</string>
     <string name="source_media_permission_denied">Media permission denied</string>
+    <string name="source_access_mode_media">Media (MediaStore)</string>
+    <string name="source_access_mode_media_archive">Media + archives (file access)</string>
+    <string name="source_access_mode_toggle">Toggle media / media+archives access</string>
     <string name="library_roots">Library folders</string>
     <string name="folder_no_browse_roots">No browse-only folders.</string>
     <string name="library_remove_root">Remove</string>
@@ -440,7 +443,7 @@
     <string name="settings_smb_encrypt">Force SMB 3 encryption</string>
     <string name="settings_smb_encrypt_summary">Require encrypted SMB sessions (server must support SMB 3 encryption). Resets active SMB connections.</string>
     <string name="settings_upgrade_saf_to_media">Prefer MediaStore for folder access</string>
-    <string name="settings_upgrade_saf_to_media_summary">Use MediaStore for instant media scans. Off for local archive support and skips media permission prompts (better privacy).</string>
+    <string name="settings_upgrade_saf_to_media_summary">Default for new SAF sources and media-permission prompts. Override per source on Manage Sources (pic = MediaStore, archive = file access for local archives).</string>
     <string name="settings_reader_preload_image">Reader preload</string>
     <string name="settings_reader_preload_image_summary">Prefetch next %s pages (SMB downloads ahead; local opens on demand)</string>
     <string name="settings_download_download_delay">Download delay</string>

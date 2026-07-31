@@ -59,7 +59,7 @@ fun mediaStoreTreeUriToPath(treeUri: String): Path {
  * ExternalStorageProvider document ids look like `primary:Pictures/Comics`.
  */
 fun tryMediaStoreTreeUriFromSaf(treeUri: Uri): String? {
-    if (!MediaPermissions.canUpgradeSafToMediaStore()) return null
+    if (!MediaPermissions.hasImageAccess()) return null
     val authority = treeUri.authority
     if (authority != null && authority != "com.android.externalstorage.documents") {
         return null
@@ -74,21 +74,30 @@ fun tryMediaStoreTreeUriFromSaf(treeUri: Uri): String? {
 }
 
 /**
- * Prefer a MediaStore virtual path when [Settings.upgradeSafToMediaStore] is on,
- * media permission is granted, and the path maps to external storage.
- * Otherwise returns the original path (SAF backup).
+ * Prefer a MediaStore virtual path when [preferMediaStore] is true, media
+ * permission is granted, and the path maps to external storage.
+ * Otherwise returns the original path (SAF / file access — archives visible).
+ *
+ * Default [preferMediaStore] follows the global Advanced setting; per-source
+ * browse/scan passes the root's [com.ehviewer.core.database.model.LibraryRootEntity.prefersMediaStore].
  */
-fun resolveBrowsePath(path: Path): Path {
+fun resolveBrowsePath(
+    path: Path,
+    preferMediaStore: Boolean = MediaPermissions.prefersSafMediaUpgrade(),
+): Path {
     if (path.isMediaStorePath()) return path
+    if (!preferMediaStore) return path
     return tryConvertSafPathToMediaStore(path) ?: path
 }
 
 /**
  * Convert a SAF / DocumentsProvider [Path] to `mediastore:/…` when possible.
  * Keeps non-external or unmappable paths as-is (caller falls back to SAF).
+ * Requires [READ_MEDIA_IMAGES] (or partial visual access); does **not** check the
+ * global setting — callers gate with [preferMediaStore] / root access mode.
  */
 fun tryConvertSafPathToMediaStore(path: Path): Path? {
-    if (!MediaPermissions.canUpgradeSafToMediaStore()) return null
+    if (!MediaPermissions.hasImageAccess()) return null
     val str = path.toString()
     if (!str.contains("content:")) return null
     return runCatching {

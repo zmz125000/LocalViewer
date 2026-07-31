@@ -233,6 +233,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 path = path.toString(),
                 title = root.displayName,
                 relativePath = "",
+                preferMediaStore = root.prefersMediaStore,
             ),
         )
         navigate(FolderBrowserScreenDestination())

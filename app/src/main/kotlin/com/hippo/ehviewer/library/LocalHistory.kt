@@ -308,6 +308,7 @@ fun buildLocalBrowseStack(
     rootDisplayName: String,
     rootPath: okio.Path,
     relativePath: String,
+    preferMediaStore: Boolean = true,
 ): List<BrowseSession.LocalFrame> {
     val frames = ArrayList<BrowseSession.LocalFrame>()
     frames += BrowseSession.LocalFrame(
@@ -315,6 +316,7 @@ fun buildLocalBrowseStack(
         path = rootPath.toString(),
         title = rootDisplayName,
         relativePath = "",
+        preferMediaStore = preferMediaStore,
     )
     val rel = relativePath.trim('/').let { if (it == ".") "" else it }
     if (rel.isEmpty()) return frames
@@ -328,6 +330,7 @@ fun buildLocalBrowseStack(
             path = abs.toString(),
             title = seg,
             relativePath = acc,
+            preferMediaStore = preferMediaStore,
         )
     }
     return frames
