@@ -59,7 +59,7 @@ fun mediaStoreTreeUriToPath(treeUri: String): Path {
  * ExternalStorageProvider document ids look like `primary:Pictures/Comics`.
  */
 fun tryMediaStoreTreeUriFromSaf(treeUri: Uri): String? {
-    if (!MediaPermissions.canUpgradeSafToMediaStore()) return null
+    if (!MediaPermissions.hasImageAccess()) return null
     val authority = treeUri.authority
     if (authority != null && authority != "com.android.externalstorage.documents") {
         return null
@@ -74,21 +74,27 @@ fun tryMediaStoreTreeUriFromSaf(treeUri: Uri): String? {
 }
 
 /**
- * Prefer a MediaStore virtual path when [Settings.upgradeSafToMediaStore] is on,
- * media permission is granted, and the path maps to external storage.
- * Otherwise returns the original path (SAF backup).
+ * Prefer a MediaStore virtual path when [preferMediaStore] is true, media
+ * permission is granted, and the path maps to external storage.
+ * Otherwise returns the original path (SAF / file access — archives visible).
+ *
+ * Default is MediaStore-on. Per-source browse/scan passes the root's
+ * [com.ehviewer.core.database.model.LibraryRootEntity.prefersMediaStore]
+ * (false for media+archive mode on Manage Sources).
  */
-fun resolveBrowsePath(path: Path): Path {
+fun resolveBrowsePath(path: Path, preferMediaStore: Boolean = true): Path {
     if (path.isMediaStorePath()) return path
+    if (!preferMediaStore) return path
     return tryConvertSafPathToMediaStore(path) ?: path
 }
 
 /**
  * Convert a SAF / DocumentsProvider [Path] to `mediastore:/…` when possible.
  * Keeps non-external or unmappable paths as-is (caller falls back to SAF).
+ * Requires image media permission; callers gate with [preferMediaStore] / root access mode.
  */
 fun tryConvertSafPathToMediaStore(path: Path): Path? {
-    if (!MediaPermissions.canUpgradeSafToMediaStore()) return null
+    if (!MediaPermissions.hasImageAccess()) return null
     val str = path.toString()
     if (!str.contains("content:")) return null
     return runCatching {
@@ -164,17 +170,12 @@ object MediaPermissions {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    /** Setting on + user wants fast SAF listing via MediaStore. */
-    fun prefersSafMediaUpgrade(): Boolean = com.hippo.ehviewer.Settings.upgradeSafToMediaStore.value
-
-    /** Setting on and media permission granted — safe to rewrite SAF paths. */
-    fun canUpgradeSafToMediaStore(context: Context = appCtx): Boolean = prefersSafMediaUpgrade() && hasImageAccess(context)
-
     /**
-     * Whether to show the media-permission dialog before opening the SAF picker.
-     * Muted when [prefersSafMediaUpgrade] is off (privacy / pure SAF).
+     * Prompt for media permission before the SAF picker so new sources can
+     * default to MediaStore when the user grants access.
      */
-    fun shouldRequestMediaPermissionForSafAdd(context: Context = appCtx): Boolean = prefersSafMediaUpgrade() && !hasImageAccess(context)
+    fun shouldRequestMediaPermissionForSafAdd(context: Context = appCtx): Boolean =
+        !hasImageAccess(context)
 }
 
 /**

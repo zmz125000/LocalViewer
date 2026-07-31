@@ -43,11 +43,12 @@ object GallerySiblingNavigator {
         // Prefer the browse listing for the current stack frame when it matches this parent
         // (includes dual gallery rows the user saw), else list the parent path.
         val frame = BrowseSession.localStack.lastOrNull()
+        val preferMedia = frame?.preferMediaStore ?: true
         val listing = when {
             frame != null && frame.path == parent.toString() ->
                 BrowseSession.getLocalListing(BrowseSession.pathKey(parent))
-                    ?: listLocalDirectory(parent, useCache = true)
-            else -> listLocalDirectory(parent, useCache = true)
+                    ?: listLocalDirectory(parent, useCache = true, preferMediaStore = preferMedia)
+            else -> listLocalDirectory(parent, useCache = true, preferMediaStore = preferMedia)
         }
         val openable = listing.mapNotNull { e ->
             when (e) {

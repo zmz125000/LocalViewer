@@ -6,6 +6,8 @@ import android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
 import android.provider.DocumentsContract
 import androidx.core.net.toUri
 import com.ehviewer.core.database.LocalLibraryDatabase
+import com.ehviewer.core.database.model.LIBRARY_ROOT_ACCESS_MEDIA
+import com.ehviewer.core.database.model.LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_FOLDER
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
 import com.ehviewer.core.database.model.LibraryRootEntity
@@ -90,14 +92,19 @@ object LocalLibrary {
      * under any configured local browse root (e.g. downloaded solid cache).
      */
     suspend fun resolveArchiveBrowseParent(archivePath: String): ArchiveBrowseParent? {
-        val archive = resolveBrowsePath(archivePath.toPath()).toString().trimEnd('/')
-        if (archive.isEmpty()) return null
+        val raw = archivePath.toPath()
+        if (raw.toString().isEmpty()) return null
         var best: ArchiveBrowseParent? = null
         var bestRootLen = -1
         for (root in listRoots()) {
             val rp = rootPath(root) ?: continue
             val rootStr = rp.toString().trimEnd('/')
             if (rootStr.isEmpty()) continue
+            // Match archive against this root's backend (SAF or MediaStore).
+            val archive = resolveBrowsePath(
+                raw,
+                preferMediaStore = root.prefersMediaStore,
+            ).toString().trimEnd('/')
             if (!archive.startsWith("$rootStr/")) continue
             if (rootStr.length < bestRootLen) continue
             val relFile = archive.removePrefix("$rootStr/").trimStart('/')
@@ -151,18 +158,45 @@ object LocalLibrary {
                 return@withIOContext AddRootResult.AlreadyExists(existing.id, existing.role)
             }
 
+            // New sources default to MediaStore (ACCESS_MODE = 0); user can opt into
+            // media+archive on Manage Sources for local archive scan/browse.
             val id = db.libraryRootDao().insert(
                 LibraryRootEntity(
                     treeUri = treeUri,
                     displayName = displayName,
                     addedAt = Clock.System.now().toEpochMilliseconds(),
                     role = role,
+                    accessMode = LIBRARY_ROOT_ACCESS_MEDIA,
                 ),
             )
             if (role == LIBRARY_ROOT_ROLE_LIBRARY) {
                 scanRoot(id)
             }
             AddRootResult.Created(id)
+        }
+    }
+
+    /**
+     * Toggle MediaStore vs file access for a SAF library/folder source.
+     * Device-media roots stay [LIBRARY_ROOT_ACCESS_MEDIA] (no archives).
+     * Rescans library-role roots so gallery set matches the new backend.
+     */
+    suspend fun setRootAccessMode(rootId: Long, accessMode: Int) = withIOContext {
+        val root = db.libraryRootDao().load(rootId) ?: return@withIOContext
+        val mode = when {
+            isMediaStoreRootUri(root.treeUri) -> LIBRARY_ROOT_ACCESS_MEDIA
+            accessMode == LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE -> LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE
+            else -> LIBRARY_ROOT_ACCESS_MEDIA
+        }
+        if (root.accessMode == mode) return@withIOContext
+        db.libraryRootDao().updateAccessMode(rootId, mode)
+        BrowseSession.invalidateLocalListing()
+        // Drop in-memory stack if this root is open — paths may switch SAF ↔ MediaStore.
+        if (BrowseSession.localStack.any { it.rootId == rootId }) {
+            BrowseSession.localStack = emptyList()
+        }
+        if (root.role == LIBRARY_ROOT_ROLE_LIBRARY) {
+            scanRoot(rootId)
         }
     }
 
@@ -267,9 +301,10 @@ object LocalLibrary {
 
     /**
      * Resolve the browse/scan root path.
-     * SAF trees are **dynamically upgraded** to MediaStore when media permission is
-     * granted and the path maps to external storage; the stored [LibraryRootEntity.treeUri]
-     * stays as the SAF backup when permission is missing or conversion fails.
+     * SAF trees are upgraded to MediaStore when the root's [LibraryRootEntity.prefersMediaStore]
+     * is set, media permission is granted, and the path maps to external storage.
+     * Media+archive mode keeps the SAF path so local archives remain visible.
+     * Stored [LibraryRootEntity.treeUri] is always the SAF backup for non-device roots.
      */
     fun rootPath(root: LibraryRootEntity): Path? {
         if (isMediaStoreRootUri(root.treeUri)) {
@@ -285,11 +320,20 @@ object LocalLibrary {
             logcat(it)
             null
         } ?: return null
-        return resolveBrowsePath(safPath)
+        return resolveBrowsePath(safPath, preferMediaStore = root.prefersMediaStore)
     }
 
-    /** Prefer MediaStore for gallery open when permission allows; SAF content path is backup. */
-    fun contentPath(gallery: LocalGalleryEntity): Path = resolveBrowsePath(gallery.contentPath.toPath())
+    /**
+     * Prefer MediaStore for gallery open when the gallery path was stored as SAF and
+     * the owning root wants media mode; otherwise keep the stored path (archives stay SAF).
+     */
+    fun contentPath(gallery: LocalGalleryEntity): Path {
+        val path = gallery.contentPath.toPath()
+        if (path.isMediaStorePath()) return path
+        // Archives are never in MediaStore — keep file access path.
+        if (isArchiveFileName(path.name)) return path
+        return resolveBrowsePath(path)
+    }
 }
 
 /** Parent browse folder for a local archive under a configured root. */

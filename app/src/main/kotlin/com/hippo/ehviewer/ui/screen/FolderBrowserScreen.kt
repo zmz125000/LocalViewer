@@ -162,7 +162,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         try {
             val result = withIOContext {
                 if (force) BrowseSession.invalidateLocalListing(frame.path)
-                listLocalDirectory(frame.path.toPath(), useCache = !force)
+                listLocalDirectory(
+                    frame.path.toPath(),
+                    useCache = !force,
+                    preferMediaStore = frame.preferMediaStore,
+                )
             }
             if (stack.lastOrNull()?.path != targetPath) return
             entries = result
@@ -193,6 +197,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     path = path.toString(),
                     title = root.displayName,
                     relativePath = "",
+                    preferMediaStore = root.prefersMediaStore,
                 ),
             ),
         )
@@ -207,6 +212,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 path = entry.path.toString(),
                 title = entry.name,
                 relativePath = rel,
+                preferMediaStore = frame.preferMediaStore,
             ),
         )
     }
