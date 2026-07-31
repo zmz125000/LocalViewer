@@ -28,7 +28,6 @@ import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.ArchiveStreamBridge
 import com.hippo.ehviewer.library.ArchiveStreamPageCache
-import com.hippo.ehviewer.library.ReadAheadArchiveByteSource
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CancellationException
@@ -491,33 +490,13 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 // Promote to offline-capable as soon as every page is mapped
                                 // (don't wait for close — close often only saw a subset in pagePaths).
                                 markCompleteIfReady()
-                                // While still on the archive IO path, warm next page so sequential
-                                // flip/prefetch hits readahead instead of a cold Range/SMB seek.
-                                warmNextPage(index + 1)
+                                // No warm(next): readahead extend-tail + pipeline continue the
+                                // sequential high-water without re-GETting overlapping ranges.
                                 written
                             } finally {
                                 releaseByteBuffer(buffer)
                             }
                         }
-                    }
-
-                    /**
-                     * Prefill readahead for the next member (ZIP local header / TAR data).
-                     * Caps at [ReadAheadArchiveByteSource.SEQUENTIAL_WINDOW] (8 MiB).
-                     */
-                    private fun warmNextPage(next: Int) {
-                        if (next !in 0 until size) return
-                        if (isPageCached(next)) return
-                        runCatching {
-                            val off = getStreamMemberOffset(next)
-                            val len = getStreamMemberLength(next)
-                            if (off < 0L || len <= 0L) return
-                            // ZIP: offset is local header — include a little header slack.
-                            val need = (len + 512L).coerceAtMost(
-                                ReadAheadArchiveByteSource.SEQUENTIAL_WINDOW.toLong(),
-                            ).toInt()
-                            source.warm(off, need)
-                        }.onFailure { logcat(it) }
                     }
                 },
             )

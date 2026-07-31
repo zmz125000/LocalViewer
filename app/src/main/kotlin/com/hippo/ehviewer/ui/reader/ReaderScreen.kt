@@ -858,8 +858,8 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             source,
             password,
             remote,
-            // Solid / TAR chunk: fixed sequential windows + pipeline.
-            preferSequential = solid || tar,
+            // Archives: sequential windows (RAR-like). Documents (PDF) keep sparse probes.
+            preferSequential = !document,
             pipeline = true,
         )
         val cacheKey = "smb:${source.id}:$remote"
@@ -954,7 +954,8 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             source,
             password,
             remote,
-            preferSequential = solid || tar,
+            // Archives: sequential windows (RAR-like). Documents (PDF) keep sparse probes.
+            preferSequential = !document,
             pipeline = true,
         )
         val cacheKey = "webdav:${source.id}:$remote"
