@@ -267,6 +267,17 @@ object Settings : DataStorePreferences(null) {
     val showNavigationOverlayNewUser = boolPref("reader_navigation_overlay_new_user", true)
     val showNavigationOverlayOnStart = boolPref("reader_navigation_overlay_on_start", false)
     val stripExtraneousAds = boolPref("strip_extraneous_ads", false)
+    /**
+     * Full-screen flash after paged (gallery) page turns to reduce E-Ink ghosting.
+     * Webtoon / continuous vertical are unaffected.
+     */
+    val eInkRefreshEnabled = boolPref("pref_eink_refresh_enabled", false)
+    /** Flash duration in ms (100–1500, typically stepped by 100). */
+    val eInkRefreshDuration = intPref("pref_eink_refresh_duration", 100)
+    /** Refresh every N page changes (1–10). */
+    val eInkRefreshInterval = intPref("pref_eink_refresh_interval", 1)
+    /** 0=black, 1=white, 2=white then black. */
+    val eInkRefreshStyle = intPref("pref_eink_refresh_style", 0)
 
     init {
         edit { pref ->

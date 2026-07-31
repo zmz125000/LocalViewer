@@ -738,6 +738,14 @@
     <string name="zoom_start_center">Center</string>
     <string name="rotation_type">Rotation type</string>
     <string name="pref_category_reading_mode">Reading mode</string>
+    <string name="pref_eink_refresh">E-Ink display refresh</string>
+    <string name="pref_eink_refresh_summary">Flash the screen after page changes to reduce ghosting on E-Ink displays. Only applies to Gallery modes.</string>
+    <string name="pref_eink_refresh_duration">Refresh flash duration</string>
+    <string name="pref_eink_refresh_interval">Refresh interval</string>
+    <string name="pref_eink_refresh_style">Refresh flash style</string>
+    <string name="pref_eink_refresh_style_black">Black</string>
+    <string name="pref_eink_refresh_style_white">White</string>
+    <string name="pref_eink_refresh_style_white_then_black">White then black</string>
     <string name="pref_webtoon_side_padding">Side padding</string>
     <string name="webtoon_side_padding_0">None</string>
     <string name="webtoon_side_padding_5">5%</string>

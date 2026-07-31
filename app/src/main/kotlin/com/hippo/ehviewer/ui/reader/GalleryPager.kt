@@ -125,6 +125,11 @@ fun GalleryPager(
         )
     }
     NavigationOverlay(showNavigationOverlay, regions, modifier = Modifier.fillMaxSize())
+    // Paged modes only (LTR / RTL / vertical page) — not webtoon / continuous.
+    // Drawn above content + nav hint so the flash fully covers the reader surface.
+    if (isPagerType) {
+        EInkRefreshOverlay(pagerState = pagerState)
+    }
 }
 
 private suspend fun AwaitPointerEventScope.awaitScrollEvent(): PointerEvent {

@@ -582,6 +582,14 @@
     <string name="tapping_inverted_horizontal">水平</string>
     <string name="tapping_inverted_none">無</string>
     <string name="pref_category_reading_mode">閱讀模式</string>
+    <string name="pref_eink_refresh">電子墨水螢幕刷新</string>
+    <string name="pref_eink_refresh_summary">翻頁後閃爍螢幕，以減少電子墨水螢幕殘影。僅適用於畫廊模式。</string>
+    <string name="pref_eink_refresh_duration">刷新閃爍時長</string>
+    <string name="pref_eink_refresh_interval">刷新間隔頁數</string>
+    <string name="pref_eink_refresh_style">刷新閃爍樣式</string>
+    <string name="pref_eink_refresh_style_black">黑色</string>
+    <string name="pref_eink_refresh_style_white">白色</string>
+    <string name="pref_eink_refresh_style_white_then_black">先白後黑</string>
     <string name="pref_read_with_tapping_inverted">反轉輕觸區域</string>
     <string name="pref_viewer_nav">輕觸區域</string>
     <string name="edge_nav">邊緣式</string>

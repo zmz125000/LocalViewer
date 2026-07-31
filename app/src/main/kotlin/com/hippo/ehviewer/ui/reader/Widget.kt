@@ -104,6 +104,7 @@ fun SliderChoice(
     endSlot: @Composable () -> Unit,
     range: IntRange,
     field: MutableState<Int>,
+    steps: Int = range.last - range.first - 1,
 ) {
     var value by field
     Row(
@@ -116,6 +117,7 @@ fun SliderChoice(
             onValueChange = { value = it },
             modifier = Modifier.weight(1f).padding(8.dp),
             valueRange = range,
+            steps = steps,
         )
         endSlot()
     }

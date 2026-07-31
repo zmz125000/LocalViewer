@@ -5,6 +5,7 @@ import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.EhApplication.Companion.ktorClient
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.util.copyTo
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.accept
 import io.ktor.client.request.header
@@ -30,6 +31,9 @@ import tachiyomi.data.release.GithubWorkflowRuns
 
 private const val API_URL = "https://api.github.com/repos/${BuildConfig.REPO_NAME}"
 private const val LATEST_RELEASE_URL = "$API_URL/releases/latest"
+
+/** Per-request override of shared ktorClient's 10s default — check + APK download. */
+private const val UPDATE_TIMEOUT_MS = 120_000L
 
 /** GitHub returns many unused fields; shared ktorClient has no ContentNegotiation. */
 private val GithubJson = Json {
@@ -113,6 +117,12 @@ private suspend inline fun ghStatement(
     url: String,
     builder: HttpRequestBuilder.() -> Unit = {},
 ) = ktorClient.prepareGet(url) {
+    // Override shared client 10s default so update check/APK download can finish on slow links.
+    timeout {
+        requestTimeoutMillis = UPDATE_TIMEOUT_MS
+        connectTimeoutMillis = UPDATE_TIMEOUT_MS
+        socketTimeoutMillis = UPDATE_TIMEOUT_MS
+    }
     // Override Chrome Accept from configureCommon — GitHub API needs JSON.
     header(HttpHeaders.Accept, "application/vnd.github+json")
     header("X-GitHub-Api-Version", "2022-11-28")
