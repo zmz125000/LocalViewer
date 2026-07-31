@@ -32,7 +32,7 @@ sealed interface BrowseEntry {
 fun listLocalDirectory(
     dir: Path,
     useCache: Boolean = true,
-    preferMediaStore: Boolean = MediaPermissions.prefersSafMediaUpgrade(),
+    preferMediaStore: Boolean = true,
 ): List<BrowseEntry> {
     // Per-root: media mode may rewrite SAF → MediaStore; media+archive keeps file access.
     val effective = resolveBrowsePath(dir, preferMediaStore = preferMediaStore)
@@ -47,7 +47,7 @@ fun listLocalDirectory(
 
 fun listLocalDirectoryUncached(
     dir: Path,
-    preferMediaStore: Boolean = MediaPermissions.prefersSafMediaUpgrade(),
+    preferMediaStore: Boolean = true,
 ): List<BrowseEntry> {
     val childDirs = ArrayList<BrowseChild>()
     var coverPath: Path? = null

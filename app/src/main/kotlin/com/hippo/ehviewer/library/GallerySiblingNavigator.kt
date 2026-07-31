@@ -43,7 +43,7 @@ object GallerySiblingNavigator {
         // Prefer the browse listing for the current stack frame when it matches this parent
         // (includes dual gallery rows the user saw), else list the parent path.
         val frame = BrowseSession.localStack.lastOrNull()
-        val preferMedia = frame?.preferMediaStore ?: MediaPermissions.prefersSafMediaUpgrade()
+        val preferMedia = frame?.preferMediaStore ?: true
         val listing = when {
             frame != null && frame.path == parent.toString() ->
                 BrowseSession.getLocalListing(BrowseSession.pathKey(parent))

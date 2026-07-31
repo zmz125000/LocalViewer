@@ -129,7 +129,6 @@ object LocalLibrary {
         treeUri: String,
         displayName: String,
         role: Int = LIBRARY_ROOT_ROLE_LIBRARY,
-        accessMode: Int? = null,
     ): AddRootResult = withNonCancellableContext {
         // NonCancellable: MediaStore whole-library scan often outlives the add screen.
         // Composition-scoped jobs (LaunchedEffect / rememberCoroutineScope) cancel on leave
@@ -143,8 +142,6 @@ object LocalLibrary {
                     ctx.contentResolver.takePersistableUriPermission(treeUri.toUri(), URI_FLAGS)
                 }.onFailure { logcat(it) }
             }
-
-            val resolvedAccess = accessMode ?: defaultAccessMode(treeUri)
 
             val existing = db.libraryRootDao().loadByTreeUri(treeUri)
             if (existing != null) {
@@ -161,13 +158,15 @@ object LocalLibrary {
                 return@withIOContext AddRootResult.AlreadyExists(existing.id, existing.role)
             }
 
+            // New sources default to MediaStore (ACCESS_MODE = 0); user can opt into
+            // media+archive on Manage Sources for local archive scan/browse.
             val id = db.libraryRootDao().insert(
                 LibraryRootEntity(
                     treeUri = treeUri,
                     displayName = displayName,
                     addedAt = Clock.System.now().toEpochMilliseconds(),
                     role = role,
-                    accessMode = resolvedAccess,
+                    accessMode = LIBRARY_ROOT_ACCESS_MEDIA,
                 ),
             )
             if (role == LIBRARY_ROOT_ROLE_LIBRARY) {
@@ -190,7 +189,7 @@ object LocalLibrary {
             else -> LIBRARY_ROOT_ACCESS_MEDIA
         }
         if (root.accessMode == mode) return@withIOContext
-        db.libraryRootDao().update(root.copy(accessMode = mode))
+        db.libraryRootDao().updateAccessMode(rootId, mode)
         BrowseSession.invalidateLocalListing()
         // Drop in-memory stack if this root is open — paths may switch SAF ↔ MediaStore.
         if (BrowseSession.localStack.any { it.rootId == rootId }) {
@@ -199,13 +198,6 @@ object LocalLibrary {
         if (root.role == LIBRARY_ROOT_ROLE_LIBRARY) {
             scanRoot(rootId)
         }
-    }
-
-    /** Default access for a new root: device media → media; SAF → global Advanced preference. */
-    fun defaultAccessMode(treeUri: String): Int = when {
-        isMediaStoreRootUri(treeUri) -> LIBRARY_ROOT_ACCESS_MEDIA
-        MediaPermissions.prefersSafMediaUpgrade() -> LIBRARY_ROOT_ACCESS_MEDIA
-        else -> LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE
     }
 
     /**

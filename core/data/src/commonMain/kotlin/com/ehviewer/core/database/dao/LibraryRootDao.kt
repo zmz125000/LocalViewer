@@ -35,6 +35,9 @@ interface LibraryRootDao {
     @Update
     suspend fun update(root: LibraryRootEntity)
 
+    @Query("UPDATE LIBRARY_ROOTS SET ACCESS_MODE = :accessMode WHERE ID = :id")
+    suspend fun updateAccessMode(id: Long, accessMode: Int)
+
     @Delete
     suspend fun delete(root: LibraryRootEntity)
 

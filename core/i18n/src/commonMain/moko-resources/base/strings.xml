@@ -442,8 +442,6 @@
     <string name="settings_smb3_only_summary">Disable SMB 2 dialects (negotiate 3.0 / 3.0.2 / 3.1.1 only). Resets active SMB connections.</string>
     <string name="settings_smb_encrypt">Force SMB 3 encryption</string>
     <string name="settings_smb_encrypt_summary">Require encrypted SMB sessions (server must support SMB 3 encryption). Resets active SMB connections.</string>
-    <string name="settings_upgrade_saf_to_media">Prefer MediaStore for folder access</string>
-    <string name="settings_upgrade_saf_to_media_summary">Default for new SAF sources and media-permission prompts. Override per source on Manage Sources (pic = MediaStore, archive = file access for local archives).</string>
     <string name="settings_reader_preload_image">Reader preload</string>
     <string name="settings_reader_preload_image_summary">Prefetch next %s pages (SMB downloads ahead; local opens on demand)</string>
     <string name="settings_download_download_delay">Download delay</string>

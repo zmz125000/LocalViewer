@@ -45,8 +45,9 @@ data class LibraryRootEntity(
     val role: Int = LIBRARY_ROOT_ROLE_LIBRARY,
 
     /**
-     * [LIBRARY_ROOT_ACCESS_MEDIA] or [LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE].
-     * Per-source override of the global MediaStore preference.
+     * [LIBRARY_ROOT_ACCESS_MEDIA] (default) or [LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE].
+     * New and migrated roots use MediaStore; Manage Sources can switch a SAF root
+     * to file access for local archive scan/browse.
      */
     @ColumnInfo(name = "ACCESS_MODE", defaultValue = "0")
     val accessMode: Int = LIBRARY_ROOT_ACCESS_MEDIA,
@@ -54,7 +55,7 @@ data class LibraryRootEntity(
     val isLibraryRole: Boolean get() = role == LIBRARY_ROOT_ROLE_LIBRARY
     val isFolderOnlyRole: Boolean get() = role == LIBRARY_ROOT_ROLE_FOLDER
 
-    /** Prefer MediaStore rewrite when media permission is available. */
+    /** Prefer MediaStore rewrite when media permission is available (default). */
     val prefersMediaStore: Boolean get() = accessMode != LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE
 
     /** File access so archives stay visible in scan/browse. */
