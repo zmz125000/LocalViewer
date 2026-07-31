@@ -10,16 +10,28 @@ external fun openArchive(fd: Int, size: Long, sortEntries: Boolean): Int
  * Does not mmap the full file — for remote ZIP/CBZ/TAR/CBT stream open.
  *
  * **No default args** — `external` + defaults can leave callers linked to a missing
- * 3-arg JVM method ([NoSuchMethodError] on reader open).
+ * JVM overload ([NoSuchMethodError] on reader open).
  *
  * @param coverOnly if true, only index the cover page (natural-first ZIP / first TAR image).
+ * @param progressiveTar if true (reader), TAR stops after first image; call
+ *   [continueStreamTarIndex] to grow the list (seek bar). ZIP still full CD open.
  */
 external fun openArchiveStream(
     bridge: Any,
     size: Long,
     sortEntries: Boolean,
     coverOnly: Boolean,
+    progressiveTar: Boolean,
 ): Int
+
+/**
+ * Continue progressive TAR header walk; returns **total** listed image count.
+ * No-op when not a progressive TAR session or walk already complete.
+ */
+external fun continueStreamTarIndex(maxNew: Int): Int
+
+/** True when ZIP/full open finished indexing, or progressive TAR walk reached EOF. */
+external fun isStreamIndexComplete(): Boolean
 
 /**
  * Open RAR/7z for sequential pull extract via [com.hippo.ehviewer.library.ArchiveStreamBridge].

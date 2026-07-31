@@ -230,6 +230,7 @@ object ArchiveCoverCache {
                             source.size,
                             /* sortEntries = */ false,
                             /* coverOnly = */ true,
+                            /* progressiveTar = */ false,
                         )
                         when {
                             n <= 0 -> CoverEnsureResult.NoImages
