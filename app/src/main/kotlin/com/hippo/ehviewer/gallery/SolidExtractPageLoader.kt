@@ -216,7 +216,9 @@ suspend inline fun <T> useSolidExtractPageLoader(
                         // to the next reader (exit / double-tap prev-next).
                         engine.abort()
                         bgExtractJob.getAndSet(null)?.cancel()
-                        extractJobs.values.forEach { it.cancel() }
+                        // Snapshot first: cancel handlers remove from extractJobs concurrently.
+                        // Live CHM.values iteration on main (Compose dispose) → NoSuchElementException.
+                        extractJobs.values.toList().forEach { it.cancel() }
                         extractJobs.clear()
                         readyWaiters.clear()
                         // Sync-enough flush via cache scope (outlives hostScope cancel).
@@ -372,7 +374,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
                 // Reader exited or session preempted: stop extract + release network/JNI ASAP.
                 engine.abort()
                 bgExtractJob.getAndSet(null)?.cancel()
-                extractJobs.values.forEach { it.cancel() }
+                extractJobs.values.toList().forEach { it.cancel() }
                 extractJobs.clear()
                 runCatching { source.close() }
             }
@@ -454,6 +456,8 @@ class SolidExtractEngine(
      * Skip path trusts this — no File.stat per member.
      */
     private val onDisk = ConcurrentHashMap.newKeySet<Int>()
+    /** Highest known page index (avoids iterating ConcurrentHashMap keys on main). */
+    private val maxKnownIndex = AtomicInteger(-1)
     private val complete = AtomicBoolean(false)
     private val aborted = AtomicBoolean(false)
     private val error = AtomicReferenceError()
@@ -477,12 +481,9 @@ class SolidExtractEngine(
     /**
      * Page count for the reader: max known index + 1 (solid indices are 0..n-1).
      * Not [members.size] — half-cache from readdir must allow seek to the highest cached page.
+     * O(1) — never iterate ConcurrentHashMap keys (Android EntryIterator races).
      */
-    fun listedCount(): Int {
-        val maxExt = memberExt.keys.maxOrNull() ?: -1
-        val maxDisk = onDisk.maxOrNull() ?: -1
-        return maxOf(maxExt, maxDisk) + 1
-    }
+    fun listedCount(): Int = maxKnownIndex.get() + 1
 
     fun extOf(index: Int): String? = memberExt[index]
 
@@ -497,6 +498,10 @@ class SolidExtractEngine(
         aborted.set(true)
     }
 
+    private fun noteIndex(i: Int) {
+        maxKnownIndex.updateAndGet { cur -> maxOf(cur, i) }
+    }
+
     /**
      * Restore partial list from `index.json` **and** `pages/` readdir.
      * Disk pages alone are enough to resume (index may be missing after a kill).
@@ -508,6 +513,7 @@ class SolidExtractEngine(
         memberExt.clear()
         memberUnc.clear()
         onDisk.clear()
+        maxKnownIndex.set(-1)
 
         val idx = SolidExtractCache.loadIndex(cacheKey)
         if (idx != null) {
@@ -520,6 +526,7 @@ class SolidExtractEngine(
         val disk = SolidExtractCache.listCachedPages(cacheKey)
         for ((i, ext) in disk) {
             onDisk.add(i)
+            noteIndex(i)
             if (!memberExt.containsKey(i)) {
                 rememberMember(i, name = "", ext = ext, unc = 0L, notify = false)
             }
@@ -593,6 +600,7 @@ class SolidExtractEngine(
                         }
                         extractCurrentToCache(n, ext, expectedSize = unc)
                         onDisk.add(n)
+                        noteIndex(n)
                         extractedAny = true
                         runCatching { onPageReady?.invoke(n) }
                         // Keep index.json current so kill/exit still resumes half-cache.
@@ -625,6 +633,7 @@ class SolidExtractEngine(
         members.add(m)
         memberExt[i] = ext
         if (unc > 0L) memberUnc[i] = unc
+        noteIndex(i)
         if (notify) onListed?.invoke(listedCount())
     }
 
@@ -633,14 +642,18 @@ class SolidExtractEngine(
     }
 
     fun persistIndex(complete: Boolean, async: Boolean = false) {
-        // Stable list from maps (members COW may lag after seed merge).
-        val list = memberExt.keys.sorted().map { i ->
-            members.firstOrNull { it.i == i }
+        // Snapshot ConcurrentHashMaps — live key iteration races with extract/seed
+        // and has thrown NoSuchElementException on Android EntryIterator.
+        val extSnap = HashMap(memberExt)
+        val uncSnap = HashMap(memberUnc)
+        val memberSnap = members.toList()
+        val list = extSnap.keys.sorted().map { i ->
+            memberSnap.firstOrNull { it.i == i }
                 ?: SolidExtractCache.Member(
                     i = i,
                     name = "",
-                    ext = memberExt[i] ?: "bin",
-                    uncSize = memberUnc[i] ?: 0L,
+                    ext = extSnap[i] ?: "bin",
+                    uncSize = uncSnap[i] ?: 0L,
                 )
         }
         val index = SolidExtractCache.Index(
