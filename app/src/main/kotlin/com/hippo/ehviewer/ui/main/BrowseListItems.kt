@@ -583,7 +583,7 @@ fun BrowseCoverThumb(
         }
     }
 
-    // Disk thumbs are already ~512px JPEG; Coil size request is a light second pass.
+    // Disk thumbs are already ~512px JPEG (OriginDiskCache.THUMB_EDGE); Coil is a light second pass.
     val request = remember(cover, localPath, resolvedDecodePx) {
         localPath?.let { path ->
             val cacheKey = when (cover) {

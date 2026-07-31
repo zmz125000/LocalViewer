@@ -4,7 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.os.Looper
 import com.ehviewer.core.files.mkdirs
-import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.io.FileOutputStream
@@ -14,11 +14,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -31,11 +27,12 @@ import splitties.init.appCtx
 /**
  * On-disk SMB file cache.
  *
- * - **Pages** (`smb_cache/`): full remote files for the reader. Budget = Advanced
- *   image disk cache size.
- * - **Browse thumbs** (`smb_thumb_cache/`): **small JPEG only** (long edge
- *   [THUMB_DISK_EDGE]), fixed [THUMB_BUDGET_BYTES] — **not** tied to Advanced
- *   cache size, and not full studio originals.
+ * - **Pages** (`smb_cache/`): full remote files for the reader. Shares the unified
+ *   origin budget in [com.hippo.ehviewer.library.OriginDiskCache] (Advanced image
+ *   disk cache size). Oldest files first; archives are not protected.
+ * - **Browse thumbs** (`smb_thumb_cache/`): small JPEG only (long edge
+ *   [THUMB_DISK_EDGE]), shared [OriginDiskCache.THUMB_BUDGET_BYTES] with other
+ *   thumb stores — separate from origin budget.
  */
 object SmbCache {
     enum class Kind {
@@ -47,10 +44,10 @@ object SmbCache {
     }
 
     /**
-     * Long edge of JPEGs stored for browse covers. Matches [com.hippo.ehviewer.coil.CoverThumb]
-     * upper decode clamp so Coil rarely re-scales heavily.
+     * Long edge of JPEGs stored for browse covers.
+     * @see com.hippo.ehviewer.library.OriginDiskCache.THUMB_EDGE
      */
-    const val THUMB_DISK_EDGE = 768
+    const val THUMB_DISK_EDGE = OriginDiskCache.THUMB_EDGE
 
     /** JPEG quality for disk thumbs (small + sharp enough for list/grid). */
     private const val THUMB_JPEG_QUALITY = 85
@@ -59,17 +56,10 @@ object SmbCache {
      * Bump when thumb encode semantics change (e.g. EXIF bake-in) so old on-disk
      * thumbs are not reused with wrong orientation/size.
      */
-    private const val THUMB_FORMAT_VERSION = 2
-
-    /**
-     * Fixed thumb store budget (512 MiB). Independent of Settings.readCacheSize so
-     * Advanced disk size does not wipe or starve folder covers.
-     */
-    private const val THUMB_BUDGET_BYTES = 512L * 1024L * 1024L
+    private const val THUMB_FORMAT_VERSION = 3
 
     /** Cap concurrent full-file SMB fetches for thumb generation (first paint). */
     private val thumbFetchSlots = Semaphore(3)
-
     /**
      * Cache roots as pure path math from [ApplicationInfo.dataDir] (string field — no disk).
      * Avoid [Context.getCacheDir] + [mkdirs] on every path resolve (main-thread StrictMode
@@ -89,10 +79,6 @@ object SmbCache {
 
     /** Paths known present after write or off-main probe — avoids main-thread File I/O. */
     private val knownPresent = ConcurrentHashMap.newKeySet<String>()
-
-    private val trimScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val trimLock = Mutex()
-    private val trimScheduled = AtomicBoolean(false)
 
     private fun rootFor(kind: Kind): Path = when (kind) {
         Kind.Page -> pageRoot
@@ -199,7 +185,15 @@ object SmbCache {
     }
 
     fun markAbsent(path: Path) {
-        knownPresent.remove(path.toString())
+        val key = path.toString()
+        knownPresent.remove(key)
+        pathLocks.remove(key)
+        // Also clear alternate absolute/path forms used by trim.
+        val f = File(key)
+        knownPresent.remove(f.absolutePath)
+        knownPresent.remove(f.path)
+        pathLocks.remove(f.absolutePath)
+        pathLocks.remove(f.path)
     }
 
     /** Bump mtime so LRU eviction prefers colder files. No-op on main (StrictMode). */
@@ -356,53 +350,7 @@ object SmbCache {
     }
 
     private fun scheduleTrim() {
-        if (!trimScheduled.compareAndSet(false, true)) return
-        trimScope.launch {
-            try {
-                trimToMaxSize()
-            } finally {
-                trimScheduled.set(false)
-            }
-        }
-    }
-
-    /**
-     * Evict oldest files until each store is within budget.
-     * - Pages: [Settings.readCacheSize] MiB
-     * - Thumbs: fixed [THUMB_BUDGET_BYTES] (not settings)
-     */
-    suspend fun trimToMaxSize() = withContext(Dispatchers.IO) {
-        trimLock.withLock {
-            val pageBudget = Settings.readCacheSize.value.coerceIn(320, 5120).toLong() * 1024L * 1024L
-            trimDir(File(pageRoot.toString()), pageBudget)
-            trimDir(File(thumbRoot.toString()), THUMB_BUDGET_BYTES)
-        }
-    }
-
-    private fun trimDir(dir: File, maxBytes: Long) {
-        if (!dir.isDirectory) return
-        // Snapshot mtime/size — concurrent touch() during sortBy { lastModified() } breaks TimSort.
-        data class Entry(val file: File, val mtime: Long, val size: Long)
-        val files = dir.listFiles { f ->
-            f.isFile && !f.name.contains(".tmp.") && !f.name.contains(".full.") && !f.name.contains(".jpg.")
-        }?.map { f -> Entry(f, f.lastModified(), f.length()) }
-            ?.sortedWith(compareBy<Entry> { it.mtime }.thenBy { it.file.name })
-            ?: return
-        var total = files.sumOf { it.size }
-        if (total <= maxBytes) return
-        for (e in files) {
-            if (total <= maxBytes) break
-            // Keep comic archives on disk — reopening should not re-download multi‑100MB zips.
-            if (com.hippo.ehviewer.library.isArchiveCacheFileName(e.file.name)) continue
-            if (e.file.delete()) {
-                total -= e.size
-                // Drop memory hit so reader re-downloads instead of ENOENT.
-                knownPresent.remove(e.file.absolutePath)
-                knownPresent.remove(e.file.path)
-                pathLocks.remove(e.file.absolutePath)
-                pathLocks.remove(e.file.path)
-            }
-        }
+        OriginDiskCache.scheduleTrim()
     }
 
     private fun commitTmp(tmp: File, dest: File) {

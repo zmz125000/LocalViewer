@@ -66,12 +66,6 @@ fun isPdfFileName(name: String): Boolean {
     return FileUtils.getExtensionFromFilename(name)?.lowercase() == "pdf"
 }
 
-/** True if [name] looks like a cached comic archive (protect from page-cache LRU). */
-fun isArchiveCacheFileName(name: String): Boolean {
-    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
-    return ext in ARCHIVE_EXTENSIONS
-}
-
 /**
  * Prefer mmap page-0 cover extract ([ArchiveCoverCache.ensureCover] non-solid branch).
  * Solid RAR/7z still get covers via sequential first-page extract in the same API.

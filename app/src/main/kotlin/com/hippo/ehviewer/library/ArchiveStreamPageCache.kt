@@ -1,18 +1,13 @@
 package com.hippo.ehviewer.library
 
-import com.hippo.ehviewer.Settings
 import java.io.File
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okio.Path
@@ -30,9 +25,8 @@ import splitties.init.appCtx
  *   0.jpg, 1.png, …
  * ```
  *
- * **Budget:** independent of [SmbCache] / WebDAV page cache, fixed thumbs, and
- * [SolidExtractCache] / [DocumentExtractCache]. Limit = [Settings.readCacheSize] MiB
- * (same numeric pref, own pool). Trim strips page files and **keeps [index.json]**.
+ * **Budget:** shared origin pool via [OriginDiskCache] ([Settings.readCacheSize]).
+ * Trim deletes page files by age only; **never deletes [index.json]**.
  */
 object ArchiveStreamPageCache {
     private val json = Json {
@@ -45,9 +39,13 @@ object ArchiveStreamPageCache {
     }
 
     private val trimScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val trimLock = Mutex()
-    private val trimScheduled = AtomicBoolean(false)
     private val pinnedKeys = ConcurrentHashMap.newKeySet<String>()
+
+    /** Dir names under [root] for open readers — excluded from origin LRU. */
+    internal fun pinnedDirHashes(): Set<String> {
+        if (pinnedKeys.isEmpty()) return emptySet()
+        return pinnedKeys.mapTo(HashSet(pinnedKeys.size)) { sha256Hex(it) }
+    }
 
     @Serializable
     data class Member(
@@ -302,123 +300,7 @@ object ArchiveStreamPageCache {
     }
 
     fun scheduleTrim() {
-        if (!trimScheduled.compareAndSet(false, true)) return
-        trimScope.launch {
-            try {
-                trimToMaxSize()
-            } finally {
-                trimScheduled.set(false)
-            }
-        }
-    }
-
-    /**
-     * Evict page files (oldest / incomplete first); **keep [index.json]** for fast
-     * offline reopen when pages are re-filled, and for member list after a strip.
-     */
-    suspend fun trimToMaxSize() = withContext(Dispatchers.IO) {
-        trimLock.withLock {
-            val budget = Settings.readCacheSize.value.coerceIn(320, 5120).toLong() * 1024L * 1024L
-            val rootDir = File(root.toString())
-            if (!rootDir.isDirectory) return@withLock
-
-            data class Entry(
-                val dir: File,
-                val hash: String,
-                val complete: Boolean,
-                val mtime: Long,
-                val pageBytes: Long,
-            )
-
-            val pinnedHashes = pinnedKeys.mapTo(HashSet()) { sha256Hex(it) }
-            val entries = rootDir.listFiles()
-                ?.filter { it.isDirectory }
-                ?.mapNotNull { dir ->
-                    val hash = dir.name
-                    if (hash in pinnedHashes) return@mapNotNull null
-                    val pageBytes = pageBytesOf(dir)
-                    if (pageBytes <= 0L) return@mapNotNull null
-                    val idxFile = File(dir, "index.json")
-                    val complete = if (idxFile.isFile && idxFile.length() > 0L) {
-                        runCatching {
-                            json.decodeFromString(Index.serializer(), idxFile.readText()).complete
-                        }.getOrDefault(false)
-                    } else {
-                        false
-                    }
-                    val mtime = maxOf(dir.lastModified(), idxFile.lastModified())
-                    Entry(dir, hash, complete, mtime, pageBytes)
-                }
-                ?.sortedWith(compareBy<Entry> { it.complete }.thenBy { it.mtime }.thenBy { it.hash })
-                ?: return@withLock
-
-            var total = entries.sumOf { it.pageBytes } +
-                pinnedKeys.sumOf { k ->
-                    val d = File(dirFor(k).toString())
-                    if (d.isDirectory) pageBytesOf(d) else 0L
-                }
-            if (total <= budget) return@withLock
-
-            for (e in entries) {
-                if (total <= budget) break
-                val freed = stripPagesKeepIndex(e.dir)
-                if (freed > 0L) total -= freed
-            }
-        }
-    }
-
-    private fun stripPagesKeepIndex(dir: File): Long {
-        var freed = 0L
-        dir.listFiles()?.forEach { f ->
-            if (f.isFile && f.name != "index.json" && !f.name.startsWith("index.json.") &&
-                !f.name.contains(".tmp.")
-            ) {
-                freed += f.length()
-                f.delete()
-            } else if (f.isDirectory) {
-                // Unexpected subdirs: drop contents but keep dir shell if needed.
-                f.walkTopDown().forEach { child ->
-                    if (child.isFile && !child.name.contains(".tmp.")) {
-                        freed += child.length()
-                        child.delete()
-                    }
-                }
-                f.deleteRecursively()
-            }
-        }
-        val idxFile = File(dir, "index.json")
-        if (idxFile.isFile && idxFile.length() > 0L) {
-            runCatching {
-                val idx = json.decodeFromString(Index.serializer(), idxFile.readText())
-                if (idx.complete) {
-                    val tmp = File("${idxFile.path}.tmp.${System.nanoTime()}")
-                    try {
-                        tmp.writeText(
-                            json.encodeToString(Index.serializer(), idx.copy(complete = false)),
-                        )
-                        CachePagePublish.atomicReplaceFile(tmp, idxFile)
-                    } catch (_: Throwable) {
-                        // Best-effort rewrite during trim.
-                    } finally {
-                        tmp.delete()
-                    }
-                }
-            }
-        }
-        return freed
-    }
-
-    private fun pageBytesOf(dir: File): Long {
-        if (!dir.isDirectory) return 0L
-        var sum = 0L
-        dir.walkTopDown().forEach { f ->
-            if (f.isFile && f.name != "index.json" && !f.name.startsWith("index.json.") &&
-                !f.name.contains(".tmp.")
-            ) {
-                sum += f.length()
-            }
-        }
-        return sum
+        OriginDiskCache.scheduleTrim()
     }
 
     private fun sha256Hex(s: String): String {

@@ -42,20 +42,22 @@ sealed interface CoverEnsureResult {
 
 /**
  * First-page JPEG thumbs for archive galleries (library + folder / network browse).
- * Long edge [THUMB_EDGE] matches SMB/WebDAV browse thumbs (768).
+ * Long edge [THUMB_EDGE] matches SMB/WebDAV browse thumbs ([OriginDiskCache.THUMB_EDGE]).
  *
  * - Local archives (ZIP/TAR/RAR/7z, incl. SAF `content://`): [openFileDescriptor] +
  *   libarchive page 0 — never [FileArchiveByteSource] (that only works on real file paths)
  * - Network ZIP/TAR: [ensureStreamCover] (range + coverOnly)
  * - Network RAR/7z: [ensureSolidStreamCover] (sequential first playable only)
  * - After solid reader: [writeCoverFromExtractedPage] from extract cache page 0
+ *
+ * Thumbs share the fixed [OriginDiskCache.THUMB_BUDGET_BYTES] pool (not origin settings).
  */
 object ArchiveCoverCache {
-    /** Align with [com.hippo.ehviewer.smb.SmbCache.THUMB_DISK_EDGE]. */
-    const val THUMB_EDGE = 768
+    /** Align with [OriginDiskCache.THUMB_EDGE] / SMB/WebDAV browse thumbs. */
+    const val THUMB_EDGE = OriginDiskCache.THUMB_EDGE
 
     private const val THUMB_JPEG_QUALITY = 85
-    private const val FORMAT_VERSION = 1
+    private const val FORMAT_VERSION = 2
 
     private val extractSlots = Semaphore(1)
 
@@ -94,6 +96,14 @@ object ArchiveCoverCache {
 
     fun markPresent(path: Path) {
         knownPresent.add(path.toString())
+    }
+
+    fun markAbsent(path: Path) {
+        val key = path.toString()
+        knownPresent.remove(key)
+        val f = File(key)
+        knownPresent.remove(f.absolutePath)
+        knownPresent.remove(f.path)
     }
 
     /**
@@ -185,6 +195,7 @@ object ArchiveCoverCache {
                 }
                 if (destFile.isFile && destFile.length() > 0L) {
                     markPresent(dest)
+                    OriginDiskCache.scheduleTrim()
                     dest
                 } else {
                     null
@@ -487,6 +498,7 @@ object ArchiveCoverCache {
                 }
                 if (destFile.isFile && destFile.length() > 0L) {
                     markPresent(dest)
+                    OriginDiskCache.scheduleTrim()
                 }
             } finally {
                 rawTmp.delete()
