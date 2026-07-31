@@ -10,7 +10,11 @@ import com.hippo.ehviewer.jni.closeArchive
 import com.hippo.ehviewer.jni.extractToByteBuffer
 import com.hippo.ehviewer.jni.getExtension
 import com.hippo.ehviewer.jni.getStreamMemberLength
+import com.hippo.ehviewer.jni.getStreamMemberMethod
 import com.hippo.ehviewer.jni.getStreamMemberOffset
+import com.hippo.ehviewer.jni.getStreamMemberUncSize
+import com.hippo.ehviewer.jni.isStreamTarIndex
+import com.hippo.ehviewer.jni.loadStreamIndex
 import com.hippo.ehviewer.jni.needPassword
 import com.hippo.ehviewer.jni.openArchiveStream
 import com.hippo.ehviewer.jni.providePassword
@@ -113,8 +117,18 @@ suspend inline fun <T> useStreamArchivePageLoader(
                 { ArchiveStreamBridge(source) },
                 { b, _ -> b.close() },
             )
+            // Prefer disk seek index (offsets) so ZIP/TAR reopen skips EOCD/CD / header walk.
+            val diskIndex = ArchiveStreamPageCache.loadIndex(cacheKey)
+                ?.takeIf {
+                    it.remoteSize <= 0L || it.remoteSize == archiveSizeBytes
+                }
+                ?.takeIf { it.hasFullSeekIndex() }
             val pageCount = install(
                 {
+                    val fromDisk = diskIndex?.let { idx ->
+                        openFromSeekIndex(bridge, archiveSizeBytes, idx)
+                    } ?: 0
+                    if (fromDisk > 0) return@install fromDisk
                     val n = openArchiveStream(bridge, archiveSizeBytes, true, false)
                     check(n > 0) { "Archive have no content!" }
                     n
@@ -128,18 +142,19 @@ suspend inline fun <T> useStreamArchivePageLoader(
                 ArchiveCoverCache.writeCoverFromOpenArchive(cacheKey, 0L, archiveSizeBytes)
             }.onFailure { logcat(it) }
 
-            // Member list for offline reopen — build + write async so open is not blocked
-            // by N getExtension + index.json write (was making "resume" feel slower than cold).
-            val streamMembers = ArrayList<ArchiveStreamPageCache.Member>(pageCount)
-            for (i in 0 until pageCount) {
-                val ext = getExtension(i)?.ifBlank { null } ?: "bin"
-                streamMembers += ArchiveStreamPageCache.Member(i = i, name = "", ext = ext, uncSize = 0L)
+            // Full seek metadata for next open (ZIP CD / TAR header walk skip).
+            val streamMembers = buildStreamMembers(pageCount, prior = diskIndex)
+            val format = when {
+                diskIndex?.format == "zip" || diskIndex?.format == "tar" -> diskIndex.format
+                isStreamTarIndex() -> "tar"
+                else -> "zip"
             }
             ArchiveStreamPageCache.saveIndexAsync(
                 ArchiveStreamPageCache.Index(
+                    v = ArchiveStreamPageCache.INDEX_VERSION,
                     cacheKey = cacheKey,
                     remoteSize = archiveSizeBytes,
-                    format = "stream",
+                    format = format,
                     complete = false,
                     members = streamMembers,
                 ),
@@ -219,9 +234,10 @@ suspend inline fun <T> useStreamArchivePageLoader(
                             )
                         ArchiveStreamPageCache.saveIndexAsync(
                             ArchiveStreamPageCache.Index(
+                                v = ArchiveStreamPageCache.INDEX_VERSION,
                                 cacheKey = cacheKey,
                                 remoteSize = archiveSizeBytes,
-                                format = "stream",
+                                format = format,
                                 complete = complete,
                                 members = streamMembers,
                             ),
@@ -336,9 +352,10 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         if (pageCount <= 0 || pagePaths.size < pageCount) return
                         ArchiveStreamPageCache.saveIndexAsync(
                             ArchiveStreamPageCache.Index(
+                                v = ArchiveStreamPageCache.INDEX_VERSION,
                                 cacheKey = cacheKey,
                                 remoteSize = archiveSizeBytes,
-                                format = "stream",
+                                format = format,
                                 complete = true,
                                 members = streamMembers,
                             ),
@@ -419,6 +436,76 @@ suspend inline fun <T> useStreamArchivePageLoader(
             }
         }
     }
+}
+
+/**
+ * Open stream session from disk seek index (no ZIP CD / TAR header network walk).
+ * @return page count or 0 if load failed (caller falls back to [openArchiveStream]).
+ */
+@PublishedApi
+internal fun openFromSeekIndex(
+    bridge: ArchiveStreamBridge,
+    archiveSizeBytes: Long,
+    idx: ArchiveStreamPageCache.Index,
+): Int {
+    val members = idx.members.sortedBy { it.i }
+    if (members.isEmpty() || !members.all { it.hasSeek }) return 0
+    val n = members.size
+    val offsets = LongArray(n) { members[it].offset }
+    val unc = LongArray(n) { members[it].uncSize }
+    val comp = LongArray(n) {
+        val c = members[it].compSize
+        if (c > 0L) c else members[it].uncSize
+    }
+    val methods = IntArray(n) {
+        val m = members[it].method
+        if (m >= 0) m else 0
+    }
+    val names = Array(n) { i ->
+        val ext = members[i].ext.ifBlank { "bin" }
+        members[i].name.ifBlank { "%06d.%s".format(members[i].i, ext) }
+    }
+    // Only trust explicit format — ZIP store also uses method 0.
+    val isTar = idx.format == "tar"
+    return runCatching {
+        loadStreamIndex(
+            bridge,
+            archiveSizeBytes,
+            offsets,
+            unc,
+            comp,
+            methods,
+            names,
+            isTar,
+        )
+    }.getOrDefault(0)
+}
+
+/** Build member list with seek offsets from live JNI (or reuse prior disk values). */
+@PublishedApi
+internal fun buildStreamMembers(
+    pageCount: Int,
+    prior: ArchiveStreamPageCache.Index?,
+): ArrayList<ArchiveStreamPageCache.Member> {
+    val priorByI = prior?.members?.associateBy { it.i }.orEmpty()
+    val out = ArrayList<ArchiveStreamPageCache.Member>(pageCount)
+    for (i in 0 until pageCount) {
+        val ext = getExtension(i)?.ifBlank { null } ?: priorByI[i]?.ext ?: "bin"
+        val off = getStreamMemberOffset(i).takeIf { it >= 0L } ?: priorByI[i]?.offset ?: -1L
+        val comp = getStreamMemberLength(i).takeIf { it >= 0L } ?: priorByI[i]?.compSize ?: -1L
+        val unc = getStreamMemberUncSize(i).takeIf { it > 0L } ?: priorByI[i]?.uncSize ?: 0L
+        val method = getStreamMemberMethod(i).takeIf { it >= 0 } ?: priorByI[i]?.method ?: -1
+        out += ArchiveStreamPageCache.Member(
+            i = i,
+            name = priorByI[i]?.name.orEmpty(),
+            ext = ext,
+            uncSize = unc,
+            offset = off,
+            compSize = comp,
+            method = method,
+        )
+    }
+    return out
 }
 
 @PublishedApi

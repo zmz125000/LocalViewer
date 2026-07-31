@@ -1817,6 +1817,185 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamMemberLength(JNIEnv *env, jclass 
     return entries[index].compressed_size;
 }
 
+/** Uncompressed size for decode buffer. */
+JNIEXPORT jlong JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamMemberUncSize(JNIEnv *env, jclass thiz, jint index) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    if (!use_stream_io || !entries || index < 0 || (size_t) index >= entryCount) return -1;
+    if (!(use_zip_cd_index || use_tar_index)) return -1;
+    return (jlong) entries[index].size;
+}
+
+/** ZIP method or 0 for TAR. */
+JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamMemberMethod(JNIEnv *env, jclass thiz, jint index) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    if (!use_stream_io || !entries || index < 0 || (size_t) index >= entryCount) return -1;
+    if (!(use_zip_cd_index || use_tar_index)) return -1;
+    return (jint) entries[index].compression_method;
+}
+
+/** True when active stream index is TAR (store). */
+JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_isStreamTarIndex(JNIEnv *env, jclass thiz) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    return use_tar_index ? JNI_TRUE : JNI_FALSE;
+}
+
+/**
+ * Install disk-cached stream member table (offsets/sizes) — skip ZIP CD / TAR header walk.
+ * Parallel arrays length = n. names used for getExtension only.
+ */
+JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_loadStreamIndex(
+        JNIEnv *env, jclass thiz, jobject bridge, jlong size,
+        jlongArray offsets, jlongArray uncSizes, jlongArray compSizes,
+        jintArray methods, jobjectArray names, jboolean is_tar) {
+    EH_UNUSED(thiz);
+    if (!bridge || size <= 0 || !offsets || !uncSizes || !compSizes || !methods || !names) {
+        return 0;
+    }
+    jsize n = (*env)->GetArrayLength(env, offsets);
+    if (n <= 0 ||
+        (*env)->GetArrayLength(env, uncSizes) != n ||
+        (*env)->GetArrayLength(env, compSizes) != n ||
+        (*env)->GetArrayLength(env, methods) != n ||
+        (*env)->GetArrayLength(env, names) != n) {
+        return 0;
+    }
+    if (n > 500000) return 0;
+
+    archive_cache_vm(env);
+    solid_seq_reset_state();
+    stream_bridge_clear(env);
+    if (archiveAddr != MAP_FAILED) {
+        munmap(archiveAddr, archiveSize);
+        archiveAddr = MAP_FAILED;
+    }
+    if (entries) {
+        for (int i = 0; i < (int) entryCount; ++i)
+            free((void *) entries[i].filename);
+        free(entries);
+        entries = NULL;
+        entryCount = 0;
+    }
+    if (ctx_pool) {
+        for (int i = 0; i < CTX_POOL_SIZE; i++)
+            archive_release_ctx(ctx_pool[i]);
+        free(ctx_pool);
+        ctx_pool = NULL;
+    }
+
+    use_stream_io = true;
+    use_zip_cd_index = (is_tar != JNI_TRUE);
+    use_tar_index = (is_tar == JNI_TRUE);
+    archiveSize = (size_t) size;
+    archiveAddr = MAP_FAILED;
+    need_encrypt = false;
+    g_stream_pos = 0;
+    stream_bytes_read = 0;
+    g_stream_bridge = (*env)->NewGlobalRef(env, bridge);
+    jclass cls = (*env)->GetObjectClass(env, bridge);
+    g_mid_read = (*env)->GetMethodID(env, cls, "nativeRead", "(I)[B");
+    g_mid_seek = (*env)->GetMethodID(env, cls, "nativeSeek", "(JI)J");
+    (*env)->DeleteLocalRef(env, cls);
+    if (!g_mid_read || !g_mid_seek) {
+        LOGE("%s", "loadStreamIndex: bridge methods missing");
+        stream_bridge_clear(env);
+        use_zip_cd_index = false;
+        use_tar_index = false;
+        return 0;
+    }
+
+    entries = calloc((size_t) n, sizeof(entry));
+    if (!entries) {
+        stream_bridge_clear(env);
+        use_zip_cd_index = false;
+        use_tar_index = false;
+        return 0;
+    }
+
+    jlong *offs = (*env)->GetLongArrayElements(env, offsets, NULL);
+    jlong *uncs = (*env)->GetLongArrayElements(env, uncSizes, NULL);
+    jlong *comps = (*env)->GetLongArrayElements(env, compSizes, NULL);
+    jint *meths = (*env)->GetIntArrayElements(env, methods, NULL);
+    if (!offs || !uncs || !comps || !meths) {
+        if (offs) (*env)->ReleaseLongArrayElements(env, offsets, offs, JNI_ABORT);
+        if (uncs) (*env)->ReleaseLongArrayElements(env, uncSizes, uncs, JNI_ABORT);
+        if (comps) (*env)->ReleaseLongArrayElements(env, compSizes, comps, JNI_ABORT);
+        if (meths) (*env)->ReleaseIntArrayElements(env, methods, meths, JNI_ABORT);
+        free(entries);
+        entries = NULL;
+        stream_bridge_clear(env);
+        use_zip_cd_index = false;
+        use_tar_index = false;
+        return 0;
+    }
+
+    max_file_size = 0;
+    int ok = 1;
+    for (jsize i = 0; i < n; i++) {
+        if (offs[i] < 0 || uncs[i] <= 0 || uncs[i] >= (1ll << 31)) {
+            ok = 0;
+            break;
+        }
+        jstring jn = (jstring) (*env)->GetObjectArrayElement(env, names, i);
+        const char *utf = jn ? (*env)->GetStringUTFChars(env, jn, NULL) : NULL;
+        char *fname = NULL;
+        if (utf && utf[0]) {
+            fname = strdup(utf);
+        } else {
+            char tmp[32];
+            snprintf(tmp, sizeof(tmp), "%d.bin", (int) i);
+            fname = strdup(tmp);
+        }
+        if (utf && jn) (*env)->ReleaseStringUTFChars(env, jn, utf);
+        if (jn) (*env)->DeleteLocalRef(env, jn);
+        if (!fname) {
+            ok = 0;
+            break;
+        }
+        entries[i].filename = fname;
+        entries[i].index = (int) i;
+        entries[i].size = (ssize_t) uncs[i];
+        entries[i].addr = NULL;
+        entries[i].local_header_offset = (int64_t) offs[i];
+        entries[i].compressed_size = comps[i] > 0 ? (int64_t) comps[i] : (int64_t) uncs[i];
+        entries[i].compression_method = meths[i] >= 0 ? (uint16_t) meths[i] : 0;
+        if (entries[i].size > max_file_size) max_file_size = entries[i].size;
+    }
+
+    (*env)->ReleaseLongArrayElements(env, offsets, offs, JNI_ABORT);
+    (*env)->ReleaseLongArrayElements(env, uncSizes, uncs, JNI_ABORT);
+    (*env)->ReleaseLongArrayElements(env, compSizes, comps, JNI_ABORT);
+    (*env)->ReleaseIntArrayElements(env, methods, meths, JNI_ABORT);
+
+    if (!ok) {
+        for (jsize i = 0; i < n; i++) {
+            free((void *) entries[i].filename);
+        }
+        free(entries);
+        entries = NULL;
+        entryCount = 0;
+        stream_bridge_clear(env);
+        use_zip_cd_index = false;
+        use_tar_index = false;
+        return 0;
+    }
+
+    entryCount = (size_t) n;
+    // Match openArchiveStream: decode buffers sized from max_file_size via existing paths.
+    if (!ctx_pool) {
+        ctx_pool = calloc(CTX_POOL_SIZE, sizeof(archive_ctx *));
+    }
+    LOGI("loadStreamIndex: %d entries (%s) size=%lld",
+         (int) n, is_tar ? "tar" : "zip", (long long) size);
+    return (jint) n;
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_extractToFd(JNIEnv *env, jclass thiz, jint index, jint fd) {
     EH_UNUSED(env);

@@ -9,15 +9,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * - **Sequential** (forward continuation / start-of-file) → large fetch
  * - **Random** (backward or far jump) → small fetch (EOCD tail, ZIP local headers)
  * - **Pipeline**: after a sequential fill, prefetch the **next** window on a worker so
- *   decompress / page-write can overlap network. Without this, solid extract shows
- *   sawtooth traffic (burst → idle → burst), especially on SMB where each range has
- *   higher startup cost than a warm WebDAV GET stream. Consumers that hit the next
- *   window wait for that in-flight fetch to finish (no short timeout) so slow links
- *   do not issue a duplicate range for the same 8 MiB.
- * - **[warm]** explicit next-page fill (up to [SEQUENTIAL_WINDOW])
+ *   decompress / page-write can overlap network. Consumers that need any byte inside an
+ *   in-flight next window **wait and reuse** it (not only when offset == window start),
+ *   so sequential page extract + [warm] cannot double-download the same 8 MiB region.
+ * - **[warm]** explicit next-page fill (up to [SEQUENTIAL_WINDOW]); no-op when already
+ *   covered by current or pipeline window
  *
- * Blind large readahead on every miss re-downloads zip members during header walks;
- * ZIP open uses CD-only indexing; solid / page extract use the sequential path.
  * Sparse probes (`want` ≤ [RANDOM_WINDOW], non-solid) stay at the small window so
  * TAR 512‑byte header walks do not pull multi‑MiB member bodies.
  */
@@ -40,6 +37,8 @@ class ReadAheadArchiveByteSource(
     private var pref: ByteArray? = null
     /** Target offset of an in-flight prefetch (valid while [prefInFlight]). */
     private var prefFlightOff: Long = -1L
+    /** Expected end exclusive of in-flight fetch (flightOff + planned length). */
+    private var prefFlightEnd: Long = -1L
     private var prefInFlight = false
     private var closed = false
     private val prefEpoch = AtomicInteger(0)
@@ -58,14 +57,11 @@ class ReadAheadArchiveByteSource(
             // Fast path: current window hit (no network).
             synchronized(lock) {
                 if (closed) return -1
-                win?.let { w ->
-                    if (offset >= winStart && offset + want <= winStart + winLen) {
-                        System.arraycopy(w, (offset - winStart).toInt(), buf, off, want)
-                        maybeKickPrefetchLocked(fileSize)
-                        return want
-                    }
+                if (copyFromWinLocked(offset, want, buf, off)) {
+                    maybeKickPrefetchLocked(fileSize)
+                    return want
                 }
-                // Promote completed prefetch if it covers this read.
+                // Promote completed prefetch if it fully covers this read.
                 if (tryPromotePrefetchLocked(offset, want)) {
                     System.arraycopy(win!!, (offset - winStart).toInt(), buf, off, want)
                     maybeKickPrefetchLocked(fileSize)
@@ -73,13 +69,26 @@ class ReadAheadArchiveByteSource(
                 }
             }
 
-            // Wait out an in-flight prefetch for this offset so we never issue a second
-            // SMB/WebDAV range for the same 8 MiB window (slow links used to time out at
-            // 3 s and double-fetch).
-            if (pipeline && awaitSameOffsetPrefetch(offset, want, fileSize, buf, off)) {
+            // Wait for in-flight pipeline window that overlaps this read (any offset inside
+            // the planned range — not only exact start). Prevents double Range for same 8 MiB.
+            if (pipeline && awaitOverlappingPrefetch(offset, want, fileSize, buf, off)) {
                 return want
             }
             if (closed) return -1
+
+            // Re-check after wait race (another thread may have filled win).
+            synchronized(lock) {
+                if (closed) return -1
+                if (copyFromWinLocked(offset, want, buf, off)) {
+                    maybeKickPrefetchLocked(fileSize)
+                    return want
+                }
+                if (tryPromotePrefetchLocked(offset, want)) {
+                    System.arraycopy(win!!, (offset - winStart).toInt(), buf, off, want)
+                    maybeKickPrefetchLocked(fileSize)
+                    return want
+                }
+            }
 
             val window = chooseWindow(offset, want)
             val fetch = minOf(window.toLong(), fileSize - offset).toInt().coerceAtLeast(want)
@@ -93,6 +102,9 @@ class ReadAheadArchiveByteSource(
      * Prefill readahead at [offset] (e.g. next page local-header / data).
      * Fetches up to min([length], [sequentialWindow]) so multi‑MiB pages can land
      * in one network round-trip when the link is warm.
+     *
+     * No-op when current window, completed prefetch, or in-flight pipeline already
+     * covers the requested range (avoids warm/extract refiring the same traffic).
      */
     override fun warm(offset: Long, length: Int) {
         if (offset < 0L || length <= 0) return
@@ -107,18 +119,19 @@ class ReadAheadArchiveByteSource(
             if (want <= 0) return
             synchronized(lock) {
                 if (closed) return
-                if (win != null && offset >= winStart && offset + want <= winStart + winLen) {
-                    return
-                }
-                if (tryPromotePrefetchLocked(offset, want)) {
-                    return
-                }
+                if (rangeFullyInWinLocked(offset, want)) return
+                if (tryPromotePrefetchLocked(offset, want)) return
             }
-            // Same as readAt: do not race a pipeline fill for this offset.
-            if (pipeline && awaitSameOffsetPrefetch(offset, want, fileSize)) {
+            // Wait for pipeline if it already covers (or overlaps) this warm range.
+            if (pipeline && awaitOverlappingPrefetch(offset, want, fileSize)) {
                 return
             }
             if (closed) return
+            synchronized(lock) {
+                if (closed) return
+                if (rangeFullyInWinLocked(offset, want)) return
+                if (tryPromotePrefetchLocked(offset, want)) return
+            }
             fillWindowSync(offset, want, 0, null, 0, fileSize)
         } catch (_: Throwable) {
             // Network blip during warm — ignore.
@@ -126,15 +139,16 @@ class ReadAheadArchiveByteSource(
     }
 
     /**
-     * Block until an in-flight next-window prefetch for [offset] finishes, then promote
-     * if it covers [want]. Returns true when the window is ready (and [copyBuf] was
-     * filled when non-null). Returns false when there is nothing to wait for (caller
-     * should [fillWindowSync]).
+     * Block until an in-flight prefetch that **overlaps** [offset, offset+want) finishes,
+     * then promote/serve if the completed window covers the full want.
+     *
+     * Returns true when the read was satisfied from the promoted window.
+     * Returns false when there is nothing useful to wait for (caller should fetch).
      *
      * Waits until completion — no short timeout that re-issues the same range on slow
-     * VPN/hotspot. [close] notifies waiters so this cannot hang past source teardown.
+     * links. [close] notifies waiters so this cannot hang past source teardown.
      */
-    private fun awaitSameOffsetPrefetch(
+    private fun awaitOverlappingPrefetch(
         offset: Long,
         want: Int,
         fileSize: Long,
@@ -145,6 +159,10 @@ class ReadAheadArchiveByteSource(
             val wait: Boolean
             synchronized(lock) {
                 if (closed) return false
+                if (copyFromWinLocked(offset, want, copyBuf, copyOff)) {
+                    maybeKickPrefetchLocked(fileSize)
+                    return true
+                }
                 if (tryPromotePrefetchLocked(offset, want)) {
                     if (copyBuf != null) {
                         System.arraycopy(win!!, (offset - winStart).toInt(), copyBuf, copyOff, want)
@@ -152,7 +170,12 @@ class ReadAheadArchiveByteSource(
                     }
                     return true
                 }
-                wait = prefInFlight && prefFlightOff == offset
+                // Wait only if in-flight range can fully cover this read once complete
+                // (or already overlaps so we must not start a competing fetch).
+                wait = prefInFlight && (
+                    rangeFullyInsideFlightLocked(offset, want) ||
+                        rangeOverlapsFlightLocked(offset, want)
+                    )
                 if (wait) {
                     try {
                         (lock as Object).wait(50L)
@@ -162,8 +185,54 @@ class ReadAheadArchiveByteSource(
                     }
                 }
             }
-            if (!wait) return false
+            if (!wait) {
+                // After flight ended without covering us — check completed pref once more.
+                synchronized(lock) {
+                    if (tryPromotePrefetchLocked(offset, want)) {
+                        if (copyBuf != null) {
+                            System.arraycopy(win!!, (offset - winStart).toInt(), copyBuf, copyOff, want)
+                            maybeKickPrefetchLocked(fileSize)
+                        }
+                        return true
+                    }
+                }
+                return false
+            }
         }
+    }
+
+    /** Caller holds [lock]. */
+    private fun copyFromWinLocked(
+        offset: Long,
+        want: Int,
+        copyBuf: ByteArray?,
+        copyOff: Int,
+    ): Boolean {
+        val w = win ?: return false
+        if (offset < winStart || offset + want > winStart + winLen) return false
+        if (copyBuf != null) {
+            System.arraycopy(w, (offset - winStart).toInt(), copyBuf, copyOff, want)
+        }
+        return true
+    }
+
+    /** Caller holds [lock]. */
+    private fun rangeFullyInWinLocked(offset: Long, want: Int): Boolean {
+        if (win == null) return false
+        return offset >= winStart && offset + want <= winStart + winLen
+    }
+
+    /** Caller holds [lock]. In-flight planned range fully covers [offset, offset+want). */
+    private fun rangeFullyInsideFlightLocked(offset: Long, want: Int): Boolean {
+        if (!prefInFlight || prefFlightOff < 0L || prefFlightEnd <= prefFlightOff) return false
+        return offset >= prefFlightOff && offset + want <= prefFlightEnd
+    }
+
+    /** Caller holds [lock]. Any overlap with in-flight planned range. */
+    private fun rangeOverlapsFlightLocked(offset: Long, want: Int): Boolean {
+        if (!prefInFlight || prefFlightOff < 0L || prefFlightEnd <= prefFlightOff) return false
+        val end = offset + want
+        return offset < prefFlightEnd && end > prefFlightOff
     }
 
     /**
@@ -210,6 +279,27 @@ class ReadAheadArchiveByteSource(
         copyOff: Int,
         fileSize: Long = size,
     ): Int {
+        // Last chance: do not network if another thread filled while we chose fetch size.
+        val need = if (copyLen > 0) copyLen else fetch
+        synchronized(lock) {
+            if (closed) return -1
+            if (copyLen > 0 && copyBuf != null && copyFromWinLocked(offset, copyLen, copyBuf, copyOff)) {
+                maybeKickPrefetchLocked(fileSize)
+                return copyLen
+            }
+            if (copyLen <= 0 && rangeFullyInWinLocked(offset, need.coerceAtLeast(1).coerceAtMost(sequentialWindow))) {
+                return winLen
+            }
+            if (tryPromotePrefetchLocked(offset, need.coerceAtLeast(1))) {
+                if (copyLen > 0 && copyBuf != null) {
+                    System.arraycopy(win!!, (offset - winStart).toInt(), copyBuf, copyOff, copyLen)
+                    maybeKickPrefetchLocked(fileSize)
+                    return copyLen
+                }
+                return winLen
+            }
+        }
+
         val fresh = ByteArray(fetch)
         val got = try {
             inner.readAt(offset, fresh, 0, fetch)
@@ -243,9 +333,10 @@ class ReadAheadArchiveByteSource(
         }
     }
 
-    /** Caller holds [lock]. */
+    /** Caller holds [lock]. Promote pref only when it fully covers [offset, offset+want). */
     private fun tryPromotePrefetchLocked(offset: Long, want: Int): Boolean {
         val p = pref ?: return false
+        if (want <= 0) return false
         if (offset < prefStart || offset + want > prefStart + prefLen) return false
         win = p
         winStart = prefStart
@@ -272,10 +363,12 @@ class ReadAheadArchiveByteSource(
         // Only pipeline when we are consuming a full-size sequential window (not tiny random).
         if (winLen < randomWindow * 2 && !preferSequential) return
 
+        val fetch = minOf(sequentialWindow.toLong(), fileSize - nextOff).toInt()
+        if (fetch <= 0) return
         prefInFlight = true
         prefFlightOff = nextOff
+        prefFlightEnd = nextOff + fetch
         val epoch = prefEpoch.incrementAndGet()
-        val fetch = minOf(sequentialWindow.toLong(), fileSize - nextOff).toInt()
         PREFETCH_EXECUTOR.execute {
             try {
                 if (closed || epoch != prefEpoch.get()) {
@@ -301,12 +394,14 @@ class ReadAheadArchiveByteSource(
                     }
                     prefInFlight = false
                     prefFlightOff = -1L
+                    prefFlightEnd = -1L
                     (lock as Object).notifyAll()
                 }
             } catch (_: Throwable) {
                 synchronized(lock) {
                     prefInFlight = false
                     prefFlightOff = -1L
+                    prefFlightEnd = -1L
                     pref = null
                     prefStart = -1L
                     prefLen = 0
@@ -328,6 +423,7 @@ class ReadAheadArchiveByteSource(
         if (prefInFlight && prefFlightOff == flightOff) {
             prefInFlight = false
             prefFlightOff = -1L
+            prefFlightEnd = -1L
         }
         (lock as Object).notifyAll()
     }
@@ -344,6 +440,7 @@ class ReadAheadArchiveByteSource(
             prefLen = 0
             prefInFlight = false
             prefFlightOff = -1L
+            prefFlightEnd = -1L
             (lock as Object).notifyAll()
         }
         inner.close()

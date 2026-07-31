@@ -48,6 +48,33 @@ external fun getStreamMemberOffset(index: Int): Long
 /** Stream ZIP/TAR index: compressed/raw member length for readahead warm; -1 if N/A. */
 external fun getStreamMemberLength(index: Int): Long
 
+/** Uncompressed member size (decode buffer). -1 if N/A. */
+external fun getStreamMemberUncSize(index: Int): Long
+
+/** ZIP method (0/8) or 0 for TAR. -1 if N/A. */
+external fun getStreamMemberMethod(index: Int): Int
+
+/**
+ * Install a pre-parsed stream index (from disk cache) and bind [bridge] for extract.
+ * Skips ZIP EOCD/CD and TAR header walk. [isTar] selects store extract vs ZIP inflate path.
+ *
+ * Arrays are parallel, length = page count. [names] used for [getExtension] only.
+ * @return entry count on success, 0 on failure.
+ */
+external fun loadStreamIndex(
+    bridge: Any,
+    archiveSize: Long,
+    offsets: LongArray,
+    uncSizes: LongArray,
+    compSizes: LongArray,
+    methods: IntArray,
+    names: Array<String>,
+    isTar: Boolean,
+): Int
+
+/** True when the active stream session is a TAR header index (not ZIP CD). */
+external fun isStreamTarIndex(): Boolean
+
 external fun needPassword(): Boolean
 external fun providePassword(str: String): Boolean
 external fun closeArchive()

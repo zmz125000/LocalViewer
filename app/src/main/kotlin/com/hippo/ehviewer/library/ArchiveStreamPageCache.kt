@@ -55,17 +55,42 @@ object ArchiveStreamPageCache {
         val name: String = "",
         val ext: String,
         val uncSize: Long = 0L,
-    )
+        /**
+         * Stream seek offset: ZIP local-header start, or TAR member data start.
+         * -1 = unknown (legacy index; must re-open native CD/header walk).
+         */
+        val offset: Long = -1L,
+        /** Compressed (ZIP) or raw (TAR) length for readahead warm. */
+        val compSize: Long = -1L,
+        /**
+         * ZIP compression method (0 store / 8 deflate). TAR always 0.
+         * -1 = unknown.
+         */
+        val method: Int = -1,
+    ) {
+        val hasSeek: Boolean get() = offset >= 0L && uncSize > 0L
+    }
 
     @Serializable
     data class Index(
-        val v: Int = 1,
+        /**
+         * v1: ext list only. v2+: optional [Member.offset]/[Member.compSize]/[Member.method]
+         * so reopen can skip ZIP EOCD/CD or TAR header walk.
+         */
+        val v: Int = INDEX_VERSION,
         val cacheKey: String,
         val remoteSize: Long = 0L,
+        /** "zip" | "tar" | "stream" (unknown / legacy). */
         val format: String = "stream",
         val complete: Boolean = false,
         val members: List<Member> = emptyList(),
-    )
+    ) {
+        /** True when every member has a usable random-seek offset. */
+        fun hasFullSeekIndex(): Boolean =
+            members.isNotEmpty() && members.all { it.hasSeek }
+    }
+
+    const val INDEX_VERSION: Int = 2
 
     fun dirFor(cacheKey: String): Path = root / sha256Hex(cacheKey)
 
