@@ -277,6 +277,12 @@
         <item>@string/scale_type_smart_fit</item>
     </string-array>
 
+    <string-array name="eink_refresh_style">
+        <item>@string/pref_eink_refresh_style_black</item>
+        <item>@string/pref_eink_refresh_style_white</item>
+        <item>@string/pref_eink_refresh_style_white_then_black</item>
+    </string-array>
+
     <string-array name="zoom_start">
         <item>@string/zoom_start_automatic</item>
         <item>@string/zoom_start_left</item>

@@ -120,6 +120,48 @@ private fun PagerSetting() = Column {
         title = stringResource(id = R.string.pref_crop_borders),
         field = Settings.cropBorder.asMutableState(),
     )
+    val eInkRefresh = Settings.eInkRefreshEnabled.asMutableState()
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_eink_refresh),
+        summary = stringResource(id = R.string.pref_eink_refresh_summary),
+        field = eInkRefresh,
+    )
+    AnimatedVisibility(visible = eInkRefresh.value) {
+        Column {
+            val duration = Settings.eInkRefreshDuration.asMutableState()
+            Text(
+                text = stringResource(id = R.string.pref_eink_refresh_duration),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            // 100–1500 ms in 100 ms steps (15 stops → 13 intermediate steps).
+            SliderChoice(
+                startSlot = {},
+                endSlot = { Text(text = "${duration.value} ms") },
+                range = 100..1500,
+                steps = 13,
+                field = duration,
+            )
+            val interval = Settings.eInkRefreshInterval.asMutableState()
+            Text(
+                text = stringResource(id = R.string.pref_eink_refresh_interval),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            SliderChoice(
+                startSlot = {},
+                endSlot = { Text(text = "${interval.value}") },
+                range = 1..10,
+                field = interval,
+            )
+            SpinnerChoice(
+                title = stringResource(id = R.string.pref_eink_refresh_style),
+                entries = stringArrayResource(id = com.hippo.ehviewer.R.array.eink_refresh_style),
+                values = listOf(0, 1, 2),
+                field = Settings.eInkRefreshStyle.asMutableState(),
+            )
+        }
+    }
 }
 
 @Composable
