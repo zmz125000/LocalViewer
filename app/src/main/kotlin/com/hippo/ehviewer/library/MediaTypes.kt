@@ -41,6 +41,15 @@ fun isSolidArchiveFileName(name: String): Boolean {
     return ext in SOLID_ARCHIVE_EXTENSIONS
 }
 
+/** ustar/GNU TAR/CBT — store members; network reader uses chunk readahead (not ZIP CD). */
+val TAR_ARCHIVE_EXTENSIONS = setOf("tar", "cbt")
+
+fun isTarArchiveFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in TAR_ARCHIVE_EXTENSIONS
+}
+
 fun isDocumentFileName(name: String): Boolean {
     if (name.startsWith('.')) return false
     val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false

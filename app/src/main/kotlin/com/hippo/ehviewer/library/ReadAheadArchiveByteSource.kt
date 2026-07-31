@@ -16,15 +16,19 @@ import java.util.concurrent.atomic.AtomicInteger
  *   covered by current or pipeline window
  *
  * Sparse probes (`want` ≤ [RANDOM_WINDOW], non-solid) stay at the small window so
- * TAR 512‑byte header walks do not pull multi‑MiB member bodies.
+ * ZIP EOCD/local-header probes do not pull multi‑MiB bodies.
+ *
+ * **Fixed window:** [sequentialWindow] is one size for all sequential fills (no
+ * first-window special case). TAR chunk + solid reader use 8 MiB; cover thumbs use
+ * a smaller fixed window with [pipeline] off.
  */
 class ReadAheadArchiveByteSource(
     private val inner: ArchiveByteSource,
     private val sequentialWindow: Int = SEQUENTIAL_WINDOW,
     private val randomWindow: Int = RANDOM_WINDOW,
-    /** When true, forward misses always use the large window (solid fake-stream). */
+    /** When true, forward misses always use the fixed sequential window (solid / TAR chunk). */
     private val preferSequential: Boolean = false,
-    /** Overlap next-window network with current-window consumption. */
+    /** Overlap next fixed window with current-window consumption. Off for cover thumbs. */
     private val pipeline: Boolean = true,
 ) : ArchiveByteSource {
     private val lock = Any()
@@ -447,8 +451,10 @@ class ReadAheadArchiveByteSource(
     }
 
     companion object {
-        /** Large enough for solid member spans; still bounded for RAM (2 windows max). */
+        /** Fixed sequential window (reader solid / TAR chunk / default pipeline). */
         const val SEQUENTIAL_WINDOW = 8 * 1024 * 1024
+        /** Fixed smaller window for browse cover extract (no pipeline). */
+        const val COVER_WINDOW = 2 * 1024 * 1024
         const val RANDOM_WINDOW = 64 * 1024
 
         private val PREFETCH_EXECUTOR = Executors.newCachedThreadPool { r ->

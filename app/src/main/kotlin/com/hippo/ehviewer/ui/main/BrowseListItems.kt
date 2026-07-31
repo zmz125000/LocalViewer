@@ -441,6 +441,9 @@ fun BrowseCoverThumb(
                                 password,
                                 cover.remoteRelativeFile,
                                 preferSequential = true,
+                                pipeline = false,
+                                sequentialWindow =
+                                com.hippo.ehviewer.library.ReadAheadArchiveByteSource.COVER_WINDOW,
                             )
                         }
                     } else {
@@ -484,6 +487,9 @@ fun BrowseCoverThumb(
                                 password,
                                 cover.remoteRelativeFile,
                                 preferSequential = true,
+                                pipeline = false,
+                                sequentialWindow =
+                                com.hippo.ehviewer.library.ReadAheadArchiveByteSource.COVER_WINDOW,
                             )
                         }
                     } else {

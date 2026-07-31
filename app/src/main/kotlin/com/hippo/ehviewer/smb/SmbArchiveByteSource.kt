@@ -34,15 +34,20 @@ class SmbArchiveByteSource(
     password: String,
     remoteRelativeFile: String,
     /**
-     * Solid fake-stream: always large sequential windows + aggressive pipeline prefetch
-     * so SMB traffic stays saturated while libarchive decompresses.
+     * Solid / TAR chunk: always fixed sequential windows so traffic stays saturated
+     * while decompress/parse runs.
      */
     preferSequential: Boolean = false,
+    /** Pipeline next fixed window (reader solid/TAR). Off for cover thumbs. */
+    pipeline: Boolean = true,
+    /** Fixed window size (default 8 MiB). Cover thumbs use a smaller fixed window. */
+    sequentialWindow: Int = ReadAheadArchiveByteSource.SEQUENTIAL_WINDOW,
 ) : ArchiveByteSource {
     private val inner = ReadAheadArchiveByteSource(
         inner = KeepOpenSmbFileSource(source, password, remoteRelativeFile),
+        sequentialWindow = sequentialWindow,
         preferSequential = preferSequential,
-        pipeline = true,
+        pipeline = pipeline,
     )
 
     override val size: Long get() = inner.size

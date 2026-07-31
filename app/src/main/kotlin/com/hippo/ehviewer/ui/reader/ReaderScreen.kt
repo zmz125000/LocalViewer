@@ -97,10 +97,12 @@ import com.hippo.ehviewer.gallery.useLocalDocumentExtractPageLoader
 import com.hippo.ehviewer.gallery.useSmbFolderPageLoader
 import com.hippo.ehviewer.gallery.useSolidExtractPageLoader
 import com.hippo.ehviewer.gallery.useStreamArchivePageLoader
+import com.hippo.ehviewer.gallery.useTarChunkPageLoader
 import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
+import com.hippo.ehviewer.library.isTarArchiveFileName
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
@@ -850,13 +852,15 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
         }
         val remote = args.remotePath
         val solid = isSolidArchiveFileName(remote)
+        val tar = isTarArchiveFileName(remote)
         val document = isDocumentFileName(remote)
         val byteSource = com.hippo.ehviewer.smb.SmbArchiveByteSource(
             source,
             password,
             remote,
-            // Solid sequential extract: large windows + pipeline keep SMB saturated.
-            preferSequential = solid,
+            // Solid / TAR chunk: fixed sequential windows + pipeline.
+            preferSequential = solid || tar,
+            pipeline = true,
         )
         val cacheKey = "smb:${source.id}:$remote"
         val titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName }
@@ -911,6 +915,16 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                     block = block,
                 )
             }
+        } else if (tar) {
+            // TAR/CBT: fixed-window readahead indexes + extracts from the same bytes.
+            useTarChunkPageLoader(
+                source = byteSource,
+                cacheKey = cacheKey,
+                titleHint = titleHint,
+                info = info,
+                startPage = page,
+                block = block,
+            )
         } else {
             useStreamArchivePageLoader(
                 source = byteSource,
@@ -934,12 +948,14 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
         }
         val remote = args.remotePath
         val solid = isSolidArchiveFileName(remote)
+        val tar = isTarArchiveFileName(remote)
         val document = isDocumentFileName(remote)
         val byteSource = com.hippo.ehviewer.webdav.WebDavArchiveByteSource(
             source,
             password,
             remote,
-            preferSequential = solid,
+            preferSequential = solid || tar,
+            pipeline = true,
         )
         val cacheKey = "webdav:${source.id}:$remote"
         val titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName }
@@ -992,6 +1008,15 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                     block = block,
                 )
             }
+        } else if (tar) {
+            useTarChunkPageLoader(
+                source = byteSource,
+                cacheKey = cacheKey,
+                titleHint = titleHint,
+                info = info,
+                startPage = page,
+                block = block,
+            )
         } else {
             useStreamArchivePageLoader(
                 source = byteSource,

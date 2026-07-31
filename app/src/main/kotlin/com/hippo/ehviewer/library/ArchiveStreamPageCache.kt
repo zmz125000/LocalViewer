@@ -255,6 +255,24 @@ object ArchiveStreamPageCache {
         return dest
     }
 
+    /** TAR chunk extract — body already in memory from the same readahead window. */
+    fun writePageBytes(cacheKey: String, index: Int, ext: String, bytes: ByteArray): Path {
+        val dest = pagePath(cacheKey, index, ext)
+        val tmp = File("${dest}.tmp.${System.nanoTime()}")
+        CachePagePublish.writeBytesToTmp(tmp, bytes)
+        check(
+            CachePagePublish.publishTmp(
+                tmp = tmp,
+                dest = File(dest.toString()),
+                expectedSize = bytes.size.toLong(),
+                ext = ext,
+            ),
+        ) { "Failed to publish stream cache page $index (bytes)" }
+        touch(cacheKey)
+        scheduleTrim()
+        return dest
+    }
+
     fun scheduleTrim() {
         if (!trimScheduled.compareAndSet(false, true)) return
         trimScope.launch {
