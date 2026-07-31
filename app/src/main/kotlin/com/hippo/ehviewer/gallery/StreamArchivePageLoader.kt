@@ -7,14 +7,22 @@ import com.hippo.ehviewer.Settings.archivePasswds
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.jni.closeArchive
+import com.hippo.ehviewer.jni.continueStreamTarIndex
 import com.hippo.ehviewer.jni.extractToByteBuffer
 import com.hippo.ehviewer.jni.getExtension
 import com.hippo.ehviewer.jni.getStreamMemberLength
+import com.hippo.ehviewer.jni.getStreamMemberMethod
 import com.hippo.ehviewer.jni.getStreamMemberOffset
+import com.hippo.ehviewer.jni.getStreamMemberUncSize
+import com.hippo.ehviewer.jni.isStreamIndexComplete
+import com.hippo.ehviewer.jni.isStreamTarIndex
+import com.hippo.ehviewer.jni.loadStreamIndex
 import com.hippo.ehviewer.jni.needPassword
 import com.hippo.ehviewer.jni.openArchiveStream
 import com.hippo.ehviewer.jni.providePassword
 import com.hippo.ehviewer.jni.releaseByteBuffer
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import com.hippo.ehviewer.library.ArchiveAccess
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
@@ -48,6 +56,11 @@ import okio.Path
  * - Native stream I/O is single-flight ([extractMutex]); jobs queue, not parallel-extract
  * - Interactive page (user seek) cancels far-away prefetch jobs so it reaches the mutex sooner
  * - UI waiters are registered so cancel/join races never leave a forever-spinner
+ *
+ * **TAR progressive index:** cold open lists the first image then continues header walk in
+ * the background; [PageLoader.growTo] extends the seek bar as more members appear.
+ * Jump only lands on already-listed pages (same constraint as solid lazy list).
+ * ZIP still opens via full EOCD+CD (count known immediately).
  */
 suspend inline fun <T> useStreamArchivePageLoader(
     source: ArchiveByteSource,
@@ -113,9 +126,30 @@ suspend inline fun <T> useStreamArchivePageLoader(
                 { ArchiveStreamBridge(source) },
                 { b, _ -> b.close() },
             )
+            // Prefer disk seek index (offsets) so ZIP/TAR reopen skips EOCD/CD / header walk.
+            val diskIndex = ArchiveStreamPageCache.loadIndex(cacheKey)
+                ?.takeIf {
+                    it.remoteSize <= 0L || it.remoteSize == archiveSizeBytes
+                }
+                ?.takeIf { it.hasFullSeekIndex() }
+            val openedFromDisk = AtomicInteger(0)
             val pageCount = install(
                 {
-                    val n = openArchiveStream(bridge, archiveSizeBytes, true, false)
+                    val fromDisk = diskIndex?.let { idx ->
+                        openFromSeekIndex(bridge, archiveSizeBytes, idx)
+                    } ?: 0
+                    if (fromDisk > 0) {
+                        openedFromDisk.set(1)
+                        return@install fromDisk
+                    }
+                    // progressiveTar=true: TAR first image only; ZIP still full CD.
+                    val n = openArchiveStream(
+                        bridge,
+                        archiveSizeBytes,
+                        /* sortEntries = */ true,
+                        /* coverOnly = */ false,
+                        /* progressiveTar = */ true,
+                    )
                     check(n > 0) { "Archive have no content!" }
                     n
                 },
@@ -128,22 +162,46 @@ suspend inline fun <T> useStreamArchivePageLoader(
                 ArchiveCoverCache.writeCoverFromOpenArchive(cacheKey, 0L, archiveSizeBytes)
             }.onFailure { logcat(it) }
 
-            // Member list for offline reopen — build + write async so open is not blocked
-            // by N getExtension + index.json write (was making "resume" feel slower than cold).
-            val streamMembers = ArrayList<ArchiveStreamPageCache.Member>(pageCount)
-            for (i in 0 until pageCount) {
-                val ext = getExtension(i)?.ifBlank { null } ?: "bin"
-                streamMembers += ArchiveStreamPageCache.Member(i = i, name = "", ext = ext, uncSize = 0L)
+            val format = when {
+                diskIndex?.format == "zip" || diskIndex?.format == "tar" -> diskIndex!!.format
+                isStreamTarIndex() -> "tar"
+                else -> "zip"
             }
-            ArchiveStreamPageCache.saveIndexAsync(
-                ArchiveStreamPageCache.Index(
-                    cacheKey = cacheKey,
-                    remoteSize = archiveSizeBytes,
-                    format = "stream",
-                    complete = false,
-                    members = streamMembers,
-                ),
+            // Progressive TAR: optionally advance walk until resume page is listed.
+            var listedCount = pageCount
+            if (format == "tar" &&
+                openedFromDisk.get() == 0 &&
+                !isStreamIndexComplete() &&
+                startPage > 0
+            ) {
+                while (listedCount <= startPage && !isStreamIndexComplete()) {
+                    listedCount = continueStreamTarIndex(16).coerceAtLeast(listedCount)
+                }
+            }
+            val streamMembersRef = AtomicReference(
+                buildStreamMembers(listedCount, prior = diskIndex),
             )
+            // Persist seek offsets (no local fun — not allowed inside inline).
+            val persistMembers: (Boolean) -> Unit = persist@{ _completeHint ->
+                val members = streamMembersRef.get()
+                val rebuilt = if (format == "tar" && isStreamIndexComplete()) {
+                    buildStreamMembers(members.size.coerceAtLeast(1), prior = null)
+                } else {
+                    members
+                }
+                streamMembersRef.set(rebuilt)
+                ArchiveStreamPageCache.saveIndexAsync(
+                    ArchiveStreamPageCache.Index(
+                        v = ArchiveStreamPageCache.INDEX_VERSION,
+                        cacheKey = cacheKey,
+                        remoteSize = archiveSizeBytes,
+                        format = format,
+                        complete = false, // page completeness tracked separately
+                        members = rebuilt.toList(),
+                    ),
+                )
+            }
+            persistMembers(false)
 
             // Single-flight native extract (shared stream position / buffer).
             val extractMutex = Mutex()
@@ -152,16 +210,59 @@ suspend inline fun <T> useStreamArchivePageLoader(
             val pagePaths = ConcurrentHashMap<Int, Path>()
             // Pages within this distance of the target keep running; farther jobs cancel.
             val keepWindow = 4
+            val hostScope = this
+            val tarIndexJob = AtomicReference<Job?>(null)
 
             val loader = install(
                 object : PageLoader(
                     this,
                     info,
-                    startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0)),
-                    pageCount,
+                    startPage.coerceIn(0, (listedCount - 1).coerceAtLeast(0)),
+                    listedCount,
                     hasAds,
                 ) {
                     override val title by lazy { info?.title ?: titleHint }
+
+                    init {
+                        // TAR: keep walking headers so seek bar grows; ZIP already complete.
+                        if (format == "tar" &&
+                            openedFromDisk.get() == 0 &&
+                            !isStreamIndexComplete()
+                        ) {
+                            tarIndexJob.set(
+                                hostScope.launch(Dispatchers.IO) {
+                                    try {
+                                        while (isActive && !isStreamIndexComplete()) {
+                                            val n = continueStreamTarIndex(12)
+                                            if (n > size) {
+                                                streamMembersRef.set(
+                                                    buildStreamMembers(n, prior = null),
+                                                )
+                                                growTo(n)
+                                                // Persist offsets periodically so kill/resume skips re-walk.
+                                                if (n % 24 == 0 || isStreamIndexComplete()) {
+                                                    persistMembers(isStreamIndexComplete())
+                                                }
+                                            } else if (isStreamIndexComplete()) {
+                                                streamMembersRef.set(
+                                                    buildStreamMembers(
+                                                        size.coerceAtLeast(n),
+                                                        prior = null,
+                                                    ),
+                                                )
+                                                persistMembers(true)
+                                                break
+                                            }
+                                        }
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Throwable) {
+                                        logcat("StreamTarIndex", e)
+                                    }
+                                },
+                            )
+                        }
+                    }
 
                     override fun getImageExtension(index: Int) = getExtension(index)
 
@@ -208,22 +309,29 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         // Drop in-flight extracts so ArchiveAccess can hand off (exit / prev-next).
                         // Snapshot: cancel handlers remove from extractJobs concurrently
                         // (live CHM.values iter on main → NoSuchElementException).
+                        tarIndexJob.getAndSet(null)?.cancel()
                         extractJobs.values.toList().forEach { it.cancel() }
                         extractJobs.clear()
                         readyWaiters.clear()
                         // Prefer pagePaths (no disk). Fall back to readdir count so a session
                         // that only touched the last missing pages still flips complete.
-                        val complete = pageCount > 0 && (
-                            (0 until pageCount).all { pagePaths.containsKey(it) } ||
-                                ArchiveStreamPageCache.countPageFiles(cacheKey) >= pageCount
-                            )
+                        // Use live [size] (TAR may have grown past initial listedCount).
+                        val n = size
+                        val members = streamMembersRef.get()
+                        val complete = n > 0 &&
+                            isStreamIndexComplete() &&
+                            (
+                                (0 until n).all { pagePaths.containsKey(it) } ||
+                                    ArchiveStreamPageCache.countPageFiles(cacheKey) >= n
+                                )
                         ArchiveStreamPageCache.saveIndexAsync(
                             ArchiveStreamPageCache.Index(
+                                v = ArchiveStreamPageCache.INDEX_VERSION,
                                 cacheKey = cacheKey,
                                 remoteSize = archiveSizeBytes,
-                                format = "stream",
+                                format = format,
                                 complete = complete,
-                                members = streamMembers,
+                                members = members.toList(),
                             ),
                         )
                         // Unblock any JNI read waiting on the network source.
@@ -333,14 +441,17 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     private fun markCompleteIfReady() {
                         // Hot path: only session map (no readdir). Disk-complete repair is
                         // handled on next open via [ArchiveStreamPageCache.isCompleteAndReady].
-                        if (pageCount <= 0 || pagePaths.size < pageCount) return
+                        // TAR progressive: only flip complete when index walk finished + all pages.
+                        val n = size
+                        if (n <= 0 || pagePaths.size < n || !isStreamIndexComplete()) return
                         ArchiveStreamPageCache.saveIndexAsync(
                             ArchiveStreamPageCache.Index(
+                                v = ArchiveStreamPageCache.INDEX_VERSION,
                                 cacheKey = cacheKey,
                                 remoteSize = archiveSizeBytes,
-                                format = "stream",
+                                format = format,
                                 complete = true,
-                                members = streamMembers,
+                                members = streamMembersRef.get().toList(),
                             ),
                         )
                     }
@@ -413,12 +524,83 @@ suspend inline fun <T> useStreamArchivePageLoader(
             try {
                 block(loader)
             } finally {
+                tarIndexJob.getAndSet(null)?.cancel()
                 extractJobs.values.toList().forEach { it.cancel() }
                 extractJobs.clear()
                 runCatching { source.close() }
             }
         }
     }
+}
+
+/**
+ * Open stream session from disk seek index (no ZIP CD / TAR header network walk).
+ * @return page count or 0 if load failed (caller falls back to [openArchiveStream]).
+ */
+@PublishedApi
+internal fun openFromSeekIndex(
+    bridge: ArchiveStreamBridge,
+    archiveSizeBytes: Long,
+    idx: ArchiveStreamPageCache.Index,
+): Int {
+    val members = idx.members.sortedBy { it.i }
+    if (members.isEmpty() || !members.all { it.hasSeek }) return 0
+    val n = members.size
+    val offsets = LongArray(n) { members[it].offset }
+    val unc = LongArray(n) { members[it].uncSize }
+    val comp = LongArray(n) {
+        val c = members[it].compSize
+        if (c > 0L) c else members[it].uncSize
+    }
+    val methods = IntArray(n) {
+        val m = members[it].method
+        if (m >= 0) m else 0
+    }
+    val names = Array(n) { i ->
+        val ext = members[i].ext.ifBlank { "bin" }
+        members[i].name.ifBlank { "%06d.%s".format(members[i].i, ext) }
+    }
+    // Only trust explicit format — ZIP store also uses method 0.
+    val isTar = idx.format == "tar"
+    return runCatching {
+        loadStreamIndex(
+            bridge,
+            archiveSizeBytes,
+            offsets,
+            unc,
+            comp,
+            methods,
+            names,
+            isTar,
+        )
+    }.getOrDefault(0)
+}
+
+/** Build member list with seek offsets from live JNI (or reuse prior disk values). */
+@PublishedApi
+internal fun buildStreamMembers(
+    pageCount: Int,
+    prior: ArchiveStreamPageCache.Index?,
+): ArrayList<ArchiveStreamPageCache.Member> {
+    val priorByI = prior?.members?.associateBy { it.i }.orEmpty()
+    val out = ArrayList<ArchiveStreamPageCache.Member>(pageCount)
+    for (i in 0 until pageCount) {
+        val ext = getExtension(i)?.ifBlank { null } ?: priorByI[i]?.ext ?: "bin"
+        val off = getStreamMemberOffset(i).takeIf { it >= 0L } ?: priorByI[i]?.offset ?: -1L
+        val comp = getStreamMemberLength(i).takeIf { it >= 0L } ?: priorByI[i]?.compSize ?: -1L
+        val unc = getStreamMemberUncSize(i).takeIf { it > 0L } ?: priorByI[i]?.uncSize ?: 0L
+        val method = getStreamMemberMethod(i).takeIf { it >= 0 } ?: priorByI[i]?.method ?: -1
+        out += ArchiveStreamPageCache.Member(
+            i = i,
+            name = priorByI[i]?.name.orEmpty(),
+            ext = ext,
+            uncSize = unc,
+            offset = off,
+            compSize = comp,
+            method = method,
+        )
+    }
+    return out
 }
 
 @PublishedApi

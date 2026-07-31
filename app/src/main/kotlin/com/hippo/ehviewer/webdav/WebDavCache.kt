@@ -4,7 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.os.Looper
 import com.ehviewer.core.files.mkdirs
-import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.io.FileOutputStream
@@ -14,11 +14,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -30,16 +26,15 @@ import splitties.init.appCtx
 
 /**
  * Disk cache for WebDAV (mirrors [com.hippo.ehviewer.smb.SmbCache] split).
- * - Pages: `webdav_cache/` full files
- * - Thumbs: `webdav_thumb_cache/` small JPEG
+ * - Pages: `webdav_cache/` full files — unified origin budget ([OriginDiskCache])
+ * - Thumbs: `webdav_thumb_cache/` small JPEG — shared thumb budget
  */
 object WebDavCache {
     enum class Kind { Page, Thumb }
 
-    const val THUMB_DISK_EDGE = 768
+    const val THUMB_DISK_EDGE = OriginDiskCache.THUMB_EDGE
     private const val THUMB_JPEG_QUALITY = 85
-    private const val THUMB_FORMAT_VERSION = 1
-    private const val THUMB_BUDGET_BYTES = 512L * 1024L * 1024L
+    private const val THUMB_FORMAT_VERSION = 2
     private val thumbFetchSlots = Semaphore(3)
 
     /**
@@ -56,9 +51,6 @@ object WebDavCache {
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
     /** Paths known to exist after a successful write or off-main probe — avoids main-thread File I/O. */
     private val knownPresent = ConcurrentHashMap.newKeySet<String>()
-    private val trimScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val trimLock = Mutex()
-    private val trimScheduled = AtomicBoolean(false)
 
     private fun ensureRootDirs() {
         File(pageRoot.toString()).mkdirs()
@@ -132,6 +124,17 @@ object WebDavCache {
 
     fun markPresent(path: Path) {
         knownPresent.add(path.toString())
+    }
+
+    fun markAbsent(path: Path) {
+        val key = path.toString()
+        knownPresent.remove(key)
+        pathLocks.remove(key)
+        val f = File(key)
+        knownPresent.remove(f.absolutePath)
+        knownPresent.remove(f.path)
+        pathLocks.remove(f.absolutePath)
+        pathLocks.remove(f.path)
     }
 
     fun touch(path: Path) {
@@ -259,49 +262,7 @@ object WebDavCache {
     }
 
     private fun scheduleTrim() {
-        if (!trimScheduled.compareAndSet(false, true)) return
-        trimScope.launch {
-            try {
-                trimToMaxSize()
-            } finally {
-                trimScheduled.set(false)
-            }
-        }
-    }
-
-    private suspend fun trimToMaxSize() = withContext(Dispatchers.IO) {
-        trimLock.withLock {
-            val pageBudget = Settings.readCacheSize.value.coerceIn(320, 5120).toLong() * 1024L * 1024L
-            trimDir(File(pageRoot.toString()), pageBudget)
-            trimDir(File(thumbRoot.toString()), THUMB_BUDGET_BYTES)
-        }
-    }
-
-    private fun trimDir(dir: File, budget: Long) {
-        if (!dir.isDirectory) return
-        // Snapshot mtime/size before sort — concurrent touch() during sortBy { lastModified() }
-        // mutates the comparison key mid-TimSort → "Comparison method violates its general contract".
-        data class Entry(val file: File, val mtime: Long, val size: Long)
-        val files = dir.listFiles()
-            ?.mapNotNull { f ->
-                if (!f.isFile) return@mapNotNull null
-                Entry(f, f.lastModified(), f.length())
-            }
-            ?.sortedWith(compareBy<Entry> { it.mtime }.thenBy { it.file.name })
-            ?: return
-        var total = files.sumOf { it.size }
-        for (e in files) {
-            if (total <= budget) break
-            // Keep comic archives — reopen must not re-download large zips.
-            if (com.hippo.ehviewer.library.isArchiveCacheFileName(e.file.name)) continue
-            if (e.file.delete()) {
-                total -= e.size
-                knownPresent.remove(e.file.absolutePath)
-                knownPresent.remove(e.file.path)
-                pathLocks.remove(e.file.absolutePath)
-                pathLocks.remove(e.file.path)
-            }
-        }
+        OriginDiskCache.scheduleTrim()
     }
 
     private fun sha256Hex(s: String): String {

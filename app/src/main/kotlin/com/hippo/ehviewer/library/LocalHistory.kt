@@ -151,6 +151,33 @@ object LocalHistory {
         EhDB.putHistoryInfo(info)
     }
 
+    /**
+     * GalleryInfo used for read progress + history for a local archive path.
+     * Prefer permanent library row (same [LocalGalleryEntity.id] the library UI uses);
+     * otherwise a stable synthetic id so progress survives reopen.
+     */
+    suspend fun galleryInfoForLocalArchive(
+        path: String,
+        title: String? = null,
+        coverPath: String? = null,
+        pages: Int = 0,
+    ): BaseGalleryInfo {
+        LocalLibrary.loadGalleryByContentPath(path)?.let { return it.toBaseGalleryInfo() }
+        val name = title?.ifBlank { null }
+            ?: path.trimEnd('/').substringAfterLast('/').ifEmpty { "Archive" }
+        return BaseGalleryInfo(
+            gid = stableGalleryId(0L, "local-archive:$path"),
+            token = LOCAL_ARCHIVE_TOKEN,
+            title = name,
+            thumbKey = coverPath,
+            category = 1,
+            uploader = path,
+            rating = -1f,
+            pages = pages,
+            favoriteSlot = NOT_FAVORITED,
+        )
+    }
+
     /** Local archive path (browse folder or downloaded solid cache). Click → reader. */
     suspend fun recordLocalArchive(
         path: String,
@@ -163,19 +190,7 @@ object LocalHistory {
             recordLibraryGallery(it)
             return
         }
-        val name = title?.ifBlank { null }
-            ?: path.trimEnd('/').substringAfterLast('/').ifEmpty { "Archive" }
-        val info = BaseGalleryInfo(
-            gid = stableGalleryId(0L, "local-archive:$path"),
-            token = LOCAL_ARCHIVE_TOKEN,
-            title = name,
-            thumbKey = coverPath,
-            category = 1,
-            uploader = path,
-            rating = -1f,
-            pages = pages,
-            favoriteSlot = NOT_FAVORITED,
-        )
+        val info = galleryInfoForLocalArchive(path, title, coverPath, pages)
         EhDB.putHistoryInfo(info)
     }
 

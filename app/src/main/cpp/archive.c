@@ -77,6 +77,25 @@ static bool use_tar_index = false;
 /** Bytes actually pulled through stream I/O (diagnostics). */
 static int64_t stream_bytes_read = 0;
 
+// Progressive TAR header walk (lazy first page + grow listed count).
+// Discovery order only — never mid-session qsort (indices must stay stable for seek bar).
+static bool tar_walk_active = false;
+static bool tar_walk_complete = false;
+static la_int64_t tar_walk_pos = 0;
+static char *tar_walk_pending = NULL;
+static int tar_walk_zero_blocks = 0;
+static size_t tar_walk_cap = 0;
+
+static void tar_walk_reset(void) {
+    free(tar_walk_pending);
+    tar_walk_pending = NULL;
+    tar_walk_active = false;
+    tar_walk_complete = false;
+    tar_walk_pos = 0;
+    tar_walk_zero_blocks = 0;
+    tar_walk_cap = 0;
+}
+
 static inline int filename_is_playable_file(const char *name);
 static inline int compare_entries(const void *a, const void *b);
 
@@ -625,13 +644,170 @@ static char *tar_pax_extract_path(const uint8_t *body, size_t len) {
 }
 
 /**
- * Open stream TAR by walking 512-byte headers only (seek/advance past bodies).
- * Same idea as ZIP EOCD+CD: listing traffic ≈ header blocks, not member data.
- * Supports ustar, GNU longname ('L'), and pax path ('x'). Store only (cbt).
- * @param cover_only stop after the first playable image (browse thumbs).
- * @return entry count, or 0 if not a tar / parse failed (caller falls back).
+ * One step of TAR header walk. Caller holds stream_mutex when concurrent with extract.
+ * @param stop_after_images stop once this many *new* images were added this call
+ *        (0 = unlimited until EOF / error).
+ * @return 1 if more headers may remain, 0 if walk finished (EOF/error/end).
  */
-static jint tar_stream_open_from_headers(jboolean sort_entries, bool cover_only) {
+static int tar_walk_step(int stop_after_images) {
+    if (!tar_walk_active || tar_walk_complete) return 0;
+    uint8_t hdr[TAR_BLOCK];
+    int added = 0;
+
+    while ((size_t) tar_walk_pos + TAR_BLOCK <= archiveSize) {
+        if (stream_pread(hdr, tar_walk_pos, TAR_BLOCK) != TAR_BLOCK) {
+            tar_walk_complete = true;
+            tar_walk_active = false;
+            free(tar_walk_pending);
+            tar_walk_pending = NULL;
+            return 0;
+        }
+        if (tar_header_is_zero(hdr)) {
+            tar_walk_zero_blocks++;
+            if (tar_walk_zero_blocks >= 2) {
+                tar_walk_complete = true;
+                tar_walk_active = false;
+                free(tar_walk_pending);
+                tar_walk_pending = NULL;
+                return 0;
+            }
+            tar_walk_pos += TAR_BLOCK;
+            continue;
+        }
+        tar_walk_zero_blocks = 0;
+        if (!tar_checksum_ok(hdr)) {
+            tar_walk_complete = true;
+            tar_walk_active = false;
+            free(tar_walk_pending);
+            tar_walk_pending = NULL;
+            return 0;
+        }
+
+        int64_t size = tar_parse_size_field(hdr + 124);
+        if (size < 0) {
+            tar_walk_complete = true;
+            tar_walk_active = false;
+            free(tar_walk_pending);
+            tar_walk_pending = NULL;
+            return 0;
+        }
+        char typeflag = (char) hdr[156];
+        int64_t data_off = tar_walk_pos + TAR_BLOCK;
+        int64_t padded = tar_padded_size(size);
+        if ((uint64_t) data_off + (uint64_t) padded > (uint64_t) archiveSize + TAR_BLOCK) {
+            if ((uint64_t) data_off + (uint64_t) size > (uint64_t) archiveSize) {
+                tar_walk_complete = true;
+                tar_walk_active = false;
+                free(tar_walk_pending);
+                tar_walk_pending = NULL;
+                return 0;
+            }
+            padded = tar_padded_size(size);
+            if ((uint64_t) data_off + (uint64_t) size > (uint64_t) archiveSize) {
+                tar_walk_complete = true;
+                tar_walk_active = false;
+                free(tar_walk_pending);
+                tar_walk_pending = NULL;
+                return 0;
+            }
+        }
+
+        if (typeflag == 'L' || typeflag == 'K') {
+            if (typeflag == 'L' && size > 0 && size < 64 * 1024) {
+                free(tar_walk_pending);
+                tar_walk_pending = (char *) malloc((size_t) size + 1);
+                if (tar_walk_pending &&
+                    stream_pread((uint8_t *) tar_walk_pending, data_off, (size_t) size) == (int) size) {
+                    tar_walk_pending[size] = '\0';
+                    size_t nlen = strnlen(tar_walk_pending, (size_t) size);
+                    tar_walk_pending[nlen] = '\0';
+                } else {
+                    free(tar_walk_pending);
+                    tar_walk_pending = NULL;
+                }
+            }
+            tar_walk_pos = data_off + padded;
+            continue;
+        }
+
+        if (typeflag == 'x' || typeflag == 'g') {
+            if (typeflag == 'x' && size > 0 && size < 64 * 1024) {
+                uint8_t *body = (uint8_t *) malloc((size_t) size);
+                if (body && stream_pread(body, data_off, (size_t) size) == (int) size) {
+                    char *path = tar_pax_extract_path(body, (size_t) size);
+                    if (path) {
+                        free(tar_walk_pending);
+                        tar_walk_pending = path;
+                    }
+                }
+                free(body);
+            }
+            tar_walk_pos = data_off + padded;
+            continue;
+        }
+
+        bool is_reg = (typeflag == '0' || typeflag == '\0' || typeflag == '7');
+        size_t name_nlen = strnlen((const char *) hdr, 100);
+        bool is_dir = (typeflag == '5') ||
+                      (name_nlen > 0 && ((const char *) hdr)[name_nlen - 1] == '/');
+
+        if (is_reg && !is_dir && size > 0 && size < (1ll << 31)) {
+            char *name = tar_make_name(hdr, tar_walk_pending);
+            free(tar_walk_pending);
+            tar_walk_pending = NULL;
+            if (name && filename_is_playable_file(name)) {
+                if (entryCount >= tar_walk_cap) {
+                    size_t ncap = tar_walk_cap ? tar_walk_cap * 2 : 64;
+                    entry *grown = realloc(entries, ncap * sizeof(entry));
+                    if (!grown) {
+                        free(name);
+                        tar_walk_complete = true;
+                        tar_walk_active = false;
+                        return 0;
+                    }
+                    memset(grown + tar_walk_cap, 0, (ncap - tar_walk_cap) * sizeof(entry));
+                    entries = grown;
+                    tar_walk_cap = ncap;
+                }
+                entries[entryCount].filename = name;
+                entries[entryCount].index = (int) entryCount;
+                entries[entryCount].size = (ssize_t) size;
+                entries[entryCount].addr = NULL;
+                entries[entryCount].local_header_offset = data_off;
+                entries[entryCount].compressed_size = size;
+                entries[entryCount].compression_method = 0;
+                max_file_size = max((ssize_t) size, max_file_size);
+                entryCount++;
+                added++;
+                tar_walk_pos = data_off + padded;
+                if (stop_after_images > 0 && added >= stop_after_images) {
+                    return 1;
+                }
+                continue;
+            } else {
+                free(name);
+            }
+        } else {
+            free(tar_walk_pending);
+            tar_walk_pending = NULL;
+        }
+
+        tar_walk_pos = data_off + padded;
+    }
+
+    tar_walk_complete = true;
+    tar_walk_active = false;
+    free(tar_walk_pending);
+    tar_walk_pending = NULL;
+    return 0;
+}
+
+/**
+ * Open stream TAR: progressive (first image) or full walk.
+ * Progressive never sorts — stable indices for growing seek bar.
+ */
+static jint tar_stream_open_from_headers(jboolean sort_entries, bool cover_only, bool progressive) {
+    tar_walk_reset();
     if (archiveSize < TAR_BLOCK) return 0;
     stream_bytes_read = 0;
 
@@ -639,141 +815,71 @@ static jint tar_stream_open_from_headers(jboolean sort_entries, bool cover_only)
     if (stream_pread(hdr, 0, TAR_BLOCK) != TAR_BLOCK) return 0;
     if (tar_header_is_zero(hdr) || !tar_checksum_ok(hdr)) return 0;
 
-    size_t cap = 64;
-    entries = calloc(cap, sizeof(entry));
+    tar_walk_cap = 64;
+    entries = calloc(tar_walk_cap, sizeof(entry));
     if (!entries) return 0;
     entryCount = 0;
     max_file_size = 0;
     need_encrypt = false;
+    tar_walk_pos = 0;
+    tar_walk_zero_blocks = 0;
+    tar_walk_pending = NULL;
+    tar_walk_active = true;
+    tar_walk_complete = false;
+    use_tar_index = true;
 
-    char *pending_name = NULL;
-    la_int64_t pos = 0;
-    int zero_blocks = 0;
-
-    while ((size_t) pos + TAR_BLOCK <= archiveSize) {
-        if (stream_pread(hdr, pos, TAR_BLOCK) != TAR_BLOCK) break;
-        if (tar_header_is_zero(hdr)) {
-            zero_blocks++;
-            if (zero_blocks >= 2) break;
-            pos += TAR_BLOCK;
-            continue;
-        }
-        zero_blocks = 0;
-        if (!tar_checksum_ok(hdr)) {
-            // Corrupt or not tar after a valid start — stop; keep whatever we have.
-            break;
-        }
-
-        int64_t size = tar_parse_size_field(hdr + 124);
-        if (size < 0) break;
-        char typeflag = (char) hdr[156];
-        int64_t data_off = pos + TAR_BLOCK;
-        int64_t padded = tar_padded_size(size);
-        if ((uint64_t) data_off + (uint64_t) padded > (uint64_t) archiveSize + TAR_BLOCK) {
-            // Allow last member without full pad if size fits.
-            if ((uint64_t) data_off + (uint64_t) size > (uint64_t) archiveSize) break;
-            padded = tar_padded_size(size);
-            if ((uint64_t) data_off + (uint64_t) size > (uint64_t) archiveSize) break;
-        }
-
-        // GNU long name: next header's name is in this member's data.
-        if (typeflag == 'L' || typeflag == 'K') {
-            if (typeflag == 'L' && size > 0 && size < 64 * 1024) {
-                free(pending_name);
-                pending_name = (char *) malloc((size_t) size + 1);
-                if (pending_name &&
-                    stream_pread((uint8_t *) pending_name, data_off, (size_t) size) == (int) size) {
-                    pending_name[size] = '\0';
-                    // GNU longname is NUL-terminated inside payload; trim extra NULs.
-                    size_t nlen = strnlen(pending_name, (size_t) size);
-                    pending_name[nlen] = '\0';
-                } else {
-                    free(pending_name);
-                    pending_name = NULL;
-                }
-            }
-            pos = data_off + padded;
-            continue;
-        }
-
-        // pax extended header ('x') may carry path=; global 'g' is ignored for path.
-        if (typeflag == 'x' || typeflag == 'g') {
-            if (typeflag == 'x' && size > 0 && size < 64 * 1024) {
-                uint8_t *body = (uint8_t *) malloc((size_t) size);
-                if (body && stream_pread(body, data_off, (size_t) size) == (int) size) {
-                    char *path = tar_pax_extract_path(body, (size_t) size);
-                    if (path) {
-                        free(pending_name);
-                        pending_name = path;
-                    }
-                }
-                free(body);
-            }
-            pos = data_off + padded;
-            continue;
-        }
-
-        // Regular files: '0', '\0', or GNU '7' contiguous.
-        bool is_reg = (typeflag == '0' || typeflag == '\0' || typeflag == '7');
-        size_t name_nlen = strnlen((const char *) hdr, 100);
-        bool is_dir = (typeflag == '5') ||
-                      (name_nlen > 0 && ((const char *) hdr)[name_nlen - 1] == '/');
-
-        if (is_reg && !is_dir && size > 0 && size < (1ll << 31)) {
-            char *name = tar_make_name(hdr, pending_name);
-            free(pending_name);
-            pending_name = NULL;
-            if (name && filename_is_playable_file(name)) {
-                if (entryCount >= cap) {
-                    size_t ncap = cap * 2;
-                    entry *grown = realloc(entries, ncap * sizeof(entry));
-                    if (!grown) {
-                        free(name);
-                        break;
-                    }
-                    memset(grown + cap, 0, (ncap - cap) * sizeof(entry));
-                    entries = grown;
-                    cap = ncap;
-                }
-                entries[entryCount].filename = name;
-                entries[entryCount].index = (int) entryCount;
-                entries[entryCount].size = (ssize_t) size;
-                entries[entryCount].addr = NULL;
-                // Data payload offset (unlike ZIP local-header offset).
-                entries[entryCount].local_header_offset = data_off;
-                entries[entryCount].compressed_size = size;
-                entries[entryCount].compression_method = 0; // tar store
-                max_file_size = max((ssize_t) size, max_file_size);
-                entryCount++;
-                if (cover_only) {
-                    // First playable image is enough for a thumb — do not seek past remaining members.
-                    free(pending_name);
-                    pending_name = NULL;
-                    break;
-                }
-            } else {
-                free(name);
-            }
-        } else {
-            free(pending_name);
-            pending_name = NULL;
-        }
-
-        // Advance past body without reading it (seek-equivalent via absolute pos).
-        pos = data_off + padded;
+    bool stop_early = progressive || cover_only;
+    if (stop_early) {
+        tar_walk_step(1);
+    } else {
+        tar_walk_step(0);
     }
-    free(pending_name);
 
     if (!entryCount) {
         free(entries);
         entries = NULL;
+        tar_walk_reset();
+        use_tar_index = false;
         return 0;
     }
-    if (!cover_only && sort_entries) qsort(entries, entryCount, sizeof(entry), compare_entries);
-    use_tar_index = true;
-    LOGI("Found %zu images in archive (TAR headers%s, %lld bytes net)",
-         entryCount, cover_only ? " cover" : "", (long long) stream_bytes_read);
+
+    if (!progressive && !cover_only && sort_entries && tar_walk_complete) {
+        qsort(entries, entryCount, sizeof(entry), compare_entries);
+        for (size_t i = 0; i < entryCount; i++) {
+            entries[i].index = (int) i;
+        }
+    }
+
+    if (cover_only) {
+        tar_walk_active = false;
+        tar_walk_complete = true;
+        free(tar_walk_pending);
+        tar_walk_pending = NULL;
+    }
+
+    LOGI("Found %zu images in archive (TAR headers%s%s, %lld bytes net)",
+         entryCount,
+         cover_only ? " cover" : (progressive ? " progressive" : ""),
+         tar_walk_complete ? " complete" : " partial",
+         (long long) stream_bytes_read);
     return (int) entryCount;
+}
+
+/** Continue progressive TAR walk; add up to max_new images. Returns total count. */
+static jint tar_stream_continue(int max_new) {
+    if (!use_tar_index || !tar_walk_active || tar_walk_complete) {
+        return (jint) entryCount;
+    }
+    if (max_new <= 0) max_new = 8;
+    pthread_mutex_lock(&stream_mutex);
+    tar_walk_step(max_new);
+    jint n = (jint) entryCount;
+    pthread_mutex_unlock(&stream_mutex);
+    if (tar_walk_complete) {
+        LOGI("TAR progressive walk complete: %zu images, %lld bytes net",
+             entryCount, (long long) stream_bytes_read);
+    }
+    return n;
 }
 
 /** Store-only extract from TAR member data offset. */
@@ -862,6 +968,7 @@ static void stream_bridge_clear(JNIEnv *env) {
     use_zip_cd_index = false;
     use_tar_index = false;
     stream_bytes_read = 0;
+    tar_walk_reset();
 }
 
 #define SUPPORT_EXT_COUNT 11
@@ -1277,18 +1384,22 @@ static int archive_get_ctx(archive_ctx **ctxptr, int idx) {
 /**
  * Stream open: ZIP EOCD+CD, then TAR header-only index; libarchive as last resort.
  * @param cover_only thumb path: one natural-first ZIP entry / first TAR image only.
+ * @param progressive_tar reader: stop TAR after first image; continue via continueStreamTarIndex.
  */
-static jint archive_open_stream_single_pass(jboolean sort_entries, bool cover_only) {
+static jint archive_open_stream_single_pass(jboolean sort_entries, bool cover_only,
+                                           bool progressive_tar) {
     use_zip_cd_index = false;
     use_tar_index = false;
+    tar_walk_reset();
     stream_bytes_read = 0;
 
     // ZIP central-directory index (no member walk).
     jint zip_n = zip_stream_open_from_cd(sort_entries, cover_only);
     if (zip_n > 0) return zip_n;
 
-    // TAR: 512-byte headers only (seek past bodies — same idea as ZIP CD).
-    jint tar_n = tar_stream_open_from_headers(sort_entries, cover_only);
+    // TAR: progressive (reader) or full / cover-only.
+    jint tar_n = tar_stream_open_from_headers(
+            sort_entries, cover_only, progressive_tar && !cover_only);
     if (tar_n > 0) return tar_n;
 
     // Fallback: libarchive with skip→seek (odd formats / edge cases).
@@ -1351,14 +1462,15 @@ static jint archive_open_stream_single_pass(jboolean sort_entries, bool cover_on
     return (int) entryCount;
 }
 
-static jint archive_open_common(JNIEnv *env, jboolean sort_entries, bool cover_only) {
+static jint archive_open_common(JNIEnv *env, jboolean sort_entries, bool cover_only,
+                                bool progressive_tar) {
     EH_UNUSED(env);
     archive_ctx *ctx = NULL;
     ctx_pool = calloc(CTX_POOL_SIZE, sizeof(archive_ctx **));
 
-    // Stream: one header pass only (see above).
+    // Stream: ZIP full CD, or TAR progressive / full.
     if (use_stream_io) {
-        return archive_open_stream_single_pass(sort_entries, cover_only);
+        return archive_open_stream_single_pass(sort_entries, cover_only, progressive_tar);
     }
 
     ctx = archive_alloc_ctx();
@@ -1419,17 +1531,20 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchive(JNIEnv *env, jclass thiz, jint
         return 0;
     }
     archiveSize = (size_t) size;
-    return archive_open_common(env, sort_entries, false);
+    return archive_open_common(env, sort_entries, false, false);
 }
 
 /**
  * Open archive via Kotlin [ArchiveStreamBridge] (random read/seek — SMB/WebDAV stream).
  * Does not mmap; extracts always go through decode buffers.
  * @param cover_only if true, index only the cover page (natural-first ZIP / first TAR image).
+ * @param progressive_tar if true (reader), TAR stops after first image; continue via
+ *        continueStreamTarIndex. Seek bar grows as more headers are discovered.
  */
 JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(
-        JNIEnv *env, jclass thiz, jobject bridge, jlong size, jboolean sort_entries, jboolean cover_only) {
+        JNIEnv *env, jclass thiz, jobject bridge, jlong size, jboolean sort_entries,
+        jboolean cover_only, jboolean progressive_tar) {
     EH_UNUSED(thiz);
     if (!bridge || size <= 0) return 0;
     archive_cache_vm(env);
@@ -1454,7 +1569,29 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(
         stream_bridge_clear(env);
         return 0;
     }
-    return archive_open_common(env, sort_entries, cover_only == JNI_TRUE);
+    // Reader progressive TAR; cover_only never progressive (thumb stops at first image).
+    bool prog = progressive_tar == JNI_TRUE && cover_only != JNI_TRUE;
+    return archive_open_common(env, sort_entries, cover_only == JNI_TRUE, prog);
+}
+
+/** Continue progressive TAR index; returns total listed count. */
+JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_continueStreamTarIndex(
+        JNIEnv *env, jclass thiz, jint max_new) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    return tar_stream_continue((int) max_new);
+}
+
+/** True when stream index walk finished (ZIP always true after open; TAR progressive when done). */
+JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_isStreamIndexComplete(JNIEnv *env, jclass thiz) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    if (use_zip_cd_index) return JNI_TRUE;
+    if (use_tar_index) return tar_walk_complete ? JNI_TRUE : JNI_FALSE;
+    // libarchive fallback / unknown — treat as complete after open.
+    return JNI_TRUE;
 }
 
 /**
@@ -1694,6 +1831,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_closeArchive(JNIEnv *env, jclass thiz) {
     use_zip_cd_index = false;
     use_tar_index = false;
     stream_bytes_read = 0;
+    tar_walk_reset();
     if (archiveAddr != MAP_FAILED) {
         munmap(archiveAddr, archiveSize);
         archiveAddr = MAP_FAILED;
@@ -1815,6 +1953,185 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamMemberLength(JNIEnv *env, jclass 
     if (!use_stream_io || !entries || index < 0 || (size_t) index >= entryCount) return -1;
     if (!(use_zip_cd_index || use_tar_index)) return -1;
     return entries[index].compressed_size;
+}
+
+/** Uncompressed size for decode buffer. */
+JNIEXPORT jlong JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamMemberUncSize(JNIEnv *env, jclass thiz, jint index) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    if (!use_stream_io || !entries || index < 0 || (size_t) index >= entryCount) return -1;
+    if (!(use_zip_cd_index || use_tar_index)) return -1;
+    return (jlong) entries[index].size;
+}
+
+/** ZIP method or 0 for TAR. */
+JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamMemberMethod(JNIEnv *env, jclass thiz, jint index) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    if (!use_stream_io || !entries || index < 0 || (size_t) index >= entryCount) return -1;
+    if (!(use_zip_cd_index || use_tar_index)) return -1;
+    return (jint) entries[index].compression_method;
+}
+
+/** True when active stream index is TAR (store). */
+JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_isStreamTarIndex(JNIEnv *env, jclass thiz) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    return use_tar_index ? JNI_TRUE : JNI_FALSE;
+}
+
+/**
+ * Install disk-cached stream member table (offsets/sizes) — skip ZIP CD / TAR header walk.
+ * Parallel arrays length = n. names used for getExtension only.
+ */
+JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_loadStreamIndex(
+        JNIEnv *env, jclass thiz, jobject bridge, jlong size,
+        jlongArray offsets, jlongArray uncSizes, jlongArray compSizes,
+        jintArray methods, jobjectArray names, jboolean is_tar) {
+    EH_UNUSED(thiz);
+    if (!bridge || size <= 0 || !offsets || !uncSizes || !compSizes || !methods || !names) {
+        return 0;
+    }
+    jsize n = (*env)->GetArrayLength(env, offsets);
+    if (n <= 0 ||
+        (*env)->GetArrayLength(env, uncSizes) != n ||
+        (*env)->GetArrayLength(env, compSizes) != n ||
+        (*env)->GetArrayLength(env, methods) != n ||
+        (*env)->GetArrayLength(env, names) != n) {
+        return 0;
+    }
+    if (n > 500000) return 0;
+
+    archive_cache_vm(env);
+    solid_seq_reset_state();
+    stream_bridge_clear(env);
+    if (archiveAddr != MAP_FAILED) {
+        munmap(archiveAddr, archiveSize);
+        archiveAddr = MAP_FAILED;
+    }
+    if (entries) {
+        for (int i = 0; i < (int) entryCount; ++i)
+            free((void *) entries[i].filename);
+        free(entries);
+        entries = NULL;
+        entryCount = 0;
+    }
+    if (ctx_pool) {
+        for (int i = 0; i < CTX_POOL_SIZE; i++)
+            archive_release_ctx(ctx_pool[i]);
+        free(ctx_pool);
+        ctx_pool = NULL;
+    }
+
+    use_stream_io = true;
+    use_zip_cd_index = (is_tar != JNI_TRUE);
+    use_tar_index = (is_tar == JNI_TRUE);
+    archiveSize = (size_t) size;
+    archiveAddr = MAP_FAILED;
+    need_encrypt = false;
+    g_stream_pos = 0;
+    stream_bytes_read = 0;
+    g_stream_bridge = (*env)->NewGlobalRef(env, bridge);
+    jclass cls = (*env)->GetObjectClass(env, bridge);
+    g_mid_read = (*env)->GetMethodID(env, cls, "nativeRead", "(I)[B");
+    g_mid_seek = (*env)->GetMethodID(env, cls, "nativeSeek", "(JI)J");
+    (*env)->DeleteLocalRef(env, cls);
+    if (!g_mid_read || !g_mid_seek) {
+        LOGE("%s", "loadStreamIndex: bridge methods missing");
+        stream_bridge_clear(env);
+        use_zip_cd_index = false;
+        use_tar_index = false;
+        return 0;
+    }
+
+    entries = calloc((size_t) n, sizeof(entry));
+    if (!entries) {
+        stream_bridge_clear(env);
+        use_zip_cd_index = false;
+        use_tar_index = false;
+        return 0;
+    }
+
+    jlong *offs = (*env)->GetLongArrayElements(env, offsets, NULL);
+    jlong *uncs = (*env)->GetLongArrayElements(env, uncSizes, NULL);
+    jlong *comps = (*env)->GetLongArrayElements(env, compSizes, NULL);
+    jint *meths = (*env)->GetIntArrayElements(env, methods, NULL);
+    if (!offs || !uncs || !comps || !meths) {
+        if (offs) (*env)->ReleaseLongArrayElements(env, offsets, offs, JNI_ABORT);
+        if (uncs) (*env)->ReleaseLongArrayElements(env, uncSizes, uncs, JNI_ABORT);
+        if (comps) (*env)->ReleaseLongArrayElements(env, compSizes, comps, JNI_ABORT);
+        if (meths) (*env)->ReleaseIntArrayElements(env, methods, meths, JNI_ABORT);
+        free(entries);
+        entries = NULL;
+        stream_bridge_clear(env);
+        use_zip_cd_index = false;
+        use_tar_index = false;
+        return 0;
+    }
+
+    max_file_size = 0;
+    int ok = 1;
+    for (jsize i = 0; i < n; i++) {
+        if (offs[i] < 0 || uncs[i] <= 0 || uncs[i] >= (1ll << 31)) {
+            ok = 0;
+            break;
+        }
+        jstring jn = (jstring) (*env)->GetObjectArrayElement(env, names, i);
+        const char *utf = jn ? (*env)->GetStringUTFChars(env, jn, NULL) : NULL;
+        char *fname = NULL;
+        if (utf && utf[0]) {
+            fname = strdup(utf);
+        } else {
+            char tmp[32];
+            snprintf(tmp, sizeof(tmp), "%d.bin", (int) i);
+            fname = strdup(tmp);
+        }
+        if (utf && jn) (*env)->ReleaseStringUTFChars(env, jn, utf);
+        if (jn) (*env)->DeleteLocalRef(env, jn);
+        if (!fname) {
+            ok = 0;
+            break;
+        }
+        entries[i].filename = fname;
+        entries[i].index = (int) i;
+        entries[i].size = (ssize_t) uncs[i];
+        entries[i].addr = NULL;
+        entries[i].local_header_offset = (int64_t) offs[i];
+        entries[i].compressed_size = comps[i] > 0 ? (int64_t) comps[i] : (int64_t) uncs[i];
+        entries[i].compression_method = meths[i] >= 0 ? (uint16_t) meths[i] : 0;
+        if (entries[i].size > max_file_size) max_file_size = entries[i].size;
+    }
+
+    (*env)->ReleaseLongArrayElements(env, offsets, offs, JNI_ABORT);
+    (*env)->ReleaseLongArrayElements(env, uncSizes, uncs, JNI_ABORT);
+    (*env)->ReleaseLongArrayElements(env, compSizes, comps, JNI_ABORT);
+    (*env)->ReleaseIntArrayElements(env, methods, meths, JNI_ABORT);
+
+    if (!ok) {
+        for (jsize i = 0; i < n; i++) {
+            free((void *) entries[i].filename);
+        }
+        free(entries);
+        entries = NULL;
+        entryCount = 0;
+        stream_bridge_clear(env);
+        use_zip_cd_index = false;
+        use_tar_index = false;
+        return 0;
+    }
+
+    entryCount = (size_t) n;
+    // Match openArchiveStream: decode buffers sized from max_file_size via existing paths.
+    if (!ctx_pool) {
+        ctx_pool = calloc(CTX_POOL_SIZE, sizeof(archive_ctx *));
+    }
+    LOGI("loadStreamIndex: %d entries (%s) size=%lld",
+         (int) n, is_tar ? "tar" : "zip", (long long) size);
+    return (jint) n;
 }
 
 JNIEXPORT jboolean JNICALL

@@ -10,16 +10,28 @@ external fun openArchive(fd: Int, size: Long, sortEntries: Boolean): Int
  * Does not mmap the full file — for remote ZIP/CBZ/TAR/CBT stream open.
  *
  * **No default args** — `external` + defaults can leave callers linked to a missing
- * 3-arg JVM method ([NoSuchMethodError] on reader open).
+ * JVM overload ([NoSuchMethodError] on reader open).
  *
  * @param coverOnly if true, only index the cover page (natural-first ZIP / first TAR image).
+ * @param progressiveTar if true (reader), TAR stops after first image; call
+ *   [continueStreamTarIndex] to grow the list (seek bar). ZIP still full CD open.
  */
 external fun openArchiveStream(
     bridge: Any,
     size: Long,
     sortEntries: Boolean,
     coverOnly: Boolean,
+    progressiveTar: Boolean,
 ): Int
+
+/**
+ * Continue progressive TAR header walk; returns **total** listed image count.
+ * No-op when not a progressive TAR session or walk already complete.
+ */
+external fun continueStreamTarIndex(maxNew: Int): Int
+
+/** True when ZIP/full open finished indexing, or progressive TAR walk reached EOF. */
+external fun isStreamIndexComplete(): Boolean
 
 /**
  * Open RAR/7z for sequential pull extract via [com.hippo.ehviewer.library.ArchiveStreamBridge].
@@ -47,6 +59,33 @@ external fun getStreamMemberOffset(index: Int): Long
 
 /** Stream ZIP/TAR index: compressed/raw member length for readahead warm; -1 if N/A. */
 external fun getStreamMemberLength(index: Int): Long
+
+/** Uncompressed member size (decode buffer). -1 if N/A. */
+external fun getStreamMemberUncSize(index: Int): Long
+
+/** ZIP method (0/8) or 0 for TAR. -1 if N/A. */
+external fun getStreamMemberMethod(index: Int): Int
+
+/**
+ * Install a pre-parsed stream index (from disk cache) and bind [bridge] for extract.
+ * Skips ZIP EOCD/CD and TAR header walk. [isTar] selects store extract vs ZIP inflate path.
+ *
+ * Arrays are parallel, length = page count. [names] used for [getExtension] only.
+ * @return entry count on success, 0 on failure.
+ */
+external fun loadStreamIndex(
+    bridge: Any,
+    archiveSize: Long,
+    offsets: LongArray,
+    uncSizes: LongArray,
+    compSizes: LongArray,
+    methods: IntArray,
+    names: Array<String>,
+    isTar: Boolean,
+): Int
+
+/** True when the active stream session is a TAR header index (not ZIP CD). */
+external fun isStreamTarIndex(): Boolean
 
 external fun needPassword(): Boolean
 external fun providePassword(str: String): Boolean

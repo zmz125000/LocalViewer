@@ -19,13 +19,18 @@ class WebDavArchiveByteSource(
     source: WebDavSourceEntity,
     password: String,
     remoteRelativeFile: String,
-    /** Solid fake-stream: large sequential windows + pipeline (see SMB twin). */
+    /** Solid / TAR chunk: fixed sequential windows (see SMB twin). */
     preferSequential: Boolean = false,
+    /** Pipeline next fixed window (reader). Off for cover thumbs. */
+    pipeline: Boolean = true,
+    /** Fixed window size (default 8 MiB). Cover thumbs use a smaller fixed window. */
+    sequentialWindow: Int = ReadAheadArchiveByteSource.SEQUENTIAL_WINDOW,
 ) : ArchiveByteSource {
     private val inner = ReadAheadArchiveByteSource(
         inner = RawWebDavArchiveByteSource(source, password, remoteRelativeFile),
+        sequentialWindow = sequentialWindow,
         preferSequential = preferSequential,
-        pipeline = true,
+        pipeline = pipeline,
     )
 
     override val size: Long get() = inner.size
