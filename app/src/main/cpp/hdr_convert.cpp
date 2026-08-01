@@ -56,6 +56,63 @@ uint16_t float_to_half(float f) {
     return static_cast<uint16_t>(half);
 }
 
+float half_to_float(uint16_t h) {
+    const uint32_t sign = (static_cast<uint32_t>(h) & 0x8000u) << 16;
+    uint32_t exp = (h >> 10) & 0x1fu;
+    uint32_t mant = h & 0x3ffu;
+    uint32_t out;
+    if (exp == 0) {
+        if (mant == 0) {
+            out = sign;
+        } else {
+            // subnormal
+            exp = 1;
+            while ((mant & 0x400u) == 0) {
+                mant <<= 1;
+                exp--;
+            }
+            mant &= 0x3ffu;
+            uint32_t e = (127 - 15 + exp) << 23;
+            out = sign | e | (mant << 13);
+        }
+    } else if (exp == 31) {
+        out = sign | 0x7f800000u | (mant << 13);
+    } else {
+        out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+    }
+    union {
+        uint32_t u;
+        float f;
+    } v{out};
+    return v.f;
+}
+
+/**
+ * Peak of max(R,G,B) in linear scRGB (relative to SDR white = 1.0).
+ * Used as content boost so hdr_capacity_max ≈ peak (not default 10000/203 ≈ 49).
+ */
+// jxrlib JXRGlue.h defines min/max macros — avoid std::max/min after that include.
+static inline float fmax3(float a, float b, float c) {
+    float m = a > b ? a : b;
+    return m > c ? m : c;
+}
+
+float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count) {
+    float peak = 1.0f;
+    for (size_t i = 0; i < pixel_count; i++) {
+        const float r = half_to_float(rgba[i * 4 + 0]);
+        const float g = half_to_float(rgba[i * 4 + 1]);
+        const float b = half_to_float(rgba[i * 4 + 2]);
+        // Ignore non-finite / negative (scRGB can go slightly negative; boost uses positive).
+        const float m = fmax3(r, g, b);
+        if (std::isfinite(m) && m > peak) peak = m;
+    }
+    // Camera-like range: small headroom above 1, cap runaway highlights.
+    if (peak < 1.05f) peak = 1.05f;
+    if (peak > 64.0f) peak = 64.0f;
+    return peak;
+}
+
 bool guid_eq(const PKPixelFormatGUID& a, const PKPixelFormatGUID& b) {
     return memcmp(&a, &b, sizeof(PKPixelFormatGUID)) == 0;
 }
@@ -207,12 +264,29 @@ bool write_file(const char* path, const void* data, size_t size) {
     return static_cast<bool>(out);
 }
 
+/**
+ * Encode LINEAR scRGB half-float → Ultra HDR JPEG with **content-matched** capacity.
+ *
+ * Default libultrahdr LINEAR peak is 10000 nits → hdr_capacity_max ≈ 10000/203 ≈ 49.
+ * On a phone with display boost ≈ 4, Android applies:
+ *   weight = log(display) / log(capacity) ≈ log(4)/log(49) ≈ 0.25  → looks SDR.
+ *
+ * Match camera Ultra HDR: capacity ≈ content peak (typically 3–8) so weight ≈ 1 on phones.
+ * Encode metadata is content-only — never bake panel/display boost into the file.
+ */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba, const char* out_path) {
     uhdr_codec_private_t* enc = uhdr_create_encoder();
     if (!enc) {
         ALOGE("uhdr_create_encoder failed");
         return -1;
     }
+
+    const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
+    const float content_peak = scan_scrgb_peak(rgba, pixels);
+    // SDR white reference for Ultra HDR metadata is 203 nits.
+    float peak_nits = 203.0f * content_peak;
+    if (peak_nits < 203.0f) peak_nits = 203.0f;
+    if (peak_nits > 10000.0f) peak_nits = 10000.0f;
 
     uhdr_raw_image_t img{};
     img.fmt = UHDR_IMG_FMT_64bppRGBAHalfFloat;
@@ -230,13 +304,29 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         uhdr_release_encoder(enc);
         return -2;
     }
-    err = uhdr_enc_set_quality(enc, 90, UHDR_BASE_IMG);
-    if (err.error_code != UHDR_CODEC_OK) {
-        ALOGE("uhdr_enc_set_quality base: %s", err.has_detail ? err.detail : "error");
-    }
-    err = uhdr_enc_set_quality(enc, 85, UHDR_GAIN_MAP_IMG);
+
+    // Quality: base + multi-channel gain map (closer to camera Ultra HDR).
+    err = uhdr_enc_set_quality(enc, 92, UHDR_BASE_IMG);
+    err = uhdr_enc_set_quality(enc, 95, UHDR_GAIN_MAP_IMG);
+    err = uhdr_enc_set_using_multi_channel_gainmap(enc, 1);
+    err = uhdr_enc_set_gainmap_gamma(enc, 1.0f);
     err = uhdr_enc_set_preset(enc, UHDR_USAGE_BEST_QUALITY);
     err = uhdr_enc_set_output_format(enc, UHDR_CODEC_JPG);
+
+    // Content boost (linear): min=1 (SDR base), max=content peak.
+    err = uhdr_enc_set_min_max_content_boost(enc, 1.0f, content_peak);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_min_max_content_boost: %s", err.has_detail ? err.detail : "error");
+    }
+    // Sets hdr_capacity_max ≈ peak_nits / 203 ≈ content_peak (not 49).
+    err = uhdr_enc_set_target_display_peak_brightness(enc, peak_nits);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_target_display_peak_brightness: %s",
+              err.has_detail ? err.detail : "error");
+    }
+
+    ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f %ux%u", content_peak, peak_nits, w, h);
+
     err = uhdr_encode(enc);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_encode: %s", err.has_detail ? err.detail : "error");
@@ -254,7 +344,8 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         uhdr_release_encoder(enc);
         return -5;
     }
-    ALOGI("Wrote Ultra HDR %ux%u → %s (%zu bytes)", w, h, out_path, stream->data_sz);
+    ALOGI("Wrote Ultra HDR %ux%u peak=%.2f → %s (%zu bytes)", w, h, content_peak, out_path,
+          stream->data_sz);
     uhdr_release_encoder(enc);
     return 0;
 }

@@ -49,9 +49,11 @@ import com.hippo.ehviewer.coil.detectQrCode
 import com.hippo.ehviewer.coil.hardwareThreshold
 import com.hippo.ehviewer.coil.maybeCropBorder
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.HdrGainmapConvert
 import com.hippo.ehviewer.image.hdr.HdrKind
 import com.hippo.ehviewer.image.hdr.isHdrAlwaysConvertExtension
 import com.hippo.ehviewer.image.hdr.sniffHdr
+import com.hippo.ehviewer.image.hdr.sniffHdrPath
 import com.hippo.ehviewer.jni.isGif
 import com.hippo.ehviewer.jni.mmap
 import com.hippo.ehviewer.jni.munmap
@@ -93,9 +95,28 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
         else -> false
     }
 
+    /**
+     * Content HDR boost / capacity (linear) for [android.view.Window.setDesiredHdrHeadroom].
+     * From gain-map metadata after [HdrGainmapConvert] clamp — not panel max.
+     */
+    val contentHdrBoost: Float
+
     var innerImage: CoilImage? = when (image) {
         is BitmapImageWithExtraInfo -> image.image
         else -> image
+    }
+
+    init {
+        contentHdrBoost = if (hasGainmap) {
+            val bm = when (image) {
+                is BitmapImageWithExtraInfo -> image.image.bitmap
+                is BitmapImage -> image.bitmap
+                else -> null
+            }
+            if (bm != null) HdrGainmapConvert.clampOversizedCapacity(bm) else 1f
+        } else {
+            1f
+        }
     }
 
     private fun recycle() {
@@ -137,40 +158,31 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
             return runCatching {
                 when (src) {
                     is Either.Left -> sniffHdr(src.value.source).kind == HdrKind.GainMap
-                    is Either.Right -> {
-                        val path = src.value.source
-                        val file = File(path.toString())
-                        if (file.isFile) {
-                            sniffHdr(file, fileNameHint = path.name).kind == HdrKind.GainMap
-                        } else {
-                            path.read {
-                                val bytes = ByteArray(HDR_SNIFF_BYTES)
-                                val n = readAtMostTo(bytes)
-                                n > 0 && sniffHdr(bytes, n, path.name).kind == HdrKind.GainMap
-                            }
-                        }
-                    }
+                    is Either.Right ->
+                        sniffHdrPath(src.value.source, fileNameHint = src.value.source.name).kind ==
+                            HdrKind.GainMap
                 }
             }.getOrDefault(false)
         }
 
         /**
-         * Local / archive paths: convert JPEG XR (and later PQ) to Ultra HDR before Coil.
+         * Local / archive / SAF paths: convert JPEG XR (and later PQ) to Ultra HDR before Coil.
          * Network loaders already convert at download time.
+         *
+         * Important: local folders often use content:// Okio paths — never require java.io.File.
          */
         private suspend fun PathSource.maybeConvertHdr(): PathSource {
             val ext = type.lowercase().removePrefix(".")
+                .ifEmpty { FileUtils.getExtensionFromFilename(source.name)?.lowercase().orEmpty() }
             val always = isHdrAlwaysConvertExtension(ext)
             if (!always) {
                 // Fast path: only sniff always-convert candidates by ext, or known maybe types.
                 val maybe = ext in setOf("avif", "heic", "heif", "jxr", "wdp", "hdp")
                 if (!maybe) return this
             }
-            val file = File(source.toString())
-            if (!file.isFile) return this
-            val sniff = sniffHdr(file, fileNameHint = source.name)
+            val sniff = sniffHdrPath(source, fileNameHint = source.name)
             if (!sniff.needsConvert) return this
-            val converted = HdrConvertCache.ensureReadable(file, source.name)
+            val converted = HdrConvertCache.ensureReadable(source, source.name)
             if (converted.toString() == source.toString()) return this
             val outer = this
             return object : PathSource {

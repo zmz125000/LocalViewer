@@ -1,9 +1,11 @@
 package com.hippo.ehviewer.image.hdr
 
+import com.ehviewer.core.files.read
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
+import okio.Path
 
 /**
  * HDR taxonomy for the reader pipeline.
@@ -80,6 +82,26 @@ fun sniffHdr(
     return sniffHdr(bytes, read, fileNameHint ?: file.name)
 }
 
+/**
+ * Sniff any Okio path (physical or SAF content://). Extension alone is enough for JXR.
+ */
+fun sniffHdrPath(path: Path, fileNameHint: String? = null, maxBytes: Int = HDR_SNIFF_BYTES): HdrSniffResult {
+    val hint = fileNameHint ?: path.name
+    // Always-convert by extension without I/O (JXR cannot be platform-decoded).
+    val ext = FileUtils.getExtensionFromFilename(hint)?.lowercase()
+        ?: FileUtils.getExtensionFromFilename(path.name)?.lowercase()
+    if (isHdrAlwaysConvertExtension(ext)) {
+        return HdrSniffResult(HdrKind.JpegXr)
+    }
+    return runCatching {
+        path.read {
+            val bytes = ByteArray(maxBytes)
+            val n = readAtMostTo(bytes)
+            if (n <= 0) HdrSniffResult(HdrKind.None) else sniffHdr(bytes, n, hint)
+        }
+    }.getOrDefault(HdrSniffResult(HdrKind.None))
+}
+
 fun sniffHdr(buffer: ByteBuffer, fileNameHint: String? = null): HdrSniffResult {
     val dup = buffer.asReadOnlyBuffer()
     val n = minOf(dup.remaining(), HDR_SNIFF_BYTES)
@@ -119,8 +141,16 @@ fun sniffHdr(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
 
 const val HDR_SNIFF_BYTES = 256 * 1024
 
-/** Sibling / storage suffix for converted Ultra HDR JPEG (hash.uhdr.jpg). */
-const val UHDR_CACHE_SUFFIX = "uhdr.jpg"
+/**
+ * Sibling / storage suffix for converted Ultra HDR JPEG (`hash.uhdr2.jpg`).
+ *
+ * v2 = content-matched hdr_capacity_max (peak boost), not default LINEAR 10000/203≈49.
+ * Bumping the name invalidates old SDR-looking converts on disk.
+ */
+const val UHDR_CACHE_SUFFIX = "uhdr2.jpg"
+
+/** Encode pipeline version (local derived cache key). */
+const val UHDR_ENCODE_VERSION = 2
 
 private fun isJpegXrMagic(bytes: ByteArray, n: Int): Boolean {
     // Little-endian JXR: 'I' 'I' 0xBC 0x01
