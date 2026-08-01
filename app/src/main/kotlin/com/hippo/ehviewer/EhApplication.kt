@@ -41,6 +41,7 @@ import coil3.request.ErrorResult
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.serviceLoaderEnabled
+import coil3.svg.SvgDecoder
 import coil3.util.DebugLogger
 import com.ehviewer.core.database.SearchDatabase
 import com.ehviewer.core.database.roomDb
@@ -245,6 +246,8 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             add(QrCodeInterceptor)
             add(AnimatedWebPDecoder.Factory)
             add(AnimatedImageDecoder.Factory(false))
+            // serviceLoaderEnabled(false): register SVG explicitly (coil-svg).
+            add(SvgDecoder.Factory())
         }
         // Dedicated budgets for library/browse covers (reader pages use their own path).
         memoryCache { thumbMemoryCache }
