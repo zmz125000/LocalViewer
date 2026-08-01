@@ -64,7 +64,7 @@ object RemoteArchiveOpen {
         }
         var downloaded = false
         onWillDownload?.invoke()
-        SmbCache.downloadIfNeeded(cache) { out ->
+        SmbCache.downloadIfNeeded(cache, originalFileName = null) { out ->
             downloaded = true
             SmbGateway.downloadFile(source, password, remote, out)
         }
@@ -90,7 +90,7 @@ object RemoteArchiveOpen {
         }
         var downloaded = false
         onWillDownload?.invoke()
-        WebDavCache.downloadIfNeeded(cache) { out ->
+        WebDavCache.downloadIfNeeded(cache, originalFileName = null) { out ->
             downloaded = true
             WebDavClient.downloadFile(source, password, remote, out)
         }

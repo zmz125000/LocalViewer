@@ -402,8 +402,11 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 return@collectLatest
             }
             page.statusFlow.collect { status ->
-                val hdr = (status as? PageStatus.Ready)?.image?.hasGainmap == true
-                activity.setHdrColorMode(hdr)
+                val ready = status as? PageStatus.Ready
+                val img = ready?.image
+                val hdr = img?.hasGainmap == true
+                // contentBoost from gain map (encode metadata); panel boost applied inside HdrWindow.
+                activity.setHdrColorMode(hdr, contentBoost = img?.contentHdrBoost ?: 1f)
             }
         }
     }

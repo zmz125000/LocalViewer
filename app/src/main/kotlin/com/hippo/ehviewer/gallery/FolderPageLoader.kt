@@ -42,6 +42,7 @@ suspend inline fun <T> useFolderPageLoader(
 
                 override fun openSource(index: Int): ImageSource {
                     val path = files[index]
+                    // HDR convert (JXR → Ultra HDR) happens in Image.decode for PathSource.
                     return object : PathSource {
                         override val source = path
                         override val type by lazy {

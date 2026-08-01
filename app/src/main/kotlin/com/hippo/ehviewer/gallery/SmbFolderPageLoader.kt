@@ -70,7 +70,8 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(imageFileNames[index])
 
                 override fun save(index: Int, file: Path): Boolean = runCatching {
-                    val cached = SmbCache.cachePath(source.id, remoteDir, imageFileNames[index])
+                    val primary = SmbCache.cachePath(source.id, remoteDir, imageFileNames[index])
+                    val cached = SmbCache.resolveReaderPath(primary)
                     check(SmbCache.isCachedOnDisk(cached)) { "Not cached" }
                     cached sendTo file
                     true
@@ -78,13 +79,17 @@ suspend inline fun <T> useSmbFolderPageLoader(
 
                 override fun openSource(index: Int): ImageSource {
                     val name = imageFileNames[index]
-                    val path = SmbCache.cachePath(source.id, remoteDir, name)
+                    val primary = SmbCache.cachePath(source.id, remoteDir, name)
+                    val path = SmbCache.resolveReaderPath(primary)
                     // Always re-probe disk: knownPresent can outlive LRU eviction of cover pages.
                     check(SmbCache.isCachedOnDisk(path)) { "SMB page $index not downloaded" }
                     return object : PathSource {
                         override val source = path
+                        // Converted Ultra HDR is JPEG; original name may be .jxr
                         override val type by lazy {
-                            FileUtils.getExtensionFromFilename(name)!!
+                            FileUtils.getExtensionFromFilename(path.name)
+                                ?: FileUtils.getExtensionFromFilename(name)
+                                ?: "jpg"
                         }
 
                         override fun close() = Unit
@@ -144,7 +149,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
                     // Never probe disk here — onRequest/retryPage run on main (lifecycle
                     // ON_RESUME). Memory-only skip for prefetch when known present.
-                    if (onReady == null && SmbCache.isCached(cache)) {
+                    if (onReady == null && SmbCache.isPageCached(cache)) {
                         return
                     }
                     if (onReady != null) {
@@ -159,7 +164,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                         var needsInteractive = interactive
                         try {
                             // Authoritative disk check on IO (StrictMode + LRU correctness).
-                            if (SmbCache.isCachedOnDisk(cache)) {
+                            if (SmbCache.isPageCachedOnDisk(cache)) {
                                 dispatchReady(index)
                                 return@launch
                             }
@@ -171,7 +176,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             slots.withPermit {
                                 downloadToCache(index)
                             }
-                            if (SmbCache.isCachedOnDisk(cache)) {
+                            if (SmbCache.isPageCachedOnDisk(cache)) {
                                 dispatchReady(index)
                             } else {
                                 val waiters = takeReadyWaiters(index)
@@ -216,10 +221,10 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 private suspend fun downloadToCache(index: Int) {
                     val name = imageFileNames[index]
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
-                    if (SmbCache.isCachedOnDisk(cache)) return
+                    if (SmbCache.isPageCachedOnDisk(cache)) return
                     val rel = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
                     // Per-path mutex: two connections never write the same cache file.
-                    SmbCache.downloadIfNeeded(cache) { out ->
+                    SmbCache.downloadIfNeeded(cache, originalFileName = name) { out ->
                         SmbGateway.downloadFile(source, password, rel, out)
                     }
                 }

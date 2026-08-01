@@ -1,0 +1,605 @@
+/*
+ * JPEG XR / HDR raster → Ultra HDR JPEG via libultrahdr.
+ * JNI: com.hippo.ehviewer.jni.HdrConvertKt
+ */
+#include <android/log.h>
+#include <jni.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "hdr_encode.h"
+#include "ultrahdr_api.h"
+
+// jxrlib (Microsoft / brion jpegxr packaging)
+extern "C" {
+#include "JXRGlue.h"
+}
+
+#define LOG_TAG "HdrConvert"
+#define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+
+namespace {
+
+// IEEE754 half from float (round-to-nearest-even, simple portable).
+uint16_t float_to_half(float f) {
+    union {
+        float f;
+        uint32_t u;
+    } v{f};
+    uint32_t x = v.u;
+    uint32_t sign = (x >> 16) & 0x8000u;
+    int32_t exp = static_cast<int32_t>((x >> 23) & 0xff) - 127 + 15;
+    uint32_t mant = x & 0x7fffffu;
+    if (exp <= 0) {
+        if (exp < -10) return static_cast<uint16_t>(sign);
+        mant |= 0x800000u;
+        uint32_t t = 14 - exp;
+        uint32_t m = mant >> t;
+        if ((mant >> (t - 1)) & 1u) m++;
+        return static_cast<uint16_t>(sign | m);
+    }
+    if (exp >= 31) {
+        // Inf/NaN → max finite or Inf
+        if (mant) return static_cast<uint16_t>(sign | 0x7e00u);
+        return static_cast<uint16_t>(sign | 0x7c00u);
+    }
+    uint32_t half = sign | (static_cast<uint32_t>(exp) << 10) | (mant >> 13);
+    if (mant & 0x1000u) half++;  // round
+    return static_cast<uint16_t>(half);
+}
+
+float half_to_float(uint16_t h) {
+    const uint32_t sign = (static_cast<uint32_t>(h) & 0x8000u) << 16;
+    uint32_t exp = (h >> 10) & 0x1fu;
+    uint32_t mant = h & 0x3ffu;
+    uint32_t out;
+    if (exp == 0) {
+        if (mant == 0) {
+            out = sign;
+        } else {
+            // subnormal
+            exp = 1;
+            while ((mant & 0x400u) == 0) {
+                mant <<= 1;
+                exp--;
+            }
+            mant &= 0x3ffu;
+            uint32_t e = (127 - 15 + exp) << 23;
+            out = sign | e | (mant << 13);
+        }
+    } else if (exp == 31) {
+        out = sign | 0x7f800000u | (mant << 13);
+    } else {
+        out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+    }
+    union {
+        uint32_t u;
+        float f;
+    } v{out};
+    return v.f;
+}
+
+/**
+ * Peak of max(R,G,B) in linear scRGB (relative to SDR white = 1.0).
+ * Used as content boost so hdr_capacity_max ≈ peak (not default 10000/203 ≈ 49).
+ */
+// jxrlib JXRGlue.h defines min/max macros — avoid std::max/min after that include.
+static inline float fmax3(float a, float b, float c) {
+    float m = a > b ? a : b;
+    return m > c ? m : c;
+}
+
+float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count) {
+    float peak = 1.0f;
+    for (size_t i = 0; i < pixel_count; i++) {
+        const float r = half_to_float(rgba[i * 4 + 0]);
+        const float g = half_to_float(rgba[i * 4 + 1]);
+        const float b = half_to_float(rgba[i * 4 + 2]);
+        // Ignore non-finite / negative (scRGB can go slightly negative; boost uses positive).
+        const float m = fmax3(r, g, b);
+        if (std::isfinite(m) && m > peak) peak = m;
+    }
+    // Camera-like range: small headroom above 1, cap runaway highlights.
+    if (peak < 1.05f) peak = 1.05f;
+    if (peak > 64.0f) peak = 64.0f;
+    return peak;
+}
+
+bool guid_eq(const PKPixelFormatGUID& a, const PKPixelFormatGUID& b) {
+    return memcmp(&a, &b, sizeof(PKPixelFormatGUID)) == 0;
+}
+
+enum class JxrPix {
+    RgbaF32,
+    RgbaF16,
+    Rgb101010,
+    Unsupported,
+};
+
+JxrPix classify_guid(const PKPixelFormatGUID& g) {
+    if (guid_eq(g, GUID_PKPixelFormat128bppRGBAFloat)) return JxrPix::RgbaF32;
+    if (guid_eq(g, GUID_PKPixelFormat128bppPRGBAFloat)) return JxrPix::RgbaF32;
+    if (guid_eq(g, GUID_PKPixelFormat128bppRGBFloat)) return JxrPix::RgbaF32;
+    if (guid_eq(g, GUID_PKPixelFormat64bppRGBAHalf)) return JxrPix::RgbaF16;
+    if (guid_eq(g, GUID_PKPixelFormat64bppRGBHalf)) return JxrPix::RgbaF16;
+    if (guid_eq(g, GUID_PKPixelFormat32bppRGB101010)) return JxrPix::Rgb101010;
+    return JxrPix::Unsupported;
+}
+
+int bpp_of(JxrPix p) {
+    switch (p) {
+        case JxrPix::RgbaF32:
+            return 16;
+        case JxrPix::RgbaF16:
+            return 8;
+        case JxrPix::Rgb101010:
+            return 4;
+        default:
+            return 0;
+    }
+}
+
+/**
+ * Configure decoder for full-frame decode in the given (native) pixel format.
+ * Ported from branch `hdr` jxr_hdr.c — never force half→float via jxrlib Convert
+ * (that path produces vertical stripe garbage).
+ */
+bool setup_full_frame(PKImageDecode* dec, PKPixelFormatGUID* fmt) {
+    PKPixelInfo pi{};
+    pi.pGUIDPixFmt = fmt;
+    if (PixelFormatLookup(&pi, LOOKUP_FORWARD) != WMP_errSuccess) return false;
+
+    if (!!(pi.grBit & PK_pixfmtHasAlpha)) {
+        dec->WMP.wmiSCP.uAlphaMode = 2; /* image + alpha */
+    } else {
+        dec->WMP.wmiSCP.uAlphaMode = 0;
+    }
+
+    dec->WMP.wmiI.cfColorFormat = pi.cfColorFormat;
+    dec->WMP.wmiI.bdBitDepth = pi.bdBitDepth;
+    dec->WMP.wmiI.cBitsPerUnit = pi.cbitUnit;
+    dec->WMP.wmiI.bRGB = !(pi.grBit & PK_pixfmtBGR);
+
+    dec->WMP.wmiI.cThumbnailWidth = dec->WMP.wmiI.cWidth;
+    dec->WMP.wmiI.cThumbnailHeight = dec->WMP.wmiI.cHeight;
+    dec->WMP.wmiI.bSkipFlexbits = FALSE;
+    dec->WMP.wmiI.cROILeftX = 0;
+    dec->WMP.wmiI.cROITopY = 0;
+    dec->WMP.wmiI.cROIWidth = dec->WMP.wmiI.cThumbnailWidth;
+    dec->WMP.wmiI.cROIHeight = dec->WMP.wmiI.cThumbnailHeight;
+    dec->WMP.wmiI.oOrientation = O_NONE;
+    dec->WMP.wmiI.cPostProcStrength = 0;
+    return true;
+}
+
+/**
+ * Decode JXR from an in-memory buffer (no temp file).
+ * Same approach as branch `hdr` HdrJxr: CreateStreamFromMemory + native pixel format.
+ * SAF/local paths: Kotlin reads via Okio → bytes → this (skips copy-to-temp.jxr).
+ */
+bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
+                            unsigned& w, unsigned& h) {
+    if (!data || len == 0) return false;
+
+    PKFactory* factory = nullptr;
+    PKCodecFactory* codecFactory = nullptr;
+    struct WMPStream* stream = nullptr;
+    PKImageDecode* decoder = nullptr;
+    bool ok = false;
+
+    auto release_all = [&]() {
+        if (decoder) {
+            decoder->Release(&decoder);
+            decoder = nullptr;
+        }
+        if (stream) {
+            stream->Close(&stream);
+            stream = nullptr;
+        }
+        if (codecFactory) {
+            codecFactory->Release(&codecFactory);
+            codecFactory = nullptr;
+        }
+        if (factory) {
+            factory->Release(&factory);
+            factory = nullptr;
+        }
+    };
+
+    ERR err = PKCreateFactory(&factory, PK_SDK_VERSION);
+    if (Failed(err) || !factory) {
+        ALOGE("PKCreateFactory failed: %d", err);
+        return false;
+    }
+    err = PKCreateCodecFactory(&codecFactory, WMP_SDK_VERSION);
+    if (Failed(err) || !codecFactory) {
+        ALOGE("PKCreateCodecFactory failed: %d", err);
+        release_all();
+        return false;
+    }
+    err = factory->CreateStreamFromMemory(&stream, const_cast<uint8_t*>(data), len);
+    if (Failed(err) || !stream) {
+        ALOGE("CreateStreamFromMemory failed: %d", err);
+        release_all();
+        return false;
+    }
+    err = PKImageDecode_Create_WMP(&decoder);
+    if (Failed(err) || !decoder) {
+        ALOGE("PKImageDecode_Create_WMP failed: %d", err);
+        release_all();
+        return false;
+    }
+    err = decoder->Initialize(decoder, stream);
+    if (Failed(err)) {
+        ALOGE("decoder Initialize failed: %d", err);
+        release_all();
+        return false;
+    }
+    /* Stream owned by decoder after Initialize (hdr branch). */
+    decoder->fStreamOwner = 1;
+    stream = nullptr;
+
+    I32 width = 0, height = 0;
+    err = decoder->GetSize(decoder, &width, &height);
+    if (Failed(err) || width <= 0 || height <= 0 || width > 16384 || height > 16384) {
+        ALOGE("GetSize failed/out of range: %d %dx%d", err, (int)width, (int)height);
+        release_all();
+        return false;
+    }
+
+    PKPixelFormatGUID guid{};
+    err = decoder->GetPixelFormat(decoder, &guid);
+    if (Failed(err)) {
+        ALOGE("GetPixelFormat failed: %d", err);
+        release_all();
+        return false;
+    }
+    JxrPix pix = classify_guid(guid);
+    if (pix == JxrPix::Unsupported) {
+        ALOGE("Unsupported JXR pixel format");
+        release_all();
+        return false;
+    }
+
+    /* Decode in native format — no jxrlib format conversion. */
+    if (!setup_full_frame(decoder, &guid)) {
+        ALOGE("setup_full_frame failed");
+        release_all();
+        return false;
+    }
+
+    w = static_cast<unsigned>(decoder->WMP.wmiI.cROIWidth);
+    h = static_cast<unsigned>(decoder->WMP.wmiI.cROIHeight);
+    if (w == 0 || h == 0) {
+        w = static_cast<unsigned>(width);
+        h = static_cast<unsigned>(height);
+    }
+
+    const bool rgb_half = guid_eq(guid, GUID_PKPixelFormat64bppRGBHalf) ||
+        guid_eq(guid, GUID_PKPixelFormat48bppRGBHalf);
+    const bool rgba_half = guid_eq(guid, GUID_PKPixelFormat64bppRGBAHalf);
+    const bool rgb_float = guid_eq(guid, GUID_PKPixelFormat128bppRGBFloat) ||
+        guid_eq(guid, GUID_PKPixelFormat96bppRGBFloat);
+    const bool rgba_float = guid_eq(guid, GUID_PKPixelFormat128bppRGBAFloat) ||
+        guid_eq(guid, GUID_PKPixelFormat128bppPRGBAFloat);
+
+    PKPixelInfo pi{};
+    pi.pGUIDPixFmt = &guid;
+    if (PixelFormatLookup(&pi, LOOKUP_FORWARD) != WMP_errSuccess || pi.cbitUnit == 0 ||
+        (pi.cbitUnit % 8) != 0) {
+        ALOGE("bad cbitUnit");
+        release_all();
+        return false;
+    }
+    const U32 bytes_per_pixel = pi.cbitUnit / 8u;
+    const size_t stride = static_cast<size_t>(w) * static_cast<size_t>(bytes_per_pixel);
+    const size_t buf_size = stride * static_cast<size_t>(h);
+    std::vector<uint8_t> raw(buf_size);
+
+    PKRect rect{};
+    rect.X = 0;
+    rect.Y = 0;
+    rect.Width = static_cast<I32>(w);
+    rect.Height = static_cast<I32>(h);
+    err = decoder->Copy(decoder, &rect, raw.data(), static_cast<U32>(stride));
+    if (Failed(err)) {
+        ALOGE("Copy failed: %d", err);
+        release_all();
+        return false;
+    }
+
+    out_rgba.resize(static_cast<size_t>(w) * h * 4);
+    if (rgba_half || rgb_half) {
+        const size_t src_bpp = bytes_per_pixel;
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const uint16_t* p =
+                    reinterpret_cast<const uint16_t*>(row + static_cast<size_t>(x) * src_bpp);
+                const size_t i = static_cast<size_t>(y) * w + x;
+                out_rgba[i * 4 + 0] = p[0];
+                out_rgba[i * 4 + 1] = p[1];
+                out_rgba[i * 4 + 2] = p[2];
+                out_rgba[i * 4 + 3] = rgba_half ? p[3] : float_to_half(1.0f);
+            }
+        }
+        ok = true;
+    } else if (rgba_float || rgb_float) {
+        const size_t src_bpp = bytes_per_pixel;
+        const bool has_a = rgba_float;
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const float* p =
+                    reinterpret_cast<const float*>(row + static_cast<size_t>(x) * src_bpp);
+                const size_t i = static_cast<size_t>(y) * w + x;
+                out_rgba[i * 4 + 0] = float_to_half(p[0]);
+                out_rgba[i * 4 + 1] = float_to_half(p[1]);
+                out_rgba[i * 4 + 2] = float_to_half(p[2]);
+                out_rgba[i * 4 + 3] = float_to_half(has_a ? p[3] : 1.0f);
+            }
+        }
+        ok = true;
+    } else if (pix == JxrPix::Rgb101010) {
+        for (unsigned i = 0; i < w * h; i++) {
+            uint32_t p;
+            memcpy(&p, raw.data() + i * 4, 4);
+            float r = static_cast<float>((p >> 0) & 0x3ff) / 1023.0f;
+            float g = static_cast<float>((p >> 10) & 0x3ff) / 1023.0f;
+            float b = static_cast<float>((p >> 20) & 0x3ff) / 1023.0f;
+            out_rgba[i * 4 + 0] = float_to_half(r);
+            out_rgba[i * 4 + 1] = float_to_half(g);
+            out_rgba[i * 4 + 2] = float_to_half(b);
+            out_rgba[i * 4 + 3] = float_to_half(1.0f);
+        }
+        ok = true;
+    } else {
+        ALOGE("Unhandled JXR expand path");
+    }
+
+    release_all();
+    return ok;
+}
+
+// Path helper: load whole file into memory then decode (no jxrlib file I/O).
+bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, unsigned& w,
+                            unsigned& h) {
+    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    if (!in) {
+        ALOGE("open JXR failed: %s", path);
+        return false;
+    }
+    const auto sz = in.tellg();
+    if (sz <= 0) return false;
+    in.seekg(0, std::ios::beg);
+    std::vector<uint8_t> buf(static_cast<size_t>(sz));
+    if (!in.read(reinterpret_cast<char*>(buf.data()), sz)) {
+        ALOGE("read JXR failed: %s", path);
+        return false;
+    }
+    return decode_jxr_from_memory(buf.data(), buf.size(), out_rgba, w, h);
+}
+
+}  // namespace
+
+static bool write_file(const char* path, const void* data, size_t size) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out) return false;
+    out.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+    return static_cast<bool>(out);
+}
+
+/**
+ * Encode LINEAR scRGB half-float → Ultra HDR JPEG with **content-matched** capacity.
+ *
+ * Default libultrahdr LINEAR peak is 10000 nits → hdr_capacity_max ≈ 10000/203 ≈ 49.
+ * On a phone with display boost ≈ 4, Android applies:
+ *   weight = log(display) / log(capacity) ≈ log(4)/log(49) ≈ 0.25  → looks SDR.
+ *
+ * Match camera Ultra HDR: capacity ≈ content peak (typically 3–8) so weight ≈ 1 on phones.
+ * Encode metadata is content-only — never bake panel/display boost into the file.
+ */
+int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba, const char* out_path) {
+    uhdr_codec_private_t* enc = uhdr_create_encoder();
+    if (!enc) {
+        ALOGE("uhdr_create_encoder failed");
+        return -1;
+    }
+
+    const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
+    // peak scan (inline — avoid name clash with file-local helper in anon namespace)
+    float content_peak = 1.0f;
+    for (size_t i = 0; i < pixels; i++) {
+        auto h2f = [](uint16_t h) -> float {
+            const uint32_t sign = (static_cast<uint32_t>(h) & 0x8000u) << 16;
+            uint32_t exp = (h >> 10) & 0x1fu;
+            uint32_t mant = h & 0x3ffu;
+            uint32_t out;
+            if (exp == 0) {
+                if (mant == 0) {
+                    out = sign;
+                } else {
+                    exp = 1;
+                    while ((mant & 0x400u) == 0) {
+                        mant <<= 1;
+                        exp--;
+                    }
+                    mant &= 0x3ffu;
+                    out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+                }
+            } else if (exp == 31) {
+                out = sign | 0x7f800000u | (mant << 13);
+            } else {
+                out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+            }
+            union {
+                uint32_t u;
+                float f;
+            } v{out};
+            return v.f;
+        };
+        const float r = h2f(rgba[i * 4 + 0]);
+        const float g = h2f(rgba[i * 4 + 1]);
+        const float b = h2f(rgba[i * 4 + 2]);
+        float m = r > g ? r : g;
+        if (b > m) m = b;
+        if (std::isfinite(m) && m > content_peak) content_peak = m;
+    }
+    if (content_peak < 1.05f) content_peak = 1.05f;
+    if (content_peak > 64.0f) content_peak = 64.0f;
+    // SDR white reference for Ultra HDR metadata is 203 nits.
+    float peak_nits = 203.0f * content_peak;
+    if (peak_nits < 203.0f) peak_nits = 203.0f;
+    if (peak_nits > 10000.0f) peak_nits = 10000.0f;
+
+    uhdr_raw_image_t img{};
+    img.fmt = UHDR_IMG_FMT_64bppRGBAHalfFloat;
+    img.cg = UHDR_CG_BT_709;  // scRGB primaries ≈ BT.709
+    img.ct = UHDR_CT_LINEAR;
+    img.range = UHDR_CR_FULL_RANGE;
+    img.w = w;
+    img.h = h;
+    img.planes[UHDR_PLANE_PACKED] = const_cast<uint16_t*>(rgba);
+    img.stride[UHDR_PLANE_PACKED] = w;
+
+    uhdr_error_info_t err = uhdr_enc_set_raw_image(enc, &img, UHDR_HDR_IMG);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_raw_image: %s", err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -2;
+    }
+
+    // Quality: base + multi-channel gain map (closer to camera Ultra HDR).
+    err = uhdr_enc_set_quality(enc, 92, UHDR_BASE_IMG);
+    err = uhdr_enc_set_quality(enc, 95, UHDR_GAIN_MAP_IMG);
+    err = uhdr_enc_set_using_multi_channel_gainmap(enc, 1);
+    err = uhdr_enc_set_gainmap_gamma(enc, 1.0f);
+    err = uhdr_enc_set_preset(enc, UHDR_USAGE_BEST_QUALITY);
+    err = uhdr_enc_set_output_format(enc, UHDR_CODEC_JPG);
+
+    // Content boost (linear): min=1 (SDR base), max=content peak.
+    err = uhdr_enc_set_min_max_content_boost(enc, 1.0f, content_peak);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_min_max_content_boost: %s", err.has_detail ? err.detail : "error");
+    }
+    // Sets hdr_capacity_max ≈ peak_nits / 203 ≈ content_peak (not 49).
+    err = uhdr_enc_set_target_display_peak_brightness(enc, peak_nits);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_target_display_peak_brightness: %s",
+              err.has_detail ? err.detail : "error");
+    }
+
+    ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f %ux%u", content_peak, peak_nits, w, h);
+
+    err = uhdr_encode(enc);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_encode: %s", err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -3;
+    }
+    uhdr_compressed_image_t* stream = uhdr_get_encoded_stream(enc);
+    if (!stream || !stream->data || stream->data_sz == 0) {
+        ALOGE("uhdr_get_encoded_stream empty");
+        uhdr_release_encoder(enc);
+        return -4;
+    }
+    if (!write_file(out_path, stream->data, stream->data_sz)) {
+        ALOGE("write Ultra HDR failed: %s", out_path);
+        uhdr_release_encoder(enc);
+        return -5;
+    }
+    ALOGI("Wrote Ultra HDR %ux%u peak=%.2f → %s (%zu bytes)", w, h, content_peak, out_path,
+          stream->data_sz);
+    uhdr_release_encoder(enc);
+    return 0;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrToUltraHdr(JNIEnv* env, jclass,
+                                                              jstring jInput, jstring jOutput) {
+    if (!jInput || !jOutput) return -10;
+    const char* in_path = env->GetStringUTFChars(jInput, nullptr);
+    const char* out_path = env->GetStringUTFChars(jOutput, nullptr);
+    if (!in_path || !out_path) {
+        if (in_path) env->ReleaseStringUTFChars(jInput, in_path);
+        if (out_path) env->ReleaseStringUTFChars(jOutput, out_path);
+        return -11;
+    }
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    int rc = -20;
+    if (decode_jxr_to_rgba_f16(in_path, rgba, w, h)) {
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path);
+    } else {
+        rc = -21;
+    }
+
+    env->ReleaseStringUTFChars(jInput, in_path);
+    env->ReleaseStringUTFChars(jOutput, out_path);
+    return rc;
+}
+
+/**
+ * SAF/local Okio path path: Kotlin already holds JXR bytes — no temp .jxr on disk.
+ * Mirrors branch `hdr` HdrJxr.decode(bytes) → convert pipeline.
+ */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, jclass,
+                                                                   jbyteArray jInput,
+                                                                   jstring jOutput) {
+    if (!jInput || !jOutput) return -10;
+    const jsize len = env->GetArrayLength(jInput);
+    if (len <= 0) return -12;
+    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
+    if (!bytes) return -13;
+    const char* out_path = env->GetStringUTFChars(jOutput, nullptr);
+    if (!out_path) {
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return -14;
+    }
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    int rc = -20;
+    if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
+                               rgba, w, h)) {
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path);
+    } else {
+        rc = -21;
+    }
+
+    env->ReleaseStringUTFChars(jOutput, out_path);
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+    return rc;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeLinearRgbaF16ToUltraHdr(
+        JNIEnv* env, jclass, jint width, jint height, jbyteArray jRgba, jstring jOutput) {
+    if (width <= 0 || height <= 0 || !jRgba || !jOutput) return -10;
+    const size_t need = static_cast<size_t>(width) * static_cast<size_t>(height) * 8;
+    jsize len = env->GetArrayLength(jRgba);
+    if (static_cast<size_t>(len) < need) return -12;
+    jbyte* bytes = env->GetByteArrayElements(jRgba, nullptr);
+    if (!bytes) return -13;
+    const char* out_path = env->GetStringUTFChars(jOutput, nullptr);
+    if (!out_path) {
+        env->ReleaseByteArrayElements(jRgba, bytes, JNI_ABORT);
+        return -14;
+    }
+    int rc = encode_linear_rgba_f16_to_uhdr(static_cast<unsigned>(width), static_cast<unsigned>(height),
+                                            reinterpret_cast<const uint16_t*>(bytes), out_path);
+    env->ReleaseStringUTFChars(jOutput, out_path);
+    env->ReleaseByteArrayElements(jRgba, bytes, JNI_ABORT);
+    return rc;
+}

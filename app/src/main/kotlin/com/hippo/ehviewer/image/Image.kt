@@ -48,13 +48,21 @@ import com.hippo.ehviewer.coil.detectGainmap
 import com.hippo.ehviewer.coil.detectQrCode
 import com.hippo.ehviewer.coil.hardwareThreshold
 import com.hippo.ehviewer.coil.maybeCropBorder
+import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.HdrGainmapConvert
+import com.hippo.ehviewer.image.hdr.HdrKind
+import com.hippo.ehviewer.image.hdr.isHdrAlwaysConvertExtension
+import com.hippo.ehviewer.image.hdr.sniffHdr
+import com.hippo.ehviewer.image.hdr.sniffHdrPath
 import com.hippo.ehviewer.jni.isGif
 import com.hippo.ehviewer.jni.mmap
 import com.hippo.ehviewer.jni.munmap
 import com.hippo.ehviewer.jni.rewriteGifSource
 import com.hippo.ehviewer.ktbuilder.execute
 import com.hippo.ehviewer.ktbuilder.imageRequest
+import com.hippo.ehviewer.util.FileUtils
 import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
+import java.io.File
 import java.nio.ByteBuffer
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.decrementAndFetch
@@ -87,9 +95,28 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
         else -> false
     }
 
+    /**
+     * Content HDR boost / capacity (linear) for [android.view.Window.setDesiredHdrHeadroom].
+     * From gain-map metadata after [HdrGainmapConvert] clamp — not panel max.
+     */
+    val contentHdrBoost: Float
+
     var innerImage: CoilImage? = when (image) {
         is BitmapImageWithExtraInfo -> image.image
         else -> image
+    }
+
+    init {
+        contentHdrBoost = if (hasGainmap) {
+            val bm = when (image) {
+                is BitmapImageWithExtraInfo -> image.image.bitmap
+                is BitmapImage -> image.bitmap
+                else -> null
+            }
+            if (bm != null) HdrGainmapConvert.clampOversizedCapacity(bm) else 1f
+        } else {
+            1f
+        }
     }
 
     private fun recycle() {
@@ -130,23 +157,39 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
             if (!isAtLeastU) return false
             return runCatching {
                 when (src) {
-                    is Either.Left -> {
-                        val buf = src.value.source.asReadOnlyBuffer()
-                        val n = minOf(buf.remaining(), HDR_SNIFF_BYTES)
-                        if (n <= 0) return false
-                        val bytes = ByteArray(n)
-                        buf.get(bytes)
-                        bytes.containsHdrGainMapMarker(n)
-                    }
-                    is Either.Right -> {
-                        src.value.source.read {
-                            val bytes = ByteArray(HDR_SNIFF_BYTES)
-                            val n = readAtMostTo(bytes)
-                            n > 0 && bytes.containsHdrGainMapMarker(n)
-                        }
-                    }
+                    is Either.Left -> sniffHdr(src.value.source).kind == HdrKind.GainMap
+                    is Either.Right ->
+                        sniffHdrPath(src.value.source, fileNameHint = src.value.source.name).kind ==
+                            HdrKind.GainMap
                 }
             }.getOrDefault(false)
+        }
+
+        /**
+         * Local / archive / SAF paths: convert JPEG XR (and later PQ) to Ultra HDR before Coil.
+         * Network loaders already convert at download time.
+         *
+         * Important: local folders often use content:// Okio paths — never require java.io.File.
+         */
+        private suspend fun PathSource.maybeConvertHdr(): PathSource {
+            val ext = type.lowercase().removePrefix(".")
+                .ifEmpty { FileUtils.getExtensionFromFilename(source.name)?.lowercase().orEmpty() }
+            val always = isHdrAlwaysConvertExtension(ext)
+            if (!always) {
+                // Fast path: only sniff always-convert candidates by ext, or known maybe types.
+                val maybe = ext in setOf("avif", "heic", "heif", "jxr", "wdp", "hdp")
+                if (!maybe) return this
+            }
+            val sniff = sniffHdrPath(source, fileNameHint = source.name)
+            if (!sniff.needsConvert) return this
+            val converted = HdrConvertCache.ensureReadable(source, source.name)
+            if (converted.toString() == source.toString()) return this
+            val outer = this
+            return object : PathSource {
+                override val source = converted
+                override val type = FileUtils.getExtensionFromFilename(converted.name) ?: "jpg"
+                override fun close() = outer.close()
+            }
         }
 
         private fun CoilImage.asBitmapImage(): BitmapImage? = when (this) {
@@ -238,18 +281,25 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
             checkExtraneousAds: Boolean = false,
             forceOriginal: Boolean = false,
         ): Image {
-            val image = when (src) {
+            // PathSource may be rewritten to a derived Ultra HDR file (JXR → cache).
+            val effectiveSrc: ImageSource = when (src) {
+                is PathSource -> src.maybeConvertHdr()
+                else -> src
+            }
+            val image = when (val s = effectiveSrc) {
                 is PathSource -> {
                     // Pre-U GIF rewrite via mmap (platform animated decoder on U+ is fine).
                     if (!isAtLeastU) {
-                        src.source.openFileDescriptor("rw").use {
+                        s.source.openFileDescriptor("rw").use {
                             val fd = it.fd
                             if (isGif(fd)) {
                                 return bracketCase(
                                     { mmap(fd)!! },
                                     { buffer ->
                                         decode(
-                                            byteBufferSource(buffer) { munmap(buffer).also { src.close() } },
+                                            byteBufferSource(buffer) {
+                                                munmap(buffer).also { s.close() }
+                                            },
                                             checkExtraneousAds,
                                             forceOriginal,
                                         )
@@ -259,17 +309,17 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                             }
                         }
                     }
-                    src.right().decodeCoil(checkExtraneousAds, forceOriginal)
+                    s.right().decodeCoil(checkExtraneousAds, forceOriginal)
                 }
                 is ByteBufferSource -> {
                     if (!isAtLeastU) {
-                        rewriteGifSource(src.source)
+                        rewriteGifSource(s.source)
                     }
-                    src.left().decodeCoil(checkExtraneousAds, forceOriginal)
+                    s.left().decodeCoil(checkExtraneousAds, forceOriginal)
                 }
             }
-            return Image(image, src).apply {
-                if (innerImage is BitmapImage) src.close()
+            return Image(image, effectiveSrc).apply {
+                if (innerImage is BitmapImage) effectiveSrc.close()
             }
         }
 

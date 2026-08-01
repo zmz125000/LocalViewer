@@ -1,7 +1,26 @@
 cmake_minimum_required(VERSION 3.14)
-project(ehviewer C)
+project(ehviewer C CXX)
 include(ExternalProject)
 include(FetchContent)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ExternalProject (libultrahdr/turbojpeg, aom) may use Ninja; Android Gradle
+# does not always put cmake's ninja on PATH for nested configures.
+if (NOT CMAKE_MAKE_PROGRAM)
+    file(GLOB _eh_ninja_candidates
+            "$ENV{ANDROID_HOME}/cmake/*/bin/ninja"
+            "$ENV{ANDROID_SDK_ROOT}/cmake/*/bin/ninja"
+            "/Users/jingxuan/Library/Android/sdk/cmake/*/bin/ninja"
+    )
+    if (_eh_ninja_candidates)
+        list(SORT _eh_ninja_candidates ORDER DESCENDING)
+        list(GET _eh_ninja_candidates 0 CMAKE_MAKE_PROGRAM)
+        set(CMAKE_MAKE_PROGRAM "${CMAKE_MAKE_PROGRAM}" CACHE FILEPATH "" FORCE)
+        message(STATUS "Using ninja: ${CMAKE_MAKE_PROGRAM}")
+    endif ()
+endif ()
 
 if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     string(CONCAT CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -ffast-math -fvisibility=hidden -fvisibility-inlines-hidden -funroll-loops -flto "
@@ -155,10 +174,147 @@ corrosion_import_crate(
 corrosion_add_target_rustflags(ehviewer_rust $<$<NOT:$<CONFIG:Debug>>:-Z unstable-options -C panic=immediate-abort -Z location-detail=none -Z fmt-debug=none>)
 corrosion_link_libraries(ehviewer_rust android jnigraphics log webp webpdemux)
 
+# ── jxrlib (Microsoft JPEG XR, packaged in brion/jpegxr) ─────────────────
+FetchContent_Declare(
+        jpegxr_src
+        GIT_REPOSITORY https://github.com/bvibber/jpegxr.git
+        GIT_TAG 0.3.1
+        GIT_SHALLOW 1
+)
+FetchContent_GetProperties(jpegxr_src)
+if (NOT jpegxr_src_POPULATED)
+    FetchContent_Populate(jpegxr_src)
+endif ()
+set(JXRLIB_ROOT ${jpegxr_src_SOURCE_DIR}/jxrlib)
+add_library(jxrlib STATIC
+        ${JXRLIB_ROOT}/image/sys/adapthuff.c
+        ${JXRLIB_ROOT}/image/sys/image.c
+        ${JXRLIB_ROOT}/image/sys/strcodec.c
+        ${JXRLIB_ROOT}/image/sys/strPredQuant.c
+        ${JXRLIB_ROOT}/image/sys/strTransform.c
+        ${JXRLIB_ROOT}/image/sys/perfTimerANSI.c
+        ${JXRLIB_ROOT}/image/decode/decode.c
+        ${JXRLIB_ROOT}/image/decode/postprocess.c
+        ${JXRLIB_ROOT}/image/decode/segdec.c
+        ${JXRLIB_ROOT}/image/decode/strdec.c
+        ${JXRLIB_ROOT}/image/decode/strInvTransform.c
+        ${JXRLIB_ROOT}/image/decode/strPredQuantDec.c
+        ${JXRLIB_ROOT}/image/decode/JXRTranscode.c
+        ${JXRLIB_ROOT}/image/encode/encode.c
+        ${JXRLIB_ROOT}/image/encode/segenc.c
+        ${JXRLIB_ROOT}/image/encode/strenc.c
+        ${JXRLIB_ROOT}/image/encode/strFwdTransform.c
+        ${JXRLIB_ROOT}/image/encode/strPredQuantEnc.c
+        ${JXRLIB_ROOT}/jxrgluelib/JXRGlue.c
+        ${JXRLIB_ROOT}/jxrgluelib/JXRGlueJxr.c
+        ${JXRLIB_ROOT}/jxrgluelib/JXRGluePFC.c
+        ${JXRLIB_ROOT}/jxrgluelib/JXRMeta.c
+)
+target_include_directories(jxrlib PUBLIC
+        ${JXRLIB_ROOT}
+        ${JXRLIB_ROOT}/common/include
+        ${JXRLIB_ROOT}/image/sys
+        ${JXRLIB_ROOT}/jxrgluelib
+)
+target_compile_definitions(jxrlib PUBLIC __ANSI__ DISABLE_PERF_MEASUREMENT)
+target_compile_options(jxrlib PRIVATE
+        -Wno-unused-function
+        -Wno-unused-variable
+        -Wno-sign-compare
+        -Wno-shift-negative-value
+        -Wno-extra-tokens
+        -Wno-missing-field-initializers
+        -Wno-constant-conversion
+        -Wno-deprecated-declarations
+)
+
+# ── libultrahdr (Google Ultra HDR encode) ────────────────────────────────
+set(UHDR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(UHDR_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(UHDR_BUILD_BENCHMARK OFF CACHE BOOL "" FORCE)
+set(UHDR_BUILD_FUZZERS OFF CACHE BOOL "" FORCE)
+set(UHDR_BUILD_JAVA OFF CACHE BOOL "" FORCE)
+set(UHDR_BUILD_DEPS ON CACHE BOOL "" FORCE)
+set(UHDR_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(UHDR_ENABLE_GLES OFF CACHE BOOL "" FORCE)
+set(UHDR_WRITE_XMP ON CACHE BOOL "" FORCE)
+set(UHDR_WRITE_ISO ON CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+        libultrahdr
+        GIT_REPOSITORY https://github.com/google/libultrahdr.git
+        GIT_TAG v1.5.1
+        GIT_SHALLOW 1
+)
+FetchContent_MakeAvailable(libultrahdr)
+
+# ── libavif (+ libaom decoder) for PQ/HLG AVIF stills ───────────────────
+# libavif ≥1.1 uses OFF|LOCAL|SYSTEM (not ON/OFF bool). ON was ignored →
+# "No codec available" at runtime.
+set(AVIF_CODEC_AOM "LOCAL" CACHE STRING "" FORCE)
+set(AVIF_CODEC_AOM_DECODE ON CACHE BOOL "" FORCE)
+set(AVIF_CODEC_AOM_ENCODE OFF CACHE BOOL "" FORCE)
+set(AVIF_CODEC_DAV1D "OFF" CACHE STRING "" FORCE)
+set(AVIF_CODEC_LIBGAV1 "OFF" CACHE STRING "" FORCE)
+set(AVIF_CODEC_RAV1E "OFF" CACHE STRING "" FORCE)
+set(AVIF_CODEC_SVT "OFF" CACHE STRING "" FORCE)
+set(AVIF_CODEC_AVM "OFF" CACHE STRING "" FORCE)
+set(AVIF_BUILD_APPS OFF CACHE BOOL "" FORCE)
+set(AVIF_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(AVIF_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(AVIF_ENABLE_GTEST OFF CACHE BOOL "" FORCE)
+set(AVIF_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
+set(AVIF_LIBYUV "OFF" CACHE STRING "" FORCE)
+# aom (pulled by LocalAom.cmake): skip encoder/tests for faster NDK builds
+set(ENABLE_DOCS OFF CACHE BOOL "" FORCE)
+set(ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(ENABLE_TESTDATA OFF CACHE BOOL "" FORCE)
+set(ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(ENABLE_TOOLS OFF CACHE BOOL "" FORCE)
+set(CONFIG_AV1_ENCODER 0 CACHE STRING "" FORCE)
+set(CONFIG_REALTIME_ONLY 0 CACHE STRING "" FORCE)
+
+FetchContent_Declare(
+        libavif
+        GIT_REPOSITORY https://github.com/AOMediaCodec/libavif.git
+        GIT_TAG v1.3.0
+        GIT_SHALLOW 1
+)
+FetchContent_MakeAvailable(libavif)
+# AVIF_CODEC_AOM_ENABLED is local to libavif's directory; check the aom target instead.
+if (NOT TARGET aom AND NOT TARGET aom_av1 AND NOT TARGET aom_static)
+    message(FATAL_ERROR "libavif: AOM decoder target missing (set AVIF_CODEC_AOM=LOCAL)")
+endif ()
+
 # Build and link our app's native lib
-add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c)
+add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c
+        hdr_convert.cpp avif_hdr.cpp)
+target_include_directories(${PROJECT_NAME} PRIVATE
+        ${JXRLIB_ROOT}/jxrgluelib
+        ${JXRLIB_ROOT}/common/include
+        ${JXRLIB_ROOT}/image/sys
+)
+# libultrahdr public header target name is typically "uhdr"
+if (TARGET uhdr)
+    set(UHDR_LIB uhdr)
+elseif (TARGET libuhdr)
+    set(UHDR_LIB libuhdr)
+elseif (TARGET ultrahdr)
+    set(UHDR_LIB ultrahdr)
+else ()
+    message(FATAL_ERROR "libultrahdr CMake target not found (expected uhdr)")
+endif ()
+# libavif target is usually "avif"
+if (TARGET avif)
+    set(AVIF_LIB avif)
+elseif (TARGET libavif)
+    set(AVIF_LIB libavif)
+else ()
+    message(FATAL_ERROR "libavif CMake target not found (expected avif)")
+endif ()
 target_link_libraries(
-        ${PROJECT_NAME} archive_static ehviewer_rust z
+        ${PROJECT_NAME} archive_static ehviewer_rust z jxrlib ${UHDR_LIB} ${AVIF_LIB} log
         -Wl,-u,JNI_OnLoad -Wl,--undefined-glob,Java_*
         -Wl,--version-script,${CMAKE_SOURCE_DIR}/libehviewer.map.txt
 )
