@@ -358,7 +358,7 @@ object SmbCache {
         val outFile = File(outPath.toString())
         val ok = when (sniff.kind) {
             HdrKind.JpegXr -> HdrConvertCache.convertJxrFile(tmp, outFile)
-            HdrKind.AbsolutePqHlg -> false // P2: keep original until PQ pipeline lands
+            HdrKind.AbsolutePqHlg -> HdrConvertCache.convertAvifFile(tmp, outFile)
             else -> false
         }
         if (ok) {

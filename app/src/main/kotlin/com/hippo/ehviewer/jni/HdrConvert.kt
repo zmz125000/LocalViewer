@@ -15,6 +15,17 @@ external fun convertJxrToUltraHdr(inputPath: String, outputPath: String): Int
 external fun convertJxrBytesToUltraHdr(input: ByteArray, outputPath: String): Int
 
 /**
+ * Decode AVIF (libavif) PQ/HLG → linear scRGB → Ultra HDR JPEG.
+ * Gain-map AVIF should use platform ImageDecoder; this is for absolute HDR stills.
+ */
+external fun convertAvifBytesToUltraHdr(input: ByteArray, outputPath: String): Int
+
+/**
+ * Probe AVIF HDR kind: 0=not avif/error, 1=gain-map, 2=PQ/HLG absolute, 3=other avif.
+ */
+external fun probeAvifHdrKind(input: ByteArray): Int
+
+/**
  * Encode pre-decoded linear RGBA half-float (little-endian IEEE half) as Ultra HDR JPEG.
  * [rgbaF16] length must be width * height * 8.
  */

@@ -263,7 +263,7 @@ object WebDavCache {
         val outFile = File(outPath.toString())
         val ok = when (sniff.kind) {
             HdrKind.JpegXr -> HdrConvertCache.convertJxrFile(tmp, outFile)
-            HdrKind.AbsolutePqHlg -> false
+            HdrKind.AbsolutePqHlg -> HdrConvertCache.convertAvifFile(tmp, outFile)
             else -> false
         }
         if (ok) {

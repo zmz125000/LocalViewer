@@ -122,18 +122,29 @@ fun sniffHdr(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
         return HdrSniffResult(HdrKind.JpegXr)
     }
 
-    // Gain-map markers (Ultra HDR / ISO 21496 / Apple XMP) — class A, no convert.
+    // Gain-map markers (Ultra HDR / ISO 21496 / Apple XMP / HEIF tmap) — class A, no convert.
+    // Android 14+ ImageDecoder attaches Gainmap for these AVIFs (platform path).
     if (bytes.containsAscii("GainMap", n) ||
         bytes.containsAscii("hdrgm", n) ||
         bytes.containsAscii("HDRGainMap", n) ||
-        bytes.containsAscii("urn:iso:std:iso:ts:21496:-1", n)
+        bytes.containsAscii("urn:iso:std:iso:ts:21496:-1", n) ||
+        bytes.containsAscii("tmap", n) // HEIF derived gain-map item type
     ) {
         return HdrSniffResult(HdrKind.GainMap)
     }
 
     // Absolute PQ/HLG in HEIF/AVIF: CICP transfer 16 (PQ) or 18 (HLG) without gain map.
+    // Convert via libavif → Ultra HDR JPEG.
     if (isHeifFamily(bytes, n) && hasAbsoluteHdrCicp(bytes, n)) {
         return HdrSniffResult(HdrKind.AbsolutePqHlg)
+    }
+
+    // Named gain-map samples without ASCII (fallback): if ftyp avif and filename hints gainmap.
+    if (ext == "avif" && fileNameHint != null) {
+        val lower = fileNameHint.lowercase()
+        if (lower.contains("gainmap") || lower.contains("gain_map")) {
+            return HdrSniffResult(HdrKind.GainMap)
+        }
     }
 
     return HdrSniffResult(HdrKind.None)

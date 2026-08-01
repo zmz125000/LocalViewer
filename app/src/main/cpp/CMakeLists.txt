@@ -233,8 +233,39 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(libultrahdr)
 
+# ── libavif (+ libaom decoder) for PQ/HLG and gain-map-aware AVIF stills ──
+set(AVIF_CODEC_AOM ON CACHE BOOL "" FORCE)
+set(AVIF_LOCAL_AOM ON CACHE BOOL "" FORCE)
+set(AVIF_CODEC_DAV1D OFF CACHE BOOL "" FORCE)
+set(AVIF_CODEC_LIBGAV1 OFF CACHE BOOL "" FORCE)
+set(AVIF_CODEC_RAV1E OFF CACHE BOOL "" FORCE)
+set(AVIF_CODEC_SVT OFF CACHE BOOL "" FORCE)
+set(AVIF_CODEC_AVM OFF CACHE BOOL "" FORCE)
+set(AVIF_BUILD_APPS OFF CACHE BOOL "" FORCE)
+set(AVIF_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(AVIF_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(AVIF_ENABLE_GTEST OFF CACHE BOOL "" FORCE)
+set(AVIF_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
+set(AVIF_LIBYUV OFF CACHE BOOL "" FORCE)
+# aom: decode only (faster configure)
+set(ENABLE_DOCS OFF CACHE BOOL "" FORCE)
+set(ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(ENABLE_TESTDATA OFF CACHE BOOL "" FORCE)
+set(ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(ENABLE_TOOLS OFF CACHE BOOL "" FORCE)
+set(CONFIG_AV1_ENCODER 0 CACHE STRING "" FORCE)
+
+FetchContent_Declare(
+        libavif
+        GIT_REPOSITORY https://github.com/AOMediaCodec/libavif.git
+        GIT_TAG v1.3.0
+        GIT_SHALLOW 1
+)
+FetchContent_MakeAvailable(libavif)
+
 # Build and link our app's native lib
-add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c hdr_convert.cpp)
+add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c
+        hdr_convert.cpp avif_hdr.cpp)
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${JXRLIB_ROOT}/jxrgluelib
         ${JXRLIB_ROOT}/common/include
@@ -250,8 +281,16 @@ elseif (TARGET ultrahdr)
 else ()
     message(FATAL_ERROR "libultrahdr CMake target not found (expected uhdr)")
 endif ()
+# libavif target is usually "avif"
+if (TARGET avif)
+    set(AVIF_LIB avif)
+elseif (TARGET libavif)
+    set(AVIF_LIB libavif)
+else ()
+    message(FATAL_ERROR "libavif CMake target not found (expected avif)")
+endif ()
 target_link_libraries(
-        ${PROJECT_NAME} archive_static ehviewer_rust z jxrlib ${UHDR_LIB} log
+        ${PROJECT_NAME} archive_static ehviewer_rust z jxrlib ${UHDR_LIB} ${AVIF_LIB} log
         -Wl,-u,JNI_OnLoad -Wl,--undefined-glob,Java_*
         -Wl,--version-script,${CMAKE_SOURCE_DIR}/libehviewer.map.txt
 )

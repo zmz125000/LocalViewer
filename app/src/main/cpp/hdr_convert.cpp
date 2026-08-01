@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "hdr_encode.h"
 #include "ultrahdr_api.h"
 
 // jxrlib (Microsoft / brion jpegxr packaging)
@@ -388,7 +389,9 @@ bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, u
     return decode_jxr_from_memory(buf.data(), buf.size(), out_rgba, w, h);
 }
 
-bool write_file(const char* path, const void* data, size_t size) {
+}  // namespace
+
+static bool write_file(const char* path, const void* data, size_t size) {
     std::ofstream out(path, std::ios::binary);
     if (!out) return false;
     out.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
@@ -413,7 +416,46 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     }
 
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
-    const float content_peak = scan_scrgb_peak(rgba, pixels);
+    // peak scan (inline — avoid name clash with file-local helper in anon namespace)
+    float content_peak = 1.0f;
+    for (size_t i = 0; i < pixels; i++) {
+        auto h2f = [](uint16_t h) -> float {
+            const uint32_t sign = (static_cast<uint32_t>(h) & 0x8000u) << 16;
+            uint32_t exp = (h >> 10) & 0x1fu;
+            uint32_t mant = h & 0x3ffu;
+            uint32_t out;
+            if (exp == 0) {
+                if (mant == 0) {
+                    out = sign;
+                } else {
+                    exp = 1;
+                    while ((mant & 0x400u) == 0) {
+                        mant <<= 1;
+                        exp--;
+                    }
+                    mant &= 0x3ffu;
+                    out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+                }
+            } else if (exp == 31) {
+                out = sign | 0x7f800000u | (mant << 13);
+            } else {
+                out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+            }
+            union {
+                uint32_t u;
+                float f;
+            } v{out};
+            return v.f;
+        };
+        const float r = h2f(rgba[i * 4 + 0]);
+        const float g = h2f(rgba[i * 4 + 1]);
+        const float b = h2f(rgba[i * 4 + 2]);
+        float m = r > g ? r : g;
+        if (b > m) m = b;
+        if (std::isfinite(m) && m > content_peak) content_peak = m;
+    }
+    if (content_peak < 1.05f) content_peak = 1.05f;
+    if (content_peak > 64.0f) content_peak = 64.0f;
     // SDR white reference for Ultra HDR metadata is 203 nits.
     float peak_nits = 203.0f * content_peak;
     if (peak_nits < 203.0f) peak_nits = 203.0f;
@@ -480,8 +522,6 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     uhdr_release_encoder(enc);
     return 0;
 }
-
-}  // namespace
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrToUltraHdr(JNIEnv* env, jclass,

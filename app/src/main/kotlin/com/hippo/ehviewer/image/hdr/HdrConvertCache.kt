@@ -3,8 +3,10 @@ package com.hippo.ehviewer.image.hdr
 import android.util.Log
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.read
+import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxrToUltraHdr
+import com.hippo.ehviewer.jni.probeAvifHdrKind
 import com.hippo.ehviewer.library.OriginDiskCache
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
@@ -29,8 +31,7 @@ import splitties.init.appCtx
  * always-convert types are never kept. **Local:** non-destructive derived store
  * [localRoot] keyed by path identity + mtime + size (works for SAF content:// too).
  *
- * Native jxrlib needs a real filesystem path — SAF/content sources are copied to a
- * temp file under [localRoot] before convert.
+ * Local JXR/AVIF: Okio read → memory decode (jxrlib / libavif) → Ultra HDR JPEG only.
  */
 object HdrConvertCache {
     private const val TAG = "HdrConvert"
@@ -111,10 +112,7 @@ object HdrConvertCache {
             }
             when (sniff.kind) {
                 HdrKind.JpegXr -> ensureJxrConverted(source)
-                HdrKind.AbsolutePqHlg -> {
-                    // P2: PQ path not fully wired yet
-                    source
-                }
+                HdrKind.AbsolutePqHlg -> ensureAvifPqConverted(source)
                 else -> source
             }
         }
@@ -221,7 +219,7 @@ object HdrConvertCache {
         val outFile = File(outPath.toString())
         val ok = when (sniff.kind) {
             HdrKind.JpegXr -> convertJxrFile(downloaded, outFile)
-            HdrKind.AbsolutePqHlg -> false // P2
+            HdrKind.AbsolutePqHlg -> convertAvifFile(downloaded, outFile)
             else -> false
         }
         if (ok) {
@@ -247,8 +245,7 @@ object HdrConvertCache {
         val destFile = File(dest.toString())
         if (destFile.isFile && destFile.length() > 0L) return dest
 
-        // Branch `hdr` path: Okio read → bytes → CreateStreamFromMemory.
-        // No copy of original JXR into cache/ (SAF or physical).
+        // Okio read → bytes → CreateStreamFromMemory (no temp original).
         val bytes = runCatching {
             source.read { readByteArray() }
         }.onFailure {
@@ -259,6 +256,70 @@ object HdrConvertCache {
         }
         if (convertJxrBytes(bytes, destFile)) return dest
         error("JPEG XR → Ultra HDR convert failed: ${source.name}")
+    }
+
+    private suspend fun ensureAvifPqConverted(source: Path): Path {
+        val dest = localDerivedPath(source)
+        ensureLocalRoot()
+        val destFile = File(dest.toString())
+        if (destFile.isFile && destFile.length() > 0L) return dest
+
+        val bytes = runCatching {
+            source.read { readByteArray() }
+        }.onFailure {
+            Log.e(TAG, "read AVIF failed: $source", it)
+        }.getOrNull()
+        if (bytes == null || bytes.isEmpty()) {
+            error("AVIF source unreadable: ${source.name}")
+        }
+        // If native probe says gain-map, leave for platform ImageDecoder.
+        when (probeAvifHdrKind(bytes)) {
+            1 -> {
+                Log.i(TAG, "AVIF gain-map → platform path: ${source.name}")
+                return source
+            }
+            0 -> {
+                // Not AVIF / probe fail — try convert only for known PQ sniff.
+            }
+        }
+        if (convertAvifBytes(bytes, destFile)) return dest
+        error("AVIF PQ/HLG → Ultra HDR convert failed: ${source.name}")
+    }
+
+    suspend fun convertAvifFile(input: File, output: File): Boolean = withContext(Dispatchers.IO) {
+        if (output.isFile && output.length() > 0L) return@withContext true
+        val bytes = runCatching { input.readBytes() }.getOrNull() ?: return@withContext false
+        when (probeAvifHdrKind(bytes)) {
+            1 -> return@withContext false // gain-map: keep original for platform
+        }
+        convertAvifBytes(bytes, output)
+    }
+
+    suspend fun convertAvifBytes(input: ByteArray, output: File): Boolean = withContext(Dispatchers.IO) {
+        if (output.isFile && output.length() > 0L) return@withContext true
+        if (input.isEmpty()) return@withContext false
+        val lockKey = output.absolutePath
+        val mutex = pathLocks.getOrPut(lockKey) { Mutex() }
+        mutex.withLock {
+            if (output.isFile && output.length() > 0L) return@withLock true
+            output.parentFile?.mkdirs()
+            val tmp = File("${output.absolutePath}.tmp.${System.nanoTime()}")
+            try {
+                val code = convertAvifBytesToUltraHdr(input, tmp.absolutePath)
+                if (code != 0 || !tmp.isFile || tmp.length() <= 0L) {
+                    Log.e(TAG, "convertAvifBytesToUltraHdr failed code=$code in=${input.size}b")
+                    tmp.delete()
+                    return@withLock false
+                }
+                commitTmp(tmp, output)
+                OriginDiskCache.scheduleTrim()
+                true
+            } catch (e: Throwable) {
+                Log.e(TAG, "convertAvifBytes exception", e)
+                tmp.delete()
+                false
+            }
+        }
     }
 
     private fun commitTmp(tmp: File, dest: File) {
