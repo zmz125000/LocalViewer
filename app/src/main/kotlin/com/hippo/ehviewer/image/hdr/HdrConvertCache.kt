@@ -2,7 +2,8 @@ package com.hippo.ehviewer.image.hdr
 
 import android.util.Log
 import com.ehviewer.core.files.metadataOrNull
-import com.ehviewer.core.files.sendTo
+import com.ehviewer.core.files.read
+import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxrToUltraHdr
 import com.hippo.ehviewer.library.OriginDiskCache
 import java.io.File
@@ -15,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.io.readByteArray
 import okio.Path
 import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
@@ -131,6 +133,21 @@ object HdrConvertCache {
             Log.e(TAG, "convertJxrFile: missing input ${input.absolutePath}")
             return@withContext false
         }
+        // Prefer memory path (same as SAF) so jxrlib uses CreateStreamFromMemory + setup_full_frame.
+        val bytes = runCatching { input.readBytes() }.getOrNull()
+        if (bytes != null && bytes.isNotEmpty()) {
+            return@withContext convertJxrBytes(bytes, output)
+        }
+        convertJxrViaPath(input.absolutePath, output)
+    }
+
+    /**
+     * Convert JXR bytes → Ultra HDR JPEG at [output].
+     * No intermediate .jxr on disk (branch `hdr` local-folder path).
+     */
+    suspend fun convertJxrBytes(input: ByteArray, output: File): Boolean = withContext(Dispatchers.IO) {
+        if (output.isFile && output.length() > 0L) return@withContext true
+        if (input.isEmpty()) return@withContext false
         val lockKey = output.absolutePath
         val mutex = pathLocks.getOrPut(lockKey) { Mutex() }
         mutex.withLock {
@@ -138,9 +155,9 @@ object HdrConvertCache {
             output.parentFile?.mkdirs()
             val tmp = File("${output.absolutePath}.tmp.${System.nanoTime()}")
             try {
-                val code = convertJxrToUltraHdr(input.absolutePath, tmp.absolutePath)
+                val code = convertJxrBytesToUltraHdr(input, tmp.absolutePath)
                 if (code != 0 || !tmp.isFile || tmp.length() <= 0L) {
-                    Log.e(TAG, "convertJxrToUltraHdr failed code=$code in=${input.name} out=${tmp.name}")
+                    Log.e(TAG, "convertJxrBytesToUltraHdr failed code=$code out=${tmp.name} in=${input.size}b")
                     tmp.delete()
                     return@withLock false
                 }
@@ -148,12 +165,39 @@ object HdrConvertCache {
                 OriginDiskCache.scheduleTrim()
                 true
             } catch (e: Throwable) {
-                Log.e(TAG, "convertJxrFile exception", e)
+                Log.e(TAG, "convertJxrBytes exception", e)
                 tmp.delete()
                 false
             }
         }
     }
+
+    private suspend fun convertJxrViaPath(inputPath: String, output: File): Boolean =
+        withContext(Dispatchers.IO) {
+            if (output.isFile && output.length() > 0L) return@withContext true
+            val lockKey = output.absolutePath
+            val mutex = pathLocks.getOrPut(lockKey) { Mutex() }
+            mutex.withLock {
+                if (output.isFile && output.length() > 0L) return@withLock true
+                output.parentFile?.mkdirs()
+                val tmp = File("${output.absolutePath}.tmp.${System.nanoTime()}")
+                try {
+                    val code = convertJxrToUltraHdr(inputPath, tmp.absolutePath)
+                    if (code != 0 || !tmp.isFile || tmp.length() <= 0L) {
+                        Log.e(TAG, "convertJxrToUltraHdr failed code=$code in=$inputPath")
+                        tmp.delete()
+                        return@withLock false
+                    }
+                    commitTmp(tmp, output)
+                    OriginDiskCache.scheduleTrim()
+                    true
+                } catch (e: Throwable) {
+                    Log.e(TAG, "convertJxrViaPath exception", e)
+                    tmp.delete()
+                    false
+                }
+            }
+        }
 
     /**
      * After a network download of raw bytes to [downloaded], maybe convert and
@@ -203,41 +247,18 @@ object HdrConvertCache {
         val destFile = File(dest.toString())
         if (destFile.isFile && destFile.length() > 0L) return dest
 
-        // jxrlib needs a real path — materialize SAF/content into cache temp if needed.
-        val physical: File
-        val deletePhysicalAfter: Boolean
-        if (isPhysicalPath(source)) {
-            physical = File(source.toString())
-            deletePhysicalAfter = false
-            if (!physical.isFile || physical.length() <= 0L) {
-                error("JPEG XR source missing: ${source.name}")
-            }
-        } else {
-            ensureLocalRoot()
-            val tmpIn = File(
-                localRoot.toString(),
-                "in.${sha256Hex(source.toString())}.${System.nanoTime()}.jxr",
-            )
-            copyPathToFile(source, tmpIn)
-            physical = tmpIn
-            deletePhysicalAfter = true
+        // Branch `hdr` path: Okio read → bytes → CreateStreamFromMemory.
+        // No copy of original JXR into cache/ (SAF or physical).
+        val bytes = runCatching {
+            source.read { readByteArray() }
+        }.onFailure {
+            Log.e(TAG, "read JXR failed: $source", it)
+        }.getOrNull()
+        if (bytes == null || bytes.isEmpty()) {
+            error("JPEG XR source unreadable: ${source.name}")
         }
-
-        try {
-            if (convertJxrFile(physical, destFile)) return dest
-            error("JPEG XR → Ultra HDR convert failed: ${source.name}")
-        } finally {
-            if (deletePhysicalAfter) physical.delete()
-        }
-    }
-
-    /** Copy Okio path (SAF or file) to a physical [dest] for native codecs. */
-    private fun copyPathToFile(source: Path, dest: File) {
-        dest.parentFile?.mkdirs()
-        if (dest.exists()) dest.delete()
-        // AndroidFileSystem.copy handles content:// → physical via PFD/sendfile.
-        source sendTo dest.toOkioPath()
-        check(dest.isFile && dest.length() > 0L) { "Failed to materialize ${source.name}" }
+        if (convertJxrBytes(bytes, destFile)) return dest
+        error("JPEG XR → Ultra HDR convert failed: ${source.name}")
     }
 
     private fun commitTmp(tmp: File, dest: File) {

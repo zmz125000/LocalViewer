@@ -147,100 +147,208 @@ int bpp_of(JxrPix p) {
     }
 }
 
-// Decode JXR to packed RGBA half-float linear scRGB (A=1).
-bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, unsigned& w,
-                            unsigned& h) {
-    PKImageDecode* decoder = nullptr;
-    ERR err = PKCodecFactory_CreateDecoderFromFile(path, &decoder);
-    if (Failed(err) || !decoder) {
-        ALOGE("CreateDecoderFromFile failed: %d for %s", err, path);
-        return false;
+/**
+ * Configure decoder for full-frame decode in the given (native) pixel format.
+ * Ported from branch `hdr` jxr_hdr.c — never force half→float via jxrlib Convert
+ * (that path produces vertical stripe garbage).
+ */
+bool setup_full_frame(PKImageDecode* dec, PKPixelFormatGUID* fmt) {
+    PKPixelInfo pi{};
+    pi.pGUIDPixFmt = fmt;
+    if (PixelFormatLookup(&pi, LOOKUP_FORWARD) != WMP_errSuccess) return false;
+
+    if (!!(pi.grBit & PK_pixfmtHasAlpha)) {
+        dec->WMP.wmiSCP.uAlphaMode = 2; /* image + alpha */
+    } else {
+        dec->WMP.wmiSCP.uAlphaMode = 0;
     }
 
-    struct DecoderGuard {
-        PKImageDecode* d;
-        ~DecoderGuard() {
-            if (d) PKImageDecode_Release(&d);
+    dec->WMP.wmiI.cfColorFormat = pi.cfColorFormat;
+    dec->WMP.wmiI.bdBitDepth = pi.bdBitDepth;
+    dec->WMP.wmiI.cBitsPerUnit = pi.cbitUnit;
+    dec->WMP.wmiI.bRGB = !(pi.grBit & PK_pixfmtBGR);
+
+    dec->WMP.wmiI.cThumbnailWidth = dec->WMP.wmiI.cWidth;
+    dec->WMP.wmiI.cThumbnailHeight = dec->WMP.wmiI.cHeight;
+    dec->WMP.wmiI.bSkipFlexbits = FALSE;
+    dec->WMP.wmiI.cROILeftX = 0;
+    dec->WMP.wmiI.cROITopY = 0;
+    dec->WMP.wmiI.cROIWidth = dec->WMP.wmiI.cThumbnailWidth;
+    dec->WMP.wmiI.cROIHeight = dec->WMP.wmiI.cThumbnailHeight;
+    dec->WMP.wmiI.oOrientation = O_NONE;
+    dec->WMP.wmiI.cPostProcStrength = 0;
+    return true;
+}
+
+/**
+ * Decode JXR from an in-memory buffer (no temp file).
+ * Same approach as branch `hdr` HdrJxr: CreateStreamFromMemory + native pixel format.
+ * SAF/local paths: Kotlin reads via Okio → bytes → this (skips copy-to-temp.jxr).
+ */
+bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
+                            unsigned& w, unsigned& h) {
+    if (!data || len == 0) return false;
+
+    PKFactory* factory = nullptr;
+    PKCodecFactory* codecFactory = nullptr;
+    struct WMPStream* stream = nullptr;
+    PKImageDecode* decoder = nullptr;
+    bool ok = false;
+
+    auto release_all = [&]() {
+        if (decoder) {
+            decoder->Release(&decoder);
+            decoder = nullptr;
         }
-    } guard{decoder};
+        if (stream) {
+            stream->Close(&stream);
+            stream = nullptr;
+        }
+        if (codecFactory) {
+            codecFactory->Release(&codecFactory);
+            codecFactory = nullptr;
+        }
+        if (factory) {
+            factory->Release(&factory);
+            factory = nullptr;
+        }
+    };
+
+    ERR err = PKCreateFactory(&factory, PK_SDK_VERSION);
+    if (Failed(err) || !factory) {
+        ALOGE("PKCreateFactory failed: %d", err);
+        return false;
+    }
+    err = PKCreateCodecFactory(&codecFactory, WMP_SDK_VERSION);
+    if (Failed(err) || !codecFactory) {
+        ALOGE("PKCreateCodecFactory failed: %d", err);
+        release_all();
+        return false;
+    }
+    err = factory->CreateStreamFromMemory(&stream, const_cast<uint8_t*>(data), len);
+    if (Failed(err) || !stream) {
+        ALOGE("CreateStreamFromMemory failed: %d", err);
+        release_all();
+        return false;
+    }
+    err = PKImageDecode_Create_WMP(&decoder);
+    if (Failed(err) || !decoder) {
+        ALOGE("PKImageDecode_Create_WMP failed: %d", err);
+        release_all();
+        return false;
+    }
+    err = decoder->Initialize(decoder, stream);
+    if (Failed(err)) {
+        ALOGE("decoder Initialize failed: %d", err);
+        release_all();
+        return false;
+    }
+    /* Stream owned by decoder after Initialize (hdr branch). */
+    decoder->fStreamOwner = 1;
+    stream = nullptr;
+
+    I32 width = 0, height = 0;
+    err = decoder->GetSize(decoder, &width, &height);
+    if (Failed(err) || width <= 0 || height <= 0 || width > 16384 || height > 16384) {
+        ALOGE("GetSize failed/out of range: %d %dx%d", err, (int)width, (int)height);
+        release_all();
+        return false;
+    }
 
     PKPixelFormatGUID guid{};
     err = decoder->GetPixelFormat(decoder, &guid);
     if (Failed(err)) {
         ALOGE("GetPixelFormat failed: %d", err);
+        release_all();
         return false;
     }
     JxrPix pix = classify_guid(guid);
     if (pix == JxrPix::Unsupported) {
         ALOGE("Unsupported JXR pixel format");
+        release_all();
         return false;
     }
 
-    I32 width = 0, height = 0;
-    err = decoder->GetSize(decoder, &width, &height);
-    if (Failed(err) || width <= 0 || height <= 0) {
-        ALOGE("GetSize failed: %d", err);
+    /* Decode in native format — no jxrlib format conversion. */
+    if (!setup_full_frame(decoder, &guid)) {
+        ALOGE("setup_full_frame failed");
+        release_all();
         return false;
     }
-    w = static_cast<unsigned>(width);
-    h = static_cast<unsigned>(height);
 
-    const bool rgb_half = guid_eq(guid, GUID_PKPixelFormat64bppRGBHalf);
-    const bool rgb_float = guid_eq(guid, GUID_PKPixelFormat128bppRGBFloat);
-    int bpp = bpp_of(pix);
-    if (rgb_half) bpp = 6;
-    if (rgb_float) bpp = 12;
+    w = static_cast<unsigned>(decoder->WMP.wmiI.cROIWidth);
+    h = static_cast<unsigned>(decoder->WMP.wmiI.cROIHeight);
+    if (w == 0 || h == 0) {
+        w = static_cast<unsigned>(width);
+        h = static_cast<unsigned>(height);
+    }
 
-    const size_t stride = static_cast<size_t>(w) * static_cast<size_t>(bpp);
-    std::vector<uint8_t> raw(stride * h);
+    const bool rgb_half = guid_eq(guid, GUID_PKPixelFormat64bppRGBHalf) ||
+        guid_eq(guid, GUID_PKPixelFormat48bppRGBHalf);
+    const bool rgba_half = guid_eq(guid, GUID_PKPixelFormat64bppRGBAHalf);
+    const bool rgb_float = guid_eq(guid, GUID_PKPixelFormat128bppRGBFloat) ||
+        guid_eq(guid, GUID_PKPixelFormat96bppRGBFloat);
+    const bool rgba_float = guid_eq(guid, GUID_PKPixelFormat128bppRGBAFloat) ||
+        guid_eq(guid, GUID_PKPixelFormat128bppPRGBAFloat);
+
+    PKPixelInfo pi{};
+    pi.pGUIDPixFmt = &guid;
+    if (PixelFormatLookup(&pi, LOOKUP_FORWARD) != WMP_errSuccess || pi.cbitUnit == 0 ||
+        (pi.cbitUnit % 8) != 0) {
+        ALOGE("bad cbitUnit");
+        release_all();
+        return false;
+    }
+    const U32 bytes_per_pixel = pi.cbitUnit / 8u;
+    const size_t stride = static_cast<size_t>(w) * static_cast<size_t>(bytes_per_pixel);
+    const size_t buf_size = stride * static_cast<size_t>(h);
+    std::vector<uint8_t> raw(buf_size);
 
     PKRect rect{};
     rect.X = 0;
     rect.Y = 0;
-    rect.Width = width;
-    rect.Height = height;
+    rect.Width = static_cast<I32>(w);
+    rect.Height = static_cast<I32>(h);
     err = decoder->Copy(decoder, &rect, raw.data(), static_cast<U32>(stride));
     if (Failed(err)) {
         ALOGE("Copy failed: %d", err);
+        release_all();
         return false;
     }
 
     out_rgba.resize(static_cast<size_t>(w) * h * 4);
-    if (pix == JxrPix::RgbaF16) {
-        if (rgb_half) {
-            for (unsigned i = 0; i < w * h; i++) {
-                const uint16_t* src = reinterpret_cast<const uint16_t*>(raw.data() + i * 6);
-                out_rgba[i * 4 + 0] = src[0];
-                out_rgba[i * 4 + 1] = src[1];
-                out_rgba[i * 4 + 2] = src[2];
-                out_rgba[i * 4 + 3] = float_to_half(1.0f);
-            }
-        } else {
-            memcpy(out_rgba.data(), raw.data(), out_rgba.size() * sizeof(uint16_t));
-        }
-        return true;
-    }
-    if (pix == JxrPix::RgbaF32) {
-        if (rgb_float) {
-            const float* src = reinterpret_cast<const float*>(raw.data());
-            for (unsigned i = 0; i < w * h; i++) {
-                out_rgba[i * 4 + 0] = float_to_half(src[i * 3 + 0]);
-                out_rgba[i * 4 + 1] = float_to_half(src[i * 3 + 1]);
-                out_rgba[i * 4 + 2] = float_to_half(src[i * 3 + 2]);
-                out_rgba[i * 4 + 3] = float_to_half(1.0f);
-            }
-        } else {
-            const float* src = reinterpret_cast<const float*>(raw.data());
-            for (unsigned i = 0; i < w * h; i++) {
-                out_rgba[i * 4 + 0] = float_to_half(src[i * 4 + 0]);
-                out_rgba[i * 4 + 1] = float_to_half(src[i * 4 + 1]);
-                out_rgba[i * 4 + 2] = float_to_half(src[i * 4 + 2]);
-                out_rgba[i * 4 + 3] = float_to_half(1.0f);
+    if (rgba_half || rgb_half) {
+        const size_t src_bpp = bytes_per_pixel;
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const uint16_t* p =
+                    reinterpret_cast<const uint16_t*>(row + static_cast<size_t>(x) * src_bpp);
+                const size_t i = static_cast<size_t>(y) * w + x;
+                out_rgba[i * 4 + 0] = p[0];
+                out_rgba[i * 4 + 1] = p[1];
+                out_rgba[i * 4 + 2] = p[2];
+                out_rgba[i * 4 + 3] = rgba_half ? p[3] : float_to_half(1.0f);
             }
         }
-        return true;
-    }
-    if (pix == JxrPix::Rgb101010) {
+        ok = true;
+    } else if (rgba_float || rgb_float) {
+        const size_t src_bpp = bytes_per_pixel;
+        const bool has_a = rgba_float;
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const float* p =
+                    reinterpret_cast<const float*>(row + static_cast<size_t>(x) * src_bpp);
+                const size_t i = static_cast<size_t>(y) * w + x;
+                out_rgba[i * 4 + 0] = float_to_half(p[0]);
+                out_rgba[i * 4 + 1] = float_to_half(p[1]);
+                out_rgba[i * 4 + 2] = float_to_half(p[2]);
+                out_rgba[i * 4 + 3] = float_to_half(has_a ? p[3] : 1.0f);
+            }
+        }
+        ok = true;
+    } else if (pix == JxrPix::Rgb101010) {
         for (unsigned i = 0; i < w * h; i++) {
             uint32_t p;
             memcpy(&p, raw.data() + i * 4, 4);
@@ -252,9 +360,32 @@ bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, u
             out_rgba[i * 4 + 2] = float_to_half(b);
             out_rgba[i * 4 + 3] = float_to_half(1.0f);
         }
-        return true;
+        ok = true;
+    } else {
+        ALOGE("Unhandled JXR expand path");
     }
-    return false;
+
+    release_all();
+    return ok;
+}
+
+// Path helper: load whole file into memory then decode (no jxrlib file I/O).
+bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, unsigned& w,
+                            unsigned& h) {
+    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    if (!in) {
+        ALOGE("open JXR failed: %s", path);
+        return false;
+    }
+    const auto sz = in.tellg();
+    if (sz <= 0) return false;
+    in.seekg(0, std::ios::beg);
+    std::vector<uint8_t> buf(static_cast<size_t>(sz));
+    if (!in.read(reinterpret_cast<char*>(buf.data()), sz)) {
+        ALOGE("read JXR failed: %s", path);
+        return false;
+    }
+    return decode_jxr_from_memory(buf.data(), buf.size(), out_rgba, w, h);
 }
 
 bool write_file(const char* path, const void* data, size_t size) {
@@ -375,6 +506,40 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrToUltraHdr(JNIEnv* env, jclas
 
     env->ReleaseStringUTFChars(jInput, in_path);
     env->ReleaseStringUTFChars(jOutput, out_path);
+    return rc;
+}
+
+/**
+ * SAF/local Okio path path: Kotlin already holds JXR bytes — no temp .jxr on disk.
+ * Mirrors branch `hdr` HdrJxr.decode(bytes) → convert pipeline.
+ */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, jclass,
+                                                                   jbyteArray jInput,
+                                                                   jstring jOutput) {
+    if (!jInput || !jOutput) return -10;
+    const jsize len = env->GetArrayLength(jInput);
+    if (len <= 0) return -12;
+    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
+    if (!bytes) return -13;
+    const char* out_path = env->GetStringUTFChars(jOutput, nullptr);
+    if (!out_path) {
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return -14;
+    }
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    int rc = -20;
+    if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
+                               rgba, w, h)) {
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path);
+    } else {
+        rc = -21;
+    }
+
+    env->ReleaseStringUTFChars(jOutput, out_path);
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return rc;
 }
 
