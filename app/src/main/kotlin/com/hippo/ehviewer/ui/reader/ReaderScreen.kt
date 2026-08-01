@@ -437,7 +437,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 return@collectLatest
             }
             // Any status emission in the window → re-evaluate whether HDR stays on.
-            merge(statusFlows).collect {
+            statusFlows.merge().collect {
                 var anyHdr = false
                 var maxBoost = 1f
                 for (idx in range) {
