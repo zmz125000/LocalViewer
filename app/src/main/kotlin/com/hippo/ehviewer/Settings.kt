@@ -248,8 +248,9 @@ object Settings : DataStorePreferences(null) {
      */
     val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", true)
     /**
-     * When the current reader page has a gain map and the display supports HDR,
-     * set [android.view.Window.setColorMode] to [android.content.pm.ActivityInfo.COLOR_MODE_HDR].
+     * When a composed reader page has a gain map and the display supports HDR,
+     * set [android.view.Window.setColorMode] to [android.content.pm.ActivityInfo.COLOR_MODE_HDR]
+     * for the compose window (visible ± prefetch), not only the focused page.
      * Ultra HDR pages always decode at original size.
      */
     val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)

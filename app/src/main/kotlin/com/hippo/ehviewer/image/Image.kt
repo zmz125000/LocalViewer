@@ -87,7 +87,7 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
 
     /**
      * True when the platform attached an Ultra HDR / gain map (API 34+).
-     * Used to enable [android.view.Window] HDR color mode while this page is shown.
+     * Used to enable [android.view.Window] HDR color mode while this page is composed.
      */
     val hasGainmap = when (image) {
         is BitmapImageWithExtraInfo -> image.hasGainmap
