@@ -23,6 +23,8 @@ object CropBorderInterceptor : Interceptor {
         if (result is SuccessResult) {
             val image = result.image
             if (image is BitmapImageWithExtraInfo) {
+                // Cropping would drop Ultra HDR gain maps.
+                if (image.hasGainmap) return result
                 // Copy with cropped region
                 val srcSize = IntSize(image.width, image.height)
                 if (image.rect.size != srcSize) {

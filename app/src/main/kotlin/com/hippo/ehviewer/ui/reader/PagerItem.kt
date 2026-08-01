@@ -140,7 +140,9 @@ fun PagerItem(
                 val imgSize = image.intrinsicSize
                 val rotate = shouldAutoRotate(imgSize, viewportSize, autoRotateMode)
                 val clockwise = isAutoRotateClockwise(autoRotateMode)
+                // Color matrices crush Ultra HDR gain-map boost — leave filters off for HDR pages.
                 val colorFilter = when {
+                    image.hasGainmap -> null
                     grayScale && invert -> grayScaleAndInvertFilter
                     grayScale -> grayScaleFilter
                     invert -> invertFilter

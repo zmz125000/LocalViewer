@@ -69,7 +69,7 @@ With [Material Design 3](https://m3.material.io/)
 and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) Support.  
 Based on [EhViewer](https://github.com/FooIbar/EhViewer).
 
-Similar to Perfect Viewer and Kuro Reader but with Hi-Res images support (no downscaling).
+Similar to Perfect Viewer and Kuro Reader but with Hi-Res images support (no downscaling), clean UI and way better performance.
 
 Build with Grok 4.5.
 
@@ -87,6 +87,7 @@ Build with Grok 4.5.
 * High performance reader with cache from EhViewer.
 * Reader allow full size image decode.
 * Reader auto rotate image.
+* E-Ink mode support (ported from [venera-next](https://github.com/cyrilpeng/venera-next)).
 * EasyTier support (ported from [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus)).
 
 ### To use WebDAV

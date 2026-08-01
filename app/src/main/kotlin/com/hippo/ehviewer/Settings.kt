@@ -244,8 +244,15 @@ object Settings : DataStorePreferences(null) {
      * Coil [allowHardware] for reader decode: GPU hardware bitmaps without software
      * intermediate for crop-border / QR-ad detection. Faster + less Java-heap RAM;
      * disables crop borders and extraneous-ad strip while on.
+     * Default on (preserves Ultra HDR gain maps; crop/QR stay off unless user disables this).
      */
-    val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", false)
+    val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", true)
+    /**
+     * When the current reader page has a gain map and the display supports HDR,
+     * set [android.view.Window.setColorMode] to [android.content.pm.ActivityInfo.COLOR_MODE_HDR].
+     * Ultra HDR pages always decode at original size.
+     */
+    val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)

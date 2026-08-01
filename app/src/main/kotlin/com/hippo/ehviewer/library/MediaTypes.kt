@@ -2,8 +2,22 @@ package com.hippo.ehviewer.library
 
 import com.hippo.ehviewer.util.FileUtils
 
+/**
+ * Extensions treated as playable gallery images (folders, archives, MediaStore filter).
+ *
+ * Must stay aligned with native [supportExt] in `archive.c` and with formats Coil can
+ * decode: Android BitmapFactory/ImageDecoder (minSdk 31) plus [coil3.svg.SvgDecoder].
+ */
 val IMAGE_EXTENSIONS = setOf(
-    "jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif",
+    // JPEG (+ common aliases)
+    "jpg", "jpeg", "jpe", "jfif",
+    // Lossless / general raster
+    "png", "webp", "gif", "bmp",
+    // Android / Coil platform (ImageDecoder)
+    "heic", "heif", "avif",
+    "ico", "wbmp",
+    // Coil [coil-svg]
+    "svg", "svgz",
 )
 
 val ARCHIVE_EXTENSIONS = setOf(
