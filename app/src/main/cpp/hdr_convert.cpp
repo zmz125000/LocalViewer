@@ -399,7 +399,7 @@ static bool write_file(const char* path, const void* data, size_t size) {
 }
 
 /**
- * Encode LINEAR scRGB half-float → Ultra HDR JPEG with **content-matched** capacity.
+ * Encode LINEAR half-float RGB (declared gamut) → Ultra HDR JPEG with **content-matched** capacity.
  *
  * Default libultrahdr LINEAR peak is 10000 nits → hdr_capacity_max ≈ 10000/203 ≈ 49.
  * On a phone with display boost ≈ 4, Android applies:
@@ -407,12 +407,22 @@ static bool write_file(const char* path, const void* data, size_t size) {
  *
  * Match camera Ultra HDR: capacity ≈ content peak (typically 3–8) so weight ≈ 1 on phones.
  * Encode metadata is content-only — never bake panel/display boost into the file.
+ *
+ * [cg] must match [rgba] primaries. libultrahdr embeds a matching ICC on the base JPEG
+ * (BT.709 / Display P3 / BT.2100). Do not rematrix here.
  */
-int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba, const char* out_path) {
+int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
+                                   const char* out_path, uhdr_color_gamut_t cg) {
     uhdr_codec_private_t* enc = uhdr_create_encoder();
     if (!enc) {
         ALOGE("uhdr_create_encoder failed");
         return -1;
+    }
+
+    // Only the three gamuts libultrahdr can tag/ICC-embed.
+    if (cg != UHDR_CG_BT_709 && cg != UHDR_CG_DISPLAY_P3 && cg != UHDR_CG_BT_2100) {
+        ALOGI("Unknown gamut %d → BT.709 tag (caller must have converted RGB if needed)", (int)cg);
+        cg = UHDR_CG_BT_709;
     }
 
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
@@ -463,7 +473,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
 
     uhdr_raw_image_t img{};
     img.fmt = UHDR_IMG_FMT_64bppRGBAHalfFloat;
-    img.cg = UHDR_CG_BT_709;  // scRGB primaries ≈ BT.709
+    img.cg = cg;
     img.ct = UHDR_CT_LINEAR;
     img.range = UHDR_CR_FULL_RANGE;
     img.w = w;
@@ -498,7 +508,8 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
               err.has_detail ? err.detail : "error");
     }
 
-    ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f %ux%u", content_peak, peak_nits, w, h);
+    ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f cg=%d %ux%u", content_peak, peak_nits,
+          (int)cg, w, h);
 
     err = uhdr_encode(enc);
     if (err.error_code != UHDR_CODEC_OK) {
@@ -517,8 +528,8 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         uhdr_release_encoder(enc);
         return -5;
     }
-    ALOGI("Wrote Ultra HDR %ux%u peak=%.2f → %s (%zu bytes)", w, h, content_peak, out_path,
-          stream->data_sz);
+    ALOGI("Wrote Ultra HDR %ux%u peak=%.2f cg=%d → %s (%zu bytes)", w, h, content_peak, (int)cg,
+          out_path, stream->data_sz);
     uhdr_release_encoder(enc);
     return 0;
 }
@@ -539,7 +550,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrToUltraHdr(JNIEnv* env, jclas
     unsigned w = 0, h = 0;
     int rc = -20;
     if (decode_jxr_to_rgba_f16(in_path, rgba, w, h)) {
-        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path);
+        // HD Photo / scRGB-like: BT.709 primaries, linear extended range.
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709);
     } else {
         rc = -21;
     }
@@ -573,7 +585,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
     int rc = -20;
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
                                rgba, w, h)) {
-        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path);
+        // HD Photo / scRGB-like: BT.709 primaries, linear extended range.
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709);
     } else {
         rc = -21;
     }
@@ -597,8 +610,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeLinearRgbaF16ToUltraHdr(
         env->ReleaseByteArrayElements(jRgba, bytes, JNI_ABORT);
         return -14;
     }
+    // Kotlin helper: linear RGBA F16 is assumed scRGB / BT.709 unless caller extends API.
     int rc = encode_linear_rgba_f16_to_uhdr(static_cast<unsigned>(width), static_cast<unsigned>(height),
-                                            reinterpret_cast<const uint16_t*>(bytes), out_path);
+                                            reinterpret_cast<const uint16_t*>(bytes), out_path,
+                                            UHDR_CG_BT_709);
     env->ReleaseStringUTFChars(jOutput, out_path);
     env->ReleaseByteArrayElements(jRgba, bytes, JNI_ABORT);
     return rc;
