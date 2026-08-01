@@ -624,7 +624,6 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                                 is ReaderScreenArgs.Archive -> {
                                     LocalHistory.recordLocalArchive(s.path)
                                 }
-                                else -> Unit
                             }
                         }
                     }

@@ -7,7 +7,6 @@ import com.hippo.ehviewer.library.ReadAheadArchiveByteSource
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
@@ -49,7 +48,8 @@ private class RawWebDavArchiveByteSource(
     remoteRelativeFile: String,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
-    private val sizeRef = AtomicReference<Long?>(null)
+    /** Cached size; ≤0 means unknown. AtomicLong avoids identity-equality issues with Long boxes. */
+    private val sizeBytes = AtomicLong(0L)
     /** Epoch ms until which failed stats fail-fast (avoid readahead hammering a down server). */
     private val failFastUntilMs = AtomicLong(0L)
 
@@ -60,15 +60,17 @@ private class RawWebDavArchiveByteSource(
      */
     override val size: Long
         get() {
-            sizeRef.get()?.let { return it }
+            val cached = sizeBytes.get()
+            if (cached > 0L) return cached
             val now = System.currentTimeMillis()
             if (now < failFastUntilMs.get()) {
                 throw IOException("Cannot stat WebDAV archive (recent fail): $remote")
             }
             val s = resolveSizeWithRetry()
             if (s != null && s > 0L) {
-                sizeRef.compareAndSet(null, s)
-                return sizeRef.get() ?: s
+                sizeBytes.compareAndSet(0L, s)
+                val after = sizeBytes.get()
+                return if (after > 0L) after else s
             }
             failFastUntilMs.set(now + FAIL_FAST_MS)
             throw IOException("Cannot stat WebDAV archive: $remote")
@@ -81,8 +83,9 @@ private class RawWebDavArchiveByteSource(
     private fun resolveSizeWithRetry(): Long? = runBlocking {
         var last: Long? = null
         repeat(SIZE_ATTEMPTS) { attempt ->
-            last = WebDavClient.fileSizeOrNull(source, password, remote)
-            if (last != null && last!! > 0L) return@runBlocking last
+            val size = WebDavClient.fileSizeOrNull(source, password, remote)
+            last = size
+            if (size != null && size > 0L) return@runBlocking size
             if (attempt < SIZE_ATTEMPTS - 1) {
                 delay(SIZE_BACKOFF_MS * (attempt + 1))
             }

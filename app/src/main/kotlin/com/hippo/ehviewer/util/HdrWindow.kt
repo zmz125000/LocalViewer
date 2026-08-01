@@ -6,6 +6,7 @@ import android.os.Build
 import android.util.Log
 import android.view.Display
 import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
 
 /**
  * Aves-style window HDR color mode for Ultra HDR / gain-map images.
@@ -83,4 +84,4 @@ private fun Activity.displayIsHdr(): Boolean {
 }
 
 private fun Activity.displayOrNull(): Display? =
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else windowManager.defaultDisplay
+    ContextCompat.getDisplayOrDefault(this)

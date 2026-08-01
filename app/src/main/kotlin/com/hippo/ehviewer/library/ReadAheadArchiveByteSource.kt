@@ -27,7 +27,9 @@ class ReadAheadArchiveByteSource(
     /** Prefetch the next window after a sequential fill. Off for cover thumbs. */
     private val pipeline: Boolean = true,
 ) : ArchiveByteSource {
-    private val lock = Any()
+    // java.lang.Object required for wait/notify (monitor API not on kotlin.Any).
+    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
+    private val lock = java.lang.Object()
     private var winStart: Long = -1L
     private var winLen: Int = 0
     private var win: ByteArray? = null
@@ -165,7 +167,7 @@ class ReadAheadArchiveByteSource(
                     )
                 if (wait) {
                     try {
-                        (lock as Object).wait(50L)
+                        lock.wait(50L)
                     } catch (_: InterruptedException) {
                         Thread.currentThread().interrupt()
                         return false
@@ -501,7 +503,7 @@ class ReadAheadArchiveByteSource(
                         prefInFlight = false
                         prefFlightOff = -1L
                         prefFlightEnd = -1L
-                        (lock as Object).notifyAll()
+                        lock.notifyAll()
                         return@synchronized
                     }
                     if (got > 0) {
@@ -523,7 +525,7 @@ class ReadAheadArchiveByteSource(
                     prefInFlight = false
                     prefFlightOff = -1L
                     prefFlightEnd = -1L
-                    (lock as Object).notifyAll()
+                    lock.notifyAll()
                 }
             } catch (_: Throwable) {
                 synchronized(lock) {
@@ -533,7 +535,7 @@ class ReadAheadArchiveByteSource(
                     pref = null
                     prefStart = -1L
                     prefLen = 0
-                    (lock as Object).notifyAll()
+                    lock.notifyAll()
                 }
             }
         }
@@ -551,7 +553,7 @@ class ReadAheadArchiveByteSource(
             prefFlightOff = -1L
             prefFlightEnd = -1L
         }
-        (lock as Object).notifyAll()
+        lock.notifyAll()
     }
 
     override fun close() {
@@ -567,7 +569,7 @@ class ReadAheadArchiveByteSource(
             prefInFlight = false
             prefFlightOff = -1L
             prefFlightEnd = -1L
-            (lock as Object).notifyAll()
+            lock.notifyAll()
         }
         inner.close()
     }
