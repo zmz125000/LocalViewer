@@ -7,6 +7,11 @@ import com.hippo.ehviewer.util.FileUtils
  *
  * Must stay aligned with native [supportExt] in `archive.c` and with formats Coil can
  * decode: Android BitmapFactory/ImageDecoder (minSdk 31) plus [coil3.svg.SvgDecoder].
+ *
+ * HDR notes:
+ * - Gain-map JPEG/AVIF/HEIC: Android 14+ platform decode (class A).
+ * - JPEG XR (`jxr`/`wdp`/`hdp`): convert to Ultra HDR JPEG before Coil (class C).
+ * - Absolute PQ/HLG AVIF/HEIC: convert path (class B) when sniff detects CICP.
  */
 val IMAGE_EXTENSIONS = setOf(
     // JPEG (+ common aliases)
@@ -18,6 +23,8 @@ val IMAGE_EXTENSIONS = setOf(
     "ico", "wbmp",
     // Coil [coil-svg]
     "svg", "svgz",
+    // JPEG XR (Windows HDR screen capture) — converted to Ultra HDR before decode
+    "jxr", "wdp", "hdp",
 )
 
 val ARCHIVE_EXTENSIONS = setOf(

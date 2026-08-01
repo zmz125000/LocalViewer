@@ -54,7 +54,8 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     FileUtils.getExtensionFromFilename(imageFileNames[index])
 
                 override fun save(index: Int, file: Path): Boolean = runCatching {
-                    val cached = WebDavCache.cachePath(source.id, remoteDir, imageFileNames[index])
+                    val primary = WebDavCache.cachePath(source.id, remoteDir, imageFileNames[index])
+                    val cached = WebDavCache.resolveReaderPath(primary)
                     check(WebDavCache.isCachedOnDisk(cached)) { "Not cached" }
                     cached sendTo file
                     true
@@ -62,12 +63,15 @@ suspend inline fun <T> useWebDavFolderPageLoader(
 
                 override fun openSource(index: Int): ImageSource {
                     val name = imageFileNames[index]
-                    val path = WebDavCache.cachePath(source.id, remoteDir, name)
+                    val primary = WebDavCache.cachePath(source.id, remoteDir, name)
+                    val path = WebDavCache.resolveReaderPath(primary)
                     check(WebDavCache.isCachedOnDisk(path)) { "WebDAV page $index not downloaded" }
                     return object : PathSource {
                         override val source = path
                         override val type by lazy {
-                            FileUtils.getExtensionFromFilename(name)!!
+                            FileUtils.getExtensionFromFilename(path.name)
+                                ?: FileUtils.getExtensionFromFilename(name)
+                                ?: "jpg"
                         }
 
                         override fun close() = Unit
@@ -111,7 +115,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     val name = imageFileNames[index]
                     val cache = WebDavCache.cachePath(source.id, remoteDir, name)
                     // Never probe disk here — onRequest/retryPage run on main (lifecycle).
-                    if (onReady == null && WebDavCache.isCached(cache)) {
+                    if (onReady == null && WebDavCache.isPageCached(cache)) {
                         return
                     }
                     if (onReady != null) addReadyWaiter(index, onReady)
@@ -123,20 +127,20 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     val job = launch(Dispatchers.IO) {
                         try {
                             // Authoritative disk check on IO (StrictMode + LRU correctness).
-                            if (WebDavCache.isCachedOnDisk(cache)) {
+                            if (WebDavCache.isPageCachedOnDisk(cache)) {
                                 dispatchReady(index)
                                 return@launch
                             }
                             slots.withPermit {
-                                if (WebDavCache.isCachedOnDisk(cache)) {
+                                if (WebDavCache.isPageCachedOnDisk(cache)) {
                                     dispatchReady(index)
                                     return@withPermit
                                 }
                                 val remote = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
-                                WebDavCache.downloadIfNeeded(cache) { out ->
+                                WebDavCache.downloadIfNeeded(cache, originalFileName = name) { out ->
                                     WebDavClient.downloadFile(source, password, remote, out)
                                 }
-                                if (WebDavCache.isCachedOnDisk(cache)) {
+                                if (WebDavCache.isPageCachedOnDisk(cache)) {
                                     dispatchReady(index)
                                 } else if (readyWaiters.containsKey(index)) {
                                     notifyPageFailed(index, "WebDAV download incomplete")

@@ -190,6 +190,12 @@ object CachePagePublish {
                 // ftyp box — offset 4
                 n >= 12 && header[4] == 'f'.code.toByte() && header[5] == 't'.code.toByte() &&
                     header[6] == 'y'.code.toByte() && header[7] == 'p'.code.toByte()
+            "jxr", "wdp", "hdp" ->
+                // JPEG XR little-endian: II 0xBC 0x01
+                n >= 4 &&
+                    header[0] == 'I'.code.toByte() && header[1] == 'I'.code.toByte() &&
+                    (header[2].toInt() and 0xff) == 0xbc &&
+                    (header[3].toInt() and 0xff) == 0x01
             "jp2" ->
                 n >= 12 // JPEG 2000 — skip strict check
             else -> true

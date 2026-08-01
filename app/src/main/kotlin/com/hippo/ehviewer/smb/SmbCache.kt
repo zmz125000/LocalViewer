@@ -4,6 +4,10 @@ import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.os.Looper
 import com.ehviewer.core.files.mkdirs
+import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.HdrKind
+import com.hippo.ehviewer.image.hdr.isHdrAlwaysConvertExtension
+import com.hippo.ehviewer.image.hdr.sniffHdr
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
@@ -115,7 +119,8 @@ object SmbCache {
         val key = if (dir.isEmpty()) "$sourceId:$name" else "$sourceId:$dir/$name"
         val hash = sha256Hex(key)
         val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: "bin"
-        return pageRoot / "$hash.$ext"
+        // JXR etc. always stored as Ultra HDR JPEG (never keep original on disk).
+        return pageRoot / HdrConvertCache.networkStorageName(hash, ext)
     }
 
     /**
@@ -239,8 +244,10 @@ object SmbCache {
                     return@withContext destPath
                 }
                 // Full original → smb_cache (same key as reader pages for this file).
-                downloadIfNeeded(pagePath, download)
-                if (!isCachedOnDisk(pagePath)) {
+                val pageName = remoteRelativeFile.substringAfterLast('/')
+                downloadIfNeeded(pagePath, originalFileName = pageName, write = download)
+                val pageForThumb = resolveReaderPath(pagePath)
+                if (!isCachedOnDisk(pageForThumb)) {
                     error("SMB page cache empty after download for $remoteRelativeFile")
                 }
                 ensureRootDirs()
@@ -249,7 +256,7 @@ object SmbCache {
                 val jpgTmp = File("$key.jpg.${System.nanoTime()}")
                 try {
                     writeSubsampledJpeg(
-                        File(pagePath.toString()),
+                        File(pageForThumb.toString()),
                         jpgTmp,
                         THUMB_DISK_EDGE,
                         THUMB_JPEG_QUALITY,
@@ -273,18 +280,29 @@ object SmbCache {
     /**
      * Download full file into [path] if missing (reader pages).
      * Do **not** use for browse covers — use [ensureBrowseThumb].
+     *
+     * HDR: when [originalFileName] is JPEG XR (or sniff says convert), writes Ultra HDR
+     * JPEG only — original PQ/JXR bytes are not kept in [smb_cache].
+     *
+     * @param originalFileName remote base name for sniff / always-convert ext detection.
      */
-    suspend fun downloadIfNeeded(path: Path, write: suspend (OutputStream) -> Unit) {
+    suspend fun downloadIfNeeded(
+        path: Path,
+        originalFileName: String? = null,
+        write: suspend (OutputStream) -> Unit,
+    ) {
+        val resolved = HdrConvertCache.resolvePagePath(path)
         // Always revalidate on disk (never skip download on stale knownPresent).
-        if (isCachedOnDisk(path)) {
-            touch(path)
+        if (isCachedOnDisk(resolved)) {
+            touch(resolved)
             return
         }
         val key = path.toString()
         val mutex = pathLocks.getOrPut(key) { Mutex() }
         mutex.withLock {
-            if (isCachedOnDisk(path)) {
-                touch(path)
+            val again = HdrConvertCache.resolvePagePath(path)
+            if (isCachedOnDisk(again)) {
+                touch(again)
                 return
             }
             ensureRootDirs()
@@ -293,16 +311,72 @@ object SmbCache {
             val tmp = File("$key.tmp.${System.nanoTime()}")
             try {
                 FileOutputStream(tmp).use { out -> write(out) }
-                commitTmp(tmp, dest)
-                markPresent(path)
-                touch(path)
+                val nameHint = originalFileName ?: path.name
+                val finalPath = maybeConvertHdrDownload(tmp, path, nameHint)
+                markPresent(finalPath)
+                touch(finalPath)
             } catch (e: Throwable) {
                 tmp.delete()
-                if (isCachedOnDisk(path)) return
+                if (isCachedOnDisk(HdrConvertCache.resolvePagePath(path))) return
                 throw e
+            } finally {
+                if (tmp.exists()) tmp.delete()
             }
         }
         scheduleTrim()
+    }
+
+    /**
+     * Prefer Ultra HDR sibling when present (post-convert network pages).
+     */
+    fun resolveReaderPath(path: Path): Path = HdrConvertCache.resolvePagePath(path)
+
+    /** True if [path] or its Ultra HDR sibling is on disk. */
+    fun isPageCachedOnDisk(path: Path): Boolean = isCachedOnDisk(resolveReaderPath(path))
+
+    fun isPageCached(path: Path): Boolean {
+        val resolved = resolveReaderPath(path)
+        return if (resolved == path) isCached(path) else isCached(resolved) || isCached(path)
+    }
+
+    private suspend fun maybeConvertHdrDownload(
+        tmp: File,
+        primaryPath: Path,
+        originalFileName: String,
+    ): Path {
+        val sniff = sniffHdr(tmp, fileNameHint = originalFileName)
+        if (!sniff.needsConvert) {
+            commitTmp(tmp, File(primaryPath.toString()))
+            return primaryPath
+        }
+        // Convert → Ultra HDR; do not keep original PQ/JXR for network.
+        val outPath = if (primaryPath.name.endsWith(".${com.hippo.ehviewer.image.hdr.UHDR_CACHE_SUFFIX}")) {
+            primaryPath
+        } else {
+            HdrConvertCache.uhdrSiblingOf(primaryPath)
+        }
+        val outFile = File(outPath.toString())
+        val ok = when (sniff.kind) {
+            HdrKind.JpegXr -> HdrConvertCache.convertJxrFile(tmp, outFile)
+            HdrKind.AbsolutePqHlg -> false // P2: keep original until PQ pipeline lands
+            else -> false
+        }
+        if (ok) {
+            tmp.delete()
+            val primary = File(primaryPath.toString())
+            if (primary.absolutePath != outFile.absolutePath) primary.delete()
+            return outPath
+        }
+        // Always-convert (JXR): cannot serve original to Coil.
+        if (sniff.kind == HdrKind.JpegXr ||
+            isHdrAlwaysConvertExtension(FileUtils.getExtensionFromFilename(originalFileName))
+        ) {
+            tmp.delete()
+            error("HDR convert failed for $originalFileName")
+        }
+        // Soft-fail convert: keep downloaded original.
+        commitTmp(tmp, File(primaryPath.toString()))
+        return primaryPath
     }
 
     /**

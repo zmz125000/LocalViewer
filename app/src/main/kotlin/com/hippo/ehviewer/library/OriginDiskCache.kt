@@ -89,6 +89,8 @@ object OriginDiskCache {
         // Flat remote file caches (folder pages + full archive downloads).
         collectFlatOrigin(cacheDir("smb_cache"), candidates)
         collectFlatOrigin(cacheDir("webdav_cache"), candidates)
+        // Local-folder HDR → Ultra HDR derivatives (non-destructive).
+        collectFlatOrigin(cacheDir("hdr_ultrahdr"), candidates)
 
         // Extracted page caches — skip index.json; skip currently open galleries.
         pinnedBytes += collectExtractOrigin(

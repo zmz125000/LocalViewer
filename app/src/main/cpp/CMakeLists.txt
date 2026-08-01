@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.14)
-project(ehviewer C)
+project(ehviewer C CXX)
 include(ExternalProject)
 include(FetchContent)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     string(CONCAT CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -ffast-math -fvisibility=hidden -fvisibility-inlines-hidden -funroll-loops -flto "
@@ -155,10 +158,100 @@ corrosion_import_crate(
 corrosion_add_target_rustflags(ehviewer_rust $<$<NOT:$<CONFIG:Debug>>:-Z unstable-options -C panic=immediate-abort -Z location-detail=none -Z fmt-debug=none>)
 corrosion_link_libraries(ehviewer_rust android jnigraphics log webp webpdemux)
 
+# ── jxrlib (Microsoft JPEG XR, packaged in brion/jpegxr) ─────────────────
+FetchContent_Declare(
+        jpegxr_src
+        GIT_REPOSITORY https://github.com/bvibber/jpegxr.git
+        GIT_TAG 0.3.1
+        GIT_SHALLOW 1
+)
+FetchContent_GetProperties(jpegxr_src)
+if (NOT jpegxr_src_POPULATED)
+    FetchContent_Populate(jpegxr_src)
+endif ()
+set(JXRLIB_ROOT ${jpegxr_src_SOURCE_DIR}/jxrlib)
+add_library(jxrlib STATIC
+        ${JXRLIB_ROOT}/image/sys/adapthuff.c
+        ${JXRLIB_ROOT}/image/sys/image.c
+        ${JXRLIB_ROOT}/image/sys/strcodec.c
+        ${JXRLIB_ROOT}/image/sys/strPredQuant.c
+        ${JXRLIB_ROOT}/image/sys/strTransform.c
+        ${JXRLIB_ROOT}/image/sys/perfTimerANSI.c
+        ${JXRLIB_ROOT}/image/decode/decode.c
+        ${JXRLIB_ROOT}/image/decode/postprocess.c
+        ${JXRLIB_ROOT}/image/decode/segdec.c
+        ${JXRLIB_ROOT}/image/decode/strdec.c
+        ${JXRLIB_ROOT}/image/decode/strInvTransform.c
+        ${JXRLIB_ROOT}/image/decode/strPredQuantDec.c
+        ${JXRLIB_ROOT}/image/decode/JXRTranscode.c
+        ${JXRLIB_ROOT}/image/encode/encode.c
+        ${JXRLIB_ROOT}/image/encode/segenc.c
+        ${JXRLIB_ROOT}/image/encode/strenc.c
+        ${JXRLIB_ROOT}/image/encode/strFwdTransform.c
+        ${JXRLIB_ROOT}/image/encode/strPredQuantEnc.c
+        ${JXRLIB_ROOT}/jxrgluelib/JXRGlue.c
+        ${JXRLIB_ROOT}/jxrgluelib/JXRGlueJxr.c
+        ${JXRLIB_ROOT}/jxrgluelib/JXRGluePFC.c
+        ${JXRLIB_ROOT}/jxrgluelib/JXRMeta.c
+)
+target_include_directories(jxrlib PUBLIC
+        ${JXRLIB_ROOT}
+        ${JXRLIB_ROOT}/common/include
+        ${JXRLIB_ROOT}/image/sys
+        ${JXRLIB_ROOT}/jxrgluelib
+)
+target_compile_definitions(jxrlib PUBLIC __ANSI__ DISABLE_PERF_MEASUREMENT)
+target_compile_options(jxrlib PRIVATE
+        -Wno-unused-function
+        -Wno-unused-variable
+        -Wno-sign-compare
+        -Wno-shift-negative-value
+        -Wno-extra-tokens
+        -Wno-missing-field-initializers
+        -Wno-constant-conversion
+        -Wno-deprecated-declarations
+)
+
+# ── libultrahdr (Google Ultra HDR encode) ────────────────────────────────
+set(UHDR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(UHDR_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(UHDR_BUILD_BENCHMARK OFF CACHE BOOL "" FORCE)
+set(UHDR_BUILD_FUZZERS OFF CACHE BOOL "" FORCE)
+set(UHDR_BUILD_JAVA OFF CACHE BOOL "" FORCE)
+set(UHDR_BUILD_DEPS ON CACHE BOOL "" FORCE)
+set(UHDR_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(UHDR_ENABLE_GLES OFF CACHE BOOL "" FORCE)
+set(UHDR_WRITE_XMP ON CACHE BOOL "" FORCE)
+set(UHDR_WRITE_ISO ON CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+        libultrahdr
+        GIT_REPOSITORY https://github.com/google/libultrahdr.git
+        GIT_TAG v1.5.1
+        GIT_SHALLOW 1
+)
+FetchContent_MakeAvailable(libultrahdr)
+
 # Build and link our app's native lib
-add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c)
+add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c hdr_convert.cpp)
+target_include_directories(${PROJECT_NAME} PRIVATE
+        ${JXRLIB_ROOT}/jxrgluelib
+        ${JXRLIB_ROOT}/common/include
+        ${JXRLIB_ROOT}/image/sys
+)
+# libultrahdr public header target name is typically "uhdr"
+if (TARGET uhdr)
+    set(UHDR_LIB uhdr)
+elseif (TARGET libuhdr)
+    set(UHDR_LIB libuhdr)
+elseif (TARGET ultrahdr)
+    set(UHDR_LIB ultrahdr)
+else ()
+    message(FATAL_ERROR "libultrahdr CMake target not found (expected uhdr)")
+endif ()
 target_link_libraries(
-        ${PROJECT_NAME} archive_static ehviewer_rust z
+        ${PROJECT_NAME} archive_static ehviewer_rust z jxrlib ${UHDR_LIB} log
         -Wl,-u,JNI_OnLoad -Wl,--undefined-glob,Java_*
         -Wl,--version-script,${CMAKE_SOURCE_DIR}/libehviewer.map.txt
 )

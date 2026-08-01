@@ -4,6 +4,11 @@ import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.os.Looper
 import com.ehviewer.core.files.mkdirs
+import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.HdrKind
+import com.hippo.ehviewer.image.hdr.UHDR_CACHE_SUFFIX
+import com.hippo.ehviewer.image.hdr.isHdrAlwaysConvertExtension
+import com.hippo.ehviewer.image.hdr.sniffHdr
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
@@ -75,7 +80,7 @@ object WebDavCache {
             val key = "dav:$sourceId:$remote"
             val hash = sha256Hex(key)
             val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: "bin"
-            pageRoot / "$hash.$ext"
+            pageRoot / HdrConvertCache.networkStorageName(hash, ext)
         }
     }
 
@@ -167,14 +172,16 @@ object WebDavCache {
                     touch(destPath)
                     return@withContext destPath
                 }
-                downloadIfNeeded(pagePath, download)
-                if (!probeDisk(pagePath)) error("WebDAV page cache empty for $remoteRelativeFile")
+                val name = remoteRelativeFile.substringAfterLast('/')
+                downloadIfNeeded(pagePath, originalFileName = name, download)
+                val pageForThumb = resolveReaderPath(pagePath)
+                if (!probeDisk(pageForThumb)) error("WebDAV page cache empty for $remoteRelativeFile")
                 ensureRootDirs()
                 File(destPath.parent!!.toString()).mkdirs()
                 val dest = File(key)
                 val jpgTmp = File("$key.jpg.${System.nanoTime()}")
                 try {
-                    writeSubsampledJpeg(File(pagePath.toString()), jpgTmp, THUMB_DISK_EDGE, THUMB_JPEG_QUALITY)
+                    writeSubsampledJpeg(File(pageForThumb.toString()), jpgTmp, THUMB_DISK_EDGE, THUMB_JPEG_QUALITY)
                     commitTmp(jpgTmp, dest)
                     markPresent(destPath)
                     touch(destPath)
@@ -191,34 +198,88 @@ object WebDavCache {
         destPath
     }
 
-    suspend fun downloadIfNeeded(path: Path, write: suspend (OutputStream) -> Unit) {
-        if (isCachedOnDisk(path)) {
-            touch(path)
+    suspend fun downloadIfNeeded(
+        path: Path,
+        originalFileName: String? = null,
+        write: suspend (OutputStream) -> Unit,
+    ) {
+        val resolved = resolveReaderPath(path)
+        if (isCachedOnDisk(resolved)) {
+            touch(resolved)
             return
         }
         val key = path.toString()
         val mutex = pathLocks.getOrPut(key) { Mutex() }
         mutex.withLock {
-            if (isCachedOnDisk(path)) {
-                touch(path)
+            val again = resolveReaderPath(path)
+            if (isCachedOnDisk(again)) {
+                touch(again)
                 return
             }
             ensureRootDirs()
             path.parent?.let { File(it.toString()).mkdirs() }
-            val dest = File(key)
             val tmp = File("$key.tmp.${System.nanoTime()}")
             try {
                 FileOutputStream(tmp).use { out -> write(out) }
-                commitTmp(tmp, dest)
-                markPresent(path)
-                touch(path)
+                val nameHint = originalFileName ?: path.name
+                val finalPath = maybeConvertHdrDownload(tmp, path, nameHint)
+                markPresent(finalPath)
+                touch(finalPath)
             } catch (e: Throwable) {
                 tmp.delete()
-                if (isCachedOnDisk(path)) return
+                if (isCachedOnDisk(resolveReaderPath(path))) return
                 throw e
+            } finally {
+                if (tmp.exists()) tmp.delete()
             }
         }
         scheduleTrim()
+    }
+
+    fun resolveReaderPath(path: Path): Path = HdrConvertCache.resolvePagePath(path)
+
+    fun isPageCachedOnDisk(path: Path): Boolean = isCachedOnDisk(resolveReaderPath(path))
+
+    fun isPageCached(path: Path): Boolean {
+        val resolved = resolveReaderPath(path)
+        return if (resolved == path) isCached(path) else isCached(resolved) || isCached(path)
+    }
+
+    private suspend fun maybeConvertHdrDownload(
+        tmp: File,
+        primaryPath: Path,
+        originalFileName: String,
+    ): Path {
+        val sniff = sniffHdr(tmp, fileNameHint = originalFileName)
+        if (!sniff.needsConvert) {
+            commitTmp(tmp, File(primaryPath.toString()))
+            return primaryPath
+        }
+        val outPath = if (primaryPath.name.endsWith(".$UHDR_CACHE_SUFFIX")) {
+            primaryPath
+        } else {
+            HdrConvertCache.uhdrSiblingOf(primaryPath)
+        }
+        val outFile = File(outPath.toString())
+        val ok = when (sniff.kind) {
+            HdrKind.JpegXr -> HdrConvertCache.convertJxrFile(tmp, outFile)
+            HdrKind.AbsolutePqHlg -> false
+            else -> false
+        }
+        if (ok) {
+            tmp.delete()
+            val primary = File(primaryPath.toString())
+            if (primary.absolutePath != outFile.absolutePath) primary.delete()
+            return outPath
+        }
+        if (sniff.kind == HdrKind.JpegXr ||
+            isHdrAlwaysConvertExtension(FileUtils.getExtensionFromFilename(originalFileName))
+        ) {
+            tmp.delete()
+            error("HDR convert failed for $originalFileName")
+        }
+        commitTmp(tmp, File(primaryPath.toString()))
+        return primaryPath
     }
 
     /** @see isCachedOnDisk */
