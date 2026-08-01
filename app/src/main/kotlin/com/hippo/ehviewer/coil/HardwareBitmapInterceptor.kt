@@ -28,6 +28,8 @@ object HardwareBitmapInterceptor : Interceptor {
         if (!request.allowHardware && result is SuccessResult) {
             val image = result.image
             if (image is BitmapImageWithExtraInfo) {
+                // Bitmap.copy drops gain maps — keep software bitmap for Ultra HDR.
+                if (image.hasGainmap) return result
                 val bitmap = image.image.bitmap
                 val isHardware = bitmap.config == Bitmap.Config.HARDWARE
                 // Large hardware bitmaps have rendering issues (e.g. crash, empty) on some devices.

@@ -38,11 +38,13 @@ import coil3.size.Scale
 import coil3.size.Size
 import coil3.size.SizeResolver
 import com.ehviewer.core.files.openFileDescriptor
+import com.ehviewer.core.files.read
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.util.isAtLeastU
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.AnimatedWebPDrawable
 import com.hippo.ehviewer.coil.BitmapImageWithExtraInfo
+import com.hippo.ehviewer.coil.detectGainmap
 import com.hippo.ehviewer.coil.detectQrCode
 import com.hippo.ehviewer.coil.hardwareThreshold
 import com.hippo.ehviewer.coil.maybeCropBorder
@@ -72,6 +74,16 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
     val allocationSize = image.size
     val hasQrCode = when (image) {
         is BitmapImageWithExtraInfo -> image.hasQrCode
+        else -> false
+    }
+
+    /**
+     * True when the platform attached an Ultra HDR / gain map (API 34+).
+     * Used to enable [android.view.Window] HDR color mode while this page is shown.
+     */
+    val hasGainmap = when (image) {
+        is BitmapImageWithExtraInfo -> image.hasGainmap
+        is BitmapImage -> image.detectGainmap()
         else -> false
     }
 
@@ -109,14 +121,51 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
             return DecodeSizeType.fromPreference(Settings.readerDecodeSize.value)
         }
 
-        private suspend fun Either<ByteBufferSource, PathSource>.decodeCoil(
+        /**
+         * Cheap header sniff for Ultra HDR / gain-map markers so we can force original
+         * size without a second full decode. False negatives still fall through to
+         * post-decode [Bitmap.hasGainmap] (then re-decode at ORIGIN if needed).
+         */
+        private fun sourceLooksLikeHdrGainMap(src: Either<ByteBufferSource, PathSource>): Boolean {
+            if (!isAtLeastU) return false
+            return runCatching {
+                when (src) {
+                    is Either.Left -> {
+                        val buf = src.value.source.asReadOnlyBuffer()
+                        val n = minOf(buf.remaining(), HDR_SNIFF_BYTES)
+                        if (n <= 0) return false
+                        val bytes = ByteArray(n)
+                        buf.get(bytes)
+                        bytes.containsHdrGainMapMarker(n)
+                    }
+                    is Either.Right -> {
+                        src.value.source.read {
+                            val bytes = ByteArray(HDR_SNIFF_BYTES)
+                            val n = readAtMostTo(bytes)
+                            n > 0 && bytes.containsHdrGainMapMarker(n)
+                        }
+                    }
+                }
+            }.getOrDefault(false)
+        }
+
+        private fun CoilImage.asBitmapImage(): BitmapImage? = when (this) {
+            is BitmapImageWithExtraInfo -> image
+            is BitmapImage -> this
+            else -> null
+        }
+
+        private fun CoilImage.recycleBitmaps() {
+            asBitmapImage()?.bitmap?.recycle()
+        }
+
+        private suspend fun Either<ByteBufferSource, PathSource>.decodeCoilOnce(
+            mode: DecodeSizeType,
             checkExtraneousAds: Boolean,
-            forceOriginal: Boolean,
+            /** Prefer hardware + no crop/QR so gain maps are not stripped. */
+            hdrSafe: Boolean,
         ): CoilImage {
-            val mode = decodeMode(forceOriginal)
-            // Direct hardware path: Coil may decode to HARDWARE without a software copy for
-            // crop / QR post-process. Incompatible with maybeCropBorder + detectQrCode.
-            val hardwareDirect = Settings.readerHardwareBitmap.value
+            val hardwareDirect = Settings.readerHardwareBitmap.value || hdrSafe
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
@@ -132,7 +181,6 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                     maxBitmapSize(Size.ORIGINAL)
                     if (hardwareDirect) {
                         allowHardware(true)
-                        // Skip CPU post-process that forces software bitmap + copy.
                         maybeCropBorder(false)
                         detectQrCode(false)
                     } else {
@@ -150,9 +198,40 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
             }
         }
 
+        private suspend fun Either<ByteBufferSource, PathSource>.decodeCoil(
+            checkExtraneousAds: Boolean,
+            forceOriginal: Boolean,
+        ): CoilImage {
+            val hdrEnabled = isAtLeastU && Settings.readerHdrDisplay.value
+            val mode = decodeMode(forceOriginal)
+            // Ultra HDR / gain-map files always decode at original size (simple + correct).
+            val looksHdr = hdrEnabled && sourceLooksLikeHdrGainMap(this)
+            val effectiveMode = if (looksHdr) DecodeSizeType.ORIGIN else mode
+            val hdrSafe = hdrEnabled && (looksHdr || effectiveMode.isOriginal)
+
+            var image = decodeCoilOnce(effectiveMode, checkExtraneousAds, hdrSafe = hdrSafe)
+
+            // Sniff miss: platform still attached a gain map after a downscale decode → re-do ORIGIN.
+            if (hdrEnabled && !effectiveMode.isOriginal) {
+                val bm = image.asBitmapImage()
+                if (bm != null && bm.detectGainmap()) {
+                    image.recycleBitmaps()
+                    image = decodeCoilOnce(DecodeSizeType.ORIGIN, checkExtraneousAds, hdrSafe = true)
+                }
+            }
+
+            // Annotate gain map when the hardware path skipped MapExtraInfoInterceptor.
+            val bitmapImage = image.asBitmapImage()
+            if (bitmapImage != null && image !is BitmapImageWithExtraInfo && bitmapImage.detectGainmap()) {
+                return BitmapImageWithExtraInfo(image = bitmapImage, hasGainmap = true)
+            }
+            return image
+        }
+
         /**
          * @param forceOriginal if true (page menu "View original"), decode at file resolution;
-         *   otherwise use [Settings.readerDecodeSize] (1.5x…3x or origin).
+         *   otherwise use [Settings.readerDecodeSize] (1.5x…3x or origin). HDR gain-map files
+         *   always use original size when [Settings.readerHdrDisplay] is on.
          */
         suspend fun decode(
             src: ImageSource,
@@ -193,6 +272,8 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                 if (innerImage is BitmapImage) src.close()
             }
         }
+
+        private const val HDR_SNIFF_BYTES = 256 * 1024
     }
 }
 
@@ -210,6 +291,28 @@ interface ByteBufferSource : ImageSource {
 inline fun byteBufferSource(buffer: ByteBuffer, crossinline release: () -> Unit) = object : ByteBufferSource {
     override val source = buffer
     override fun close() = release()
+}
+
+/** ASCII marker scan for Ultra HDR / gain-map sidecars in JPEG/XMP headers. */
+private fun ByteArray.containsHdrGainMapMarker(length: Int = size): Boolean {
+    // "GainMap", "hdrgm", "HDRGainMap" — enough for Google Ultra HDR + Adobe/Apple XMP.
+    val n = length.coerceIn(0, size)
+    return indexOfAscii("GainMap", n) >= 0 ||
+        indexOfAscii("hdrgm", n) >= 0 ||
+        indexOfAscii("HDRGainMap", n) >= 0
+}
+
+private fun ByteArray.indexOfAscii(needle: String, length: Int = size): Int {
+    if (needle.isEmpty() || length < needle.length) return -1
+    val first = needle[0].code.toByte()
+    outer@ for (i in 0..length - needle.length) {
+        if (this[i] != first) continue
+        for (j in 1 until needle.length) {
+            if (this[i + j] != needle[j].code.toByte()) continue@outer
+        }
+        return i
+    }
+    return -1
 }
 
 external fun detectBorder(bitmap: Bitmap): IntArray

@@ -121,6 +121,7 @@ import com.hippo.ehviewer.ui.tools.awaitInputText
 import com.hippo.ehviewer.ui.tools.dialog
 import com.hippo.ehviewer.util.displayString
 import com.hippo.ehviewer.util.hasAds
+import com.hippo.ehviewer.util.setHdrColorMode
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -133,6 +134,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.sample
@@ -348,10 +350,16 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 cropBorder.changesFlow(),
                 stripExtraneousAds.changesFlow(),
                 readerHardwareBitmap.changesFlow(),
+                readerHdrDisplay.changesFlow(),
             ).collect {
                 pageLoader.restart()
             }
         }
+    }
+    // Ultra HDR: toggle window COLOR_MODE_HDR for the current page only (Aves #838).
+    val hdrDisplayEnabled by Settings.readerHdrDisplay.collectAsState()
+    DisposableEffect(activity) {
+        onDispose { activity.setHdrColorMode(false) }
     }
     val webtoon = remember(info) {
         // Tags in database may or may not have the prefix "other:"
@@ -379,6 +387,26 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     var appbarVisible by remember { mutableStateOf(false) }
     val isWebtoon by rememberUpdatedState(ReadingModeType.isWebtoon(readingMode))
     val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(pageLoader, hdrDisplayEnabled) {
+        if (!hdrDisplayEnabled) {
+            activity.setHdrColorMode(false)
+            return@LaunchedEffect
+        }
+        // sliderValue is snapshot state; page status is a Flow — nest collectLatest.
+        snapshotFlow { syncState.sliderValue to pageLoader.size }.collectLatest { (page1, size) ->
+            val idx = (page1 - 1).coerceIn(0, (size - 1).coerceAtLeast(0))
+            val page = pageLoader.pages.getOrNull(idx)
+            if (page == null) {
+                activity.setHdrColorMode(false)
+                return@collectLatest
+            }
+            page.statusFlow.collect { status ->
+                val hdr = (status as? PageStatus.Ready)?.image?.hasGainmap == true
+                activity.setHdrColorMode(hdr)
+            }
+        }
+    }
 
     // SMB: after app background, pool sockets are closed (ON_STOP). Re-request the
     // current page (and nearby errors) so the reader recovers without a manual retry.

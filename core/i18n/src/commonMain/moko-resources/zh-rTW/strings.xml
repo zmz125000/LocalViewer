@@ -530,6 +530,8 @@
     <string name="pref_smb_reader_safe_concurrency_summary">強制 3 條連線、每連線 1 個傳輸。降低原圖／大圖閱讀時的 OOM 風險。</string>
     <string name="pref_reader_hardware_bitmap">硬體點陣圖解碼</string>
     <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路徑（GPU 點陣圖）。會關閉裁邊與 QR 廣告偵測，避免先軟體解碼再拷貝。</string>
+    <string name="pref_reader_hdr_display">HDR 顯示（Ultra HDR）</string>
+    <string name="pref_reader_hdr_display_summary">在 HDR 螢幕上為 Ultra HDR／增益圖頁面啟用視窗 HDR 模式。此類頁面一律以原始尺寸解碼。</string>
     <string name="pref_custom_brightness">自訂亮度</string>
     <string name="pref_custom_color_filter">色彩濾鏡</string>
     <string name="pref_keep_screen_on">保持螢幕恆亮</string>
