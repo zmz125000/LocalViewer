@@ -6,6 +6,22 @@ include(FetchContent)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ExternalProject (libultrahdr/turbojpeg, aom) may use Ninja; Android Gradle
+# does not always put cmake's ninja on PATH for nested configures.
+if (NOT CMAKE_MAKE_PROGRAM)
+    file(GLOB _eh_ninja_candidates
+            "$ENV{ANDROID_HOME}/cmake/*/bin/ninja"
+            "$ENV{ANDROID_SDK_ROOT}/cmake/*/bin/ninja"
+            "/Users/jingxuan/Library/Android/sdk/cmake/*/bin/ninja"
+    )
+    if (_eh_ninja_candidates)
+        list(SORT _eh_ninja_candidates ORDER DESCENDING)
+        list(GET _eh_ninja_candidates 0 CMAKE_MAKE_PROGRAM)
+        set(CMAKE_MAKE_PROGRAM "${CMAKE_MAKE_PROGRAM}" CACHE FILEPATH "" FORCE)
+        message(STATUS "Using ninja: ${CMAKE_MAKE_PROGRAM}")
+    endif ()
+endif ()
+
 if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     string(CONCAT CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -ffast-math -fvisibility=hidden -fvisibility-inlines-hidden -funroll-loops -flto "
             "-ffile-prefix-map=${ANDROID_TOOLCHAIN_ROOT}= "
@@ -233,27 +249,31 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(libultrahdr)
 
-# ── libavif (+ libaom decoder) for PQ/HLG and gain-map-aware AVIF stills ──
-set(AVIF_CODEC_AOM ON CACHE BOOL "" FORCE)
-set(AVIF_LOCAL_AOM ON CACHE BOOL "" FORCE)
-set(AVIF_CODEC_DAV1D OFF CACHE BOOL "" FORCE)
-set(AVIF_CODEC_LIBGAV1 OFF CACHE BOOL "" FORCE)
-set(AVIF_CODEC_RAV1E OFF CACHE BOOL "" FORCE)
-set(AVIF_CODEC_SVT OFF CACHE BOOL "" FORCE)
-set(AVIF_CODEC_AVM OFF CACHE BOOL "" FORCE)
+# ── libavif (+ libaom decoder) for PQ/HLG AVIF stills ───────────────────
+# libavif ≥1.1 uses OFF|LOCAL|SYSTEM (not ON/OFF bool). ON was ignored →
+# "No codec available" at runtime.
+set(AVIF_CODEC_AOM "LOCAL" CACHE STRING "" FORCE)
+set(AVIF_CODEC_AOM_DECODE ON CACHE BOOL "" FORCE)
+set(AVIF_CODEC_AOM_ENCODE OFF CACHE BOOL "" FORCE)
+set(AVIF_CODEC_DAV1D "OFF" CACHE STRING "" FORCE)
+set(AVIF_CODEC_LIBGAV1 "OFF" CACHE STRING "" FORCE)
+set(AVIF_CODEC_RAV1E "OFF" CACHE STRING "" FORCE)
+set(AVIF_CODEC_SVT "OFF" CACHE STRING "" FORCE)
+set(AVIF_CODEC_AVM "OFF" CACHE STRING "" FORCE)
 set(AVIF_BUILD_APPS OFF CACHE BOOL "" FORCE)
 set(AVIF_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(AVIF_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(AVIF_ENABLE_GTEST OFF CACHE BOOL "" FORCE)
 set(AVIF_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
-set(AVIF_LIBYUV OFF CACHE BOOL "" FORCE)
-# aom: decode only (faster configure)
+set(AVIF_LIBYUV "OFF" CACHE STRING "" FORCE)
+# aom (pulled by LocalAom.cmake): skip encoder/tests for faster NDK builds
 set(ENABLE_DOCS OFF CACHE BOOL "" FORCE)
 set(ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTDATA OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TOOLS OFF CACHE BOOL "" FORCE)
 set(CONFIG_AV1_ENCODER 0 CACHE STRING "" FORCE)
+set(CONFIG_REALTIME_ONLY 0 CACHE STRING "" FORCE)
 
 FetchContent_Declare(
         libavif
@@ -262,6 +282,10 @@ FetchContent_Declare(
         GIT_SHALLOW 1
 )
 FetchContent_MakeAvailable(libavif)
+# AVIF_CODEC_AOM_ENABLED is local to libavif's directory; check the aom target instead.
+if (NOT TARGET aom AND NOT TARGET aom_av1 AND NOT TARGET aom_static)
+    message(FATAL_ERROR "libavif: AOM decoder target missing (set AVIF_CODEC_AOM=LOCAL)")
+endif ()
 
 # Build and link our app's native lib
 add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c
