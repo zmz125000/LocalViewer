@@ -972,7 +972,7 @@ static void stream_bridge_clear(JNIEnv *env) {
 }
 
 /* Keep in sync with IMAGE_EXTENSIONS in MediaTypes.kt (max 4-char ext). */
-#define SUPPORT_EXT_COUNT 18
+#define SUPPORT_EXT_COUNT 19
 
 const char supportExt[SUPPORT_EXT_COUNT][5] = {
         "jpeg",
@@ -993,6 +993,7 @@ const char supportExt[SUPPORT_EXT_COUNT][5] = {
         "jxr",
         "wdp",
         "hdp",
+        "jxl",
 };
 
 /** basename after last / or \ */

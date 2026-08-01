@@ -264,6 +264,10 @@ object WebDavCache {
         val ok = when (sniff.kind) {
             HdrKind.JpegXr -> HdrConvertCache.convertJxrFile(tmp, outFile)
             HdrKind.AbsolutePqHlg -> HdrConvertCache.convertAvifFile(tmp, outFile)
+            HdrKind.JpegXl -> {
+                val bytes = runCatching { tmp.readBytes() }.getOrNull()
+                if (bytes != null) HdrConvertCache.convertJxlBytes(bytes, outFile) else false
+            }
             else -> false
         }
         if (ok) {
@@ -272,7 +276,7 @@ object WebDavCache {
             if (primary.absolutePath != outFile.absolutePath) primary.delete()
             return outPath
         }
-        if (sniff.kind == HdrKind.JpegXr ||
+        if (sniff.kind == HdrKind.JpegXr || sniff.kind == HdrKind.JpegXl ||
             isHdrAlwaysConvertExtension(FileUtils.getExtensionFromFilename(originalFileName))
         ) {
             tmp.delete()

@@ -287,9 +287,33 @@ if (NOT TARGET aom AND NOT TARGET aom_av1 AND NOT TARGET aom_static)
     message(FATAL_ERROR "libavif: AOM decoder target missing (set AVIF_CODEC_AOM=LOCAL)")
 endif ()
 
+# ── libjxl (JPEG XL decode → Ultra HDR) ─────────────────────────────────
+set(JPEGXL_ENABLE_TOOLS OFF CACHE BOOL "" FORCE)
+set(JPEGXL_ENABLE_DEVTOOLS OFF CACHE BOOL "" FORCE)
+set(JPEGXL_ENABLE_BENCHMARK OFF CACHE BOOL "" FORCE)
+set(JPEGXL_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(JPEGXL_ENABLE_MANPAGES OFF CACHE BOOL "" FORCE)
+set(JPEGXL_ENABLE_JNI OFF CACHE BOOL "" FORCE)
+set(JPEGXL_ENABLE_OPENEXR OFF CACHE BOOL "" FORCE)
+set(JPEGXL_ENABLE_JPEGLI OFF CACHE BOOL "" FORCE)
+set(JPEGXL_ENABLE_SJPEG OFF CACHE BOOL "" FORCE)
+set(JPEGXL_ENABLE_TCMALLOC OFF CACHE BOOL "" FORCE)
+set(JPEGXL_ENABLE_FUZZERS OFF CACHE BOOL "" FORCE)
+set(JPEGXL_BUNDLE_LIBPNG OFF CACHE BOOL "" FORCE)
+set(JPEGXL_ENABLE_DOXYGEN OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+        libjxl
+        GIT_REPOSITORY https://github.com/libjxl/libjxl.git
+        GIT_TAG v0.11.1
+        GIT_SHALLOW 1
+        GIT_SUBMODULES "third_party/brotli;third_party/highway;third_party/skcms"
+)
+FetchContent_MakeAvailable(libjxl)
+
 # Build and link our app's native lib
 add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c
-        hdr_convert.cpp avif_hdr.cpp)
+        hdr_convert.cpp avif_hdr.cpp jxl_hdr.cpp)
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${JXRLIB_ROOT}/jxrgluelib
         ${JXRLIB_ROOT}/common/include
@@ -313,8 +337,24 @@ elseif (TARGET libavif)
 else ()
     message(FATAL_ERROR "libavif CMake target not found (expected avif)")
 endif ()
+# libjxl
+if (TARGET jxl_dec)
+    set(JXL_LIB jxl_dec)
+elseif (TARGET jxl)
+    set(JXL_LIB jxl)
+else ()
+    message(FATAL_ERROR "libjxl CMake target not found (expected jxl or jxl_dec)")
+endif ()
+set(JXL_EXTRA_LIBS "")
+if (TARGET jxl_threads)
+    list(APPEND JXL_EXTRA_LIBS jxl_threads)
+endif ()
+if (TARGET jxl_cms)
+    list(APPEND JXL_EXTRA_LIBS jxl_cms)
+endif ()
 target_link_libraries(
-        ${PROJECT_NAME} archive_static ehviewer_rust z jxrlib ${UHDR_LIB} ${AVIF_LIB} log
+        ${PROJECT_NAME} archive_static ehviewer_rust z jxrlib ${UHDR_LIB} ${AVIF_LIB}
+        ${JXL_LIB} ${JXL_EXTRA_LIBS} log
         -Wl,-u,JNI_OnLoad -Wl,--undefined-glob,Java_*
         -Wl,--version-script,${CMAKE_SOURCE_DIR}/libehviewer.map.txt
 )

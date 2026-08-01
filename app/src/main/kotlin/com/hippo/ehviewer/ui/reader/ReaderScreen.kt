@@ -350,7 +350,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 cropBorder.changesFlow(),
                 stripExtraneousAds.changesFlow(),
                 readerHardwareBitmap.changesFlow(),
-                readerHdrDisplay.changesFlow(),
+                // readerHdrDisplay only toggles window COLOR_MODE_HDR — no page restart.
             ).collect {
                 pageLoader.restart()
             }

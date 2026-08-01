@@ -14,17 +14,21 @@ import okio.Path
  * - [GainMap]: Ultra HDR JPEG, ISO 21496-1, gain-map AVIF/HEIC — Android 14+ platform path.
  * - [AbsolutePqHlg]: True PQ/HLG without gain map — convert to Ultra HDR via libultrahdr.
  * - [JpegXr]: Windows HDR screen capture (scRGB float) — convert to Ultra HDR.
+ * - [JpegXl]: JPEG XL (often HDR float / PQ) — convert to Ultra HDR via libjxl.
+ *
+ * [needsConvert] is the single switch for convert + convert-path thumbs (future kinds plug in here).
  */
 enum class HdrKind {
     None,
     GainMap,
     AbsolutePqHlg,
     JpegXr,
+    JpegXl,
     ;
 
-    /** Needs decode → Ultra HDR JPEG before Coil/ImageDecoder. */
+    /** Needs decode → Ultra HDR JPEG before Coil/ImageDecoder / thumb decoder. */
     val needsConvert: Boolean
-        get() = this == AbsolutePqHlg || this == JpegXr
+        get() = this == AbsolutePqHlg || this == JpegXr || this == JpegXl
 }
 
 data class HdrSniffResult(
@@ -33,8 +37,8 @@ data class HdrSniffResult(
     val needsConvert: Boolean get() = kind.needsConvert
 }
 
-/** Extensions that always convert (platform cannot decode). */
-val HDR_ALWAYS_CONVERT_EXTENSIONS = setOf("jxr", "wdp", "hdp")
+/** Extensions that always convert (platform cannot reliably decode, esp. HDR). */
+val HDR_ALWAYS_CONVERT_EXTENSIONS = setOf("jxr", "wdp", "hdp", "jxl")
 
 /** Extensions that may be absolute PQ/HLG or gain-map (sniff after bytes available). */
 val HDR_MAYBE_CONVERT_EXTENSIONS = setOf("avif", "heic", "heif")
@@ -58,6 +62,7 @@ fun isHdrConvertCandidateExtension(ext: String?): Boolean =
 fun classifyHdrByExtension(fileName: String): HdrKind {
     val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase()
     return when {
+        ext == "jxl" -> HdrKind.JpegXl
         isHdrAlwaysConvertExtension(ext) -> HdrKind.JpegXr
         else -> HdrKind.None
     }
@@ -117,8 +122,13 @@ fun sniffHdr(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
 
     val ext = FileUtils.getExtensionFromFilename(fileNameHint)?.lowercase()
 
+    // JPEG XL codestream / container (before generic always-convert).
+    if (isJpegXlMagic(bytes, n) || ext == "jxl") {
+        return HdrSniffResult(HdrKind.JpegXl)
+    }
+
     // JPEG XR: magic or always-convert extension (Windows HDR captures).
-    if (isJpegXrMagic(bytes, n) || isHdrAlwaysConvertExtension(ext)) {
+    if (isJpegXrMagic(bytes, n) || (isHdrAlwaysConvertExtension(ext) && ext != "jxl")) {
         return HdrSniffResult(HdrKind.JpegXr)
     }
 
@@ -171,6 +181,26 @@ private fun isJpegXrMagic(bytes: ByteArray, n: Int): Boolean {
         bytes[1] == 'I'.code.toByte() &&
         (bytes[2].toInt() and 0xff) == 0xbc &&
         (bytes[3].toInt() and 0xff) == 0x01
+}
+
+/** JPEG XL: bare codestream FF 0A, or ISOBMFF container starting with 0x00.. 'JXL '. */
+private fun isJpegXlMagic(bytes: ByteArray, n: Int): Boolean {
+    if (n >= 2 &&
+        (bytes[0].toInt() and 0xff) == 0xff &&
+        (bytes[1].toInt() and 0xff) == 0x0a
+    ) {
+        return true
+    }
+    // Container: ....JXL \0\0\0\x0C ftyp jxl
+    if (n >= 12 &&
+        bytes[4] == 'J'.code.toByte() &&
+        bytes[5] == 'X'.code.toByte() &&
+        bytes[6] == 'L'.code.toByte() &&
+        bytes[7] == ' '.code.toByte()
+    ) {
+        return true
+    }
+    return false
 }
 
 private fun isHeifFamily(bytes: ByteArray, n: Int): Boolean {

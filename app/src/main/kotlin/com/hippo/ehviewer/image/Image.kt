@@ -52,6 +52,7 @@ import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.HdrGainmapConvert
 import com.hippo.ehviewer.image.hdr.HdrKind
 import com.hippo.ehviewer.image.hdr.isHdrAlwaysConvertExtension
+import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
 import com.hippo.ehviewer.image.hdr.sniffHdr
 import com.hippo.ehviewer.image.hdr.sniffHdrPath
 import com.hippo.ehviewer.jni.isGif
@@ -166,7 +167,9 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
         }
 
         /**
-         * Local / archive / SAF paths: convert JPEG XR (and later PQ) to Ultra HDR before Coil.
+         * Local / archive / SAF paths: convert unreadable HDR (JXR / PQ AVIF / JXL / …)
+         * to Ultra HDR before Coil. Runs **regardless** of [Settings.readerHdrDisplay]
+         * (that pref only toggles window COLOR_MODE_HDR).
          * Network loaders already convert at download time.
          *
          * Important: local folders often use content:// Okio paths — never require java.io.File.
@@ -174,11 +177,9 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
         private suspend fun PathSource.maybeConvertHdr(): PathSource {
             val ext = type.lowercase().removePrefix(".")
                 .ifEmpty { FileUtils.getExtensionFromFilename(source.name)?.lowercase().orEmpty() }
-            val always = isHdrAlwaysConvertExtension(ext)
-            if (!always) {
-                // Fast path: only sniff always-convert candidates by ext, or known maybe types.
-                val maybe = ext in setOf("avif", "heic", "heif", "jxr", "wdp", "hdp")
-                if (!maybe) return this
+            // Fast path: skip sniff for extensions that never need convert.
+            if (!isHdrConvertCandidateExtension(ext) && !isHdrAlwaysConvertExtension(ext)) {
+                return this
             }
             val sniff = sniffHdrPath(source, fileNameHint = source.name)
             if (!sniff.needsConvert) return this
@@ -245,17 +246,17 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
             checkExtraneousAds: Boolean,
             forceOriginal: Boolean,
         ): CoilImage {
-            val hdrEnabled = isAtLeastU && Settings.readerHdrDisplay.value
+            // Gain-map / Ultra HDR file path is independent of [Settings.readerHdrDisplay]
+            // (pref only gates window COLOR_MODE_HDR). Always ORIGIN + no crop/QR strip.
             val mode = decodeMode(forceOriginal)
-            // Ultra HDR / gain-map files always decode at original size (simple + correct).
-            val looksHdr = hdrEnabled && sourceLooksLikeHdrGainMap(this)
+            val looksHdr = isAtLeastU && sourceLooksLikeHdrGainMap(this)
             val effectiveMode = if (looksHdr) DecodeSizeType.ORIGIN else mode
-            val hdrSafe = hdrEnabled && (looksHdr || effectiveMode.isOriginal)
+            val hdrSafe = looksHdr
 
             var image = decodeCoilOnce(effectiveMode, checkExtraneousAds, hdrSafe = hdrSafe)
 
             // Sniff miss: platform still attached a gain map after a downscale decode → re-do ORIGIN.
-            if (hdrEnabled && !effectiveMode.isOriginal) {
+            if (isAtLeastU && !effectiveMode.isOriginal) {
                 val bm = image.asBitmapImage()
                 if (bm != null && bm.detectGainmap()) {
                     image.recycleBitmaps()
@@ -273,8 +274,8 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
 
         /**
          * @param forceOriginal if true (page menu "View original"), decode at file resolution;
-         *   otherwise use [Settings.readerDecodeSize] (1.5x…3x or origin). HDR gain-map files
-         *   always use original size when [Settings.readerHdrDisplay] is on.
+         *   otherwise use [Settings.readerDecodeSize] (1.5x…3x or origin). Gain-map Ultra HDR
+         *   files always decode at original size (independent of HDR display pref).
          */
         suspend fun decode(
             src: ImageSource,

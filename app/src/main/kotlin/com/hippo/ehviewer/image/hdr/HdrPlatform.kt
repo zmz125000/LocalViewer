@@ -26,8 +26,9 @@ object HdrPlatform {
     val isApi36HdrExtras: Boolean = Build.VERSION.SDK_INT >= 36
 
     /**
-     * Whether the reader should attempt HDR window color mode for gain-map pages.
-     * Conversion to Ultra HDR still runs for always-convert formats (JXR) so pages open.
+     * Whether the reader should set window [COLOR_MODE_HDR] for gain-map pages.
+     * Convert (JXR / PQ / JXL → Ultra HDR) and gain-map decode always run; this
+     * only gates window presentation / headroom.
      */
     fun shouldEnableWindowHdr(readerHdrDisplayPref: Boolean): Boolean =
         readerHdrDisplayPref && isUltraHdrDisplaySupported

@@ -1,7 +1,7 @@
 package com.hippo.ehviewer.jni
 
 /**
- * Native HDR → Ultra HDR JPEG conversion (libultrahdr + jxrlib).
+ * Native HDR → Ultra HDR JPEG conversion (libultrahdr + jxrlib + libavif + libjxl).
  *
  * @return 0 on success; non-zero error code on failure.
  */
@@ -25,6 +25,17 @@ external fun convertAvifBytesToUltraHdr(input: ByteArray, outputPath: String): I
  * Probe AVIF HDR kind: 0=not avif/error, 1=gain-map, 2=PQ/HLG absolute, 3=other avif.
  */
 external fun probeAvifHdrKind(input: ByteArray): Int
+
+/**
+ * Decode JPEG XL (libjxl) → linear RGB → Ultra HDR JPEG.
+ */
+external fun convertJxlBytesToUltraHdr(input: ByteArray, outputPath: String): Int
+
+/**
+ * Same as [convertJxlBytesToUltraHdr] but scale long edge to [maxEdge] before encode (thumbs).
+ * Pass [maxEdge] ≤ 0 for full resolution.
+ */
+external fun convertJxlBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: String, maxEdge: Int): Int
 
 /**
  * Encode pre-decoded linear RGBA half-float (little-endian IEEE half) as Ultra HDR JPEG.

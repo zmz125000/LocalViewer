@@ -564,7 +564,7 @@
     <string name="pref_reader_hardware_bitmap">硬件位图解码</string>
     <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路径（GPU 位图）。会关闭裁边与二维码广告检测，避免先软件解码再拷贝。</string>
     <string name="pref_reader_hdr_display">HDR 显示（Ultra HDR）</string>
-    <string name="pref_reader_hdr_display_summary">在 HDR 屏幕上为 Ultra HDR / 增益图页面启用窗口 HDR 模式。此类页面始终按原图像素解码。</string>
+    <string name="pref_reader_hdr_display_summary">在 HDR 屏幕上为 Ultra HDR / 增益图页面启用窗口 HDR 色彩模式。HDR 文件的转换与解码始终进行；关闭后仅以 SDR 基底显示。</string>
     <string name="pref_custom_brightness">自定义亮度</string>
     <string name="pref_custom_color_filter">自定义滤镜</string>
     <string name="pref_keep_screen_on">保持屏幕常亮</string>

@@ -248,10 +248,12 @@ object Settings : DataStorePreferences(null) {
      */
     val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", true)
     /**
-     * When a composed reader page has a gain map and the display supports HDR,
-     * set [android.view.Window.setColorMode] to [android.content.pm.ActivityInfo.COLOR_MODE_HDR]
-     * for the compose window (visible ± prefetch), not only the focused page.
-     * Ultra HDR pages always decode at original size.
+     * Window HDR presentation only: when a composed page has a gain map and the
+     * display supports HDR, set [android.view.Window.setColorMode] to
+     * [android.content.pm.ActivityInfo.COLOR_MODE_HDR].
+     *
+     * Does **not** disable convert (JXR/PQ/JXL → Ultra HDR) or gain-map decode —
+     * those always run so files open; off = SDR base presentation without window HDR.
      */
     val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)
     val fullscreen = boolPref("fullscreen", true)

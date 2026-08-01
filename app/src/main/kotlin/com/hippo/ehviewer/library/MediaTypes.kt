@@ -12,6 +12,7 @@ import com.hippo.ehviewer.util.FileUtils
  * - Gain-map JPEG/AVIF/HEIC: Android 14+ platform decode (class A).
  * - JPEG XR (`jxr`/`wdp`/`hdp`): convert to Ultra HDR JPEG before Coil (class C).
  * - Absolute PQ/HLG AVIF/HEIC: convert path (class B) when sniff detects CICP.
+ * - JPEG XL (`jxl`): convert to Ultra HDR via libjxl (class C).
  */
 val IMAGE_EXTENSIONS = setOf(
     // JPEG (+ common aliases)
@@ -25,6 +26,8 @@ val IMAGE_EXTENSIONS = setOf(
     "svg", "svgz",
     // JPEG XR (Windows HDR screen capture) — converted to Ultra HDR before decode
     "jxr", "wdp", "hdp",
+    // JPEG XL — converted to Ultra HDR before decode
+    "jxl",
 )
 
 val ARCHIVE_EXTENSIONS = setOf(
