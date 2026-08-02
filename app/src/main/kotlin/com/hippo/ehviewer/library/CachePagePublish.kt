@@ -186,8 +186,8 @@ object CachePagePublish {
                     header[10] == 'B'.code.toByte() && header[11] == 'P'.code.toByte()
             "bmp" ->
                 header[0] == 'B'.code.toByte() && header[1] == 'M'.code.toByte()
-            "avif", "heic", "heif" ->
-                // ftyp box — offset 4
+            "avif", "heic", "heif", "heics", "heifs", "hif" ->
+                // ISOBMFF ftyp box — offset 4 (AVIF + HEIC/HEIF family)
                 n >= 12 && header[4] == 'f'.code.toByte() && header[5] == 't'.code.toByte() &&
                     header[6] == 'y'.code.toByte() && header[7] == 'p'.code.toByte()
             "jxr", "wdp", "hdp" ->

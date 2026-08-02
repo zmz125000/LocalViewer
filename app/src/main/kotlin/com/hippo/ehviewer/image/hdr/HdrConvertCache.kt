@@ -29,9 +29,11 @@ import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
 
 /**
- * Converts absolute HDR / JPEG XR / JPEG XL sources to Ultra HDR JPEG and stores
- * results under origin-cache roots. Also builds convert-path **thumbs** for any
+ * Converts absolute HDR / JPEG XR / JPEG XL / PQ-AVIF sources to Ultra HDR JPEG and
+ * stores results under origin-cache roots. Also builds convert-path **thumbs** for any
  * [HdrKind.needsConvert] format (present and future).
+ *
+ * **HEIC/HEIF** (HEVC): not converted here — Coil/ImageDecoder on API 31+ (Aves-style).
  *
  * **Network:** prefer [uhdrSiblingOf] next to the download path; originals for
  * always-convert types are never kept. **Local:** non-destructive derived store
@@ -349,6 +351,12 @@ object HdrConvertCache {
         if (bytes == null || bytes.isEmpty()) {
             error("AVIF source unreadable: ${source.name}")
         }
+        // HEIC/HEIF (HEVC) must not go through libavif — platform ImageDecoder only.
+        val ext = source.name.substringAfterLast('.', "").lowercase()
+        if (isHeicImageExtension(ext)) {
+            Log.i(TAG, "HEIC/HEIF → platform path (not libavif): ${source.name}")
+            return source
+        }
         // If native probe says gain-map, leave for platform ImageDecoder.
         when (probeAvifHdrKind(bytes)) {
             1 -> {
@@ -360,11 +368,14 @@ object HdrConvertCache {
             }
         }
         if (convertAvifBytes(bytes, destFile)) return dest
-        error("AVIF PQ/HLG → Ultra HDR convert failed: ${source.name}")
+        // libavif failed (often mis-sniffed HEIC): fall back to original for Coil/ImageDecoder.
+        Log.w(TAG, "AVIF PQ convert failed, platform fallback: ${source.name}")
+        return source
     }
 
     suspend fun convertAvifFile(input: File, output: File): Boolean = withContext(Dispatchers.IO) {
         if (output.isFile && output.length() > 0L) return@withContext true
+        if (isHeicImageExtension(input.extension)) return@withContext false
         val bytes = runCatching { input.readBytes() }.getOrNull() ?: return@withContext false
         when (probeAvifHdrKind(bytes)) {
             1 -> return@withContext false // gain-map: keep original for platform

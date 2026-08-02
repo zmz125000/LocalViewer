@@ -10,9 +10,11 @@ import okio.Path
 /**
  * HDR taxonomy for the reader pipeline.
  *
- * - [None]: SDR / unknown — decode as usual.
+ * - [None]: SDR / unknown — decode as usual (includes **HEIC/HEIF** on API 31+ platform
+ *   ImageDecoder — same approach as Aves; do **not** route HEVC-HEIC through libavif).
  * - [GainMap]: Ultra HDR JPEG, ISO 21496-1, gain-map AVIF/HEIC — Android 14+ platform path.
- * - [AbsolutePqHlg]: True PQ/HLG without gain map — convert to Ultra HDR via libultrahdr.
+ * - [AbsolutePqHlg]: True PQ/HLG **AVIF** without gain map — convert via libavif → Ultra HDR.
+ *   HEIC with PQ CICP stays [None] (platform); libavif cannot decode HEVC.
  * - [JpegXr]: Windows HDR screen capture (scRGB float) — convert to Ultra HDR.
  * - [JpegXl]: JPEG XL (often HDR float / PQ) — convert to Ultra HDR via libjxl.
  *
@@ -40,8 +42,19 @@ data class HdrSniffResult(
 /** Extensions that always convert (platform cannot reliably decode, esp. HDR). */
 val HDR_ALWAYS_CONVERT_EXTENSIONS = setOf("jxr", "wdp", "hdp", "jxl")
 
+/**
+ * HEIC/HEIF stills (HEVC in ISOBMFF). Platform ImageDecoder on minSdk 31+ (Aves-style).
+ * Also listed under [HDR_MAYBE_CONVERT_EXTENSIONS] so we sniff gain-map / ftyp brands.
+ */
+val HEIC_IMAGE_EXTENSIONS = setOf("heic", "heif", "heics", "heifs", "hif")
+
 /** Extensions that may be absolute PQ/HLG or gain-map (sniff after bytes available). */
-val HDR_MAYBE_CONVERT_EXTENSIONS = setOf("avif", "heic", "heif")
+val HDR_MAYBE_CONVERT_EXTENSIONS = setOf("avif") + HEIC_IMAGE_EXTENSIONS
+
+fun isHeicImageExtension(ext: String?): Boolean {
+    val e = ext?.lowercase()?.removePrefix(".") ?: return false
+    return e in HEIC_IMAGE_EXTENSIONS
+}
 
 fun isHdrAlwaysConvertExtension(ext: String?): Boolean {
     val e = ext?.lowercase()?.removePrefix(".") ?: return false
@@ -135,7 +148,7 @@ fun sniffHdr(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
     }
 
     // Gain-map markers (Ultra HDR / ISO 21496 / Apple XMP / HEIF tmap) — class A, no convert.
-    // Android 14+ ImageDecoder attaches Gainmap for these AVIFs (platform path).
+    // Android 14+ ImageDecoder attaches Gainmap for AVIF and many HEIC (platform path).
     if (bytes.containsAscii("GainMap", n) ||
         bytes.containsAscii("hdrgm", n) ||
         bytes.containsAscii("HDRGainMap", n) ||
@@ -145,18 +158,31 @@ fun sniffHdr(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
         return HdrSniffResult(HdrKind.GainMap)
     }
 
-    // Absolute PQ/HLG in HEIF/AVIF: CICP transfer 16 (PQ) or 18 (HLG) without gain map.
-    // Convert via libavif → Ultra HDR JPEG.
+    // Absolute PQ/HLG: only **AVIF** (AV1) goes through libavif convert.
+    // HEIC/HEIF (HEVC) must stay on platform ImageDecoder — libavif cannot decode them
+    // (same split Aves relies on for reliable HEIC open).
     if (isHeifFamily(bytes, n) && hasAbsoluteHdrCicp(bytes, n)) {
-        return HdrSniffResult(HdrKind.AbsolutePqHlg)
+        return if (isAvifBrand(bytes, n)) {
+            HdrSniffResult(HdrKind.AbsolutePqHlg)
+        } else {
+            // HEIC/HEIF PQ/HLG or unknown ISOBMFF still — platform decode.
+            HdrSniffResult(HdrKind.None)
+        }
     }
 
-    // Named gain-map samples without ASCII (fallback): if ftyp avif and filename hints gainmap.
-    if (ext == "avif" && fileNameHint != null) {
+    // Named gain-map samples without ASCII (fallback).
+    if (fileNameHint != null) {
         val lower = fileNameHint.lowercase()
         if (lower.contains("gainmap") || lower.contains("gain_map")) {
-            return HdrSniffResult(HdrKind.GainMap)
+            if (ext == "avif" || isHeicImageExtension(ext) || isHeifFamily(bytes, n)) {
+                return HdrSniffResult(HdrKind.GainMap)
+            }
         }
+    }
+
+    // Explicit HEIC/HEIF by extension or brand → platform (None); listed as images elsewhere.
+    if (isHeicImageExtension(ext) || (isHeifFamily(bytes, n) && isHeicBrand(bytes, n))) {
+        return HdrSniffResult(HdrKind.None)
     }
 
     return HdrSniffResult(HdrKind.None)
@@ -212,6 +238,61 @@ private fun isHeifFamily(bytes: ByteArray, n: Int): Boolean {
         bytes[5] == 't'.code.toByte() &&
         bytes[6] == 'y'.code.toByte() &&
         bytes[7] == 'p'.code.toByte()
+}
+
+/** True if ftyp major or compatible brand is AVIF (AV1-in-HEIF). */
+private fun isAvifBrand(bytes: ByteArray, n: Int): Boolean =
+    heifFtypHasBrand(bytes, n, "avif") || heifFtypHasBrand(bytes, n, "avis")
+
+/**
+ * True if ftyp looks like HEIC/HEIF (HEVC still), not AVIF.
+ * Brands: heic, heix, hevc, hevx, mif1, msf1, heif, heim, heis, …
+ */
+private fun isHeicBrand(bytes: ByteArray, n: Int): Boolean {
+    if (!isHeifFamily(bytes, n)) return false
+    if (isAvifBrand(bytes, n)) return false
+    return heifFtypHasBrand(bytes, n, "heic") ||
+        heifFtypHasBrand(bytes, n, "heix") ||
+        heifFtypHasBrand(bytes, n, "hevc") ||
+        heifFtypHasBrand(bytes, n, "hevx") ||
+        heifFtypHasBrand(bytes, n, "heim") ||
+        heifFtypHasBrand(bytes, n, "heis") ||
+        heifFtypHasBrand(bytes, n, "hevm") ||
+        heifFtypHasBrand(bytes, n, "hevs") ||
+        heifFtypHasBrand(bytes, n, "mif1") ||
+        heifFtypHasBrand(bytes, n, "msf1") ||
+        heifFtypHasBrand(bytes, n, "heif")
+}
+
+/** Scan ISOBMFF ftyp box (and a small header window) for a 4-char brand. */
+private fun heifFtypHasBrand(bytes: ByteArray, n: Int, brand: String): Boolean {
+    if (brand.length != 4 || n < 12) return false
+    val b0 = brand[0].code.toByte()
+    val b1 = brand[1].code.toByte()
+    val b2 = brand[2].code.toByte()
+    val b3 = brand[3].code.toByte()
+    // Major brand at offset 8; compatible brands from 16 in steps of 4 (within ftyp size).
+    val ftypSize = if (n >= 8) {
+        ((bytes[0].toInt() and 0xff) shl 24) or
+            ((bytes[1].toInt() and 0xff) shl 16) or
+            ((bytes[2].toInt() and 0xff) shl 8) or
+            (bytes[3].toInt() and 0xff)
+    } else {
+        0
+    }
+    val end = when {
+        ftypSize in 16..n -> ftypSize
+        else -> minOf(n, 256)
+    }
+    var i = 8
+    while (i + 4 <= end) {
+        if (bytes[i] == b0 && bytes[i + 1] == b1 && bytes[i + 2] == b2 && bytes[i + 3] == b3) {
+            return true
+        }
+        i += 4
+    }
+    // Loose fallback in first 256 bytes (some files have multiple ftyp-like chunks).
+    return bytes.containsAscii(brand, minOf(n, 256))
 }
 
 /**

@@ -971,10 +971,10 @@ static void stream_bridge_clear(JNIEnv *env) {
     tar_walk_reset();
 }
 
-/* Keep in sync with IMAGE_EXTENSIONS in MediaTypes.kt (max 4-char ext). */
-#define SUPPORT_EXT_COUNT 19
+/* Keep in sync with IMAGE_EXTENSIONS in MediaTypes.kt (room for heics/heifs). */
+#define SUPPORT_EXT_COUNT 22
 
-const char supportExt[SUPPORT_EXT_COUNT][5] = {
+const char supportExt[SUPPORT_EXT_COUNT][8] = {
         "jpeg",
         "jpg",
         "jpe",
@@ -987,6 +987,9 @@ const char supportExt[SUPPORT_EXT_COUNT][5] = {
         "wbmp",
         "heic",
         "heif",
+        "heics",
+        "heifs",
+        "hif",
         "avif",
         "svg",
         "svgz",

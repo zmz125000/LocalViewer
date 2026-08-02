@@ -324,8 +324,8 @@ if (EHVIEWER_HDR_CODECS)
     )
     FetchContent_MakeAvailable(libjxl)
 
+    # HEIC/HEIF: platform ImageDecoder (minSdk 31), not a native codec here — see HdrKind.
     set(EHVIEWER_HDR_SOURCES hdr_convert.cpp avif_hdr.cpp jxl_hdr.cpp)
-    # Future: heic_hdr.cpp when added — keep under this same EHVIEWER_HDR_CODECS block.
 
     if (TARGET uhdr)
         list(APPEND EHVIEWER_HDR_LIBS uhdr)
