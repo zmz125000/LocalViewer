@@ -88,16 +88,18 @@ fun sniffHdr(
 }
 
 /**
- * Sniff any Okio path (physical or SAF content://). Extension alone is enough for JXR.
+ * Sniff any Okio path (physical or SAF content://).
+ * Always-convert extensions (JXR / JXL) can be classified by name without I/O;
+ * do **not** map every always-convert ext to [HdrKind.JpegXr] (that broke `.jxl`).
  */
 fun sniffHdrPath(path: Path, fileNameHint: String? = null, maxBytes: Int = HDR_SNIFF_BYTES): HdrSniffResult {
     val hint = fileNameHint ?: path.name
-    // Always-convert by extension without I/O (JXR cannot be platform-decoded).
-    val ext = FileUtils.getExtensionFromFilename(hint)?.lowercase()
-        ?: FileUtils.getExtensionFromFilename(path.name)?.lowercase()
-    if (isHdrAlwaysConvertExtension(ext)) {
-        return HdrSniffResult(HdrKind.JpegXr)
+    // Extension-only fast path: JXR/JXL (and future always-convert) via classifyHdrByExtension.
+    val byExt = classifyHdrByExtension(hint)
+    if (byExt.needsConvert) {
+        return HdrSniffResult(byExt)
     }
+    // Maybe-convert (AVIF/HEIC/…) need header bytes for PQ vs gain-map vs SDR.
     return runCatching {
         path.read {
             val bytes = ByteArray(maxBytes)
