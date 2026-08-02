@@ -3,6 +3,9 @@ package com.hippo.ehviewer.jni
 /**
  * Native HDR → Ultra HDR JPEG conversion (libultrahdr + jxrlib + libavif + libjxl).
  *
+ * Linked only for **arm64-v8a** and **x86_64** ([EHVIEWER_HDR_CODECS] in CMake).
+ * On armeabi-v7a the same JNI symbols are stubs and return -100 (unsupported ABI).
+ *
  * @return 0 on success; non-zero error code on failure.
  */
 external fun convertJxrToUltraHdr(inputPath: String, outputPath: String): Int
