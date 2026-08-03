@@ -4,6 +4,7 @@ import android.app.Activity
 import android.os.Build
 import android.view.Display
 import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
 import com.ehviewer.core.util.isAtLeastU
 
 /**
@@ -37,7 +38,7 @@ object HdrDisplayInfo {
     fun Activity.maxDisplayBoost(): Float = maxDisplayBoost(displayOrNull())
 
     private fun Activity.displayOrNull(): Display? =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else windowManager.defaultDisplay
+        ContextCompat.getDisplayOrDefault(this)
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     private fun liveHdrSdrRatio(display: Display): Float? {

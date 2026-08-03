@@ -14,6 +14,9 @@ plugins {
     alias(libs.plugins.baselineprofile)
 }
 
+// App ships all three ABIs in release; HDR *convert codecs* (jxr/avif/jxl/uhdr)
+// are only compiled into arm64-v8a + x86_64 (see CMake EHVIEWER_HDR_CODECS).
+// armeabi-v7a still gets libehviewer.so (archive/rust) with HDR JNI stubs.
 val supportedAbis = arrayOf("arm64-v8a", "x86_64", "armeabi-v7a")
 
 // GitHub release APKs: LocalViewer-<tag>-{default|easytier}-<abi>.apk
@@ -74,9 +77,9 @@ android {
         applicationId = "moe.tarsin.localviewer"
         versionCode = 38
         versionName = if (snapshot) {
-            "1.8.1-SNAPSHOT"
+            "1.8.3-SNAPSHOT"
         } else {
-            "1.8.1"
+            "1.8.3"
         }
         buildConfigField("boolean", "SNAPSHOT", "$snapshot")
         buildConfigField("String", "RAW_VERSION_NAME", "\"$versionName\"")

@@ -23,9 +23,7 @@ internal fun KotlinCommonCompilerOptions.configureKotlin(includeKotlinX: Boolean
     }
     freeCompilerArgs.addAll(
         "-Xcollection-literals",
-        "-Xcontext-parameters",
         "-Xwhen-expressions=indy",
-        "-Xannotation-default-target=param-property",
     )
 }
 

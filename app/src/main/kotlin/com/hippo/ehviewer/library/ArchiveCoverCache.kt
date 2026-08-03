@@ -7,6 +7,8 @@ import android.os.ParcelFileDescriptor
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
 import com.hippo.ehviewer.jni.closeArchive
 import com.hippo.ehviewer.jni.extractToByteBuffer
 import com.hippo.ehviewer.jni.needPassword
@@ -21,6 +23,7 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import okio.Path
@@ -187,6 +190,7 @@ object ArchiveCoverCache {
             File(dest.parent!!.toString()).mkdirs()
             val jpgTmp = File("${dest}.jpg.${System.nanoTime()}")
             try {
+                // Convert-path formats (JXR/JXL/PQ/…) → ensureThumb then copy; else ImageDecoder subsample.
                 writeSubsampledJpeg(src, jpgTmp, THUMB_EDGE, THUMB_JPEG_QUALITY)
                 val destFile = File(dest.toString())
                 if (!jpgTmp.renameTo(destFile)) {
@@ -520,6 +524,20 @@ object ArchiveCoverCache {
     }
 
     private fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {
+        // Formats Coil/ImageDecoder cannot open: convert-path thumb (JXR/JXL/PQ/future).
+        val ext = source.extension.lowercase()
+        if (isHdrConvertCandidateExtension(ext)) {
+            val thumb = runBlocking {
+                HdrConvertCache.ensureThumb(source.toOkioPath(), source.name, maxEdge)
+            }
+            if (thumb != null) {
+                val t = File(thumb.toString())
+                if (t.isFile && t.length() > 0L) {
+                    t.copyTo(destJpeg, overwrite = true)
+                    return
+                }
+            }
+        }
         val decoded = ImageDecoder.decodeBitmap(ImageDecoder.createSource(source)) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             val w = info.size.width

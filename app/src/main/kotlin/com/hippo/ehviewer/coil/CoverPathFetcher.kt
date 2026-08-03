@@ -13,6 +13,9 @@ import coil3.key.Keyer
 import coil3.request.Options
 import coil3.toUri as toCoilUri
 import com.ehviewer.core.files.toUri
+import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
+import com.hippo.ehviewer.util.FileUtils
 import okio.Path.Companion.toPath
 import okio.buffer
 import okio.source
@@ -27,14 +30,26 @@ data class CoverPath(val path: String)
  * Fetches cover bytes for SAF / file / MediaStore virtual paths.
  * [CoverPath.path] is the stable cache identity; Android [android.net.Uri] is only
  * resolved when Coil actually needs to open the file (background).
+ *
+ * Convert-path HDR covers (JXR / PQ AVIF / JXL / future [HdrKind.needsConvert]):
+ * routes through [HdrConvertCache.ensureThumb] so Coil always opens a platform JPEG.
  */
 class CoverPathFetcher(
     private val data: CoverPath,
     private val options: Options,
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
+        val path = data.path.toPath()
+        // Only pay convert/sniff cost for known convert-candidate extensions.
+        val ext = FileUtils.getExtensionFromFilename(path.name)?.lowercase()
+        val openPath = if (isHdrConvertCandidateExtension(ext)) {
+            HdrConvertCache.ensureThumb(path) ?: path
+        } else {
+            path
+        }
+
         // Path.toUri() may ContentResolver.query for mediastore: — safe here (fetcher thread).
-        val androidUri = data.path.toPath().toUri()
+        val androidUri = openPath.toUri()
         val contentResolver = options.context.contentResolver
         val afd = when (androidUri.scheme) {
             ContentResolver.SCHEME_CONTENT, ContentResolver.SCHEME_ANDROID_RESOURCE ->
@@ -53,7 +68,7 @@ class CoverPathFetcher(
                 fileSystem = options.fileSystem,
                 metadata = ContentMetadata(coilUri, afd),
             ),
-            mimeType = contentResolver.getType(androidUri),
+            mimeType = contentResolver.getType(androidUri) ?: "image/jpeg",
             dataSource = DataSource.DISK,
         )
     }

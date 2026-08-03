@@ -695,7 +695,7 @@
     <string name="pref_reader_hardware_bitmap">Hardware bitmap decode</string>
     <string name="pref_reader_hardware_bitmap_summary">Faster Coil path (GPU bitmaps). Disables crop borders and QR ad detection to avoid a software copy.</string>
     <string name="pref_reader_hdr_display">HDR display support</string>
-    <string name="pref_reader_hdr_display_summary">On HDR screens, enable window HDR mode for Ultra HDR / gain-map pages. Those pages always decode at original size.</string>
+    <string name="pref_reader_hdr_display_summary">On HDR screens, enable window HDR color mode for Ultra HDR / gain-map pages. Conversion and decoding of HDR files always run; turn off to present the SDR base only.</string>
     <string name="pref_custom_brightness">Custom brightness</string>
     <string name="pref_grayscale">Grayscale</string>
     <string name="pref_inverted_colors">Inverted</string>

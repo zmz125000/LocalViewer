@@ -350,13 +350,15 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 cropBorder.changesFlow(),
                 stripExtraneousAds.changesFlow(),
                 readerHardwareBitmap.changesFlow(),
-                readerHdrDisplay.changesFlow(),
+                // readerHdrDisplay only toggles window COLOR_MODE_HDR — no page restart.
             ).collect {
                 pageLoader.restart()
             }
         }
     }
-    // Ultra HDR: toggle window COLOR_MODE_HDR for the current page only (Aves #838).
+    // Ultra HDR: COLOR_MODE_HDR for the composed page window (not only the current page).
+    // Pager uses beyondViewportPageCount=1; webtoon uses visible items ±1. Mixed SDR/HDR
+    // in that range must not flip the window mode per page (brightness thrash).
     val hdrDisplayEnabled by Settings.readerHdrDisplay.collectAsState()
     DisposableEffect(activity) {
         onDispose { activity.setHdrColorMode(false) }
@@ -393,20 +395,62 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
             activity.setHdrColorMode(false)
             return@LaunchedEffect
         }
-        // sliderValue is snapshot state; page status is a Flow — nest collectLatest.
-        snapshotFlow { syncState.sliderValue to pageLoader.size }.collectLatest { (page1, size) ->
-            val idx = (page1 - 1).coerceIn(0, (size - 1).coerceAtLeast(0))
-            val page = pageLoader.pages.getOrNull(idx)
-            if (page == null) {
+        // Compose range from layout (pager beyondViewport / list visible) with ±1 fallback.
+        // Status is Flow-backed — nest collectLatest and re-scan Ready gain maps in range.
+        snapshotFlow {
+            val size = pageLoader.size
+            if (size <= 0) return@snapshotFlow IntRange.EMPTY
+            val last = size - 1
+            fun around(center: Int): IntRange {
+                val c = center.coerceIn(0, last)
+                return (c - 1).coerceAtLeast(0)..(c + 1).coerceAtMost(last)
+            }
+            if (isWebtoon) {
+                val items = lazyListState.layoutInfo.visibleItemsInfo
+                if (items.isEmpty()) {
+                    around(syncState.sliderValue - 1)
+                } else {
+                    // Prefetch / cache window may keep neighbors composed — keep ±1.
+                    val first = items.first().index
+                    val end = items.last().index
+                    (first - 1).coerceAtLeast(0)..(end + 1).coerceAtMost(last)
+                }
+            } else {
+                val pages = pagerState.layoutInfo.visiblePagesInfo
+                if (pages.isEmpty()) {
+                    around(pagerState.currentPage)
+                } else {
+                    // visiblePagesInfo already includes beyondViewportPageCount (=1).
+                    pages.first().index..pages.last().index
+                }
+            }
+        }.collectLatest { range ->
+            if (range.isEmpty()) {
                 activity.setHdrColorMode(false)
                 return@collectLatest
             }
-            page.statusFlow.collect { status ->
-                val ready = status as? PageStatus.Ready
-                val img = ready?.image
-                val hdr = img?.hasGainmap == true
-                // contentBoost from gain map (encode metadata); panel boost applied inside HdrWindow.
-                activity.setHdrColorMode(hdr, contentBoost = img?.contentHdrBoost ?: 1f)
+            val statusFlows = range.mapNotNull { idx ->
+                pageLoader.pages.getOrNull(idx)?.statusFlow
+            }
+            if (statusFlows.isEmpty()) {
+                activity.setHdrColorMode(false)
+                return@collectLatest
+            }
+            // Any status emission in the window → re-evaluate whether HDR stays on.
+            statusFlows.merge().collect {
+                var anyHdr = false
+                var maxBoost = 1f
+                for (idx in range) {
+                    val img = (pageLoader.pages.getOrNull(idx)?.status as? PageStatus.Ready)
+                        ?.image
+                        ?: continue
+                    if (img.hasGainmap) {
+                        anyHdr = true
+                        maxBoost = maxOf(maxBoost, img.contentHdrBoost)
+                    }
+                }
+                // Keep COLOR_MODE_HDR while any gain-map page is still composed.
+                activity.setHdrColorMode(anyHdr, contentBoost = maxBoost)
             }
         }
     }
@@ -580,7 +624,6 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                                 is ReaderScreenArgs.Archive -> {
                                     LocalHistory.recordLocalArchive(s.path)
                                 }
-                                else -> Unit
                             }
                         }
                     }

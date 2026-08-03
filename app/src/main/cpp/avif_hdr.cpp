@@ -2,8 +2,10 @@
  * AVIF still decode via libavif → Ultra HDR JPEG (libultrahdr).
  *
  * - Gain-map AVIF: prefer Android 14+ ImageDecoder (Kotlin); not re-encoded here.
- * - Absolute PQ/HLG AVIF: decode with libavif, linearize to scRGB half-float,
- *   encode content-matched Ultra HDR JPEG.
+ * - Absolute PQ/HLG AVIF: decode with libavif, linearize in **source primaries**,
+ *   encode content-matched Ultra HDR JPEG tagged with matching libultrahdr gamut
+ *   (BT.2100 / Display P3 / BT.709). Do not force BT.709 clip when the format can
+ *   carry the source gamut.
  *
  * JNI: com.hippo.ehviewer.jni.HdrConvertKt.convertAvifBytesToUltraHdr
  */
@@ -17,6 +19,7 @@
 
 #include "avif/avif.h"
 #include "hdr_encode.h"
+#include "ultrahdr_api.h"
 
 #define LOG_TAG "AvifHdr"
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -80,7 +83,7 @@ float hlg_inv_oetf(float x) {
     return (std::exp((x - c) / a) + b) / 12.f;
 }
 
-// BT.2020 → BT.709 linear matrix (approx, same as many HDR pipelines).
+// BT.2020 → BT.709 linear matrix (fallback only when we cannot tag source gamut).
 void bt2020_to_bt709(float& r, float& g, float& b) {
     const float rr = 1.6605f * r - 0.5876f * g - 0.0728f * b;
     const float gg = -0.1246f * r + 1.1329f * g - 0.0083f * b;
@@ -91,14 +94,41 @@ void bt2020_to_bt709(float& r, float& g, float& b) {
 }
 
 /**
- * Decode AVIF → linear scRGB RGBA half (1.0 = SDR white / 203 nits for PQ).
+ * Map AVIF CICP primaries (+ transfer) → libultrahdr gamut tag.
+ * Values and tags must stay consistent: if we keep BT.2020 RGB, tag BT_2100.
+ */
+uhdr_color_gamut_t map_avif_primaries_to_uhdr_cg(avifColorPrimaries primaries,
+                                                   bool is_pq_or_hlg) {
+    switch (primaries) {
+        case AVIF_COLOR_PRIMARIES_BT2020:
+            return UHDR_CG_BT_2100;
+        case AVIF_COLOR_PRIMARIES_SMPTE432:  // Display P3 (D65)
+            return UHDR_CG_DISPLAY_P3;
+        case AVIF_COLOR_PRIMARIES_SMPTE431:  // DCI-P3 — closest Ultra HDR tag is Display P3
+            return UHDR_CG_DISPLAY_P3;
+        case AVIF_COLOR_PRIMARIES_BT709:
+            return UHDR_CG_BT_709;
+        default:
+            // PQ/HLG with unspecified/unknown primaries: industry default is BT.2020.
+            if (is_pq_or_hlg) return UHDR_CG_BT_2100;
+            return UHDR_CG_BT_709;
+    }
+}
+
+/**
+ * Decode AVIF → linear RGBA half in source (or fallback BT.709) primaries.
+ * 1.0 = SDR white / 203 nits for PQ.
+ *
+ * @param out_cg libultrahdr gamut matching out_rgba (required for accurate encode).
  * @return 0 OK, non-zero on failure. Sets out_has_gainmap if libavif reports a gain map.
  */
 int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
                               unsigned& w, unsigned& h, int* out_has_gainmap,
-                              int* out_transfer /* 16=PQ, 18=HLG, else other */) {
+                              int* out_transfer /* 16=PQ, 18=HLG, else other */,
+                              uhdr_color_gamut_t* out_cg) {
     if (out_has_gainmap) *out_has_gainmap = 0;
     if (out_transfer) *out_transfer = 0;
+    if (out_cg) *out_cg = UHDR_CG_BT_709;
     if (!data || len == 0) return -1;
 
     avifDecoder* dec = avifDecoderCreate();
@@ -148,7 +178,14 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
     if (out_transfer) *out_transfer = static_cast<int>(tc);
     const bool is_pq = (tc == AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084);
     const bool is_hlg = (tc == AVIF_TRANSFER_CHARACTERISTICS_HLG);
-    const bool is_bt2020 = (image->colorPrimaries == AVIF_COLOR_PRIMARIES_BT2020);
+    const avifColorPrimaries primaries = image->colorPrimaries;
+    const bool is_bt2020 = (primaries == AVIF_COLOR_PRIMARIES_BT2020);
+
+    // Preserve source gamut when libultrahdr can tag it (accuracy-first).
+    // Policy B (convert → BT.709) only if we ever tag 709 while source was BT.2020.
+    uhdr_color_gamut_t cg = map_avif_primaries_to_uhdr_cg(primaries, is_pq || is_hlg);
+    const bool need_bt2020_to_709 = (cg == UHDR_CG_BT_709 && is_bt2020);
+    if (out_cg) *out_cg = cg;
 
     avifRGBImage rgb;
     memset(&rgb, 0, sizeof(rgb));
@@ -180,7 +217,7 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
         const uint16_t* row = reinterpret_cast<const uint16_t*>(row_base + static_cast<size_t>(y) * row_bytes);
         for (unsigned x = 0; x < w; x++) {
             const uint16_t* p = row + x * 4;
-            // 16-bit full range normalized
+            // 16-bit full range normalized (transfer-encoded if PQ/HLG)
             float rn = p[0] / 65535.f;
             float gn = p[1] / 65535.f;
             float bn = p[2] / 65535.f;
@@ -188,7 +225,7 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
 
             float rl, gl, bl;
             if (is_pq) {
-                // PQ code → nits → scRGB relative to 203 nits SDR white.
+                // PQ code → nits → linear relative to 203 nits SDR white (source primaries).
                 rl = pq_eotf(rn) / 203.f;
                 gl = pq_eotf(gn) / 203.f;
                 bl = pq_eotf(bn) / 203.f;
@@ -198,17 +235,19 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
                 gl = hlg_inv_oetf(gn) * 12.f;
                 bl = hlg_inv_oetf(bn) * 12.f;
             } else {
-                // Already roughly display-linear / gamma — treat as linear scRGB.
+                // Already roughly display-linear / gamma — treat as linear in declared primaries.
                 rl = rn;
                 gl = gn;
                 bl = bn;
             }
 
-            if (is_bt2020 || is_pq || is_hlg) {
+            // Policy B only: values must match the BT.709 tag. Preserve path never rematrixes.
+            if (need_bt2020_to_709) {
                 bt2020_to_bt709(rl, gl, bl);
             }
 
             // Clamp huge values for half float range; keep HDR headroom.
+            // Preserve path keeps wide-gamut positives; rematrix negatives are floored.
             auto clamp_hf = [](float v) {
                 if (!std::isfinite(v) || v < 0.f) return 0.f;
                 if (v > 64.f) return 64.f;
@@ -228,8 +267,9 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
         }
     }
 
-    ALOGI("AVIF %ux%u tc=%d pq=%d hlg=%d bt2020=%d gainmap=%d", w, h, (int)tc, is_pq ? 1 : 0,
-          is_hlg ? 1 : 0, is_bt2020 ? 1 : 0, out_has_gainmap ? *out_has_gainmap : 0);
+    ALOGI("AVIF %ux%u tc=%d primaries=%d pq=%d hlg=%d cg=%d rematrix709=%d gainmap=%d", w, h,
+          (int)tc, (int)primaries, is_pq ? 1 : 0, is_hlg ? 1 : 0, (int)cg,
+          need_bt2020_to_709 ? 1 : 0, out_has_gainmap ? *out_has_gainmap : 0);
 
     avifRGBImageFreePixels(&rgb);
     avifDecoderDestroy(dec);
@@ -257,8 +297,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdr(JNIEnv* env,
     unsigned w = 0, h = 0;
     int has_gm = 0;
     int transfer = 0;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     int rc = decode_avif_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
-                                       static_cast<size_t>(len), rgba, w, h, &has_gm, &transfer);
+                                       static_cast<size_t>(len), rgba, w, h, &has_gm, &transfer,
+                                       &cg);
     if (rc != 0) {
         ALOGE("AVIF decode failed rc=%d", rc);
         env->ReleaseStringUTFChars(jOutput, out_path);
@@ -270,7 +312,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdr(JNIEnv* env,
         ALOGI("AVIF has embedded gain map — encoding linearized base to Ultra HDR JPEG");
     }
 
-    rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path);
+    rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg);
     env->ReleaseStringUTFChars(jOutput, out_path);
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return rc;

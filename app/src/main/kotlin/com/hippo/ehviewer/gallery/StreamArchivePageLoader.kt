@@ -161,10 +161,9 @@ suspend inline fun <T> useStreamArchivePageLoader(
                 ArchiveCoverCache.writeCoverFromOpenArchive(cacheKey, 0L, archiveSizeBytes)
             }.onFailure { logcat(it) }
 
-            val format = when {
-                diskIndex?.format == "zip" || diskIndex?.format == "tar" -> diskIndex!!.format
-                isStreamTarIndex() -> "tar"
-                else -> "zip"
+            val format = when (val fmt = diskIndex?.format) {
+                "zip", "tar" -> fmt
+                else -> if (isStreamTarIndex()) "tar" else "zip"
             }
             // Progressive TAR: optionally advance walk until resume page is listed.
             var listedCount = pageCount
@@ -266,7 +265,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     override fun getImageExtension(index: Int) = getExtension(index)
 
                     override fun save(index: Int, file: Path): Boolean = runCatching {
-                        val ext = getExtension(index) ?: return@runCatching false
+                        val ext = getExtension(index).ifBlank { return@runCatching false }
                         val path = pagePaths[index]
                             ?.takeIf { ArchiveStreamPageCache.isCached(it) }
                             ?: ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
@@ -360,7 +359,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
 
                     private fun isPageCached(index: Int): Boolean {
                         pagePaths[index]?.let { if (ArchiveStreamPageCache.isCached(it)) return true }
-                        val ext = getExtension(index) ?: return false
+                        val ext = getExtension(index).ifBlank { return false }
                         val path = ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
                         if (ArchiveStreamPageCache.isCached(path)) {
                             pagePaths[index] = path
@@ -460,7 +459,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         ensureActive()
                         if (isPageCached(index)) {
                             val hit = pagePaths[index]
-                                ?: getExtension(index)?.let { ArchiveStreamPageCache.pagePath(cacheKey, index, it) }
+                                ?: ArchiveStreamPageCache.pagePath(cacheKey, index, getExtension(index))
                             if (hit != null) {
                                 pagePaths[index] = hit
                                 markCompleteIfReady()
@@ -471,14 +470,14 @@ suspend inline fun <T> useStreamArchivePageLoader(
                             ensureActive()
                             if (isPageCached(index)) {
                                 val hit = pagePaths[index]
-                                    ?: getExtension(index)?.let { ArchiveStreamPageCache.pagePath(cacheKey, index, it) }
+                                    ?: ArchiveStreamPageCache.pagePath(cacheKey, index, getExtension(index))
                                 if (hit != null) {
                                     pagePaths[index] = hit
                                     markCompleteIfReady()
                                 }
                                 return@withLock hit
                             }
-                            val ext = getExtension(index) ?: return@withLock null
+                            val ext = getExtension(index).ifBlank { return@withLock null }
                             val buffer = extractToByteBuffer(index) ?: return@withLock null
                             try {
                                 // Reader exit may cancel while native extract was finishing —
@@ -564,7 +563,7 @@ internal fun buildStreamMembers(
     val priorByI = prior?.members?.associateBy { it.i }.orEmpty()
     val out = ArrayList<ArchiveStreamPageCache.Member>(pageCount)
     for (i in 0 until pageCount) {
-        val ext = getExtension(i)?.ifBlank { null } ?: priorByI[i]?.ext ?: "bin"
+        val ext = getExtension(i).ifBlank { null } ?: priorByI[i]?.ext ?: "bin"
         val off = getStreamMemberOffset(i).takeIf { it >= 0L } ?: priorByI[i]?.offset ?: -1L
         val comp = getStreamMemberLength(i).takeIf { it >= 0L } ?: priorByI[i]?.compSize ?: -1L
         val unc = getStreamMemberUncSize(i).takeIf { it > 0L } ?: priorByI[i]?.uncSize ?: 0L

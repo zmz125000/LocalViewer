@@ -186,8 +186,8 @@ object CachePagePublish {
                     header[10] == 'B'.code.toByte() && header[11] == 'P'.code.toByte()
             "bmp" ->
                 header[0] == 'B'.code.toByte() && header[1] == 'M'.code.toByte()
-            "avif", "heic", "heif" ->
-                // ftyp box — offset 4
+            "avif", "heic", "heif", "heics", "heifs", "hif" ->
+                // ISOBMFF ftyp box — offset 4 (AVIF + HEIC/HEIF family)
                 n >= 12 && header[4] == 'f'.code.toByte() && header[5] == 't'.code.toByte() &&
                     header[6] == 'y'.code.toByte() && header[7] == 'p'.code.toByte()
             "jxr", "wdp", "hdp" ->
@@ -196,6 +196,14 @@ object CachePagePublish {
                     header[0] == 'I'.code.toByte() && header[1] == 'I'.code.toByte() &&
                     (header[2].toInt() and 0xff) == 0xbc &&
                     (header[3].toInt() and 0xff) == 0x01
+            "jxl" ->
+                // Codestream FF 0A, or container ....JXL
+                (n >= 2 &&
+                    (header[0].toInt() and 0xff) == 0xff &&
+                    (header[1].toInt() and 0xff) == 0x0a) ||
+                    (n >= 12 &&
+                        header[4] == 'J'.code.toByte() && header[5] == 'X'.code.toByte() &&
+                        header[6] == 'L'.code.toByte() && header[7] == ' '.code.toByte())
             "jp2" ->
                 n >= 12 // JPEG 2000 — skip strict check
             else -> true

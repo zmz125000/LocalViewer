@@ -281,7 +281,7 @@ suspend fun awaitSelectTags(): List<String> = dialog { cont ->
                                     Column {
                                         Text(text = tag, overflow = TextOverflow.Ellipsis, maxLines = 2)
                                         ProvideTextStyle(MaterialTheme.typography.bodySmall) {
-                                            if (hint != null) {
+                                            if (hint.isNotEmpty()) {
                                                 Text(
                                                     text = hint,
                                                     overflow = TextOverflow.Ellipsis,

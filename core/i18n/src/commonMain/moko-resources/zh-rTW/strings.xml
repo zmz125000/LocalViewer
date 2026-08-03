@@ -531,7 +531,7 @@
     <string name="pref_reader_hardware_bitmap">硬體點陣圖解碼</string>
     <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路徑（GPU 點陣圖）。會關閉裁邊與 QR 廣告偵測，避免先軟體解碼再拷貝。</string>
     <string name="pref_reader_hdr_display">HDR 顯示（Ultra HDR）</string>
-    <string name="pref_reader_hdr_display_summary">在 HDR 螢幕上為 Ultra HDR／增益圖頁面啟用視窗 HDR 模式。此類頁面一律以原始尺寸解碼。</string>
+    <string name="pref_reader_hdr_display_summary">在 HDR 螢幕上為 Ultra HDR／增益圖頁面啟用視窗 HDR 色彩模式。HDR 檔案的轉換與解碼一律進行；關閉後僅以 SDR 基底顯示。</string>
     <string name="pref_custom_brightness">自訂亮度</string>
     <string name="pref_custom_color_filter">色彩濾鏡</string>
     <string name="pref_keep_screen_on">保持螢幕恆亮</string>

@@ -359,6 +359,10 @@ object SmbCache {
         val ok = when (sniff.kind) {
             HdrKind.JpegXr -> HdrConvertCache.convertJxrFile(tmp, outFile)
             HdrKind.AbsolutePqHlg -> HdrConvertCache.convertAvifFile(tmp, outFile)
+            HdrKind.JpegXl -> {
+                val bytes = runCatching { tmp.readBytes() }.getOrNull()
+                if (bytes != null) HdrConvertCache.convertJxlBytes(bytes, outFile) else false
+            }
             else -> false
         }
         if (ok) {
@@ -367,8 +371,8 @@ object SmbCache {
             if (primary.absolutePath != outFile.absolutePath) primary.delete()
             return outPath
         }
-        // Always-convert (JXR): cannot serve original to Coil.
-        if (sniff.kind == HdrKind.JpegXr ||
+        // Always-convert (JXR/JXL): cannot serve original to Coil.
+        if (sniff.kind == HdrKind.JpegXr || sniff.kind == HdrKind.JpegXl ||
             isHdrAlwaysConvertExtension(FileUtils.getExtensionFromFilename(originalFileName))
         ) {
             tmp.delete()
