@@ -96,8 +96,14 @@ float half_to_float(uint16_t h) {
 }
 
 /**
- * Peak of max(R,G,B) in linear scRGB (relative to SDR white = 1.0).
- * Used as content boost so hdr_capacity_max ≈ peak (not default 10000/203 ≈ 49).
+ * Content peak of max(R,G,B) in linear scRGB (1.0 ≈ SDR / 203 nits).
+ *
+ * Uses the **99.99th percentile** brightest max-component (not raw single-pixel max),
+ * matching jxr_to_png / "On the Calculation and Usage of HDR Static Content Metadata"
+ * (MaxCLL percentile). JXR half-float fireflies (peak 48 → ~9750 nits) otherwise
+ * inflate hdr_capacity_max and collapse Android gain-map weight to SDR.
+ *
+ * Returns linear boost (peak_nits / 203), clamped to a camera-like range.
  */
 // jxrlib JXRGlue.h defines min/max macros — avoid std::max/min after that include.
 static inline float fmax3(float a, float b, float c) {
@@ -105,17 +111,50 @@ static inline float fmax3(float a, float b, float c) {
     return m > c ? m : c;
 }
 
+/** Percentile for content MaxCLL (0.9999 = top 0.01% of pixels). */
+static constexpr double kContentPeakPercentile = 0.9999;
+
 float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count) {
-    float peak = 1.0f;
+    if (!rgba || pixel_count == 0) return 1.05f;
+
+    // Histogram of max(R,G,B) as absolute nits (1.0 linear → 203 nits), 1-nit bins 0..10000.
+    // Same spirit as jxr_to_png MAXCLL_PERCENTILE (there: BT.2100 linear 1.0 = 10000 nits).
+    constexpr int kNitBins = 10001;  // 0..10000 inclusive
+    std::vector<uint32_t> nit_counts(static_cast<size_t>(kNitBins), 0);
+    int raw_max_nits = 0;
+
     for (size_t i = 0; i < pixel_count; i++) {
         const float r = half_to_float(rgba[i * 4 + 0]);
         const float g = half_to_float(rgba[i * 4 + 1]);
         const float b = half_to_float(rgba[i * 4 + 2]);
-        // Ignore non-finite / negative (scRGB can go slightly negative; boost uses positive).
-        const float m = fmax3(r, g, b);
-        if (std::isfinite(m) && m > peak) peak = m;
+        float m = fmax3(r, g, b);
+        if (!std::isfinite(m) || m <= 0.f) continue;
+        // Absolute nits for histogram (same scale we feed libultrahdr).
+        float nits_f = m * 203.0f;
+        if (nits_f > 10000.0f) nits_f = 10000.0f;
+        int nits = static_cast<int>(std::lround(nits_f));
+        if (nits < 0) nits = 0;
+        if (nits >= kNitBins) nits = kNitBins - 1;
+        nit_counts[static_cast<size_t>(nits)]++;
+        if (nits > raw_max_nits) raw_max_nits = nits;
     }
-    // Camera-like range: small headroom above 1, cap runaway highlights.
+
+    // Walk from brightest bin until we have covered the top (1 - percentile) of pixels.
+    const uint64_t count_target = static_cast<uint64_t>(
+        std::llround((1.0 - kContentPeakPercentile) * static_cast<double>(pixel_count)));
+    const uint64_t need = count_target < 1 ? 1 : count_target;
+    uint64_t count = 0;
+    int maxcll_nits = raw_max_nits;
+    for (int idx = raw_max_nits; idx >= 0; idx--) {
+        count += nit_counts[static_cast<size_t>(idx)];
+        if (count >= need) {
+            maxcll_nits = idx;
+            break;
+        }
+    }
+
+    // Linear content boost for Ultra HDR metadata.
+    float peak = static_cast<float>(maxcll_nits) / 203.0f;
     if (peak < 1.05f) peak = 1.05f;
     if (peak > 64.0f) peak = 64.0f;
     return peak;
@@ -433,46 +472,8 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     }
 
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
-    // peak scan (inline — avoid name clash with file-local helper in anon namespace)
-    float content_peak = 1.0f;
-    for (size_t i = 0; i < pixels; i++) {
-        auto h2f = [](uint16_t h) -> float {
-            const uint32_t sign = (static_cast<uint32_t>(h) & 0x8000u) << 16;
-            uint32_t exp = (h >> 10) & 0x1fu;
-            uint32_t mant = h & 0x3ffu;
-            uint32_t out;
-            if (exp == 0) {
-                if (mant == 0) {
-                    out = sign;
-                } else {
-                    exp = 1;
-                    while ((mant & 0x400u) == 0) {
-                        mant <<= 1;
-                        exp--;
-                    }
-                    mant &= 0x3ffu;
-                    out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-                }
-            } else if (exp == 31) {
-                out = sign | 0x7f800000u | (mant << 13);
-            } else {
-                out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-            }
-            union {
-                uint32_t u;
-                float f;
-            } v{out};
-            return v.f;
-        };
-        const float r = h2f(rgba[i * 4 + 0]);
-        const float g = h2f(rgba[i * 4 + 1]);
-        const float b = h2f(rgba[i * 4 + 2]);
-        float m = r > g ? r : g;
-        if (b > m) m = b;
-        if (std::isfinite(m) && m > content_peak) content_peak = m;
-    }
-    if (content_peak < 1.05f) content_peak = 1.05f;
-    if (content_peak > 64.0f) content_peak = 64.0f;
+    // 99.99th-percentile max(R,G,B) (jxr_to_png / MaxCLL paper) — reject firefly peaks.
+    const float content_peak = scan_scrgb_peak(rgba, pixels);
     // SDR white reference for Ultra HDR metadata is 203 nits.
     float peak_nits = 203.0f * content_peak;
     if (peak_nits < 203.0f) peak_nits = 203.0f;
@@ -515,8 +516,8 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
               err.has_detail ? err.detail : "error");
     }
 
-    ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f cg=%d %ux%u", content_peak, peak_nits,
-          (int)cg, w, h);
+    ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f (p99.99 MaxCLL-style) cg=%d %ux%u",
+          content_peak, peak_nits, (int)cg, w, h);
 
     err = uhdr_encode(enc);
     if (err.error_code != UHDR_CODEC_OK) {
