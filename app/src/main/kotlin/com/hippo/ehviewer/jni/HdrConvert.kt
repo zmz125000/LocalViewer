@@ -39,14 +39,3 @@ external fun convertJxlBytesToUltraHdr(input: ByteArray, outputPath: String): In
  * Pass [maxEdge] ≤ 0 for full resolution.
  */
 external fun convertJxlBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: String, maxEdge: Int): Int
-
-/**
- * Encode pre-decoded linear RGBA half-float (little-endian IEEE half) as Ultra HDR JPEG.
- * [rgbaF16] length must be width * height * 8.
- */
-external fun encodeLinearRgbaF16ToUltraHdr(
-    width: Int,
-    height: Int,
-    rgbaF16: ByteArray,
-    outputPath: String,
-): Int

@@ -190,18 +190,6 @@ fun sniffHdr(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
 
 const val HDR_SNIFF_BYTES = 256 * 1024
 
-/**
- * Sibling / storage suffix for converted Ultra HDR JPEG (`hash.uhdr3.jpg`).
- *
- * v2 = content-matched hdr_capacity_max (peak boost), not default LINEAR 10000/203≈49.
- * v3 = preserve source color gamut (BT.2100 / Display P3) instead of forcing BT.709.
- * Bumping the name invalidates old clipped converts on disk.
- */
-const val UHDR_CACHE_SUFFIX = "uhdr3.jpg"
-
-/** Encode pipeline version (local derived cache key). */
-const val UHDR_ENCODE_VERSION = 3
-
 private fun isJpegXrMagic(bytes: ByteArray, n: Int): Boolean {
     // Little-endian JXR: 'I' 'I' 0xBC 0x01
     if (n < 4) return false

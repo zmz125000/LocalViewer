@@ -5,9 +5,6 @@ import android.graphics.ImageDecoder
 import android.os.Looper
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
-import com.hippo.ehviewer.image.hdr.HdrKind
-import com.hippo.ehviewer.image.hdr.isHdrAlwaysConvertExtension
-import com.hippo.ehviewer.image.hdr.sniffHdr
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
@@ -343,45 +340,7 @@ object SmbCache {
         tmp: File,
         primaryPath: Path,
         originalFileName: String,
-    ): Path {
-        val sniff = sniffHdr(tmp, fileNameHint = originalFileName)
-        if (!sniff.needsConvert) {
-            commitTmp(tmp, File(primaryPath.toString()))
-            return primaryPath
-        }
-        // Convert → Ultra HDR; do not keep original PQ/JXR for network.
-        val outPath = if (primaryPath.name.endsWith(".${com.hippo.ehviewer.image.hdr.UHDR_CACHE_SUFFIX}")) {
-            primaryPath
-        } else {
-            HdrConvertCache.uhdrSiblingOf(primaryPath)
-        }
-        val outFile = File(outPath.toString())
-        val ok = when (sniff.kind) {
-            HdrKind.JpegXr -> HdrConvertCache.convertJxrFile(tmp, outFile)
-            HdrKind.AbsolutePqHlg -> HdrConvertCache.convertAvifFile(tmp, outFile)
-            HdrKind.JpegXl -> {
-                val bytes = runCatching { tmp.readBytes() }.getOrNull()
-                if (bytes != null) HdrConvertCache.convertJxlBytes(bytes, outFile) else false
-            }
-            else -> false
-        }
-        if (ok) {
-            tmp.delete()
-            val primary = File(primaryPath.toString())
-            if (primary.absolutePath != outFile.absolutePath) primary.delete()
-            return outPath
-        }
-        // Always-convert (JXR/JXL): cannot serve original to Coil.
-        if (sniff.kind == HdrKind.JpegXr || sniff.kind == HdrKind.JpegXl ||
-            isHdrAlwaysConvertExtension(FileUtils.getExtensionFromFilename(originalFileName))
-        ) {
-            tmp.delete()
-            error("HDR convert failed for $originalFileName")
-        }
-        // Soft-fail convert: keep downloaded original.
-        commitTmp(tmp, File(primaryPath.toString()))
-        return primaryPath
-    }
+    ): Path = HdrConvertCache.finalizeNetworkDownload(tmp, primaryPath, originalFileName)
 
     /**
      * Decode [source] → small JPEG. Uses [ImageDecoder] so EXIF orientation is baked

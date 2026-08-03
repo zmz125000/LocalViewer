@@ -595,26 +595,3 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return rc;
 }
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeLinearRgbaF16ToUltraHdr(
-        JNIEnv* env, jclass, jint width, jint height, jbyteArray jRgba, jstring jOutput) {
-    if (width <= 0 || height <= 0 || !jRgba || !jOutput) return -10;
-    const size_t need = static_cast<size_t>(width) * static_cast<size_t>(height) * 8;
-    jsize len = env->GetArrayLength(jRgba);
-    if (static_cast<size_t>(len) < need) return -12;
-    jbyte* bytes = env->GetByteArrayElements(jRgba, nullptr);
-    if (!bytes) return -13;
-    const char* out_path = env->GetStringUTFChars(jOutput, nullptr);
-    if (!out_path) {
-        env->ReleaseByteArrayElements(jRgba, bytes, JNI_ABORT);
-        return -14;
-    }
-    // Kotlin helper: linear RGBA F16 is assumed scRGB / BT.709 unless caller extends API.
-    int rc = encode_linear_rgba_f16_to_uhdr(static_cast<unsigned>(width), static_cast<unsigned>(height),
-                                            reinterpret_cast<const uint16_t*>(bytes), out_path,
-                                            UHDR_CG_BT_709);
-    env->ReleaseStringUTFChars(jOutput, out_path);
-    env->ReleaseByteArrayElements(jRgba, bytes, JNI_ABORT);
-    return rc;
-}

@@ -48,9 +48,3 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBytesToUltraHdrMaxEdge(JNIEnv
                                                                           jint) {
     return kUnsupportedAbi;
 }
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeLinearRgbaF16ToUltraHdr(JNIEnv*, jclass, jint, jint,
-                                                                       jbyteArray, jstring) {
-    return kUnsupportedAbi;
-}
