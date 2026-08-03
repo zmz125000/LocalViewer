@@ -31,8 +31,10 @@ data class CoverPath(val path: String)
  * [CoverPath.path] is the stable cache identity; Android [android.net.Uri] is only
  * resolved when Coil actually needs to open the file (background).
  *
- * Convert-path HDR covers (JXR / PQ AVIF / JXL / future [HdrKind.needsConvert]):
- * routes through [HdrConvertCache.ensureThumb] so Coil always opens a platform JPEG.
+ * Convert-path HDR covers (JXR / PQ AVIF / JXL): [HdrConvertCache.ensureCoverSource]
+ * → full Ultra HDR JPEG in the local derived store (same as reader), then Coil scales.
+ * Browse thumbs (archive/SMB/WebDAV) write Ultra HDR thumbs into **their** thumb folders
+ * via [HdrConvertCache.writeThumbJpeg] — not a separate hdr_thumbs key space.
  */
 class CoverPathFetcher(
     private val data: CoverPath,
@@ -43,7 +45,7 @@ class CoverPathFetcher(
         // Only pay convert/sniff cost for known convert-candidate extensions.
         val ext = FileUtils.getExtensionFromFilename(path.name)?.lowercase()
         val openPath = if (isHdrConvertCandidateExtension(ext)) {
-            HdrConvertCache.ensureThumb(path) ?: path
+            HdrConvertCache.ensureCoverSource(path)
         } else {
             path
         }

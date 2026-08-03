@@ -1,7 +1,5 @@
 package com.hippo.ehviewer.smb
 
-import android.graphics.Bitmap
-import android.graphics.ImageDecoder
 import android.os.Looper
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
@@ -16,6 +14,7 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -343,8 +342,8 @@ object SmbCache {
     ): Path = HdrConvertCache.finalizeNetworkDownload(tmp, primaryPath, originalFileName)
 
     /**
-     * Decode [source] → small JPEG. Uses [ImageDecoder] so EXIF orientation is baked
-     * in (matches Coil/reader). Long edge clamped to [maxEdge]; never upscales.
+     * Decode [source] → small JPEG at [destJpeg] (same [smb_thumb_cache] key as always).
+     * Convert-path formats: native decode + libultrahdr; else ImageDecoder subsample.
      */
     private fun writeSubsampledJpeg(
         source: File,
@@ -352,36 +351,16 @@ object SmbCache {
         maxEdge: Int,
         quality: Int,
     ) {
-        val decoded = try {
-            ImageDecoder.decodeBitmap(ImageDecoder.createSource(source)) { decoder, info, _ ->
-                // JPEG compress requires a software bitmap (not HARDWARE).
-                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                // Default: apply EXIF orientation; [info.size] is post-orient.
-                val w = info.size.width
-                val h = info.size.height
-                if (w <= 0 || h <= 0) error("Cannot decode image bounds: ${source.name}")
-                val longEdge = maxOf(w, h)
-                if (longEdge > maxEdge) {
-                    val scale = maxEdge.toFloat() / longEdge
-                    decoder.setTargetSize(
-                        (w * scale).toInt().coerceAtLeast(1),
-                        (h * scale).toInt().coerceAtLeast(1),
-                    )
-                }
-            }
-        } catch (e: Throwable) {
-            throw IllegalStateException("Cannot decode image: ${source.name}", e)
+        val ok = runBlocking {
+            HdrConvertCache.writeThumbJpeg(
+                source = source.toOkioPath(),
+                destJpeg = destJpeg,
+                maxEdge = maxEdge,
+                quality = quality,
+                fileNameHint = source.name,
+            )
         }
-        try {
-            FileOutputStream(destJpeg).use { out ->
-                if (!decoded.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
-                    error("JPEG compress failed for ${source.name}")
-                }
-            }
-        } finally {
-            if (!decoded.isRecycled) decoded.recycle()
-        }
-        if (!destJpeg.isFile || destJpeg.length() == 0L) {
+        if (!ok || !destJpeg.isFile || destJpeg.length() == 0L) {
             error("Empty JPEG thumb for ${source.name}")
         }
     }

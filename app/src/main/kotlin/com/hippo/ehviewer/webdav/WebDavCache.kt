@@ -1,7 +1,5 @@
 package com.hippo.ehviewer.webdav
 
-import android.graphics.Bitmap
-import android.graphics.ImageDecoder
 import android.os.Looper
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
@@ -16,6 +14,7 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -250,29 +249,22 @@ object WebDavCache {
     /** @see isCachedOnDisk */
     private fun probeDisk(path: Path): Boolean = isCachedOnDisk(path)
 
+    /**
+     * Same [webdav_thumb_cache] dest/key as platform thumbs.
+     * Convert-path → lib+libultrahdr; else ImageDecoder subsample.
+     */
     private fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {
-        val decoded = ImageDecoder.decodeBitmap(ImageDecoder.createSource(source)) { decoder, info, _ ->
-            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val w = info.size.width
-            val h = info.size.height
-            if (w <= 0 || h <= 0) error("Cannot decode bounds: ${source.name}")
-            val longEdge = maxOf(w, h)
-            if (longEdge > maxEdge) {
-                val scale = maxEdge.toFloat() / longEdge
-                decoder.setTargetSize(
-                    (w * scale).toInt().coerceAtLeast(1),
-                    (h * scale).toInt().coerceAtLeast(1),
-                )
-            }
+        val ok = runBlocking {
+            HdrConvertCache.writeThumbJpeg(
+                source = source.toOkioPath(),
+                destJpeg = destJpeg,
+                maxEdge = maxEdge,
+                quality = quality,
+                fileNameHint = source.name,
+            )
         }
-        try {
-            FileOutputStream(destJpeg).use { out ->
-                check(decoded.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
-                    "JPEG compress failed"
-                }
-            }
-        } finally {
-            if (!decoded.isRecycled) decoded.recycle()
+        check(ok && destJpeg.isFile && destJpeg.length() > 0L) {
+            "JPEG thumb failed for ${source.name}"
         }
     }
 

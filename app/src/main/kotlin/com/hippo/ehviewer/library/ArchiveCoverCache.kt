@@ -1,14 +1,11 @@
 package com.hippo.ehviewer.library
 
-import android.graphics.Bitmap
-import android.graphics.ImageDecoder
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
-import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
 import com.hippo.ehviewer.jni.closeArchive
 import com.hippo.ehviewer.jni.extractToByteBuffer
 import com.hippo.ehviewer.jni.needPassword
@@ -190,7 +187,7 @@ object ArchiveCoverCache {
             File(dest.parent!!.toString()).mkdirs()
             val jpgTmp = File("${dest}.jpg.${System.nanoTime()}")
             try {
-                // Convert-path formats (JXR/JXL/PQ/…) → ensureThumb then copy; else ImageDecoder subsample.
+                // writeThumbJpeg: convert-path → lib+libultrahdr into this dest; else ImageDecoder.
                 writeSubsampledJpeg(src, jpgTmp, THUMB_EDGE, THUMB_JPEG_QUALITY)
                 val destFile = File(dest.toString())
                 if (!jpgTmp.renameTo(destFile)) {
@@ -524,40 +521,18 @@ object ArchiveCoverCache {
     }
 
     private fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {
-        // Formats Coil/ImageDecoder cannot open: convert-path thumb (JXR/JXL/PQ/future).
-        val ext = source.extension.lowercase()
-        if (isHdrConvertCandidateExtension(ext)) {
-            val thumb = runBlocking {
-                HdrConvertCache.ensureThumb(source.toOkioPath(), source.name, maxEdge)
-            }
-            if (thumb != null) {
-                val t = File(thumb.toString())
-                if (t.isFile && t.length() > 0L) {
-                    t.copyTo(destJpeg, overwrite = true)
-                    return
-                }
-            }
+        // Same dest/key as any archive thumb. Convert-path → lib+libultrahdr; else ImageDecoder.
+        val ok = runBlocking {
+            HdrConvertCache.writeThumbJpeg(
+                source = source.toOkioPath(),
+                destJpeg = destJpeg,
+                maxEdge = maxEdge,
+                quality = quality,
+                fileNameHint = source.name,
+            )
         }
-        val decoded = ImageDecoder.decodeBitmap(ImageDecoder.createSource(source)) { decoder, info, _ ->
-            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val w = info.size.width
-            val h = info.size.height
-            if (w <= 0 || h <= 0) error("bad bounds")
-            val longEdge = maxOf(w, h)
-            if (longEdge > maxEdge) {
-                val scale = maxEdge.toFloat() / longEdge
-                decoder.setTargetSize(
-                    (w * scale).toInt().coerceAtLeast(1),
-                    (h * scale).toInt().coerceAtLeast(1),
-                )
-            }
-        }
-        try {
-            FileOutputStream(destJpeg).use { out ->
-                check(decoded.compress(Bitmap.CompressFormat.JPEG, quality, out))
-            }
-        } finally {
-            if (!decoded.isRecycled) decoded.recycle()
+        check(ok && destJpeg.isFile && destJpeg.length() > 0L) {
+            "thumb encode failed: ${source.name}"
         }
     }
 

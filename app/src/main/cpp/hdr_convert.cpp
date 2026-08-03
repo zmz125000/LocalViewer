@@ -534,6 +534,102 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     return 0;
 }
 
+void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,
+                             unsigned max_edge) {
+    if (max_edge == 0 || w == 0 || h == 0) return;
+    const unsigned long_edge = w > h ? w : h;
+    if (long_edge <= max_edge) return;
+
+    const float scale = static_cast<float>(max_edge) / static_cast<float>(long_edge);
+    const unsigned nw = std::max(1u, static_cast<unsigned>(w * scale));
+    const unsigned nh = std::max(1u, static_cast<unsigned>(h * scale));
+    std::vector<uint16_t> out(static_cast<size_t>(nw) * nh * 4);
+
+    auto h2f = [](uint16_t hv) -> float {
+        const uint32_t sign = (static_cast<uint32_t>(hv) & 0x8000u) << 16;
+        uint32_t exp = (hv >> 10) & 0x1fu;
+        uint32_t mant = hv & 0x3ffu;
+        uint32_t o;
+        if (exp == 0) {
+            if (mant == 0) {
+                o = sign;
+            } else {
+                exp = 1;
+                while ((mant & 0x400u) == 0) {
+                    mant <<= 1;
+                    exp--;
+                }
+                mant &= 0x3ffu;
+                o = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+            }
+        } else if (exp == 31) {
+            o = sign | 0x7f800000u | (mant << 13);
+        } else {
+            o = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+        }
+        union {
+            uint32_t u;
+            float f;
+        } v{o};
+        return v.f;
+    };
+    auto f2h = [](float f) -> uint16_t {
+        union {
+            float f;
+            uint32_t u;
+        } v{f};
+        uint32_t x = v.u;
+        uint32_t sign = (x >> 16) & 0x8000u;
+        int32_t exp = static_cast<int32_t>((x >> 23) & 0xff) - 127 + 15;
+        uint32_t mant = x & 0x7fffffu;
+        if (exp <= 0) {
+            if (exp < -10) return static_cast<uint16_t>(sign);
+            mant |= 0x800000u;
+            uint32_t t = 14 - exp;
+            uint32_t m = mant >> t;
+            if ((mant >> (t - 1)) & 1u) m++;
+            return static_cast<uint16_t>(sign | m);
+        }
+        if (exp >= 31) {
+            if (mant) return static_cast<uint16_t>(sign | 0x7e00u);
+            return static_cast<uint16_t>(sign | 0x7c00u);
+        }
+        uint32_t half = sign | (static_cast<uint32_t>(exp) << 10) | (mant >> 13);
+        if (mant & 0x1000u) half++;
+        return static_cast<uint16_t>(half);
+    };
+
+    for (unsigned y = 0; y < nh; y++) {
+        const unsigned sy0 = y * h / nh;
+        const unsigned sy1 = std::min(h, (y + 1) * h / nh);
+        for (unsigned x = 0; x < nw; x++) {
+            const unsigned sx0 = x * w / nw;
+            const unsigned sx1 = std::min(w, (x + 1) * w / nw);
+            float acc[4] = {0, 0, 0, 0};
+            unsigned cnt = 0;
+            for (unsigned sy = sy0; sy < sy1; sy++) {
+                for (unsigned sx = sx0; sx < sx1; sx++) {
+                    const size_t i = (static_cast<size_t>(sy) * w + sx) * 4;
+                    acc[0] += h2f(rgba[i + 0]);
+                    acc[1] += h2f(rgba[i + 1]);
+                    acc[2] += h2f(rgba[i + 2]);
+                    acc[3] += h2f(rgba[i + 3]);
+                    cnt++;
+                }
+            }
+            if (cnt == 0) cnt = 1;
+            const size_t o = (static_cast<size_t>(y) * nw + x) * 4;
+            out[o + 0] = f2h(acc[0] / cnt);
+            out[o + 1] = f2h(acc[1] / cnt);
+            out[o + 2] = f2h(acc[2] / cnt);
+            out[o + 3] = f2h(acc[3] / cnt);
+        }
+    }
+    rgba.swap(out);
+    w = nw;
+    h = nh;
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrToUltraHdr(JNIEnv* env, jclass,
                                                               jstring jInput, jstring jOutput) {
@@ -586,6 +682,39 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
                                rgba, w, h)) {
         // HD Photo / scRGB-like: BT.709 primaries, linear extended range.
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709);
+    } else {
+        rc = -21;
+    }
+
+    env->ReleaseStringUTFChars(jOutput, out_path);
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+    return rc;
+}
+
+/** JXR → Ultra HDR with optional long-edge cap (0 = full res). Used for thumbs. */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
+        JNIEnv* env, jclass, jbyteArray jInput, jstring jOutput, jint maxEdge) {
+    if (!jInput || !jOutput) return -10;
+    const jsize len = env->GetArrayLength(jInput);
+    if (len <= 0) return -12;
+    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
+    if (!bytes) return -13;
+    const char* out_path = env->GetStringUTFChars(jOutput, nullptr);
+    if (!out_path) {
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return -14;
+    }
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    int rc = -20;
+    if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
+                               rgba, w, h)) {
+        if (maxEdge > 0) {
+            scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
+        }
         rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709);
     } else {
         rc = -21;

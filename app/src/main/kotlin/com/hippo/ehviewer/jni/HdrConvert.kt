@@ -18,11 +18,22 @@ external fun convertJxrToUltraHdr(inputPath: String, outputPath: String): Int
 external fun convertJxrBytesToUltraHdr(input: ByteArray, outputPath: String): Int
 
 /**
+ * Same as [convertJxrBytesToUltraHdr] but scale long edge to [maxEdge] before encode (thumbs).
+ * Pass [maxEdge] ≤ 0 for full resolution.
+ */
+external fun convertJxrBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: String, maxEdge: Int): Int
+
+/**
  * Decode AVIF (libavif) PQ/HLG → linear RGB in source primaries → Ultra HDR JPEG
  * tagged with matching gamut (BT.2100 / Display P3 / BT.709).
  * Gain-map AVIF should use platform ImageDecoder; this is for absolute HDR stills.
  */
 external fun convertAvifBytesToUltraHdr(input: ByteArray, outputPath: String): Int
+
+/**
+ * Same as [convertAvifBytesToUltraHdr] but scale long edge to [maxEdge] before encode (thumbs).
+ */
+external fun convertAvifBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: String, maxEdge: Int): Int
 
 /**
  * Probe AVIF HDR kind: 0=not avif/error, 1=gain-map, 2=PQ/HLG absolute, 3=other avif.
