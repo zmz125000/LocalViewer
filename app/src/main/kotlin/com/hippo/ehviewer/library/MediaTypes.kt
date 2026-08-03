@@ -8,12 +8,12 @@ import com.hippo.ehviewer.util.FileUtils
  * Must stay aligned with native [supportExt] in `archive.c` and with formats Coil can
  * decode: Android BitmapFactory/ImageDecoder (minSdk 31) plus [coil3.svg.SvgDecoder].
  *
- * HDR inventory (frozen for convert codecs — see [com.hippo.ehviewer.image.hdr.HdrKind]):
- * - Gain-map JPEG/AVIF/HEIC: Android 14+ platform decode (class A).
- * - HEIC/HEIF (HEVC): platform ImageDecoder on minSdk 31+ (Aves-style); not libavif.
- * - JPEG XR (`jxr`/`wdp`/`hdp`): jxrlib → Ultra HDR JPEG before Coil (class C).
- * - Absolute PQ/HLG **AVIF** only: libavif convert path (class B) when sniff detects CICP.
- * - JPEG XL (`jxl`): libjxl → Ultra HDR (class C).
+ * HDR / lib-still inventory (see [com.hippo.ehviewer.image.hdr.HdrKind]):
+ * - Gain-map JPEG/AVIF/HEIC: Android 14+ platform decode.
+ * - HEIC/HEIF (HEVC): platform ImageDecoder (not libavif).
+ * - JPEG XR / JPEG XL: **lib decode**. SDR keeps original (no UHDR cache);
+ *   HDR → FP16 + libultrahdr Ultra HDR JPEG only.
+ * - Absolute PQ/HLG **AVIF**: libavif → Ultra HDR when CICP sniff hits.
  * Native codecs link only arm64-v8a + x86_64 ([EHVIEWER_HDR_CODECS]).
  */
 val IMAGE_EXTENSIONS = setOf(

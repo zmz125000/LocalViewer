@@ -12,11 +12,14 @@ import com.hippo.ehviewer.jni.convertJxlBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxrToUltraHdr
+import com.hippo.ehviewer.jni.decodeJxlSdrRgba8
+import com.hippo.ehviewer.jni.decodeJxrSdrRgba8
 import com.hippo.ehviewer.jni.probeAvifHdrKind
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -32,23 +35,16 @@ import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
 
 /**
- * Converts absolute HDR / JPEG XR / JPEG XL / PQ-AVIF sources to Ultra HDR JPEG and
- * stores full-size results under [localRoot] (local/SAF) or network page caches.
+ * Lib still codecs (JXR / JXL / absolute PQ-AVIF) and Ultra HDR convert cache.
  *
- * **Thumbs:** [writeThumbJpeg] writes into the **caller-owned** dest (same folder, same
- * `.jpg` key as platform thumbs — e.g. `archive_thumb`, `smb_thumb_cache`). Convert-path
- * formats use native decode + libultrahdr at [maxEdge]; everything else uses ImageDecoder.
- * There is no separate `hdr_thumbs` store.
+ * ## HDR content only → Ultra HDR JPEG
+ * Full-pixel scan + libultrahdr → [localRoot] / network sibling `.jpg`.
  *
- * Supported convert path (inventory freeze):
- * - JPEG XR (`jxr`/`wdp`/`hdp`) → jxrlib
- * - JPEG XL (`jxl`) → libjxl
- * - Absolute PQ/HLG **AVIF** only → libavif (+ aom)
- * - All of the above encode to Ultra HDR JPEG via libultrahdr
+ * ## SDR lib formats → no UHDR jpg cache
+ * Keep original file (network caches origin). Decode via [decodeLibSdrBitmap] for
+ * reader/thumbs (plain RGBA → Bitmap / regular JPEG thumb).
  *
- * **HEIC/HEIF** (HEVC) and gain-map AVIF/JPEG: platform ImageDecoder (not converted here).
- *
- * Convert always runs independent of [com.hippo.ehviewer.Settings.readerHdrDisplay].
+ * Platform formats (HEIC, gain-map AVIF, JPEG…) never enter this convert path.
  */
 object HdrConvertCache {
     private const val TAG = "HdrConvert"
@@ -75,20 +71,16 @@ object HdrConvertCache {
     }
 
     /**
-     * Page path for network caches: always-convert extensions resolve directly to `.jpg`.
-     * Other types keep original extension; after convert, [resolvePagePath] prefers `.jpg`.
+     * Network page cache name. Always keeps the original extension (SDR JXL/JXR stay
+     * `hash.jxl` / `hash.jxr`). After HDR convert, [resolvePagePath] prefers sibling `.jpg`.
      */
     fun networkStorageName(hash: String, originalExt: String): String {
-        val ext = originalExt.lowercase().removePrefix(".")
-        return if (isHdrAlwaysConvertExtension(ext)) {
-            "$hash.jpg"
-        } else {
-            "$hash.$ext"
-        }
+        val ext = originalExt.lowercase().removePrefix(".").ifEmpty { "bin" }
+        return "$hash.$ext"
     }
 
     /**
-     * Prefer converted Ultra HDR sibling when present; else [primary].
+     * Prefer converted Ultra HDR sibling when present; else [primary] (including SDR originals).
      */
     fun resolvePagePath(primary: Path): Path {
         val uhdr = uhdrSiblingOf(primary)
@@ -110,15 +102,13 @@ object HdrConvertCache {
     }
 
     /**
-     * Ensure [source] is available as Ultra HDR for the reader.
-     * Supports physical files and SAF/content Okio paths.
-     * Independent of HDR display pref — always convert when [HdrKind.needsConvert].
-     * @return path to open (converted Ultra HDR or original when no convert needed)
+     * Ensure HDR lib sources are available as Ultra HDR JPEG for Coil.
+     * **SDR lib formats return [source] unchanged** (no UHDR cache).
      */
     suspend fun ensureReadable(source: Path, fileNameHint: String = source.name): Path =
         withContext(Dispatchers.IO) {
             val sniff = sniffHdrPath(source, fileNameHint)
-            if (!sniff.needsConvert) {
+            if (!sniff.needsUhdrConvert) {
                 return@withContext source
             }
             when (sniff.kind) {
@@ -130,13 +120,52 @@ object HdrConvertCache {
         }
 
     /**
-     * Write a long-edge [maxEdge] JPEG thumb of [source] into **[destJpeg]** (caller owns
-     * path / cache key / folder — same as platform thumbs).
-     *
-     * - [HdrKind.needsConvert]: native decode → scale → libultrahdr Ultra HDR JPEG
-     * - else: ImageDecoder subsample + [Bitmap.CompressFormat.JPEG]
-     *
-     * @return true when [destJpeg] is a non-empty file
+     * Decode lib still (JXR/JXL) as SDR [Bitmap] for reader/display. No disk UHDR cache.
+     * @param maxEdge ≤ 0 full resolution long edge.
+     */
+    suspend fun decodeLibSdrBitmap(
+        source: Path,
+        fileNameHint: String = source.name,
+        maxEdge: Int = 0,
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        val bytes = runCatching { source.read { readByteArray() } }.getOrNull() ?: return@withContext null
+        decodeLibSdrBitmap(bytes, fileNameHint, maxEdge)
+    }
+
+    fun decodeLibSdrBitmap(bytes: ByteArray, fileNameHint: String, maxEdge: Int = 0): Bitmap? {
+        if (bytes.isEmpty()) return null
+        val edge = if (maxEdge > 0) maxEdge.coerceIn(64, 8192) else 0
+        val outWh = IntArray(2)
+        val rgba = when {
+            isJpegXlName(fileNameHint) || isJpegXlMagic(bytes) ->
+                decodeJxlSdrRgba8(bytes, edge, outWh)
+            isJpegXrName(fileNameHint) || isJpegXrMagic(bytes) ->
+                decodeJxrSdrRgba8(bytes, edge, outWh)
+            else -> {
+                // Sniff kind from bytes
+                val sniff = sniffHdr(bytes, bytes.size, fileNameHint)
+                when (sniff.kind) {
+                    HdrKind.JpegXl -> decodeJxlSdrRgba8(bytes, edge, outWh)
+                    HdrKind.JpegXr -> decodeJxrSdrRgba8(bytes, edge, outWh)
+                    else -> null
+                }
+            }
+        } ?: return null
+        val w = outWh[0]
+        val h = outWh[1]
+        if (w <= 0 || h <= 0 || rgba.size < w * h * 4) return null
+        return runCatching {
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            bmp.copyPixelsFromBuffer(ByteBuffer.wrap(rgba))
+            bmp
+        }.getOrNull()
+    }
+
+    /**
+     * Write long-edge [maxEdge] JPEG thumb into caller-owned [destJpeg] (same folder/key).
+     * - HDR lib: native → libultrahdr Ultra HDR JPEG
+     * - SDR lib: native RGBA → regular JPEG (not UHDR encode)
+     * - Platform: ImageDecoder subsample
      */
     suspend fun writeThumbJpeg(
         source: Path,
@@ -148,10 +177,11 @@ object HdrConvertCache {
         if (destJpeg.isFile && destJpeg.length() > 0L) return@withContext true
         val edge = maxEdge.coerceIn(64, 2048)
         val sniff = sniffHdrPath(source, fileNameHint)
-        val ok = if (sniff.needsConvert) {
-            writeConvertThumb(source, destJpeg, edge, fileNameHint, sniff.kind)
-        } else {
-            writePlatformThumb(source, destJpeg, edge, quality)
+        val ok = when {
+            sniff.needsUhdrConvert -> writeConvertThumb(source, destJpeg, edge, fileNameHint, sniff.kind)
+            sniff.needsLibDecode && sniff.kind != HdrKind.AbsolutePqHlg ->
+                writeLibSdrThumb(source, destJpeg, edge, quality, fileNameHint)
+            else -> writePlatformThumb(source, destJpeg, edge, quality)
         }
         if (ok && destJpeg.isFile && destJpeg.length() > 0L) {
             OriginDiskCache.scheduleTrim()
@@ -162,12 +192,64 @@ object HdrConvertCache {
     }
 
     /**
-     * Convenience for local Coil covers: convert-path → full Ultra HDR in [localRoot]
-     * (same derived store as the reader); platform formats return [source] unchanged.
-     * Coil then decodes/scales — no parallel thumb key store.
+     * Local Coil covers: HDR → Ultra HDR derived file; SDR lib → original (decoder path);
+     * platform → original.
      */
     suspend fun ensureCoverSource(source: Path, fileNameHint: String = source.name): Path =
         ensureReadable(source, fileNameHint)
+
+    private suspend fun writeLibSdrThumb(
+        source: Path,
+        destJpeg: File,
+        maxEdge: Int,
+        quality: Int,
+        fileNameHint: String,
+    ): Boolean {
+        val bmp = decodeLibSdrBitmap(source, fileNameHint, maxEdge) ?: return false
+        return try {
+            destJpeg.parentFile?.mkdirs()
+            val tmp = File("${destJpeg.absolutePath}.tmp.${System.nanoTime()}")
+            FileOutputStream(tmp).use { out ->
+                check(bmp.compress(Bitmap.CompressFormat.JPEG, quality, out))
+            }
+            commitTmp(tmp, destJpeg)
+            true
+        } catch (e: Throwable) {
+            Log.e(TAG, "writeLibSdrThumb failed $fileNameHint", e)
+            false
+        } finally {
+            if (!bmp.isRecycled) bmp.recycle()
+        }
+    }
+
+    private fun isJpegXlName(name: String) =
+        FileUtils.getExtensionFromFilename(name)?.equals("jxl", true) == true
+
+    private fun isJpegXrName(name: String): Boolean {
+        val e = FileUtils.getExtensionFromFilename(name)?.lowercase()
+        return e == "jxr" || e == "wdp" || e == "hdp"
+    }
+
+    private fun isJpegXlMagic(bytes: ByteArray): Boolean {
+        if (bytes.size >= 2 &&
+            (bytes[0].toInt() and 0xff) == 0xff &&
+            (bytes[1].toInt() and 0xff) == 0x0a
+        ) {
+            return true
+        }
+        return bytes.size >= 12 &&
+            bytes[4] == 'J'.code.toByte() &&
+            bytes[5] == 'X'.code.toByte() &&
+            bytes[6] == 'L'.code.toByte() &&
+            bytes[7] == ' '.code.toByte()
+    }
+
+    private fun isJpegXrMagic(bytes: ByteArray): Boolean =
+        bytes.size >= 4 &&
+            bytes[0] == 'I'.code.toByte() &&
+            bytes[1] == 'I'.code.toByte() &&
+            (bytes[2].toInt() and 0xff) == 0xbc &&
+            (bytes[3].toInt() and 0xff) == 0x01
 
     private suspend fun writeConvertThumb(
         source: Path,
@@ -337,14 +419,10 @@ object HdrConvertCache {
         }
 
     /**
-     * Commit a network page download temp file: convert HDR sources to Ultra HDR JPEG
-     * when needed, otherwise move [tmp] to [primaryPath].
-     *
-     * Always-convert types (JXR/JXL): hard-fail if convert fails (cannot serve original).
-     * PQ AVIF: soft-fail keeps the original download at [primaryPath].
-     * On convert success, [tmp] and the non-UHDR primary (if different) are deleted.
-     *
-     * Shared by SMB / WebDAV page caches.
+     * Commit a network page download.
+     * - **SDR / platform / unknown lib SDR:** keep original at [primaryPath] (no UHDR jpg).
+     * - **Confirmed HDR (JXR/JXL/PQ-AVIF):** convert to Ultra HDR sibling `.jpg`, drop original.
+     * Hard-fail only when confirmed HDR convert fails (cannot present HDR without UHDR).
      */
     suspend fun finalizeNetworkDownload(
         tmp: File,
@@ -352,11 +430,11 @@ object HdrConvertCache {
         originalFileName: String,
     ): Path = withContext(Dispatchers.IO) {
         val sniff = sniffHdr(tmp, fileNameHint = originalFileName)
-        if (!sniff.needsConvert) {
+        if (!sniff.needsUhdrConvert) {
+            // SDR jxl/jxr and all platform formats: cache the original bytes only.
             commitTmp(tmp, File(primaryPath.toString()))
             return@withContext primaryPath
         }
-        // Convert → Ultra HDR JPEG; do not keep original PQ/JXR/JXL for network.
         val outPath = uhdrSiblingOf(primaryPath)
         val outFile = File(outPath.toString())
         val ok = when (sniff.kind) {
@@ -374,17 +452,13 @@ object HdrConvertCache {
             if (primary.absolutePath != outFile.absolutePath) primary.delete()
             return@withContext outPath
         }
-        // Always-convert (JXR/JXL): cannot serve original to Coil.
-        if (sniff.kind == HdrKind.JpegXr ||
-            sniff.kind == HdrKind.JpegXl ||
-            isHdrAlwaysConvertExtension(FileUtils.getExtensionFromFilename(originalFileName))
-        ) {
-            tmp.delete()
-            error("HDR convert failed for $originalFileName")
+        // Confirmed HDR must convert; soft-fail only for AVIF probe edge cases.
+        if (sniff.kind == HdrKind.AbsolutePqHlg) {
+            commitTmp(tmp, File(primaryPath.toString()))
+            return@withContext primaryPath
         }
-        // Soft-fail convert (e.g. mis-sniffed AVIF): keep downloaded original.
-        commitTmp(tmp, File(primaryPath.toString()))
-        primaryPath
+        tmp.delete()
+        error("HDR convert failed for $originalFileName")
     }
 
     private suspend fun ensureJxrConverted(source: Path): Path {

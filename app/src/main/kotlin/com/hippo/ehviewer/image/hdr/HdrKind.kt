@@ -1,6 +1,8 @@
 package com.hippo.ehviewer.image.hdr
 
 import com.ehviewer.core.files.read
+import com.hippo.ehviewer.jni.probeJxlContent
+import com.hippo.ehviewer.jni.probeJxrContent
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.io.FileInputStream
@@ -8,17 +10,21 @@ import java.nio.ByteBuffer
 import okio.Path
 
 /**
- * HDR taxonomy for the reader pipeline.
+ * Still-image route for the reader / thumbs / network cache.
  *
- * - [None]: SDR / unknown — decode as usual (includes **HEIC/HEIF** on API 31+ platform
- *   ImageDecoder — same approach as Aves; do **not** route HEVC-HEIC through libavif).
- * - [GainMap]: Ultra HDR JPEG, ISO 21496-1, gain-map AVIF/HEIC — Android 14+ platform path.
- * - [AbsolutePqHlg]: True PQ/HLG **AVIF** without gain map — convert via libavif → Ultra HDR.
- *   HEIC with PQ CICP stays [None] (platform); libavif cannot decode HEVC.
- * - [JpegXr]: Windows HDR screen capture (scRGB float) — convert to Ultra HDR.
- * - [JpegXl]: JPEG XL (often HDR float / PQ) — convert to Ultra HDR via libjxl.
+ * ## Platform path (system ImageDecoder / Coil)
+ * - [None]: SDR / unknown, including **HEIC/HEIF** (HEVC) on minSdk 31+
+ * - [GainMap]: Ultra HDR JPEG / gain-map AVIF-HEIC — Android 14+ attaches [android.graphics.Gainmap]
  *
- * [needsConvert] is the single switch for convert + convert-path thumbs (future kinds plug in here).
+ * ## Lib path (not reliable on platform as absolute HDR)
+ * - [JpegXr] / [JpegXl]: always decoded by jxrlib / libjxl
+ * - [AbsolutePqHlg]: absolute PQ/HLG **AVIF** only → libavif
+ *
+ * Content class [content] decides caching:
+ * - [HdrContent.Hdr] → FP16 + libultrahdr → Ultra HDR JPEG disk cache
+ * - [HdrContent.Sdr] → lib decode to pixels / plain display; **no** UHDR jpg cache;
+ *   network keeps the original file
+ * - [HdrContent.Unknown] → probe with native (or treat carefully at convert time)
  */
 enum class HdrKind {
     None,
@@ -27,25 +33,56 @@ enum class HdrKind {
     JpegXr,
     JpegXl,
     ;
+}
 
-    /** Needs decode → Ultra HDR JPEG before Coil/ImageDecoder / thumb decoder. */
-    val needsConvert: Boolean
-        get() = this == AbsolutePqHlg || this == JpegXr || this == JpegXl
+/** Whether lib-decoded content needs Ultra HDR encode (vs plain SDR display). */
+enum class HdrContent {
+    /** Platform path or irrelevant. */
+    NA,
+    Sdr,
+    Hdr,
+    Unknown,
 }
 
 data class HdrSniffResult(
     val kind: HdrKind,
+    val content: HdrContent = defaultContent(kind),
 ) {
-    val needsConvert: Boolean get() = kind.needsConvert
+    /**
+     * True → full-pixel HDR pipeline: lib decode FP16 → libultrahdr → `.jpg` convert cache.
+     * False for SDR lib formats (keep original, decode for display only).
+     */
+    val needsUhdrConvert: Boolean
+        get() = when (kind) {
+            HdrKind.AbsolutePqHlg -> true
+            // Only confirmed HDR → Ultra HDR JPEG cache. Unknown/SDR keep original + lib decode.
+            HdrKind.JpegXr, HdrKind.JpegXl -> content == HdrContent.Hdr
+            else -> false
+        }
+
+    /** Formats that never go through platform ImageDecoder for pixels. */
+    val needsLibDecode: Boolean
+        get() = kind == HdrKind.JpegXr || kind == HdrKind.JpegXl || kind == HdrKind.AbsolutePqHlg
+
+    /** @deprecated Use [needsUhdrConvert] — only HDR content converts to Ultra HDR JPEG. */
+    val needsConvert: Boolean get() = needsUhdrConvert
 }
 
-/** Extensions that always convert (platform cannot reliably decode, esp. HDR). */
-val HDR_ALWAYS_CONVERT_EXTENSIONS = setOf("jxr", "wdp", "hdp", "jxl")
+private fun defaultContent(kind: HdrKind): HdrContent = when (kind) {
+    HdrKind.None, HdrKind.GainMap -> HdrContent.NA
+    HdrKind.AbsolutePqHlg -> HdrContent.Hdr
+    HdrKind.JpegXr, HdrKind.JpegXl -> HdrContent.Unknown
+}
 
 /**
- * HEIC/HEIF stills (HEVC in ISOBMFF). Platform ImageDecoder on minSdk 31+ (Aves-style).
- * Also listed under [HDR_MAYBE_CONVERT_EXTENSIONS] so we sniff gain-map / ftyp brands.
+ * Extensions that are **not** platform ImageDecoder stills (need lib).
+ * Does **not** mean “always UHDR convert” — content probe decides that.
  */
+val LIB_STILL_EXTENSIONS = setOf("jxr", "wdp", "hdp", "jxl")
+
+/** @deprecated Name kept for call sites; means lib still extensions. */
+val HDR_ALWAYS_CONVERT_EXTENSIONS = LIB_STILL_EXTENSIONS
+
 val HEIC_IMAGE_EXTENSIONS = setOf("heic", "heif", "heics", "heifs", "hif")
 
 /** Extensions that may be absolute PQ/HLG or gain-map (sniff after bytes available). */
@@ -56,10 +93,13 @@ fun isHeicImageExtension(ext: String?): Boolean {
     return e in HEIC_IMAGE_EXTENSIONS
 }
 
-fun isHdrAlwaysConvertExtension(ext: String?): Boolean {
+fun isLibStillExtension(ext: String?): Boolean {
     val e = ext?.lowercase()?.removePrefix(".") ?: return false
-    return e in HDR_ALWAYS_CONVERT_EXTENSIONS
+    return e in LIB_STILL_EXTENSIONS
 }
+
+/** @deprecated Prefer [isLibStillExtension]. */
+fun isHdrAlwaysConvertExtension(ext: String?): Boolean = isLibStillExtension(ext)
 
 fun isHdrMaybeConvertExtension(ext: String?): Boolean {
     val e = ext?.lowercase()?.removePrefix(".") ?: return false
@@ -67,30 +107,34 @@ fun isHdrMaybeConvertExtension(ext: String?): Boolean {
 }
 
 fun isHdrConvertCandidateExtension(ext: String?): Boolean =
-    isHdrAlwaysConvertExtension(ext) || isHdrMaybeConvertExtension(ext)
+    isLibStillExtension(ext) || isHdrMaybeConvertExtension(ext)
 
 /**
- * File-name based quick classify (no I/O). Prefer [sniffHdr] when bytes are available.
+ * File-name only (no I/O). Content is [HdrContent.Unknown] for lib formats — probe before UHDR.
  */
 fun classifyHdrByExtension(fileName: String): HdrKind {
     val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase()
     return when {
         ext == "jxl" -> HdrKind.JpegXl
-        isHdrAlwaysConvertExtension(ext) -> HdrKind.JpegXr
+        isLibStillExtension(ext) -> HdrKind.JpegXr
         else -> HdrKind.None
     }
 }
 
-/**
- * Cheap header sniff (≤ [maxBytes]). Safe for network cache posts and local paths.
- */
 fun sniffHdr(
     file: File,
     maxBytes: Int = HDR_SNIFF_BYTES,
     fileNameHint: String? = null,
 ): HdrSniffResult {
     if (!file.isFile || file.length() <= 0L) return HdrSniffResult(HdrKind.None)
-    val n = minOf(maxBytes.toLong(), file.length()).toInt().coerceAtLeast(0)
+    // Lib formats: probe with full file when reasonable so SDR vs HDR is accurate.
+    val ext = FileUtils.getExtensionFromFilename(fileNameHint ?: file.name)?.lowercase()
+    val useFull = isLibStillExtension(ext) && file.length() <= LIB_PROBE_MAX_BYTES
+    val n = if (useFull) {
+        file.length().toInt().coerceAtLeast(0)
+    } else {
+        minOf(maxBytes.toLong(), file.length()).toInt().coerceAtLeast(0)
+    }
     if (n <= 0) return HdrSniffResult(HdrKind.None)
     val bytes = ByteArray(n)
     val read = runCatching {
@@ -101,21 +145,19 @@ fun sniffHdr(
 }
 
 /**
- * Sniff any Okio path (physical or SAF content://).
- * Always-convert extensions (JXR / JXL) can be classified by name without I/O;
- * do **not** map every always-convert ext to [HdrKind.JpegXr] (that broke `.jxl`).
+ * Sniff any Okio path. Lib formats read enough bytes for native content probe (SDR vs HDR).
  */
 fun sniffHdrPath(path: Path, fileNameHint: String? = null, maxBytes: Int = HDR_SNIFF_BYTES): HdrSniffResult {
     val hint = fileNameHint ?: path.name
-    // Extension-only fast path: JXR/JXL (and future always-convert) via classifyHdrByExtension.
-    val byExt = classifyHdrByExtension(hint)
-    if (byExt.needsConvert) {
-        return HdrSniffResult(byExt)
-    }
-    // Maybe-convert (AVIF/HEIC/…) need header bytes for PQ vs gain-map vs SDR.
     return runCatching {
         path.read {
-            val bytes = ByteArray(maxBytes)
+            val ext = FileUtils.getExtensionFromFilename(hint)?.lowercase()
+            val cap = if (isLibStillExtension(ext)) {
+                LIB_PROBE_MAX_BYTES
+            } else {
+                maxBytes
+            }
+            val bytes = ByteArray(cap)
             val n = readAtMostTo(bytes)
             if (n <= 0) HdrSniffResult(HdrKind.None) else sniffHdr(bytes, n, hint)
         }
@@ -137,61 +179,67 @@ fun sniffHdr(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
 
     val ext = FileUtils.getExtensionFromFilename(fileNameHint)?.lowercase()
 
-    // JPEG XL codestream / container (before generic always-convert).
+    // JPEG XL — format + native content probe (PQ/HLG/linear intensity).
     if (isJpegXlMagic(bytes, n) || ext == "jxl") {
-        return HdrSniffResult(HdrKind.JpegXl)
+        val content = when (probeJxlContent(bytes.copyOf(n))) {
+            2 -> HdrContent.Hdr
+            1 -> HdrContent.Sdr
+            else -> HdrContent.Unknown
+        }
+        return HdrSniffResult(HdrKind.JpegXl, content)
     }
 
-    // JPEG XR: magic or always-convert extension (Windows HDR captures).
-    if (isJpegXrMagic(bytes, n) || (isHdrAlwaysConvertExtension(ext) && ext != "jxl")) {
-        return HdrSniffResult(HdrKind.JpegXr)
+    // JPEG XR — float/half/10-bit → HDR; other → SDR/unknown.
+    if (isJpegXrMagic(bytes, n) || (isLibStillExtension(ext) && ext != "jxl")) {
+        val content = when (probeJxrContent(bytes.copyOf(n))) {
+            2 -> HdrContent.Hdr
+            1 -> HdrContent.Sdr
+            else -> HdrContent.Unknown
+        }
+        return HdrSniffResult(HdrKind.JpegXr, content)
     }
 
-    // Gain-map markers (Ultra HDR / ISO 21496 / Apple XMP / HEIF tmap) — class A, no convert.
-    // Android 14+ ImageDecoder attaches Gainmap for AVIF and many HEIC (platform path).
+    // Gain-map markers — platform path, no lib convert.
     if (bytes.containsAscii("GainMap", n) ||
         bytes.containsAscii("hdrgm", n) ||
         bytes.containsAscii("HDRGainMap", n) ||
         bytes.containsAscii("urn:iso:std:iso:ts:21496:-1", n) ||
-        bytes.containsAscii("tmap", n) // HEIF derived gain-map item type
+        bytes.containsAscii("tmap", n)
     ) {
-        return HdrSniffResult(HdrKind.GainMap)
+        return HdrSniffResult(HdrKind.GainMap, HdrContent.NA)
     }
 
-    // Absolute PQ/HLG: only **AVIF** (AV1) goes through libavif convert.
-    // HEIC/HEIF (HEVC) must stay on platform ImageDecoder — libavif cannot decode them
-    // (same split Aves relies on for reliable HEIC open).
+    // Absolute PQ/HLG AVIF only → UHDR convert. HEIC stays platform.
     if (isHeifFamily(bytes, n) && hasAbsoluteHdrCicp(bytes, n)) {
         return if (isAvifBrand(bytes, n)) {
-            HdrSniffResult(HdrKind.AbsolutePqHlg)
+            HdrSniffResult(HdrKind.AbsolutePqHlg, HdrContent.Hdr)
         } else {
-            // HEIC/HEIF PQ/HLG or unknown ISOBMFF still — platform decode.
-            HdrSniffResult(HdrKind.None)
+            HdrSniffResult(HdrKind.None, HdrContent.NA)
         }
     }
 
-    // Named gain-map samples without ASCII (fallback).
     if (fileNameHint != null) {
         val lower = fileNameHint.lowercase()
         if (lower.contains("gainmap") || lower.contains("gain_map")) {
             if (ext == "avif" || isHeicImageExtension(ext) || isHeifFamily(bytes, n)) {
-                return HdrSniffResult(HdrKind.GainMap)
+                return HdrSniffResult(HdrKind.GainMap, HdrContent.NA)
             }
         }
     }
 
-    // Explicit HEIC/HEIF by extension or brand → platform (None); listed as images elsewhere.
     if (isHeicImageExtension(ext) || (isHeifFamily(bytes, n) && isHeicBrand(bytes, n))) {
-        return HdrSniffResult(HdrKind.None)
+        return HdrSniffResult(HdrKind.None, HdrContent.NA)
     }
 
-    return HdrSniffResult(HdrKind.None)
+    return HdrSniffResult(HdrKind.None, HdrContent.NA)
 }
 
 const val HDR_SNIFF_BYTES = 256 * 1024
 
+/** Cap for native JXL/JXR content probe (full file when under this size). */
+const val LIB_PROBE_MAX_BYTES = 48 * 1024 * 1024
+
 private fun isJpegXrMagic(bytes: ByteArray, n: Int): Boolean {
-    // Little-endian JXR: 'I' 'I' 0xBC 0x01
     if (n < 4) return false
     return bytes[0] == 'I'.code.toByte() &&
         bytes[1] == 'I'.code.toByte() &&
@@ -199,7 +247,6 @@ private fun isJpegXrMagic(bytes: ByteArray, n: Int): Boolean {
         (bytes[3].toInt() and 0xff) == 0x01
 }
 
-/** JPEG XL: bare codestream FF 0A, or ISOBMFF container starting with 0x00.. 'JXL '. */
 private fun isJpegXlMagic(bytes: ByteArray, n: Int): Boolean {
     if (n >= 2 &&
         (bytes[0].toInt() and 0xff) == 0xff &&
@@ -207,7 +254,6 @@ private fun isJpegXlMagic(bytes: ByteArray, n: Int): Boolean {
     ) {
         return true
     }
-    // Container: ....JXL \0\0\0\x0C ftyp jxl
     if (n >= 12 &&
         bytes[4] == 'J'.code.toByte() &&
         bytes[5] == 'X'.code.toByte() &&
@@ -220,7 +266,6 @@ private fun isJpegXlMagic(bytes: ByteArray, n: Int): Boolean {
 }
 
 private fun isHeifFamily(bytes: ByteArray, n: Int): Boolean {
-    // ftyp box at offset 4
     if (n < 12) return false
     return bytes[4] == 'f'.code.toByte() &&
         bytes[5] == 't'.code.toByte() &&
@@ -228,14 +273,9 @@ private fun isHeifFamily(bytes: ByteArray, n: Int): Boolean {
         bytes[7] == 'p'.code.toByte()
 }
 
-/** True if ftyp major or compatible brand is AVIF (AV1-in-HEIF). */
 private fun isAvifBrand(bytes: ByteArray, n: Int): Boolean =
     heifFtypHasBrand(bytes, n, "avif") || heifFtypHasBrand(bytes, n, "avis")
 
-/**
- * True if ftyp looks like HEIC/HEIF (HEVC still), not AVIF.
- * Brands: heic, heix, hevc, hevx, mif1, msf1, heif, heim, heis, …
- */
 private fun isHeicBrand(bytes: ByteArray, n: Int): Boolean {
     if (!isHeifFamily(bytes, n)) return false
     if (isAvifBrand(bytes, n)) return false
@@ -252,14 +292,12 @@ private fun isHeicBrand(bytes: ByteArray, n: Int): Boolean {
         heifFtypHasBrand(bytes, n, "heif")
 }
 
-/** Scan ISOBMFF ftyp box (and a small header window) for a 4-char brand. */
 private fun heifFtypHasBrand(bytes: ByteArray, n: Int, brand: String): Boolean {
     if (brand.length != 4 || n < 12) return false
     val b0 = brand[0].code.toByte()
     val b1 = brand[1].code.toByte()
     val b2 = brand[2].code.toByte()
     val b3 = brand[3].code.toByte()
-    // Major brand at offset 8; compatible brands from 16 in steps of 4 (within ftyp size).
     val ftypSize = if (n >= 8) {
         ((bytes[0].toInt() and 0xff) shl 24) or
             ((bytes[1].toInt() and 0xff) shl 16) or
@@ -279,18 +317,10 @@ private fun heifFtypHasBrand(bytes: ByteArray, n: Int, brand: String): Boolean {
         }
         i += 4
     }
-    // Loose fallback in first 256 bytes (some files have multiple ftyp-like chunks).
     return bytes.containsAscii(brand, minOf(n, 256))
 }
 
-/**
- * Look for CICP / NCLX transfer characteristics in a HEIF/AVIF header window.
- * Transfer 16 = PQ (SMPTE ST 2084), 18 = HLG. Not perfect but catches common absolute-HDR stills.
- */
 private fun hasAbsoluteHdrCicp(bytes: ByteArray, n: Int): Boolean {
-    // Search for 'colr' + 'nclx' box payload patterns and transfer byte.
-    // nclx layout after colour_type: primaries(u16) transfer(u16) matrix(u16) full_range(u8)
-    // Also match freeform sequences where transfer is stored as single byte 16 or 18 near 'nclx'.
     val limit = n - 8
     if (limit <= 0) return false
     var i = 0
@@ -300,12 +330,10 @@ private fun hasAbsoluteHdrCicp(bytes: ByteArray, n: Int): Boolean {
             bytes[i + 2] == 'l'.code.toByte() &&
             bytes[i + 3] == 'x'.code.toByte()
         ) {
-            // After 'nclx': colour_primaries (2), transfer_characteristics (2)
             if (i + 8 <= n) {
                 val transfer = ((bytes[i + 6].toInt() and 0xff) shl 8) or (bytes[i + 7].toInt() and 0xff)
                 if (transfer == 16 || transfer == 18) return true
             }
-            // Some writers pack 1-byte fields
             if (i + 6 <= n) {
                 val t = bytes[i + 5].toInt() and 0xff
                 if (t == 16 || t == 18) return true
@@ -313,15 +341,11 @@ private fun hasAbsoluteHdrCicp(bytes: ByteArray, n: Int): Boolean {
         }
         i++
     }
-    // Fallback: CICP in codec config often has bytes ...,9,16,9,... (BT.2020 / PQ / BT.2020)
-    // Look for 0x10 (16) as transfer in short CICP triples near 'av1C' / 'hvcC' is too loose —
-    // require adjacent primaries 9 (BT.2020) then transfer 16 or 18.
     i = 0
     while (i < n - 2) {
         val p = bytes[i].toInt() and 0xff
         val t = bytes[i + 1].toInt() and 0xff
         if (p == 9 && (t == 16 || t == 18)) {
-            // Avoid matching random binary: require nearby 'colr' or 'nclx' or ftyp avif context
             if (bytes.containsAscii("colr", n) || bytes.containsAscii("nclx", n)) return true
         }
         i++

@@ -33,6 +33,17 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(JNIEnv
 }
 
 extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_probeJxrContent(JNIEnv*, jclass, jbyteArray) {
+    return 0;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrSdrRgba8(JNIEnv*, jclass, jbyteArray, jint,
+                                                           jintArray) {
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdr(JNIEnv*, jclass, jbyteArray,
                                                                     jstring) {
     return kUnsupportedAbi;
@@ -48,6 +59,17 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdrMaxEdge(JNIEn
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_probeAvifHdrKind(JNIEnv*, jclass, jbyteArray) {
     return 0;  // not AVIF / unsupported on this ABI
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_probeJxlContent(JNIEnv*, jclass, jbyteArray) {
+    return 0;
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlSdrRgba8(JNIEnv*, jclass, jbyteArray, jint,
+                                                           jintArray) {
+    return nullptr;
 }
 
 extern "C" JNIEXPORT jint JNICALL

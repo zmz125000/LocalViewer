@@ -699,6 +699,152 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
     return rc;
 }
 
+/**
+ * Probe JXR pixel format without full raster (0=error, 1=SDR-ish integer, 2=HDR float/half/10b).
+ * Windows HDR screen captures are float/half scRGB → 2.
+ */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_probeJxrContent(JNIEnv* env, jclass, jbyteArray jInput) {
+    if (!jInput) return 0;
+    const jsize len = env->GetArrayLength(jInput);
+    if (len <= 0) return 0;
+    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
+    if (!bytes) return 0;
+
+    PKFactory* factory = nullptr;
+    PKCodecFactory* codecFactory = nullptr;
+    struct WMPStream* stream = nullptr;
+    PKImageDecode* decoder = nullptr;
+    jint result = 0;
+    auto release_all = [&]() {
+        if (decoder) decoder->Release(&decoder);
+        if (stream) stream->Close(&stream);
+        if (codecFactory) codecFactory->Release(&codecFactory);
+        if (factory) factory->Release(&factory);
+    };
+
+    ERR err = PKCreateFactory(&factory, PK_SDK_VERSION);
+    if (Failed(err) || !factory) {
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return 0;
+    }
+    err = PKCreateCodecFactory(&codecFactory, WMP_SDK_VERSION);
+    if (Failed(err) || !codecFactory) {
+        release_all();
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return 0;
+    }
+    err = factory->CreateStreamFromMemory(&stream, reinterpret_cast<U8*>(bytes),
+                                          static_cast<size_t>(len));
+    if (Failed(err) || !stream) {
+        release_all();
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return 0;
+    }
+    err = PKImageDecode_Create_WMP(&decoder);
+    if (Failed(err) || !decoder) {
+        release_all();
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return 0;
+    }
+    err = decoder->Initialize(decoder, stream);
+    if (Failed(err)) {
+        release_all();
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return 0;
+    }
+    decoder->fStreamOwner = 1;
+    stream = nullptr;
+
+    PKPixelFormatGUID guid{};
+    err = decoder->GetPixelFormat(decoder, &guid);
+    if (!Failed(err)) {
+        JxrPix pix = classify_guid(guid);
+        // Float/half/10-bit: HDR path. Anything else we currently support as raster is rare;
+        // unknown GUID → treat as SDR candidate (1) so we do not force UHDR cache.
+        if (pix == JxrPix::RgbaF32 || pix == JxrPix::RgbaF16 || pix == JxrPix::Rgb101010) {
+            result = 2;
+        } else {
+            result = 1;
+        }
+    }
+    release_all();
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+    return result;
+}
+
+/**
+ * Decode JXR → SDR RGBA8888 for display/thumbs (tone-map linear float to 0..255 when HDR-ish).
+ * Used when content is SDR, or as a non-UHDR display path. max_edge 0 = full.
+ */
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrSdrRgba8(JNIEnv* env, jclass, jbyteArray jInput,
+                                                           jint maxEdge, jintArray jOutWh) {
+    if (!jInput || !jOutWh || env->GetArrayLength(jOutWh) < 2) return nullptr;
+    const jsize len = env->GetArrayLength(jInput);
+    if (len <= 0) return nullptr;
+    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
+    if (!bytes) return nullptr;
+
+    std::vector<uint16_t> rgba_f16;
+    unsigned w = 0, h = 0;
+    if (!decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
+                                rgba_f16, w, h)) {
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return nullptr;
+    }
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+
+    if (maxEdge > 0) {
+        scale_rgba_f16_max_edge(rgba_f16, w, h, static_cast<unsigned>(maxEdge));
+    }
+
+    const size_t n = static_cast<size_t>(w) * static_cast<size_t>(h);
+    std::vector<uint8_t> out(n * 4);
+    for (size_t i = 0; i < n; i++) {
+        float r = half_to_float(rgba_f16[i * 4 + 0]);
+        float g = half_to_float(rgba_f16[i * 4 + 1]);
+        float b = half_to_float(rgba_f16[i * 4 + 2]);
+        float a = half_to_float(rgba_f16[i * 4 + 3]);
+        // Tone-map: simple Reinhard so SDR displays get a usable image without UHDR.
+        auto tm = [](float v) -> uint8_t {
+            if (!std::isfinite(v) || v <= 0.f) return 0;
+            // compress highlights; keep ~1.0 near white
+            const float x = v / (1.f + v);
+            int o = static_cast<int>(std::lround(std::sqrt(x) * 255.f));  // approx gamma
+            if (o < 0) o = 0;
+            if (o > 255) o = 255;
+            return static_cast<uint8_t>(o);
+        };
+        // Linear ≤1 stays in SDR range with mild gamma.
+        auto sdr = [](float v) -> uint8_t {
+            if (!std::isfinite(v) || v <= 0.f) return 0;
+            if (v > 1.f) {
+                // HDR leftover: reinhard then gamma
+                v = v / (1.f + v);
+            }
+            int o = static_cast<int>(std::lround(std::pow(v, 1.f / 2.2f) * 255.f));
+            if (o < 0) o = 0;
+            if (o > 255) o = 255;
+            return static_cast<uint8_t>(o);
+        };
+        (void)tm;
+        out[i * 4 + 0] = sdr(r);
+        out[i * 4 + 1] = sdr(g);
+        out[i * 4 + 2] = sdr(b);
+        int ai = static_cast<int>(std::lround((a > 1.f ? 1.f : (a < 0.f ? 0.f : a)) * 255.f));
+        out[i * 4 + 3] = static_cast<uint8_t>(ai);
+    }
+
+    jint wh[2] = {static_cast<jint>(w), static_cast<jint>(h)};
+    env->SetIntArrayRegion(jOutWh, 0, 2, wh);
+    jbyteArray jOut = env->NewByteArray(static_cast<jsize>(out.size()));
+    if (!jOut) return nullptr;
+    env->SetByteArrayRegion(jOut, 0, static_cast<jsize>(out.size()),
+                            reinterpret_cast<const jbyte*>(out.data()));
+    return jOut;
+}
+
 /** JXR → Ultra HDR with optional long-edge cap (0 = full res). Used for thumbs. */
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
