@@ -1,21 +1,26 @@
 package com.hippo.ehviewer.coil
 
-import android.content.ContentResolver
 import coil3.ImageLoader
 import coil3.Uri as CoilUri
+import coil3.asImage
 import coil3.decode.ContentMetadata
 import coil3.decode.DataSource
 import coil3.decode.ImageSource
 import coil3.fetch.FetchResult
 import coil3.fetch.Fetcher
+import coil3.fetch.ImageFetchResult
 import coil3.fetch.SourceFetchResult
 import coil3.key.Keyer
 import coil3.request.Options
+import coil3.size.Dimension
 import coil3.toUri as toCoilUri
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.image.hdr.HdrKind
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
+import com.hippo.ehviewer.image.hdr.sniffHdrPath
 import com.hippo.ehviewer.util.FileUtils
+import okio.Path
 import okio.Path.Companion.toPath
 import okio.buffer
 import okio.source
@@ -28,11 +33,10 @@ data class CoverPath(val path: String)
 
 /**
  * Fetches cover bytes for SAF / file / MediaStore virtual paths.
- * [CoverPath.path] is the stable cache identity; Android [android.net.Uri] is only
- * resolved when Coil actually needs to open the file (background).
  *
- * Convert-path HDR covers (JXR / PQ AVIF / JXL / future [HdrKind.needsConvert]):
- * routes through [HdrConvertCache.ensureThumb] so Coil always opens a platform JPEG.
+ * - **HDR** lib (JXR/JXL/PQ-AVIF): [HdrConvertCache.ensureCoverSource] → Ultra HDR JPEG
+ * - **SDR** lib (JXR/JXL): lib decode → Bitmap (no UHDR jpg cache)
+ * - Platform formats: open original
  */
 class CoverPathFetcher(
     private val data: CoverPath,
@@ -40,27 +44,31 @@ class CoverPathFetcher(
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
         val path = data.path.toPath()
-        // Only pay convert/sniff cost for known convert-candidate extensions.
         val ext = FileUtils.getExtensionFromFilename(path.name)?.lowercase()
-        val openPath = if (isHdrConvertCandidateExtension(ext)) {
-            HdrConvertCache.ensureThumb(path) ?: path
-        } else {
-            path
+        if (isHdrConvertCandidateExtension(ext)) {
+            val sniff = sniffHdrPath(path)
+            if (sniff.needsUhdrConvert) {
+                return openAsSource(HdrConvertCache.ensureCoverSource(path))
+            }
+            if (sniff.kind == HdrKind.JpegXr || sniff.kind == HdrKind.JpegXl) {
+                val edge = coverDecodeEdge(options)
+                val bmp = HdrConvertCache.decodeLibSdrBitmap(path, path.name, edge)
+                    ?: error("Lib SDR decode failed: ${path.name}")
+                return ImageFetchResult(
+                    image = bmp.asImage(),
+                    isSampled = edge > 0,
+                    dataSource = DataSource.DISK,
+                )
+            }
         }
+        return openAsSource(path)
+    }
 
-        // Path.toUri() may ContentResolver.query for mediastore: — safe here (fetcher thread).
+    private fun openAsSource(openPath: Path): SourceFetchResult {
         val androidUri = openPath.toUri()
         val contentResolver = options.context.contentResolver
-        val afd = when (androidUri.scheme) {
-            ContentResolver.SCHEME_CONTENT, ContentResolver.SCHEME_ANDROID_RESOURCE ->
-                contentResolver.openAssetFileDescriptor(androidUri, "r")
-            ContentResolver.SCHEME_FILE ->
-                contentResolver.openAssetFileDescriptor(androidUri, "r")
-            else ->
-                contentResolver.openAssetFileDescriptor(androidUri, "r")
-        }
+        val afd = contentResolver.openAssetFileDescriptor(androidUri, "r")
         checkNotNull(afd) { "Unable to open cover: ${data.path} → $androidUri" }
-
         val coilUri: CoilUri = androidUri.toString().toCoilUri()
         return SourceFetchResult(
             source = ImageSource(
@@ -74,8 +82,15 @@ class CoverPathFetcher(
     }
 
     class Factory : Fetcher.Factory<CoverPath> {
-        override fun create(data: CoverPath, options: Options, imageLoader: ImageLoader): Fetcher = CoverPathFetcher(data, options)
+        override fun create(data: CoverPath, options: Options, imageLoader: ImageLoader): Fetcher =
+            CoverPathFetcher(data, options)
     }
+}
+
+private fun coverDecodeEdge(options: Options): Int {
+    val w = (options.size.width as? Dimension.Pixels)?.px ?: 0
+    val h = (options.size.height as? Dimension.Pixels)?.px ?: 0
+    return maxOf(w, h).takeIf { it > 0 } ?: 512
 }
 
 /** Memory/disk keyer so CoverPath caches without relying on URI identity. */

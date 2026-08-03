@@ -1,14 +1,8 @@
 package com.hippo.ehviewer.webdav
 
-import android.graphics.Bitmap
-import android.graphics.ImageDecoder
 import android.os.Looper
 import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
-import com.hippo.ehviewer.image.hdr.HdrKind
-import com.hippo.ehviewer.image.hdr.UHDR_CACHE_SUFFIX
-import com.hippo.ehviewer.image.hdr.isHdrAlwaysConvertExtension
-import com.hippo.ehviewer.image.hdr.sniffHdr
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
@@ -20,6 +14,7 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -249,69 +244,27 @@ object WebDavCache {
         tmp: File,
         primaryPath: Path,
         originalFileName: String,
-    ): Path {
-        val sniff = sniffHdr(tmp, fileNameHint = originalFileName)
-        if (!sniff.needsConvert) {
-            commitTmp(tmp, File(primaryPath.toString()))
-            return primaryPath
-        }
-        val outPath = if (primaryPath.name.endsWith(".$UHDR_CACHE_SUFFIX")) {
-            primaryPath
-        } else {
-            HdrConvertCache.uhdrSiblingOf(primaryPath)
-        }
-        val outFile = File(outPath.toString())
-        val ok = when (sniff.kind) {
-            HdrKind.JpegXr -> HdrConvertCache.convertJxrFile(tmp, outFile)
-            HdrKind.AbsolutePqHlg -> HdrConvertCache.convertAvifFile(tmp, outFile)
-            HdrKind.JpegXl -> {
-                val bytes = runCatching { tmp.readBytes() }.getOrNull()
-                if (bytes != null) HdrConvertCache.convertJxlBytes(bytes, outFile) else false
-            }
-            else -> false
-        }
-        if (ok) {
-            tmp.delete()
-            val primary = File(primaryPath.toString())
-            if (primary.absolutePath != outFile.absolutePath) primary.delete()
-            return outPath
-        }
-        if (sniff.kind == HdrKind.JpegXr || sniff.kind == HdrKind.JpegXl ||
-            isHdrAlwaysConvertExtension(FileUtils.getExtensionFromFilename(originalFileName))
-        ) {
-            tmp.delete()
-            error("HDR convert failed for $originalFileName")
-        }
-        commitTmp(tmp, File(primaryPath.toString()))
-        return primaryPath
-    }
+    ): Path = HdrConvertCache.finalizeNetworkDownload(tmp, primaryPath, originalFileName)
 
     /** @see isCachedOnDisk */
     private fun probeDisk(path: Path): Boolean = isCachedOnDisk(path)
 
+    /**
+     * Same [webdav_thumb_cache] dest/key as platform thumbs.
+     * Convert-path → lib+libultrahdr; else ImageDecoder subsample.
+     */
     private fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {
-        val decoded = ImageDecoder.decodeBitmap(ImageDecoder.createSource(source)) { decoder, info, _ ->
-            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val w = info.size.width
-            val h = info.size.height
-            if (w <= 0 || h <= 0) error("Cannot decode bounds: ${source.name}")
-            val longEdge = maxOf(w, h)
-            if (longEdge > maxEdge) {
-                val scale = maxEdge.toFloat() / longEdge
-                decoder.setTargetSize(
-                    (w * scale).toInt().coerceAtLeast(1),
-                    (h * scale).toInt().coerceAtLeast(1),
-                )
-            }
+        val ok = runBlocking {
+            HdrConvertCache.writeThumbJpeg(
+                source = source.toOkioPath(),
+                destJpeg = destJpeg,
+                maxEdge = maxEdge,
+                quality = quality,
+                fileNameHint = source.name,
+            )
         }
-        try {
-            FileOutputStream(destJpeg).use { out ->
-                check(decoded.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
-                    "JPEG compress failed"
-                }
-            }
-        } finally {
-            if (!decoded.isRecycled) decoded.recycle()
+        check(ok && destJpeg.isFile && destJpeg.length() > 0L) {
+            "JPEG thumb failed for ${source.name}"
         }
     }
 

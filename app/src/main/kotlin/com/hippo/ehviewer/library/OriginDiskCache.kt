@@ -241,8 +241,6 @@ object OriginDiskCache {
         collectThumbFiles(cacheDir("smb_thumb_cache"), candidates)
         collectThumbFiles(cacheDir("webdav_thumb_cache"), candidates)
         collectThumbFiles(cacheDir("archive_thumb"), candidates)
-        // Convert-path HDR covers (JXR / JXL / PQ / future needsConvert)
-        collectThumbFiles(cacheDir("hdr_thumbs"), candidates)
 
         var total = candidates.sumOf { it.size }
         if (total <= THUMB_BUDGET_BYTES) return

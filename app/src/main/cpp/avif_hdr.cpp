@@ -318,6 +318,44 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdr(JNIEnv* env,
     return rc;
 }
 
+/** AVIF → Ultra HDR with optional long-edge cap (0 = full res). Used for thumbs. */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdrMaxEdge(
+        JNIEnv* env, jclass, jbyteArray jInput, jstring jOutput, jint maxEdge) {
+    if (!jInput || !jOutput) return -10;
+    const jsize len = env->GetArrayLength(jInput);
+    if (len <= 0) return -12;
+    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
+    if (!bytes) return -13;
+    const char* out_path = env->GetStringUTFChars(jOutput, nullptr);
+    if (!out_path) {
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return -14;
+    }
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    int has_gm = 0;
+    int transfer = 0;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    int rc = decode_avif_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
+                                       static_cast<size_t>(len), rgba, w, h, &has_gm, &transfer,
+                                       &cg);
+    if (rc != 0) {
+        env->ReleaseStringUTFChars(jOutput, out_path);
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return -20 + rc;
+    }
+    if (maxEdge > 0) {
+        scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
+    }
+    // Thumbs: fixed MaxCLL 1000 nits — skip full-frame p99.99 peak scan.
+    rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 1000.f);
+    env->ReleaseStringUTFChars(jOutput, out_path);
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+    return rc;
+}
+
 /**
  * Probe: 0 = not AVIF / error, 1 = gain-map AVIF, 2 = absolute PQ/HLG, 3 = other AVIF.
  */

@@ -22,6 +22,13 @@
 extern "C" {
 #include "JXRGlue.h"
 }
+// JXRGlue.h defines min/max as macros (Windows-style) — breaks std::min/max.
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
 
 #define LOG_TAG "HdrConvert"
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -89,8 +96,14 @@ float half_to_float(uint16_t h) {
 }
 
 /**
- * Peak of max(R,G,B) in linear scRGB (relative to SDR white = 1.0).
- * Used as content boost so hdr_capacity_max ≈ peak (not default 10000/203 ≈ 49).
+ * Content peak of max(R,G,B) in linear scRGB (1.0 ≈ SDR / 203 nits).
+ *
+ * Uses the **99.99th percentile** brightest max-component (not raw single-pixel max),
+ * matching jxr_to_png / "On the Calculation and Usage of HDR Static Content Metadata"
+ * (MaxCLL percentile). JXR half-float fireflies (peak 48 → ~9750 nits) otherwise
+ * inflate hdr_capacity_max and collapse Android gain-map weight to SDR.
+ *
+ * Returns linear boost (peak_nits / 203), clamped to a camera-like range.
  */
 // jxrlib JXRGlue.h defines min/max macros — avoid std::max/min after that include.
 static inline float fmax3(float a, float b, float c) {
@@ -98,17 +111,50 @@ static inline float fmax3(float a, float b, float c) {
     return m > c ? m : c;
 }
 
+/** Percentile for content MaxCLL (0.9999 = top 0.01% of pixels). */
+static constexpr double kContentPeakPercentile = 0.9999;
+
 float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count) {
-    float peak = 1.0f;
+    if (!rgba || pixel_count == 0) return 1.05f;
+
+    // Histogram of max(R,G,B) as absolute nits (1.0 linear → 203 nits), 1-nit bins 0..10000.
+    // Same spirit as jxr_to_png MAXCLL_PERCENTILE (there: BT.2100 linear 1.0 = 10000 nits).
+    constexpr int kNitBins = 10001;  // 0..10000 inclusive
+    std::vector<uint32_t> nit_counts(static_cast<size_t>(kNitBins), 0);
+    int raw_max_nits = 0;
+
     for (size_t i = 0; i < pixel_count; i++) {
         const float r = half_to_float(rgba[i * 4 + 0]);
         const float g = half_to_float(rgba[i * 4 + 1]);
         const float b = half_to_float(rgba[i * 4 + 2]);
-        // Ignore non-finite / negative (scRGB can go slightly negative; boost uses positive).
-        const float m = fmax3(r, g, b);
-        if (std::isfinite(m) && m > peak) peak = m;
+        float m = fmax3(r, g, b);
+        if (!std::isfinite(m) || m <= 0.f) continue;
+        // Absolute nits for histogram (same scale we feed libultrahdr).
+        float nits_f = m * 203.0f;
+        if (nits_f > 10000.0f) nits_f = 10000.0f;
+        int nits = static_cast<int>(std::lround(nits_f));
+        if (nits < 0) nits = 0;
+        if (nits >= kNitBins) nits = kNitBins - 1;
+        nit_counts[static_cast<size_t>(nits)]++;
+        if (nits > raw_max_nits) raw_max_nits = nits;
     }
-    // Camera-like range: small headroom above 1, cap runaway highlights.
+
+    // Walk from brightest bin until we have covered the top (1 - percentile) of pixels.
+    const uint64_t count_target = static_cast<uint64_t>(
+        std::llround((1.0 - kContentPeakPercentile) * static_cast<double>(pixel_count)));
+    const uint64_t need = count_target < 1 ? 1 : count_target;
+    uint64_t count = 0;
+    int maxcll_nits = raw_max_nits;
+    for (int idx = raw_max_nits; idx >= 0; idx--) {
+        count += nit_counts[static_cast<size_t>(idx)];
+        if (count >= need) {
+            maxcll_nits = idx;
+            break;
+        }
+    }
+
+    // Linear content boost for Ultra HDR metadata.
+    float peak = static_cast<float>(maxcll_nits) / 203.0f;
     if (peak < 1.05f) peak = 1.05f;
     if (peak > 64.0f) peak = 64.0f;
     return peak;
@@ -405,14 +451,18 @@ static bool write_file(const char* path, const void* data, size_t size) {
  * On a phone with display boost ≈ 4, Android applies:
  *   weight = log(display) / log(capacity) ≈ log(4)/log(49) ≈ 0.25  → looks SDR.
  *
- * Match camera Ultra HDR: capacity ≈ content peak (typically 3–8) so weight ≈ 1 on phones.
+ * Match camera Ultra HDR: capacity ≈ content peak so weight ≈ 1 on phones.
  * Encode metadata is content-only — never bake panel/display boost into the file.
+ *
+ * [fixed_peak_nits] > 0: skip full-frame peak scan (thumbs use fixed MaxCLL e.g. 1000).
+ * [fixed_peak_nits] ≤ 0: p99.99 scan of max(R,G,B) (full pages).
  *
  * [cg] must match [rgba] primaries. libultrahdr embeds a matching ICC on the base JPEG
  * (BT.709 / Display P3 / BT.2100). Do not rematrix here.
  */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
-                                   const char* out_path, uhdr_color_gamut_t cg) {
+                                   const char* out_path, uhdr_color_gamut_t cg,
+                                   float fixed_peak_nits) {
     uhdr_codec_private_t* enc = uhdr_create_encoder();
     if (!enc) {
         ALOGE("uhdr_create_encoder failed");
@@ -425,51 +475,23 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         cg = UHDR_CG_BT_709;
     }
 
-    const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
-    // peak scan (inline — avoid name clash with file-local helper in anon namespace)
-    float content_peak = 1.0f;
-    for (size_t i = 0; i < pixels; i++) {
-        auto h2f = [](uint16_t h) -> float {
-            const uint32_t sign = (static_cast<uint32_t>(h) & 0x8000u) << 16;
-            uint32_t exp = (h >> 10) & 0x1fu;
-            uint32_t mant = h & 0x3ffu;
-            uint32_t out;
-            if (exp == 0) {
-                if (mant == 0) {
-                    out = sign;
-                } else {
-                    exp = 1;
-                    while ((mant & 0x400u) == 0) {
-                        mant <<= 1;
-                        exp--;
-                    }
-                    mant &= 0x3ffu;
-                    out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-                }
-            } else if (exp == 31) {
-                out = sign | 0x7f800000u | (mant << 13);
-            } else {
-                out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-            }
-            union {
-                uint32_t u;
-                float f;
-            } v{out};
-            return v.f;
-        };
-        const float r = h2f(rgba[i * 4 + 0]);
-        const float g = h2f(rgba[i * 4 + 1]);
-        const float b = h2f(rgba[i * 4 + 2]);
-        float m = r > g ? r : g;
-        if (b > m) m = b;
-        if (std::isfinite(m) && m > content_peak) content_peak = m;
+    float content_peak;
+    float peak_nits;
+    if (fixed_peak_nits > 0.f) {
+        // Thumbs / cheap path: fixed MaxCLL, no pixel histogram.
+        peak_nits = fixed_peak_nits;
+        if (peak_nits < 203.0f) peak_nits = 203.0f;
+        if (peak_nits > 10000.0f) peak_nits = 10000.0f;
+        content_peak = peak_nits / 203.0f;
+        if (content_peak < 1.05f) content_peak = 1.05f;
+    } else {
+        const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
+        // Full page: 99.99th-percentile max(R,G,B) (jxr_to_png / MaxCLL paper).
+        content_peak = scan_scrgb_peak(rgba, pixels);
+        peak_nits = 203.0f * content_peak;
+        if (peak_nits < 203.0f) peak_nits = 203.0f;
+        if (peak_nits > 10000.0f) peak_nits = 10000.0f;
     }
-    if (content_peak < 1.05f) content_peak = 1.05f;
-    if (content_peak > 64.0f) content_peak = 64.0f;
-    // SDR white reference for Ultra HDR metadata is 203 nits.
-    float peak_nits = 203.0f * content_peak;
-    if (peak_nits < 203.0f) peak_nits = 203.0f;
-    if (peak_nits > 10000.0f) peak_nits = 10000.0f;
 
     uhdr_raw_image_t img{};
     img.fmt = UHDR_IMG_FMT_64bppRGBAHalfFloat;
@@ -508,8 +530,8 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
               err.has_detail ? err.detail : "error");
     }
 
-    ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f cg=%d %ux%u", content_peak, peak_nits,
-          (int)cg, w, h);
+    ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f fixed=%d cg=%d %ux%u", content_peak,
+          peak_nits, fixed_peak_nits > 0.f ? 1 : 0, (int)cg, w, h);
 
     err = uhdr_encode(enc);
     if (err.error_code != UHDR_CODEC_OK) {
@@ -532,6 +554,102 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
           out_path, stream->data_sz);
     uhdr_release_encoder(enc);
     return 0;
+}
+
+void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,
+                             unsigned max_edge) {
+    if (max_edge == 0 || w == 0 || h == 0) return;
+    const unsigned long_edge = w > h ? w : h;
+    if (long_edge <= max_edge) return;
+
+    const float scale = static_cast<float>(max_edge) / static_cast<float>(long_edge);
+    const unsigned nw = std::max(1u, static_cast<unsigned>(w * scale));
+    const unsigned nh = std::max(1u, static_cast<unsigned>(h * scale));
+    std::vector<uint16_t> out(static_cast<size_t>(nw) * nh * 4);
+
+    auto h2f = [](uint16_t hv) -> float {
+        const uint32_t sign = (static_cast<uint32_t>(hv) & 0x8000u) << 16;
+        uint32_t exp = (hv >> 10) & 0x1fu;
+        uint32_t mant = hv & 0x3ffu;
+        uint32_t o;
+        if (exp == 0) {
+            if (mant == 0) {
+                o = sign;
+            } else {
+                exp = 1;
+                while ((mant & 0x400u) == 0) {
+                    mant <<= 1;
+                    exp--;
+                }
+                mant &= 0x3ffu;
+                o = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+            }
+        } else if (exp == 31) {
+            o = sign | 0x7f800000u | (mant << 13);
+        } else {
+            o = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+        }
+        union {
+            uint32_t u;
+            float f;
+        } v{o};
+        return v.f;
+    };
+    auto f2h = [](float f) -> uint16_t {
+        union {
+            float f;
+            uint32_t u;
+        } v{f};
+        uint32_t x = v.u;
+        uint32_t sign = (x >> 16) & 0x8000u;
+        int32_t exp = static_cast<int32_t>((x >> 23) & 0xff) - 127 + 15;
+        uint32_t mant = x & 0x7fffffu;
+        if (exp <= 0) {
+            if (exp < -10) return static_cast<uint16_t>(sign);
+            mant |= 0x800000u;
+            uint32_t t = 14 - exp;
+            uint32_t m = mant >> t;
+            if ((mant >> (t - 1)) & 1u) m++;
+            return static_cast<uint16_t>(sign | m);
+        }
+        if (exp >= 31) {
+            if (mant) return static_cast<uint16_t>(sign | 0x7e00u);
+            return static_cast<uint16_t>(sign | 0x7c00u);
+        }
+        uint32_t half = sign | (static_cast<uint32_t>(exp) << 10) | (mant >> 13);
+        if (mant & 0x1000u) half++;
+        return static_cast<uint16_t>(half);
+    };
+
+    for (unsigned y = 0; y < nh; y++) {
+        const unsigned sy0 = y * h / nh;
+        const unsigned sy1 = std::min(h, (y + 1) * h / nh);
+        for (unsigned x = 0; x < nw; x++) {
+            const unsigned sx0 = x * w / nw;
+            const unsigned sx1 = std::min(w, (x + 1) * w / nw);
+            float acc[4] = {0, 0, 0, 0};
+            unsigned cnt = 0;
+            for (unsigned sy = sy0; sy < sy1; sy++) {
+                for (unsigned sx = sx0; sx < sx1; sx++) {
+                    const size_t i = (static_cast<size_t>(sy) * w + sx) * 4;
+                    acc[0] += h2f(rgba[i + 0]);
+                    acc[1] += h2f(rgba[i + 1]);
+                    acc[2] += h2f(rgba[i + 2]);
+                    acc[3] += h2f(rgba[i + 3]);
+                    cnt++;
+                }
+            }
+            if (cnt == 0) cnt = 1;
+            const size_t o = (static_cast<size_t>(y) * nw + x) * 4;
+            out[o + 0] = f2h(acc[0] / cnt);
+            out[o + 1] = f2h(acc[1] / cnt);
+            out[o + 2] = f2h(acc[2] / cnt);
+            out[o + 3] = f2h(acc[3] / cnt);
+        }
+    }
+    rgba.swap(out);
+    w = nw;
+    h = nh;
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -586,7 +704,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
                                rgba, w, h)) {
         // HD Photo / scRGB-like: BT.709 primaries, linear extended range.
-        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709);
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709, 0.f);
     } else {
         rc = -21;
     }
@@ -596,25 +714,182 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
     return rc;
 }
 
+/**
+ * Probe JXR pixel format without full raster (0=error, 1=SDR-ish integer, 2=HDR float/half/10b).
+ * Windows HDR screen captures are float/half scRGB → 2.
+ */
 extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_encodeLinearRgbaF16ToUltraHdr(
-        JNIEnv* env, jclass, jint width, jint height, jbyteArray jRgba, jstring jOutput) {
-    if (width <= 0 || height <= 0 || !jRgba || !jOutput) return -10;
-    const size_t need = static_cast<size_t>(width) * static_cast<size_t>(height) * 8;
-    jsize len = env->GetArrayLength(jRgba);
-    if (static_cast<size_t>(len) < need) return -12;
-    jbyte* bytes = env->GetByteArrayElements(jRgba, nullptr);
+Java_com_hippo_ehviewer_jni_HdrConvertKt_probeJxrContent(JNIEnv* env, jclass, jbyteArray jInput) {
+    if (!jInput) return 0;
+    const jsize len = env->GetArrayLength(jInput);
+    if (len <= 0) return 0;
+    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
+    if (!bytes) return 0;
+
+    PKFactory* factory = nullptr;
+    PKCodecFactory* codecFactory = nullptr;
+    struct WMPStream* stream = nullptr;
+    PKImageDecode* decoder = nullptr;
+    jint result = 0;
+    auto release_all = [&]() {
+        if (decoder) decoder->Release(&decoder);
+        if (stream) stream->Close(&stream);
+        if (codecFactory) codecFactory->Release(&codecFactory);
+        if (factory) factory->Release(&factory);
+    };
+
+    ERR err = PKCreateFactory(&factory, PK_SDK_VERSION);
+    if (Failed(err) || !factory) {
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return 0;
+    }
+    err = PKCreateCodecFactory(&codecFactory, WMP_SDK_VERSION);
+    if (Failed(err) || !codecFactory) {
+        release_all();
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return 0;
+    }
+    err = factory->CreateStreamFromMemory(&stream, reinterpret_cast<U8*>(bytes),
+                                          static_cast<size_t>(len));
+    if (Failed(err) || !stream) {
+        release_all();
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return 0;
+    }
+    err = PKImageDecode_Create_WMP(&decoder);
+    if (Failed(err) || !decoder) {
+        release_all();
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return 0;
+    }
+    err = decoder->Initialize(decoder, stream);
+    if (Failed(err)) {
+        release_all();
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return 0;
+    }
+    decoder->fStreamOwner = 1;
+    stream = nullptr;
+
+    PKPixelFormatGUID guid{};
+    err = decoder->GetPixelFormat(decoder, &guid);
+    if (!Failed(err)) {
+        JxrPix pix = classify_guid(guid);
+        // Float/half/10-bit: HDR path. Anything else we currently support as raster is rare;
+        // unknown GUID → treat as SDR candidate (1) so we do not force UHDR cache.
+        if (pix == JxrPix::RgbaF32 || pix == JxrPix::RgbaF16 || pix == JxrPix::Rgb101010) {
+            result = 2;
+        } else {
+            result = 1;
+        }
+    }
+    release_all();
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+    return result;
+}
+
+/**
+ * Decode JXR → SDR RGBA8888 for display/thumbs (tone-map linear float to 0..255 when HDR-ish).
+ * Used when content is SDR, or as a non-UHDR display path. max_edge 0 = full.
+ */
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrSdrRgba8(JNIEnv* env, jclass, jbyteArray jInput,
+                                                           jint maxEdge, jintArray jOutWh) {
+    if (!jInput || !jOutWh || env->GetArrayLength(jOutWh) < 2) return nullptr;
+    const jsize len = env->GetArrayLength(jInput);
+    if (len <= 0) return nullptr;
+    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
+    if (!bytes) return nullptr;
+
+    std::vector<uint16_t> rgba_f16;
+    unsigned w = 0, h = 0;
+    if (!decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
+                                rgba_f16, w, h)) {
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+        return nullptr;
+    }
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+
+    if (maxEdge > 0) {
+        scale_rgba_f16_max_edge(rgba_f16, w, h, static_cast<unsigned>(maxEdge));
+    }
+
+    const size_t n = static_cast<size_t>(w) * static_cast<size_t>(h);
+    std::vector<uint8_t> out(n * 4);
+    for (size_t i = 0; i < n; i++) {
+        float r = half_to_float(rgba_f16[i * 4 + 0]);
+        float g = half_to_float(rgba_f16[i * 4 + 1]);
+        float b = half_to_float(rgba_f16[i * 4 + 2]);
+        float a = half_to_float(rgba_f16[i * 4 + 3]);
+        // Tone-map: simple Reinhard so SDR displays get a usable image without UHDR.
+        auto tm = [](float v) -> uint8_t {
+            if (!std::isfinite(v) || v <= 0.f) return 0;
+            // compress highlights; keep ~1.0 near white
+            const float x = v / (1.f + v);
+            int o = static_cast<int>(std::lround(std::sqrt(x) * 255.f));  // approx gamma
+            if (o < 0) o = 0;
+            if (o > 255) o = 255;
+            return static_cast<uint8_t>(o);
+        };
+        // Linear ≤1 stays in SDR range with mild gamma.
+        auto sdr = [](float v) -> uint8_t {
+            if (!std::isfinite(v) || v <= 0.f) return 0;
+            if (v > 1.f) {
+                // HDR leftover: reinhard then gamma
+                v = v / (1.f + v);
+            }
+            int o = static_cast<int>(std::lround(std::pow(v, 1.f / 2.2f) * 255.f));
+            if (o < 0) o = 0;
+            if (o > 255) o = 255;
+            return static_cast<uint8_t>(o);
+        };
+        (void)tm;
+        out[i * 4 + 0] = sdr(r);
+        out[i * 4 + 1] = sdr(g);
+        out[i * 4 + 2] = sdr(b);
+        int ai = static_cast<int>(std::lround((a > 1.f ? 1.f : (a < 0.f ? 0.f : a)) * 255.f));
+        out[i * 4 + 3] = static_cast<uint8_t>(ai);
+    }
+
+    jint wh[2] = {static_cast<jint>(w), static_cast<jint>(h)};
+    env->SetIntArrayRegion(jOutWh, 0, 2, wh);
+    jbyteArray jOut = env->NewByteArray(static_cast<jsize>(out.size()));
+    if (!jOut) return nullptr;
+    env->SetByteArrayRegion(jOut, 0, static_cast<jsize>(out.size()),
+                            reinterpret_cast<const jbyte*>(out.data()));
+    return jOut;
+}
+
+/** JXR → Ultra HDR with optional long-edge cap (0 = full res). Used for thumbs. */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
+        JNIEnv* env, jclass, jbyteArray jInput, jstring jOutput, jint maxEdge) {
+    if (!jInput || !jOutput) return -10;
+    const jsize len = env->GetArrayLength(jInput);
+    if (len <= 0) return -12;
+    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
     if (!bytes) return -13;
     const char* out_path = env->GetStringUTFChars(jOutput, nullptr);
     if (!out_path) {
-        env->ReleaseByteArrayElements(jRgba, bytes, JNI_ABORT);
+        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
         return -14;
     }
-    // Kotlin helper: linear RGBA F16 is assumed scRGB / BT.709 unless caller extends API.
-    int rc = encode_linear_rgba_f16_to_uhdr(static_cast<unsigned>(width), static_cast<unsigned>(height),
-                                            reinterpret_cast<const uint16_t*>(bytes), out_path,
-                                            UHDR_CG_BT_709);
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    int rc = -20;
+    if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
+                               rgba, w, h)) {
+        if (maxEdge > 0) {
+            scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
+        }
+        // Thumbs: fixed MaxCLL 1000 nits — skip full-frame p99.99 peak scan.
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709, 1000.f);
+    } else {
+        rc = -21;
+    }
+
     env->ReleaseStringUTFChars(jOutput, out_path);
-    env->ReleaseByteArrayElements(jRgba, bytes, JNI_ABORT);
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return rc;
 }

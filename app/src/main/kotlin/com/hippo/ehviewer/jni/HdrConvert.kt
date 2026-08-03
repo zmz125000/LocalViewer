@@ -1,52 +1,68 @@
 package com.hippo.ehviewer.jni
 
 /**
- * Native HDR → Ultra HDR JPEG conversion (libultrahdr + jxrlib + libavif + libjxl).
+ * Native still codecs for formats the platform cannot open reliably as HDR
+ * (libultrahdr + jxrlib + libavif + libjxl).
  *
  * Linked only for **arm64-v8a** and **x86_64** ([EHVIEWER_HDR_CODECS] in CMake).
- * On armeabi-v7a the same JNI symbols are stubs and return -100 (unsupported ABI).
+ * On armeabi-v7a the same JNI symbols are stubs (convert → -100, probe → 0).
  *
- * @return 0 on success; non-zero error code on failure.
+ * **HDR content only** uses convert* → Ultra HDR JPEG (disk cache).
+ * **SDR** of lib formats uses probe* + decode*SdrRgba8 (no UHDR jpg cache).
+ *
+ * @return convert*: 0 on success; non-zero error code on failure.
  */
+
+// ── JPEG XR ──────────────────────────────────────────────────────────────
+
 external fun convertJxrToUltraHdr(inputPath: String, outputPath: String): Int
 
-/**
- * Decode JXR from memory (no temp file) → Ultra HDR JPEG on disk.
- * Prefer for SAF/content Okio paths: read via Okio, convert, never write original .jxr.
- * Same idea as branch `hdr` [HdrJxr.decode] + CreateStreamFromMemory.
- */
 external fun convertJxrBytesToUltraHdr(input: ByteArray, outputPath: String): Int
 
 /**
- * Decode AVIF (libavif) PQ/HLG → linear RGB in source primaries → Ultra HDR JPEG
- * tagged with matching gamut (BT.2100 / Display P3 / BT.709).
- * Gain-map AVIF should use platform ImageDecoder; this is for absolute HDR stills.
+ * JXR → Ultra HDR thumb (long edge [maxEdge]). Uses fixed MaxCLL **1000 nits**
+ * (no full-frame peak scan).
  */
+external fun convertJxrBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: String, maxEdge: Int): Int
+
+/**
+ * Probe JXR content class without full UHDR encode.
+ * @return 0=error, 1=SDR-ish, 2=HDR (float/half/10-bit scRGB)
+ */
+external fun probeJxrContent(input: ByteArray): Int
+
+/**
+ * Decode JXR to packed RGBA8888 (tone-mapped if linear > 1).
+ * [outWh] length ≥ 2 receives width, height. [maxEdge] ≤ 0 = full res.
+ */
+external fun decodeJxrSdrRgba8(input: ByteArray, maxEdge: Int, outWh: IntArray): ByteArray?
+
+// ── AVIF (absolute PQ/HLG only — gain-map stays platform) ────────────────
+
 external fun convertAvifBytesToUltraHdr(input: ByteArray, outputPath: String): Int
+
+/** PQ AVIF → Ultra HDR thumb; fixed MaxCLL 1000 nits (no peak scan). */
+external fun convertAvifBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: String, maxEdge: Int): Int
 
 /**
  * Probe AVIF HDR kind: 0=not avif/error, 1=gain-map, 2=PQ/HLG absolute, 3=other avif.
  */
 external fun probeAvifHdrKind(input: ByteArray): Int
 
-/**
- * Decode JPEG XL (libjxl) → linear RGB → Ultra HDR JPEG.
- */
+// ── JPEG XL ──────────────────────────────────────────────────────────────
+
 external fun convertJxlBytesToUltraHdr(input: ByteArray, outputPath: String): Int
 
-/**
- * Same as [convertJxlBytesToUltraHdr] but scale long edge to [maxEdge] before encode (thumbs).
- * Pass [maxEdge] ≤ 0 for full resolution.
- */
+/** JXL → Ultra HDR thumb; fixed MaxCLL 1000 nits (no peak scan). */
 external fun convertJxlBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: String, maxEdge: Int): Int
 
 /**
- * Encode pre-decoded linear RGBA half-float (little-endian IEEE half) as Ultra HDR JPEG.
- * [rgbaF16] length must be width * height * 8.
+ * Probe JXL content class (BASIC_INFO + COLOR_ENCODING only).
+ * @return 0=error, 1=SDR, 2=HDR (PQ/HLG/high-intensity linear)
  */
-external fun encodeLinearRgbaF16ToUltraHdr(
-    width: Int,
-    height: Int,
-    rgbaF16: ByteArray,
-    outputPath: String,
-): Int
+external fun probeJxlContent(input: ByteArray): Int
+
+/**
+ * Decode JXL as SDR RGBA8888 (sRGB when color management allows).
+ */
+external fun decodeJxlSdrRgba8(input: ByteArray, maxEdge: Int, outWh: IntArray): ByteArray?
