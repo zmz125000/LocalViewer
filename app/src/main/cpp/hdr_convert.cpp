@@ -22,6 +22,13 @@
 extern "C" {
 #include "JXRGlue.h"
 }
+// JXRGlue.h defines min/max as macros (Windows-style) — breaks std::min/max.
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
 
 #define LOG_TAG "HdrConvert"
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
