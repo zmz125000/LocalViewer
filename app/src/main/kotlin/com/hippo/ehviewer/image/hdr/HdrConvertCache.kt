@@ -163,8 +163,12 @@ object HdrConvertCache {
 
     /**
      * Write long-edge [maxEdge] JPEG thumb into caller-owned [destJpeg] (same folder/key).
-     * - HDR lib: native → libultrahdr Ultra HDR JPEG
-     * - SDR lib: native RGBA → regular JPEG (not UHDR encode)
+     *
+     * Non-system (lib) formats — same **content** policy as full pages:
+     * - **SDR** lib (JXR/JXL): same as full pic — keep original semantics, lib decode →
+     *   plain SDR JPEG (no Ultra HDR encode / no peak scan).
+     * - **HDR** lib: lib decode + scale → libultrahdr with **fixed MaxCLL 1000 nits**
+     *   (skips full-frame p99.99 pixel scan used for full pages).
      * - Platform: ImageDecoder subsample
      */
     suspend fun writeThumbJpeg(

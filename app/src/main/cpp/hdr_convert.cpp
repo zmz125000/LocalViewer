@@ -451,14 +451,18 @@ static bool write_file(const char* path, const void* data, size_t size) {
  * On a phone with display boost ≈ 4, Android applies:
  *   weight = log(display) / log(capacity) ≈ log(4)/log(49) ≈ 0.25  → looks SDR.
  *
- * Match camera Ultra HDR: capacity ≈ content peak (typically 3–8) so weight ≈ 1 on phones.
+ * Match camera Ultra HDR: capacity ≈ content peak so weight ≈ 1 on phones.
  * Encode metadata is content-only — never bake panel/display boost into the file.
+ *
+ * [fixed_peak_nits] > 0: skip full-frame peak scan (thumbs use fixed MaxCLL e.g. 1000).
+ * [fixed_peak_nits] ≤ 0: p99.99 scan of max(R,G,B) (full pages).
  *
  * [cg] must match [rgba] primaries. libultrahdr embeds a matching ICC on the base JPEG
  * (BT.709 / Display P3 / BT.2100). Do not rematrix here.
  */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
-                                   const char* out_path, uhdr_color_gamut_t cg) {
+                                   const char* out_path, uhdr_color_gamut_t cg,
+                                   float fixed_peak_nits) {
     uhdr_codec_private_t* enc = uhdr_create_encoder();
     if (!enc) {
         ALOGE("uhdr_create_encoder failed");
@@ -471,13 +475,23 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         cg = UHDR_CG_BT_709;
     }
 
-    const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
-    // 99.99th-percentile max(R,G,B) (jxr_to_png / MaxCLL paper) — reject firefly peaks.
-    const float content_peak = scan_scrgb_peak(rgba, pixels);
-    // SDR white reference for Ultra HDR metadata is 203 nits.
-    float peak_nits = 203.0f * content_peak;
-    if (peak_nits < 203.0f) peak_nits = 203.0f;
-    if (peak_nits > 10000.0f) peak_nits = 10000.0f;
+    float content_peak;
+    float peak_nits;
+    if (fixed_peak_nits > 0.f) {
+        // Thumbs / cheap path: fixed MaxCLL, no pixel histogram.
+        peak_nits = fixed_peak_nits;
+        if (peak_nits < 203.0f) peak_nits = 203.0f;
+        if (peak_nits > 10000.0f) peak_nits = 10000.0f;
+        content_peak = peak_nits / 203.0f;
+        if (content_peak < 1.05f) content_peak = 1.05f;
+    } else {
+        const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
+        // Full page: 99.99th-percentile max(R,G,B) (jxr_to_png / MaxCLL paper).
+        content_peak = scan_scrgb_peak(rgba, pixels);
+        peak_nits = 203.0f * content_peak;
+        if (peak_nits < 203.0f) peak_nits = 203.0f;
+        if (peak_nits > 10000.0f) peak_nits = 10000.0f;
+    }
 
     uhdr_raw_image_t img{};
     img.fmt = UHDR_IMG_FMT_64bppRGBAHalfFloat;
@@ -516,8 +530,8 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
               err.has_detail ? err.detail : "error");
     }
 
-    ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f (p99.99 MaxCLL-style) cg=%d %ux%u",
-          content_peak, peak_nits, (int)cg, w, h);
+    ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f fixed=%d cg=%d %ux%u", content_peak,
+          peak_nits, fixed_peak_nits > 0.f ? 1 : 0, (int)cg, w, h);
 
     err = uhdr_encode(enc);
     if (err.error_code != UHDR_CODEC_OK) {
@@ -690,7 +704,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
                                rgba, w, h)) {
         // HD Photo / scRGB-like: BT.709 primaries, linear extended range.
-        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709);
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709, 0.f);
     } else {
         rc = -21;
     }
@@ -869,7 +883,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
-        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709);
+        // Thumbs: fixed MaxCLL 1000 nits — skip full-frame p99.99 peak scan.
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709, 1000.f);
     } else {
         rc = -21;
     }

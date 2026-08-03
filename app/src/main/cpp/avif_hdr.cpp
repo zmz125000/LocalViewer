@@ -349,7 +349,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdrMaxEdge(
     if (maxEdge > 0) {
         scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
     }
-    rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg);
+    // Thumbs: fixed MaxCLL 1000 nits — skip full-frame p99.99 peak scan.
+    rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 1000.f);
     env->ReleaseStringUTFChars(jOutput, out_path);
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return rc;

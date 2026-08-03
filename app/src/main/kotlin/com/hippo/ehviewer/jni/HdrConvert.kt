@@ -19,6 +19,10 @@ external fun convertJxrToUltraHdr(inputPath: String, outputPath: String): Int
 
 external fun convertJxrBytesToUltraHdr(input: ByteArray, outputPath: String): Int
 
+/**
+ * JXR → Ultra HDR thumb (long edge [maxEdge]). Uses fixed MaxCLL **1000 nits**
+ * (no full-frame peak scan).
+ */
 external fun convertJxrBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: String, maxEdge: Int): Int
 
 /**
@@ -37,6 +41,7 @@ external fun decodeJxrSdrRgba8(input: ByteArray, maxEdge: Int, outWh: IntArray):
 
 external fun convertAvifBytesToUltraHdr(input: ByteArray, outputPath: String): Int
 
+/** PQ AVIF → Ultra HDR thumb; fixed MaxCLL 1000 nits (no peak scan). */
 external fun convertAvifBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: String, maxEdge: Int): Int
 
 /**
@@ -48,6 +53,7 @@ external fun probeAvifHdrKind(input: ByteArray): Int
 
 external fun convertJxlBytesToUltraHdr(input: ByteArray, outputPath: String): Int
 
+/** JXL → Ultra HDR thumb; fixed MaxCLL 1000 nits (no peak scan). */
 external fun convertJxlBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: String, maxEdge: Int): Int
 
 /**
