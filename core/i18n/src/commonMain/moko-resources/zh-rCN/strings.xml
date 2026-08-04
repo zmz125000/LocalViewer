@@ -563,7 +563,7 @@
     <string name="pref_smb_reader_safe_concurrency_summary">强制 3 条连接、每连接 1 个传输。降低原图/大图阅读时的 OOM 风险。</string>
     <string name="pref_reader_hardware_bitmap">硬件位图解码</string>
     <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路径（GPU 位图）。会关闭裁边与二维码广告检测，避免先软件解码再拷贝。</string>
-    <string name="pref_reader_lib_direct_bitmap">解码直出位图（实验）</string>
+    <string name="pref_reader_lib_direct_bitmap">解码直出位图</string>
     <string name="pref_reader_lib_direct_bitmap_summary">将 JXL / JXR / PQ-AVIF 直接解码为 Bitmap，跳过 Ultra HDR JPEG 转换。</string>
     <string name="pref_reader_hdr_display">HDR 显示</string>
     <string name="pref_reader_hdr_display_summary">在 HDR 屏幕上为 Ultra HDR / 增益图页面启用窗口 HDR 色彩模式。HDR 文件的转换与解码始终进行；关闭后仅以 SDR 基底显示。</string>
