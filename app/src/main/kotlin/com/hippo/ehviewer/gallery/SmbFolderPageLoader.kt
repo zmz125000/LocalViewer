@@ -6,6 +6,7 @@ import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
@@ -52,12 +53,16 @@ suspend inline fun <T> useSmbFolderPageLoader(
         } else {
             Semaphore(maxOps - 1)
         }
+        // B1: lib-HDR/avif candidates — only 1 prefetch ahead (interactive + 1 = depth 2).
+        val libHdrPrefetchSlots = Semaphore(1)
         // In-flight downloads by page index — join small-jump overlap, cancel large jumps.
         val downloadJobs = ConcurrentHashMap<Int, Job>()
         /** UI/decode callbacks waiting for [index] to land in [SmbCache]. */
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         // Pages within this distance of the target keep running; farther jobs are cancelled.
+        // Tighter for lib-HDR so we do not pile 30MB RAM buffers.
         val keepWindow = 4
+        val libHdrKeepWindow = 2
 
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
@@ -110,10 +115,15 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     }
                 }
 
+                private fun isLibHdrCandidate(name: String): Boolean =
+                    HdrConvertCache.isRamPipelineCandidate(name)
+
                 private fun cancelDistantDownloads(center: Int) {
                     val snapshot = downloadJobs.entries.toList()
+                    val centerLib = isLibHdrCandidate(imageFileNames.getOrNull(center).orEmpty())
+                    val window = if (centerLib) libHdrKeepWindow else keepWindow
                     for ((idx, job) in snapshot) {
-                        if (kotlin.math.abs(idx - center) > keepWindow) {
+                        if (kotlin.math.abs(idx - center) > window) {
                             // Do not remove waiters here — job's CancellationException handler
                             // restarts download if the UI is still waiting for this page.
                             job.cancel()
@@ -172,7 +182,12 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             if (readyWaiters[index]?.isNotEmpty() == true) {
                                 needsInteractive = true
                             }
-                            val slots = if (needsInteractive) interactiveSlots else prefetchSlots
+                            val nameForSlot = imageFileNames[index]
+                            val slots = when {
+                                needsInteractive -> interactiveSlots
+                                isLibHdrCandidate(nameForSlot) -> libHdrPrefetchSlots
+                                else -> prefetchSlots
+                            }
                             slots.withPermit {
                                 downloadToCache(index)
                             }

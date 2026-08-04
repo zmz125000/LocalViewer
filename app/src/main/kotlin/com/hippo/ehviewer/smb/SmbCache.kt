@@ -5,6 +5,7 @@ import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -207,14 +208,10 @@ object SmbCache {
     /**
      * Ensure a **small JPEG** browse thumb exists for [remoteRelativeFile].
      *
-     * 1. Thumb hit → touch + return (no SMB)
-     * 2. Miss → ensure **full original** in page cache ([smb_cache] / [Kind.Page]) via
-     *    [downloadIfNeeded] (one SMB fetch, shared with reader), then subsample + JPEG
-     *    into [smb_thumb_cache]
-     * 3. If page cache already has the file (e.g. reader opened first), thumb is built
-     *    offline with no network
-     *
-     * Concurrent callers for the same thumb path share one job.
+     * 1. Thumb hit → return
+     * 2. If page cache already has the file (reader opened first) → MaxEdge/subsample offline
+     * 3. Else download to **RAM** → [HdrConvertCache.writeThumbFromBytes] (HDR = MaxEdge only,
+     *    **no** full-page UHDR in page cache from browse)
      */
     suspend fun ensureBrowseThumb(
         sourceId: Long,
@@ -239,33 +236,47 @@ object SmbCache {
                     touch(destPath)
                     return@withContext destPath
                 }
-                // Full original → smb_cache (same key as reader pages for this file).
-                val pageName = remoteRelativeFile.substringAfterLast('/')
-                downloadIfNeeded(pagePath, originalFileName = pageName, write = download)
-                val pageForThumb = resolveReaderPath(pagePath)
-                if (!isCachedOnDisk(pageForThumb)) {
-                    error("SMB page cache empty after download for $remoteRelativeFile")
-                }
                 ensureRootDirs()
                 File(destPath.parent!!.toString()).mkdirs()
                 val dest = File(key)
-                val jpgTmp = File("$key.jpg.${System.nanoTime()}")
-                try {
-                    writeSubsampledJpeg(
-                        File(pageForThumb.toString()),
-                        jpgTmp,
-                        THUMB_DISK_EDGE,
-                        THUMB_JPEG_QUALITY,
+                val pageName = remoteRelativeFile.substringAfterLast('/')
+                val pageForThumb = resolveReaderPath(pagePath)
+                if (isCachedOnDisk(pageForThumb)) {
+                    val jpgTmp = File("$key.jpg.${System.nanoTime()}")
+                    try {
+                        writeSubsampledJpeg(
+                            File(pageForThumb.toString()),
+                            jpgTmp,
+                            THUMB_DISK_EDGE,
+                            THUMB_JPEG_QUALITY,
+                        )
+                        commitTmp(jpgTmp, dest)
+                        markPresent(destPath)
+                        touch(destPath)
+                    } catch (e: Throwable) {
+                        if (jpgTmp.exists()) jpgTmp.delete()
+                        if (isCachedOnDisk(destPath)) return@withContext destPath
+                        throw e
+                    } finally {
+                        if (jpgTmp.exists()) jpgTmp.delete()
+                    }
+                } else {
+                    // MaxEdge-only (HDR) / decode-subsample — no full-page convert.
+                    val bos = ByteArrayOutputStream(256 * 1024)
+                    download(bos)
+                    val bytes = bos.toByteArray()
+                    val ok = HdrConvertCache.writeThumbFromBytes(
+                        bytes = bytes,
+                        destJpeg = dest,
+                        maxEdge = THUMB_DISK_EDGE,
+                        quality = THUMB_JPEG_QUALITY,
+                        fileNameHint = pageName,
                     )
-                    commitTmp(jpgTmp, dest)
+                    if (!ok || !dest.isFile || dest.length() == 0L) {
+                        error("SMB browse thumb failed for $remoteRelativeFile")
+                    }
                     markPresent(destPath)
                     touch(destPath)
-                } catch (e: Throwable) {
-                    if (jpgTmp.exists()) jpgTmp.delete()
-                    if (isCachedOnDisk(destPath)) return@withContext destPath
-                    throw e
-                } finally {
-                    if (jpgTmp.exists()) jpgTmp.delete()
                 }
             }
         }
@@ -277,10 +288,10 @@ object SmbCache {
      * Download full file into [path] if missing (reader pages).
      * Do **not** use for browse covers — use [ensureBrowseThumb].
      *
-     * HDR: when [originalFileName] is JPEG XR (or sniff says convert), writes Ultra HDR
-     * JPEG only — original PQ/JXR bytes are not kept in [smb_cache].
+     * Lib/avif candidates (B1): download to RAM → classify → UHDR `.jpg` only (or keep SDR
+     * original). No discarded multi-MB original on disk.
      *
-     * @param originalFileName remote base name for sniff / always-convert ext detection.
+     * @param originalFileName remote base name for sniff / pipeline routing.
      */
     suspend fun downloadIfNeeded(
         path: Path,
@@ -303,20 +314,28 @@ object SmbCache {
             }
             ensureRootDirs()
             path.parent?.let { File(it.toString()).mkdirs() }
-            val dest = File(key)
-            val tmp = File("$key.tmp.${System.nanoTime()}")
+            val nameHint = originalFileName ?: path.name
             try {
-                FileOutputStream(tmp).use { out -> write(out) }
-                val nameHint = originalFileName ?: path.name
-                val finalPath = maybeConvertHdrDownload(tmp, path, nameHint)
-                markPresent(finalPath)
-                touch(finalPath)
+                if (HdrConvertCache.isRamPipelineCandidate(nameHint)) {
+                    val bos = ByteArrayOutputStream(1024 * 1024)
+                    write(bos)
+                    val finalPath = HdrConvertCache.finalizeNetworkBytes(bos.toByteArray(), path, nameHint)
+                    markPresent(finalPath)
+                    touch(finalPath)
+                } else {
+                    val tmp = File("$key.tmp.${System.nanoTime()}")
+                    try {
+                        FileOutputStream(tmp).use { out -> write(out) }
+                        val finalPath = maybeConvertHdrDownload(tmp, path, nameHint)
+                        markPresent(finalPath)
+                        touch(finalPath)
+                    } finally {
+                        if (tmp.exists()) tmp.delete()
+                    }
+                }
             } catch (e: Throwable) {
-                tmp.delete()
                 if (isCachedOnDisk(HdrConvertCache.resolvePagePath(path))) return
                 throw e
-            } finally {
-                if (tmp.exists()) tmp.delete()
             }
         }
         scheduleTrim()

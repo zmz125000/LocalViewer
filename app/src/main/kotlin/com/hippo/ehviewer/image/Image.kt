@@ -347,26 +347,53 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                     if (!isAtLeastU) {
                         rewriteGifSource(src.source)
                     }
-                    // One classify for in-memory lib stills (rare archive path).
-                    runCatching {
+                    // Archive mmap path: one classify for lib SDR / absolute HDR.
+                    val bufferBytes = runCatching {
                         val dup = src.source.asReadOnlyBuffer()
                         val n = dup.remaining()
-                        if (n <= 0) return@runCatching null
-                        val bytes = ByteArray(n)
-                        dup.get(bytes)
-                        val route = classify(bytes, n)
-                        if (!route.isLibSdr) return@runCatching null
-                        val lib = route as StillRoute.Lib
-                        val mode = decodeMode(forceOriginal)
-                        val hint = when (lib.codec) {
-                            LibCodec.Jxl -> "buf.jxl"
-                            LibCodec.Jxr -> "buf.jxr"
-                            LibCodec.AvifPq -> return@runCatching null
-                        }
-                        HdrConvertCache.decodeLibSdrBitmap(bytes, hint, maxEdgeForMode(mode))?.asImage()
-                    }.getOrNull()?.let { libImg ->
-                        return Image(libImg, src).apply {
-                            if (innerImage is BitmapImage) src.close()
+                        if (n <= 0) null else ByteArray(n).also { dup.get(it) }
+                    }.getOrNull()
+                    if (bufferBytes != null) {
+                        val route = classify(bufferBytes, bufferBytes.size)
+                        when {
+                            route.needsUhdr -> {
+                                // Absolute HDR JXR/JXL/PQ-AVIF: convert to UHDR file then Coil.
+                                val hint = when ((route as StillRoute.Lib).codec) {
+                                    LibCodec.Jxl -> "archive.jxl"
+                                    LibCodec.Jxr -> "archive.jxr"
+                                    LibCodec.AvifPq -> "archive.avif"
+                                }
+                                val uhdr = HdrConvertCache.ensureUhdrFromBytes(bufferBytes, hint)
+                                val pathSrc = object : PathSource {
+                                    override val source = uhdr
+                                    override val type = "jpg"
+                                    override fun close() = src.close()
+                                }
+                                val coilImage = pathSrc.right().decodeCoil(checkExtraneousAds, forceOriginal)
+                                return Image(coilImage, pathSrc).apply {
+                                    if (innerImage is BitmapImage) pathSrc.close()
+                                }
+                            }
+                            route.isLibSdr -> {
+                                val lib = route as StillRoute.Lib
+                                val mode = decodeMode(forceOriginal)
+                                val hint = when (lib.codec) {
+                                    LibCodec.Jxl -> "buf.jxl"
+                                    LibCodec.Jxr -> "buf.jxr"
+                                    LibCodec.AvifPq -> null
+                                }
+                                if (hint != null) {
+                                    HdrConvertCache.decodeLibSdrBitmap(
+                                        bufferBytes,
+                                        hint,
+                                        maxEdgeForMode(mode),
+                                    )?.asImage()?.let { libImg ->
+                                        return Image(libImg, src).apply {
+                                            if (innerImage is BitmapImage) src.close()
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     val coilImage = src.left().decodeCoil(checkExtraneousAds, forceOriginal)

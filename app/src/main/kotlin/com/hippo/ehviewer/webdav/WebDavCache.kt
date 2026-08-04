@@ -5,6 +5,7 @@ import com.ehviewer.core.files.mkdirs
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -143,13 +144,16 @@ object WebDavCache {
         if (f.isFile) f.setLastModified(System.currentTimeMillis())
     }
 
+    /**
+     * Browse thumb: reuse page cache if present; else RAM download → MaxEdge-only thumb
+     * (no full-page UHDR from list covers).
+     */
     suspend fun ensureBrowseThumb(
         sourceId: Long,
         remoteRelativeFile: String,
         download: suspend (OutputStream) -> Unit,
     ): Path = withContext(Dispatchers.IO) {
         val destPath = thumbCachePath(sourceId, remoteRelativeFile)
-        // Always on IO here — allow real disk probe.
         if (probeDisk(destPath)) {
             touch(destPath)
             return@withContext destPath
@@ -168,24 +172,44 @@ object WebDavCache {
                     return@withContext destPath
                 }
                 val name = remoteRelativeFile.substringAfterLast('/')
-                downloadIfNeeded(pagePath, originalFileName = name, download)
-                val pageForThumb = resolveReaderPath(pagePath)
-                if (!probeDisk(pageForThumb)) error("WebDAV page cache empty for $remoteRelativeFile")
                 ensureRootDirs()
                 File(destPath.parent!!.toString()).mkdirs()
                 val dest = File(key)
-                val jpgTmp = File("$key.jpg.${System.nanoTime()}")
-                try {
-                    writeSubsampledJpeg(File(pageForThumb.toString()), jpgTmp, THUMB_DISK_EDGE, THUMB_JPEG_QUALITY)
-                    commitTmp(jpgTmp, dest)
+                val pageForThumb = resolveReaderPath(pagePath)
+                if (probeDisk(pageForThumb)) {
+                    val jpgTmp = File("$key.jpg.${System.nanoTime()}")
+                    try {
+                        writeSubsampledJpeg(
+                            File(pageForThumb.toString()),
+                            jpgTmp,
+                            THUMB_DISK_EDGE,
+                            THUMB_JPEG_QUALITY,
+                        )
+                        commitTmp(jpgTmp, dest)
+                        markPresent(destPath)
+                        touch(destPath)
+                    } catch (e: Throwable) {
+                        if (jpgTmp.exists()) jpgTmp.delete()
+                        if (probeDisk(destPath)) return@withContext destPath
+                        throw e
+                    } finally {
+                        if (jpgTmp.exists()) jpgTmp.delete()
+                    }
+                } else {
+                    val bos = ByteArrayOutputStream(256 * 1024)
+                    download(bos)
+                    val ok = HdrConvertCache.writeThumbFromBytes(
+                        bytes = bos.toByteArray(),
+                        destJpeg = dest,
+                        maxEdge = THUMB_DISK_EDGE,
+                        quality = THUMB_JPEG_QUALITY,
+                        fileNameHint = name,
+                    )
+                    if (!ok || !dest.isFile || dest.length() == 0L) {
+                        error("WebDAV browse thumb failed for $remoteRelativeFile")
+                    }
                     markPresent(destPath)
                     touch(destPath)
-                } catch (e: Throwable) {
-                    if (jpgTmp.exists()) jpgTmp.delete()
-                    if (probeDisk(destPath)) return@withContext destPath
-                    throw e
-                } finally {
-                    if (jpgTmp.exists()) jpgTmp.delete()
                 }
             }
         }
@@ -193,6 +217,9 @@ object WebDavCache {
         destPath
     }
 
+    /**
+     * Reader page download. Lib/avif: RAM → [HdrConvertCache.finalizeNetworkBytes] (B1).
+     */
     suspend fun downloadIfNeeded(
         path: Path,
         originalFileName: String? = null,
@@ -213,19 +240,28 @@ object WebDavCache {
             }
             ensureRootDirs()
             path.parent?.let { File(it.toString()).mkdirs() }
-            val tmp = File("$key.tmp.${System.nanoTime()}")
+            val nameHint = originalFileName ?: path.name
             try {
-                FileOutputStream(tmp).use { out -> write(out) }
-                val nameHint = originalFileName ?: path.name
-                val finalPath = maybeConvertHdrDownload(tmp, path, nameHint)
-                markPresent(finalPath)
-                touch(finalPath)
+                if (HdrConvertCache.isRamPipelineCandidate(nameHint)) {
+                    val bos = ByteArrayOutputStream(1024 * 1024)
+                    write(bos)
+                    val finalPath = HdrConvertCache.finalizeNetworkBytes(bos.toByteArray(), path, nameHint)
+                    markPresent(finalPath)
+                    touch(finalPath)
+                } else {
+                    val tmp = File("$key.tmp.${System.nanoTime()}")
+                    try {
+                        FileOutputStream(tmp).use { out -> write(out) }
+                        val finalPath = maybeConvertHdrDownload(tmp, path, nameHint)
+                        markPresent(finalPath)
+                        touch(finalPath)
+                    } finally {
+                        if (tmp.exists()) tmp.delete()
+                    }
+                }
             } catch (e: Throwable) {
-                tmp.delete()
                 if (isCachedOnDisk(resolveReaderPath(path))) return
                 throw e
-            } finally {
-                if (tmp.exists()) tmp.delete()
             }
         }
         scheduleTrim()

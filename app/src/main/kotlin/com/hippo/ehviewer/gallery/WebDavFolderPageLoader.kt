@@ -6,6 +6,7 @@ import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.webdav.WebDavCache
 import com.hippo.ehviewer.webdav.WebDavClient
@@ -24,6 +25,7 @@ import okio.Path
 /**
  * WebDAV folder reader — same waiter/prefetch shape as SMB, without TCP pool.
  * HTTP client multiplexes; download fan-out is capped inside [WebDavClient].
+ * Lib-HDR/avif: interactive + 1 prefetch (B1 pipeline depth 2).
  */
 suspend inline fun <T> useWebDavFolderPageLoader(
     source: WebDavSourceEntity,
@@ -39,9 +41,11 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         val size = imageFileNames.size
         val interactiveSlots = Semaphore(1)
         val prefetchSlots = Semaphore(3)
+        val libHdrPrefetchSlots = Semaphore(1)
         val downloadJobs = ConcurrentHashMap<Int, Job>()
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         val keepWindow = 4
+        val libHdrKeepWindow = 2
 
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
@@ -89,9 +93,14 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     }
                 }
 
+                private fun isLibHdrCandidate(name: String): Boolean =
+                    HdrConvertCache.isRamPipelineCandidate(name)
+
                 private fun cancelDistantDownloads(center: Int) {
+                    val centerLib = isLibHdrCandidate(imageFileNames.getOrNull(center).orEmpty())
+                    val window = if (centerLib) libHdrKeepWindow else keepWindow
                     for ((idx, job) in downloadJobs.entries.toList()) {
-                        if (kotlin.math.abs(idx - center) > keepWindow) job.cancel()
+                        if (kotlin.math.abs(idx - center) > window) job.cancel()
                     }
                 }
 
@@ -123,7 +132,11 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     val existing = downloadJobs[index]
                     if (existing != null && existing.isActive) return
 
-                    val slots = if (interactive) interactiveSlots else prefetchSlots
+                    val slots = when {
+                        interactive -> interactiveSlots
+                        isLibHdrCandidate(name) -> libHdrPrefetchSlots
+                        else -> prefetchSlots
+                    }
                     val job = launch(Dispatchers.IO) {
                         try {
                             // Authoritative disk check on IO (StrictMode + LRU correctness).
