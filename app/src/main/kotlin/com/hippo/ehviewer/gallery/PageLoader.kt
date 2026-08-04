@@ -13,6 +13,7 @@ import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.Image
 import com.hippo.ehviewer.image.ImageSource
+import com.hippo.ehviewer.image.hdr.DisplaySource
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
 import com.hippo.ehviewer.util.detectAds
@@ -107,8 +108,17 @@ abstract class PageLoader(
     }
 
     private suspend fun atomicallyDecodeAndUpdate(index: Int, forceOriginal: Boolean) {
+        // Prepare (lib HDR→UHDR / lib SDR→jpeg) then Coil-only decode — Image.decode stays simple.
         bracketCase(
-            { openSource(index) },
+            {
+                val raw = openSource(index)
+                try {
+                    DisplaySource.ensureReady(raw)
+                } catch (e: Throwable) {
+                    raw.close()
+                    throw e
+                }
+            },
             { src ->
                 withNonCancellableContext {
                     notifyPageSucceed(

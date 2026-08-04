@@ -8,7 +8,7 @@ import com.hippo.ehviewer.util.FileUtils
  * Must stay aligned with native [supportExt] in `archive.c` and with formats Coil can
  * decode: Android BitmapFactory/ImageDecoder (minSdk 31) plus [coil3.svg.SvgDecoder].
  *
- * HDR / lib-still inventory (see [com.hippo.ehviewer.image.hdr.HdrKind]):
+ * HDR / lib-still inventory (see [com.hippo.ehviewer.image.hdr.StillRoute]):
  * - Gain-map JPEG/AVIF/HEIC: Android 14+ platform decode.
  * - HEIC/HEIF (HEVC): platform ImageDecoder (not libavif).
  * - JPEG XR / JPEG XL: **lib decode**. SDR keeps original (no UHDR cache);
