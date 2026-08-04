@@ -24,6 +24,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import okio.Path
 import okio.Path.Companion.toOkioPath
+import okio.Path.Companion.toPath
 import splitties.init.appCtx
 
 /**
@@ -103,6 +104,18 @@ object ArchiveCoverCache {
         val f = File(key)
         knownPresent.remove(f.absolutePath)
         knownPresent.remove(f.path)
+    }
+
+    /**
+     * Whether a stored cover path is still openable.
+     * Absolute filesystem paths (e.g. `…/cache/archive_thumb/…jpg`) are probed on disk
+     * and [knownPresent] is updated. Non-absolute schemes (`content:`, `mediastore:`) are
+     * trusted here — [com.hippo.ehviewer.coil.CoverPathFetcher] resolves them later.
+     */
+    fun isCoverPathReadable(path: String): Boolean {
+        if (path.isBlank()) return false
+        if (!path.startsWith('/')) return true
+        return isCachedOnDisk(path.toPath())
     }
 
     /**
