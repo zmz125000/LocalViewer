@@ -79,6 +79,7 @@
 * 双击跳转到下一个文件夹
 * 隐私模式和历史记录
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB 格式支持.
+* **JXL/JXR/JPG/AVIF/HEIC HDR 格式支持.**
 * 高性能 smbj 客户端，支持并发连接，图片丝滑加载
 * Ktor CIO WebDAV client 客户端 支持 HTTP/1.1 和 TLS.
 * // Cronet WebDAV 客户端，支持 HTTP/2 和 QUIC
@@ -87,6 +88,7 @@
 * 针对深层文件夹路径优化的导航流程
 * **智能混合加载相册目录和子文件夹，默认加载 SMB 相册封面**
 * 支持 SMB3 加密
+* 支持墨水屏模式 (移植自 [venera-next](https://github.com/cyrilpeng/venera-next)).
 * 支持 EasyTier (移植自 [moonlight-vplus](https://github.com/qiin2333/moonlight-vplus))
 
 
@@ -150,6 +152,7 @@ while ($true) {
 - [Coil](https://coil-kt.github.io/coil/)
 - [Compose Destinations](https://composedestinations.rafaelcosta.xyz/)
 - [libarchive](https://www.libarchive.org/)
+- [libultrahdr](https://github.com/google/libultrahdr)
 
 # 许可证
 
