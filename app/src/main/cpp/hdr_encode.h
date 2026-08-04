@@ -73,6 +73,35 @@ inline uint8_t linear_to_srgb_u8(float l) {
     return static_cast<uint8_t>(s * 255.f + 0.5f);
 }
 
+// ── Linear RGB gamut rematrix (D65, no CAT) ─────────────────────────────────
+//
+// Built as:  M = XYZ_to_linear_sRGB × source_to_XYZ
+// using CSS Color Module Level 4 sample matrices (same primaries as BT.709 for
+// the sRGB/709 end, Display P3, and Rec.2020 / BT.2100):
+//   https://www.w3.org/TR/css-color-4/#color-conversion-code
+// Both ends share D65, so no Bradford chromatic adaptation is applied.
+// Row-major: [R' G' B']^T = M × [R G B]^T in **linear** light.
+
+/** Linear Display P3 → linear BT.709 / sRGB. */
+inline void linear_p3_to_bt709(float& r, float& g, float& b) {
+    const float nr = 1.2249401763f * r + -0.2249401763f * g + 0.0000000000f * b;
+    const float ng = -0.0420569547f * r + 1.0420569547f * g + 0.0000000000f * b;
+    const float nb = -0.0196375546f * r + -0.0786360456f * g + 1.0982736001f * b;
+    r = nr;
+    g = ng;
+    b = nb;
+}
+
+/** Linear BT.2020 / BT.2100 primaries → linear BT.709 / sRGB. */
+inline void linear_bt2020_to_bt709(float& r, float& g, float& b) {
+    const float nr = 1.6604910021f * r + -0.5876411388f * g + -0.0728498633f * b;
+    const float ng = -0.1245504745f * r + 1.1328998971f * g + -0.0083494226f * b;
+    const float nb = -0.0181507634f * r + -0.1005788980f * g + 1.1187296614f * b;
+    r = nr;
+    g = ng;
+    b = nb;
+}
+
 /**
  * Pack linear F16 RGBA (1.0 ≈ SDR / 203 nits) for direct Android Bitmap present
  * (skip Ultra HDR JPEG convert).

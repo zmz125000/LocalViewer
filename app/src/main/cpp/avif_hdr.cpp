@@ -83,16 +83,6 @@ float hlg_inv_oetf(float x) {
     return (std::exp((x - c) / a) + b) / 12.f;
 }
 
-// BT.2020 → BT.709 linear matrix (fallback only when we cannot tag source gamut).
-void bt2020_to_bt709(float& r, float& g, float& b) {
-    const float rr = 1.6605f * r - 0.5876f * g - 0.0728f * b;
-    const float gg = -0.1246f * r + 1.1329f * g - 0.0083f * b;
-    const float bb = -0.0182f * r - 0.1006f * g + 1.1187f * b;
-    r = rr;
-    g = gg;
-    b = bb;
-}
-
 /**
  * Map AVIF CICP primaries (+ transfer) → libultrahdr gamut tag.
  * Values and tags must stay consistent: if we keep BT.2020 RGB, tag BT_2100.
@@ -248,7 +238,7 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
 
             // Policy B only: values must match the BT.709 tag. Preserve path never rematrixes.
             if (need_bt2020_to_709) {
-                bt2020_to_bt709(rl, gl, bl);
+                linear_bt2020_to_bt709(rl, gl, bl);
             }
 
             // Clamp to Ultra HDR LINEAR nominal max (10000/203).

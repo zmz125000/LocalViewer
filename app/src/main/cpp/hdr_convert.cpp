@@ -454,25 +454,6 @@ static bool write_file(const char* path, const void* data, size_t size) {
 
 namespace {
 
-/** Linear RGB Display P3 → BT.709 (for baseline SDR JPEG only). */
-inline void p3_to_bt709_lin(float& r, float& g, float& b) {
-    const float nr = 1.22494018f * r + -0.224940176f * g + -0.000000001f * b;
-    const float ng = -0.042056955f * r + 1.04205695f * g + 0.000000001f * b;
-    const float nb = -0.019637555f * r + -0.078636046f * g + 1.09827360f * b;
-    r = nr;
-    g = ng;
-    b = nb;
-}
-
-inline void bt2020_to_bt709_lin(float& r, float& g, float& b) {
-    const float nr = 1.660491f * r + -0.587641f * g + -0.072850f * b;
-    const float ng = -0.124550f * r + 1.132900f * g + -0.008349f * b;
-    const float nb = -0.018151f * r + -0.100579f * g + 1.118730f * b;
-    r = nr;
-    g = ng;
-    b = nb;
-}
-
 struct JpegErr {
     jpeg_error_mgr pub;
     jmp_buf jump;
@@ -503,9 +484,9 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
         float g = half_to_float(rgba[i * 4 + 1]);
         float b = half_to_float(rgba[i * 4 + 2]);
         if (rematrix_p3) {
-            p3_to_bt709_lin(r, g, b);
+            linear_p3_to_bt709(r, g, b);
         } else if (rematrix_2020) {
-            bt2020_to_bt709_lin(r, g, b);
+            linear_bt2020_to_bt709(r, g, b);
         }
         if (!std::isfinite(r) || r < 0.f) r = 0.f;
         if (!std::isfinite(g) || g < 0.f) g = 0.f;
@@ -706,26 +687,6 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
 
 namespace {
 
-/** Linear RGB in Display P3 → BT.709 (D65). Matrices from IEC 61966-2-1 / CSS Color 4. */
-inline void p3_to_bt709(float& r, float& g, float& b) {
-    const float nr = 1.22494018f * r + -0.224940176f * g + -0.000000001f * b;
-    const float ng = -0.042056955f * r + 1.04205695f * g + 0.000000001f * b;
-    const float nb = -0.019637555f * r + -0.078636046f * g + 1.09827360f * b;
-    r = nr;
-    g = ng;
-    b = nb;
-}
-
-/** Linear RGB BT.2020 → BT.709 (D65). */
-inline void bt2020_to_bt709(float& r, float& g, float& b) {
-    const float nr = 1.660491f * r + -0.587641f * g + -0.072850f * b;
-    const float ng = -0.124550f * r + 1.132900f * g + -0.008349f * b;
-    const float nb = -0.018151f * r + -0.100579f * g + 1.118730f * b;
-    r = nr;
-    g = ng;
-    b = nb;
-}
-
 inline float clamp_nonneg(float v) {
     if (!std::isfinite(v) || v < 0.f) return 0.f;
     if (v > kMaxLinear) return kMaxLinear;
@@ -769,9 +730,9 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
             float b = half_to_float(rgba[i * 4 + 2]);
             float a = half_to_float(rgba[i * 4 + 3]);
             if (cg == UHDR_CG_DISPLAY_P3) {
-                p3_to_bt709(r, g, b);
+                linear_p3_to_bt709(r, g, b);
             } else {
-                bt2020_to_bt709(r, g, b);
+                linear_bt2020_to_bt709(r, g, b);
             }
             r = clamp_nonneg(r);
             g = clamp_nonneg(g);
