@@ -49,11 +49,13 @@ external fun convertJxlBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: Stri
 /**
  * Decode lib still → packed pixels for [android.graphics.Bitmap].
  *
- * [outInfo] length ≥ 5: `w`, `h`, `format` (0=RGBA_8888, 1=RGBA_F16), `isHdr` (0/1),
- * `gamut` **after pack** (0=BT.709/scRGB, 1=Display P3, 2=BT.2100) for Bitmap ColorSpace.
+ * [outInfo] length ≥ 6:
+ * - `w`, `h`, `format` (0=RGBA_8888, 1=RGBA_F16), `isHdr` (0/1)
+ * - `gamut` after pack (0=BT.709/scRGB, 1=Display P3, 2=BT.2100)
+ * - `transferCICP` (16=PQ, 18=HLG, 0=other) when gamut is BT.2100
  * [outBoost] length ≥ 1: content HDR boost (linear) for window headroom.
  * [maxEdge] 0 = full resolution; else long-edge cap after decode.
- * [advancedColor] reader advanced-color: high bit depth F16 + preserve Display P3 for SDR WCG.
+ * [advancedColor] high bit depth + preserve P3 SDR / BT.2020 HDR primaries.
  *
  * @return pixel bytes (RGBA order) or null on failure / unsupported ABI.
  */

@@ -358,18 +358,18 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdrMaxEdge(
 
 /**
  * PQ/HLG AVIF → direct display pixels (skip UHDR JPEG).
- * outInfo int[≥5]: w, h, format(0=8888,1=f16), isHdr(0/1), gamut(0=709,1=P3,2=2100)
+ * outInfo int[≥6]: w, h, format, isHdr, gamut, transferCICP
  * outBoost float[1]: contentHdrBoost
- * forceF16: advanced color — keep half-float for SDR
+ * advancedColor: WCG preserve + high bit depth
  */
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv* env, jclass,
                                                                  jbyteArray jInput, jint maxEdge,
-                                                                 jboolean forceF16,
+                                                                 jboolean advancedColor,
                                                                  jintArray jOutInfo,
                                                                  jfloatArray jOutBoost) {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
-    if (env->GetArrayLength(jOutInfo) < 5 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
+    if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jsize len = env->GetArrayLength(jInput);
     if (len <= 0) return nullptr;
     jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
@@ -390,13 +390,13 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv* env, jc
         }
         const bool force_hdr = (transfer == 16 || transfer == 18);
         std::vector<uint8_t> pixels;
-        int format = 0, is_hdr = 0, gamut = 0;
+        int format = 0, is_hdr = 0, gamut = 0, tf = 0;
         float boost = 1.f;
         if (pack_linear_f16_for_direct(rgba.data(), w, h, force_hdr, cg,
-                                       /*advanced_color=*/forceF16 == JNI_TRUE, pixels, &format,
-                                       &is_hdr, &boost, &gamut) == 0) {
-            jint info[5] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut};
-            env->SetIntArrayRegion(jOutInfo, 0, 5, info);
+                                       advancedColor == JNI_TRUE, transfer, pixels, &format,
+                                       &is_hdr, &boost, &gamut, &tf) == 0) {
+            jint info[6] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut, tf};
+            env->SetIntArrayRegion(jOutInfo, 0, 6, info);
             env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
             result = env->NewByteArray(static_cast<jsize>(pixels.size()));
             if (result) {

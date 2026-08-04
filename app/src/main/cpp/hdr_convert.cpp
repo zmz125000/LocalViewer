@@ -587,9 +587,9 @@ inline float clamp_nonneg(float v) {
 }  // namespace
 
 int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, bool force_hdr,
-                               uhdr_color_gamut_t cg, bool advanced_color,
+                               uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
-                               float* out_boost, int* out_gamut) {
+                               float* out_boost, int* out_gamut, int* out_transfer) {
     if (!rgba || w == 0 || h == 0) return -1;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
 
@@ -605,11 +605,12 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
     if (peak > 64.f) peak = 64.f;
 
     const bool is_hdr = force_hdr || peak > 1.25f;
-    // Advanced + SDR Display P3: keep source primaries for true WCG (window wideColorGamut).
-    // HDR always rematrixes to scRGB for LINEAR_EXTENDED_SRGB + COLOR_MODE_HDR.
+    // Advanced + SDR Display P3: keep source primaries for true WCG.
     const bool preserve_p3 = advanced_color && !is_hdr && cg == UHDR_CG_DISPLAY_P3;
-    const bool need_rematrix =
-        !preserve_p3 && (cg == UHDR_CG_DISPLAY_P3 || cg == UHDR_CG_BT_2100);
+    // Advanced + HDR BT.2100: keep BT.2020 linear for correct WCG+HDR tagging.
+    const bool preserve_bt2100 = advanced_color && is_hdr && cg == UHDR_CG_BT_2100;
+    const bool need_rematrix = (cg == UHDR_CG_DISPLAY_P3 || cg == UHDR_CG_BT_2100) &&
+        !preserve_p3 && !preserve_bt2100;
 
     std::vector<uint16_t> converted;
     const uint16_t* src = rgba;
@@ -643,11 +644,13 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
     int pixel_gamut = 0;
     if (preserve_p3) {
         pixel_gamut = 1;
-    } else if (!need_rematrix && cg == UHDR_CG_BT_2100 && is_hdr) {
-        // Unreachable today (HDR always rematrixes); keep enum for future.
+    } else if (preserve_bt2100) {
         pixel_gamut = 2;
     }
     if (out_gamut) *out_gamut = pixel_gamut;
+    if (out_transfer) {
+        *out_transfer = preserve_bt2100 ? transfer_cicp : 0;
+    }
 
     // High bit depth F16: HDR always; advanced SDR unless preserving P3 as 8888+DISPLAY_P3.
     const bool use_f16 = is_hdr || (advanced_color && !preserve_p3);
@@ -656,11 +659,11 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
     if (out_format) *out_format = use_f16 ? 1 : 0;
 
     if (use_f16) {
-        // RGBA_F16 linear scRGB (after rematrix when needed) — values may exceed 1.0 for HDR.
+        // RGBA_F16 linear (scRGB or preserved BT.2020) — values may exceed 1.0 for HDR.
         out_pixels.resize(pixels * 8);
         std::memcpy(out_pixels.data(), src, out_pixels.size());
-        ALOGI("direct pack F16 %ux%u peak=%.3f hdr=%d advanced=%d pixel_gamut=%d", w, h, peak,
-              is_hdr ? 1 : 0, advanced_color ? 1 : 0, pixel_gamut);
+        ALOGI("direct pack F16 %ux%u peak=%.3f hdr=%d advanced=%d gamut=%d tf=%d", w, h, peak,
+              is_hdr ? 1 : 0, advanced_color ? 1 : 0, pixel_gamut, transfer_cicp);
         return 0;
     }
 
@@ -891,19 +894,19 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
 
 /**
  * JXR → direct display pixels (skip UHDR JPEG).
- * outInfo int[≥5]: w, h, format(0=8888,1=f16), isHdr(0/1), gamut(0=709,1=P3,2=2100)
+ * outInfo int[≥6]: w, h, format, isHdr, gamut, transferCICP
  * outBoost float[1]: contentHdrBoost
- * forceF16: advanced color — keep half-float for SDR
+ * advancedColor: WCG preserve + high bit depth
  * @return pixel bytes or null
  */
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jclass,
                                                                 jbyteArray jInput, jint maxEdge,
-                                                                jboolean forceF16,
+                                                                jboolean advancedColor,
                                                                 jintArray jOutInfo,
                                                                 jfloatArray jOutBoost) {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
-    if (env->GetArrayLength(jOutInfo) < 5 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
+    if (env->GetArrayLength(jOutInfo) < 6 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jsize len = env->GetArrayLength(jInput);
     if (len <= 0) return nullptr;
     jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
@@ -920,13 +923,13 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
         // Peak (and optional force) decides 8888 vs F16; float JXR often peaks > 1.25.
         // JXR path has no reliable CICP here — treat as BT.709 scRGB-like.
         std::vector<uint8_t> pixels;
-        int format = 0, is_hdr = 0, gamut = 0;
+        int format = 0, is_hdr = 0, gamut = 0, tf = 0;
         float boost = 1.f;
         if (pack_linear_f16_for_direct(rgba.data(), w, h, /*force_hdr=*/false, UHDR_CG_BT_709,
-                                       /*advanced_color=*/forceF16 == JNI_TRUE, pixels, &format,
-                                       &is_hdr, &boost, &gamut) == 0) {
-            jint info[5] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut};
-            env->SetIntArrayRegion(jOutInfo, 0, 5, info);
+                                       advancedColor == JNI_TRUE, /*transfer_cicp=*/0, pixels,
+                                       &format, &is_hdr, &boost, &gamut, &tf) == 0) {
+            jint info[6] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut, tf};
+            env->SetIntArrayRegion(jOutInfo, 0, 6, info);
             env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
             result = env->NewByteArray(static_cast<jsize>(pixels.size()));
             if (result) {

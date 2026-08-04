@@ -36,22 +36,25 @@ void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned&
  * Linear RGB is assumed in [cg] primaries.
  *
  * Color policy:
- * - HDR (or peak > 1.25): rematrix wide → BT.709/scRGB, RGBA_F16 linear.
- * - Advanced [advanced_color] + SDR Display P3: **keep P3**, gamma OETF → RGBA_8888
- *   (Kotlin tags DISPLAY_P3; needs window COLOR_MODE_WIDE_COLOR_GAMUT).
+ * - Default HDR: rematrix wide → BT.709/scRGB, RGBA_F16 linear.
+ * - Advanced + HDR BT.2100: **keep BT.2020 primaries**, F16 linear (Kotlin tags
+ *   linear-BT2020 / BT2020_PQ|HLG metadata via [out_transfer]).
+ * - Advanced + SDR Display P3: **keep P3**, gamma OETF → RGBA_8888 (DISPLAY_P3).
  * - Advanced + SDR BT.709: RGBA_F16 linear scRGB (high bit depth).
  * - Default SDR: rematrix wide → 709, RGBA_8888 sRGB OETF.
  *
  * [force_hdr]: true when transfer is PQ/HLG (or similar absolute HDR).
  * [advanced_color]: reader advanced-color toggle (WCG preserve + high bit depth).
+ * [transfer_cicp]: 16=PQ, 18=HLG, 0=other (passed through to [out_transfer]).
  *
  * @param out_format 0 = RGBA_8888, 1 = RGBA_F16
  * @param out_is_hdr  0/1
  * @param out_boost   content headroom linear (for setDesiredHdrHeadroom)
  * @param out_gamut   **pixel** gamut after pack: 0=BT.709/scRGB, 1=Display P3, 2=BT.2100
+ * @param out_transfer CICP transfer of source (16/18/0) when pixels stay BT.2100
  * @return 0 OK
  */
 int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, bool force_hdr,
-                               uhdr_color_gamut_t cg, bool advanced_color,
+                               uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
-                               float* out_boost, int* out_gamut);
+                               float* out_boost, int* out_gamut, int* out_transfer);
