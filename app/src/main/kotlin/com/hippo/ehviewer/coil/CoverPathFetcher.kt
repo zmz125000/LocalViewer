@@ -16,9 +16,10 @@ import coil3.size.Dimension
 import coil3.toUri as toCoilUri
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
-import com.hippo.ehviewer.image.hdr.HdrKind
+import com.hippo.ehviewer.image.hdr.classifyPath
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
-import com.hippo.ehviewer.image.hdr.sniffHdrPath
+import com.hippo.ehviewer.image.hdr.isLibSdr
+import com.hippo.ehviewer.image.hdr.needsUhdr
 import com.hippo.ehviewer.util.FileUtils
 import okio.Path
 import okio.Path.Companion.toPath
@@ -46,19 +47,19 @@ class CoverPathFetcher(
         val path = data.path.toPath()
         val ext = FileUtils.getExtensionFromFilename(path.name)?.lowercase()
         if (isHdrConvertCandidateExtension(ext)) {
-            val sniff = sniffHdrPath(path)
-            if (sniff.needsUhdrConvert) {
-                return openAsSource(HdrConvertCache.ensureCoverSource(path))
-            }
-            if (sniff.kind == HdrKind.JpegXr || sniff.kind == HdrKind.JpegXl) {
-                val edge = coverDecodeEdge(options)
-                val bmp = HdrConvertCache.decodeLibSdrBitmap(path, path.name, edge)
-                    ?: error("Lib SDR decode failed: ${path.name}")
-                return ImageFetchResult(
-                    image = bmp.asImage(),
-                    isSampled = edge > 0,
-                    dataSource = DataSource.DISK,
-                )
+            val route = classifyPath(path)
+            when {
+                route.needsUhdr -> return openAsSource(HdrConvertCache.ensureCoverSource(path))
+                route.isLibSdr -> {
+                    val edge = coverDecodeEdge(options)
+                    val bmp = HdrConvertCache.decodeLibSdrBitmap(path, path.name, edge)
+                        ?: error("Lib SDR decode failed: ${path.name}")
+                    return ImageFetchResult(
+                        image = bmp.asImage(),
+                        isSampled = edge > 0,
+                        dataSource = DataSource.DISK,
+                    )
+                }
             }
         }
         return openAsSource(path)

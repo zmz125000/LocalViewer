@@ -49,13 +49,15 @@ import com.hippo.ehviewer.coil.detectGainmap
 import com.hippo.ehviewer.coil.detectQrCode
 import com.hippo.ehviewer.coil.hardwareThreshold
 import com.hippo.ehviewer.coil.maybeCropBorder
-import com.hippo.ehviewer.image.hdr.HdrContent
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.HdrGainmapConvert
-import com.hippo.ehviewer.image.hdr.HdrKind
+import com.hippo.ehviewer.image.hdr.LibCodec
+import com.hippo.ehviewer.image.hdr.StillRoute
+import com.hippo.ehviewer.image.hdr.classify
+import com.hippo.ehviewer.image.hdr.classifyPath
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
-import com.hippo.ehviewer.image.hdr.sniffHdr
-import com.hippo.ehviewer.image.hdr.sniffHdrPath
+import com.hippo.ehviewer.image.hdr.isLibSdr
+import com.hippo.ehviewer.image.hdr.needsUhdr
 import com.hippo.ehviewer.jni.isGif
 import com.hippo.ehviewer.jni.mmap
 import com.hippo.ehviewer.jni.munmap
@@ -158,10 +160,10 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
             if (!isAtLeastU) return false
             return runCatching {
                 when (src) {
-                    is Either.Left -> sniffHdr(src.value.source).kind == HdrKind.GainMap
+                    is Either.Left -> classify(src.value.source) is StillRoute.PlatformGainMap
                     is Either.Right ->
-                        sniffHdrPath(src.value.source, fileNameHint = src.value.source.name).kind ==
-                            HdrKind.GainMap
+                        classifyPath(src.value.source, fileNameHint = src.value.source.name) is
+                            StillRoute.PlatformGainMap
                 }
             }.getOrDefault(false)
         }
@@ -178,44 +180,43 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
         }
 
         /**
-         * Local / archive / SAF: **HDR** lib formats → Ultra HDR file for Coil.
-         * **SDR** lib formats are left as-is (decoded via [HdrConvertCache.decodeLibSdrBitmap]).
+         * One classify per open for lib-candidate paths.
+         * - HDR lib → Ultra HDR file for Coil
+         * - SDR lib → Bitmap via [HdrConvertCache.decodeLibSdrBitmap]
+         * - else → original PathSource for Coil
          */
-        private suspend fun PathSource.maybeConvertHdr(): PathSource {
+        private suspend fun PathSource.prepareLibRoute(
+            forceOriginal: Boolean,
+        ): Pair<PathSource, CoilImage?> {
             val ext = type.lowercase().removePrefix(".")
                 .ifEmpty { FileUtils.getExtensionFromFilename(source.name)?.lowercase().orEmpty() }
             if (!isHdrConvertCandidateExtension(ext)) {
-                return this
+                return this to null
             }
-            val sniff = sniffHdrPath(source, fileNameHint = source.name)
-            if (!sniff.needsUhdrConvert) return this
-            val converted = HdrConvertCache.ensureReadable(source, source.name)
-            if (converted.toString() == source.toString()) return this
-            val outer = this
-            return object : PathSource {
-                override val source = converted
-                override val type = FileUtils.getExtensionFromFilename(converted.name) ?: "jpg"
-                override fun close() = outer.close()
+            val route = classifyPath(source, fileNameHint = source.name)
+            when {
+                route.needsUhdr -> {
+                    val converted = HdrConvertCache.ensureDisplayFile(source, source.name)
+                    if (converted.toString() == source.toString()) return this to null
+                    val outer = this
+                    val wrapped = object : PathSource {
+                        override val source = converted
+                        override val type = FileUtils.getExtensionFromFilename(converted.name) ?: "jpg"
+                        override fun close() = outer.close()
+                    }
+                    return wrapped to null
+                }
+                route.isLibSdr -> {
+                    val mode = decodeMode(forceOriginal)
+                    val bmp = HdrConvertCache.decodeLibSdrBitmap(
+                        source,
+                        source.name,
+                        maxEdgeForMode(mode),
+                    ) ?: return this to null
+                    return this to bmp.asImage()
+                }
+                else -> return this to null
             }
-        }
-
-        /** Lib SDR (JXR/JXL) → Bitmap without UHDR disk cache. */
-        private suspend fun PathSource.tryDecodeLibSdr(forceOriginal: Boolean): CoilImage? {
-            val ext = type.lowercase().removePrefix(".")
-                .ifEmpty { FileUtils.getExtensionFromFilename(source.name)?.lowercase().orEmpty() }
-            if (!isHdrConvertCandidateExtension(ext)) return null
-            val sniff = sniffHdrPath(source, fileNameHint = source.name)
-            // Only plain lib SDR (not UHDR convert, not platform AVIF).
-            if (sniff.needsUhdrConvert) return null
-            if (sniff.kind != HdrKind.JpegXr && sniff.kind != HdrKind.JpegXl) return null
-            if (sniff.content == HdrContent.Hdr) return null
-            val mode = decodeMode(forceOriginal)
-            val bmp = HdrConvertCache.decodeLibSdrBitmap(
-                source,
-                source.name,
-                maxEdgeForMode(mode),
-            ) ?: return null
-            return bmp.asImage()
         }
 
         private fun CoilImage.asBitmapImage(): BitmapImage? = when (this) {
@@ -307,22 +308,18 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
             checkExtraneousAds: Boolean = false,
             forceOriginal: Boolean = false,
         ): Image {
-            // HDR lib → Ultra HDR file for Coil; SDR lib stays original (decodeLibSdr).
-            val effectiveSrc: ImageSource = when (src) {
-                is PathSource -> src.maybeConvertHdr()
-                else -> src
-            }
-            val image = when (val s = effectiveSrc) {
+            when (src) {
                 is PathSource -> {
-                    // SDR JXR/JXL: lib → Bitmap (no UHDR jpg cache).
-                    s.tryDecodeLibSdr(forceOriginal)?.let { libImg ->
-                        return Image(libImg, s).apply {
-                            if (innerImage is BitmapImage) s.close()
+                    // One classify: HDR → UHDR file; SDR lib → Bitmap; else Coil.
+                    val (pathSrc, libSdrImage) = src.prepareLibRoute(forceOriginal)
+                    if (libSdrImage != null) {
+                        return Image(libSdrImage, pathSrc).apply {
+                            if (innerImage is BitmapImage) pathSrc.close()
                         }
                     }
                     // Pre-U GIF rewrite via mmap (platform animated decoder on U+ is fine).
                     if (!isAtLeastU) {
-                        s.source.openFileDescriptor("rw").use {
+                        pathSrc.source.openFileDescriptor("rw").use {
                             val fd = it.fd
                             if (isGif(fd)) {
                                 return bracketCase(
@@ -330,7 +327,7 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                                     { buffer ->
                                         decode(
                                             byteBufferSource(buffer) {
-                                                munmap(buffer).also { s.close() }
+                                                munmap(buffer).also { pathSrc.close() }
                                             },
                                             checkExtraneousAds,
                                             forceOriginal,
@@ -341,49 +338,44 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                             }
                         }
                     }
-                    s.right().decodeCoil(checkExtraneousAds, forceOriginal)
+                    val coilImage = pathSrc.right().decodeCoil(checkExtraneousAds, forceOriginal)
+                    return Image(coilImage, pathSrc).apply {
+                        if (innerImage is BitmapImage) pathSrc.close()
+                    }
                 }
                 is ByteBufferSource -> {
                     if (!isAtLeastU) {
-                        rewriteGifSource(s.source)
+                        rewriteGifSource(src.source)
                     }
-                    // Lib SDR from memory (rare archive path).
+                    // One classify for in-memory lib stills (rare archive path).
                     runCatching {
-                        val dup = s.source.asReadOnlyBuffer()
+                        val dup = src.source.asReadOnlyBuffer()
                         val n = dup.remaining()
-                        if (n > 0) {
-                            val bytes = ByteArray(n)
-                            dup.get(bytes)
-                            val sniff = sniffHdr(bytes, n)
-                            if (!sniff.needsUhdrConvert &&
-                                (sniff.kind == HdrKind.JpegXl || sniff.kind == HdrKind.JpegXr)
-                            ) {
-                                val mode = decodeMode(forceOriginal)
-                                HdrConvertCache.decodeLibSdrBitmap(
-                                    bytes,
-                                    "buf.${if (sniff.kind == HdrKind.JpegXl) "jxl" else "jxr"}",
-                                    maxEdgeForMode(mode),
-                                )?.asImage()
-                            } else {
-                                null
-                            }
-                        } else {
-                            null
+                        if (n <= 0) return@runCatching null
+                        val bytes = ByteArray(n)
+                        dup.get(bytes)
+                        val route = classify(bytes, n)
+                        if (!route.isLibSdr) return@runCatching null
+                        val lib = route as StillRoute.Lib
+                        val mode = decodeMode(forceOriginal)
+                        val hint = when (lib.codec) {
+                            LibCodec.Jxl -> "buf.jxl"
+                            LibCodec.Jxr -> "buf.jxr"
+                            LibCodec.AvifPq -> return@runCatching null
                         }
+                        HdrConvertCache.decodeLibSdrBitmap(bytes, hint, maxEdgeForMode(mode))?.asImage()
                     }.getOrNull()?.let { libImg ->
-                        return Image(libImg, s).apply {
-                            if (innerImage is BitmapImage) s.close()
+                        return Image(libImg, src).apply {
+                            if (innerImage is BitmapImage) src.close()
                         }
                     }
-                    s.left().decodeCoil(checkExtraneousAds, forceOriginal)
+                    val coilImage = src.left().decodeCoil(checkExtraneousAds, forceOriginal)
+                    return Image(coilImage, src).apply {
+                        if (innerImage is BitmapImage) src.close()
+                    }
                 }
             }
-            return Image(image, effectiveSrc).apply {
-                if (innerImage is BitmapImage) effectiveSrc.close()
-            }
         }
-
-        private const val HDR_SNIFF_BYTES = 256 * 1024
     }
 }
 
