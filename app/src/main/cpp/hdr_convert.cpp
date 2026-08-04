@@ -556,6 +556,68 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     return 0;
 }
 
+int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, bool force_hdr,
+                               std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
+                               float* out_boost) {
+    if (!rgba || w == 0 || h == 0) return -1;
+    const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
+
+    float peak = 0.f;
+    for (size_t i = 0; i < pixels; i++) {
+        const float r = half_to_float(rgba[i * 4 + 0]);
+        const float g = half_to_float(rgba[i * 4 + 1]);
+        const float b = half_to_float(rgba[i * 4 + 2]);
+        float m = fmax3(r, g, b);
+        if (std::isfinite(m) && m > peak) peak = m;
+    }
+    if (peak < 1.f) peak = 1.f;
+    if (peak > 64.f) peak = 64.f;
+
+    const bool is_hdr = force_hdr || peak > 1.25f;
+    if (out_is_hdr) *out_is_hdr = is_hdr ? 1 : 0;
+    if (out_boost) *out_boost = is_hdr ? peak : 1.f;
+    if (out_format) *out_format = is_hdr ? 1 : 0;
+
+    if (is_hdr) {
+        // RGBA_F16 linear — copy half floats as little-endian bytes.
+        out_pixels.resize(pixels * 8);
+        std::memcpy(out_pixels.data(), rgba, out_pixels.size());
+        ALOGI("direct pack HDR F16 %ux%u peak=%.3f force=%d", w, h, peak, force_hdr ? 1 : 0);
+        return 0;
+    }
+
+    // SDR: approximate sRGB OETF into RGBA_8888 (Android Bitmap native order = RGBA).
+    auto linear_to_srgb_u8 = [](float l) -> uint8_t {
+        if (!std::isfinite(l) || l <= 0.f) return 0;
+        if (l >= 1.f) return 255;
+        float s;
+        if (l <= 0.0031308f) {
+            s = l * 12.92f;
+        } else {
+            s = 1.055f * std::pow(l, 1.f / 2.4f) - 0.055f;
+        }
+        if (s < 0.f) s = 0.f;
+        if (s > 1.f) s = 1.f;
+        return static_cast<uint8_t>(s * 255.f + 0.5f);
+    };
+
+    out_pixels.resize(pixels * 4);
+    for (size_t i = 0; i < pixels; i++) {
+        const float r = half_to_float(rgba[i * 4 + 0]);
+        const float g = half_to_float(rgba[i * 4 + 1]);
+        const float b = half_to_float(rgba[i * 4 + 2]);
+        float a = half_to_float(rgba[i * 4 + 3]);
+        if (!std::isfinite(a) || a < 0.f) a = 0.f;
+        if (a > 1.f) a = 1.f;
+        out_pixels[i * 4 + 0] = linear_to_srgb_u8(r);
+        out_pixels[i * 4 + 1] = linear_to_srgb_u8(g);
+        out_pixels[i * 4 + 2] = linear_to_srgb_u8(b);
+        out_pixels[i * 4 + 3] = static_cast<uint8_t>(a * 255.f + 0.5f);
+    }
+    ALOGI("direct pack SDR 8888 %ux%u peak=%.3f", w, h, peak);
+    return 0;
+}
+
 void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,
                              unsigned max_edge) {
     if (max_edge == 0 || w == 0 || h == 0) return;
@@ -746,4 +808,50 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
     env->ReleaseStringUTFChars(jOutput, out_path);
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return rc;
+}
+
+/**
+ * JXR → direct display pixels (skip UHDR JPEG).
+ * outInfo int[4]: w, h, format(0=8888,1=f16), isHdr(0/1)
+ * outBoost float[1]: contentHdrBoost
+ * @return pixel bytes or null
+ */
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jclass,
+                                                                jbyteArray jInput, jint maxEdge,
+                                                                jintArray jOutInfo,
+                                                                jfloatArray jOutBoost) {
+    if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
+    if (env->GetArrayLength(jOutInfo) < 4 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
+    const jsize len = env->GetArrayLength(jInput);
+    if (len <= 0) return nullptr;
+    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
+    if (!bytes) return nullptr;
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    jbyteArray result = nullptr;
+    if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
+                               rgba, w, h)) {
+        if (maxEdge > 0) {
+            scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
+        }
+        // Peak (and optional force) decides 8888 vs F16; float JXR often peaks > 1.25.
+        std::vector<uint8_t> pixels;
+        int format = 0, is_hdr = 0;
+        float boost = 1.f;
+        if (pack_linear_f16_for_direct(rgba.data(), w, h, /*force_hdr=*/false, pixels, &format,
+                                       &is_hdr, &boost) == 0) {
+            jint info[4] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr};
+            env->SetIntArrayRegion(jOutInfo, 0, 4, info);
+            env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
+            result = env->NewByteArray(static_cast<jsize>(pixels.size()));
+            if (result) {
+                env->SetByteArrayRegion(result, 0, static_cast<jsize>(pixels.size()),
+                                        reinterpret_cast<const jbyte*>(pixels.data()));
+            }
+        }
+    }
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+    return result;
 }

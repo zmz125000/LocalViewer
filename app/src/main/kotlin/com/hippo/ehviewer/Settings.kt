@@ -255,6 +255,14 @@ object Settings : DataStorePreferences(null) {
     val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", true)
 
     /**
+     * Experimental reader present for lib stills (JXL / JXR / PQ-AVIF):
+     * decode to Bitmap and skip Ultra HDR JPEG convert. Default off = convert + Coil.
+     * When on, network/SMB/WebDAV also keep the original (no download-time UHDR encode)
+     * and use normal non-lib prefetch slots. Browse covers still convert to small JPEG.
+     */
+    val readerLibDirectBitmap = boolPref("pref_reader_lib_direct_bitmap", true)
+
+    /**
      * Window HDR presentation only: when a composed page has a gain map and the
      * display supports HDR, set [android.view.Window.setColorMode] to
      * [android.content.pm.ActivityInfo.COLOR_MODE_HDR].

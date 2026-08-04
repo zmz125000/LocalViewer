@@ -351,6 +351,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 cropBorder.changesFlow(),
                 stripExtraneousAds.changesFlow(),
                 readerHardwareBitmap.changesFlow(),
+                readerLibDirectBitmap.changesFlow(),
                 // readerHdrDisplay only toggles window COLOR_MODE_HDR — no page restart.
             ).collect {
                 pageLoader.restart()
@@ -445,12 +446,13 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                     val img = (pageLoader.pages.getOrNull(idx)?.status as? PageStatus.Ready)
                         ?.image
                         ?: continue
-                    if (img.hasGainmap) {
+                    // Gain-map Ultra HDR or lib-direct absolute HDR (F16 / linear extended).
+                    if (img.isHdrContent) {
                         anyHdr = true
                         maxBoost = maxOf(maxBoost, img.contentHdrBoost)
                     }
                 }
-                // Keep COLOR_MODE_HDR while any gain-map page is still composed.
+                // Keep COLOR_MODE_HDR while any HDR page is still composed.
                 activity.setHdrColorMode(anyHdr, contentBoost = maxBoost)
             }
         }

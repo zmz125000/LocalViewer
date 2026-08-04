@@ -287,8 +287,9 @@ object SmbCache {
      * Download full file into [path] if missing (reader pages).
      * Do **not** use for browse covers — use [ensureBrowseThumb].
      *
-     * Lib/avif candidates (B1): download to RAM → classify → UHDR `.jpg` only (or keep SDR
-     * original). No discarded multi-MB original on disk.
+     * Lib/avif + convert mode (B1): download to RAM → classify → UHDR `.jpg` only.
+     * [Settings.readerLibDirectBitmap]: same as non-lib — stream original to page cache
+     * (reader [LibDirectDecode] presents Bitmap; no UHDR encode on download).
      *
      * @param originalFileName remote base name for sniff / pipeline routing.
      */
@@ -315,7 +316,7 @@ object SmbCache {
             path.parent?.let { File(it.toString()).mkdirs() }
             val nameHint = originalFileName ?: path.name
             try {
-                if (HdrConvertCache.isRamPipelineCandidate(nameHint)) {
+                if (HdrConvertCache.usesNetworkLibConvert(nameHint)) {
                     val bos = ByteArrayOutputStream(1024 * 1024)
                     write(bos)
                     val finalPath = HdrConvertCache.finalizeNetworkBytes(bos.toByteArray(), path, nameHint)

@@ -28,6 +28,7 @@ import arrow.fx.coroutines.bracketCase
 import coil3.BitmapImage
 import coil3.DrawableImage
 import coil3.Image as CoilImage
+import coil3.asImage
 import coil3.request.CachePolicy
 import coil3.request.ErrorResult
 import coil3.request.SuccessResult
@@ -49,6 +50,7 @@ import com.hippo.ehviewer.coil.detectQrCode
 import com.hippo.ehviewer.coil.hardwareThreshold
 import com.hippo.ehviewer.coil.maybeCropBorder
 import com.hippo.ehviewer.image.hdr.HdrGainmapConvert
+import com.hippo.ehviewer.image.hdr.LibDirectResult
 import com.hippo.ehviewer.jni.isGif
 import com.hippo.ehviewer.jni.mmap
 import com.hippo.ehviewer.jni.munmap
@@ -68,11 +70,18 @@ import splitties.init.appCtx
 /**
  * Coil/ImageDecoder decode + gain-map presentation metadata.
  *
- * Lib convert / lib-SDR materialization happens in
- * [com.hippo.ehviewer.image.hdr.DisplaySource] (via PageLoader) or network finalize —
- * not here. Same shape as pre-HDR reader with small Ultra HDR knobs.
+ * Default path: lib convert in [com.hippo.ehviewer.image.hdr.DisplaySource] then Coil here.
+ * Experimental direct path: [fromLibDirect] holds a lib-decoded [Bitmap] (no UHDR JPEG).
  */
-class Image private constructor(image: CoilImage, private val src: ImageSource) {
+class Image private constructor(
+    image: CoilImage,
+    private val src: ImageSource,
+    /**
+     * Lib-direct absolute HDR (no gain map). Combined with [hasGainmap] for window HDR.
+     */
+    isHdrContentDirect: Boolean = false,
+    contentHdrBoostOverride: Float? = null,
+) {
     val refcnt = AtomicInt(1)
 
     fun pin() = refcnt.updateAndFetch { if (it != 0) it + 1 else 0 } != 0
@@ -97,8 +106,13 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
     }
 
     /**
+     * HDR presentation without a gain map (lib-direct F16 / linear extended path).
+     */
+    val isHdrContent: Boolean = isHdrContentDirect || hasGainmap
+
+    /**
      * Content HDR boost / capacity (linear) for [android.view.Window.setDesiredHdrHeadroom].
-     * From gain-map metadata after [HdrGainmapConvert] clamp — not panel max.
+     * Gain-map path: metadata after [HdrGainmapConvert] clamp. Lib-direct: decode peak.
      */
     val contentHdrBoost: Float
 
@@ -108,15 +122,17 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
     }
 
     init {
-        contentHdrBoost = if (hasGainmap) {
-            val bm = when (image) {
-                is BitmapImageWithExtraInfo -> image.image.bitmap
-                is BitmapImage -> image.bitmap
-                else -> null
+        contentHdrBoost = when {
+            contentHdrBoostOverride != null -> contentHdrBoostOverride.coerceIn(1f, 64f)
+            hasGainmap -> {
+                val bm = when (image) {
+                    is BitmapImageWithExtraInfo -> image.image.bitmap
+                    is BitmapImage -> image.bitmap
+                    else -> null
+                }
+                if (bm != null) HdrGainmapConvert.clampOversizedCapacity(bm) else 1f
             }
-            if (bm != null) HdrGainmapConvert.clampOversizedCapacity(bm) else 1f
-        } else {
-            1f
+            else -> 1f
         }
     }
 
@@ -304,6 +320,34 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
             }
             return Image(image, src).apply {
                 if (innerImage is BitmapImage) src.close()
+            }
+        }
+
+        /**
+         * Experimental lib-direct present: [LibDirectResult.bitmap] already decoded
+         * (no Coil / UHDR JPEG). Closes [src] when the image is retained.
+         */
+        fun fromLibDirect(result: LibDirectResult, src: ImageSource): Image {
+            val coil = result.bitmap.asImage()
+            return Image(
+                image = coil,
+                src = src,
+                isHdrContentDirect = result.isHdrContent,
+                contentHdrBoostOverride = result.contentHdrBoost,
+            ).apply {
+                if (innerImage is BitmapImage) src.close()
+            }
+        }
+
+        /**
+         * Long-edge target for lib-direct decode (0 = full file resolution).
+         */
+        fun maxEdgeForReader(forceOriginal: Boolean): Int {
+            val mode = decodeMode(forceOriginal)
+            if (mode.isOriginal) return 0
+            val scale = mode.scale ?: return 0
+            return with(appCtx.resources.displayMetrics) {
+                (minOf(widthPixels, heightPixels) * scale).roundToInt().coerceAtLeast(1)
             }
         }
 

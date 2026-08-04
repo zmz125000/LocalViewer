@@ -5,6 +5,7 @@ import android.graphics.ImageDecoder
 import android.util.Log
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.files.read
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertAvifBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxlBytesToUltraHdr
@@ -59,13 +60,27 @@ object HdrConvertCache {
     private val convertSlots = Semaphore(2)
 
     /**
-     * Exts that use the RAM → classify → convert pipeline on network download
+     * Exts that *can* use the RAM → classify → UHDR convert pipeline on network download
      * (avoids writing full original then discarding it).
+     *
+     * Prefer [usesNetworkLibConvert] for actual download routing — experimental
+     * [Settings.readerLibDirectBitmap] keeps the original and decodes via [LibDirectDecode].
      */
     fun isRamPipelineCandidate(fileName: String): Boolean {
         val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase()
         return isLibStillExtension(ext) || ext == "avif"
     }
+
+    /**
+     * Network page download should RAM→convert→`.jpg` (B1).
+     * False when [Settings.readerLibDirectBitmap]: same path as non-lib (cache original,
+     * normal prefetch slots; reader [LibDirectDecode] presents Bitmap).
+     */
+    fun usesNetworkLibConvert(fileName: String): Boolean =
+        isRamPipelineCandidate(fileName) && !Settings.readerLibDirectBitmap.value
+
+    /** Keep original bytes on network finalize (no UHDR encode). */
+    private fun keepOriginalOnNetwork(): Boolean = Settings.readerLibDirectBitmap.value
 
     /** Derived Ultra HDR for local files (user originals untouched). */
     private val localRoot: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
@@ -96,11 +111,14 @@ object HdrConvertCache {
 
     /**
      * Prefer converted Ultra HDR sibling when present; else [primary].
+     * With [Settings.readerLibDirectBitmap], prefer [primary] when present so
+     * [LibDirectDecode] gets the original codec file (stale `.jpg` siblings ignored).
      *
      * **Disk I/O** ([File.isFile]) — call off main only. Main-thread presence checks must use
      * pure [uhdrSiblingOf] + an in-memory set (see Smb/WebDav `isPageCached`).
      */
     fun resolvePagePath(primary: Path): Path {
+        if (Settings.readerLibDirectBitmap.value && isPresent(primary)) return primary
         val uhdr = uhdrSiblingOf(primary)
         if (uhdr.toString() != primary.toString() && isPresent(uhdr)) return uhdr
         return primary
@@ -273,6 +291,7 @@ object HdrConvertCache {
 
     /**
      * Network B1: bytes already in RAM → classify → lib convert to `.jpg` / else keep original.
+     * With [Settings.readerLibDirectBitmap], always keep original (no convert).
      * Uses [convertSlots] so downloads need not hold convert CPU.
      */
     suspend fun finalizeNetworkBytes(
@@ -281,6 +300,10 @@ object HdrConvertCache {
         originalFileName: String,
     ): Path = withContext(Dispatchers.IO) {
         if (bytes.isEmpty()) error("empty download: $originalFileName")
+        if (keepOriginalOnNetwork()) {
+            writeBytesAtomic(bytes, File(primaryPath.toString()))
+            return@withContext primaryPath
+        }
         val route = classify(bytes, bytes.size, originalFileName)
         if (!route.needsUhdr) {
             writeBytesAtomic(bytes, File(primaryPath.toString()))
@@ -305,13 +328,18 @@ object HdrConvertCache {
 
     /**
      * Commit a network page download from a disk temp (legacy / non-RAM path).
-     * Prefer [finalizeNetworkBytes] for lib/avif candidates.
+     * Prefer [finalizeNetworkBytes] for lib/avif candidates when convert is on.
+     * With [Settings.readerLibDirectBitmap], commits original to [primaryPath] only.
      */
     suspend fun finalizeNetworkDownload(
         tmp: File,
         primaryPath: Path,
         originalFileName: String,
     ): Path = withContext(Dispatchers.IO) {
+        if (keepOriginalOnNetwork()) {
+            commitTmp(tmp, File(primaryPath.toString()))
+            return@withContext primaryPath
+        }
         val route = classify(tmp, fileNameHint = originalFileName)
         if (!route.needsUhdr) {
             commitTmp(tmp, File(primaryPath.toString()))
