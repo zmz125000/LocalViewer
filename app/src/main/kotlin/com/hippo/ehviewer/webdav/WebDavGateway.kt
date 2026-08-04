@@ -7,6 +7,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
+import com.hippo.ehviewer.library.isProtectedSystemName
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -55,7 +56,7 @@ object WebDavGateway {
         relativeDir: String,
     ): List<BrowseEntryRemote> {
         val children = WebDavClient.listChildren(source, password, relativeDir)
-            .filterNot { it.name.startsWith('.') }
+            .filterNot { it.name.startsWith('.') || isProtectedSystemName(it.name) }
 
         val dirsToPeek = children.filter { it.isDirectory }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
@@ -67,6 +68,7 @@ object WebDavGateway {
                             val childRel = joinRelative(relativeDir, c.name)
                             peeks[c.name] = runCatching {
                                 WebDavClient.listChildren(source, password, childRel)
+                                    .filterNot { isProtectedSystemName(it.name) }
                             }.getOrDefault(emptyList())
                         }
                     }
@@ -77,7 +79,9 @@ object WebDavGateway {
         val grandPeeks = ConcurrentHashMap<String, List<RemoteChild>>()
         val leavesToPeek = ArrayList<Pair<String, String>>()
         for ((subName, peek) in peeks) {
-            val leaves = peek.filter { it.isDirectory && !it.name.startsWith('.') }
+            val leaves = peek.filter {
+                it.isDirectory && !it.name.startsWith('.') && !isProtectedSystemName(it.name)
+            }
             if (leaves.size in 1..SMB_PROMOTE_MAX_LEAVES) {
                 for (leaf in leaves) {
                     leavesToPeek += subName to leaf.name
@@ -92,6 +96,7 @@ object WebDavGateway {
                             val leafRel = joinRelative(joinRelative(relativeDir, subName), leafName)
                             grandPeeks["$subName/$leafName"] = runCatching {
                                 WebDavClient.listChildren(source, password, leafRel)
+                                    .filterNot { isProtectedSystemName(it.name) }
                             }.getOrDefault(emptyList())
                         }
                     }
