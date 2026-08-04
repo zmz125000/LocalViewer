@@ -41,7 +41,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         val size = imageFileNames.size
         val interactiveSlots = Semaphore(1)
         val prefetchSlots = Semaphore(3)
-        val libHdrPrefetchSlots = Semaphore(1)
+        val libHdrPrefetchSlots = Semaphore(2)
         val downloadJobs = ConcurrentHashMap<Int, Job>()
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         val keepWindow = 4

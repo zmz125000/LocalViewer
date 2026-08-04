@@ -62,7 +62,7 @@ object HdrConvertCache {
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
 
     /** At most one full/thumb UHDR convert in flight (CPU + peak RAM). */
-    private val convertSlots = Semaphore(1)
+    private val convertSlots = Semaphore(3)
 
     /**
      * Exts that use the RAM → classify → convert pipeline on network download

@@ -54,7 +54,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
             Semaphore(maxOps - 1)
         }
         // B1: lib-HDR/avif candidates — only 1 prefetch ahead (interactive + 1 = depth 2).
-        val libHdrPrefetchSlots = Semaphore(1)
+        val libHdrPrefetchSlots = Semaphore(2)
         // In-flight downloads by page index — join small-jump overlap, cancel large jumps.
         val downloadJobs = ConcurrentHashMap<Int, Job>()
         /** UI/decode callbacks waiting for [index] to land in [SmbCache]. */
