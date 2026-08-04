@@ -12,14 +12,11 @@ import com.hippo.ehviewer.jni.convertJxlBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxrToUltraHdr
-import com.hippo.ehviewer.jni.decodeJxlSdrRgba8
-import com.hippo.ehviewer.jni.decodeJxrSdrRgba8
 import com.hippo.ehviewer.jni.probeAvifHdrKind
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.io.FileOutputStream
-import java.nio.ByteBuffer
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -39,21 +36,18 @@ import splitties.init.appCtx
 /**
  * Lib still codecs (JXR / JXL / absolute PQ-AVIF) and Ultra HDR convert cache.
  *
- * ## HDR content only → Ultra HDR JPEG
- * Full-pixel scan + libultrahdr → [localRoot] / network sibling `.jpg`.
+ * ## All Lib routes → Ultra HDR JPEG
+ * Platform cannot open JXR/JXL; convert is the unified Coil path for both SDR and HDR
+ * content (SDR simply yields a base JPEG without a useful gain map).
  *
  * ## Network B1 pipeline (lib candidates)
- * Download to **RAM** → single global convert slot → commit only `.jpg` (or original for SDR).
- * No discarded multi-30MB originals on disk.
- *
- * ## SDR lib formats → no UHDR jpg cache
- * Keep original file (network caches origin). Decode via [decodeLibSdrBitmap] for
- * reader/thumbs (plain RGBA → Bitmap / regular JPEG thumb).
+ * Download to **RAM** → convert slot → commit only `.jpg` (drop original).
+ * No discarded multi-30MB originals on disk after convert.
  *
  * Platform formats (HEIC, gain-map AVIF, JPEG…) never enter this convert path.
  *
- * Public surface: [ensureDisplayFile], [ensureUhdrFromBytes], [finalizeNetworkBytes],
- * [finalizeNetworkDownload], [writeThumbJpeg] / [writeThumbFromBytes], [decodeLibSdrBitmap].
+ * Public surface: [ensureCoilReady], [ensureUhdrFromBytes], [finalizeNetworkBytes],
+ * [finalizeNetworkDownload], [writeThumbJpeg] / [writeThumbFromBytes].
  */
 object HdrConvertCache {
     private const val TAG = "HdrConvert"
@@ -92,8 +86,8 @@ object HdrConvertCache {
     }
 
     /**
-     * Network page cache name. Always keeps the original extension (SDR JXL/JXR stay
-     * `hash.jxl` / `hash.jxr`). After HDR convert, [resolvePagePath] prefers sibling `.jpg`.
+     * Network page cache name (original extension for primary key).
+     * After convert, [resolvePagePath] prefers sibling `.jpg`.
      */
     fun networkStorageName(hash: String, originalExt: String): String {
         val ext = originalExt.lowercase().removePrefix(".").ifEmpty { "bin" }
@@ -101,7 +95,7 @@ object HdrConvertCache {
     }
 
     /**
-     * Prefer converted Ultra HDR sibling when present; else [primary] (including SDR originals).
+     * Prefer converted Ultra HDR sibling when present; else [primary].
      *
      * **Disk I/O** ([File.isFile]) — call off main only. Main-thread presence checks must use
      * pure [uhdrSiblingOf] + an in-memory set (see Smb/WebDav `isPageCached`).
@@ -127,8 +121,8 @@ object HdrConvertCache {
     }
 
     /**
-     * Ensure HDR lib sources are available as Ultra HDR JPEG for Coil.
-     * **SDR lib formats return [source] unchanged** (no UHDR cache).
+     * Ensure lib sources are available as Ultra HDR JPEG for Coil.
+     * Platform / gain-map return [source] unchanged.
      */
     suspend fun ensureDisplayFile(source: Path, fileNameHint: String = source.name): Path = withContext(Dispatchers.IO) {
         val route = classifyPath(source, fileNameHint)
@@ -140,46 +134,39 @@ object HdrConvertCache {
     /** Alias for [ensureDisplayFile]. */
     suspend fun ensureReadable(source: Path, fileNameHint: String = source.name): Path = ensureDisplayFile(source, fileNameHint)
 
-    /** Local Coil covers: Coil-ready path (UHDR or SDR jpeg for lib, else original). */
+    /** Local Coil covers: Coil-ready path (UHDR for lib, else original). */
     suspend fun ensureCoverSource(source: Path, fileNameHint: String = source.name): Path = ensureCoilReady(source, fileNameHint)
 
     /**
      * Reader/cache chokepoint: any path → **Coil / ImageDecoder-ready** file.
      * - Platform / gain-map → [source]
-     * - Lib HDR → Ultra HDR JPEG under [localRoot]
-     * - Lib SDR (JXR/JXL) → plain JPEG under [localRoot] (no gain map)
+     * - Lib (JXR/JXL/PQ-AVIF) → Ultra HDR JPEG under [localRoot]
      */
     suspend fun ensureCoilReady(source: Path, fileNameHint: String = source.name): Path = withContext(Dispatchers.IO) {
         val ext = FileUtils.getExtensionFromFilename(fileNameHint)?.lowercase()
             ?: FileUtils.getExtensionFromFilename(source.name)?.lowercase()
         if (!isHdrConvertCandidateExtension(ext)) return@withContext source
-        // Already a derived Ultra HDR / SDR jpeg in our cache.
+        // Already a derived Ultra HDR jpeg in our cache.
         if (source.name.endsWith(".jpg", ignoreCase = true) &&
             source.toString().contains("hdr_ultrahdr")
         ) {
             return@withContext source
         }
         val route = classifyPath(source, fileNameHint)
-        when {
-            route.needsUhdr -> {
-                val lib = route as StillRoute.Lib
-                ensureUhdrLocal(source, lib.codec)
-            }
-            route.isLibSdr -> ensureSdrJpeg(source, fileNameHint)
-            else -> source
-        }
+        if (!route.needsUhdr) return@withContext source
+        val lib = route as StillRoute.Lib
+        ensureUhdrLocal(source, lib.codec)
     }
 
     /**
      * In-memory archive pages → Coil-ready file on disk.
-     * Platform bytes written to a hashed temp for a stable PathSource; lib HDR/SDR converted.
+     * Platform bytes written to a hashed temp for a stable PathSource; lib formats converted.
      */
     suspend fun ensureCoilReadyFromBytes(bytes: ByteArray, fileNameHint: String): Path = withContext(Dispatchers.IO) {
         if (bytes.isEmpty()) error("empty image buffer: $fileNameHint")
         val route = classify(bytes, bytes.size, fileNameHint)
         when {
             route.needsUhdr -> ensureUhdrFromBytes(bytes, fileNameHint)
-            route.isLibSdr -> ensureSdrJpegFromBytes(bytes, fileNameHint)
             else -> {
                 // Platform / gain-map: materialize so PathSource open is uniform.
                 ensureLocalRoot()
@@ -224,95 +211,10 @@ object HdrConvertCache {
         return "jpg"
     }
 
-    private suspend fun ensureSdrJpeg(source: Path, fileNameHint: String): Path {
-        ensureLocalRoot()
-        val meta = source.metadataOrNull()
-        val mtime = meta?.lastModifiedAtMillis ?: 0L
-        val size = meta?.size ?: 0L
-        val dest = localRoot / "${sha256Hex("sdr:$source:$mtime:$size")}.sdr.jpg"
-        val destFile = File(dest.toString())
-        if (destFile.isFile && destFile.length() > 0L) return dest
-        val bmp = decodeLibSdrBitmap(source, fileNameHint, maxEdge = 0)
-            ?: error("Lib SDR decode failed: $fileNameHint")
-        try {
-            writeBitmapJpeg(bmp, destFile, quality = 92)
-        } finally {
-            if (!bmp.isRecycled) bmp.recycle()
-        }
-        OriginDiskCache.scheduleTrim()
-        return dest
-    }
-
-    private suspend fun ensureSdrJpegFromBytes(bytes: ByteArray, fileNameHint: String): Path {
-        ensureLocalRoot()
-        val dest = localRoot / "${sha256HexBytes(bytes)}.sdr.jpg"
-        val destFile = File(dest.toString())
-        if (destFile.isFile && destFile.length() > 0L) return dest
-        val bmp = decodeLibSdrBitmap(bytes, fileNameHint, maxEdge = 0)
-            ?: error("Lib SDR decode failed: $fileNameHint")
-        try {
-            writeBitmapJpeg(bmp, destFile, quality = 92)
-        } finally {
-            if (!bmp.isRecycled) bmp.recycle()
-        }
-        OriginDiskCache.scheduleTrim()
-        return dest
-    }
-
-    private fun writeBitmapJpeg(bmp: Bitmap, dest: File, quality: Int) {
-        dest.parentFile?.mkdirs()
-        val tmp = File("${dest.absolutePath}.tmp.${System.nanoTime()}")
-        FileOutputStream(tmp).use { out ->
-            check(bmp.compress(Bitmap.CompressFormat.JPEG, quality, out))
-        }
-        commitTmp(tmp, dest)
-    }
-
-    /**
-     * Decode lib still (JXR/JXL) as SDR [Bitmap] for reader/display. No disk UHDR cache.
-     * @param maxEdge ≤ 0 full resolution long edge.
-     */
-    suspend fun decodeLibSdrBitmap(
-        source: Path,
-        fileNameHint: String = source.name,
-        maxEdge: Int = 0,
-    ): Bitmap? = withContext(Dispatchers.IO) {
-        val bytes = runCatching { source.read { readByteArray() } }.getOrNull() ?: return@withContext null
-        decodeLibSdrBitmap(bytes, fileNameHint, maxEdge)
-    }
-
-    fun decodeLibSdrBitmap(bytes: ByteArray, fileNameHint: String, maxEdge: Int = 0): Bitmap? {
-        if (bytes.isEmpty()) return null
-        val edge = if (maxEdge > 0) maxEdge.coerceIn(64, 8192) else 0
-        val outWh = IntArray(2)
-        val codec = when {
-            isJpegXlName(fileNameHint) || isJpegXlMagic(bytes) -> LibCodec.Jxl
-            isJpegXrName(fileNameHint) || isJpegXrMagic(bytes) -> LibCodec.Jxr
-            else -> {
-                val route = classify(bytes, bytes.size, fileNameHint)
-                (route as? StillRoute.Lib)?.codec?.takeIf { it == LibCodec.Jxl || it == LibCodec.Jxr }
-            }
-        } ?: return null
-        val rgba = when (codec) {
-            LibCodec.Jxl -> decodeJxlSdrRgba8(bytes, edge, outWh)
-            LibCodec.Jxr -> decodeJxrSdrRgba8(bytes, edge, outWh)
-            LibCodec.AvifPq -> null
-        } ?: return null
-        val w = outWh[0]
-        val h = outWh[1]
-        if (w <= 0 || h <= 0 || rgba.size < w * h * 4) return null
-        return runCatching {
-            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            bmp.copyPixelsFromBuffer(ByteBuffer.wrap(rgba))
-            bmp
-        }.getOrNull()
-    }
-
     /**
      * Write long-edge [maxEdge] JPEG thumb into caller-owned [destJpeg] (same folder/key).
      *
-     * - **SDR** lib (JXR/JXL): lib decode → plain SDR JPEG
-     * - **HDR** lib: libultrahdr with **fixed MaxCLL 1000 nits** (MaxEdge JNI)
+     * - Lib (JXR/JXL/PQ-AVIF): libultrahdr with **fixed MaxCLL 1000 nits** (MaxEdge JNI)
      * - Platform: ImageDecoder subsample
      */
     suspend fun writeThumbJpeg(
@@ -325,13 +227,11 @@ object HdrConvertCache {
         if (destJpeg.isFile && destJpeg.length() > 0L) return@withContext true
         val edge = maxEdge.coerceIn(64, 2048)
         val route = classifyPath(source, fileNameHint)
-        val ok = when {
-            route.needsUhdr -> {
-                val lib = route as StillRoute.Lib
-                writeConvertThumb(source, destJpeg, edge, fileNameHint, lib.codec)
-            }
-            route.isLibSdr -> writeLibSdrThumb(source, destJpeg, edge, quality, fileNameHint)
-            else -> writePlatformThumb(source, destJpeg, edge, quality)
+        val ok = if (route.needsUhdr) {
+            val lib = route as StillRoute.Lib
+            writeConvertThumb(source, destJpeg, edge, fileNameHint, lib.codec)
+        } else {
+            writePlatformThumb(source, destJpeg, edge, quality)
         }
         if (ok && destJpeg.isFile && destJpeg.length() > 0L) {
             OriginDiskCache.scheduleTrim()
@@ -372,8 +272,8 @@ object HdrConvertCache {
     }
 
     /**
-     * Network B1: bytes already in RAM → classify → SDR keep original / HDR only `.jpg`.
-     * Uses the single [convertSlots] so downloads need not hold convert CPU.
+     * Network B1: bytes already in RAM → classify → lib convert to `.jpg` / else keep original.
+     * Uses [convertSlots] so downloads need not hold convert CPU.
      */
     suspend fun finalizeNetworkBytes(
         bytes: ByteArray,
@@ -400,7 +300,7 @@ object HdrConvertCache {
             writeBytesAtomic(bytes, File(primaryPath.toString()))
             return@withContext primaryPath
         }
-        error("HDR convert failed for $originalFileName")
+        error("Lib convert failed for $originalFileName")
     }
 
     /**
@@ -455,13 +355,11 @@ object HdrConvertCache {
         if (bytes.isEmpty()) return@withContext false
         val edge = maxEdge.coerceIn(64, 2048)
         val route = classify(bytes, bytes.size, fileNameHint)
-        val ok = when {
-            route.needsUhdr -> {
-                val lib = route as StillRoute.Lib
-                convertToUhdr(bytes, destJpeg, lib.codec, maxEdge = edge)
-            }
-            route.isLibSdr -> writeLibSdrThumbBytes(bytes, destJpeg, edge, quality, fileNameHint)
-            else -> writePlatformThumbBytes(bytes, destJpeg, edge, quality)
+        val ok = if (route.needsUhdr) {
+            val lib = route as StillRoute.Lib
+            convertToUhdr(bytes, destJpeg, lib.codec, maxEdge = edge)
+        } else {
+            writePlatformThumbBytes(bytes, destJpeg, edge, quality)
         }
         if (ok && destJpeg.isFile && destJpeg.length() > 0L) {
             OriginDiskCache.scheduleTrim()
@@ -580,30 +478,6 @@ object HdrConvertCache {
         }
     }
 
-    private fun writeLibSdrThumbBytes(
-        bytes: ByteArray,
-        destJpeg: File,
-        maxEdge: Int,
-        quality: Int,
-        fileNameHint: String,
-    ): Boolean {
-        val bmp = decodeLibSdrBitmap(bytes, fileNameHint, maxEdge) ?: return false
-        return try {
-            destJpeg.parentFile?.mkdirs()
-            val tmp = File("${destJpeg.absolutePath}.tmp.${System.nanoTime()}")
-            FileOutputStream(tmp).use { out ->
-                check(bmp.compress(Bitmap.CompressFormat.JPEG, quality, out))
-            }
-            commitTmp(tmp, destJpeg)
-            true
-        } catch (e: Throwable) {
-            Log.e(TAG, "writeLibSdrThumbBytes failed $fileNameHint", e)
-            false
-        } finally {
-            if (!bmp.isRecycled) bmp.recycle()
-        }
-    }
-
     private fun writePlatformThumbBytes(
         bytes: ByteArray,
         destJpeg: File,
@@ -687,30 +561,6 @@ object HdrConvertCache {
         return convertToUhdr(bytes, destJpeg, codec, maxEdge = maxEdge)
     }
 
-    private suspend fun writeLibSdrThumb(
-        source: Path,
-        destJpeg: File,
-        maxEdge: Int,
-        quality: Int,
-        fileNameHint: String,
-    ): Boolean {
-        val bmp = decodeLibSdrBitmap(source, fileNameHint, maxEdge) ?: return false
-        return try {
-            destJpeg.parentFile?.mkdirs()
-            val tmp = File("${destJpeg.absolutePath}.tmp.${System.nanoTime()}")
-            FileOutputStream(tmp).use { out ->
-                check(bmp.compress(Bitmap.CompressFormat.JPEG, quality, out))
-            }
-            commitTmp(tmp, destJpeg)
-            true
-        } catch (e: Throwable) {
-            Log.e(TAG, "writeLibSdrThumb failed $fileNameHint", e)
-            false
-        } finally {
-            if (!bmp.isRecycled) bmp.recycle()
-        }
-    }
-
     private fun writePlatformThumb(source: Path, destJpeg: File, maxEdge: Int, quality: Int): Boolean {
         return runCatching {
             val srcFile = File(source.toString())
@@ -747,33 +597,6 @@ object HdrConvertCache {
             Log.e(TAG, "writePlatformThumb failed $source", it)
         }.getOrDefault(false)
     }
-
-    private fun isJpegXlName(name: String) = FileUtils.getExtensionFromFilename(name)?.equals("jxl", true) == true
-
-    private fun isJpegXrName(name: String): Boolean {
-        val e = FileUtils.getExtensionFromFilename(name)?.lowercase()
-        return e == "jxr" || e == "wdp" || e == "hdp"
-    }
-
-    private fun isJpegXlMagic(bytes: ByteArray): Boolean {
-        if (bytes.size >= 2 &&
-            (bytes[0].toInt() and 0xff) == 0xff &&
-            (bytes[1].toInt() and 0xff) == 0x0a
-        ) {
-            return true
-        }
-        return bytes.size >= 12 &&
-            bytes[4] == 'J'.code.toByte() &&
-            bytes[5] == 'X'.code.toByte() &&
-            bytes[6] == 'L'.code.toByte() &&
-            bytes[7] == ' '.code.toByte()
-    }
-
-    private fun isJpegXrMagic(bytes: ByteArray): Boolean = bytes.size >= 4 &&
-        bytes[0] == 'I'.code.toByte() &&
-        bytes[1] == 'I'.code.toByte() &&
-        (bytes[2].toInt() and 0xff) == 0xbc &&
-        (bytes[3].toInt() and 0xff) == 0x01
 
     private fun commitTmp(tmp: File, dest: File) {
         if (!tmp.isFile || tmp.length() == 0L) {

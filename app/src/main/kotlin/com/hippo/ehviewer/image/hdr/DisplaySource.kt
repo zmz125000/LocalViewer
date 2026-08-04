@@ -9,7 +9,8 @@ import okio.Path
 /**
  * Reader chokepoint: turn any [ImageSource] into a **Coil / ImageDecoder-ready** [PathSource].
  *
- * Lib convert and lib-SDR decode live here (and in network finalize) — not in [com.hippo.ehviewer.image.Image].
+ * Lib convert (JXR/JXL/PQ-AVIF → Ultra HDR JPEG) lives here and in network finalize —
+ * not in [com.hippo.ehviewer.image.Image].
  */
 object DisplaySource {
     /**

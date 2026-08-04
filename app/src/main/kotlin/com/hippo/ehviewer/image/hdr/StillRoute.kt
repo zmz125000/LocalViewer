@@ -1,8 +1,6 @@
 package com.hippo.ehviewer.image.hdr
 
 import com.ehviewer.core.files.read
-import com.hippo.ehviewer.jni.probeJxlContent
-import com.hippo.ehviewer.jni.probeJxrContent
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.io.FileInputStream
@@ -14,9 +12,12 @@ import okio.Path
  *
  * ```
  * Platform / PlatformGainMap  → Coil / ImageDecoder
- * Lib(codec, hdr=true)        → ensureUhdr → Coil
- * Lib(codec, hdr=false)       → decodeLibSdr → Bitmap  (JXR/JXL only)
+ * Lib(codec)                  → ensureUhdr → Coil  (JXR / JXL / absolute PQ-AVIF)
  * ```
+ *
+ * JXR/JXL always convert: the platform cannot open them, and Ultra HDR JPEG is the
+ * unified Coil-ready form for both SDR and HDR content (SDR simply yields a base JPEG).
+ * Content probes that split "SDR lib" vs "HDR lib" were unnecessary complexity.
  */
 sealed class StillRoute {
     /** Platform ImageDecoder path (JPEG/PNG/HEIC/SDR AVIF/…). */
@@ -29,10 +30,9 @@ sealed class StillRoute {
     data object PlatformGainMap : StillRoute()
 
     /**
-     * Non-platform codec. [hdr] true → FP16 + libultrahdr cache; false → lib SDR decode
-     * (or unknown → treated as non-UHDR until probe confirms HDR).
+     * Non-platform codec → FP16 (or equivalent) + libultrahdr → Ultra HDR JPEG cache.
      */
-    data class Lib(val codec: LibCodec, val hdr: Boolean) : StillRoute()
+    data class Lib(val codec: LibCodec) : StillRoute()
 }
 
 enum class LibCodec {
@@ -43,27 +43,19 @@ enum class LibCodec {
     AvifPq,
 }
 
-/** True → full-pixel HDR pipeline: lib decode FP16 → libultrahdr → `.jpg` convert cache. */
+/** True → full-pixel pipeline: lib decode → libultrahdr → `.jpg` convert cache. */
 val StillRoute.needsUhdr: Boolean
-    get() = this is StillRoute.Lib && hdr
+    get() = this is StillRoute.Lib
 
-/** Formats that never go through platform ImageDecoder for pixels (when HDR) / always for JXR/JXL. */
+/** Formats that never go through platform ImageDecoder for pixels. */
 val StillRoute.needsLibDecode: Boolean
     get() = this is StillRoute.Lib
 
 val StillRoute.isGainMap: Boolean
     get() = this is StillRoute.PlatformGainMap
 
-/** Lib SDR path for display (JXR/JXL only; PQ-AVIF is always UHDR convert). */
-val StillRoute.isLibSdr: Boolean
-    get() {
-        val lib = this as? StillRoute.Lib ?: return false
-        return !lib.hdr && lib.codec != LibCodec.AvifPq
-    }
-
 /**
- * Extensions that are **not** platform ImageDecoder stills (need lib).
- * Does **not** mean “always UHDR convert” — content probe decides that.
+ * Extensions that are **not** platform ImageDecoder stills (need lib convert).
  */
 val LIB_STILL_EXTENSIONS = setOf("jxr", "wdp", "hdp", "jxl")
 
@@ -90,13 +82,13 @@ fun isHdrMaybeConvertExtension(ext: String?): Boolean {
 fun isHdrConvertCandidateExtension(ext: String?): Boolean = isLibStillExtension(ext) || isHdrMaybeConvertExtension(ext)
 
 /**
- * File-name only (no I/O). Lib formats default to non-HDR until [classify] probes content.
+ * File-name only (no I/O). Lib formats always convert; AVIF needs byte sniff.
  */
 fun classifyByExtension(fileName: String): StillRoute {
     val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase()
     return when {
-        ext == "jxl" -> StillRoute.Lib(LibCodec.Jxl, hdr = false)
-        isLibStillExtension(ext) -> StillRoute.Lib(LibCodec.Jxr, hdr = false)
+        ext == "jxl" -> StillRoute.Lib(LibCodec.Jxl)
+        isLibStillExtension(ext) -> StillRoute.Lib(LibCodec.Jxr)
         else -> StillRoute.Platform
     }
 }
@@ -107,13 +99,7 @@ fun classify(
     fileNameHint: String? = null,
 ): StillRoute {
     if (!file.isFile || file.length() <= 0L) return StillRoute.Platform
-    val ext = FileUtils.getExtensionFromFilename(fileNameHint ?: file.name)?.lowercase()
-    val useFull = isLibStillExtension(ext) && file.length() <= LIB_PROBE_MAX_BYTES
-    val n = if (useFull) {
-        file.length().toInt().coerceAtLeast(0)
-    } else {
-        minOf(maxBytes.toLong(), file.length()).toInt().coerceAtLeast(0)
-    }
+    val n = minOf(maxBytes.toLong(), file.length()).toInt().coerceAtLeast(0)
     if (n <= 0) return StillRoute.Platform
     val bytes = ByteArray(n)
     val read = runCatching {
@@ -123,18 +109,14 @@ fun classify(
     return classify(bytes, read, fileNameHint ?: file.name)
 }
 
-/** Classify any Okio path. Lib formats read enough bytes for native content probe (SDR vs HDR). */
+/** Classify any Okio path. Lib stills can use extension; AVIF/gain-map need header bytes. */
 fun classifyPath(path: Path, fileNameHint: String? = null, maxBytes: Int = HDR_SNIFF_BYTES): StillRoute {
     val hint = fileNameHint ?: path.name
+    val byExt = classifyByExtension(hint)
+    if (byExt.needsUhdr) return byExt
     return runCatching {
         path.read {
-            val ext = FileUtils.getExtensionFromFilename(hint)?.lowercase()
-            val cap = if (isLibStillExtension(ext)) {
-                LIB_PROBE_MAX_BYTES
-            } else {
-                maxBytes
-            }
-            val bytes = ByteArray(cap)
+            val bytes = ByteArray(maxBytes)
             val n = readAtMostTo(bytes)
             if (n <= 0) StillRoute.Platform else classify(bytes, n, hint)
         }
@@ -153,9 +135,8 @@ fun classify(buffer: ByteBuffer, fileNameHint: String? = null): StillRoute {
 /**
  * Metadata-first route classification. Never full-pixel until decode/convert.
  *
- * JXL: BASIC_INFO + COLOR_ENCODING (PQ/HLG → HDR).
- * JXR: pixel-format GUID (float/half → HDR).
- * AVIF: ftyp + nclx CICP (PQ/HLG → Lib AvifPq HDR; gain-map markers → PlatformGainMap).
+ * JXL / JXR: magic or extension → always Lib (convert).
+ * AVIF: ftyp + nclx CICP (PQ/HLG → Lib AvifPq; gain-map markers → PlatformGainMap).
  */
 fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? = null): StillRoute {
     val n = length.coerceIn(0, bytes.size)
@@ -163,22 +144,14 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
 
     val ext = FileUtils.getExtensionFromFilename(fileNameHint)?.lowercase()
 
-    // JPEG XL — format + native content probe (PQ/HLG/linear intensity).
+    // JPEG XL — platform cannot open; always Ultra HDR convert path.
     if (isJpegXlMagic(bytes, n) || ext == "jxl") {
-        val hdr = when (probeJxlContent(bytes.copyOf(n))) {
-            2 -> true
-            else -> false // 1 = SDR, 0 = unknown → no UHDR until confirmed
-        }
-        return StillRoute.Lib(LibCodec.Jxl, hdr = hdr)
+        return StillRoute.Lib(LibCodec.Jxl)
     }
 
-    // JPEG XR — float/half/10-bit → HDR; other → SDR/unknown (no UHDR).
+    // JPEG XR — same: always convert.
     if (isJpegXrMagic(bytes, n) || (isLibStillExtension(ext) && ext != "jxl")) {
-        val hdr = when (probeJxrContent(bytes.copyOf(n))) {
-            2 -> true
-            else -> false
-        }
-        return StillRoute.Lib(LibCodec.Jxr, hdr = hdr)
+        return StillRoute.Lib(LibCodec.Jxr)
     }
 
     // Gain-map markers — platform path, no lib convert.
@@ -194,7 +167,7 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
     // Absolute PQ/HLG AVIF only → UHDR convert. HEIC stays platform.
     if (isHeifFamily(bytes, n) && hasAbsoluteHdrCicp(bytes, n)) {
         return if (isAvifBrand(bytes, n)) {
-            StillRoute.Lib(LibCodec.AvifPq, hdr = true)
+            StillRoute.Lib(LibCodec.AvifPq)
         } else {
             StillRoute.Platform
         }
@@ -217,9 +190,6 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
 }
 
 const val HDR_SNIFF_BYTES = 256 * 1024
-
-/** Cap for native JXL/JXR content probe (full file when under this size). */
-const val LIB_PROBE_MAX_BYTES = 48 * 1024 * 1024
 
 private fun isJpegXrMagic(bytes: ByteArray, n: Int): Boolean {
     if (n < 4) return false

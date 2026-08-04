@@ -29,7 +29,7 @@ data class CoverPath(val path: String)
 /**
  * Fetches cover bytes for SAF / file / MediaStore virtual paths.
  *
- * Lib formats → [HdrConvertCache.ensureCoilReady] (UHDR or plain SDR jpeg); platform → original.
+ * Lib formats → [HdrConvertCache.ensureCoilReady] (Ultra HDR JPEG); platform → original.
  */
 class CoverPathFetcher(
     private val data: CoverPath,

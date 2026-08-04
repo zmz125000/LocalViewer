@@ -3,8 +3,8 @@
  * (armeabi-v7a / 32-bit). Real implementations live in hdr_convert.cpp,
  * avif_hdr.cpp, jxl_hdr.cpp and are only linked for arm64-v8a + x86_64.
  *
- * Return codes: non-zero so Kotlin treat convert as failed (open SDR path
- * or surface error) without UnsatisfiedLinkError.
+ * Return codes: non-zero so Kotlin treats convert as failed without
+ * UnsatisfiedLinkError.
  */
 #include <jni.h>
 
@@ -33,17 +33,6 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(JNIEnv
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_probeJxrContent(JNIEnv*, jclass, jbyteArray) {
-    return 0;
-}
-
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrSdrRgba8(JNIEnv*, jclass, jbyteArray, jint,
-                                                           jintArray) {
-    return nullptr;
-}
-
-extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdr(JNIEnv*, jclass, jbyteArray,
                                                                     jstring) {
     return kUnsupportedAbi;
@@ -59,17 +48,6 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdrMaxEdge(JNIEn
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_probeAvifHdrKind(JNIEnv*, jclass, jbyteArray) {
     return 0;  // not AVIF / unsupported on this ABI
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_probeJxlContent(JNIEnv*, jclass, jbyteArray) {
-    return 0;
-}
-
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlSdrRgba8(JNIEnv*, jclass, jbyteArray, jint,
-                                                           jintArray) {
-    return nullptr;
 }
 
 extern "C" JNIEXPORT jint JNICALL

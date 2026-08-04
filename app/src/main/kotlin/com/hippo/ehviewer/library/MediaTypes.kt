@@ -11,8 +11,7 @@ import com.hippo.ehviewer.util.FileUtils
  * HDR / lib-still inventory (see [com.hippo.ehviewer.image.hdr.StillRoute]):
  * - Gain-map JPEG/AVIF/HEIC: Android 14+ platform decode.
  * - HEIC/HEIF (HEVC): platform ImageDecoder (not libavif).
- * - JPEG XR / JPEG XL: **lib decode**. SDR keeps original (no UHDR cache);
- *   HDR → FP16 + libultrahdr Ultra HDR JPEG only.
+ * - JPEG XR / JPEG XL: always lib → Ultra HDR JPEG (platform cannot open either).
  * - Absolute PQ/HLG **AVIF**: libavif → Ultra HDR when CICP sniff hits.
  * Native codecs link only arm64-v8a + x86_64 ([EHVIEWER_HDR_CODECS]).
  */
