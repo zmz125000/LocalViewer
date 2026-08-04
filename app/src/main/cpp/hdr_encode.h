@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -8,14 +9,19 @@
 #include "ultrahdr_api.h"
 
 /**
- * Shared Ultra HDR JPEG encode (google/libultrahdr).
+ * Shared Ultra HDR / baseline JPEG encode (google/libultrahdr + libjpeg-turbo).
  * Linear half-float RGBA in the declared gamut, 1.0 ≈ SDR / 203 nits graphics white.
  *
- * Capacity / content boost:
+ * Capacity / content boost (Ultra HDR only):
  * - [fixed_peak_nits] ≤ 0: p99.99 MaxCLL-style pixel scan (full pages).
- * - [fixed_peak_nits] > 0: skip scan; use this MaxCLL in nits (thumbs: 1000).
+ * - [fixed_peak_nits] > 0: skip scan; use this MaxCLL in nits.
+ *   Thumbs: [kSdrWhiteNits] when known SDR, [kHdrThumbNits] when known HDR — no scan.
  *
- * [cg] must match the primaries of [rgba] (no silent rematrix inside encode):
+ * Pure SDR ([force_hdr] false and content peak ≤ 1.0): **baseline JPEG** (no gain map),
+ * so tools report ratio 1.0 / no Ultra HDR metadata. libultrahdr would otherwise
+ * epsilon-bump max boost to ~1.07 when min==max.
+ *
+ * [cg] must match the primaries of [rgba] (no silent rematrix inside Ultra HDR encode):
  *   UHDR_CG_BT_709     — BT.709 / scRGB-like
  *   UHDR_CG_DISPLAY_P3 — Display P3
  *   UHDR_CG_BT_2100    — BT.2020 primaries (PQ/HLG HDR stills)
@@ -25,11 +31,47 @@
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path,
                                    uhdr_color_gamut_t cg = UHDR_CG_BT_709,
-                                   float fixed_peak_nits = 0.f);
+                                   float fixed_peak_nits = 0.f, bool force_hdr = false);
 
 /** Downscale packed RGBA F16 so long edge ≤ max_edge (box filter). max_edge 0 = no-op. */
 void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,
                              unsigned max_edge);
+
+// ── Shared scRGB / Ultra HDR constants (libultrahdr kSdrWhiteNits / kPqMaxNits) ──
+constexpr float kSdrWhiteNits = 203.0f;
+constexpr float kMaxNits = 10000.0f;
+/** Nominal max LINEAR half value: 10000/203 ≈ 49.26 (ultrahdr_api.h). */
+constexpr float kMaxLinear = kMaxNits / kSdrWhiteNits;
+/** Fixed MaxCLL for known-HDR thumbs (no peak scan). */
+constexpr float kHdrThumbNits = 1000.0f;
+
+/** Thumb fixed peak: 203 for known SDR, 1000 for known HDR — never scan. */
+inline float thumb_fixed_peak_nits(bool force_hdr) {
+    return force_hdr ? kHdrThumbNits : kSdrWhiteNits;
+}
+
+// ── IEC 61966-2-1 sRGB transfer (shared by pack + JXL/AVIF decode) ───────────
+
+/** Encoded sRGB [0,1] → linear light [0,1]. */
+inline float srgb_eotf(float s) {
+    if (!std::isfinite(s) || s <= 0.f) return 0.f;
+    if (s >= 1.f) return 1.f;
+    if (s <= 0.04045f) return s / 12.92f;
+    return std::pow((s + 0.055f) / 1.055f, 2.4f);
+}
+
+/** Linear light [0,1+] → encoded sRGB [0,1] (clamps above 1). */
+inline float srgb_oetf(float l) {
+    if (!std::isfinite(l) || l <= 0.f) return 0.f;
+    if (l >= 1.f) return 1.f;
+    if (l <= 0.0031308f) return l * 12.92f;
+    return 1.055f * std::pow(l, 1.f / 2.4f) - 0.055f;
+}
+
+inline uint8_t linear_to_srgb_u8(float l) {
+    const float s = srgb_oetf(l);
+    return static_cast<uint8_t>(s * 255.f + 0.5f);
+}
 
 /**
  * Pack linear F16 RGBA (1.0 ≈ SDR / 203 nits) for direct Android Bitmap present

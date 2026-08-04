@@ -365,11 +365,21 @@ endif ()
 add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c
         ${EHVIEWER_HDR_SOURCES})
 if (EHVIEWER_HDR_CODECS)
+    # libjpeg-turbo is built as an ExternalProject of libultrahdr (baseline SDR JPEG).
+    set(EH_JPEG_INCLUDE_DIRS
+            ${libultrahdr_SOURCE_DIR}/third_party/turbojpeg/src
+            ${libultrahdr_BINARY_DIR}/turbojpeg/src/turbojpeg-build
+    )
+    set(EH_JPEG_LIB
+            ${libultrahdr_BINARY_DIR}/turbojpeg/src/turbojpeg-build/${CMAKE_STATIC_LIBRARY_PREFIX}jpeg${CMAKE_STATIC_LIBRARY_SUFFIX}
+    )
     target_include_directories(${PROJECT_NAME} PRIVATE
             ${JXRLIB_ROOT}/jxrgluelib
             ${JXRLIB_ROOT}/common/include
             ${JXRLIB_ROOT}/image/sys
+            ${EH_JPEG_INCLUDE_DIRS}
     )
+    list(APPEND EHVIEWER_HDR_LIBS ${EH_JPEG_LIB})
 endif ()
 target_link_libraries(
         ${PROJECT_NAME} archive_static ehviewer_rust z ${EHVIEWER_HDR_LIBS} log
