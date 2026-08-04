@@ -84,6 +84,9 @@ object HdrConvertCache {
 
     /**
      * Prefer converted Ultra HDR sibling when present; else [primary] (including SDR originals).
+     *
+     * **Disk I/O** ([File.isFile]) — call off main only. Main-thread presence checks must use
+     * pure [uhdrSiblingOf] + an in-memory set (see Smb/WebDav `isPageCached`).
      */
     fun resolvePagePath(primary: Path): Path {
         val uhdr = uhdrSiblingOf(primary)
@@ -91,6 +94,7 @@ object HdrConvertCache {
         return primary
     }
 
+    /** Disk presence probe — not StrictMode-safe on main. */
     fun isPresent(path: Path): Boolean {
         val f = File(path.toString())
         return f.isFile && f.length() > 0L

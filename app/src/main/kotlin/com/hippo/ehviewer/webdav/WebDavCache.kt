@@ -231,13 +231,25 @@ object WebDavCache {
         scheduleTrim()
     }
 
+    /** Prefer Ultra HDR sibling when present (disk probe — not for main). */
     fun resolveReaderPath(path: Path): Path = HdrConvertCache.resolvePagePath(path)
 
-    fun isPageCachedOnDisk(path: Path): Boolean = isCachedOnDisk(resolveReaderPath(path))
+    fun isPageCachedOnDisk(path: Path): Boolean {
+        val uhdr = HdrConvertCache.uhdrSiblingOf(path)
+        return (uhdr.toString() != path.toString() && isCachedOnDisk(uhdr)) || isCachedOnDisk(path)
+    }
 
+    /**
+     * Page present as primary or UHDR sibling.
+     * Main-safe: pure [HdrConvertCache.uhdrSiblingOf] + [isCached] (no File I/O).
+     */
     fun isPageCached(path: Path): Boolean {
-        val resolved = resolveReaderPath(path)
-        return if (resolved == path) isCached(path) else isCached(resolved) || isCached(path)
+        val uhdr = HdrConvertCache.uhdrSiblingOf(path)
+        return if (uhdr.toString() == path.toString()) {
+            isCached(path)
+        } else {
+            isCached(uhdr) || isCached(path)
+        }
     }
 
     private suspend fun maybeConvertHdrDownload(
