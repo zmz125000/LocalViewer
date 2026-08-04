@@ -80,7 +80,7 @@ Build with Grok 4.5.
 * Material Design 3 Navigation bar.
 * Optimized navigation flow for deep folder path.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
-* JXL/JXR/AVIF/HEIC/JPG HDR support.
+* JXL/JXR/JPG/AVIF/HEIC/ HDR support.
 * High performance smbj client with concurrent connections support.
 * // Cronet WebDAV client with HTTP/2 and QUIC support.
 * Ktor CIO WebDAV client with HTTP/1.1 and TLS support.
