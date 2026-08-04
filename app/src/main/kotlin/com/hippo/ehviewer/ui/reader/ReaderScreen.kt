@@ -457,13 +457,12 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                     }
                     if (img.isWideGamutContent) anyWide = true
                 }
-                // Advanced color: keep WCG for the reader session when no HDR is composed
-                // so Coil / ICC P3 content can expand (Android WCG is opt-in).
-                val wantWcg = advancedColorEnabled && (anyWide || !anyHdr)
+                // Advanced color + wide content only (doc: content-driven WCG, not session-wide).
+                // HDR still wins the single colorMode slot in setReaderColorMode.
                 activity.setReaderColorMode(
                     hdr = hdrDisplayEnabled && anyHdr,
                     contentBoost = maxBoost,
-                    wideColor = wantWcg && !anyHdr,
+                    wideColor = advancedColorEnabled && anyWide,
                 )
             }
         }

@@ -117,6 +117,7 @@ import com.ehviewer.core.ui.util.isMediumWidthOrWider
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhApplication.Companion.initialized
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.util.setReaderColorMode
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.ui.destinations.AboutScreenDestination
 import com.hippo.ehviewer.ui.destinations.AdvancedScreenDestination
@@ -322,6 +323,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen().setKeepOnScreenCondition { !initialized }
         super.onCreate(savedInstanceState)
+        // Manifest colorMode=wideColorGamut makes the surface capable of WCG; start in DEFAULT
+        // so browse/settings do not pay whole-app WCG cost. Reader requests HDR/WCG on demand.
+        setReaderColorMode(hdr = false, wideColor = false)
         enableEdgeToEdge()
         setMD3Content {
             val navDrawerState = rememberDrawerState(DrawerValue.Closed)

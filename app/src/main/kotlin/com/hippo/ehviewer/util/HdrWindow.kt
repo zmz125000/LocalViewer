@@ -21,8 +21,9 @@ import androidx.core.content.ContextCompat
  * ([Window.setDesiredHdrHeadroom] on API 35+). Never put panel boost into encode metadata.
  *
  * Manifest: [MainActivity] declares `android:colorMode="wideColorGamut"` so the
- * activity surface can carry wide color (reader is Compose inside MainActivity).
- * This API still selects HDR / WCG / DEFAULT at runtime from composed content.
+ * activity surface *can* carry wide color (reader is Compose inside MainActivity).
+ * [MainActivity.onCreate] forces [ActivityInfo.COLOR_MODE_DEFAULT] until the reader
+ * requests HDR/WCG from composed content (avoid whole-app WCG cost).
  *
  * @see <a href="https://developer.android.com/training/wide-color-gamut">Wide color gamut</a>
  */
@@ -36,9 +37,14 @@ fun Activity.supportsScreenHdr(): Boolean {
     return displayIsHdr() || resources.configuration.isScreenHdr
 }
 
+/**
+ * True only when the display is WCG-capable **and** the device supports WCG rendering.
+ * Matches [android.content.res.Configuration.isScreenWideColorGamut] (stricter than
+ * [Display.isWideColorGamut] alone).
+ */
 fun Activity.supportsWideColorGamut(): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
-    return displayOrNull()?.isWideColorGamut == true || resources.configuration.isScreenWideColorGamut
+    return resources.configuration.isScreenWideColorGamut
 }
 
 /**

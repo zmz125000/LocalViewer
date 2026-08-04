@@ -41,9 +41,10 @@
 
         <!--
           Reader is a Compose destination inside MainActivity (no separate ReaderActivity).
-          wideColorGamut opts the activity surface into WCG per
-          https://developer.android.com/training/wide-color-gamut
-          Runtime still switches COLOR_MODE_HDR / WCG / DEFAULT via setReaderColorMode.
+          wideColorGamut makes the surface *capable* of WCG
+          (https://developer.android.com/training/wide-color-gamut).
+          MainActivity.onCreate forces COLOR_MODE_DEFAULT until the reader requests
+          HDR/WCG (browse/settings must not pay whole-app WCG cost).
         -->
         <activity
             android:name=".ui.MainActivity"
