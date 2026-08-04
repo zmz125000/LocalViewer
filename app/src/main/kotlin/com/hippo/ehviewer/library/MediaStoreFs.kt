@@ -174,8 +174,7 @@ object MediaPermissions {
      * Prompt for media permission before the SAF picker so new sources can
      * default to MediaStore when the user grants access.
      */
-    fun shouldRequestMediaPermissionForSafAdd(context: Context = appCtx): Boolean =
-        !hasImageAccess(context)
+    fun shouldRequestMediaPermissionForSafAdd(context: Context = appCtx): Boolean = !hasImageAccess(context)
 }
 
 /**

@@ -37,6 +37,7 @@ class TarChunkEngine(
     private var cursor = 0L
     private var zeroBlocks = 0
     private var pendingName: String? = null
+
     /** Next page index to assign when discovering (continues after seed). */
     private var nextPageIndex = 0
 
@@ -183,15 +184,14 @@ class TarChunkEngine(
      */
     suspend fun ensureThroughHighWater(targetIndex: Int) = ensureThrough(targetIndex)
 
-    fun toIndex(completePages: Boolean): ArchiveStreamPageCache.Index =
-        ArchiveStreamPageCache.Index(
-            v = ArchiveStreamPageCache.INDEX_VERSION,
-            cacheKey = cacheKey,
-            remoteSize = archiveSize,
-            format = "tar",
-            complete = completePages,
-            members = membersSnapshot(),
-        )
+    fun toIndex(completePages: Boolean): ArchiveStreamPageCache.Index = ArchiveStreamPageCache.Index(
+        v = ArchiveStreamPageCache.INDEX_VERSION,
+        cacheKey = cacheKey,
+        remoteSize = archiveSize,
+        format = "tar",
+        complete = completePages,
+        members = membersSnapshot(),
+    )
 
     private fun noteIndex(i: Int) {
         maxIndex.updateAndGet { cur -> maxOf(cur, i) }

@@ -24,18 +24,15 @@ data class RemoteArchiveLocal(
  */
 object RemoteArchiveOpen {
     /** Stable cache key segment: trim, unify slashes, drop empty parts. */
-    fun normalizeRemoteRelative(path: String): String =
-        path.replace('\\', '/')
-            .split('/')
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && it != "." }
-            .joinToString("/")
+    fun normalizeRemoteRelative(path: String): String = path.replace('\\', '/')
+        .split('/')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && it != "." }
+        .joinToString("/")
 
-    fun smbCachePath(sourceId: Long, remoteRelativeFile: String): Path =
-        SmbCache.cachePathForRemoteFile(sourceId, normalizeRemoteRelative(remoteRelativeFile))
+    fun smbCachePath(sourceId: Long, remoteRelativeFile: String): Path = SmbCache.cachePathForRemoteFile(sourceId, normalizeRemoteRelative(remoteRelativeFile))
 
-    fun webDavCachePath(sourceId: Long, remoteRelativeFile: String): Path =
-        WebDavCache.cachePathForRemoteFile(sourceId, normalizeRemoteRelative(remoteRelativeFile))
+    fun webDavCachePath(sourceId: Long, remoteRelativeFile: String): Path = WebDavCache.cachePathForRemoteFile(sourceId, normalizeRemoteRelative(remoteRelativeFile))
 
     /**
      * @return local cache path + whether a network download ran.

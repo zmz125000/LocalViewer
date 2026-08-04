@@ -198,12 +198,16 @@ object CachePagePublish {
                     (header[3].toInt() and 0xff) == 0x01
             "jxl" ->
                 // Codestream FF 0A, or container ....JXL
-                (n >= 2 &&
-                    (header[0].toInt() and 0xff) == 0xff &&
-                    (header[1].toInt() and 0xff) == 0x0a) ||
-                    (n >= 12 &&
-                        header[4] == 'J'.code.toByte() && header[5] == 'X'.code.toByte() &&
-                        header[6] == 'L'.code.toByte() && header[7] == ' '.code.toByte())
+                (
+                    n >= 2 &&
+                        (header[0].toInt() and 0xff) == 0xff &&
+                        (header[1].toInt() and 0xff) == 0x0a
+                    ) ||
+                    (
+                        n >= 12 &&
+                            header[4] == 'J'.code.toByte() && header[5] == 'X'.code.toByte() &&
+                            header[6] == 'L'.code.toByte() && header[7] == ' '.code.toByte()
+                        )
             "jp2" ->
                 n >= 12 // JPEG 2000 — skip strict check
             else -> true

@@ -1,10 +1,10 @@
 package com.hippo.ehviewer.library
 
 import com.ehviewer.core.util.logcat
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.zip.Inflater
 import java.util.zip.InflaterInputStream
-import java.io.ByteArrayInputStream
 
 /**
  * Lightweight ZIP central-directory index + store/deflate extract over [ArchiveByteSource].
@@ -82,6 +82,7 @@ class ZipCentralDirectory private constructor(
     companion object {
         const val METHOD_STORE = 0
         const val METHOD_DEFLATE = 8
+
         /** Cap single member extract (comic pages + OPF/XHTML). */
         const val MAX_EXTRACT_BYTES = 64L * 1024L * 1024L
 
@@ -243,14 +244,11 @@ class ZipCentralDirectory private constructor(
             return got
         }
 
-        private fun u16(b: ByteArray, off: Int): Int =
-            (b[off].toInt() and 0xff) or ((b[off + 1].toInt() and 0xff) shl 8)
+        private fun u16(b: ByteArray, off: Int): Int = (b[off].toInt() and 0xff) or ((b[off + 1].toInt() and 0xff) shl 8)
 
-        private fun u32(b: ByteArray, off: Int): Int =
-            u16(b, off) or (u16(b, off + 2) shl 16)
+        private fun u32(b: ByteArray, off: Int): Int = u16(b, off) or (u16(b, off + 2) shl 16)
 
-        private fun u64(b: ByteArray, off: Int): Long =
-            (u32(b, off).toLong() and 0xffff_ffffL) or
-                ((u32(b, off + 4).toLong() and 0xffff_ffffL) shl 32)
+        private fun u64(b: ByteArray, off: Int): Long = (u32(b, off).toLong() and 0xffff_ffffL) or
+            ((u32(b, off + 4).toLong() and 0xffff_ffffL) shl 32)
     }
 }

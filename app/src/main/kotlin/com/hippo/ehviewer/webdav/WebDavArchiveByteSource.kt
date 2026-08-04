@@ -34,8 +34,7 @@ class WebDavArchiveByteSource(
 
     override val size: Long get() = inner.size
 
-    override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int =
-        inner.readAt(offset, buf, off, len)
+    override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = inner.readAt(offset, buf, off, len)
 
     override fun warm(offset: Long, length: Int) = inner.warm(offset, length)
 
@@ -48,8 +47,10 @@ private class RawWebDavArchiveByteSource(
     remoteRelativeFile: String,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
+
     /** Cached size; ≤0 means unknown. AtomicLong avoids identity-equality issues with Long boxes. */
     private val sizeBytes = AtomicLong(0L)
+
     /** Epoch ms until which failed stats fail-fast (avoid readahead hammering a down server). */
     private val failFastUntilMs = AtomicLong(0L)
 
@@ -113,6 +114,7 @@ private class RawWebDavArchiveByteSource(
     private companion object {
         const val SIZE_ATTEMPTS = 3
         const val SIZE_BACKOFF_MS = 250L
+
         /** After a full failed stat, skip re-HEAD for this long (readahead / JNI thrash). */
         const val FAIL_FAST_MS = 1_500L
     }

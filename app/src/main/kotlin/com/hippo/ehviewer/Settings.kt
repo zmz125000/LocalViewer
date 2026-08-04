@@ -123,10 +123,12 @@ object Settings : DataStorePreferences(null) {
      * Shared by all sources on the same host:port; stays well under Win11 Pro’s ~20 inbound cap.
      */
     val multiThreadDownload = intPref("download_thread_2", 3)
+
     /** Prefer SMB 3.x only (disable SMB 2.0.2 / 2.1 dialects). Default off. */
     val smb3Only = boolPref("smb3_only", false).observed {
         com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
     }
+
     /** Require SMB3 encryption when negotiating. Default off. */
     val smbEncryptData = boolPref("smb_encrypt_data", false).observed {
         com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
@@ -221,11 +223,13 @@ object Settings : DataStorePreferences(null) {
 
     /** Off = double-tap prev/next gallery (folder mode). Default: off. */
     val doubleTapToZoom = boolPref("pref_double_tap_to_zoom", false)
+
     /**
      * Fit-rotate mode: 0=off, 1=CW, 2=CCW ([eu.kanade.tachiyomi.ui.reader.setting.AutoRotateMode]).
      * Default CW (matches previous auto-on + clockwise).
      */
     val autoRotateMode = intPref("pref_auto_rotate_mode", 1)
+
     /**
      * Coil decode size vs shorter screen edge:
      * 0=1.5x, 1=2x, 2=2.5x, 3=3x, 4=original
@@ -233,6 +237,7 @@ object Settings : DataStorePreferences(null) {
      * One-shot full-res: page menu "View original image".
      */
     val readerDecodeSize = intPref("pref_reader_decode_size", 0)
+
     /**
      * Cap SMB pool for safer original-size reading: 3 TCP sessions, 1 op/session.
      * Overrides Advanced concurrent-connection count while enabled.
@@ -240,6 +245,7 @@ object Settings : DataStorePreferences(null) {
     val smbReaderSafeConcurrency = boolPref("pref_smb_reader_safe_concurrency", false).observed {
         runCatching { com.hippo.ehviewer.smb.SmbGateway.onReaderSafeConcurrencyChanged() }
     }
+
     /**
      * Coil [allowHardware] for reader decode: GPU hardware bitmaps without software
      * intermediate for crop-border / QR-ad detection. Faster + less Java-heap RAM;
@@ -247,6 +253,7 @@ object Settings : DataStorePreferences(null) {
      * Default on (preserves Ultra HDR gain maps; crop/QR stay off unless user disables this).
      */
     val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", true)
+
     /**
      * Window HDR presentation only: when a composed page has a gain map and the
      * display supports HDR, set [android.view.Window.setColorMode] to
@@ -277,15 +284,19 @@ object Settings : DataStorePreferences(null) {
     val showNavigationOverlayNewUser = boolPref("reader_navigation_overlay_new_user", true)
     val showNavigationOverlayOnStart = boolPref("reader_navigation_overlay_on_start", false)
     val stripExtraneousAds = boolPref("strip_extraneous_ads", false)
+
     /**
      * Full-screen flash after paged (gallery) page turns to reduce E-Ink ghosting.
      * Webtoon / continuous vertical are unaffected.
      */
     val eInkRefreshEnabled = boolPref("pref_eink_refresh_enabled", false)
+
     /** Flash duration in ms (100–1500, typically stepped by 100). */
     val eInkRefreshDuration = intPref("pref_eink_refresh_duration", 100)
+
     /** Refresh every N page changes (1–10). */
     val eInkRefreshInterval = intPref("pref_eink_refresh_interval", 1)
+
     /** 0=black, 1=white, 2=white then black. */
     val eInkRefreshStyle = intPref("pref_eink_refresh_style", 0)
 

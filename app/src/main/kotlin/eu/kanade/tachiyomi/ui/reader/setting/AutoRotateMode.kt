@@ -26,7 +26,6 @@ enum class AutoRotateMode(
     val clockwise: Boolean get() = this == CW
 
     companion object {
-        fun fromPreference(preference: Int): AutoRotateMode =
-            entries.find { it.prefValue == preference } ?: CW
+        fun fromPreference(preference: Int): AutoRotateMode = entries.find { it.prefValue == preference } ?: CW
     }
 }

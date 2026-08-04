@@ -50,8 +50,7 @@ object OriginDiskCache {
 
     private fun cacheDir(name: String): File = File(dataDir, "cache/$name")
 
-    fun originBudgetBytes(): Long =
-        Settings.readCacheSize.value.coerceIn(320, 5120).toLong() * 1024L * 1024L
+    fun originBudgetBytes(): Long = Settings.readCacheSize.value.coerceIn(320, 5120).toLong() * 1024L * 1024L
 
     fun scheduleTrim() {
         if (!scheduled.compareAndSet(false, true)) return

@@ -159,27 +159,26 @@ object WebDavClient {
         }
     }
 
-    private fun buildClient(insecureTls: Boolean): HttpClient =
-        HttpClient(CIO) {
-            engine {
-                // Run connect/read on tagged threads (see cioExecutor).
-                dispatcher = cioDispatcher
-                // Ceiling; per-call [timeout] plugin overrides for list vs download.
-                requestTimeout = DL_REQUEST_MS
-                maxConnectionsCount = 32
-                if (insecureTls) {
-                    https {
-                        trustManager = trustAllManager
-                    }
+    private fun buildClient(insecureTls: Boolean): HttpClient = HttpClient(CIO) {
+        engine {
+            // Run connect/read on tagged threads (see cioExecutor).
+            dispatcher = cioDispatcher
+            // Ceiling; per-call [timeout] plugin overrides for list vs download.
+            requestTimeout = DL_REQUEST_MS
+            maxConnectionsCount = 32
+            if (insecureTls) {
+                https {
+                    trustManager = trustAllManager
                 }
             }
-            install(HttpTimeout) {
-                requestTimeoutMillis = DL_REQUEST_MS
-                connectTimeoutMillis = DL_CONNECT_MS
-                socketTimeoutMillis = DL_SOCKET_MS
-            }
-            expectSuccess = false
         }
+        install(HttpTimeout) {
+            requestTimeoutMillis = DL_REQUEST_MS
+            connectTimeoutMillis = DL_CONNECT_MS
+            socketTimeoutMillis = DL_SOCKET_MS
+        }
+        expectSuccess = false
+    }
 
     /**
      * Close CIO client (drops keep-alive sockets). Safe from any thread.
@@ -367,8 +366,7 @@ object WebDavClient {
         return builder.build()
     }
 
-    private fun encodePathSegment(seg: String): String =
-        java.net.URLEncoder.encode(seg, Charsets.UTF_8.name()).replace("+", "%20")
+    private fun encodePathSegment(seg: String): String = java.net.URLEncoder.encode(seg, Charsets.UTF_8.name()).replace("+", "%20")
 
     private fun basicAuthHeader(username: String, password: String): String? {
         if (username.isEmpty() && password.isEmpty()) return null

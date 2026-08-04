@@ -99,17 +99,14 @@ import com.hippo.ehviewer.gallery.useSolidExtractPageLoader
 import com.hippo.ehviewer.gallery.useStreamArchivePageLoader
 import com.hippo.ehviewer.gallery.useTarChunkPageLoader
 import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
-import com.hippo.ehviewer.library.isDocumentFileName
-import com.hippo.ehviewer.library.isEpubFileName
-import com.hippo.ehviewer.library.isSolidArchiveFileName
-import com.hippo.ehviewer.library.isTarArchiveFileName
-import com.hippo.ehviewer.webdav.WebDavGateway
-import com.hippo.ehviewer.webdav.WebDavPasswordStore
-import com.hippo.ehviewer.webdav.WebDavRepository
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.isDocumentFileName
+import com.hippo.ehviewer.library.isEpubFileName
+import com.hippo.ehviewer.library.isSolidArchiveFileName
+import com.hippo.ehviewer.library.isTarArchiveFileName
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.MainActivity
@@ -122,6 +119,9 @@ import com.hippo.ehviewer.ui.tools.dialog
 import com.hippo.ehviewer.util.displayString
 import com.hippo.ehviewer.util.hasAds
 import com.hippo.ehviewer.util.setHdrColorMode
+import com.hippo.ehviewer.webdav.WebDavGateway
+import com.hippo.ehviewer.webdav.WebDavPasswordStore
+import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -294,8 +294,9 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                     is ReaderScreenArgs.SmbStreamArchive -> args.info
                     is ReaderScreenArgs.WebDavStreamArchive -> args.info
                     // Prefer args.info; PageLoader also carries resolved local-archive info.
-                    is ReaderScreenArgs.Archive -> args.info
-                        ?: (loader.info as? BaseGalleryInfo)
+                    is ReaderScreenArgs.Archive ->
+                        args.info
+                            ?: (loader.info as? BaseGalleryInfo)
                 }
                 // Explicit dispose path: system back / pop also abort archive extract so
                 // ArchiveAccess is not held after the reader leaves.

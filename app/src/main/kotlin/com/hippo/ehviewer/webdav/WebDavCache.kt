@@ -50,6 +50,7 @@ object WebDavCache {
     }
 
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
+
     /** Paths known to exist after a successful write or off-main probe — avoids main-thread File I/O. */
     private val knownPresent = ConcurrentHashMap.newKeySet<String>()
 
@@ -58,8 +59,7 @@ object WebDavCache {
         File(thumbRoot.toString()).mkdirs()
     }
 
-    fun cachePath(sourceId: Long, remoteRelativePath: String, fileName: String): Path =
-        cachePath(sourceId, remoteRelativePath, fileName, Kind.Page)
+    fun cachePath(sourceId: Long, remoteRelativePath: String, fileName: String): Path = cachePath(sourceId, remoteRelativePath, fileName, Kind.Page)
 
     fun cachePath(
         sourceId: Long,

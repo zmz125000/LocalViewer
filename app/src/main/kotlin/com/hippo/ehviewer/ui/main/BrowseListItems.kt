@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -47,7 +48,6 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
-import androidx.compose.ui.graphics.vector.ImageVector
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
@@ -72,10 +72,12 @@ import okio.Path
 /** Cover source for browse list rows (local path or lazy remote download). */
 sealed class BrowseCover {
     data class Local(val path: Path) : BrowseCover()
+
     /** Local archive or document — first page via [ArchiveCoverCache] (ZIP/TAR, solid RAR/7z, PDF/EPUB). */
     data class LocalArchive(val archivePath: Path) : BrowseCover()
     data class Smb(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
     data class WebDav(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
+
     /** Remote archive/document cover (ZIP/TAR stream, solid sequential page 0, or PDF/EPUB extract). */
     data class SmbArchive(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
     data class WebDavArchive(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()

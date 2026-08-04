@@ -185,7 +185,7 @@ object ArchiveCoverCache {
             val src = File(pageFile.toString())
             if (!src.isFile || src.length() == 0L) return null
             File(dest.parent!!.toString()).mkdirs()
-            val jpgTmp = File("${dest}.jpg.${System.nanoTime()}")
+            val jpgTmp = File("$dest.jpg.${System.nanoTime()}")
             try {
                 // writeThumbJpeg: convert-path → lib+libultrahdr into this dest; else ImageDecoder.
                 writeSubsampledJpeg(src, jpgTmp, THUMB_EDGE, THUMB_JPEG_QUALITY)
@@ -240,9 +240,12 @@ object ArchiveCoverCache {
                         val n = com.hippo.ehviewer.jni.openArchiveStream(
                             bridge,
                             source.size,
-                            /* sortEntries = */ false,
-                            /* coverOnly = */ true,
-                            /* progressiveTar = */ false,
+                            /* sortEntries = */
+                            false,
+                            /* coverOnly = */
+                            true,
+                            /* progressiveTar = */
+                            false,
                         )
                         when {
                             n <= 0 -> CoverEnsureResult.NoImages
@@ -487,8 +490,8 @@ object ArchiveCoverCache {
         try {
             check(buffer.isDirect)
             File(dest.parent!!.toString()).mkdirs()
-            val rawTmp = File("${dest}.raw.${System.nanoTime()}")
-            val jpgTmp = File("${dest}.jpg.${System.nanoTime()}")
+            val rawTmp = File("$dest.raw.${System.nanoTime()}")
+            val jpgTmp = File("$dest.jpg.${System.nanoTime()}")
             try {
                 writeBufferToFile(buffer, rawTmp)
                 writeSubsampledJpeg(rawTmp, jpgTmp, THUMB_EDGE, THUMB_JPEG_QUALITY)

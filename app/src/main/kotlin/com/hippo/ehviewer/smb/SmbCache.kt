@@ -61,6 +61,7 @@ object SmbCache {
 
     /** Cap concurrent full-file SMB fetches for thumb generation (first paint). */
     private val thumbFetchSlots = Semaphore(3)
+
     /**
      * Cache roots as pure path math from [ApplicationInfo.dataDir] (string field — no disk).
      * Avoid [Context.getCacheDir] + [mkdirs] on every path resolve (main-thread StrictMode
@@ -96,8 +97,7 @@ object SmbCache {
      * Reader page cache path (full remote file). Explicit 3-arg overload kept so
      * callers / inlined loaders never hit NoSuchMethodError when [Kind] defaults change.
      */
-    fun cachePath(sourceId: Long, remoteRelativePath: String, fileName: String): Path =
-        cachePath(sourceId, remoteRelativePath, fileName, Kind.Page)
+    fun cachePath(sourceId: Long, remoteRelativePath: String, fileName: String): Path = cachePath(sourceId, remoteRelativePath, fileName, Kind.Page)
 
     fun cachePath(
         sourceId: Long,
@@ -124,8 +124,7 @@ object SmbCache {
      * Cache path for a full share-relative file path (`Comics/Title/001.jpg`).
      * For [Kind.Thumb] this is always a **`.jpg` small thumb**, not the original file.
      */
-    fun cachePathForRemoteFile(sourceId: Long, remoteRelativeFile: String): Path =
-        cachePathForRemoteFile(sourceId, remoteRelativeFile, Kind.Page)
+    fun cachePathForRemoteFile(sourceId: Long, remoteRelativeFile: String): Path = cachePathForRemoteFile(sourceId, remoteRelativeFile, Kind.Page)
 
     fun cachePathForRemoteFile(
         sourceId: Long,

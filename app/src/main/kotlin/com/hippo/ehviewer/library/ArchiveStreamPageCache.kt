@@ -84,8 +84,7 @@ object ArchiveStreamPageCache {
         val members: List<Member> = emptyList(),
     ) {
         /** True when every member has a usable random-seek offset. */
-        fun hasFullSeekIndex(): Boolean =
-            members.isNotEmpty() && members.all { it.hasSeek }
+        fun hasFullSeekIndex(): Boolean = members.isNotEmpty() && members.all { it.hasSeek }
     }
 
     const val INDEX_VERSION: Int = 2
@@ -105,8 +104,7 @@ object ArchiveStreamPageCache {
         return CachePagePublish.isCompleteCachedFile(f, ext = ext)
     }
 
-    fun isPageCached(cacheKey: String, index: Int, ext: String): Boolean =
-        isCached(pagePath(cacheKey, index, ext), ext = ext)
+    fun isPageCached(cacheKey: String, index: Int, ext: String): Boolean = isCached(pagePath(cacheKey, index, ext), ext = ext)
 
     /**
      * One readdir of extract dir → index → ext for present page files (skip tmp/index).
@@ -266,7 +264,7 @@ object ArchiveStreamPageCache {
 
     fun writePage(cacheKey: String, index: Int, ext: String, buffer: ByteBuffer): Path {
         val dest = pagePath(cacheKey, index, ext)
-        val tmp = File("${dest}.tmp.${System.nanoTime()}")
+        val tmp = File("$dest.tmp.${System.nanoTime()}")
         CachePagePublish.writeBufferToTmp(tmp, buffer)
         check(
             CachePagePublish.publishTmp(
@@ -284,7 +282,7 @@ object ArchiveStreamPageCache {
     /** TAR chunk extract — body already in memory from the same readahead window. */
     fun writePageBytes(cacheKey: String, index: Int, ext: String, bytes: ByteArray): Path {
         val dest = pagePath(cacheKey, index, ext)
-        val tmp = File("${dest}.tmp.${System.nanoTime()}")
+        val tmp = File("$dest.tmp.${System.nanoTime()}")
         CachePagePublish.writeBytesToTmp(tmp, bytes)
         check(
             CachePagePublish.publishTmp(

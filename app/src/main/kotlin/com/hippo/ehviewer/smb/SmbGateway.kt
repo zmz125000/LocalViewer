@@ -110,26 +110,26 @@ object SmbGateway {
 
     /** Long enough for large comic page transfers on a busy LAN. */
     private const val SMB_IO_TIMEOUT_SEC = 120L
+
     /** First connect-failure backoff; doubles each trip until [COOLDOWN_MAX_MS]. */
     private const val COOLDOWN_BASE_MS = 3_000L
+
     /** Cap reconnect cooldown (battery drain guard) — max 10s between host retries. */
     private const val COOLDOWN_MAX_MS = 10_000L
     private const val PATH_CHANGE_DEBOUNCE_MS = 1_000L
 
     /** Ops multiplexed per TCP session (fixed when the session is opened). */
-    fun opsPerSession(): Int =
-        if (Settings.smbReaderSafeConcurrency.value) OPS_PER_SESSION_SAFE else OPS_PER_SESSION_DEFAULT
+    fun opsPerSession(): Int = if (Settings.smbReaderSafeConcurrency.value) OPS_PER_SESSION_SAFE else OPS_PER_SESSION_DEFAULT
 
     /**
      * Max TCP sessions per host. Safe mode forces [CONNECTIONS_SAFE] (3).
      * Otherwise uses Advanced → SMB concurrent connections.
      */
-    fun maxConnectionsPerHost(): Int =
-        if (Settings.smbReaderSafeConcurrency.value) {
-            CONNECTIONS_SAFE
-        } else {
-            Settings.multiThreadDownload.value.coerceIn(1, POOL_CAPACITY)
-        }
+    fun maxConnectionsPerHost(): Int = if (Settings.smbReaderSafeConcurrency.value) {
+        CONNECTIONS_SAFE
+    } else {
+        Settings.multiThreadDownload.value.coerceIn(1, POOL_CAPACITY)
+    }
 
     fun maxConnectionsPerSource(): Int = maxConnectionsPerHost()
 
@@ -138,8 +138,7 @@ object SmbGateway {
      * does not explode concurrent 20MB transfers (OOM) or smbj mid-close races.
      * Safe mode: 3 sessions × 1 op = 3 concurrent transfers.
      */
-    fun maxConcurrentOpsPerHost(): Int =
-        (maxConnectionsPerHost() * opsPerSession()).coerceIn(1, MAX_SAFE_HOST_OPS)
+    fun maxConcurrentOpsPerHost(): Int = (maxConnectionsPerHost() * opsPerSession()).coerceIn(1, MAX_SAFE_HOST_OPS)
 
     /** Reader toggle changed — drop pools so new sessions use the new op/session budget. */
     fun onReaderSafeConcurrencyChanged() {
@@ -218,6 +217,7 @@ object SmbGateway {
     ) {
         private val shares = HashMap<String, DiskShare>()
         private val shareLock = Any()
+
         /** Snapshot of [opsPerSession] at open — do not resize mid-life. */
         val opsLimit: Int = opsPerSession()
         val opSlots = Semaphore(opsLimit)
@@ -385,24 +385,23 @@ object SmbGateway {
             }
         }
 
-        private fun tryReserveSession(credKey: String, shareName: String): PooledSession? =
-            synchronized(sessionsLock) {
-                val ordered = sessions
-                    .filter { !it.retired.get() && it.credKey == credKey && it.isConnected }
-                    .sortedByDescending { it.hasShare(shareName) }
-                for (ps in ordered) {
-                    if (ps.opSlots.tryAcquire()) {
-                        // Re-check after slot: may have been marked dying between filter and acquire.
-                        if (ps.retired.get() || !ps.connection.isConnected) {
-                            ps.opSlots.release()
-                            continue
-                        }
-                        ps.outstanding.incrementAndGet()
-                        return ps
+        private fun tryReserveSession(credKey: String, shareName: String): PooledSession? = synchronized(sessionsLock) {
+            val ordered = sessions
+                .filter { !it.retired.get() && it.credKey == credKey && it.isConnected }
+                .sortedByDescending { it.hasShare(shareName) }
+            for (ps in ordered) {
+                if (ps.opSlots.tryAcquire()) {
+                    // Re-check after slot: may have been marked dying between filter and acquire.
+                    if (ps.retired.get() || !ps.connection.isConnected) {
+                        ps.opSlots.release()
+                        continue
                     }
+                    ps.outstanding.incrementAndGet()
+                    return ps
                 }
-                null
             }
+            null
+        }
 
         /**
          * End one op. If the session was marked dying, the **last** outstanding op closes it
@@ -1399,10 +1398,9 @@ private object KeepAliveSocketFactory : SocketFactory() {
         defaultFactory.createSocket(host, port)
     }
 
-    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
-        withSmbTrafficTag {
-            defaultFactory.createSocket(host, port, localHost, localPort)
-        }
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket = withSmbTrafficTag {
+        defaultFactory.createSocket(host, port, localHost, localPort)
+    }
 
     override fun createSocket(host: InetAddress, port: Int): Socket = withSmbTrafficTag {
         defaultFactory.createSocket(host, port)

@@ -57,6 +57,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
         val libHdrPrefetchSlots = Semaphore(2)
         // In-flight downloads by page index — join small-jump overlap, cancel large jumps.
         val downloadJobs = ConcurrentHashMap<Int, Job>()
+
         /** UI/decode callbacks waiting for [index] to land in [SmbCache]. */
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         // Pages within this distance of the target keep running; farther jobs are cancelled.
@@ -90,6 +91,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     check(SmbCache.isCachedOnDisk(path)) { "SMB page $index not downloaded" }
                     return object : PathSource {
                         override val source = path
+
                         // Converted Ultra HDR is JPEG; original name may be .jxr
                         override val type by lazy {
                             FileUtils.getExtensionFromFilename(path.name)
@@ -115,8 +117,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     }
                 }
 
-                private fun isLibHdrCandidate(name: String): Boolean =
-                    HdrConvertCache.isRamPipelineCandidate(name)
+                private fun isLibHdrCandidate(name: String): Boolean = HdrConvertCache.isRamPipelineCandidate(name)
 
                 private fun cancelDistantDownloads(center: Int) {
                     val snapshot = downloadJobs.entries.toList()
@@ -135,8 +136,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
                 }
 
-                private fun takeReadyWaiters(index: Int): List<() -> Unit> =
-                    readyWaiters.remove(index)?.toList().orEmpty()
+                private fun takeReadyWaiters(index: Int): List<() -> Unit> = readyWaiters.remove(index)?.toList().orEmpty()
 
                 private fun dispatchReady(index: Int) {
                     takeReadyWaiters(index).forEach { runCatching { it() } }

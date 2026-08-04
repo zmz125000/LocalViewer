@@ -41,23 +41,22 @@ class PdfImageEngine private constructor(
     /** File offset of page image stream for high-water ordering; -1 if unknown. */
     fun streamOffsetOf(index: Int): Long = pages.getOrNull(index)?.streamOffset ?: -1L
 
-    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index =
-        DocumentExtractCache.Index(
-            v = DocumentExtractCache.INDEX_VERSION,
-            cacheKey = cacheKey,
-            remoteSize = remoteSize,
-            format = "pdf",
-            complete = complete,
-            members = pages.mapIndexed { i, p ->
-                DocumentExtractCache.Member(
-                    i = i,
-                    name = "${p.objNum}_${p.gen}",
-                    ext = p.ext,
-                    uncSize = p.streamLen,
-                    offset = p.streamOffset,
-                )
-            },
-        )
+    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index = DocumentExtractCache.Index(
+        v = DocumentExtractCache.INDEX_VERSION,
+        cacheKey = cacheKey,
+        remoteSize = remoteSize,
+        format = "pdf",
+        complete = complete,
+        members = pages.mapIndexed { i, p ->
+            DocumentExtractCache.Member(
+                i = i,
+                name = "${p.objNum}_${p.gen}",
+                ext = p.ext,
+                uncSize = p.streamLen,
+                offset = p.streamOffset,
+            )
+        },
+    )
 
     override fun extractToCache(cacheKey: String, index: Int): Path? {
         val ref = pages.getOrNull(index) ?: return null
@@ -354,12 +353,10 @@ internal class PdfParser(
         return entry.offset + i
     }
 
-    private fun filterNames(v: PdfValue?): List<String> {
-        return when (val r = v?.let { resolveValue(it) }) {
-            is PdfName -> listOf(r.name)
-            is PdfArray -> r.items.mapNotNull { (resolveValue(it) as? PdfName)?.name }
-            else -> emptyList()
-        }
+    private fun filterNames(v: PdfValue?): List<String> = when (val r = v?.let { resolveValue(it) }) {
+        is PdfName -> listOf(r.name)
+        is PdfArray -> r.items.mapNotNull { (resolveValue(it) as? PdfName)?.name }
+        else -> emptyList()
     }
 
     // --- decode ---
@@ -379,10 +376,9 @@ internal class PdfParser(
         return parseStreamAt(raw, objNum, gen)
     }
 
-    private fun loadFromObjectStream(objNum: Int): StreamObj? {
+    private fun loadFromObjectStream(_objNum: Int): StreamObj? {
         // Scan xref for object streams is expensive; skip for MVP image streams
         // (image streams are almost never in object streams as compressed content streams might be).
-        EH_UNUSED(objNum)
         return null
     }
 
@@ -520,35 +516,33 @@ internal class PdfParser(
         }
     }
 
-    private fun colorSpaceChannels(v: PdfValue?): Int {
-        return when (val r = v?.let { resolveValue(it) }) {
-            is PdfName -> when (r.name) {
-                "/DeviceGray", "/G" -> 1
-                "/DeviceRGB", "/RGB" -> 3
-                "/DeviceCMYK", "/CMYK" -> 4
-                else -> 0
-            }
-            is PdfArray -> {
-                val first = r.items.firstOrNull()?.let { resolveValue(it) } as? PdfName
-                when (first?.name) {
-                    "/ICCBased" -> {
-                        // Second element is stream with /N channels
-                        val streamRef = r.items.getOrNull(1)
-                        val st = when (streamRef) {
-                            is PdfRef -> loadStreamObject(streamRef.num, streamRef.gen)
-                            else -> null
-                        }
-                        st?.dict?.intValue("/N") ?: 3
-                    }
-                    "/CalRGB", "/DeviceRGB" -> 3
-                    "/CalGray", "/DeviceGray" -> 1
-                    "/DeviceCMYK" -> 4
-                    "/Indexed" -> 1
-                    else -> 0
-                }
-            }
+    private fun colorSpaceChannels(v: PdfValue?): Int = when (val r = v?.let { resolveValue(it) }) {
+        is PdfName -> when (r.name) {
+            "/DeviceGray", "/G" -> 1
+            "/DeviceRGB", "/RGB" -> 3
+            "/DeviceCMYK", "/CMYK" -> 4
             else -> 0
         }
+        is PdfArray -> {
+            val first = r.items.firstOrNull()?.let { resolveValue(it) } as? PdfName
+            when (first?.name) {
+                "/ICCBased" -> {
+                    // Second element is stream with /N channels
+                    val streamRef = r.items.getOrNull(1)
+                    val st = when (streamRef) {
+                        is PdfRef -> loadStreamObject(streamRef.num, streamRef.gen)
+                        else -> null
+                    }
+                    st?.dict?.intValue("/N") ?: 3
+                }
+                "/CalRGB", "/DeviceRGB" -> 3
+                "/CalGray", "/DeviceGray" -> 1
+                "/DeviceCMYK" -> 4
+                "/Indexed" -> 1
+                else -> 0
+            }
+        }
+        else -> 0
     }
 
     private fun undoPngPredictor(data: ByteArray, columns: Int, colors: Int, bits: Int): ByteArray? {
@@ -655,7 +649,9 @@ internal class PdfParser(
                 in 'A'..'F' -> c - 'A' + 10
                 else -> return null
             }
-            if (hi < 0) hi = v else {
+            if (hi < 0) {
+                hi = v
+            } else {
                 bos.write((hi shl 4) or v)
                 hi = -1
             }
@@ -677,7 +673,10 @@ internal class PdfParser(
                 c == '~' -> break
                 c.isWhitespace() -> Unit
                 c == 'z' && tlen == 0 -> {
-                    bos.write(0); bos.write(0); bos.write(0); bos.write(0)
+                    bos.write(0)
+                    bos.write(0)
+                    bos.write(0)
+                    bos.write(0)
                 }
                 c in '!'..'u' -> {
                     tuple[tlen++] = c.code - 33
@@ -1029,12 +1028,10 @@ internal class PdfParser(
         return data
     }
 
-    private fun resolveLength(v: PdfValue?): Long? {
-        return when (val r = v?.let { resolveValue(it) }) {
-            is PdfNumber -> r.value.toLong()
-            is PdfRef -> (resolve(r) as? PdfNumber)?.value?.toLong()
-            else -> null
-        }
+    private fun resolveLength(v: PdfValue?): Long? = when (val r = v?.let { resolveValue(it) }) {
+        is PdfNumber -> r.value.toLong()
+        is PdfRef -> (resolve(r) as? PdfNumber)?.value?.toLong()
+        else -> null
     }
 
     // --- tokenizer / values ---
@@ -1125,7 +1122,9 @@ internal class PdfParser(
                             i++
                         }
                         ch == '('.code.toByte() -> {
-                            depth++; bos.write('('.code); i++
+                            depth++
+                            bos.write('('.code)
+                            i++
                         }
                         ch == ')'.code.toByte() -> {
                             depth--
@@ -1133,7 +1132,8 @@ internal class PdfParser(
                             i++
                         }
                         else -> {
-                            bos.write(ch.toInt()); i++
+                            bos.write(ch.toInt())
+                            i++
                         }
                     }
                 }
@@ -1154,7 +1154,8 @@ internal class PdfParser(
                             break
                         }
                         if (ch.isWhitespace()) {
-                            i++; continue
+                            i++
+                            continue
                         }
                         val v = when (ch) {
                             in '0'..'9' -> ch - '0'
@@ -1162,7 +1163,9 @@ internal class PdfParser(
                             in 'A'..'F' -> ch - 'A' + 10
                             else -> break
                         }
-                        if (hi < 0) hi = v else {
+                        if (hi < 0) {
+                            hi = v
+                        } else {
                             bos.write((hi shl 4) or v)
                             hi = -1
                         }
@@ -1249,7 +1252,13 @@ internal class PdfParser(
             if (r <= 0) break
             got += r
         }
-        return if (got == n) buf else if (got > 0) buf.copyOf(got) else null
+        return if (got == n) {
+            buf
+        } else if (got > 0) {
+            buf.copyOf(got)
+        } else {
+            null
+        }
     }
 }
 
@@ -1273,8 +1282,4 @@ internal class PdfDict(
     fun intValue(key: String): Int? = (map[key] as? PdfNumber)?.value?.toInt()
 }
 
-private fun Char.isPdfWs(): Boolean =
-    this == ' ' || this == '\t' || this == '\n' || this == '\r' || this == '\u0000' || this == '\u000c'
-
-@Suppress("UNUSED_PARAMETER")
-private fun EH_UNUSED(x: Any?) = Unit
+private fun Char.isPdfWs(): Boolean = this == ' ' || this == '\t' || this == '\n' || this == '\r' || this == '\u0000' || this == '\u000c'

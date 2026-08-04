@@ -37,8 +37,7 @@ object HdrDisplayInfo {
 
     fun Activity.maxDisplayBoost(): Float = maxDisplayBoost(displayOrNull())
 
-    private fun Activity.displayOrNull(): Display? =
-        ContextCompat.getDisplayOrDefault(this)
+    private fun Activity.displayOrNull(): Display? = ContextCompat.getDisplayOrDefault(this)
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     private fun liveHdrSdrRatio(display: Display): Float? {
