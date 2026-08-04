@@ -24,6 +24,7 @@ import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.isImageFileName
+import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.naturalCompare
 import java.io.IOException
 import java.io.OutputStream
@@ -900,7 +901,9 @@ object SmbGateway {
         val grandPeeks = ConcurrentHashMap<String, List<RemoteChild>>()
         val leavesToPeek = ArrayList<Pair<String, String>>() // (subName, leafName)
         for ((subName, peek) in peeks) {
-            val leaves = peek.filter { it.isDirectory && !it.name.startsWith('.') }
+            val leaves = peek.filter {
+                it.isDirectory && !it.name.startsWith('.') && !isProtectedSystemName(it.name)
+            }
             if (leaves.size in 1..SMB_PROMOTE_MAX_LEAVES) {
                 for (leaf in leaves) {
                     leavesToPeek += subName to leaf.name
@@ -1312,20 +1315,6 @@ private fun isSessionRejectError(t: Throwable): Boolean {
         cur = cur.cause
     }
     return false
-}
-
-private fun isProtectedSystemName(name: String): Boolean {
-    if (name.startsWith('$')) return true
-    return when (name.uppercase(Locale.ROOT)) {
-        "\$RECYCLE.BIN",
-        "RECYCLER",
-        "RECYCLED",
-        "SYSTEM VOLUME INFORMATION",
-        "RECOVERY",
-        "CONFIG.MSI",
-        -> true
-        else -> false
-    }
 }
 
 private fun isIgnorableListError(e: SMBApiException): Boolean {

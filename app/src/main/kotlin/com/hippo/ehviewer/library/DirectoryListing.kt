@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.library
 
+import java.util.Locale
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -287,6 +288,35 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
 
 data class RemoteChild(val name: String, val isDirectory: Boolean)
 
+/**
+ * Windows / NAS system junk that must not appear as browsable folders or count as
+ * child dirs for dual-gallery / leaf promotion (e.g. Synology `@eaDir` next to images).
+ *
+ * Names starting with `$` are admin/recycle shares; `#…` is Synology recycle/snapshot.
+ * Dot-prefixed names are handled separately by callers / [classifyRemoteListingWithPeeks].
+ */
+fun isProtectedSystemName(name: String): Boolean {
+    if (name.startsWith('$') || name.startsWith('#')) return true
+    return when (name.uppercase(Locale.ROOT)) {
+        // Windows volume / recycle
+        "RECYCLER",
+        "RECYCLED",
+        "SYSTEM VOLUME INFORMATION",
+        "RECOVERY",
+        "CONFIG.MSI",
+        // Synology DSM
+        "@EADIR",
+        "@RECENTLY-SNAPSHOT",
+        // QNAP
+        "@RECYCLE",
+        "@RECYCLINGBIN",
+        // Linux / ext*
+        "LOST+FOUND",
+        -> true
+        else -> false
+    }
+}
+
 sealed interface BrowseEntryRemote {
     val name: String
 
@@ -343,11 +373,13 @@ fun classifyRemoteListingWithPeeks(
     val archives = ArrayList<BrowseEntryRemote.ArchiveGallery>()
 
     for (e in entries) {
-        if (e.name.startsWith('.')) continue
+        if (e.name.startsWith('.') || isProtectedSystemName(e.name)) continue
         when {
             e.isDirectory -> {
                 val peek = childPeeks[e.name].orEmpty()
-                val leaves = peek.filter { it.isDirectory && !it.name.startsWith('.') }
+                val leaves = peek.filter {
+                    it.isDirectory && !it.name.startsWith('.') && !isProtectedSystemName(it.name)
+                }
                 val canPromote = leaves.size in 1..SMB_PROMOTE_MAX_LEAVES && grandPeeks.isNotEmpty()
 
                 if (canPromote) {
@@ -360,9 +392,15 @@ fun classifyRemoteListingWithPeeks(
                     val galleryLeaves = ArrayList<PromotedLeaf>()
                     // Navigable leaf = has subdirs and/or archives (must enter to open archives).
                     var hasNavigableLeaf = false
-                    val sHasImages = peek.any { !it.isDirectory && !it.name.startsWith('.') && isImageFileName(it.name) }
+                    val sHasImages = peek.any {
+                        !it.isDirectory && !it.name.startsWith('.') &&
+                            !isProtectedSystemName(it.name) && isImageFileName(it.name)
+                    }
                     // Archives as files in S → keep dir S (never promote archives to parent).
-                    val sHasArchives = peek.any { !it.isDirectory && !it.name.startsWith('.') && isArchiveFileName(it.name) }
+                    val sHasArchives = peek.any {
+                        !it.isDirectory && !it.name.startsWith('.') &&
+                            !isProtectedSystemName(it.name) && isArchiveFileName(it.name)
+                    }
                     for (leaf in leaves) {
                         val key = "${e.name}/${leaf.name}"
                         val leafPeek = grandPeeks[key].orEmpty()
@@ -530,7 +568,7 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
     var sawArchive = false
 
     for (e in peek) {
-        if (e.name.startsWith('.')) continue
+        if (e.name.startsWith('.') || isProtectedSystemName(e.name)) continue
         if (e.isDirectory) {
             sawSubdir = true
             continue
