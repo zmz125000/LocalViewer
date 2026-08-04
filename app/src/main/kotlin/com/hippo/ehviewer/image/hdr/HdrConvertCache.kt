@@ -142,9 +142,136 @@ object HdrConvertCache {
     suspend fun ensureReadable(source: Path, fileNameHint: String = source.name): Path =
         ensureDisplayFile(source, fileNameHint)
 
-    /** Local Coil covers: same as [ensureDisplayFile]. */
+    /** Local Coil covers: Coil-ready path (UHDR or SDR jpeg for lib, else original). */
     suspend fun ensureCoverSource(source: Path, fileNameHint: String = source.name): Path =
-        ensureDisplayFile(source, fileNameHint)
+        ensureCoilReady(source, fileNameHint)
+
+    /**
+     * Reader/cache chokepoint: any path → **Coil / ImageDecoder-ready** file.
+     * - Platform / gain-map → [source]
+     * - Lib HDR → Ultra HDR JPEG under [localRoot]
+     * - Lib SDR (JXR/JXL) → plain JPEG under [localRoot] (no gain map)
+     */
+    suspend fun ensureCoilReady(source: Path, fileNameHint: String = source.name): Path =
+        withContext(Dispatchers.IO) {
+            val ext = FileUtils.getExtensionFromFilename(fileNameHint)?.lowercase()
+                ?: FileUtils.getExtensionFromFilename(source.name)?.lowercase()
+            if (!isHdrConvertCandidateExtension(ext)) return@withContext source
+            // Already a derived Ultra HDR / SDR jpeg in our cache.
+            if (source.name.endsWith(".jpg", ignoreCase = true) &&
+                source.toString().contains("hdr_ultrahdr")
+            ) {
+                return@withContext source
+            }
+            val route = classifyPath(source, fileNameHint)
+            when {
+                route.needsUhdr -> {
+                    val lib = route as StillRoute.Lib
+                    ensureUhdrLocal(source, lib.codec)
+                }
+                route.isLibSdr -> ensureSdrJpeg(source, fileNameHint)
+                else -> source
+            }
+        }
+
+    /**
+     * In-memory archive pages → Coil-ready file on disk.
+     * Platform bytes written to a hashed temp for a stable PathSource; lib HDR/SDR converted.
+     */
+    suspend fun ensureCoilReadyFromBytes(bytes: ByteArray, fileNameHint: String): Path =
+        withContext(Dispatchers.IO) {
+            if (bytes.isEmpty()) error("empty image buffer: $fileNameHint")
+            val route = classify(bytes, bytes.size, fileNameHint)
+            when {
+                route.needsUhdr -> ensureUhdrFromBytes(bytes, fileNameHint)
+                route.isLibSdr -> ensureSdrJpegFromBytes(bytes, fileNameHint)
+                else -> {
+                    // Platform / gain-map: materialize so PathSource open is uniform.
+                    ensureLocalRoot()
+                    val ext = guessPlatformExt(bytes, fileNameHint)
+                    val dest = localRoot / "${sha256HexBytes(bytes)}.$ext"
+                    val f = File(dest.toString())
+                    if (!f.isFile || f.length() == 0L) {
+                        writeBytesAtomic(bytes, f)
+                    }
+                    dest
+                }
+            }
+        }
+
+    private fun guessPlatformExt(bytes: ByteArray, fileNameHint: String): String {
+        FileUtils.getExtensionFromFilename(fileNameHint)?.lowercase()
+            ?.takeIf { it.isNotEmpty() && it != "bin" }
+            ?.let { return it }
+        if (bytes.size >= 3 &&
+            (bytes[0].toInt() and 0xff) == 0xff &&
+            (bytes[1].toInt() and 0xff) == 0xd8
+        ) {
+            return "jpg"
+        }
+        if (bytes.size >= 8 &&
+            bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte()
+        ) {
+            return "png"
+        }
+        if (bytes.size >= 12 &&
+            bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() &&
+            bytes[8] == 'W'.code.toByte() && bytes[9] == 'E'.code.toByte()
+        ) {
+            return "webp"
+        }
+        if (bytes.size >= 12 &&
+            bytes[4] == 'f'.code.toByte() && bytes[5] == 't'.code.toByte() &&
+            bytes[6] == 'y'.code.toByte() && bytes[7] == 'p'.code.toByte()
+        ) {
+            return "avif"
+        }
+        return "jpg"
+    }
+
+    private suspend fun ensureSdrJpeg(source: Path, fileNameHint: String): Path {
+        ensureLocalRoot()
+        val meta = source.metadataOrNull()
+        val mtime = meta?.lastModifiedAtMillis ?: 0L
+        val size = meta?.size ?: 0L
+        val dest = localRoot / "${sha256Hex("sdr:$source:$mtime:$size")}.sdr.jpg"
+        val destFile = File(dest.toString())
+        if (destFile.isFile && destFile.length() > 0L) return dest
+        val bmp = decodeLibSdrBitmap(source, fileNameHint, maxEdge = 0)
+            ?: error("Lib SDR decode failed: $fileNameHint")
+        try {
+            writeBitmapJpeg(bmp, destFile, quality = 92)
+        } finally {
+            if (!bmp.isRecycled) bmp.recycle()
+        }
+        OriginDiskCache.scheduleTrim()
+        return dest
+    }
+
+    private suspend fun ensureSdrJpegFromBytes(bytes: ByteArray, fileNameHint: String): Path {
+        ensureLocalRoot()
+        val dest = localRoot / "${sha256HexBytes(bytes)}.sdr.jpg"
+        val destFile = File(dest.toString())
+        if (destFile.isFile && destFile.length() > 0L) return dest
+        val bmp = decodeLibSdrBitmap(bytes, fileNameHint, maxEdge = 0)
+            ?: error("Lib SDR decode failed: $fileNameHint")
+        try {
+            writeBitmapJpeg(bmp, destFile, quality = 92)
+        } finally {
+            if (!bmp.isRecycled) bmp.recycle()
+        }
+        OriginDiskCache.scheduleTrim()
+        return dest
+    }
+
+    private fun writeBitmapJpeg(bmp: Bitmap, dest: File, quality: Int) {
+        dest.parentFile?.mkdirs()
+        val tmp = File("${dest.absolutePath}.tmp.${System.nanoTime()}")
+        FileOutputStream(tmp).use { out ->
+            check(bmp.compress(Bitmap.CompressFormat.JPEG, quality, out))
+        }
+        commitTmp(tmp, dest)
+    }
 
     /**
      * Decode lib still (JXR/JXL) as SDR [Bitmap] for reader/display. No disk UHDR cache.
