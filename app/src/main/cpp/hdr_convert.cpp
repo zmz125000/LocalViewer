@@ -172,34 +172,80 @@ bool guid_eq(const PKPixelFormatGUID& a, const PKPixelFormatGUID& b) {
     return memcmp(&a, &b, sizeof(PKPixelFormatGUID)) == 0;
 }
 
+/**
+ * JXR/WDP pixel families we expand to linear F16 RGBA.
+ *
+ * HDR (linear scRGB, 1.0 ≈ paper white): half / float / 13.3 fixed-point / 101010.
+ * SDR (gamma-encoded, typically sRGB): 8/16-bit integer RGB(A)/BGR(A)/gray —
+ * common for classic .wdp from Windows Photo Gallery / cameras (libjxr decodes
+ * these; we previously rejected them as "Unsupported").
+ */
 enum class JxrPix {
     RgbaF32,
     RgbaF16,
     Rgb101010,
+    Fixed16,   // signed 13.3 fixed-point linear scRGB (HD Photo HDR)
+    Bgr8,      // 24bppBGR / 32bppBGR (B,G,R[,X])
+    Bgra8,     // 32bppBGRA
+    Pbgra8,    // 32bppPBGRA (premultiplied)
+    Rgb8,      // 24bppRGB
+    Rgba8,     // 32bppRGBA / 32bppRGB (R,G,B[,A])
+    Prgba8,    // 32bppPRGBA
+    Rgb16,     // 48bppRGB (u16 gamma)
+    Rgba16,    // 64bppRGBA / PRGBA (u16 gamma)
+    Gray8,
+    Gray16,
     Unsupported,
 };
 
 JxrPix classify_guid(const PKPixelFormatGUID& g) {
+    // ── HDR linear ────────────────────────────────────────────────────────
     if (guid_eq(g, GUID_PKPixelFormat128bppRGBAFloat)) return JxrPix::RgbaF32;
     if (guid_eq(g, GUID_PKPixelFormat128bppPRGBAFloat)) return JxrPix::RgbaF32;
     if (guid_eq(g, GUID_PKPixelFormat128bppRGBFloat)) return JxrPix::RgbaF32;
+    if (guid_eq(g, GUID_PKPixelFormat96bppRGBFloat)) return JxrPix::RgbaF32;
     if (guid_eq(g, GUID_PKPixelFormat64bppRGBAHalf)) return JxrPix::RgbaF16;
     if (guid_eq(g, GUID_PKPixelFormat64bppRGBHalf)) return JxrPix::RgbaF16;
+    if (guid_eq(g, GUID_PKPixelFormat48bppRGBHalf)) return JxrPix::RgbaF16;
     if (guid_eq(g, GUID_PKPixelFormat32bppRGB101010)) return JxrPix::Rgb101010;
+    if (guid_eq(g, GUID_PKPixelFormat48bppRGBFixedPoint)) return JxrPix::Fixed16;
+    if (guid_eq(g, GUID_PKPixelFormat64bppRGBAFixedPoint)) return JxrPix::Fixed16;
+    if (guid_eq(g, GUID_PKPixelFormat64bppRGBFixedPoint)) return JxrPix::Fixed16;
+    // ── SDR integer (gamma → linear via sRGB EOTF) ────────────────────────
+    if (guid_eq(g, GUID_PKPixelFormat24bppBGR)) return JxrPix::Bgr8;
+    if (guid_eq(g, GUID_PKPixelFormat32bppBGR)) return JxrPix::Bgr8;
+    if (guid_eq(g, GUID_PKPixelFormat32bppBGRA)) return JxrPix::Bgra8;
+    if (guid_eq(g, GUID_PKPixelFormat32bppPBGRA)) return JxrPix::Pbgra8;
+    if (guid_eq(g, GUID_PKPixelFormat24bppRGB)) return JxrPix::Rgb8;
+    if (guid_eq(g, GUID_PKPixelFormat32bppRGB)) return JxrPix::Rgba8;
+    if (guid_eq(g, GUID_PKPixelFormat32bppRGBA)) return JxrPix::Rgba8;
+    if (guid_eq(g, GUID_PKPixelFormat32bppPRGBA)) return JxrPix::Prgba8;
+    if (guid_eq(g, GUID_PKPixelFormat48bppRGB)) return JxrPix::Rgb16;
+    if (guid_eq(g, GUID_PKPixelFormat64bppRGBA)) return JxrPix::Rgba16;
+    if (guid_eq(g, GUID_PKPixelFormat64bppPRGBA)) return JxrPix::Rgba16;
+    if (guid_eq(g, GUID_PKPixelFormat8bppGray)) return JxrPix::Gray8;
+    if (guid_eq(g, GUID_PKPixelFormat16bppGray)) return JxrPix::Gray16;
     return JxrPix::Unsupported;
 }
 
-int bpp_of(JxrPix p) {
-    switch (p) {
-        case JxrPix::RgbaF32:
-            return 16;
-        case JxrPix::RgbaF16:
-            return 8;
-        case JxrPix::Rgb101010:
-            return 4;
-        default:
-            return 0;
-    }
+/** Log GUID for Unsupported diagnostics (family last byte is often enough). */
+void log_unsupported_guid(const PKPixelFormatGUID& g) {
+    const auto* b = reinterpret_cast<const uint8_t*>(&g);
+    ALOGE("Unsupported JXR pixel format GUID "
+          "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x "
+          "(last=0x%02x)",
+          b[3], b[2], b[1], b[0], b[5], b[4], b[7], b[6], b[8], b[9], b[10], b[11], b[12],
+          b[13], b[14], b[15], b[15]);
+}
+
+/** sRGB-encoded channel [0,1] → linear F16. */
+inline uint16_t enc_to_lin_half(float enc) {
+    return float_to_half(srgb_eotf(enc));
+}
+
+/** HD Photo 13.3 signed fixed-point: 1.0 linear = 0x2000 (8192). */
+inline float fixed13_3_to_float(int16_t v) {
+    return static_cast<float>(v) * (1.0f / 8192.0f);
 }
 
 /**
@@ -319,12 +365,13 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
     }
     JxrPix pix = classify_guid(guid);
     if (pix == JxrPix::Unsupported) {
-        ALOGE("Unsupported JXR pixel format");
+        log_unsupported_guid(guid);
         release_all();
         return false;
     }
 
-    /* Decode in native format — no jxrlib format conversion. */
+    /* Decode in native format — no jxrlib format conversion (half→float Convert
+     * produces vertical stripe garbage). Integer SDR expands below with sRGB EOTF. */
     if (!setup_full_frame(decoder, &guid)) {
         ALOGE("setup_full_frame failed");
         release_all();
@@ -345,6 +392,12 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
         guid_eq(guid, GUID_PKPixelFormat96bppRGBFloat);
     const bool rgba_float = guid_eq(guid, GUID_PKPixelFormat128bppRGBAFloat) ||
         guid_eq(guid, GUID_PKPixelFormat128bppPRGBAFloat);
+    const bool fixed_has_a = guid_eq(guid, GUID_PKPixelFormat64bppRGBAFixedPoint);
+    const bool rgba16_has_a = guid_eq(guid, GUID_PKPixelFormat64bppRGBA) ||
+        guid_eq(guid, GUID_PKPixelFormat64bppPRGBA);
+    const bool rgba16_prem = guid_eq(guid, GUID_PKPixelFormat64bppPRGBA);
+    const bool rgba8_has_a = guid_eq(guid, GUID_PKPixelFormat32bppRGBA) ||
+        guid_eq(guid, GUID_PKPixelFormat32bppPRGBA);
 
     PKPixelInfo pi{};
     pi.pGUIDPixFmt = &guid;
@@ -372,8 +425,23 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
     }
 
     out_rgba.resize(static_cast<size_t>(w) * h * 4);
+    const size_t src_bpp = bytes_per_pixel;
+    const size_t npx = static_cast<size_t>(w) * h;
+
+    auto store_lin = [&](size_t i, float r, float g, float b, float a) {
+        out_rgba[i * 4 + 0] = float_to_half(r);
+        out_rgba[i * 4 + 1] = float_to_half(g);
+        out_rgba[i * 4 + 2] = float_to_half(b);
+        out_rgba[i * 4 + 3] = float_to_half(a);
+    };
+    auto store_enc_rgb = [&](size_t i, float er, float eg, float eb, float ea) {
+        out_rgba[i * 4 + 0] = enc_to_lin_half(er);
+        out_rgba[i * 4 + 1] = enc_to_lin_half(eg);
+        out_rgba[i * 4 + 2] = enc_to_lin_half(eb);
+        out_rgba[i * 4 + 3] = float_to_half(ea);
+    };
+
     if (rgba_half || rgb_half) {
-        const size_t src_bpp = bytes_per_pixel;
         for (unsigned y = 0; y < h; y++) {
             const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
             for (unsigned x = 0; x < w; x++) {
@@ -388,7 +456,6 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
         }
         ok = true;
     } else if (rgba_float || rgb_float) {
-        const size_t src_bpp = bytes_per_pixel;
         const bool has_a = rgba_float;
         for (unsigned y = 0; y < h; y++) {
             const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
@@ -396,24 +463,143 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
                 const float* p =
                     reinterpret_cast<const float*>(row + static_cast<size_t>(x) * src_bpp);
                 const size_t i = static_cast<size_t>(y) * w + x;
-                out_rgba[i * 4 + 0] = float_to_half(p[0]);
-                out_rgba[i * 4 + 1] = float_to_half(p[1]);
-                out_rgba[i * 4 + 2] = float_to_half(p[2]);
-                out_rgba[i * 4 + 3] = float_to_half(has_a ? p[3] : 1.0f);
+                store_lin(i, p[0], p[1], p[2], has_a ? p[3] : 1.0f);
             }
         }
         ok = true;
     } else if (pix == JxrPix::Rgb101010) {
-        for (unsigned i = 0; i < w * h; i++) {
+        // Keep prior linear 0–1 expand (rare for Win screenshots; not gamma-encoded sRGB).
+        for (size_t i = 0; i < npx; i++) {
             uint32_t p;
             memcpy(&p, raw.data() + i * 4, 4);
-            float r = static_cast<float>((p >> 0) & 0x3ff) / 1023.0f;
-            float g = static_cast<float>((p >> 10) & 0x3ff) / 1023.0f;
-            float b = static_cast<float>((p >> 20) & 0x3ff) / 1023.0f;
-            out_rgba[i * 4 + 0] = float_to_half(r);
-            out_rgba[i * 4 + 1] = float_to_half(g);
-            out_rgba[i * 4 + 2] = float_to_half(b);
-            out_rgba[i * 4 + 3] = float_to_half(1.0f);
+            store_lin(i, static_cast<float>((p >> 0) & 0x3ff) / 1023.0f,
+                      static_cast<float>((p >> 10) & 0x3ff) / 1023.0f,
+                      static_cast<float>((p >> 20) & 0x3ff) / 1023.0f, 1.0f);
+        }
+        ok = true;
+    } else if (pix == JxrPix::Fixed16) {
+        // Linear scRGB 13.3 fixed-point (HD Photo HDR).
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const int16_t* p =
+                    reinterpret_cast<const int16_t*>(row + static_cast<size_t>(x) * src_bpp);
+                const size_t i = static_cast<size_t>(y) * w + x;
+                store_lin(i, fixed13_3_to_float(p[0]), fixed13_3_to_float(p[1]),
+                          fixed13_3_to_float(p[2]),
+                          fixed_has_a ? fixed13_3_to_float(p[3]) : 1.0f);
+            }
+        }
+        ok = true;
+    } else if (pix == JxrPix::Bgr8) {
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const uint8_t* p = row + static_cast<size_t>(x) * src_bpp;
+                const size_t i = static_cast<size_t>(y) * w + x;
+                store_enc_rgb(i, p[2] / 255.f, p[1] / 255.f, p[0] / 255.f, 1.0f);
+            }
+        }
+        ok = true;
+    } else if (pix == JxrPix::Bgra8 || pix == JxrPix::Pbgra8) {
+        const bool prem = (pix == JxrPix::Pbgra8);
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const uint8_t* p = row + static_cast<size_t>(x) * src_bpp;
+                const size_t i = static_cast<size_t>(y) * w + x;
+                float a = p[3] / 255.f;
+                float b = p[0] / 255.f, g = p[1] / 255.f, r = p[2] / 255.f;
+                if (prem && a > 1e-6f) {
+                    r /= a;
+                    g /= a;
+                    b /= a;
+                } else if (prem && a <= 1e-6f) {
+                    r = g = b = 0.f;
+                }
+                store_enc_rgb(i, r, g, b, a);
+            }
+        }
+        ok = true;
+    } else if (pix == JxrPix::Rgb8) {
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const uint8_t* p = row + static_cast<size_t>(x) * src_bpp;
+                const size_t i = static_cast<size_t>(y) * w + x;
+                store_enc_rgb(i, p[0] / 255.f, p[1] / 255.f, p[2] / 255.f, 1.0f);
+            }
+        }
+        ok = true;
+    } else if (pix == JxrPix::Rgba8 || pix == JxrPix::Prgba8) {
+        const bool prem = (pix == JxrPix::Prgba8);
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const uint8_t* p = row + static_cast<size_t>(x) * src_bpp;
+                const size_t i = static_cast<size_t>(y) * w + x;
+                float r = p[0] / 255.f, g = p[1] / 255.f, b = p[2] / 255.f;
+                float a = rgba8_has_a || prem ? p[3] / 255.f : 1.0f;
+                if (prem && a > 1e-6f) {
+                    r /= a;
+                    g /= a;
+                    b /= a;
+                } else if (prem && a <= 1e-6f) {
+                    r = g = b = 0.f;
+                }
+                store_enc_rgb(i, r, g, b, a);
+            }
+        }
+        ok = true;
+    } else if (pix == JxrPix::Rgb16) {
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const uint16_t* p =
+                    reinterpret_cast<const uint16_t*>(row + static_cast<size_t>(x) * src_bpp);
+                const size_t i = static_cast<size_t>(y) * w + x;
+                store_enc_rgb(i, p[0] / 65535.f, p[1] / 65535.f, p[2] / 65535.f, 1.0f);
+            }
+        }
+        ok = true;
+    } else if (pix == JxrPix::Rgba16) {
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const uint16_t* p =
+                    reinterpret_cast<const uint16_t*>(row + static_cast<size_t>(x) * src_bpp);
+                const size_t i = static_cast<size_t>(y) * w + x;
+                float r = p[0] / 65535.f, g = p[1] / 65535.f, b = p[2] / 65535.f;
+                float a = rgba16_has_a ? p[3] / 65535.f : 1.0f;
+                if (rgba16_prem && a > 1e-6f) {
+                    r /= a;
+                    g /= a;
+                    b /= a;
+                } else if (rgba16_prem && a <= 1e-6f) {
+                    r = g = b = 0.f;
+                }
+                store_enc_rgb(i, r, g, b, a);
+            }
+        }
+        ok = true;
+    } else if (pix == JxrPix::Gray8) {
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const float yv = row[static_cast<size_t>(x) * src_bpp] / 255.f;
+                store_enc_rgb(static_cast<size_t>(y) * w + x, yv, yv, yv, 1.0f);
+            }
+        }
+        ok = true;
+    } else if (pix == JxrPix::Gray16) {
+        for (unsigned y = 0; y < h; y++) {
+            const uint8_t* row = raw.data() + static_cast<size_t>(y) * stride;
+            for (unsigned x = 0; x < w; x++) {
+                const uint16_t* p =
+                    reinterpret_cast<const uint16_t*>(row + static_cast<size_t>(x) * src_bpp);
+                const float yv = p[0] / 65535.f;
+                store_enc_rgb(static_cast<size_t>(y) * w + x, yv, yv, yv, 1.0f);
+            }
         }
         ok = true;
     } else {
