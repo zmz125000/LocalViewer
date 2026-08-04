@@ -15,6 +15,8 @@ import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
 import com.hippo.ehviewer.util.FileUtils
+import java.io.File
+import java.io.FileNotFoundException
 import okio.Path
 import okio.Path.Companion.toPath
 import okio.buffer
@@ -37,6 +39,14 @@ class CoverPathFetcher(
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
         val path = data.path.toPath()
+        // Absolute FS covers (archive_thumb, origin files): fail before openAFD if gone
+        // (cache trim / clear data) so we don't spam ParcelFileDescriptor ENOENT.
+        if (data.path.startsWith('/')) {
+            val f = File(data.path)
+            if (!f.isFile || f.length() <= 0L) {
+                throw FileNotFoundException("Cover missing: ${data.path}")
+            }
+        }
         val ext = FileUtils.getExtensionFromFilename(path.name)?.lowercase()
         val openPath = if (isHdrConvertCandidateExtension(ext)) {
             HdrConvertCache.ensureCoilReady(path, path.name)

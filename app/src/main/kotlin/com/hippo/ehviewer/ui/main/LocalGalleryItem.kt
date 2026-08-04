@@ -100,26 +100,38 @@ private fun CoverImage(
     sizePx: Int,
     placeholder: ImageVector,
     modifier: Modifier = Modifier,
-    /** When set and [coverPath] is empty, extract first page from this local archive. */
+    /**
+     * When set, extract first page if [coverPath] is empty **or** points at a missing
+     * file (evicted `archive_thumb` after cache trim / clear).
+     */
     archiveContentPath: String? = null,
 ) {
+    // Do not paint a DB/history path until IO verifies it still exists — stale
+    // archive_thumb keys cause CoverPathFetcher ENOENT spam.
     var resolvedCover by remember(coverPath, archiveContentPath) {
-        mutableStateOf(coverPath)
+        mutableStateOf<String?>(null)
     }
     LaunchedEffect(coverPath, archiveContentPath) {
-        if (!coverPath.isNullOrBlank()) {
-            resolvedCover = coverPath
-            return@LaunchedEffect
+        val stored = coverPath?.takeIf { it.isNotBlank() }
+        if (stored != null) {
+            val readable = withIOContext { ArchiveCoverCache.isCoverPathReadable(stored) }
+            if (readable) {
+                resolvedCover = stored
+                return@LaunchedEffect
+            }
+            // Evicted / deleted thumb — drop optimistic paint; re-extract if archive.
+            resolvedCover = null
         }
         val arch = archiveContentPath ?: return@LaunchedEffect
         when (val result = withIOContext { ArchiveCoverCache.ensureCover(arch.toPath()) }) {
             is CoverEnsureResult.Hit -> {
-                resolvedCover = result.path.toString()
+                val pathStr = result.path.toString()
+                resolvedCover = pathStr
                 withIOContext {
                     LocalLibrary.updateGalleryPageAndCoverByContentPath(
                         arch,
                         0,
-                        result.path.toString(),
+                        pathStr,
                     )
                 }
             }

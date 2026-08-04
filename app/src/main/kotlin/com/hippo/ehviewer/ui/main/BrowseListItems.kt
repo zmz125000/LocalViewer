@@ -342,34 +342,19 @@ fun BrowseCoverThumb(
         is BrowseCover.Local -> "local\u0000${cover.path}"
         null -> null
     }
-    // Local image paths set immediately; archive/remote filled by LaunchedEffect after IO.
+    // Local image paths set immediately. Archive/network thumbs: never trust main-thread
+    // [knownPresent] alone (file may be trimmed) — LaunchedEffect probes disk / re-extracts.
     var localPath by remember(remoteKey) {
         mutableStateOf(
             when (cover) {
                 is BrowseCover.Local -> cover.path
-                is BrowseCover.LocalArchive -> {
-                    val cache = ArchiveCoverCache.thumbPathFor(cover.archivePath.toString())
-                    cache.takeIf { ArchiveCoverCache.isCached(it) }
-                }
-                is BrowseCover.SmbArchive -> {
-                    val key = "smb:${cover.sourceId}:${cover.remoteRelativeFile}"
-                    val cache = ArchiveCoverCache.thumbPathFor(key)
-                    cache.takeIf { ArchiveCoverCache.isCached(it) }
-                }
-                is BrowseCover.WebDavArchive -> {
-                    val key = "webdav:${cover.sourceId}:${cover.remoteRelativeFile}"
-                    val cache = ArchiveCoverCache.thumbPathFor(key)
-                    cache.takeIf { ArchiveCoverCache.isCached(it) }
-                }
-                is BrowseCover.Smb -> {
-                    val cache = SmbCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
-                    cache.takeIf { SmbCache.isCached(it) }
-                }
-                is BrowseCover.WebDav -> {
-                    val cache = WebDavCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
-                    cache.takeIf { WebDavCache.isCached(it) }
-                }
-                null -> null
+                is BrowseCover.LocalArchive,
+                is BrowseCover.SmbArchive,
+                is BrowseCover.WebDavArchive,
+                is BrowseCover.Smb,
+                is BrowseCover.WebDav,
+                null,
+                -> null
             },
         )
     }
