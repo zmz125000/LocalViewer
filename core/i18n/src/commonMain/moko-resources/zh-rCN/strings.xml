@@ -567,6 +567,8 @@
     <string name="pref_reader_lib_direct_bitmap_summary">将 JXL / JXR / PQ-AVIF 直接解码为 Bitmap，跳过 Ultra HDR JPEG 转换。</string>
     <string name="pref_reader_hdr_display">HDR 显示（Ultra HDR）</string>
     <string name="pref_reader_hdr_display_summary">在 HDR 屏幕上为 Ultra HDR / 增益图页面启用窗口 HDR 色彩模式。HDR 文件的转换与解码始终进行；关闭后仅以 SDR 基底显示。</string>
+    <string name="pref_reader_advanced_color">高级色彩（广色域 / 高位深）</string>
+    <string name="pref_reader_advanced_color_summary">在广色域屏幕上启用窗口广色域模式，并优先使用更高精度位图。会占用更多 GPU 与内存。HDR 页面仍优先使用 HDR 窗口模式。</string>
     <string name="pref_custom_brightness">自定义亮度</string>
     <string name="pref_custom_color_filter">自定义滤镜</string>
     <string name="pref_keep_screen_on">保持屏幕常亮</string>

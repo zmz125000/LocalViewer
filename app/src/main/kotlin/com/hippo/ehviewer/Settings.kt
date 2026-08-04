@@ -271,6 +271,14 @@ object Settings : DataStorePreferences(null) {
      * those always run so files open; off = SDR base presentation without window HDR.
      */
     val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)
+
+    /**
+     * Prefer wide color gamut + higher bit depth in the reader when the display
+     * supports it ([ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT]; lib-direct keeps F16
+     * for SDR too). HDR window mode still wins while HDR content is composed.
+     * Default off (Android WCG is opt-in for power/perf).
+     */
+    val readerAdvancedColor = boolPref("pref_reader_advanced_color", false)
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)

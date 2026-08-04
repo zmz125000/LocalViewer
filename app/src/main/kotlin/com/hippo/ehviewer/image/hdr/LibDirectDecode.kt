@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.ColorSpace
 import android.os.Build
 import com.ehviewer.core.files.read
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
@@ -24,11 +25,20 @@ data class LibDirectResult(
     val isHdrContent: Boolean,
     /** Linear content boost for [android.view.Window.setDesiredHdrHeadroom]. */
     val contentHdrBoost: Float,
+    /**
+     * Source was wide-gamut (Display P3 / BT.2100) before scRGB rematrix.
+     * Used with advanced color for [ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT] hints.
+     */
+    val isWideGamutSource: Boolean,
 )
 
 /**
  * Decode JXR / JXL / PQ-AVIF straight to a display [Bitmap] for the experimental
  * reader present mode ([com.hippo.ehviewer.Settings.readerLibDirectBitmap]).
+ *
+ * Color management: native rematrixes P3/BT.2020 linear → BT.709/scRGB so
+ * [ColorSpace.Named.LINEAR_EXTENDED_SRGB] / sRGB tags are hue-correct.
+ * Advanced color keeps F16 for SDR (higher bit depth) and reports wide source gamut.
  */
 object LibDirectDecode {
     /**
@@ -44,24 +54,28 @@ object LibDirectDecode {
         if (bytes.isEmpty()) return@withContext null
         val route = classify(bytes, bytes.size, fileNameHint)
         if (route !is StillRoute.Lib) return@withContext null
-        val outInfo = IntArray(4)
+        val forceF16 = Settings.readerAdvancedColor.value
+        val outInfo = IntArray(5)
         val outBoost = FloatArray(1)
         val pixels = when (route.codec) {
-            LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, outInfo, outBoost)
-            LibCodec.Jxr -> decodeJxrBytesToDirect(bytes, maxEdge, outInfo, outBoost)
-            LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, outInfo, outBoost)
+            LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, forceF16, outInfo, outBoost)
+            LibCodec.Jxr -> decodeJxrBytesToDirect(bytes, maxEdge, forceF16, outInfo, outBoost)
+            LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, forceF16, outInfo, outBoost)
         } ?: return@withContext null
         val w = outInfo[0]
         val h = outInfo[1]
         val format = outInfo[2]
         val isHdr = outInfo[3] != 0
+        val gamut = outInfo[4]
         if (w <= 0 || h <= 0) return@withContext null
-        val bitmap = pixelsToBitmap(pixels, w, h, format == 1, isHdr) ?: return@withContext null
+        val f16 = format == 1
+        val bitmap = pixelsToBitmap(pixels, w, h, f16) ?: return@withContext null
         val boost = outBoost[0].coerceIn(1f, 64f)
         LibDirectResult(
             bitmap = bitmap,
             isHdrContent = isHdr,
             contentHdrBoost = if (isHdr) boost else 1f,
+            isWideGamutSource = gamut == 1 || gamut == 2,
         )
     }
 
@@ -75,9 +89,10 @@ object LibDirectDecode {
     }
 
     /**
+     * Pixels are BT.709/scRGB after native rematrix.
      * @param f16 true → [Bitmap.Config.RGBA_F16] linear; false → ARGB_8888 sRGB
      */
-    private fun pixelsToBitmap(pixels: ByteArray, w: Int, h: Int, f16: Boolean, isHdr: Boolean): Bitmap? {
+    private fun pixelsToBitmap(pixels: ByteArray, w: Int, h: Int, f16: Boolean): Bitmap? {
         return runCatching {
             val config = if (f16 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 Bitmap.Config.RGBA_F16
@@ -85,14 +100,12 @@ object LibDirectDecode {
                 Bitmap.Config.ARGB_8888
             }
             val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && f16) {
-                // Linear extended sRGB: values > 1.0 carry headroom for window HDR.
-                val cs = ColorSpace.get(
-                    if (isHdr) {
-                        ColorSpace.Named.LINEAR_EXTENDED_SRGB
-                    } else {
-                        ColorSpace.Named.SRGB
-                    },
-                )
+                // Linear extended sRGB (scRGB): values > 1.0 carry headroom for window HDR.
+                // SDR advanced-color F16 uses the same CS with values typically in [0,1].
+                val cs = ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
+                Bitmap.createBitmap(w, h, config, true, cs)
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val cs = ColorSpace.get(ColorSpace.Named.SRGB)
                 Bitmap.createBitmap(w, h, config, true, cs)
             } else {
                 Bitmap.createBitmap(w, h, config)

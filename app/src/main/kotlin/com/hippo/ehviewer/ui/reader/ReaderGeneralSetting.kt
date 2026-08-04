@@ -54,6 +54,11 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         title = stringResource(id = R.string.pref_reader_hdr_display),
         field = Settings.readerHdrDisplay.asMutableState(),
     )
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_advanced_color),
+        summary = stringResource(id = R.string.pref_reader_advanced_color_summary),
+        field = Settings.readerAdvancedColor.asMutableState(),
+    )
     val fullscreen = Settings.fullscreen.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_fullscreen),

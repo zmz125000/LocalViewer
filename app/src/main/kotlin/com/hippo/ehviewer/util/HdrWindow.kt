@@ -9,14 +9,18 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 
 /**
- * Aves-style window HDR color mode for Ultra HDR / gain-map images.
+ * Reader window color mode for Ultra HDR / wide-gamut stills.
  *
- * Enable while any composed / near-visible page has a gain map (reader compose
- * window, not only the focused page). Clear on leave. Avoid flipping mode on
- * every adjacent SDR page — that causes mixed-content brightness thrash.
+ * Enable while any composed / near-visible page needs HDR or WCG (not only the
+ * focused page). Clear on leave. Avoid flipping mode on every adjacent SDR page
+ * — that causes mixed-content brightness thrash.
+ *
+ * Priority: **HDR > wide color gamut > default** (single [Window.colorMode] slot).
  *
  * Panel boost ([HdrDisplayInfo]) is applied at **display** time only
  * ([Window.setDesiredHdrHeadroom] on API 35+). Never put panel boost into encode metadata.
+ *
+ * @see <a href="https://developer.android.com/training/wide-color-gamut">Wide color gamut</a>
  */
 private const val TAG = "HdrWindow"
 
@@ -28,23 +32,46 @@ fun Activity.supportsScreenHdr(): Boolean {
     return displayIsHdr() || resources.configuration.isScreenHdr
 }
 
+fun Activity.supportsWideColorGamut(): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+    return displayOrNull()?.isWideColorGamut == true || resources.configuration.isScreenWideColorGamut
+}
+
 /**
  * @param on enable HDR color mode
  * @param contentBoost content hdr capacity / peak boost (from gain map), for headroom request
  */
 fun Activity.setHdrColorMode(on: Boolean, contentBoost: Float = 1f) {
+    setReaderColorMode(hdr = on, contentBoost = contentBoost, wideColor = false)
+}
+
+/**
+ * Reader color mode: HDR wins over WCG when both requested.
+ *
+ * @param hdr enable [ActivityInfo.COLOR_MODE_HDR] when display supports HDR
+ * @param contentBoost headroom for API 35+ (only when [hdr])
+ * @param wideColor enable [ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT] when not HDR
+ *   and the display is wide-gamut (Android WCG is opt-in)
+ */
+fun Activity.setReaderColorMode(
+    hdr: Boolean,
+    contentBoost: Float = 1f,
+    wideColor: Boolean = false,
+) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-    val enable = on && supportsScreenHdr()
-    val targetMode = if (enable) {
-        ActivityInfo.COLOR_MODE_HDR
-    } else {
-        ActivityInfo.COLOR_MODE_DEFAULT
+    val enableHdr = hdr && supportsScreenHdr()
+    val enableWcg = !enableHdr && wideColor && supportsWideColorGamut()
+    val targetMode = when {
+        enableHdr -> ActivityInfo.COLOR_MODE_HDR
+        enableWcg -> ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
+        else -> ActivityInfo.COLOR_MODE_DEFAULT
     }
     // Skip redundant setColorMode — each flip can re-trigger surface brightness ramps.
     if (window.colorMode != targetMode) {
         window.colorMode = targetMode
+        Log.d(TAG, "colorMode=$targetMode hdr=$enableHdr wcg=$enableWcg")
     }
-    applyDesiredHdrHeadroom(enable, contentBoost)
+    applyDesiredHdrHeadroom(enableHdr, contentBoost)
 }
 
 /**

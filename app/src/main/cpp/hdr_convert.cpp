@@ -556,17 +556,85 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     return 0;
 }
 
+namespace {
+
+/** Linear RGB in Display P3 → BT.709 (D65). Matrices from IEC 61966-2-1 / CSS Color 4. */
+inline void p3_to_bt709(float& r, float& g, float& b) {
+    const float nr = 1.22494018f * r + -0.224940176f * g + -0.000000001f * b;
+    const float ng = -0.042056955f * r + 1.04205695f * g + 0.000000001f * b;
+    const float nb = -0.019637555f * r + -0.078636046f * g + 1.09827360f * b;
+    r = nr;
+    g = ng;
+    b = nb;
+}
+
+/** Linear RGB BT.2020 → BT.709 (D65). */
+inline void bt2020_to_bt709(float& r, float& g, float& b) {
+    const float nr = 1.660491f * r + -0.587641f * g + -0.072850f * b;
+    const float ng = -0.124550f * r + 1.132900f * g + -0.008349f * b;
+    const float nb = -0.018151f * r + -0.100579f * g + 1.118730f * b;
+    r = nr;
+    g = ng;
+    b = nb;
+}
+
+inline float clamp_nonneg(float v) {
+    if (!std::isfinite(v) || v < 0.f) return 0.f;
+    if (v > 64.f) return 64.f;
+    return v;
+}
+
+}  // namespace
+
 int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, bool force_hdr,
+                               uhdr_color_gamut_t cg, bool force_f16,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
-                               float* out_boost) {
+                               float* out_boost, int* out_gamut) {
     if (!rgba || w == 0 || h == 0) return -1;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
 
+    int src_gamut = 0;
+    if (cg == UHDR_CG_DISPLAY_P3) {
+        src_gamut = 1;
+    } else if (cg == UHDR_CG_BT_2100) {
+        src_gamut = 2;
+    }
+    if (out_gamut) *out_gamut = src_gamut;
+
+    // Rematrix to BT.709 / scRGB so Android LINEAR_EXTENDED_SRGB / sRGB tags are correct.
+    std::vector<uint16_t> converted;
+    const uint16_t* src = rgba;
+    if (cg == UHDR_CG_DISPLAY_P3 || cg == UHDR_CG_BT_2100) {
+        converted.resize(pixels * 4);
+        for (size_t i = 0; i < pixels; i++) {
+            float r = half_to_float(rgba[i * 4 + 0]);
+            float g = half_to_float(rgba[i * 4 + 1]);
+            float b = half_to_float(rgba[i * 4 + 2]);
+            float a = half_to_float(rgba[i * 4 + 3]);
+            if (cg == UHDR_CG_DISPLAY_P3) {
+                p3_to_bt709(r, g, b);
+            } else {
+                bt2020_to_bt709(r, g, b);
+            }
+            r = clamp_nonneg(r);
+            g = clamp_nonneg(g);
+            b = clamp_nonneg(b);
+            if (!std::isfinite(a) || a < 0.f) a = 0.f;
+            if (a > 1.f) a = 1.f;
+            converted[i * 4 + 0] = float_to_half(r);
+            converted[i * 4 + 1] = float_to_half(g);
+            converted[i * 4 + 2] = float_to_half(b);
+            converted[i * 4 + 3] = float_to_half(a);
+        }
+        src = converted.data();
+        ALOGI("direct pack rematrix cg=%d → BT.709 %ux%u", (int)cg, w, h);
+    }
+
     float peak = 0.f;
     for (size_t i = 0; i < pixels; i++) {
-        const float r = half_to_float(rgba[i * 4 + 0]);
-        const float g = half_to_float(rgba[i * 4 + 1]);
-        const float b = half_to_float(rgba[i * 4 + 2]);
+        const float r = half_to_float(src[i * 4 + 0]);
+        const float g = half_to_float(src[i * 4 + 1]);
+        const float b = half_to_float(src[i * 4 + 2]);
         float m = fmax3(r, g, b);
         if (std::isfinite(m) && m > peak) peak = m;
     }
@@ -574,15 +642,17 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
     if (peak > 64.f) peak = 64.f;
 
     const bool is_hdr = force_hdr || peak > 1.25f;
+    const bool use_f16 = is_hdr || force_f16;
     if (out_is_hdr) *out_is_hdr = is_hdr ? 1 : 0;
     if (out_boost) *out_boost = is_hdr ? peak : 1.f;
-    if (out_format) *out_format = is_hdr ? 1 : 0;
+    if (out_format) *out_format = use_f16 ? 1 : 0;
 
-    if (is_hdr) {
-        // RGBA_F16 linear — copy half floats as little-endian bytes.
+    if (use_f16) {
+        // RGBA_F16 linear (scRGB after rematrix) — values may exceed 1.0 for HDR.
         out_pixels.resize(pixels * 8);
-        std::memcpy(out_pixels.data(), rgba, out_pixels.size());
-        ALOGI("direct pack HDR F16 %ux%u peak=%.3f force=%d", w, h, peak, force_hdr ? 1 : 0);
+        std::memcpy(out_pixels.data(), src, out_pixels.size());
+        ALOGI("direct pack F16 %ux%u peak=%.3f hdr=%d force_f16=%d cg_src=%d", w, h, peak,
+              is_hdr ? 1 : 0, force_f16 ? 1 : 0, src_gamut);
         return 0;
     }
 
@@ -603,10 +673,10 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
 
     out_pixels.resize(pixels * 4);
     for (size_t i = 0; i < pixels; i++) {
-        const float r = half_to_float(rgba[i * 4 + 0]);
-        const float g = half_to_float(rgba[i * 4 + 1]);
-        const float b = half_to_float(rgba[i * 4 + 2]);
-        float a = half_to_float(rgba[i * 4 + 3]);
+        const float r = half_to_float(src[i * 4 + 0]);
+        const float g = half_to_float(src[i * 4 + 1]);
+        const float b = half_to_float(src[i * 4 + 2]);
+        float a = half_to_float(src[i * 4 + 3]);
         if (!std::isfinite(a) || a < 0.f) a = 0.f;
         if (a > 1.f) a = 1.f;
         out_pixels[i * 4 + 0] = linear_to_srgb_u8(r);
@@ -614,7 +684,7 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
         out_pixels[i * 4 + 2] = linear_to_srgb_u8(b);
         out_pixels[i * 4 + 3] = static_cast<uint8_t>(a * 255.f + 0.5f);
     }
-    ALOGI("direct pack SDR 8888 %ux%u peak=%.3f", w, h, peak);
+    ALOGI("direct pack SDR 8888 %ux%u peak=%.3f cg_src=%d", w, h, peak, src_gamut);
     return 0;
 }
 
@@ -812,17 +882,19 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
 
 /**
  * JXR → direct display pixels (skip UHDR JPEG).
- * outInfo int[4]: w, h, format(0=8888,1=f16), isHdr(0/1)
+ * outInfo int[≥5]: w, h, format(0=8888,1=f16), isHdr(0/1), gamut(0=709,1=P3,2=2100)
  * outBoost float[1]: contentHdrBoost
+ * forceF16: advanced color — keep half-float for SDR
  * @return pixel bytes or null
  */
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jclass,
                                                                 jbyteArray jInput, jint maxEdge,
+                                                                jboolean forceF16,
                                                                 jintArray jOutInfo,
                                                                 jfloatArray jOutBoost) {
     if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
-    if (env->GetArrayLength(jOutInfo) < 4 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
+    if (env->GetArrayLength(jOutInfo) < 5 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
     const jsize len = env->GetArrayLength(jInput);
     if (len <= 0) return nullptr;
     jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
@@ -837,13 +909,15 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
         // Peak (and optional force) decides 8888 vs F16; float JXR often peaks > 1.25.
+        // JXR path has no reliable CICP here — treat as BT.709 scRGB-like.
         std::vector<uint8_t> pixels;
-        int format = 0, is_hdr = 0;
+        int format = 0, is_hdr = 0, gamut = 0;
         float boost = 1.f;
-        if (pack_linear_f16_for_direct(rgba.data(), w, h, /*force_hdr=*/false, pixels, &format,
-                                       &is_hdr, &boost) == 0) {
-            jint info[4] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr};
-            env->SetIntArrayRegion(jOutInfo, 0, 4, info);
+        if (pack_linear_f16_for_direct(rgba.data(), w, h, /*force_hdr=*/false, UHDR_CG_BT_709,
+                                       forceF16 == JNI_TRUE, pixels, &format, &is_hdr, &boost,
+                                       &gamut) == 0) {
+            jint info[5] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut};
+            env->SetIntArrayRegion(jOutInfo, 0, 5, info);
             env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
             result = env->NewByteArray(static_cast<jsize>(pixels.size()));
             if (result) {
