@@ -76,8 +76,7 @@ object HdrConvertCache {
      * False when [Settings.readerLibDirectBitmap]: same path as non-lib (cache original,
      * normal prefetch slots; reader [LibDirectDecode] presents Bitmap).
      */
-    fun usesNetworkLibConvert(fileName: String): Boolean =
-        isRamPipelineCandidate(fileName) && !Settings.readerLibDirectBitmap.value
+    fun usesNetworkLibConvert(fileName: String): Boolean = isRamPipelineCandidate(fileName) && !Settings.readerLibDirectBitmap.value
 
     /** Keep original bytes on network finalize (no UHDR encode). */
     private fun keepOriginalOnNetwork(): Boolean = Settings.readerLibDirectBitmap.value

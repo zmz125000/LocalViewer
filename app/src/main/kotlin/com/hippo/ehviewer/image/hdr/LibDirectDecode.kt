@@ -62,9 +62,12 @@ object LibDirectDecode {
         ColorSpace.Rgb(
             "BT2020-Linear-Extended",
             floatArrayOf(
-                0.708f, 0.292f,
-                0.170f, 0.797f,
-                0.131f, 0.046f,
+                0.708f,
+                0.292f,
+                0.170f,
+                0.797f,
+                0.131f,
+                0.046f,
             ),
             ColorSpace.ILLUMINANT_D65,
             DoubleUnaryOperator { x -> x },
@@ -132,10 +135,7 @@ object LibDirectDecode {
 
     /**
      * @param gamut 0=BT.709/scRGB, 1=Display P3, 2=BT.2100 (linear in buffer)
-     * @param transferCICP 16=PQ, 18=HLG (metadata; buffer is still linear)
-     */
-    /**
-     * @param transferCICP 16=PQ / 18=HLG when source was absolute HDR (pixels remain linear).
+     * @param transferCICP 16=PQ / 18=HLG when source was absolute HDR (pixels remain linear)
      */
     private fun resolveColorSpace(f16: Boolean, gamut: Int, transferCICP: Int): ColorSpace? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null

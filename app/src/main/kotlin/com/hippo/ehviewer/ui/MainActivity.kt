@@ -117,7 +117,6 @@ import com.ehviewer.core.ui.util.isMediumWidthOrWider
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhApplication.Companion.initialized
 import com.hippo.ehviewer.Settings
-import com.hippo.ehviewer.util.setReaderColorMode
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.ui.destinations.AboutScreenDestination
 import com.hippo.ehviewer.ui.destinations.AdvancedScreenDestination
@@ -146,6 +145,7 @@ import com.hippo.ehviewer.util.addTextToClipboard
 import com.hippo.ehviewer.util.displayString
 import com.hippo.ehviewer.util.getParcelableExtraCompat
 import com.hippo.ehviewer.util.getUrlFromClipboard
+import com.hippo.ehviewer.util.setReaderColorMode
 import com.hippo.ehviewer.util.sha1
 import com.ramcosta.composedestinations.DestinationsNavHost
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
