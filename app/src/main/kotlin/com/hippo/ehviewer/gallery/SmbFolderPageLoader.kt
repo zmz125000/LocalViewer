@@ -53,7 +53,8 @@ suspend inline fun <T> useSmbFolderPageLoader(
         } else {
             Semaphore(maxOps - 1)
         }
-        // B1: lib-HDR/avif candidates — only 1 prefetch ahead (interactive + 1 = depth 2).
+        // B1 convert mode: lib-HDR/avif — only 1 prefetch ahead (interactive + 1 = depth 2).
+        // Direct-Bitmap mode uses normal [prefetchSlots] / [keepWindow] (original on disk only).
         val libHdrPrefetchSlots = Semaphore(2)
         // In-flight downloads by page index — join small-jump overlap, cancel large jumps.
         val downloadJobs = ConcurrentHashMap<Int, Job>()
@@ -61,7 +62,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
         /** UI/decode callbacks waiting for [index] to land in [SmbCache]. */
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         // Pages within this distance of the target keep running; farther jobs are cancelled.
-        // Tighter for lib-HDR so we do not pile 30MB RAM buffers.
+        // Tighter for convert-mode lib so we do not pile 30MB RAM buffers.
         val keepWindow = 4
         val libHdrKeepWindow = 2
 
@@ -117,7 +118,8 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     }
                 }
 
-                private fun isLibHdrCandidate(name: String): Boolean = HdrConvertCache.isRamPipelineCandidate(name)
+                /** Restrict prefetch only when download will RAM→UHDR convert. */
+                private fun isLibHdrCandidate(name: String): Boolean = HdrConvertCache.usesNetworkLibConvert(name)
 
                 private fun cancelDistantDownloads(center: Int) {
                     val snapshot = downloadJobs.entries.toList()

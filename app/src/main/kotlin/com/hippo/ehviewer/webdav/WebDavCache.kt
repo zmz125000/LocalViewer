@@ -218,7 +218,9 @@ object WebDavCache {
     }
 
     /**
-     * Reader page download. Lib/avif: RAM → [HdrConvertCache.finalizeNetworkBytes] (B1).
+     * Reader page download.
+     * Convert mode + lib/avif: RAM → [HdrConvertCache.finalizeNetworkBytes] (B1).
+     * [Settings.readerLibDirectBitmap]: stream original like non-lib (no UHDR on download).
      */
     suspend fun downloadIfNeeded(
         path: Path,
@@ -242,7 +244,7 @@ object WebDavCache {
             path.parent?.let { File(it.toString()).mkdirs() }
             val nameHint = originalFileName ?: path.name
             try {
-                if (HdrConvertCache.isRamPipelineCandidate(nameHint)) {
+                if (HdrConvertCache.usesNetworkLibConvert(nameHint)) {
                     val bos = ByteArrayOutputStream(1024 * 1024)
                     write(bos)
                     val finalPath = HdrConvertCache.finalizeNetworkBytes(bos.toByteArray(), path, nameHint)

@@ -25,7 +25,8 @@ import okio.Path
 /**
  * WebDAV folder reader — same waiter/prefetch shape as SMB, without TCP pool.
  * HTTP client multiplexes; download fan-out is capped inside [WebDavClient].
- * Lib-HDR/avif: interactive + 1 prefetch (B1 pipeline depth 2).
+ * Convert-mode lib-HDR/avif: interactive + 1 prefetch (B1 depth 2).
+ * Direct-Bitmap mode: same prefetch slots as non-lib (cache original only).
  */
 suspend inline fun <T> useWebDavFolderPageLoader(
     source: WebDavSourceEntity,
@@ -92,7 +93,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     }
                 }
 
-                private fun isLibHdrCandidate(name: String): Boolean = HdrConvertCache.isRamPipelineCandidate(name)
+                private fun isLibHdrCandidate(name: String): Boolean = HdrConvertCache.usesNetworkLibConvert(name)
 
                 private fun cancelDistantDownloads(center: Int) {
                     val centerLib = isLibHdrCandidate(imageFileNames.getOrNull(center).orEmpty())
