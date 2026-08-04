@@ -80,12 +80,12 @@ Build with Grok 4.5.
 * Material Design 3 Navigation bar.
 * Optimized navigation flow for deep folder path.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
-* JXL/JXR/JPG/AVIF/HEIC/ HDR support.
-* High performance smbj client with concurrent connections support.
-* // Cronet WebDAV client with HTTP/2 and QUIC support.
+* JXL/JXR/JPG/AVIF/HEIC HDR support.
+* Fast smbj client with concurrent connections support.
 * Ktor CIO WebDAV client with HTTP/1.1 and TLS support.
+* // Cronet WebDAV client with HTTP/2 and QUIC support.
 * Network gallery folders recognition with fast cover loading.
-* High performance reader with cache from EhViewer.
+* High performance reader with network cache from EhViewer.
 * Reader allow full size image decode.
 * Reader auto rotate image.
 * E-Ink mode support (ported from [venera-next](https://github.com/cyrilpeng/venera-next)).
@@ -151,6 +151,7 @@ Here is the libraries
 - [Coil](https://coil-kt.github.io/coil/)
 - [Compose Destinations](https://composedestinations.rafaelcosta.xyz/)
 - [libarchive](https://www.libarchive.org/)
+- [libultrahdr](https://github.com/google/libultrahdr)
 
 # License
 

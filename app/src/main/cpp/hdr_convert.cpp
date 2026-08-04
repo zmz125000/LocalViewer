@@ -11,12 +11,20 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "hdr_encode.h"
 #include "ultrahdr_api.h"
+
+// libjpeg-turbo (built as libultrahdr dep) — baseline SDR JPEG only.
+extern "C" {
+#include "jpeglib.h"
+}
+#include <csetjmp>
+#include <cstdio>
 
 // jxrlib (Microsoft / brion jpegxr packaging)
 extern "C" {
@@ -96,14 +104,14 @@ float half_to_float(uint16_t h) {
 }
 
 /**
- * Content peak of max(R,G,B) in linear scRGB (1.0 ≈ SDR / 203 nits).
+ * Content peak of max(R,G,B) in linear scRGB (1.0 ≈ SDR / [kSdrWhiteNits] nits).
  *
- * Uses the **99.99th percentile** brightest max-component (not raw single-pixel max),
- * matching jxr_to_png / "On the Calculation and Usage of HDR Static Content Metadata"
- * (MaxCLL percentile). JXR half-float fireflies (peak 48 → ~9750 nits) otherwise
- * inflate hdr_capacity_max and collapse Android gain-map weight to SDR.
+ * Uses the **99.99th percentile** brightest max-component (not raw single-pixel max):
+ * industry MaxCLL-like firefly rejection (CTA-861.3 strict MaxCLL is single-pixel).
+ * JXR half-float fireflies otherwise inflate hdr_capacity_max and collapse Android
+ * gain-map weight to SDR.
  *
- * Returns linear boost (peak_nits / 203), clamped to a camera-like range.
+ * Returns linear boost (peak_nits / 203), clamped to [1, kMaxLinear].
  */
 // jxrlib JXRGlue.h defines min/max macros — avoid std::max/min after that include.
 static inline float fmax3(float a, float b, float c) {
@@ -111,17 +119,17 @@ static inline float fmax3(float a, float b, float c) {
     return m > c ? m : c;
 }
 
-/** Percentile for content MaxCLL (0.9999 = top 0.01% of pixels). */
+/** Percentile for content MaxCLL (0.9999 = top 0.01% of valid pixels). */
 static constexpr double kContentPeakPercentile = 0.9999;
 
 float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count) {
-    if (!rgba || pixel_count == 0) return 1.05f;
+    if (!rgba || pixel_count == 0) return 1.0f;
 
     // Histogram of max(R,G,B) as absolute nits (1.0 linear → 203 nits), 1-nit bins 0..10000.
-    // Same spirit as jxr_to_png MAXCLL_PERCENTILE (there: BT.2100 linear 1.0 = 10000 nits).
     constexpr int kNitBins = 10001;  // 0..10000 inclusive
     std::vector<uint32_t> nit_counts(static_cast<size_t>(kNitBins), 0);
     int raw_max_nits = 0;
+    uint64_t valid = 0;
 
     for (size_t i = 0; i < pixel_count; i++) {
         const float r = half_to_float(rgba[i * 4 + 0]);
@@ -129,19 +137,20 @@ float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count) {
         const float b = half_to_float(rgba[i * 4 + 2]);
         float m = fmax3(r, g, b);
         if (!std::isfinite(m) || m <= 0.f) continue;
-        // Absolute nits for histogram (same scale we feed libultrahdr).
-        float nits_f = m * 203.0f;
-        if (nits_f > 10000.0f) nits_f = 10000.0f;
+        valid++;
+        float nits_f = m * kSdrWhiteNits;
+        if (nits_f > kMaxNits) nits_f = kMaxNits;
         int nits = static_cast<int>(std::lround(nits_f));
         if (nits < 0) nits = 0;
         if (nits >= kNitBins) nits = kNitBins - 1;
         nit_counts[static_cast<size_t>(nits)]++;
         if (nits > raw_max_nits) raw_max_nits = nits;
     }
+    if (valid == 0) return 1.0f;
 
-    // Walk from brightest bin until we have covered the top (1 - percentile) of pixels.
+    // Walk from brightest bin until we have covered the top (1 - percentile) of valid pixels.
     const uint64_t count_target = static_cast<uint64_t>(
-        std::llround((1.0 - kContentPeakPercentile) * static_cast<double>(pixel_count)));
+        std::llround((1.0 - kContentPeakPercentile) * static_cast<double>(valid)));
     const uint64_t need = count_target < 1 ? 1 : count_target;
     uint64_t count = 0;
     int maxcll_nits = raw_max_nits;
@@ -153,10 +162,9 @@ float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count) {
         }
     }
 
-    // Linear content boost for Ultra HDR metadata.
-    float peak = static_cast<float>(maxcll_nits) / 203.0f;
-    if (peak < 1.05f) peak = 1.05f;
-    if (peak > 64.0f) peak = 64.0f;
+    float peak = static_cast<float>(maxcll_nits) / kSdrWhiteNits;
+    if (peak < 1.0f) peak = 1.0f;
+    if (peak > kMaxLinear) peak = kMaxLinear;
     return peak;
 }
 
@@ -444,30 +452,106 @@ static bool write_file(const char* path, const void* data, size_t size) {
     return static_cast<bool>(out);
 }
 
+namespace {
+
+struct JpegErr {
+    jpeg_error_mgr pub;
+    jmp_buf jump;
+};
+
+void jpeg_err_exit(j_common_ptr cinfo) {
+    auto* e = reinterpret_cast<JpegErr*>(cinfo->err);
+    char buf[JMSG_LENGTH_MAX];
+    (*cinfo->err->format_message)(cinfo, buf);
+    ALOGE("libjpeg: %s", buf);
+    longjmp(e->jump, 1);
+}
+
 /**
- * Encode LINEAR half-float RGB (declared gamut) → Ultra HDR JPEG with **content-matched** capacity.
+ * Pure SDR → baseline JPEG (no gain map). Avoids libultrahdr epsilon-bump of
+ * max_content_boost when min==max (≈1.07), which made tools show ratio ≠ 1.0.
+ * Wide gamut rematrixed to BT.709; sRGB OETF; quality 92.
+ */
+int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const char* out_path,
+                             uhdr_color_gamut_t cg) {
+    if (!rgba || !out_path || w == 0 || h == 0) return -30;
+    const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
+    std::vector<uint8_t> rgb(pixels * 3);
+    const bool rematrix_p3 = (cg == UHDR_CG_DISPLAY_P3);
+    const bool rematrix_2020 = (cg == UHDR_CG_BT_2100);
+    for (size_t i = 0; i < pixels; i++) {
+        float r = half_to_float(rgba[i * 4 + 0]);
+        float g = half_to_float(rgba[i * 4 + 1]);
+        float b = half_to_float(rgba[i * 4 + 2]);
+        if (rematrix_p3) {
+            linear_p3_to_bt709(r, g, b);
+        } else if (rematrix_2020) {
+            linear_bt2020_to_bt709(r, g, b);
+        }
+        if (!std::isfinite(r) || r < 0.f) r = 0.f;
+        if (!std::isfinite(g) || g < 0.f) g = 0.f;
+        if (!std::isfinite(b) || b < 0.f) b = 0.f;
+        rgb[i * 3 + 0] = linear_to_srgb_u8(r);
+        rgb[i * 3 + 1] = linear_to_srgb_u8(g);
+        rgb[i * 3 + 2] = linear_to_srgb_u8(b);
+    }
+
+    FILE* fp = fopen(out_path, "wb");
+    if (!fp) {
+        ALOGE("fopen baseline JPEG failed: %s", out_path);
+        return -31;
+    }
+
+    jpeg_compress_struct cinfo{};
+    JpegErr jerr{};
+    cinfo.err = jpeg_std_error(&jerr.pub);
+    jerr.pub.error_exit = jpeg_err_exit;
+    if (setjmp(jerr.jump)) {
+        jpeg_destroy_compress(&cinfo);
+        fclose(fp);
+        return -32;
+    }
+    jpeg_create_compress(&cinfo);
+    jpeg_stdio_dest(&cinfo, fp);
+    cinfo.image_width = w;
+    cinfo.image_height = h;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = JCS_RGB;
+    jpeg_set_defaults(&cinfo);
+    jpeg_set_quality(&cinfo, 92, TRUE);
+    jpeg_start_compress(&cinfo, TRUE);
+    while (cinfo.next_scanline < cinfo.image_height) {
+        JSAMPROW row = rgb.data() + static_cast<size_t>(cinfo.next_scanline) * w * 3;
+        jpeg_write_scanlines(&cinfo, &row, 1);
+    }
+    jpeg_finish_compress(&cinfo);
+    jpeg_destroy_compress(&cinfo);
+    fclose(fp);
+    ALOGI("Wrote baseline SDR JPEG %ux%u cg=%d → %s", w, h, (int)cg, out_path);
+    return 0;
+}
+
+}  // namespace
+
+/**
+ * Encode LINEAR half-float RGB → Ultra HDR JPEG (HDR) or baseline JPEG (pure SDR).
  *
- * Default libultrahdr LINEAR peak is 10000 nits → hdr_capacity_max ≈ 10000/203 ≈ 49.
+ * Default libultrahdr LINEAR peak is 10000 nits → hdr_capacity_max ≈ 49.
  * On a phone with display boost ≈ 4, Android applies:
  *   weight = log(display) / log(capacity) ≈ log(4)/log(49) ≈ 0.25  → looks SDR.
- *
  * Match camera Ultra HDR: capacity ≈ content peak so weight ≈ 1 on phones.
- * Encode metadata is content-only — never bake panel/display boost into the file.
  *
- * [fixed_peak_nits] > 0: skip full-frame peak scan (thumbs use fixed MaxCLL e.g. 1000).
+ * Pure SDR ([force_hdr] false and peak ≤ 1.0): baseline JPEG only — no gain map.
+ *
+ * [fixed_peak_nits] > 0: skip full-frame peak scan (thumbs: 203 SDR / 1000 HDR).
  * [fixed_peak_nits] ≤ 0: p99.99 scan of max(R,G,B) (full pages).
  *
- * [cg] must match [rgba] primaries. libultrahdr embeds a matching ICC on the base JPEG
- * (BT.709 / Display P3 / BT.2100). Do not rematrix here.
+ * [cg] must match [rgba] primaries for Ultra HDR. Baseline rematrixes wide→709.
  */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path, uhdr_color_gamut_t cg,
-                                   float fixed_peak_nits) {
-    uhdr_codec_private_t* enc = uhdr_create_encoder();
-    if (!enc) {
-        ALOGE("uhdr_create_encoder failed");
-        return -1;
-    }
+                                   float fixed_peak_nits, bool force_hdr) {
+    if (!rgba || !out_path || w == 0 || h == 0) return -1;
 
     // Only the three gamuts libultrahdr can tag/ICC-embed.
     if (cg != UHDR_CG_BT_709 && cg != UHDR_CG_DISPLAY_P3 && cg != UHDR_CG_BT_2100) {
@@ -478,19 +562,29 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
     float content_peak;
     float peak_nits;
     if (fixed_peak_nits > 0.f) {
-        // Thumbs / cheap path: fixed MaxCLL, no pixel histogram.
+        // Thumbs / known path: fixed MaxCLL, no pixel histogram.
         peak_nits = fixed_peak_nits;
-        if (peak_nits < 203.0f) peak_nits = 203.0f;
-        if (peak_nits > 10000.0f) peak_nits = 10000.0f;
-        content_peak = peak_nits / 203.0f;
-        if (content_peak < 1.05f) content_peak = 1.05f;
+        if (peak_nits < kSdrWhiteNits) peak_nits = kSdrWhiteNits;
+        if (peak_nits > kMaxNits) peak_nits = kMaxNits;
+        content_peak = peak_nits / kSdrWhiteNits;
+        if (content_peak < 1.0f) content_peak = 1.0f;
     } else {
         const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
-        // Full page: 99.99th-percentile max(R,G,B) (jxr_to_png / MaxCLL paper).
         content_peak = scan_scrgb_peak(rgba, pixels);
-        peak_nits = 203.0f * content_peak;
-        if (peak_nits < 203.0f) peak_nits = 203.0f;
-        if (peak_nits > 10000.0f) peak_nits = 10000.0f;
+        peak_nits = kSdrWhiteNits * content_peak;
+        if (peak_nits < kSdrWhiteNits) peak_nits = kSdrWhiteNits;
+        if (peak_nits > kMaxNits) peak_nits = kMaxNits;
+    }
+
+    // Pure SDR → baseline JPEG (no Ultra HDR gain map / no fake ratio > 1).
+    if (!force_hdr && content_peak <= 1.0f) {
+        return encode_baseline_sdr_jpeg(w, h, rgba, out_path, cg);
+    }
+
+    uhdr_codec_private_t* enc = uhdr_create_encoder();
+    if (!enc) {
+        ALOGE("uhdr_create_encoder failed");
+        return -1;
     }
 
     uhdr_raw_image_t img{};
@@ -512,26 +606,61 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
 
     // Quality: base + multi-channel gain map (closer to camera Ultra HDR).
     err = uhdr_enc_set_quality(enc, 92, UHDR_BASE_IMG);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_quality base: %s", err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -6;
+    }
     err = uhdr_enc_set_quality(enc, 95, UHDR_GAIN_MAP_IMG);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_quality gainmap: %s", err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -6;
+    }
     err = uhdr_enc_set_using_multi_channel_gainmap(enc, 1);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_using_multi_channel_gainmap: %s",
+              err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -6;
+    }
     err = uhdr_enc_set_gainmap_gamma(enc, 1.0f);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_gainmap_gamma: %s", err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -6;
+    }
     err = uhdr_enc_set_preset(enc, UHDR_USAGE_BEST_QUALITY);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_preset: %s", err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -6;
+    }
     err = uhdr_enc_set_output_format(enc, UHDR_CODEC_JPG);
+    if (err.error_code != UHDR_CODEC_OK) {
+        ALOGE("uhdr_enc_set_output_format: %s", err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -6;
+    }
 
     // Content boost (linear): min=1 (SDR base), max=content peak.
     err = uhdr_enc_set_min_max_content_boost(enc, 1.0f, content_peak);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_min_max_content_boost: %s", err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -7;
     }
     // Sets hdr_capacity_max ≈ peak_nits / 203 ≈ content_peak (not 49).
     err = uhdr_enc_set_target_display_peak_brightness(enc, peak_nits);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_target_display_peak_brightness: %s",
               err.has_detail ? err.detail : "error");
+        uhdr_release_encoder(enc);
+        return -7;
     }
 
-    ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f fixed=%d cg=%d %ux%u", content_peak,
-          peak_nits, fixed_peak_nits > 0.f ? 1 : 0, (int)cg, w, h);
+    ALOGI("Ultra HDR encode content_peak=%.3f peak_nits=%.1f fixed=%d force_hdr=%d cg=%d %ux%u",
+          content_peak, peak_nits, fixed_peak_nits > 0.f ? 1 : 0, force_hdr ? 1 : 0, (int)cg, w, h);
 
     err = uhdr_encode(enc);
     if (err.error_code != UHDR_CODEC_OK) {
@@ -558,40 +687,21 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
 
 namespace {
 
-/** Linear RGB in Display P3 → BT.709 (D65). Matrices from IEC 61966-2-1 / CSS Color 4. */
-inline void p3_to_bt709(float& r, float& g, float& b) {
-    const float nr = 1.22494018f * r + -0.224940176f * g + -0.000000001f * b;
-    const float ng = -0.042056955f * r + 1.04205695f * g + 0.000000001f * b;
-    const float nb = -0.019637555f * r + -0.078636046f * g + 1.09827360f * b;
-    r = nr;
-    g = ng;
-    b = nb;
-}
-
-/** Linear RGB BT.2020 → BT.709 (D65). */
-inline void bt2020_to_bt709(float& r, float& g, float& b) {
-    const float nr = 1.660491f * r + -0.587641f * g + -0.072850f * b;
-    const float ng = -0.124550f * r + 1.132900f * g + -0.008349f * b;
-    const float nb = -0.018151f * r + -0.100579f * g + 1.118730f * b;
-    r = nr;
-    g = ng;
-    b = nb;
-}
-
 inline float clamp_nonneg(float v) {
     if (!std::isfinite(v) || v < 0.f) return 0.f;
-    if (v > 64.f) return 64.f;
+    if (v > kMaxLinear) return kMaxLinear;
     return v;
 }
 
 }  // namespace
 
-int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, bool force_hdr,
+int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool force_hdr,
                                uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
                                float* out_boost, int* out_gamut, int* out_transfer) {
-    if (!rgba || w == 0 || h == 0) return -1;
+    if (w == 0 || h == 0) return -1;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
+    if (rgba.size() < pixels * 4) return -1;
 
     float peak = 0.f;
     for (size_t i = 0; i < pixels; i++) {
@@ -602,7 +712,7 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
         if (std::isfinite(m) && m > peak) peak = m;
     }
     if (peak < 1.f) peak = 1.f;
-    if (peak > 64.f) peak = 64.f;
+    if (peak > kMaxLinear) peak = kMaxLinear;
 
     const bool is_hdr = force_hdr || peak > 1.25f;
     // Advanced + SDR Display P3: keep source primaries for true WCG.
@@ -612,32 +722,29 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
     const bool need_rematrix = (cg == UHDR_CG_DISPLAY_P3 || cg == UHDR_CG_BT_2100) &&
         !preserve_p3 && !preserve_bt2100;
 
-    std::vector<uint16_t> converted;
-    const uint16_t* src = rgba;
+    // Rematrix in-place — never hold a second full-frame F16 buffer.
     if (need_rematrix) {
-        converted.resize(pixels * 4);
         for (size_t i = 0; i < pixels; i++) {
             float r = half_to_float(rgba[i * 4 + 0]);
             float g = half_to_float(rgba[i * 4 + 1]);
             float b = half_to_float(rgba[i * 4 + 2]);
             float a = half_to_float(rgba[i * 4 + 3]);
             if (cg == UHDR_CG_DISPLAY_P3) {
-                p3_to_bt709(r, g, b);
+                linear_p3_to_bt709(r, g, b);
             } else {
-                bt2020_to_bt709(r, g, b);
+                linear_bt2020_to_bt709(r, g, b);
             }
             r = clamp_nonneg(r);
             g = clamp_nonneg(g);
             b = clamp_nonneg(b);
             if (!std::isfinite(a) || a < 0.f) a = 0.f;
             if (a > 1.f) a = 1.f;
-            converted[i * 4 + 0] = float_to_half(r);
-            converted[i * 4 + 1] = float_to_half(g);
-            converted[i * 4 + 2] = float_to_half(b);
-            converted[i * 4 + 3] = float_to_half(a);
+            rgba[i * 4 + 0] = float_to_half(r);
+            rgba[i * 4 + 1] = float_to_half(g);
+            rgba[i * 4 + 2] = float_to_half(b);
+            rgba[i * 4 + 3] = float_to_half(a);
         }
-        src = converted.data();
-        ALOGI("direct pack rematrix cg=%d → BT.709 %ux%u", (int)cg, w, h);
+        ALOGI("direct pack rematrix cg=%d → BT.709 %ux%u (in-place)", (int)cg, w, h);
     }
 
     // Pixel gamut after pack (for Bitmap ColorSpace).
@@ -659,35 +766,20 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
     if (out_format) *out_format = use_f16 ? 1 : 0;
 
     if (use_f16) {
-        // RGBA_F16 linear (scRGB or preserved BT.2020) — values may exceed 1.0 for HDR.
-        out_pixels.resize(pixels * 8);
-        std::memcpy(out_pixels.data(), src, out_pixels.size());
+        // Leave packed F16 in [rgba] — no second 66 MiB memcpy buffer.
+        out_pixels.clear();
         ALOGI("direct pack F16 %ux%u peak=%.3f hdr=%d advanced=%d gamut=%d tf=%d", w, h, peak,
               is_hdr ? 1 : 0, advanced_color ? 1 : 0, pixel_gamut, transfer_cicp);
         return 0;
     }
 
-    // SDR 8888: sRGB-like OETF (also used for Display P3 tagging — same transfer curve).
-    auto linear_to_srgb_u8 = [](float l) -> uint8_t {
-        if (!std::isfinite(l) || l <= 0.f) return 0;
-        if (l >= 1.f) return 255;
-        float s;
-        if (l <= 0.0031308f) {
-            s = l * 12.92f;
-        } else {
-            s = 1.055f * std::pow(l, 1.f / 2.4f) - 0.055f;
-        }
-        if (s < 0.f) s = 0.f;
-        if (s > 1.f) s = 1.f;
-        return static_cast<uint8_t>(s * 255.f + 0.5f);
-    };
-
+    // SDR 8888: IEC 61966-2-1 sRGB OETF (also used for Display P3 tagging — same curve).
     out_pixels.resize(pixels * 4);
     for (size_t i = 0; i < pixels; i++) {
-        const float r = half_to_float(src[i * 4 + 0]);
-        const float g = half_to_float(src[i * 4 + 1]);
-        const float b = half_to_float(src[i * 4 + 2]);
-        float a = half_to_float(src[i * 4 + 3]);
+        const float r = half_to_float(rgba[i * 4 + 0]);
+        const float g = half_to_float(rgba[i * 4 + 1]);
+        const float b = half_to_float(rgba[i * 4 + 2]);
+        float a = half_to_float(rgba[i * 4 + 3]);
         if (!std::isfinite(a) || a < 0.f) a = 0.f;
         if (a > 1.f) a = 1.f;
         out_pixels[i * 4 + 0] = linear_to_srgb_u8(r);
@@ -695,9 +787,56 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
         out_pixels[i * 4 + 2] = linear_to_srgb_u8(b);
         out_pixels[i * 4 + 3] = static_cast<uint8_t>(a * 255.f + 0.5f);
     }
+    // Drop F16 staging before caller allocates the Java byte[] / Bitmap.
+    rgba.clear();
+    rgba.shrink_to_fit();
     ALOGI("direct pack SDR 8888 %ux%u peak=%.3f advanced=%d pixel_gamut=%d preserve_p3=%d", w, h,
           peak, advanced_color ? 1 : 0, pixel_gamut, preserve_p3 ? 1 : 0);
     return 0;
+}
+
+jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, unsigned w,
+                                      unsigned h, bool force_hdr, uhdr_color_gamut_t cg,
+                                      bool advanced_color, int transfer_cicp, jintArray jOutInfo,
+                                      jfloatArray jOutBoost) {
+    if (!env || !jOutInfo || !jOutBoost) return nullptr;
+    std::vector<uint8_t> sdr;
+    int format = 0, is_hdr = 0, gamut = 0, tf = 0;
+    float boost = 1.f;
+    if (pack_linear_f16_for_direct(rgba, w, h, force_hdr, cg, advanced_color, transfer_cicp, sdr,
+                                   &format, &is_hdr, &boost, &gamut, &tf) != 0) {
+        return nullptr;
+    }
+    jint info[6] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut, tf};
+    env->SetIntArrayRegion(jOutInfo, 0, 6, info);
+    env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
+
+    jbyteArray result = nullptr;
+    if (format == 1) {
+        // F16 still lives in rgba — copy once to Java, then free native immediately.
+        const size_t nbytes = rgba.size() * sizeof(uint16_t);
+        if (nbytes == 0 || nbytes > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
+            return nullptr;
+        }
+        result = env->NewByteArray(static_cast<jsize>(nbytes));
+        if (result) {
+            env->SetByteArrayRegion(result, 0, static_cast<jsize>(nbytes),
+                                    reinterpret_cast<const jbyte*>(rgba.data()));
+        }
+        rgba.clear();
+        rgba.shrink_to_fit();
+    } else {
+        // pack already freed rgba; only sdr remains.
+        if (sdr.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
+            return nullptr;
+        }
+        result = env->NewByteArray(static_cast<jsize>(sdr.size()));
+        if (result) {
+            env->SetByteArrayRegion(result, 0, static_cast<jsize>(sdr.size()),
+                                    reinterpret_cast<const jbyte*>(sdr.data()));
+        }
+    }
+    return result;
 }
 
 void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,
@@ -881,8 +1020,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
-        // Thumbs: fixed MaxCLL 1000 nits — skip full-frame p99.99 peak scan.
-        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709, 1000.f);
+        // JXR thumbs: HDR-oriented format → fixed 1000 nits, no scan.
+        rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709,
+                                           kHdrThumbNits, /*force_hdr=*/true);
     } else {
         rc = -21;
     }
@@ -922,21 +1062,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
         }
         // Peak (and optional force) decides 8888 vs F16; float JXR often peaks > 1.25.
         // JXR path has no reliable CICP here — treat as BT.709 scRGB-like.
-        std::vector<uint8_t> pixels;
-        int format = 0, is_hdr = 0, gamut = 0, tf = 0;
-        float boost = 1.f;
-        if (pack_linear_f16_for_direct(rgba.data(), w, h, /*force_hdr=*/false, UHDR_CG_BT_709,
-                                       advancedColor == JNI_TRUE, /*transfer_cicp=*/0, pixels,
-                                       &format, &is_hdr, &boost, &gamut, &tf) == 0) {
-            jint info[6] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut, tf};
-            env->SetIntArrayRegion(jOutInfo, 0, 6, info);
-            env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
-            result = env->NewByteArray(static_cast<jsize>(pixels.size()));
-            if (result) {
-                env->SetByteArrayRegion(result, 0, static_cast<jsize>(pixels.size()),
-                                        reinterpret_cast<const jbyte*>(pixels.data()));
-            }
-        }
+        result = pack_direct_to_jbyte_array(env, rgba, w, h, /*force_hdr=*/false, UHDR_CG_BT_709,
+                                            advancedColor == JNI_TRUE, /*transfer_cicp=*/0, jOutInfo,
+                                            jOutBoost);
     }
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return result;

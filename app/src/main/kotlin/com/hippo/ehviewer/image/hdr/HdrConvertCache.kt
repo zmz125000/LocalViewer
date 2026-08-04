@@ -18,6 +18,7 @@ import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -505,6 +506,10 @@ object HdrConvertCache {
         }
     }
 
+    /**
+     * Platform thumb from RAM. Decode via [ImageDecoder.createSource] on a [ByteBuffer]
+     * (minSdk 31) — never dump the full source to flash just to re-read it.
+     */
     private fun writePlatformThumbBytes(
         bytes: ByteArray,
         destJpeg: File,
@@ -513,10 +518,10 @@ object HdrConvertCache {
     ): Boolean = runCatching {
         destJpeg.parentFile?.mkdirs()
         val tmp = File("${destJpeg.absolutePath}.tmp.${System.nanoTime()}")
-        val srcTmp = File("${destJpeg.absolutePath}.src.${System.nanoTime()}")
         try {
-            FileOutputStream(srcTmp).use { it.write(bytes) }
-            val decoded = ImageDecoder.decodeBitmap(ImageDecoder.createSource(srcTmp)) { decoder, info, _ ->
+            // ImageDecoder keeps a reference for the decode call only; wrap is fine.
+            val source = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
+            val decoded = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                 val w = info.size.width
                 val h = info.size.height
@@ -540,7 +545,6 @@ object HdrConvertCache {
             commitTmp(tmp, destJpeg)
             true
         } finally {
-            srcTmp.delete()
             if (tmp.exists() && tmp.absolutePath != destJpeg.absolutePath) tmp.delete()
         }
     }.onFailure {

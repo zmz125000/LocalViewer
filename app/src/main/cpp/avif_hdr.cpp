@@ -83,16 +83,6 @@ float hlg_inv_oetf(float x) {
     return (std::exp((x - c) / a) + b) / 12.f;
 }
 
-// BT.2020 → BT.709 linear matrix (fallback only when we cannot tag source gamut).
-void bt2020_to_bt709(float& r, float& g, float& b) {
-    const float rr = 1.6605f * r - 0.5876f * g - 0.0728f * b;
-    const float gg = -0.1246f * r + 1.1329f * g - 0.0083f * b;
-    const float bb = -0.0182f * r - 0.1006f * g + 1.1187f * b;
-    r = rr;
-    g = gg;
-    b = bb;
-}
-
 /**
  * Map AVIF CICP primaries (+ transfer) → libultrahdr gamut tag.
  * Values and tags must stay consistent: if we keep BT.2020 RGB, tag BT_2100.
@@ -226,31 +216,35 @@ int decode_avif_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint1
             float rl, gl, bl;
             if (is_pq) {
                 // PQ code → nits → linear relative to 203 nits SDR white (source primaries).
-                rl = pq_eotf(rn) / 203.f;
-                gl = pq_eotf(gn) / 203.f;
-                bl = pq_eotf(bn) / 203.f;
+                rl = pq_eotf(rn) / kSdrWhiteNits;
+                gl = pq_eotf(gn) / kSdrWhiteNits;
+                bl = pq_eotf(bn) / kSdrWhiteNits;
             } else if (is_hlg) {
                 // HLG → scene linear, scale so reference white ≈ 1.
                 rl = hlg_inv_oetf(rn) * 12.f;
                 gl = hlg_inv_oetf(gn) * 12.f;
                 bl = hlg_inv_oetf(bn) * 12.f;
-            } else {
-                // Already roughly display-linear / gamma — treat as linear in declared primaries.
+            } else if (tc == AVIF_TRANSFER_CHARACTERISTICS_LINEAR) {
                 rl = rn;
                 gl = gn;
                 bl = bn;
+            } else {
+                // sRGB / 709 / IEC61966 / unspecified gamma-encoded → linear (IEC sRGB EOTF).
+                // libavif YUVToRGB returns transfer-encoded samples for non-PQ/HLG.
+                rl = srgb_eotf(rn);
+                gl = srgb_eotf(gn);
+                bl = srgb_eotf(bn);
             }
 
             // Policy B only: values must match the BT.709 tag. Preserve path never rematrixes.
             if (need_bt2020_to_709) {
-                bt2020_to_bt709(rl, gl, bl);
+                linear_bt2020_to_bt709(rl, gl, bl);
             }
 
-            // Clamp huge values for half float range; keep HDR headroom.
-            // Preserve path keeps wide-gamut positives; rematrix negatives are floored.
+            // Clamp to Ultra HDR LINEAR nominal max (10000/203).
             auto clamp_hf = [](float v) {
                 if (!std::isfinite(v) || v < 0.f) return 0.f;
-                if (v > 64.f) return 64.f;
+                if (v > kMaxLinear) return kMaxLinear;
                 return v;
             };
             rl = clamp_hf(rl);
@@ -312,7 +306,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdr(JNIEnv* env,
         ALOGI("AVIF has embedded gain map — encoding linearized base to Ultra HDR JPEG");
     }
 
-    rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg);
+    const bool force_hdr = (transfer == 16 /*PQ*/ || transfer == 18 /*HLG*/);
+    rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 0.f, force_hdr);
     env->ReleaseStringUTFChars(jOutput, out_path);
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return rc;
@@ -349,8 +344,10 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdrMaxEdge(
     if (maxEdge > 0) {
         scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
     }
-    // Thumbs: fixed MaxCLL 1000 nits — skip full-frame p99.99 peak scan.
-    rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg, 1000.f);
+    // Thumbs: known TF only — 203 nits SDR / 1000 nits HDR; no peak scan.
+    const bool force_hdr = (transfer == 16 /*PQ*/ || transfer == 18 /*HLG*/);
+    rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, cg,
+                                       thumb_fixed_peak_nits(force_hdr), force_hdr);
     env->ReleaseStringUTFChars(jOutput, out_path);
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return rc;
@@ -389,21 +386,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv* env, jc
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
         const bool force_hdr = (transfer == 16 || transfer == 18);
-        std::vector<uint8_t> pixels;
-        int format = 0, is_hdr = 0, gamut = 0, tf = 0;
-        float boost = 1.f;
-        if (pack_linear_f16_for_direct(rgba.data(), w, h, force_hdr, cg,
-                                       advancedColor == JNI_TRUE, transfer, pixels, &format,
-                                       &is_hdr, &boost, &gamut, &tf) == 0) {
-            jint info[6] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut, tf};
-            env->SetIntArrayRegion(jOutInfo, 0, 6, info);
-            env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
-            result = env->NewByteArray(static_cast<jsize>(pixels.size()));
-            if (result) {
-                env->SetByteArrayRegion(result, 0, static_cast<jsize>(pixels.size()),
-                                        reinterpret_cast<const jbyte*>(pixels.data()));
-            }
-        }
+        result = pack_direct_to_jbyte_array(env, rgba, w, h, force_hdr, cg,
+                                            advancedColor == JNI_TRUE, transfer, jOutInfo,
+                                            jOutBoost);
     } else {
         ALOGE("AVIF direct decode failed rc=%d", rc);
     }
