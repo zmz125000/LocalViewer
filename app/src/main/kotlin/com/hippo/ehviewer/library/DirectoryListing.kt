@@ -75,7 +75,7 @@ fun listLocalDirectoryUncached(
             isArchiveFileName(child.name) -> {
                 if (!EmptyArchiveRegistry.isMarked(child.path.toString())) {
                     archives += BrowseEntry.ArchiveGallery(
-                        name = child.name.substringBeforeLast('.').ifEmpty { child.name },
+                        name = child.name,
                         path = child.path,
                     )
                 }
@@ -256,7 +256,7 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
             isArchiveFileName(child.name) -> {
                 if (!EmptyArchiveRegistry.isMarked(child.path.toString())) {
                     archives += BrowseEntry.ArchiveGallery(
-                        name = child.name.substringBeforeLast('.').ifEmpty { child.name },
+                        name = child.name,
                         path = child.path,
                     )
                 }
@@ -495,7 +495,7 @@ fun classifyRemoteListingWithPeeks(
             }
             isArchiveFileName(e.name) ->
                 archives += BrowseEntryRemote.ArchiveGallery(
-                    name = e.name.substringBeforeLast('.').ifEmpty { e.name },
+                    name = e.name,
                     fileName = e.name,
                 )
         }

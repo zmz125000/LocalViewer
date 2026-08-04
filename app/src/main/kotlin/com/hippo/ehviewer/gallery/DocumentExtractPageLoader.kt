@@ -17,7 +17,6 @@ import com.hippo.ehviewer.library.document.EpubEngine
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isPdfFileName
-import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -305,7 +304,8 @@ suspend inline fun <T> useLocalDocumentExtractPageLoader(
     }
     val pfd = file.openFileDescriptor("r")
     val source = PfdArchiveByteSource(pfd, ownsPfd = true)
-    val titleHint = FileUtils.getNameFromFilename(name) ?: name
+    // Full filename incl. extension (pdf/epub).
+    val titleHint = name.ifEmpty { "Document" }
     // cacheKey = path string so browse thumbs share the same document_extract + cover key.
     return useDocumentExtractPageLoader(
         source = source,

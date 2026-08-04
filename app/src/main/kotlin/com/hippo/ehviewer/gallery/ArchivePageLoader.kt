@@ -34,7 +34,6 @@ import com.hippo.ehviewer.jni.releaseByteBuffer
 import com.hippo.ehviewer.library.ArchiveAccess
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.LocalLibrary
-import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.displayName
 import java.io.File
 import kotlinx.coroutines.coroutineScope
@@ -96,7 +95,8 @@ suspend inline fun <T> useArchivePageLoader(
                         if (info != null) {
                             info.title ?: ""
                         } else {
-                            FileUtils.getNameFromFilename(file.displayName)!!
+                            // Full filename incl. extension (archive/pdf, not folder).
+                            file.displayName.ifEmpty { file.name }
                         }
                     }
 
