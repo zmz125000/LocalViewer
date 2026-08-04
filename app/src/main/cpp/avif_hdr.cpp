@@ -357,6 +357,58 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertAvifBytesToUltraHdrMaxEdge(
 }
 
 /**
+ * PQ/HLG AVIF → direct display pixels (skip UHDR JPEG).
+ * outInfo int[4]: w, h, format(0=8888,1=f16), isHdr(0/1)
+ * outBoost float[1]: contentHdrBoost
+ */
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeAvifBytesToDirect(JNIEnv* env, jclass,
+                                                                 jbyteArray jInput, jint maxEdge,
+                                                                 jintArray jOutInfo,
+                                                                 jfloatArray jOutBoost) {
+    if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
+    if (env->GetArrayLength(jOutInfo) < 4 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
+    const jsize len = env->GetArrayLength(jInput);
+    if (len <= 0) return nullptr;
+    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
+    if (!bytes) return nullptr;
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    int has_gm = 0;
+    int transfer = 0;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    jbyteArray result = nullptr;
+    int rc = decode_avif_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
+                                       static_cast<size_t>(len), rgba, w, h, &has_gm, &transfer,
+                                       &cg);
+    if (rc == 0) {
+        if (maxEdge > 0) {
+            scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
+        }
+        const bool force_hdr = (transfer == 16 || transfer == 18);
+        std::vector<uint8_t> pixels;
+        int format = 0, is_hdr = 0;
+        float boost = 1.f;
+        if (pack_linear_f16_for_direct(rgba.data(), w, h, force_hdr, pixels, &format, &is_hdr,
+                                       &boost) == 0) {
+            jint info[4] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr};
+            env->SetIntArrayRegion(jOutInfo, 0, 4, info);
+            env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
+            result = env->NewByteArray(static_cast<jsize>(pixels.size()));
+            if (result) {
+                env->SetByteArrayRegion(result, 0, static_cast<jsize>(pixels.size()),
+                                        reinterpret_cast<const jbyte*>(pixels.data()));
+            }
+        }
+    } else {
+        ALOGE("AVIF direct decode failed rc=%d", rc);
+    }
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+    return result;
+}
+
+/**
  * Probe: 0 = not AVIF / error, 1 = gain-map AVIF, 2 = absolute PQ/HLG, 3 = other AVIF.
  */
 extern "C" JNIEXPORT jint JNICALL

@@ -103,8 +103,10 @@ uhdr_color_gamut_t map_jxl_primaries(const JxlColorEncoding& enc) {
  * @return 0 OK
  */
 int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
-                             unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg) {
+                             unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg,
+                             bool* out_force_hdr = nullptr) {
     if (out_cg) *out_cg = UHDR_CG_BT_709;
+    if (out_force_hdr) *out_force_hdr = false;
     if (!data || len == 0) return -1;
 
     auto runner = JxlResizableParallelRunnerMake(nullptr);
@@ -188,12 +190,15 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
     }
     if (out_cg) *out_cg = cg;
 
-    const size_t pixels_n = static_cast<size_t>(w) * static_cast<size_t>(h);
-    out_rgba.resize(pixels_n * 4);
-
     // BasicInfo.intensity_target is nits of the white point when meaningful.
     const float intensity =
         (info.intensity_target > 1.f) ? info.intensity_target : 203.f;
+    if (out_force_hdr) {
+        *out_force_hdr = is_pq || is_hlg || intensity > 250.f;
+    }
+
+    const size_t pixels_n = static_cast<size_t>(w) * static_cast<size_t>(h);
+    out_rgba.resize(pixels_n * 4);
 
     for (size_t i = 0; i < pixels_n; i++) {
         float r = pixels[i * 4 + 0];
@@ -321,4 +326,53 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxlBytesToUltraHdrMaxEdge(
     env->ReleaseStringUTFChars(jOutput, out_path);
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return rc;
+}
+
+/**
+ * JXL → direct display pixels (skip UHDR JPEG).
+ * outInfo int[4]: w, h, format(0=8888,1=f16), isHdr(0/1)
+ * outBoost float[1]: contentHdrBoost
+ */
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jclass,
+                                                                jbyteArray jInput, jint maxEdge,
+                                                                jintArray jOutInfo,
+                                                                jfloatArray jOutBoost) {
+    if (!jInput || !jOutInfo || !jOutBoost) return nullptr;
+    if (env->GetArrayLength(jOutInfo) < 4 || env->GetArrayLength(jOutBoost) < 1) return nullptr;
+    const jsize len = env->GetArrayLength(jInput);
+    if (len <= 0) return nullptr;
+    jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
+    if (!bytes) return nullptr;
+
+    std::vector<uint16_t> rgba;
+    unsigned w = 0, h = 0;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
+    bool force_hdr = false;
+    jbyteArray result = nullptr;
+    int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
+                                      static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr);
+    if (rc == 0) {
+        if (maxEdge > 0) {
+            scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
+        }
+        std::vector<uint8_t> pixels;
+        int format = 0, is_hdr = 0;
+        float boost = 1.f;
+        if (pack_linear_f16_for_direct(rgba.data(), w, h, force_hdr, pixels, &format, &is_hdr,
+                                       &boost) == 0) {
+            jint info[4] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr};
+            env->SetIntArrayRegion(jOutInfo, 0, 4, info);
+            env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
+            result = env->NewByteArray(static_cast<jsize>(pixels.size()));
+            if (result) {
+                env->SetByteArrayRegion(result, 0, static_cast<jsize>(pixels.size()),
+                                        reinterpret_cast<const jbyte*>(pixels.data()));
+            }
+        }
+    } else {
+        ALOGE("JXL direct decode failed rc=%d", rc);
+    }
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+    return result;
 }

@@ -46,6 +46,11 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         field = Settings.readerHardwareBitmap.asMutableState(),
     )
     SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_lib_direct_bitmap),
+        summary = stringResource(id = R.string.pref_reader_lib_direct_bitmap_summary),
+        field = Settings.readerLibDirectBitmap.asMutableState(),
+    )
+    SwitchChoice(
         title = stringResource(id = R.string.pref_reader_hdr_display),
         field = Settings.readerHdrDisplay.asMutableState(),
     )

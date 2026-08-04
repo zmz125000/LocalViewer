@@ -11,9 +11,15 @@ import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.withNonCancellableContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.Image
 import com.hippo.ehviewer.image.ImageSource
+import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.hdr.DisplaySource
+import com.hippo.ehviewer.image.hdr.LibDirectDecode
+import com.hippo.ehviewer.image.hdr.classify
+import com.hippo.ehviewer.image.hdr.classifyPath
+import com.hippo.ehviewer.image.hdr.needsLibDecode
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
 import com.hippo.ehviewer.util.detectAds
@@ -109,31 +115,44 @@ abstract class PageLoader(
     }
 
     private suspend fun atomicallyDecodeAndUpdate(index: Int, forceOriginal: Boolean) {
-        // Prepare (lib HDR→UHDR / lib SDR→jpeg) then Coil-only decode — Image.decode stays simple.
+        // Default: prepare (lib → UHDR jpeg) then Coil-only decode.
+        // Experimental [Settings.readerLibDirectBitmap]: lib → Bitmap, skip convert.
         bracketCase(
-            {
-                val raw = openSource(index)
-                try {
-                    DisplaySource.ensureReady(raw)
-                } catch (e: Throwable) {
-                    raw.close()
-                    throw e
-                }
-            },
-            { src ->
+            { openSource(index) },
+            { raw ->
                 withNonCancellableContext {
-                    notifyPageSucceed(
-                        index,
-                        Image.decode(
-                            src,
-                            checkExtraneousAds = hasAds && detectAds(index, size),
+                    val checkAds = hasAds && detectAds(index, size)
+                    val image = tryDecodeLibDirect(raw, forceOriginal)
+                        ?: Image.decode(
+                            DisplaySource.ensureReady(raw),
+                            checkExtraneousAds = checkAds,
                             forceOriginal = forceOriginal,
-                        ),
-                    )
+                        )
+                    notifyPageSucceed(index, image)
                 }
             },
             { src, case -> if (case !is ExitCase.Completed) src.close() },
         )
+    }
+
+    /**
+     * When [Settings.readerLibDirectBitmap] is on and the page is a lib still,
+     * decode straight to Bitmap. Null → fall through to convert + Coil.
+     */
+    private suspend fun tryDecodeLibDirect(raw: ImageSource, forceOriginal: Boolean): Image? {
+        if (!Settings.readerLibDirectBitmap.value) return null
+        val hint = when (raw) {
+            is PathSource -> raw.source.name
+            else -> "page.bin"
+        }
+        val route = when (raw) {
+            is PathSource -> classifyPath(raw.source, hint)
+            is ByteBufferSource -> classify(raw.source, hint)
+        }
+        if (!route.needsLibDecode) return null
+        val maxEdge = Image.maxEdgeForReader(forceOriginal)
+        val direct = LibDirectDecode.decode(raw, hint, maxEdge) ?: return null
+        return Image.fromLibDirect(direct, raw)
     }
 
     private val lock = ReentrantReadWriteLock()
