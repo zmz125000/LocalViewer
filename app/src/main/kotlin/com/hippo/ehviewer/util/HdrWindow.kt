@@ -20,6 +20,10 @@ import androidx.core.content.ContextCompat
  * Panel boost ([HdrDisplayInfo]) is applied at **display** time only
  * ([Window.setDesiredHdrHeadroom] on API 35+). Never put panel boost into encode metadata.
  *
+ * Manifest: [MainActivity] declares `android:colorMode="wideColorGamut"` so the
+ * activity surface can carry wide color (reader is Compose inside MainActivity).
+ * This API still selects HDR / WCG / DEFAULT at runtime from composed content.
+ *
  * @see <a href="https://developer.android.com/training/wide-color-gamut">Wide color gamut</a>
  */
 private const val TAG = "HdrWindow"

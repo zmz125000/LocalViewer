@@ -587,24 +587,33 @@ inline float clamp_nonneg(float v) {
 }  // namespace
 
 int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, bool force_hdr,
-                               uhdr_color_gamut_t cg, bool force_f16,
+                               uhdr_color_gamut_t cg, bool advanced_color,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
                                float* out_boost, int* out_gamut) {
     if (!rgba || w == 0 || h == 0) return -1;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
 
-    int src_gamut = 0;
-    if (cg == UHDR_CG_DISPLAY_P3) {
-        src_gamut = 1;
-    } else if (cg == UHDR_CG_BT_2100) {
-        src_gamut = 2;
+    float peak = 0.f;
+    for (size_t i = 0; i < pixels; i++) {
+        const float r = half_to_float(rgba[i * 4 + 0]);
+        const float g = half_to_float(rgba[i * 4 + 1]);
+        const float b = half_to_float(rgba[i * 4 + 2]);
+        float m = fmax3(r, g, b);
+        if (std::isfinite(m) && m > peak) peak = m;
     }
-    if (out_gamut) *out_gamut = src_gamut;
+    if (peak < 1.f) peak = 1.f;
+    if (peak > 64.f) peak = 64.f;
 
-    // Rematrix to BT.709 / scRGB so Android LINEAR_EXTENDED_SRGB / sRGB tags are correct.
+    const bool is_hdr = force_hdr || peak > 1.25f;
+    // Advanced + SDR Display P3: keep source primaries for true WCG (window wideColorGamut).
+    // HDR always rematrixes to scRGB for LINEAR_EXTENDED_SRGB + COLOR_MODE_HDR.
+    const bool preserve_p3 = advanced_color && !is_hdr && cg == UHDR_CG_DISPLAY_P3;
+    const bool need_rematrix =
+        !preserve_p3 && (cg == UHDR_CG_DISPLAY_P3 || cg == UHDR_CG_BT_2100);
+
     std::vector<uint16_t> converted;
     const uint16_t* src = rgba;
-    if (cg == UHDR_CG_DISPLAY_P3 || cg == UHDR_CG_BT_2100) {
+    if (need_rematrix) {
         converted.resize(pixels * 4);
         for (size_t i = 0; i < pixels; i++) {
             float r = half_to_float(rgba[i * 4 + 0]);
@@ -630,33 +639,32 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
         ALOGI("direct pack rematrix cg=%d → BT.709 %ux%u", (int)cg, w, h);
     }
 
-    float peak = 0.f;
-    for (size_t i = 0; i < pixels; i++) {
-        const float r = half_to_float(src[i * 4 + 0]);
-        const float g = half_to_float(src[i * 4 + 1]);
-        const float b = half_to_float(src[i * 4 + 2]);
-        float m = fmax3(r, g, b);
-        if (std::isfinite(m) && m > peak) peak = m;
+    // Pixel gamut after pack (for Bitmap ColorSpace).
+    int pixel_gamut = 0;
+    if (preserve_p3) {
+        pixel_gamut = 1;
+    } else if (!need_rematrix && cg == UHDR_CG_BT_2100 && is_hdr) {
+        // Unreachable today (HDR always rematrixes); keep enum for future.
+        pixel_gamut = 2;
     }
-    if (peak < 1.f) peak = 1.f;
-    if (peak > 64.f) peak = 64.f;
+    if (out_gamut) *out_gamut = pixel_gamut;
 
-    const bool is_hdr = force_hdr || peak > 1.25f;
-    const bool use_f16 = is_hdr || force_f16;
+    // High bit depth F16: HDR always; advanced SDR unless preserving P3 as 8888+DISPLAY_P3.
+    const bool use_f16 = is_hdr || (advanced_color && !preserve_p3);
     if (out_is_hdr) *out_is_hdr = is_hdr ? 1 : 0;
     if (out_boost) *out_boost = is_hdr ? peak : 1.f;
     if (out_format) *out_format = use_f16 ? 1 : 0;
 
     if (use_f16) {
-        // RGBA_F16 linear (scRGB after rematrix) — values may exceed 1.0 for HDR.
+        // RGBA_F16 linear scRGB (after rematrix when needed) — values may exceed 1.0 for HDR.
         out_pixels.resize(pixels * 8);
         std::memcpy(out_pixels.data(), src, out_pixels.size());
-        ALOGI("direct pack F16 %ux%u peak=%.3f hdr=%d force_f16=%d cg_src=%d", w, h, peak,
-              is_hdr ? 1 : 0, force_f16 ? 1 : 0, src_gamut);
+        ALOGI("direct pack F16 %ux%u peak=%.3f hdr=%d advanced=%d pixel_gamut=%d", w, h, peak,
+              is_hdr ? 1 : 0, advanced_color ? 1 : 0, pixel_gamut);
         return 0;
     }
 
-    // SDR: approximate sRGB OETF into RGBA_8888 (Android Bitmap native order = RGBA).
+    // SDR 8888: sRGB-like OETF (also used for Display P3 tagging — same transfer curve).
     auto linear_to_srgb_u8 = [](float l) -> uint8_t {
         if (!std::isfinite(l) || l <= 0.f) return 0;
         if (l >= 1.f) return 255;
@@ -684,7 +692,8 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
         out_pixels[i * 4 + 2] = linear_to_srgb_u8(b);
         out_pixels[i * 4 + 3] = static_cast<uint8_t>(a * 255.f + 0.5f);
     }
-    ALOGI("direct pack SDR 8888 %ux%u peak=%.3f cg_src=%d", w, h, peak, src_gamut);
+    ALOGI("direct pack SDR 8888 %ux%u peak=%.3f advanced=%d pixel_gamut=%d preserve_p3=%d", w, h,
+          peak, advanced_color ? 1 : 0, pixel_gamut, preserve_p3 ? 1 : 0);
     return 0;
 }
 
@@ -914,8 +923,8 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
         int format = 0, is_hdr = 0, gamut = 0;
         float boost = 1.f;
         if (pack_linear_f16_for_direct(rgba.data(), w, h, /*force_hdr=*/false, UHDR_CG_BT_709,
-                                       forceF16 == JNI_TRUE, pixels, &format, &is_hdr, &boost,
-                                       &gamut) == 0) {
+                                       /*advanced_color=*/forceF16 == JNI_TRUE, pixels, &format,
+                                       &is_hdr, &boost, &gamut) == 0) {
             jint info[5] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut};
             env->SetIntArrayRegion(jOutInfo, 0, 5, info);
             env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);

@@ -33,23 +33,25 @@ void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned&
  * Pack linear F16 RGBA (1.0 ≈ SDR / 203 nits) for direct Android Bitmap present
  * (skip Ultra HDR JPEG convert).
  *
- * Linear RGB is assumed in [cg] primaries. Non-BT.709 is rematrixed to BT.709 /
- * scRGB so Kotlin can tag LINEAR_EXTENDED_SRGB / sRGB without hue error.
+ * Linear RGB is assumed in [cg] primaries.
  *
- * - SDR (default): RGBA_8888 with approximate sRGB OETF, values clamped to [0,1]
- * - HDR or [force_f16]: raw RGBA_F16 linear (values may exceed 1.0 for HDR)
+ * Color policy:
+ * - HDR (or peak > 1.25): rematrix wide → BT.709/scRGB, RGBA_F16 linear.
+ * - Advanced [advanced_color] + SDR Display P3: **keep P3**, gamma OETF → RGBA_8888
+ *   (Kotlin tags DISPLAY_P3; needs window COLOR_MODE_WIDE_COLOR_GAMUT).
+ * - Advanced + SDR BT.709: RGBA_F16 linear scRGB (high bit depth).
+ * - Default SDR: rematrix wide → 709, RGBA_8888 sRGB OETF.
  *
- * [force_hdr]: true when transfer is PQ/HLG (or similar absolute HDR). Also
- * auto-HDR when peak linear max(R,G,B) > ~1.25.
- * [force_f16]: advanced-color path — keep half-float for SDR too (high bit depth).
+ * [force_hdr]: true when transfer is PQ/HLG (or similar absolute HDR).
+ * [advanced_color]: reader advanced-color toggle (WCG preserve + high bit depth).
  *
  * @param out_format 0 = RGBA_8888, 1 = RGBA_F16
  * @param out_is_hdr  0/1
  * @param out_boost   content headroom linear (for setDesiredHdrHeadroom)
- * @param out_gamut   source gamut before rematrix: 0=BT.709, 1=Display P3, 2=BT.2100
+ * @param out_gamut   **pixel** gamut after pack: 0=BT.709/scRGB, 1=Display P3, 2=BT.2100
  * @return 0 OK
  */
 int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, bool force_hdr,
-                               uhdr_color_gamut_t cg, bool force_f16,
+                               uhdr_color_gamut_t cg, bool advanced_color,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
                                float* out_boost, int* out_gamut);

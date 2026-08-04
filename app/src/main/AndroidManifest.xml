@@ -39,9 +39,16 @@
         tools:targetApi="tiramisu">
         <profileable android:shell="true" />
 
+        <!--
+          Reader is a Compose destination inside MainActivity (no separate ReaderActivity).
+          wideColorGamut opts the activity surface into WCG per
+          https://developer.android.com/training/wide-color-gamut
+          Runtime still switches COLOR_MODE_HDR / WCG / DEFAULT via setReaderColorMode.
+        -->
         <activity
             android:name=".ui.MainActivity"
             android:banner="@mipmap/ic_leanback_banner"
+            android:colorMode="wideColorGamut"
             android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize"
             android:exported="true"
             android:launchMode="singleTask"

@@ -361,8 +361,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
         std::vector<uint8_t> pixels;
         int format = 0, is_hdr = 0, gamut = 0;
         float boost = 1.f;
-        if (pack_linear_f16_for_direct(rgba.data(), w, h, force_hdr, cg, forceF16 == JNI_TRUE,
-                                       pixels, &format, &is_hdr, &boost, &gamut) == 0) {
+        if (pack_linear_f16_for_direct(rgba.data(), w, h, force_hdr, cg,
+                                       /*advanced_color=*/forceF16 == JNI_TRUE, pixels, &format,
+                                       &is_hdr, &boost, &gamut) == 0) {
             jint info[5] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut};
             env->SetIntArrayRegion(jOutInfo, 0, 5, info);
             env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
