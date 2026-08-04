@@ -116,7 +116,9 @@ static inline float fmax3(float a, float b, float c) {
 static constexpr double kContentPeakPercentile = 0.9999;
 
 float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count) {
-    if (!rgba || pixel_count == 0) return 1.05f;
+    // 1.0 = SDR white (203 nits). Do **not** floor above 1.0 — that made pure SDR
+    // Ultra HDR files report hdr/sdr ratio 1.05 instead of 1.0.
+    if (!rgba || pixel_count == 0) return 1.0f;
 
     // Histogram of max(R,G,B) as absolute nits (1.0 linear → 203 nits), 1-nit bins 0..10000.
     // Same spirit as jxr_to_png MAXCLL_PERCENTILE (there: BT.2100 linear 1.0 = 10000 nits).
@@ -154,9 +156,10 @@ float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count) {
         }
     }
 
-    // Linear content boost for Ultra HDR metadata.
+    // Linear content boost for Ultra HDR metadata (1.0 = no headroom / pure SDR).
+    // libultrahdr allows max_boost == min_boost (1.0).
     float peak = static_cast<float>(maxcll_nits) / 203.0f;
-    if (peak < 1.05f) peak = 1.05f;
+    if (peak < 1.0f) peak = 1.0f;
     if (peak > 64.0f) peak = 64.0f;
     return peak;
 }
@@ -484,7 +487,7 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         if (peak_nits < 203.0f) peak_nits = 203.0f;
         if (peak_nits > 10000.0f) peak_nits = 10000.0f;
         content_peak = peak_nits / 203.0f;
-        if (content_peak < 1.05f) content_peak = 1.05f;
+        if (content_peak < 1.0f) content_peak = 1.0f;
     } else {
         const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
         // Full page: 99.99th-percentile max(R,G,B) (jxr_to_png / MaxCLL paper).
