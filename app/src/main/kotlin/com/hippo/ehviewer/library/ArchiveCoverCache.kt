@@ -8,6 +8,7 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.jni.closeArchive
 import com.hippo.ehviewer.jni.extractToByteBuffer
+import com.hippo.ehviewer.jni.getExtension
 import com.hippo.ehviewer.jni.needPassword
 import com.hippo.ehviewer.jni.openArchive
 import com.hippo.ehviewer.jni.openSolidSequential
@@ -16,8 +17,6 @@ import com.hippo.ehviewer.jni.solidCurrentExtension
 import com.hippo.ehviewer.jni.solidExtractCurrentToFd
 import com.hippo.ehviewer.jni.solidNextPlayable
 import java.io.File
-import java.io.FileOutputStream
-import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.runBlocking
@@ -485,46 +484,56 @@ object ArchiveCoverCache {
         }
     }
 
+    /**
+     * Page 0 → small JPEG under [dest]. Bytes stay in RAM (no full-page dump under
+     * archive_thumb — a 25 MB `.raw.*` thrash would wear flash for every new cover).
+     */
     private fun extractPage0ToJpeg(dest: Path) {
         val buffer = extractToByteBuffer(0) ?: error("extract page 0 failed")
-        try {
+        val bytes = try {
             check(buffer.isDirect)
-            File(dest.parent!!.toString()).mkdirs()
-            val rawTmp = File("$dest.raw.${System.nanoTime()}")
-            val jpgTmp = File("$dest.jpg.${System.nanoTime()}")
-            try {
-                writeBufferToFile(buffer, rawTmp)
-                writeSubsampledJpeg(rawTmp, jpgTmp, THUMB_EDGE, THUMB_JPEG_QUALITY)
-                val destFile = File(dest.toString())
-                if (!jpgTmp.renameTo(destFile)) {
-                    jpgTmp.copyTo(destFile, overwrite = true)
-                    jpgTmp.delete()
-                }
-                if (destFile.isFile && destFile.length() > 0L) {
-                    markPresent(dest)
-                    OriginDiskCache.scheduleTrim()
-                }
-            } finally {
-                rawTmp.delete()
-                if (jpgTmp.exists()) jpgTmp.delete()
-            }
+            val dup = buffer.duplicate()
+            dup.clear()
+            ByteArray(dup.remaining()).also { dup.get(it) }
         } finally {
             releaseByteBuffer(buffer)
         }
-    }
-
-    private fun writeBufferToFile(buffer: ByteBuffer, file: File) {
-        val dup = buffer.duplicate()
-        dup.clear()
-        FileOutputStream(file).channel.use { ch ->
-            while (dup.hasRemaining()) {
-                ch.write(dup)
+        val ext = runCatching { getExtension(0) }.getOrNull()
+            ?.trim()?.removePrefix(".")?.ifBlank { null }
+            ?: "bin"
+        val hint = "page0.$ext"
+        File(dest.parent!!.toString()).mkdirs()
+        val jpgTmp = File("$dest.jpg.${System.nanoTime()}")
+        try {
+            val ok = runBlocking {
+                HdrConvertCache.writeThumbFromBytes(
+                    bytes = bytes,
+                    destJpeg = jpgTmp,
+                    maxEdge = THUMB_EDGE,
+                    quality = THUMB_JPEG_QUALITY,
+                    fileNameHint = hint,
+                )
             }
+            check(ok && jpgTmp.isFile && jpgTmp.length() > 0L) {
+                "thumb encode failed: $hint size=${bytes.size}"
+            }
+            val destFile = File(dest.toString())
+            if (!jpgTmp.renameTo(destFile)) {
+                jpgTmp.copyTo(destFile, overwrite = true)
+                jpgTmp.delete()
+            }
+            if (destFile.isFile && destFile.length() > 0L) {
+                markPresent(dest)
+                OriginDiskCache.scheduleTrim()
+            }
+        } finally {
+            if (jpgTmp.exists()) jpgTmp.delete()
         }
     }
 
     private fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {
-        // Same dest/key as any archive thumb. Convert-path → lib+libultrahdr; else ImageDecoder.
+        // Already-on-disk extract page (solid/document cache). Convert-path → lib MaxEdge;
+        // else ImageDecoder. No full re-copy of the source into archive_thumb.
         val ok = runBlocking {
             HdrConvertCache.writeThumbJpeg(
                 source = source.toOkioPath(),
