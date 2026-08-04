@@ -47,8 +47,7 @@ suspend fun keepNoMediaFileStatus(
 }
 
 context(_: DestinationsNavigator)
-fun navToReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1) =
-    navToReader(ReaderScreenArgs.Archive(path, page = page, info = info))
+fun navToReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1) = navToReader(ReaderScreenArgs.Archive(path, page = page, info = info))
 
 context(_: DestinationsNavigator)
 fun navToLocalFolderReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1) = navToReader(ReaderScreenArgs.LocalFolder(path, page, info))

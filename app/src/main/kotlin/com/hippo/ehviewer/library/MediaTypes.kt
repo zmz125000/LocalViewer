@@ -98,8 +98,7 @@ fun isPdfFileName(name: String): Boolean {
  * Solid RAR/7z still get covers via sequential first-page extract in the same API.
  * Documents use [ArchiveCoverCache] document branch (not libarchive page-0).
  */
-fun prefersArchiveCoverExtract(name: String): Boolean =
-    isArchiveFileName(name) && !isSolidArchiveFileName(name) && !isDocumentFileName(name)
+fun prefersArchiveCoverExtract(name: String): Boolean = isArchiveFileName(name) && !isSolidArchiveFileName(name) && !isDocumentFileName(name)
 
 /**
  * Remote path for an archive row in a browse listing.

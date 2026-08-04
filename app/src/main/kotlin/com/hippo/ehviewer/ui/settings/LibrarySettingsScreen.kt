@@ -53,6 +53,7 @@ import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_FOLDER
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.SmbSourceEntity
+import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.i18n.R
@@ -69,22 +70,18 @@ import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.NavigationIcon
-import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.hippo.ehviewer.ui.screen.SmbEditDialog
 import com.hippo.ehviewer.ui.screen.SmbEditorState
 import com.hippo.ehviewer.ui.screen.WebDavEditDialog
 import com.hippo.ehviewer.ui.screen.WebDavEditorState
-import com.hippo.ehviewer.ui.screen.resolvedDisplayName
-import com.hippo.ehviewer.ui.screen.toDuplicateEditorState
-import com.hippo.ehviewer.ui.screen.toEditorState
-import com.hippo.ehviewer.webdav.WebDavClient
-import com.hippo.ehviewer.webdav.WebDavRepository
-import com.ehviewer.core.database.model.WebDavSourceEntity
+import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.hippo.ehviewer.ui.screen.resolvedDisplayName
 import com.hippo.ehviewer.ui.screen.resolvedShareAndPath
 import com.hippo.ehviewer.ui.screen.toDuplicateEditorState
 import com.hippo.ehviewer.ui.screen.toEditorState
 import com.hippo.ehviewer.util.displayPath
+import com.hippo.ehviewer.webdav.WebDavClient
+import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -118,6 +115,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
     var accessChooserRole by remember { mutableStateOf<Int?>(null) }
     var mediaDenied by remember { mutableStateOf(false) }
     var openSafAfterMediaPerm by remember { mutableStateOf(false) }
+
     /** After media permission grant, switch this SAF root to MediaStore mode. */
     var pendingMediaModeRootId by remember { mutableLongStateOf(-1L) }
 

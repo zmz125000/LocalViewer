@@ -88,8 +88,7 @@ object DocumentExtractCache {
         return dirFor(cacheKey) / "pages" / "%06d.%s".format(index, safeExt)
     }
 
-    fun isPageCached(cacheKey: String, index: Int, ext: String): Boolean =
-        isCachedFile(pagePath(cacheKey, index, ext), ext = ext)
+    fun isPageCached(cacheKey: String, index: Int, ext: String): Boolean = isCachedFile(pagePath(cacheKey, index, ext), ext = ext)
 
     fun isCachedFile(path: Path, ext: String = ""): Boolean {
         val f = File(path.toString())
@@ -218,7 +217,7 @@ object DocumentExtractCache {
 
     fun writePage(cacheKey: String, index: Int, ext: String, bytes: ByteArray): Path {
         val dest = pagePath(cacheKey, index, ext)
-        val tmp = File("${dest}.tmp.${System.nanoTime()}")
+        val tmp = File("$dest.tmp.${System.nanoTime()}")
         CachePagePublish.writeBytesToTmp(tmp, bytes)
         check(
             CachePagePublish.publishTmp(
@@ -235,7 +234,7 @@ object DocumentExtractCache {
 
     fun writePage(cacheKey: String, index: Int, ext: String, buffer: ByteBuffer): Path {
         val dest = pagePath(cacheKey, index, ext)
-        val tmp = File("${dest}.tmp.${System.nanoTime()}")
+        val tmp = File("$dest.tmp.${System.nanoTime()}")
         CachePagePublish.writeBufferToTmp(tmp, buffer)
         check(
             CachePagePublish.publishTmp(
@@ -252,7 +251,7 @@ object DocumentExtractCache {
 
     fun writePageFromFile(cacheKey: String, index: Int, ext: String, srcFile: File): Path {
         val dest = pagePath(cacheKey, index, ext)
-        val tmp = File("${dest}.tmp.${System.nanoTime()}")
+        val tmp = File("$dest.tmp.${System.nanoTime()}")
         srcFile.copyTo(tmp, overwrite = true)
         check(
             CachePagePublish.publishTmp(

@@ -58,11 +58,9 @@ object LocalLibrary {
 
     suspend fun loadGallery(id: Long): LocalGalleryEntity? = db.localGalleryDao().load(id)
 
-    suspend fun loadGalleryByContentPath(path: String): LocalGalleryEntity? =
-        db.localGalleryDao().loadByContentPath(path)
+    suspend fun loadGalleryByContentPath(path: String): LocalGalleryEntity? = db.localGalleryDao().loadByContentPath(path)
 
-    suspend fun updateGalleryPageAndCover(id: Long, pageCount: Int, coverPath: String?) =
-        db.localGalleryDao().updatePageAndCover(id, pageCount, coverPath)
+    suspend fun updateGalleryPageAndCover(id: Long, pageCount: Int, coverPath: String?) = db.localGalleryDao().updatePageAndCover(id, pageCount, coverPath)
 
     suspend fun updateGalleryPageAndCoverByContentPath(
         contentPath: String,

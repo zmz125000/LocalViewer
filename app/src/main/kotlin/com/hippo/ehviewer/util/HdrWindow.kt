@@ -83,5 +83,4 @@ private fun Activity.displayIsHdr(): Boolean {
     return d?.isHdr == true
 }
 
-private fun Activity.displayOrNull(): Display? =
-    ContextCompat.getDisplayOrDefault(this)
+private fun Activity.displayOrNull(): Display? = ContextCompat.getDisplayOrDefault(this)

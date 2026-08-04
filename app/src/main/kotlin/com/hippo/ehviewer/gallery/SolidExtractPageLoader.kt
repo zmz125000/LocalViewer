@@ -151,6 +151,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
             val coverWritten = AtomicBoolean(false)
             val hostScope = this
             val prefetchN = Settings.preloadImage.value.coerceAtLeast(1)
+
             /** High-water extract target; advanced as the user moves so list grows past init+prefetch. */
             val extractTarget = AtomicInteger((startPage + prefetchN).coerceAtLeast(0))
             val bgExtractJob = AtomicReference<Job?>(null)
@@ -307,8 +308,10 @@ suspend inline fun <T> useSolidExtractPageLoader(
                                 // Re-queue only for in-session job races (lost putIfAbsent).
                                 // On reader exit / archive preempt, hostScope is cancelled — do not restart.
                                 if (hostScope.isActive &&
-                                    (extractJobs[index] == coroutineContext[Job] ||
-                                        extractJobs[index] == null)
+                                    (
+                                        extractJobs[index] == coroutineContext[Job] ||
+                                            extractJobs[index] == null
+                                        )
                                 ) {
                                     val waiters = readyWaiters.remove(index).orEmpty()
                                     waiters.forEach {
@@ -425,8 +428,7 @@ fun cachedSolidLoader(
 
         override fun prefetchPages(pages: List<Int>, bounds: IntRange) = Unit
 
-        override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) =
-            notifySourceReady(index, orgImg)
+        override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) = notifySourceReady(index, orgImg)
     }
 }
 
@@ -448,20 +450,24 @@ class SolidExtractEngine(
 ) {
     private val mutex = Mutex()
     private val members = CopyOnWriteArrayList<SolidExtractCache.Member>()
+
     /** O(1) ext lookup — avoid linear scan + [SolidExtractCache.extensionFor] disk. */
     private val memberExt = ConcurrentHashMap<Int, String>()
     private val memberUnc = ConcurrentHashMap<Int, Long>()
+
     /**
      * Pages known present under `pages/` (readdir once at seed + updated on extract).
      * Skip path trusts this — no File.stat per member.
      */
     private val onDisk = ConcurrentHashMap.newKeySet<Int>()
+
     /** Highest known page index (avoids iterating ConcurrentHashMap keys on main). */
     private val maxKnownIndex = AtomicInteger(-1)
     private val complete = AtomicBoolean(false)
     private val aborted = AtomicBoolean(false)
     private val error = AtomicReferenceError()
     var onListed: ((Int) -> Unit)? = null
+
     /**
      * Invoked after each playable member is on disk (extract or skip-write).
      * Used so the reader can decode page N as soon as it lands, not after
@@ -682,7 +688,7 @@ class SolidExtractEngine(
         val dest = SolidExtractCache.pagePath(cacheKey, index, ext)
         val destFile = File(dest.toString())
         File(dest.parent!!.toString()).mkdirs()
-        val tmp = File("${dest}.tmp.${System.nanoTime()}")
+        val tmp = File("$dest.tmp.${System.nanoTime()}")
         try {
             ParcelFileDescriptor.open(
                 tmp,

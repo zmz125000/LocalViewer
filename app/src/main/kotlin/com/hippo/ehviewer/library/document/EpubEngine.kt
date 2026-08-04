@@ -34,22 +34,21 @@ class EpubEngine private constructor(
 
     override fun extOf(index: Int): String? = pages.getOrNull(index)?.ext
 
-    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index =
-        DocumentExtractCache.Index(
-            v = DocumentExtractCache.INDEX_VERSION,
-            cacheKey = cacheKey,
-            remoteSize = remoteSize,
-            format = "epub",
-            complete = complete,
-            members = pages.mapIndexed { i, p ->
-                DocumentExtractCache.Member(
-                    i = i,
-                    name = p.zipName,
-                    ext = p.ext,
-                    uncSize = p.uncSize,
-                )
-            },
-        )
+    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index = DocumentExtractCache.Index(
+        v = DocumentExtractCache.INDEX_VERSION,
+        cacheKey = cacheKey,
+        remoteSize = remoteSize,
+        format = "epub",
+        complete = complete,
+        members = pages.mapIndexed { i, p ->
+            DocumentExtractCache.Member(
+                i = i,
+                name = p.zipName,
+                ext = p.ext,
+                uncSize = p.uncSize,
+            )
+        },
+    )
 
     /** Extract page [index] into [DocumentExtractCache]; returns path or null. */
     override fun extractToCache(cacheKey: String, index: Int): Path? {
@@ -250,23 +249,21 @@ class EpubEngine private constructor(
             return OpfParse(pages = pages, coverPage = coverPage)
         }
 
-        private fun fallbackImagePages(zip: ZipCentralDirectory): List<PageRef> {
-            return zip.entries
-                .filter { !it.isDirectory && !it.isEncrypted }
-                .filter { e ->
-                    val ext = FileUtils.getExtensionFromFilename(e.name)?.lowercase()
-                    ext != null && ext in IMAGE_EXTENSIONS
-                }
-                .filter { e ->
-                    !e.name.contains("__MACOSX") &&
-                        !e.name.substringAfterLast('/').startsWith('.')
-                }
-                .sortedWith { a, b -> naturalCompare(a.name, b.name) }
-                .map { e ->
-                    val ext = FileUtils.getExtensionFromFilename(e.name)?.lowercase() ?: "bin"
-                    PageRef(zipName = e.name, ext = ext, uncSize = e.uncompressedSize)
-                }
-        }
+        private fun fallbackImagePages(zip: ZipCentralDirectory): List<PageRef> = zip.entries
+            .filter { !it.isDirectory && !it.isEncrypted }
+            .filter { e ->
+                val ext = FileUtils.getExtensionFromFilename(e.name)?.lowercase()
+                ext != null && ext in IMAGE_EXTENSIONS
+            }
+            .filter { e ->
+                !e.name.contains("__MACOSX") &&
+                    !e.name.substringAfterLast('/').startsWith('.')
+            }
+            .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+            .map { e ->
+                val ext = FileUtils.getExtensionFromFilename(e.name)?.lowercase() ?: "bin"
+                PageRef(zipName = e.name, ext = ext, uncSize = e.uncompressedSize)
+            }
 
         private data class ManifestItem(
             val id: String,
@@ -299,7 +296,6 @@ class EpubEngine private constructor(
             return parts.joinToString("/")
         }
 
-        private fun extOf(path: String): String? =
-            FileUtils.getExtensionFromFilename(path.substringAfterLast('/'))?.lowercase()
+        private fun extOf(path: String): String? = FileUtils.getExtensionFromFilename(path.substringAfterLast('/'))?.lowercase()
     }
 }

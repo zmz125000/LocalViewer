@@ -79,6 +79,7 @@ abstract class PageLoader(
 
     private val jobs = mutableIntObjectMapOf<Job>()
     private val mutex = NamedMutex<Int>()
+
     /** Peak software decode is large; keep concurrency low on a 256 MiB heap. */
     private val semaphore = Semaphore(4)
 

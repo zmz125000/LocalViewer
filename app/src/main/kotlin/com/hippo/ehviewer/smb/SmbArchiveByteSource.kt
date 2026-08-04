@@ -2,10 +2,10 @@ package com.hippo.ehviewer.smb
 
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.util.logcat
+import com.hierynomus.smbj.share.File
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ReadAheadArchiveByteSource
 import com.hippo.ehviewer.library.RemoteArchiveOpen
-import com.hierynomus.smbj.share.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -52,8 +52,7 @@ class SmbArchiveByteSource(
 
     override val size: Long get() = inner.size
 
-    override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int =
-        inner.readAt(offset, buf, off, len)
+    override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = inner.readAt(offset, buf, off, len)
 
     override fun warm(offset: Long, length: Int) = inner.warm(offset, length)
 

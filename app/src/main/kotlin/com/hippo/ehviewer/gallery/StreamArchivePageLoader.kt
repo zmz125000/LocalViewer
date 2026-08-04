@@ -21,8 +21,6 @@ import com.hippo.ehviewer.jni.needPassword
 import com.hippo.ehviewer.jni.openArchiveStream
 import com.hippo.ehviewer.jni.providePassword
 import com.hippo.ehviewer.jni.releaseByteBuffer
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 import com.hippo.ehviewer.library.ArchiveAccess
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
@@ -30,6 +28,8 @@ import com.hippo.ehviewer.library.ArchiveStreamBridge
 import com.hippo.ehviewer.library.ArchiveStreamPageCache
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -145,9 +145,12 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     val n = openArchiveStream(
                         bridge,
                         archiveSizeBytes,
-                        /* sortEntries = */ true,
-                        /* coverOnly = */ false,
-                        /* progressiveTar = */ true,
+                        /* sortEntries = */
+                        true,
+                        /* coverOnly = */
+                        false,
+                        /* progressiveTar = */
+                        true,
                     )
                     check(n > 0) { "Archive have no content!" }
                     n
@@ -337,7 +340,6 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         super.close()
                     }
 
-
                     private fun cancelDistantExtracts(center: Int) {
                         for ((idx, job) in extractJobs.entries.toList()) {
                             if (kotlin.math.abs(idx - center) > keepWindow) {
@@ -350,8 +352,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
                     }
 
-                    private fun takeReadyWaiters(index: Int): List<() -> Unit> =
-                        readyWaiters.remove(index)?.toList().orEmpty()
+                    private fun takeReadyWaiters(index: Int): List<() -> Unit> = readyWaiters.remove(index)?.toList().orEmpty()
 
                     private fun dispatchReady(index: Int) {
                         takeReadyWaiters(index).forEach { runCatching { it() } }

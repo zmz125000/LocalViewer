@@ -54,8 +54,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                         ?: remoteDir.substringAfterLast('/').ifEmpty { source.displayName }
                 }
 
-                override fun getImageExtension(index: Int) =
-                    FileUtils.getExtensionFromFilename(imageFileNames[index])
+                override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(imageFileNames[index])
 
                 override fun save(index: Int, file: Path): Boolean = runCatching {
                     val primary = WebDavCache.cachePath(source.id, remoteDir, imageFileNames[index])
@@ -93,8 +92,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     }
                 }
 
-                private fun isLibHdrCandidate(name: String): Boolean =
-                    HdrConvertCache.isRamPipelineCandidate(name)
+                private fun isLibHdrCandidate(name: String): Boolean = HdrConvertCache.isRamPipelineCandidate(name)
 
                 private fun cancelDistantDownloads(center: Int) {
                     val centerLib = isLibHdrCandidate(imageFileNames.getOrNull(center).orEmpty())
@@ -108,8 +106,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
                 }
 
-                private fun takeReadyWaiters(index: Int): List<() -> Unit> =
-                    readyWaiters.remove(index)?.toList().orEmpty()
+                private fun takeReadyWaiters(index: Int): List<() -> Unit> = readyWaiters.remove(index)?.toList().orEmpty()
 
                 private fun dispatchReady(index: Int) {
                     takeReadyWaiters(index).forEach { runCatching { it() } }

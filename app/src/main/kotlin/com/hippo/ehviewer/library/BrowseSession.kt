@@ -132,8 +132,7 @@ object BrowseSession {
 
     fun webDavListingKey(sourceId: Long, relativeDir: String) = "dav:$sourceId|$relativeDir"
 
-    fun getWebDavListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? =
-        webDavListings[webDavListingKey(sourceId, relativeDir)]
+    fun getWebDavListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? = webDavListings[webDavListingKey(sourceId, relativeDir)]
 
     fun putWebDavListing(sourceId: Long, relativeDir: String, entries: List<BrowseEntryRemote>) {
         webDavListings[webDavListingKey(sourceId, relativeDir)] = entries

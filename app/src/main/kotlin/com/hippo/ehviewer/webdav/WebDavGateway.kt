@@ -21,8 +21,7 @@ import kotlinx.coroutines.sync.withPermit
 object WebDavGateway {
     private val peekSlots = Semaphore(6)
 
-    fun sourceConfigKey(source: WebDavSourceEntity): String =
-        "${source.id}|${source.baseUrl}|${source.pathPrefix}|${source.username}"
+    fun sourceConfigKey(source: WebDavSourceEntity): String = "${source.id}|${source.baseUrl}|${source.pathPrefix}|${source.username}"
 
     fun joinRelative(parent: String, child: String): String {
         val p = parent.replace('\\', '/').trim('/')

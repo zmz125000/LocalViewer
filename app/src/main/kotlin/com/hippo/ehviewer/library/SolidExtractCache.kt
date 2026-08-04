@@ -76,8 +76,7 @@ object SolidExtractCache {
         return dirFor(cacheKey) / "pages" / "%06d.%s".format(index, safeExt)
     }
 
-    fun isPageCached(cacheKey: String, index: Int, ext: String): Boolean =
-        isCachedFile(pagePath(cacheKey, index, ext), ext = ext)
+    fun isPageCached(cacheKey: String, index: Int, ext: String): Boolean = isCachedFile(pagePath(cacheKey, index, ext), ext = ext)
 
     fun isCachedFile(path: Path, ext: String = ""): Boolean {
         val f = File(path.toString())
@@ -88,8 +87,7 @@ object SolidExtractCache {
      * One readdir of `pages/` → set of page indices present (no per-file [File.length]).
      * Used to fast-forward solid skip without O(n) stats before new extracts.
      */
-    fun cachedPageIndices(cacheKey: String): Set<Int> =
-        listCachedPages(cacheKey).keys
+    fun cachedPageIndices(cacheKey: String): Set<Int> = listCachedPages(cacheKey).keys
 
     /**
      * `pages/%06d.ext` → (index → ext). Skips tmp files. Used to resume half-cache even
@@ -246,7 +244,7 @@ object SolidExtractCache {
 
     fun writePage(cacheKey: String, index: Int, ext: String, buffer: ByteBuffer): Path {
         val dest = pagePath(cacheKey, index, ext)
-        val tmp = File("${dest}.tmp.${System.nanoTime()}")
+        val tmp = File("$dest.tmp.${System.nanoTime()}")
         CachePagePublish.writeBufferToTmp(tmp, buffer)
         check(
             CachePagePublish.publishTmp(
@@ -263,7 +261,7 @@ object SolidExtractCache {
 
     fun writePageFromFdCopy(cacheKey: String, index: Int, ext: String, srcFile: File): Path {
         val dest = pagePath(cacheKey, index, ext)
-        val tmp = File("${dest}.tmp.${System.nanoTime()}")
+        val tmp = File("$dest.tmp.${System.nanoTime()}")
         srcFile.copyTo(tmp, overwrite = true)
         check(
             CachePagePublish.publishTmp(

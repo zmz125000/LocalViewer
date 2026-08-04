@@ -38,6 +38,7 @@ sealed class StillRoute {
 enum class LibCodec {
     Jxr,
     Jxl,
+
     /** Absolute PQ/HLG AVIF only (gain-map AVIF is [StillRoute.PlatformGainMap]). */
     AvifPq,
 }
@@ -86,8 +87,7 @@ fun isHdrMaybeConvertExtension(ext: String?): Boolean {
     return e in HDR_MAYBE_CONVERT_EXTENSIONS
 }
 
-fun isHdrConvertCandidateExtension(ext: String?): Boolean =
-    isLibStillExtension(ext) || isHdrMaybeConvertExtension(ext)
+fun isHdrConvertCandidateExtension(ext: String?): Boolean = isLibStillExtension(ext) || isHdrMaybeConvertExtension(ext)
 
 /**
  * File-name only (no I/O). Lib formats default to non-HDR until [classify] probes content.
@@ -255,8 +255,7 @@ private fun isHeifFamily(bytes: ByteArray, n: Int): Boolean {
         bytes[7] == 'p'.code.toByte()
 }
 
-private fun isAvifBrand(bytes: ByteArray, n: Int): Boolean =
-    heifFtypHasBrand(bytes, n, "avif") || heifFtypHasBrand(bytes, n, "avis")
+private fun isAvifBrand(bytes: ByteArray, n: Int): Boolean = heifFtypHasBrand(bytes, n, "avif") || heifFtypHasBrand(bytes, n, "avis")
 
 private fun isHeicBrand(bytes: ByteArray, n: Int): Boolean {
     if (!isHeifFamily(bytes, n)) return false

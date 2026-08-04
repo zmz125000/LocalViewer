@@ -17,8 +17,7 @@ data class BitmapImageWithExtraInfo(
     val hasGainmap: Boolean = false,
 ) : Image by image
 
-fun BitmapImage.detectGainmap(): Boolean =
-    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && bitmap.hasGainmap()
+fun BitmapImage.detectGainmap(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && bitmap.hasGainmap()
 
 object MapExtraInfoInterceptor : Interceptor {
     override suspend fun intercept(chain: Interceptor.Chain): ImageResult {

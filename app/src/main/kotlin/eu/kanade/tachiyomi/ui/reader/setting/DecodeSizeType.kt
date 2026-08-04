@@ -30,7 +30,6 @@ enum class DecodeSizeType(
     val isOriginal: Boolean get() = scale == null
 
     companion object {
-        fun fromPreference(preference: Int): DecodeSizeType =
-            entries.find { it.prefValue == preference } ?: SCALE_1_5
+        fun fromPreference(preference: Int): DecodeSizeType = entries.find { it.prefValue == preference } ?: SCALE_1_5
     }
 }
