@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -586,12 +587,13 @@ inline float clamp_nonneg(float v) {
 
 }  // namespace
 
-int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, bool force_hdr,
+int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool force_hdr,
                                uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
                                float* out_boost, int* out_gamut, int* out_transfer) {
-    if (!rgba || w == 0 || h == 0) return -1;
+    if (w == 0 || h == 0) return -1;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
+    if (rgba.size() < pixels * 4) return -1;
 
     float peak = 0.f;
     for (size_t i = 0; i < pixels; i++) {
@@ -612,10 +614,8 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
     const bool need_rematrix = (cg == UHDR_CG_DISPLAY_P3 || cg == UHDR_CG_BT_2100) &&
         !preserve_p3 && !preserve_bt2100;
 
-    std::vector<uint16_t> converted;
-    const uint16_t* src = rgba;
+    // Rematrix in-place — never hold a second full-frame F16 buffer.
     if (need_rematrix) {
-        converted.resize(pixels * 4);
         for (size_t i = 0; i < pixels; i++) {
             float r = half_to_float(rgba[i * 4 + 0]);
             float g = half_to_float(rgba[i * 4 + 1]);
@@ -631,13 +631,12 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
             b = clamp_nonneg(b);
             if (!std::isfinite(a) || a < 0.f) a = 0.f;
             if (a > 1.f) a = 1.f;
-            converted[i * 4 + 0] = float_to_half(r);
-            converted[i * 4 + 1] = float_to_half(g);
-            converted[i * 4 + 2] = float_to_half(b);
-            converted[i * 4 + 3] = float_to_half(a);
+            rgba[i * 4 + 0] = float_to_half(r);
+            rgba[i * 4 + 1] = float_to_half(g);
+            rgba[i * 4 + 2] = float_to_half(b);
+            rgba[i * 4 + 3] = float_to_half(a);
         }
-        src = converted.data();
-        ALOGI("direct pack rematrix cg=%d → BT.709 %ux%u", (int)cg, w, h);
+        ALOGI("direct pack rematrix cg=%d → BT.709 %ux%u (in-place)", (int)cg, w, h);
     }
 
     // Pixel gamut after pack (for Bitmap ColorSpace).
@@ -659,9 +658,8 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
     if (out_format) *out_format = use_f16 ? 1 : 0;
 
     if (use_f16) {
-        // RGBA_F16 linear (scRGB or preserved BT.2020) — values may exceed 1.0 for HDR.
-        out_pixels.resize(pixels * 8);
-        std::memcpy(out_pixels.data(), src, out_pixels.size());
+        // Leave packed F16 in [rgba] — no second 66 MiB memcpy buffer.
+        out_pixels.clear();
         ALOGI("direct pack F16 %ux%u peak=%.3f hdr=%d advanced=%d gamut=%d tf=%d", w, h, peak,
               is_hdr ? 1 : 0, advanced_color ? 1 : 0, pixel_gamut, transfer_cicp);
         return 0;
@@ -684,10 +682,10 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
 
     out_pixels.resize(pixels * 4);
     for (size_t i = 0; i < pixels; i++) {
-        const float r = half_to_float(src[i * 4 + 0]);
-        const float g = half_to_float(src[i * 4 + 1]);
-        const float b = half_to_float(src[i * 4 + 2]);
-        float a = half_to_float(src[i * 4 + 3]);
+        const float r = half_to_float(rgba[i * 4 + 0]);
+        const float g = half_to_float(rgba[i * 4 + 1]);
+        const float b = half_to_float(rgba[i * 4 + 2]);
+        float a = half_to_float(rgba[i * 4 + 3]);
         if (!std::isfinite(a) || a < 0.f) a = 0.f;
         if (a > 1.f) a = 1.f;
         out_pixels[i * 4 + 0] = linear_to_srgb_u8(r);
@@ -695,9 +693,56 @@ int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, boo
         out_pixels[i * 4 + 2] = linear_to_srgb_u8(b);
         out_pixels[i * 4 + 3] = static_cast<uint8_t>(a * 255.f + 0.5f);
     }
+    // Drop F16 staging before caller allocates the Java byte[] / Bitmap.
+    rgba.clear();
+    rgba.shrink_to_fit();
     ALOGI("direct pack SDR 8888 %ux%u peak=%.3f advanced=%d pixel_gamut=%d preserve_p3=%d", w, h,
           peak, advanced_color ? 1 : 0, pixel_gamut, preserve_p3 ? 1 : 0);
     return 0;
+}
+
+jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, unsigned w,
+                                      unsigned h, bool force_hdr, uhdr_color_gamut_t cg,
+                                      bool advanced_color, int transfer_cicp, jintArray jOutInfo,
+                                      jfloatArray jOutBoost) {
+    if (!env || !jOutInfo || !jOutBoost) return nullptr;
+    std::vector<uint8_t> sdr;
+    int format = 0, is_hdr = 0, gamut = 0, tf = 0;
+    float boost = 1.f;
+    if (pack_linear_f16_for_direct(rgba, w, h, force_hdr, cg, advanced_color, transfer_cicp, sdr,
+                                   &format, &is_hdr, &boost, &gamut, &tf) != 0) {
+        return nullptr;
+    }
+    jint info[6] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut, tf};
+    env->SetIntArrayRegion(jOutInfo, 0, 6, info);
+    env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
+
+    jbyteArray result = nullptr;
+    if (format == 1) {
+        // F16 still lives in rgba — copy once to Java, then free native immediately.
+        const size_t nbytes = rgba.size() * sizeof(uint16_t);
+        if (nbytes == 0 || nbytes > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
+            return nullptr;
+        }
+        result = env->NewByteArray(static_cast<jsize>(nbytes));
+        if (result) {
+            env->SetByteArrayRegion(result, 0, static_cast<jsize>(nbytes),
+                                    reinterpret_cast<const jbyte*>(rgba.data()));
+        }
+        rgba.clear();
+        rgba.shrink_to_fit();
+    } else {
+        // pack already freed rgba; only sdr remains.
+        if (sdr.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
+            return nullptr;
+        }
+        result = env->NewByteArray(static_cast<jsize>(sdr.size()));
+        if (result) {
+            env->SetByteArrayRegion(result, 0, static_cast<jsize>(sdr.size()),
+                                    reinterpret_cast<const jbyte*>(sdr.data()));
+        }
+    }
+    return result;
 }
 
 void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned& h,
@@ -922,21 +967,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
         }
         // Peak (and optional force) decides 8888 vs F16; float JXR often peaks > 1.25.
         // JXR path has no reliable CICP here — treat as BT.709 scRGB-like.
-        std::vector<uint8_t> pixels;
-        int format = 0, is_hdr = 0, gamut = 0, tf = 0;
-        float boost = 1.f;
-        if (pack_linear_f16_for_direct(rgba.data(), w, h, /*force_hdr=*/false, UHDR_CG_BT_709,
-                                       advancedColor == JNI_TRUE, /*transfer_cicp=*/0, pixels,
-                                       &format, &is_hdr, &boost, &gamut, &tf) == 0) {
-            jint info[6] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut, tf};
-            env->SetIntArrayRegion(jOutInfo, 0, 6, info);
-            env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
-            result = env->NewByteArray(static_cast<jsize>(pixels.size()));
-            if (result) {
-                env->SetByteArrayRegion(result, 0, static_cast<jsize>(pixels.size()),
-                                        reinterpret_cast<const jbyte*>(pixels.data()));
-            }
-        }
+        result = pack_direct_to_jbyte_array(env, rgba, w, h, /*force_hdr=*/false, UHDR_CG_BT_709,
+                                            advancedColor == JNI_TRUE, /*transfer_cicp=*/0, jOutInfo,
+                                            jOutBoost);
     }
     env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return result;

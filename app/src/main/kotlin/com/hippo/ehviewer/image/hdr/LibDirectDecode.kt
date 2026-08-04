@@ -17,6 +17,8 @@ import com.hippo.ehviewer.jni.decodeJxrBytesToDirect
 import java.nio.ByteBuffer
 import java.util.function.DoubleUnaryOperator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.io.readByteArray
 
@@ -54,6 +56,13 @@ object LibDirectDecode {
         HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_WRITE_RARELY
 
     /**
+     * Full-res RGBA_F16 is ~66 MiB at 3500×2500. Concurrent packs (PageLoader
+     * Semaphore 4 + two pages) blow a 256 MiB Java heap → blocking GC Alloc /
+     * SoftReference thrash. Serialize heavy native→Bitmap work process-wide.
+     */
+    private val heavyDecode = Semaphore(1)
+
+    /**
      * BT.2020 primaries (CIE xy) for linear extended ColorSpace.
      * Pixels are linear relative to 203 nits (may exceed 1.0). Named
      * [ColorSpace.Named.BT2020_PQ] / HLG expect transfer-encoded values; we stay linear.
@@ -86,43 +95,68 @@ object LibDirectDecode {
         fileNameHint: String,
         maxEdge: Int = 0,
     ): LibDirectResult? = withContext(Dispatchers.IO) {
-        val bytes = readBytes(src) ?: return@withContext null
-        if (bytes.isEmpty()) return@withContext null
-        val route = classify(bytes, bytes.size, fileNameHint)
-        if (route !is StillRoute.Lib) return@withContext null
-        val advanced = Settings.readerAdvancedColor.value
-        val outInfo = IntArray(6)
-        val outBoost = FloatArray(1)
-        val pixels = when (route.codec) {
-            LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
-            LibCodec.Jxr -> decodeJxrBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
-            LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
-        } ?: return@withContext null
-        val w = outInfo[0]
-        val h = outInfo[1]
-        val format = outInfo[2]
-        val isHdr = outInfo[3] != 0
-        val gamut = outInfo[4]
-        val transfer = outInfo[5]
-        if (w <= 0 || h <= 0) return@withContext null
+        // Gate before allocating native F16 + Java byte[] + Bitmap (~one full frame each).
+        heavyDecode.withPermit {
+            decodeUnlocked(src, fileNameHint, maxEdge)
+        }
+    }
+
+    private fun decodeUnlocked(
+        src: ImageSource,
+        fileNameHint: String,
+        maxEdge: Int,
+    ): LibDirectResult? {
+        // Scope source bytes tightly so they are eligible for GC before Bitmap.create.
+        val packed = run {
+            val bytes = readBytes(src) ?: return null
+            if (bytes.isEmpty()) return null
+            val route = classify(bytes, bytes.size, fileNameHint)
+            if (route !is StillRoute.Lib) return null
+            val advanced = Settings.readerAdvancedColor.value
+            val outInfo = IntArray(6)
+            val outBoost = FloatArray(1)
+            val pixels = when (route.codec) {
+                LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
+                LibCodec.Jxr -> decodeJxrBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
+                LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
+            } ?: return null
+            // [bytes] ends with this block; only packed pixels + meta remain.
+            PackedPixels(pixels, outInfo, outBoost, advanced)
+        }
+        val w = packed.outInfo[0]
+        val h = packed.outInfo[1]
+        val format = packed.outInfo[2]
+        val isHdr = packed.outInfo[3] != 0
+        val gamut = packed.outInfo[4]
+        val transfer = packed.outInfo[5]
+        if (w <= 0 || h <= 0) return null
         val f16 = format == 1
         val colorSpace = resolveColorSpace(f16, gamut, transfer)
-        val software = pixelsToSoftwareBitmap(pixels, w, h, f16, colorSpace) ?: return@withContext null
-        val bitmap = if (advanced && f16) {
+        val software = pixelsToSoftwareBitmap(packed.pixels, w, h, f16, colorSpace) ?: return null
+        // Drop the intermediate Java pixel buffer as soon as the Bitmap owns a copy.
+        // (local ref ends after this function; no extra hold.)
+        val bitmap = if (packed.advanced && f16) {
             tryHardwareBitmap(software) ?: software
         } else {
             software
         }
-        val boost = outBoost[0].coerceIn(1f, 64f)
+        val boost = packed.outBoost[0].coerceIn(1f, 64f)
         val wide = gamut == 1 || gamut == 2 ||
             (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && bitmap.colorSpace?.isWideGamut == true)
-        LibDirectResult(
+        return LibDirectResult(
             bitmap = bitmap,
             isHdrContent = isHdr,
             contentHdrBoost = if (isHdr) boost else 1f,
             isWideGamutSource = wide,
         )
     }
+
+    private class PackedPixels(
+        val pixels: ByteArray,
+        val outInfo: IntArray,
+        val outBoost: FloatArray,
+        val advanced: Boolean,
+    )
 
     private fun readBytes(src: ImageSource): ByteArray? = when (src) {
         is PathSource -> runCatching { src.source.read { readByteArray() } }.getOrNull()

@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <vector>
 
+#include <jni.h>
+
 #include "ultrahdr_api.h"
 
 /**
@@ -33,7 +35,8 @@ void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned&
  * Pack linear F16 RGBA (1.0 ≈ SDR / 203 nits) for direct Android Bitmap present
  * (skip Ultra HDR JPEG convert).
  *
- * Linear RGB is assumed in [cg] primaries.
+ * Linear RGB is assumed in [cg] primaries. [rgba] is mutated in-place when a
+ * rematrix is required (no second full-frame buffer).
  *
  * Color policy:
  * - Default HDR: rematrix wide → BT.709/scRGB, RGBA_F16 linear.
@@ -42,6 +45,12 @@ void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned&
  * - Advanced + SDR Display P3: **keep P3**, gamma OETF → RGBA_8888 (DISPLAY_P3).
  * - Advanced + SDR BT.709: RGBA_F16 linear scRGB (high bit depth).
  * - Default SDR: rematrix wide → 709, RGBA_8888 sRGB OETF.
+ *
+ * Memory contract (critical on 256 MiB Java heaps):
+ * - **F16** (`*out_format == 1`): packed half-floats stay in [rgba];
+ *   [out_pixels] is cleared. Caller copies [rgba] → Java then frees native.
+ * - **8888** (`*out_format == 0`): [out_pixels] holds bytes; [rgba] is cleared
+ *   and shrink_to_fit'd before return so peak is one full frame, not two.
  *
  * [force_hdr]: true when transfer is PQ/HLG (or similar absolute HDR).
  * [advanced_color]: reader advanced-color toggle (WCG preserve + high bit depth).
@@ -54,7 +63,19 @@ void scale_rgba_f16_max_edge(std::vector<uint16_t>& rgba, unsigned& w, unsigned&
  * @param out_transfer CICP transfer of source (16/18/0) when pixels stay BT.2100
  * @return 0 OK
  */
-int pack_linear_f16_for_direct(const uint16_t* rgba, unsigned w, unsigned h, bool force_hdr,
+int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned h, bool force_hdr,
                                uhdr_color_gamut_t cg, bool advanced_color, int transfer_cicp,
                                std::vector<uint8_t>& out_pixels, int* out_format, int* out_is_hdr,
                                float* out_boost, int* out_gamut, int* out_transfer);
+
+/**
+ * Pack [rgba] then copy into a Java byte[] for Bitmap.createBitmap.
+ * Frees native staging before/after the Java allocation so peak is one full
+ * frame of pixels on the native side, not two.
+ *
+ * Writes [jOutInfo] (len≥6) and [jOutBoost] (len≥1). Returns null on failure.
+ */
+jbyteArray pack_direct_to_jbyte_array(JNIEnv* env, std::vector<uint16_t>& rgba, unsigned w,
+                                      unsigned h, bool force_hdr, uhdr_color_gamut_t cg,
+                                      bool advanced_color, int transfer_cicp, jintArray jOutInfo,
+                                      jfloatArray jOutBoost);

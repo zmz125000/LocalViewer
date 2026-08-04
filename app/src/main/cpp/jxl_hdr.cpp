@@ -370,21 +370,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
-        std::vector<uint8_t> pixels;
-        int format = 0, is_hdr = 0, gamut = 0, tf = 0;
-        float boost = 1.f;
-        if (pack_linear_f16_for_direct(rgba.data(), w, h, force_hdr, cg,
-                                       advancedColor == JNI_TRUE, transfer_cicp, pixels, &format,
-                                       &is_hdr, &boost, &gamut, &tf) == 0) {
-            jint info[6] = {static_cast<jint>(w), static_cast<jint>(h), format, is_hdr, gamut, tf};
-            env->SetIntArrayRegion(jOutInfo, 0, 6, info);
-            env->SetFloatArrayRegion(jOutBoost, 0, 1, &boost);
-            result = env->NewByteArray(static_cast<jsize>(pixels.size()));
-            if (result) {
-                env->SetByteArrayRegion(result, 0, static_cast<jsize>(pixels.size()),
-                                        reinterpret_cast<const jbyte*>(pixels.data()));
-            }
-        }
+        result = pack_direct_to_jbyte_array(env, rgba, w, h, force_hdr, cg,
+                                            advancedColor == JNI_TRUE, transfer_cicp, jOutInfo,
+                                            jOutBoost);
     } else {
         ALOGE("JXL direct decode failed rc=%d", rc);
     }
