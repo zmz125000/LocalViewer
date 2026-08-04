@@ -119,6 +119,7 @@ import com.hippo.ehviewer.ui.tools.dialog
 import com.hippo.ehviewer.util.displayString
 import com.hippo.ehviewer.util.hasAds
 import com.hippo.ehviewer.util.setHdrColorMode
+import com.hippo.ehviewer.util.setReaderColorMode
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
@@ -352,16 +353,18 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 stripExtraneousAds.changesFlow(),
                 readerHardwareBitmap.changesFlow(),
                 readerLibDirectBitmap.changesFlow(),
+                // Advanced color changes F16 pack / CS for lib-direct — re-decode.
+                readerAdvancedColor.changesFlow(),
                 // readerHdrDisplay only toggles window COLOR_MODE_HDR — no page restart.
             ).collect {
                 pageLoader.restart()
             }
         }
     }
-    // Ultra HDR: COLOR_MODE_HDR for the composed page window (not only the current page).
-    // Pager uses beyondViewportPageCount=1; webtoon uses visible items ±1. Mixed SDR/HDR
-    // in that range must not flip the window mode per page (brightness thrash).
+    // Window color mode for composed pages (not only the focused page):
+    // HDR > wide color gamut > default. Mixed content must not thrash per adjacent page.
     val hdrDisplayEnabled by Settings.readerHdrDisplay.collectAsState()
+    val advancedColorEnabled by Settings.readerAdvancedColor.collectAsState()
     DisposableEffect(activity) {
         onDispose { activity.setHdrColorMode(false) }
     }
@@ -392,13 +395,13 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     val isWebtoon by rememberUpdatedState(ReadingModeType.isWebtoon(readingMode))
     val focusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(pageLoader, hdrDisplayEnabled) {
-        if (!hdrDisplayEnabled) {
-            activity.setHdrColorMode(false)
+    LaunchedEffect(pageLoader, hdrDisplayEnabled, advancedColorEnabled) {
+        if (!hdrDisplayEnabled && !advancedColorEnabled) {
+            activity.setReaderColorMode(hdr = false, wideColor = false)
             return@LaunchedEffect
         }
         // Compose range from layout (pager beyondViewport / list visible) with ±1 fallback.
-        // Status is Flow-backed — nest collectLatest and re-scan Ready gain maps in range.
+        // Status is Flow-backed — nest collectLatest and re-scan Ready pages in range.
         snapshotFlow {
             val size = pageLoader.size
             if (size <= 0) return@snapshotFlow IntRange.EMPTY
@@ -428,19 +431,20 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
             }
         }.collectLatest { range ->
             if (range.isEmpty()) {
-                activity.setHdrColorMode(false)
+                activity.setReaderColorMode(hdr = false, wideColor = false)
                 return@collectLatest
             }
             val statusFlows = range.mapNotNull { idx ->
                 pageLoader.pages.getOrNull(idx)?.statusFlow
             }
             if (statusFlows.isEmpty()) {
-                activity.setHdrColorMode(false)
+                activity.setReaderColorMode(hdr = false, wideColor = false)
                 return@collectLatest
             }
-            // Any status emission in the window → re-evaluate whether HDR stays on.
+            // Any status emission in the window → re-evaluate HDR / WCG.
             statusFlows.merge().collect {
                 var anyHdr = false
+                var anyWide = false
                 var maxBoost = 1f
                 for (idx in range) {
                     val img = (pageLoader.pages.getOrNull(idx)?.status as? PageStatus.Ready)
@@ -451,9 +455,15 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                         anyHdr = true
                         maxBoost = maxOf(maxBoost, img.contentHdrBoost)
                     }
+                    if (img.isWideGamutContent) anyWide = true
                 }
-                // Keep COLOR_MODE_HDR while any HDR page is still composed.
-                activity.setHdrColorMode(anyHdr, contentBoost = maxBoost)
+                // Advanced color + wide content only (doc: content-driven WCG, not session-wide).
+                // HDR still wins the single colorMode slot in setReaderColorMode.
+                activity.setReaderColorMode(
+                    hdr = hdrDisplayEnabled && anyHdr,
+                    contentBoost = maxBoost,
+                    wideColor = advancedColorEnabled && anyWide,
+                )
             }
         }
     }

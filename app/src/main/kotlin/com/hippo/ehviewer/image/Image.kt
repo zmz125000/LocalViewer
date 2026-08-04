@@ -33,6 +33,7 @@ import coil3.request.CachePolicy
 import coil3.request.ErrorResult
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
+import coil3.request.colorSpace
 import coil3.request.maxBitmapSize
 import coil3.size.Precision
 import coil3.size.Scale
@@ -81,6 +82,7 @@ class Image private constructor(
      */
     isHdrContentDirect: Boolean = false,
     contentHdrBoostOverride: Float? = null,
+    isWideGamutDirect: Boolean = false,
 ) {
     val refcnt = AtomicInt(1)
 
@@ -111,6 +113,12 @@ class Image private constructor(
     val isHdrContent: Boolean = isHdrContentDirect || hasGainmap
 
     /**
+     * Wide-gamut content (Display P3 / BT.2020 source, or Bitmap [ColorSpace.isWideGamut]).
+     * Used with [Settings.readerAdvancedColor] for window [COLOR_MODE_WIDE_COLOR_GAMUT].
+     */
+    val isWideGamutContent: Boolean
+
+    /**
      * Content HDR boost / capacity (linear) for [android.view.Window.setDesiredHdrHeadroom].
      * Gain-map path: metadata after [HdrGainmapConvert] clamp. Lib-direct: decode peak.
      */
@@ -134,6 +142,17 @@ class Image private constructor(
             }
             else -> 1f
         }
+        isWideGamutContent = isWideGamutDirect || bitmapIsWideGamut(image)
+    }
+
+    private fun bitmapIsWideGamut(image: CoilImage): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return false
+        val bm = when (image) {
+            is BitmapImageWithExtraInfo -> image.image.bitmap
+            is BitmapImage -> image.bitmap
+            else -> null
+        } ?: return false
+        return runCatching { bm.colorSpace?.isWideGamut == true }.getOrDefault(false)
     }
 
     private fun recycle() {
@@ -213,6 +232,7 @@ class Image private constructor(
             hdrSafe: Boolean,
         ): CoilImage {
             val hardwareDirect = Settings.readerHardwareBitmap.value || hdrSafe
+            val advancedColor = Settings.readerAdvancedColor.value
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
@@ -226,6 +246,11 @@ class Image private constructor(
                         precision(Precision.INEXACT)
                     }
                     maxBitmapSize(Size.ORIGINAL)
+                    // Prefer Display P3 so ImageDecoder / BitmapFactory keep wide ICC
+                    // (requires activity wideColorGamut + runtime WCG/HDR when composed).
+                    if (advancedColor && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        colorSpace(android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.DISPLAY_P3))
+                    }
                     if (hardwareDirect) {
                         allowHardware(true)
                         maybeCropBorder(false)
@@ -334,6 +359,7 @@ class Image private constructor(
                 src = src,
                 isHdrContentDirect = result.isHdrContent,
                 contentHdrBoostOverride = result.contentHdrBoost,
+                isWideGamutDirect = result.isWideGamutSource,
             ).apply {
                 if (innerImage is BitmapImage) src.close()
             }

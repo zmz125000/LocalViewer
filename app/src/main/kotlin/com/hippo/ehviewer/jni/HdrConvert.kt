@@ -49,14 +49,36 @@ external fun convertJxlBytesToUltraHdrMaxEdge(input: ByteArray, outputPath: Stri
 /**
  * Decode lib still → packed pixels for [android.graphics.Bitmap].
  *
- * [outInfo] length ≥ 4: `w`, `h`, `format` (0=RGBA_8888, 1=RGBA_F16), `isHdr` (0/1).
+ * [outInfo] length ≥ 6:
+ * - `w`, `h`, `format` (0=RGBA_8888, 1=RGBA_F16), `isHdr` (0/1)
+ * - `gamut` after pack (0=BT.709/scRGB, 1=Display P3, 2=BT.2100)
+ * - `transferCICP` (16=PQ, 18=HLG, 0=other) when gamut is BT.2100
  * [outBoost] length ≥ 1: content HDR boost (linear) for window headroom.
  * [maxEdge] 0 = full resolution; else long-edge cap after decode.
+ * [advancedColor] high bit depth + preserve P3 SDR / BT.2020 HDR primaries.
  *
  * @return pixel bytes (RGBA order) or null on failure / unsupported ABI.
  */
-external fun decodeJxrBytesToDirect(input: ByteArray, maxEdge: Int, outInfo: IntArray, outBoost: FloatArray): ByteArray?
+external fun decodeJxrBytesToDirect(
+    input: ByteArray,
+    maxEdge: Int,
+    advancedColor: Boolean,
+    outInfo: IntArray,
+    outBoost: FloatArray,
+): ByteArray?
 
-external fun decodeJxlBytesToDirect(input: ByteArray, maxEdge: Int, outInfo: IntArray, outBoost: FloatArray): ByteArray?
+external fun decodeJxlBytesToDirect(
+    input: ByteArray,
+    maxEdge: Int,
+    advancedColor: Boolean,
+    outInfo: IntArray,
+    outBoost: FloatArray,
+): ByteArray?
 
-external fun decodeAvifBytesToDirect(input: ByteArray, maxEdge: Int, outInfo: IntArray, outBoost: FloatArray): ByteArray?
+external fun decodeAvifBytesToDirect(
+    input: ByteArray,
+    maxEdge: Int,
+    advancedColor: Boolean,
+    outInfo: IntArray,
+    outBoost: FloatArray,
+): ByteArray?
