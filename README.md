@@ -80,6 +80,7 @@ Build with Grok 4.5.
 * Material Design 3 Navigation bar.
 * Optimized navigation flow for deep folder path.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
+* JXL/JXR/JPG/AVIF/HEIC/ HDR support.
 * High performance smbj client with concurrent connections support.
 * // Cronet WebDAV client with HTTP/2 and QUIC support.
 * Ktor CIO WebDAV client with HTTP/1.1 and TLS support.
@@ -127,6 +128,7 @@ while ($true) {
 |-------------|-------------------------|--------------------------------|
 | Default     | 12                      | Full support                   |
 | EasyTier    | 12 (arm64-v8a)          | Full support                   |
+| HDR         | 14 (arm64-v8a, x86-64)  | Full support                   |
 
 <a href="https://github.com/zmz125000/LocalViewer/releases">
 <img alt="Get it on GitHub" src="https://github.com/zmz125000/LocalViewer-art/blob/master/get-it-on-github.svg" width="200px"/>
