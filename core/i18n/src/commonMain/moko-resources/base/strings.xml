@@ -691,9 +691,9 @@
     <string name="pref_smb_reader_safe_concurrency">Limit SMB concurrency (safer original size)</string>
     <string name="pref_smb_reader_safe_concurrency_summary">Force 3 connections and 1 transfer per connection. Reduces OOM when loading large images over SMB.</string>
     <string name="pref_reader_hardware_bitmap">Hardware bitmap decode</string>
-    <string name="pref_reader_hardware_bitmap_summary">Faster Coil path (GPU bitmaps). Disables crop borders and QR ad detection to avoid a software copy.</string>
-    <string name="pref_reader_lib_direct_bitmap">Direct bitmap presentation (experimental)</string>
-    <string name="pref_reader_lib_direct_bitmap_summary">Decode to Bitmap and skip Ultra HDR JPEG conversion.</string>
+    <string name="pref_reader_hardware_bitmap_summary">Disables crop borders and QR ad detection to avoid a software copy.</string>
+    <string name="pref_reader_lib_direct_bitmap">Direct bitmap mode</string>
+    <string name="pref_reader_lib_direct_bitmap_summary">Decode to Bitmap and skip Ultra HDR JPEG conversion for advanced formats.</string>
     <string name="pref_reader_hdr_display">HDR display support</string>
     <string name="pref_reader_hdr_display_summary">On HDR screens, enable window HDR color mode for Ultra HDR / gain-map pages. Conversion and decoding of HDR files always run; turn off to present the SDR base only.</string>
     <string name="pref_reader_advanced_color">Advanced color (WCG / high bit depth)</string>

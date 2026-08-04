@@ -25,6 +25,24 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         field = Settings.readerTheme.asMutableState(),
     )
     SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_hdr_display),
+        field = Settings.readerHdrDisplay.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_lib_direct_bitmap),
+        summary = stringResource(id = R.string.pref_reader_lib_direct_bitmap_summary),
+        field = Settings.readerLibDirectBitmap.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_advanced_color),
+        field = Settings.readerAdvancedColor.asMutableState(),
+    )
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_hardware_bitmap),
+        summary = stringResource(id = R.string.pref_reader_hardware_bitmap_summary),
+        field = Settings.readerHardwareBitmap.asMutableState(),
+    )
+    SwitchChoice(
         title = stringResource(id = R.string.pref_show_page_number),
         field = Settings.showPageNumber.asMutableState(),
     )
@@ -39,25 +57,6 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
     SwitchChoice(
         title = stringResource(id = R.string.pref_smb_reader_safe_concurrency),
         field = Settings.smbReaderSafeConcurrency.asMutableState(),
-    )
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_reader_hardware_bitmap),
-        summary = stringResource(id = R.string.pref_reader_hardware_bitmap_summary),
-        field = Settings.readerHardwareBitmap.asMutableState(),
-    )
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_reader_lib_direct_bitmap),
-        summary = stringResource(id = R.string.pref_reader_lib_direct_bitmap_summary),
-        field = Settings.readerLibDirectBitmap.asMutableState(),
-    )
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_reader_hdr_display),
-        field = Settings.readerHdrDisplay.asMutableState(),
-    )
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_reader_advanced_color),
-        summary = stringResource(id = R.string.pref_reader_advanced_color_summary),
-        field = Settings.readerAdvancedColor.asMutableState(),
     )
     val fullscreen = Settings.fullscreen.asMutableState()
     SwitchChoice(

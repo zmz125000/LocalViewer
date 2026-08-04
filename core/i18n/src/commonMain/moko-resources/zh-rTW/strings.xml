@@ -532,7 +532,7 @@
     <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路徑（GPU 點陣圖）。會關閉裁邊與 QR 廣告偵測，避免先軟體解碼再拷貝。</string>
     <string name="pref_reader_lib_direct_bitmap">原生直出點陣圖（實驗）</string>
     <string name="pref_reader_lib_direct_bitmap_summary">將 JXL／JXR／PQ-AVIF 直接解碼為 Bitmap，略過 Ultra HDR JPEG 轉換。</string>
-    <string name="pref_reader_hdr_display">HDR 顯示（Ultra HDR）</string>
+    <string name="pref_reader_hdr_display">HDR 顯示</string>
     <string name="pref_reader_hdr_display_summary">在 HDR 螢幕上為 Ultra HDR／增益圖頁面啟用視窗 HDR 色彩模式。HDR 檔案的轉換與解碼一律進行；關閉後僅以 SDR 基底顯示。</string>
     <string name="pref_reader_advanced_color">進階色彩（廣色域／高位深）</string>
     <string name="pref_reader_advanced_color_summary">在廣色域螢幕上啟用視窗廣色域模式，並優先使用更高精度點陣圖。會占用更多 GPU 與記憶體。HDR 頁面仍優先使用 HDR 視窗模式。</string>
