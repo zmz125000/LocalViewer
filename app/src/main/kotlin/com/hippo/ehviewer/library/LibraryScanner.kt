@@ -87,7 +87,8 @@ object LibraryScanner {
                 id = stableGalleryId(rootId, rel),
                 rootId = rootId,
                 relativePath = rel,
-                title = archive.name.substringBeforeLast('.').ifEmpty { archive.name },
+                // Keep extension so zip/rar/pdf/epub are distinguishable from folder titles.
+                title = archive.name,
                 kind = LOCAL_GALLERY_KIND_ARCHIVE,
                 pageCount = 0, // unknown until open
                 coverPath = null,
