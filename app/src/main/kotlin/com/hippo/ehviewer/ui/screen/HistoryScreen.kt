@@ -440,15 +440,15 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         tint = MaterialTheme.colorScheme.primary,
                     )
                     val saveHistory by Settings.saveHistory.collectAsState()
-                    val emptyHint = when {
-                        !saveHistory && keyword.isEmpty() -> stringResource(id = R.string.history_disabled)
-                        keyword.isEmpty() -> stringResource(id = R.string.no_history)
-                        else -> stringResource(id = R.string.gallery_list_empty_hit)
-                    }
-                    Text(
-                        text = emptyHint,
-                        style = MaterialTheme.typography.headlineMedium,
-                    )
+                    // val emptyHint = when {
+                    //     !saveHistory && keyword.isEmpty() -> stringResource(id = R.string.history_disabled)
+                    //     keyword.isEmpty() -> stringResource(id = R.string.no_history)
+                    //     else -> stringResource(id = R.string.gallery_list_empty_hit)
+                    // }
+                    // Text(
+                    //     text = emptyHint,
+                    //     style = MaterialTheme.typography.headlineMedium,
+                    // )
                 }
             }
         }
