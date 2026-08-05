@@ -19,6 +19,7 @@ package com.hippo.ehviewer.image
 
 import android.graphics.Bitmap
 import android.hardware.HardwareBuffer
+import android.util.Log
 import androidx.compose.ui.unit.IntSize
 import arrow.core.Either
 import arrow.core.left
@@ -33,7 +34,6 @@ import coil3.request.CachePolicy
 import coil3.request.ErrorResult
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
-import coil3.request.colorSpace
 import coil3.request.maxBitmapSize
 import coil3.size.Precision
 import coil3.size.Scale
@@ -114,7 +114,8 @@ class Image private constructor(
 
     /**
      * Wide-gamut content (Display P3 / BT.2020 source, or Bitmap [ColorSpace.isWideGamut]).
-     * Used with [Settings.readerAdvancedColor] for window [COLOR_MODE_WIDE_COLOR_GAMUT].
+     * Diagnostic / history; Option A session WCG is gated by [Settings.readerAdvancedColor]
+     * alone (not only when this is true).
      */
     val isWideGamutContent: Boolean
 
@@ -232,7 +233,6 @@ class Image private constructor(
             hdrSafe: Boolean,
         ): CoilImage {
             val hardwareDirect = Settings.readerHardwareBitmap.value || hdrSafe
-            val advancedColor = Settings.readerAdvancedColor.value
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
@@ -246,11 +246,10 @@ class Image private constructor(
                         precision(Precision.INEXACT)
                     }
                     maxBitmapSize(Size.ORIGINAL)
-                    // Prefer Display P3 so ImageDecoder / BitmapFactory keep wide ICC
-                    // (requires activity wideColorGamut + runtime WCG/HDR when composed).
-                    if (advancedColor && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        colorSpace(android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.DISPLAY_P3))
-                    }
+                    // No forced colorSpace(DISPLAY_P3): preserves embedded ICC under the
+                    // reader WCG window (advanced color on). sRGB stays sRGB-tagged (no
+                    // oversaturation); P3 stays P3. 8-bit JPEGs stay 8888/HARDWARE.
+                    // Advanced color still drives lib-direct pack + reader window policy.
                     if (hardwareDirect) {
                         allowHardware(true)
                         maybeCropBorder(false)
@@ -265,7 +264,30 @@ class Image private constructor(
                 }
             }
             return when (val result = request.execute()) {
-                is SuccessResult -> result.image
+                is SuccessResult -> {
+                    // Phase 0/4 diagnostics: adb logcat -s ReaderColor:D
+                    if (Log.isLoggable("ReaderColor", Log.DEBUG)) {
+                        val bm = result.image.asBitmapImage()?.bitmap
+                        if (bm != null) {
+                            val cs = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                bm.colorSpace?.name ?: "null"
+                            } else {
+                                "n/a"
+                            }
+                            val wide = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                bm.colorSpace?.isWideGamut == true
+                            } else {
+                                false
+                            }
+                            Log.d(
+                                "ReaderColor",
+                                "coil decode config=${bm.config} cs=$cs wide=$wide " +
+                                    "${bm.width}x${bm.height}",
+                            )
+                        }
+                    }
+                    result.image
+                }
                 is ErrorResult -> throw result.throwable
             }
         }

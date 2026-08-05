@@ -361,12 +361,14 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
             }
         }
     }
-    // Window color mode for composed pages (not only the focused page):
-    // HDR > wide color gamut > default. Mixed content must not thrash per adjacent page.
+    // Window color mode: HDR > WCG > default.
+    // Option A: advanced color on → session WCG for the whole reader (display-capable),
+    // so ImageDecoder keeps embedded ICC before the first page is Ready. HDR still wins
+    // when a composed page is HDR. Leave reader → DEFAULT (onDispose).
     val hdrDisplayEnabled by Settings.readerHdrDisplay.collectAsState()
     val advancedColorEnabled by Settings.readerAdvancedColor.collectAsState()
     DisposableEffect(activity) {
-        onDispose { activity.setHdrColorMode(false) }
+        onDispose { activity.setReaderColorMode(hdr = false, wideColor = false) }
     }
     val webtoon = remember(info) {
         // Tags in database may or may not have the prefix "other:"
@@ -400,6 +402,11 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
             activity.setReaderColorMode(hdr = false, wideColor = false)
             return@LaunchedEffect
         }
+        // Option A: raise WCG as soon as the reader opens (advanced on) so platform
+        // decode under a WCG window preserves ICC — no forced Coil target ColorSpace.
+        if (advancedColorEnabled) {
+            activity.setReaderColorMode(hdr = false, wideColor = true)
+        }
         // Compose range from layout (pager beyondViewport / list visible) with ±1 fallback.
         // Status is Flow-backed — nest collectLatest and re-scan Ready pages in range.
         snapshotFlow {
@@ -431,20 +438,19 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
             }
         }.collectLatest { range ->
             if (range.isEmpty()) {
-                activity.setReaderColorMode(hdr = false, wideColor = false)
+                activity.setReaderColorMode(hdr = false, wideColor = advancedColorEnabled)
                 return@collectLatest
             }
             val statusFlows = range.mapNotNull { idx ->
                 pageLoader.pages.getOrNull(idx)?.statusFlow
             }
             if (statusFlows.isEmpty()) {
-                activity.setReaderColorMode(hdr = false, wideColor = false)
+                activity.setReaderColorMode(hdr = false, wideColor = advancedColorEnabled)
                 return@collectLatest
             }
-            // Any status emission in the window → re-evaluate HDR / WCG.
+            // Any status emission in the window → re-evaluate HDR (WCG stays session-wide).
             statusFlows.merge().collect {
                 var anyHdr = false
-                var anyWide = false
                 var maxBoost = 1f
                 for (idx in range) {
                     val img = (pageLoader.pages.getOrNull(idx)?.status as? PageStatus.Ready)
@@ -455,14 +461,13 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                         anyHdr = true
                         maxBoost = maxOf(maxBoost, img.contentHdrBoost)
                     }
-                    if (img.isWideGamutContent) anyWide = true
                 }
-                // Advanced color + wide content only (doc: content-driven WCG, not session-wide).
+                // Option A: advanced → session WCG (not only when isWideGamutContent).
                 // HDR still wins the single colorMode slot in setReaderColorMode.
                 activity.setReaderColorMode(
                     hdr = hdrDisplayEnabled && anyHdr,
                     contentBoost = maxBoost,
-                    wideColor = advancedColorEnabled && anyWide,
+                    wideColor = advancedColorEnabled,
                 )
             }
         }

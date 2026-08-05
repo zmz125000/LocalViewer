@@ -255,10 +255,11 @@ object Settings : DataStorePreferences(null) {
     val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", true)
 
     /**
-     * Experimental reader present for lib stills (JXL / JXR / PQ-AVIF):
-     * decode to Bitmap and skip Ultra HDR JPEG convert. Default off = convert + Coil.
-     * When on, network/SMB/WebDAV also keep the original (no download-time UHDR encode)
-     * and use normal non-lib prefetch slots. Browse covers still convert to small JPEG.
+     * Lib stills (JXL / JXR / PQ-AVIF): decode to Bitmap and skip Ultra HDR JPEG convert.
+     * Default off = convert + Coil (deep color reduced; WCG only as encode tags).
+     * When on: [com.hippo.ehviewer.image.hdr.LibDirectDecode]; with [readerAdvancedColor]
+     * preserves P3/BT.2020 + F16 where useful; advanced off rematrixes wide→709.
+     * Network/SMB/WebDAV keep original when on. Browse covers still convert to small JPEG.
      */
     val readerLibDirectBitmap = boolPref("pref_reader_lib_direct_bitmap", false)
 
@@ -273,12 +274,18 @@ object Settings : DataStorePreferences(null) {
     val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)
 
     /**
-     * Prefer wide color gamut + higher bit depth in the reader when the display
-     * supports it ([ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT]; lib-direct keeps F16
-     * for SDR too). HDR window mode still wins while HDR content is composed.
-     * Default off (Android WCG is opt-in for power/perf).
+     * Reader wide color + high bit depth (Option A toggle, default **on**).
+     *
+     * When on and the display supports WCG:
+     * - Window [ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT] for the reader session
+     *   (HDR still wins while HDR pages are composed).
+     * - Platform stills: ImageDecoder keeps embedded ICC (sRGB stays sRGB-tagged;
+     *   P3 stays P3 — no forced target ColorSpace).
+     * - Lib-direct: preserve P3/BT.2020 and extra F16 for SDR-709.
+     *
+     * When off: platform sRGB conversion; lib rematrix wide→709; no WCG window.
      */
-    val readerAdvancedColor = boolPref("pref_reader_advanced_color", false)
+    val readerAdvancedColor = boolPref("pref_reader_advanced_color", true)
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)

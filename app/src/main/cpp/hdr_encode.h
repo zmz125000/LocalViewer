@@ -21,7 +21,12 @@
  * so tools report ratio 1.0 / no Ultra HDR metadata. libultrahdr would otherwise
  * epsilon-bump max boost to ~1.07 when min==max.
  *
- * [cg] must match the primaries of [rgba] (no silent rematrix inside Ultra HDR encode):
+ * Baseline SDR color:
+ *   - Display P3: keep primaries + embed P3 ICC (WCG-capable convert for Coil).
+ *   - BT.2100 pure SDR: rematrix → 709 (no PQ/HLG in baseline).
+ *   - BT.709: sRGB OETF.
+ *
+ * [cg] must match the primaries of [rgba] for Ultra HDR encode:
  *   UHDR_CG_BT_709     — BT.709 / scRGB-like
  *   UHDR_CG_DISPLAY_P3 — Display P3
  *   UHDR_CG_BT_2100    — BT.2020 primaries (PQ/HLG HDR stills)
