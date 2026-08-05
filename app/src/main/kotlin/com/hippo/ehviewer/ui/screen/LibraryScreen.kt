@@ -6,13 +6,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -26,7 +24,6 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -63,11 +60,13 @@ import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.FavoriteBrowseSource
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.buildLocalBrowseStack
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
 import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
 import com.hippo.ehviewer.library.toBaseGalleryInfo
@@ -97,6 +96,8 @@ import moe.tarsin.string
 fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Screen(navigator) {
     val title = stringResource(id = R.string.library)
     val hint = stringResource(R.string.search_bar_hint, title)
+    val addedToFavourites = stringResource(id = R.string.add_to_favourites)
+    val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
 
     var searchBarExpanded by rememberSaveable { mutableStateOf(false) }
     var searchBarOffsetY by remember { mutableIntStateOf(0) }
@@ -123,13 +124,13 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val smbSources by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
     val webDavSources by WebDavRepository.sourcesFlow().collectAsState(initial = emptyList())
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
-    val favorites = remember(roots, smbSources, webDavSources, favoriteKeys, keyword) {
-        if (keyword.isNotBlank()) {
-            emptyList()
-        } else {
-            resolveFavoriteBrowseSources(roots, smbSources, webDavSources, favoriteKeys)
-        }
+    // Favourites strip uses full library (not search-filtered) so pins stay visible while searching.
+    val allGalleries by LocalLibrary.galleriesFlow().collectAsState(initial = emptyList())
+    val favorites = remember(roots, smbSources, webDavSources, allGalleries, favoriteKeys) {
+        resolveFavoriteBrowseSources(roots, smbSources, webDavSources, allGalleries, favoriteKeys)
     }
+    // Hide favourites section while searching (matches previous behaviour for source pins).
+    val showFavorites = keyword.isBlank() && favorites.isNotEmpty()
 
     val listMode by Settings.listMode.collectAsState()
     val showPages by Settings.showGalleryPages.collectAsState()
@@ -138,6 +139,12 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val marginH = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
     val marginV = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_v)
     val listInterval = dimensionResource(com.hippo.ehviewer.R.dimen.gallery_list_interval)
+
+    fun notifyFavoriteToggle(nowFavorite: Boolean) {
+        launch {
+            snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
+        }
+    }
 
     fun openGallery(gallery: LocalGalleryEntity) {
         // Navigation must run on the main thread — Compose crashes if navigate() is
@@ -155,18 +162,20 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
     }
 
+    fun toggleGalleryFavorite(gallery: LocalGalleryEntity) {
+        notifyFavoriteToggle(BrowseFavorites.toggleGallery(gallery.id))
+    }
+
     fun openFavorite(fav: FavoriteBrowseSource) {
         when (fav) {
             is FavoriteBrowseSource.Local -> {
                 val path = LocalLibrary.rootPath(fav.root) ?: return
-                BrowseSession.localStack = listOf(
-                    BrowseSession.LocalFrame(
-                        rootId = fav.root.id,
-                        path = path.toString(),
-                        title = fav.root.displayName,
-                        relativePath = "",
-                        preferMediaStore = fav.root.prefersMediaStore,
-                    ),
+                BrowseSession.localStack = buildLocalBrowseStack(
+                    rootId = fav.root.id,
+                    rootDisplayName = fav.root.displayName,
+                    rootPath = path,
+                    relativePath = "",
+                    preferMediaStore = fav.root.prefersMediaStore,
                 )
                 navigate(FolderBrowserScreenDestination())
             }
@@ -181,6 +190,43 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             is FavoriteBrowseSource.WebDav -> {
                 BrowseSession.setWebDavSegments(fav.source.id, emptyList())
                 navigate(WebDavBrowserScreenDestination(fav.source.id, ""))
+            }
+            is FavoriteBrowseSource.Gallery -> openGallery(fav.gallery)
+            is FavoriteBrowseSource.LocalFolder -> {
+                // Same stack rebuild as History → browse folder.
+                val rootPath = LocalLibrary.rootPath(fav.root) ?: return
+                BrowseSession.localStack = buildLocalBrowseStack(
+                    rootId = fav.root.id,
+                    rootDisplayName = fav.root.displayName,
+                    rootPath = rootPath,
+                    relativePath = fav.relativePath,
+                    preferMediaStore = fav.root.prefersMediaStore,
+                )
+                navigate(FolderBrowserScreenDestination())
+            }
+            is FavoriteBrowseSource.SmbFolder -> {
+                if (fav.source.share.isBlank()) {
+                    launch { snackbar(string(R.string.network_share_required)) }
+                    return
+                }
+                val segments = fav.relativePath.split('/').filter { it.isNotEmpty() }
+                BrowseSession.setSmbSegments(fav.source.id, segments)
+                navigate(
+                    SmbBrowserScreenDestination(
+                        sourceId = fav.source.id,
+                        initialRelativePath = fav.relativePath,
+                    ),
+                )
+            }
+            is FavoriteBrowseSource.WebDavFolder -> {
+                val segments = fav.relativePath.split('/').filter { it.isNotEmpty() }
+                BrowseSession.setWebDavSegments(fav.source.id, segments)
+                navigate(
+                    WebDavBrowserScreenDestination(
+                        sourceId = fav.source.id,
+                        initialRelativePath = fav.relativePath,
+                    ),
+                )
             }
         }
     }
@@ -237,7 +283,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
 
         Box(Modifier.fillMaxSize()) {
-            if (galleries.isEmpty() && favorites.isEmpty() && !scanning && !refreshing) {
+            if (galleries.isEmpty() && !showFavorites && !scanning && !refreshing) {
                 Column(
                     modifier = Modifier
                         .padding(paddingValues)
@@ -263,15 +309,27 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     contentPadding = listPadding,
                     verticalArrangement = Arrangement.spacedBy(listInterval),
                 ) {
-                    if (favorites.isNotEmpty()) {
+                    if (showFavorites) {
                         item(key = "fav-hdr") {
                             BrowseSectionHeader(stringResource(R.string.favourite))
                         }
                         items(favorites, key = { "fav-${it.key}" }) { fav ->
-                            FavoriteSourceListRow(
-                                fav = fav,
-                                onClick = { openFavorite(fav) },
-                            )
+                            when (fav) {
+                                is FavoriteBrowseSource.Gallery -> LocalGalleryListItem(
+                                    gallery = fav.gallery,
+                                    onClick = { openGallery(fav.gallery) },
+                                    onLongClick = { toggleGalleryFavorite(fav.gallery) },
+                                    showPages = showPages,
+                                    showProgress = showProgress,
+                                    modifier = Modifier
+                                        .height(cardHeight)
+                                        .fillMaxWidth(),
+                                )
+                                else -> FavoriteSourceListRow(
+                                    fav = fav,
+                                    onClick = { openFavorite(fav) },
+                                )
+                            }
                         }
                         if (galleries.isNotEmpty()) {
                             item(key = "gal-hdr") {
@@ -283,6 +341,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                         LocalGalleryListItem(
                             gallery = gallery,
                             onClick = { openGallery(gallery) },
+                            onLongClick = { toggleGalleryFavorite(gallery) },
                             showPages = showPages,
                             showProgress = showProgress,
                             modifier = Modifier
@@ -302,7 +361,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     verticalArrangement = gridSpacing,
                     horizontalArrangement = gridSpacing,
                 ) {
-                    if (favorites.isNotEmpty()) {
+                    if (showFavorites) {
                         item(
                             key = "fav-hdr",
                             span = { GridItemSpan(maxLineSpan) },
@@ -310,10 +369,19 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             BrowseSectionHeader(stringResource(R.string.favourite))
                         }
                         items(favorites, key = { "fav-${it.key}" }) { fav ->
-                            FavoriteSourceGridCell(
-                                fav = fav,
-                                onClick = { openFavorite(fav) },
-                            )
+                            when (fav) {
+                                is FavoriteBrowseSource.Gallery -> LocalGalleryGridItem(
+                                    gallery = fav.gallery,
+                                    onClick = { openGallery(fav.gallery) },
+                                    onLongClick = { toggleGalleryFavorite(fav.gallery) },
+                                    showPages = showPages,
+                                    showProgress = showProgress,
+                                )
+                                else -> FavoriteSourceGridCell(
+                                    fav = fav,
+                                    onClick = { openFavorite(fav) },
+                                )
+                            }
                         }
                         if (galleries.isNotEmpty()) {
                             item(
@@ -328,6 +396,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                         LocalGalleryGridItem(
                             gallery = gallery,
                             onClick = { openGallery(gallery) },
+                            onLongClick = { toggleGalleryFavorite(gallery) },
                             showPages = showPages,
                             showProgress = showProgress,
                         )
@@ -335,7 +404,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
 
-            if (scanning && galleries.isEmpty() && favorites.isEmpty()) {
+            if (scanning && galleries.isEmpty() && !showFavorites) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularWavyProgressIndicator()
                 }
@@ -351,18 +420,7 @@ private fun FavoriteSourceListRow(
 ) {
     ListItem(
         headlineContent = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(fav.displayName, modifier = Modifier.weight(1f, fill = false))
-                Icon(
-                    Icons.Default.Star,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
+            Text(fav.displayName)
         },
         supportingContent = { Text(favoriteSubtitle(fav)) },
         leadingContent = {
@@ -392,23 +450,11 @@ private fun FavoriteSourceGridCell(
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
             )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    fav.displayName,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    modifier = Modifier.weight(1f),
-                )
-                Icon(
-                    Icons.Default.Star,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
+            Text(
+                fav.displayName,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 2,
+            )
             Text(
                 favoriteSubtitle(fav),
                 style = MaterialTheme.typography.bodySmall,
@@ -425,6 +471,10 @@ private fun favoriteSubtitle(fav: FavoriteBrowseSource): String = when (fav) {
     )
     is FavoriteBrowseSource.Smb -> stringResource(R.string.network)
     is FavoriteBrowseSource.WebDav -> stringResource(R.string.webdav)
+    is FavoriteBrowseSource.Gallery -> stringResource(R.string.library)
+    is FavoriteBrowseSource.LocalFolder -> stringResource(R.string.folder)
+    is FavoriteBrowseSource.SmbFolder -> stringResource(R.string.network)
+    is FavoriteBrowseSource.WebDavFolder -> stringResource(R.string.webdav)
 }
 
 private fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
@@ -432,4 +482,8 @@ private fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
         if (fav.root.isLibraryRole) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.Folder
     is FavoriteBrowseSource.Smb -> Icons.Default.Lan
     is FavoriteBrowseSource.WebDav -> Icons.Default.Cloud
+    is FavoriteBrowseSource.Gallery -> Icons.Default.Folder
+    is FavoriteBrowseSource.LocalFolder -> Icons.Default.Folder
+    is FavoriteBrowseSource.SmbFolder -> Icons.Default.Lan
+    is FavoriteBrowseSource.WebDavFolder -> Icons.Default.Cloud
 }

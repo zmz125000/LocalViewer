@@ -66,6 +66,7 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
 import com.hippo.ehviewer.library.ArchiveTooLargeException
 import com.hippo.ehviewer.library.BrowseEntryRemote
+import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
@@ -143,6 +144,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
+    val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
+    val addedToFavourites = stringResource(id = R.string.add_to_favourites)
+    val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
     // Scroll down hides the top bar; scroll up brings it back (enterAlways).
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     // FAB tracks the same enterAlways state (hide when bar collapses, show when it reappears).
@@ -152,6 +156,17 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     val relativeDir = segments.joinToString("/")
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
+
+    fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else SmbGateway.joinRelativePath(relativeDir, name)
+
+    fun toggleDirFavorite(name: String) {
+        val nowFavorite = BrowseFavorites.toggleSmbFolder(sourceId, dirRelative(name))
+        launch {
+            snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
+        }
+    }
+
+    fun isDirFavorite(name: String): Boolean = BrowseFavorites.smbFolderKey(sourceId, dirRelative(name)) in favoriteKeys
     val emptyArchiveRev by EmptyArchiveRegistry.revision.collectAsState()
     val displayEntries = remember(entries, emptyArchiveRev, relativeDir, sourceId) {
         EmptyArchiveRegistry.filterRemoteEntries(entries) { arch ->
@@ -604,6 +619,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     BrowseDirectoryGridItem(
                                         name = dir.name,
                                         onClick = { enterDir(dir.name) },
+                                        onLongClick = { toggleDirFavorite(dir.name) },
+                                        showFavoriteStar = isDirFavorite(dir.name),
                                     )
                                 }
                             }
@@ -648,7 +665,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     BrowseSectionHeader(stringResource(R.string.browse_directories))
                                 }
                                 items(dirs, key = { "d-${it.name}" }) { dir ->
-                                    BrowseDirectoryRow(name = dir.name, onClick = { enterDir(dir.name) })
+                                    BrowseDirectoryRow(
+                                        name = dir.name,
+                                        onClick = { enterDir(dir.name) },
+                                        onLongClick = { toggleDirFavorite(dir.name) },
+                                    )
                                 }
                             }
                             if (galleries.isNotEmpty()) {

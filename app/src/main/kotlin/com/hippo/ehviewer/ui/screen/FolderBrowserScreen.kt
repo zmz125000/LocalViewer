@@ -63,6 +63,7 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseEntry
+import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
@@ -91,6 +92,7 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.flow.first
+import moe.tarsin.snackbar
 import okio.Path.Companion.toPath
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -126,10 +128,28 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
+    val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
+    val addedToFavourites = stringResource(id = R.string.add_to_favourites)
+    val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
 
     val current = stack.lastOrNull()
     val currentPath = current?.path
     val title = current?.title ?: stringResource(R.string.folder)
+
+    fun toggleDirFavorite(dir: BrowseEntry.Directory) {
+        val frame = stack.lastOrNull() ?: return
+        val rel = if (frame.relativePath.isEmpty()) dir.name else "${frame.relativePath}/${dir.name}"
+        val nowFavorite = BrowseFavorites.toggleLocalFolder(frame.rootId, rel)
+        launch {
+            snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
+        }
+    }
+
+    fun isDirFavorite(dir: BrowseEntry.Directory): Boolean {
+        val frame = stack.lastOrNull() ?: return false
+        val rel = if (frame.relativePath.isEmpty()) dir.name else "${frame.relativePath}/${dir.name}"
+        return BrowseFavorites.localFolderKey(frame.rootId, rel) in favoriteKeys
+    }
     // Scroll down hides the top bar; scroll up brings it back (enterAlways).
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     // FAB tracks the same enterAlways state (hide when bar collapses, show when it reappears).
@@ -437,7 +457,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseSectionHeader(stringResource(R.string.browse_directories))
                                 }
                                 items(dirs, key = { "d-${it.path}" }) { dir ->
-                                    BrowseDirectoryGridItem(name = dir.name, onClick = { enterDir(dir) })
+                                    BrowseDirectoryGridItem(
+                                        name = dir.name,
+                                        onClick = { enterDir(dir) },
+                                        onLongClick = { toggleDirFavorite(dir) },
+                                        showFavoriteStar = isDirFavorite(dir),
+                                    )
                                 }
                             }
                             if (galleries.isNotEmpty()) {
@@ -487,7 +512,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseSectionHeader(stringResource(R.string.browse_directories))
                                 }
                                 items(dirs, key = { "d-${it.path}" }) { dir ->
-                                    BrowseDirectoryRow(name = dir.name, onClick = { enterDir(dir) })
+                                    BrowseDirectoryRow(
+                                        name = dir.name,
+                                        onClick = { enterDir(dir) },
+                                        onLongClick = { toggleDirFavorite(dir) },
+                                    )
                                 }
                             }
                             if (galleries.isNotEmpty()) {

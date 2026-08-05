@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.main
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
@@ -14,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
@@ -32,9 +34,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -88,14 +92,30 @@ fun BrowseDirectoryRow(
     name: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
 ) {
+    val haptic = LocalHapticFeedback.current
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = { Text(stringResource(R.string.browse_directory)) },
         leadingContent = {
             Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
         },
-        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = onClick,
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick()
+                        },
+                    )
+                } else {
+                    Modifier.clickable(onClick = onClick)
+                },
+            ),
     )
 }
 
@@ -169,10 +189,14 @@ fun BrowseDirectoryGridItem(
     name: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
+    /** Top-end star badge when this dir path is favourited (O(1) set lookup — no dir scan). */
+    showFavoriteStar: Boolean = false,
 ) {
     BrowseGridCell(
         name = name,
         onClick = onClick,
+        onLongClick = onLongClick ?: onClick,
         modifier = modifier,
         thumb = {
             Box(
@@ -185,6 +209,20 @@ fun BrowseDirectoryGridItem(
                     modifier = Modifier.size(48.dp),
                     tint = MaterialTheme.colorScheme.primary,
                 )
+                if (showFavoriteStar) {
+                    Badge(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .widthIn(min = 32.dp)
+                            .height(24.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Star,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
             }
         },
     )
@@ -274,6 +312,7 @@ private fun BrowseGridCell(
     onClick: () -> Unit,
     thumb: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    onLongClick: () -> Unit = onClick,
 ) {
     // Same caption metrics as Library grid (GalleryGridDefaults).
     val nameHeight = GalleryGridDefaults.nameHeight()
@@ -282,7 +321,7 @@ private fun BrowseGridCell(
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
-        onLongClick = onClick,
+        onLongClick = onLongClick,
     ) {
         Column(Modifier.fillMaxWidth()) {
             Box(

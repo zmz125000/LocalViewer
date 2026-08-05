@@ -114,8 +114,10 @@ object Settings : DataStorePreferences(null) {
     val libraryStartupScan = boolPref("library_startup_scan", true)
 
     /**
-     * Browse sources pinned to Library favourites. Keys:
-     * `local:{rootId}`, `smb:{id}`, `webdav:{id}`.
+     * Library favourites strip. Keys:
+     * `local:{rootId}`, `smb:{id}`, `webdav:{id}`,
+     * `gallery:{galleryId}`,
+     * `lf:{rootId}:{rel}`, `sf:{sourceId}:{rel}`, `wf:{sourceId}:{rel}`.
      */
     val favoriteBrowseSources = stringSetPref("favorite_browse_sources", emptySet())
     val showVoteStatus = boolPref("show_vote_status", false)
