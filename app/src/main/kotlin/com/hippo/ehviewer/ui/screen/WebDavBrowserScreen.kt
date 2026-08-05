@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.GridView
@@ -66,6 +67,7 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
 import com.hippo.ehviewer.library.ArchiveTooLargeException
 import com.hippo.ehviewer.library.BrowseEntryRemote
+import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
@@ -82,6 +84,7 @@ import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
+import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
 import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseArchiveGridItem
@@ -114,6 +117,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     sourceId: Long,
     initialRelativePath: String = "",
     fromHistory: Boolean = false,
+    fromLibrary: Boolean = false,
     navigator: DestinationsNavigator,
 ) = Screen(navigator) {
     DrawerHandle(false)
@@ -143,6 +147,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
+    val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
+    val addedToFavourites = stringResource(id = R.string.add_to_favourites)
+    val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
     // Scroll down hides the top bar; scroll up brings it back (enterAlways).
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     // FAB tracks the same enterAlways state (hide when bar collapses, show when it reappears).
@@ -152,6 +159,18 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     val relativeDir = segments.joinToString("/")
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
+
+    fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else WebDavGateway.joinRelative(relativeDir, name)
+
+    fun toggleDirFavorite(name: String) {
+        val nowFavorite = BrowseFavorites.toggleWebDavFolder(sourceId, dirRelative(name))
+        launch {
+            snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
+        }
+    }
+
+    fun isDirFavorite(name: String): Boolean = BrowseFavorites.webDavFolderKey(sourceId, dirRelative(name)) in favoriteKeys
+
     val emptyArchiveRev by EmptyArchiveRegistry.revision.collectAsState()
     val displayEntries = remember(entries, emptyArchiveRev, relativeDir, sourceId) {
         EmptyArchiveRegistry.filterRemoteEntries(entries) { arch ->
@@ -479,8 +498,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     enter = fadeIn() + scaleIn(),
                     exit = fadeOut() + scaleOut(),
                 ) {
-                    if (fromHistory) {
-                        ExtendedFloatingActionButton(
+                    when {
+                        fromHistory -> ExtendedFloatingActionButton(
                             onClick = {
                                 if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
                                     navigator.navigate(HistoryScreenDestination) {
@@ -493,8 +512,20 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             },
                             text = { Text(stringResource(R.string.back_to_history)) },
                         )
-                    } else {
-                        ExtendedFloatingActionButton(
+                        fromLibrary -> ExtendedFloatingActionButton(
+                            onClick = {
+                                if (!navigator.popBackStack(LibraryScreenDestination, inclusive = false)) {
+                                    navigator.navigate(LibraryScreenDestination) {
+                                        launchSingleTop = true
+                                    }
+                                }
+                            },
+                            icon = {
+                                Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null)
+                            },
+                            text = { Text(stringResource(R.string.back_to_library)) },
+                        )
+                        else -> ExtendedFloatingActionButton(
                             onClick = {
                                 if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
                                     navigator.navigate(BrowseScreenDestination) {
@@ -601,6 +632,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     BrowseDirectoryGridItem(
                                         name = dir.name,
                                         onClick = { enterDir(dir.name) },
+                                        onLongClick = { toggleDirFavorite(dir.name) },
+                                        showFavoriteStar = isDirFavorite(dir.name),
                                     )
                                 }
                             }
@@ -645,7 +678,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     BrowseSectionHeader(stringResource(R.string.browse_directories))
                                 }
                                 items(dirs, key = { "d-${it.name}" }) { dir ->
-                                    BrowseDirectoryRow(name = dir.name, onClick = { enterDir(dir.name) })
+                                    BrowseDirectoryRow(
+                                        name = dir.name,
+                                        onClick = { enterDir(dir.name) },
+                                        onLongClick = { toggleDirFavorite(dir.name) },
+                                    )
                                 }
                             }
                             if (galleries.isNotEmpty()) {

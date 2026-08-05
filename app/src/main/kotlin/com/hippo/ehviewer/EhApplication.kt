@@ -64,6 +64,7 @@ import com.hippo.ehviewer.ktor.Cronet
 import com.hippo.ehviewer.ktor.configureClient
 import com.hippo.ehviewer.ktor.configureCommon
 import com.hippo.ehviewer.ktor.isCronetAvailable
+import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
 import com.hippo.ehviewer.ui.tools.dataStateFlow
@@ -133,6 +134,11 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                 FileUtils.cleanupDirectory(AppConfig.externalParseErrorDir)
             }
             launch { cleanupDownload() }
+            // Library: prune dead galleries (all sources); MediaStore roots also rescan.
+            launch {
+                if (!Settings.libraryStartupScan.value) return@launch
+                runCatching { LocalLibrary.startupMaintenance() }.onFailure { logcat(it) }
+            }
         }
         if (BuildConfig.DEBUG) {
             StrictMode.enableDefaults()

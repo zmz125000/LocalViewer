@@ -46,6 +46,8 @@
     <string name="library_no_roots">ライブラリフォルダがありません。</string>
     <string name="settings_library">ライブラリ</string>
     <string name="settings_library_summary">画像ギャラリーをスキャンするローカルフォルダ</string>
+    <string name="settings_library_startup_scan">起動時にライブラリをスキャン</string>
+    <string name="settings_library_startup_scan_summary">起動時にアクセスできないギャラリーを整理し、MediaStore ソースは再スキャンします。ファイル／アーカイブモードのソースは欠落項目のみ削除します（フルツリー走査なし）。</string>
     <string name="library_gallery_folder">フォルダ</string>
     <string name="library_gallery_archive">アーカイブ</string>
     <string name="browse_directory">ディレクトリ</string>
@@ -98,6 +100,7 @@
     <string name="history_unavailable">この項目は利用できなくなりました</string>
     <string name="back_to_history">履歴に戻る</string>
     <string name="back_to_browse">ブラウズに戻る</string>
+    <string name="back_to_library">ライブラリに戻る</string>
     <string name="go_to_first_page">最初のページへ</string>
     <string name="go_to_next_gallery">次のギャラリー</string>
     <string name="settings_download_remote_thumbs">ネットワークフォルダの表紙を取得</string>

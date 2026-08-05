@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.GridView
@@ -63,6 +64,7 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseEntry
+import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
@@ -75,6 +77,7 @@ import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
+import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseArchiveGridItem
 import com.hippo.ehviewer.ui.main.BrowseCover
@@ -91,6 +94,7 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.flow.first
+import moe.tarsin.snackbar
 import okio.Path.Companion.toPath
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -100,6 +104,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     navigator: DestinationsNavigator,
     /** When opened from History, show a FAB to jump straight back (skip path climb). */
     fromHistory: Boolean = false,
+    /** When opened from Library favourites, show a FAB to jump back to Library. */
+    fromLibrary: Boolean = false,
 ) = Screen(navigator) {
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
     // Session-scoped stack survives reader navigation (unlike remember {}).
@@ -126,10 +132,28 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
+    val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
+    val addedToFavourites = stringResource(id = R.string.add_to_favourites)
+    val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
 
     val current = stack.lastOrNull()
     val currentPath = current?.path
     val title = current?.title ?: stringResource(R.string.folder)
+
+    fun toggleDirFavorite(dir: BrowseEntry.Directory) {
+        val frame = stack.lastOrNull() ?: return
+        val rel = if (frame.relativePath.isEmpty()) dir.name else "${frame.relativePath}/${dir.name}"
+        val nowFavorite = BrowseFavorites.toggleLocalFolder(frame.rootId, rel)
+        launch {
+            snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
+        }
+    }
+
+    fun isDirFavorite(dir: BrowseEntry.Directory): Boolean {
+        val frame = stack.lastOrNull() ?: return false
+        val rel = if (frame.relativePath.isEmpty()) dir.name else "${frame.relativePath}/${dir.name}"
+        return BrowseFavorites.localFolderKey(frame.rootId, rel) in favoriteKeys
+    }
     // Scroll down hides the top bar; scroll up brings it back (enterAlways).
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     // FAB tracks the same enterAlways state (hide when bar collapses, show when it reappears).
@@ -339,8 +363,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     enter = fadeIn() + scaleIn(),
                     exit = fadeOut() + scaleOut(),
                 ) {
-                    if (fromHistory) {
-                        ExtendedFloatingActionButton(
+                    when {
+                        fromHistory -> ExtendedFloatingActionButton(
                             onClick = {
                                 if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
                                     navigator.navigate(HistoryScreenDestination) {
@@ -353,8 +377,20 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             },
                             text = { Text(stringResource(R.string.back_to_history)) },
                         )
-                    } else {
-                        ExtendedFloatingActionButton(
+                        fromLibrary -> ExtendedFloatingActionButton(
+                            onClick = {
+                                if (!navigator.popBackStack(LibraryScreenDestination, inclusive = false)) {
+                                    navigator.navigate(LibraryScreenDestination) {
+                                        launchSingleTop = true
+                                    }
+                                }
+                            },
+                            icon = {
+                                Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null)
+                            },
+                            text = { Text(stringResource(R.string.back_to_library)) },
+                        )
+                        else -> ExtendedFloatingActionButton(
                             onClick = {
                                 if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
                                     navigator.navigate(BrowseScreenDestination) {
@@ -437,7 +473,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseSectionHeader(stringResource(R.string.browse_directories))
                                 }
                                 items(dirs, key = { "d-${it.path}" }) { dir ->
-                                    BrowseDirectoryGridItem(name = dir.name, onClick = { enterDir(dir) })
+                                    BrowseDirectoryGridItem(
+                                        name = dir.name,
+                                        onClick = { enterDir(dir) },
+                                        onLongClick = { toggleDirFavorite(dir) },
+                                        showFavoriteStar = isDirFavorite(dir),
+                                    )
                                 }
                             }
                             if (galleries.isNotEmpty()) {
@@ -487,7 +528,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseSectionHeader(stringResource(R.string.browse_directories))
                                 }
                                 items(dirs, key = { "d-${it.path}" }) { dir ->
-                                    BrowseDirectoryRow(name = dir.name, onClick = { enterDir(dir) })
+                                    BrowseDirectoryRow(
+                                        name = dir.name,
+                                        onClick = { enterDir(dir) },
+                                        onLongClick = { toggleDirFavorite(dir) },
+                                    )
                                 }
                             }
                             if (galleries.isNotEmpty()) {

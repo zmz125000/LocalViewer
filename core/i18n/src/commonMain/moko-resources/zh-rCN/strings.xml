@@ -41,6 +41,8 @@
     <string name="library_no_roots">暂无图库文件夹。</string>
     <string name="settings_library">图库</string>
     <string name="settings_library_summary">用于扫描图片图库的本地文件夹</string>
+    <string name="settings_library_startup_scan">启动时扫描图库</string>
+    <string name="settings_library_startup_scan_summary">启动时清理不可访问的图库，并对媒体库来源重新扫描。文件/归档模式来源仅做缺失条目清理（不做完整目录遍历）。</string>
     <string name="library_gallery_folder">文件夹</string>
     <string name="library_gallery_archive">压缩包</string>
     <string name="browse_directory">目录</string>
@@ -346,6 +348,7 @@
     <string name="clear_all_history">清除所有阅读历史？</string>
     <string name="back_to_history">返回历史</string>
     <string name="back_to_browse">返回浏览</string>
+    <string name="back_to_library">返回书库</string>
     <string name="go_to_first_page">回到第一页</string>
     <string name="go_to_next_gallery">下一本</string>
     <string name="settings_privacy_save_history">保存历史</string>

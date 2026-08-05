@@ -215,6 +215,10 @@ object LibDirectDecode {
     /**
      * GPU-friendly wrap via [HardwareBuffer] + [Bitmap.wrapHardwareBuffer], preserving ColorSpace.
      * Falls back to the software bitmap on failure (caller keeps ownership of [software] then).
+     *
+     * [Bitmap.wrapHardwareBuffer] retains its own native ref; always [HardwareBuffer.close] the
+     * create() acquisition (same pattern as [com.hippo.ehviewer.coil.CropBorderInterceptor]).
+     * Omitting close() trips StrictMode [android.os.strictmode.LeakedClosableViolation].
      */
     private fun tryHardwareBitmap(software: Bitmap): Bitmap? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
@@ -229,9 +233,9 @@ object LibDirectDecode {
                     ?: error("wrapHardwareBuffer returned null")
                 software.recycle()
                 hw
-            } catch (t: Throwable) {
+            } finally {
+                // Release the create() ref; wrapped Bitmap keeps the buffer alive until recycle.
                 buffer.close()
-                throw t
             }
         }.onFailure { logcat(it) }.getOrNull()
     }
