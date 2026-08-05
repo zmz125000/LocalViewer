@@ -45,6 +45,8 @@
     <string name="library_no_roots">尚無圖庫資料夾。</string>
     <string name="settings_library">圖庫</string>
     <string name="settings_library_summary">用於掃描圖片圖庫的本機資料夾</string>
+    <string name="settings_library_startup_scan">啟動時掃描圖庫</string>
+    <string name="settings_library_startup_scan_summary">啟動時清理無法存取的圖庫，並對媒體庫來源重新掃描。檔案/封存模式來源僅清理缺失項目（不做完整目錄走訪）。</string>
     <string name="library_gallery_folder">資料夾</string>
     <string name="library_gallery_archive">壓縮檔</string>
     <string name="browse_directory">目錄</string>

@@ -99,6 +99,11 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 state = Settings.showReadingProgress.asMutableState(),
             )
             SwitchPreference(
+                title = stringResource(id = R.string.settings_library_startup_scan),
+                summary = stringResource(id = R.string.settings_library_startup_scan_summary),
+                state = Settings.libraryStartupScan.asMutableState(),
+            )
+            SwitchPreference(
                 title = stringResource(id = R.string.settings_download_remote_thumbs),
                 summary = stringResource(id = R.string.settings_download_remote_thumbs_summary),
                 state = Settings.downloadRemoteThumbs.asMutableState(),

@@ -7,10 +7,11 @@ import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -29,6 +31,7 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,6 +49,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
@@ -66,6 +70,7 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.AddRootResult
+import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaPermissions
@@ -103,11 +108,20 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
     val smbSources by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
     val webDavSources by WebDavRepository.sourcesFlow().collectAsState(initial = emptyList())
+    val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val gridView by Settings.gridView.collectAsState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val context = LocalContext.current
     val cannotGetLocation = stringResource(id = R.string.settings_download_cant_get_download_location)
     val alreadyAdded = stringResource(id = R.string.library_root_already_added)
+    val addedToFavourites = stringResource(id = R.string.add_to_favourites)
+    val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
+
+    fun notifyFavoriteToggle(nowFavorite: Boolean) {
+        launch {
+            snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
+        }
+    }
 
     var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }
     var webDavEditor by remember { mutableStateOf<WebDavEditorState?>(null) }
@@ -463,19 +477,29 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         BrowseSectionHeader(stringResource(R.string.network))
                     }
                     items(smbSources, key = { "s-${it.id}" }) { source ->
+                        val favorited = BrowseFavorites.smbKey(source.id) in favoriteKeys
                         BrowseRootCard(
                             title = source.displayName,
                             subtitle = smbSubtitle(source),
+                            favorited = favorited,
                             icon = { Icon(Icons.Default.Lan, contentDescription = null) },
                             onClick = { openSmb(source) },
+                            onLongClick = {
+                                notifyFavoriteToggle(BrowseFavorites.toggleSmb(source.id))
+                            },
                         )
                     }
                     items(webDavSources, key = { "w-${it.id}" }) { source ->
+                        val favorited = BrowseFavorites.webDavKey(source.id) in favoriteKeys
                         BrowseRootCard(
                             title = source.displayName,
                             subtitle = webDavSubtitle(source),
+                            favorited = favorited,
                             icon = { Icon(Icons.Default.Cloud, contentDescription = null) },
                             onClick = { openWebDav(source) },
+                            onLongClick = {
+                                notifyFavoriteToggle(BrowseFavorites.toggleWebDav(source.id))
+                            },
                         )
                     }
                 }
@@ -484,6 +508,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         BrowseSectionHeader(stringResource(R.string.folder))
                     }
                     items(roots, key = { "r-${it.id}" }) { root ->
+                        val favorited = BrowseFavorites.localKey(root.id) in favoriteKeys
                         BrowseRootCard(
                             title = root.displayName,
                             subtitle = stringResource(
@@ -493,6 +518,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                                     R.string.folder
                                 },
                             ),
+                            favorited = favorited,
                             icon = {
                                 Icon(
                                     if (root.isLibraryRole) {
@@ -504,6 +530,9 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                                 )
                             },
                             onClick = { openLocalRoot(root) },
+                            onLongClick = {
+                                notifyFavoriteToggle(BrowseFavorites.toggleLocal(root.id))
+                            },
                         )
                     }
                 }
@@ -520,23 +549,43 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         BrowseSectionHeader(stringResource(R.string.network))
                     }
                     items(smbSources, key = { "s-${it.id}" }) { source ->
+                        val favorited = BrowseFavorites.smbKey(source.id) in favoriteKeys
                         ListItem(
-                            headlineContent = { Text(source.displayName) },
+                            headlineContent = {
+                                BrowseSourceTitle(name = source.displayName, favorited = favorited)
+                            },
                             supportingContent = { Text(smbSubtitle(source)) },
                             leadingContent = {
                                 Icon(Icons.Default.Lan, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             },
-                            modifier = Modifier.fillMaxWidth().clickable { openSmb(source) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = { openSmb(source) },
+                                    onLongClick = {
+                                        notifyFavoriteToggle(BrowseFavorites.toggleSmb(source.id))
+                                    },
+                                ),
                         )
                     }
                     items(webDavSources, key = { "w-${it.id}" }) { source ->
+                        val favorited = BrowseFavorites.webDavKey(source.id) in favoriteKeys
                         ListItem(
-                            headlineContent = { Text(source.displayName) },
+                            headlineContent = {
+                                BrowseSourceTitle(name = source.displayName, favorited = favorited)
+                            },
                             supportingContent = { Text(webDavSubtitle(source)) },
                             leadingContent = {
                                 Icon(Icons.Default.Cloud, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             },
-                            modifier = Modifier.fillMaxWidth().clickable { openWebDav(source) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = { openWebDav(source) },
+                                    onLongClick = {
+                                        notifyFavoriteToggle(BrowseFavorites.toggleWebDav(source.id))
+                                    },
+                                ),
                         )
                     }
                 }
@@ -545,8 +594,11 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         BrowseSectionHeader(stringResource(R.string.folder))
                     }
                     items(roots, key = { "r-${it.id}" }) { root ->
+                        val favorited = BrowseFavorites.localKey(root.id) in favoriteKeys
                         ListItem(
-                            headlineContent = { Text(root.displayName) },
+                            headlineContent = {
+                                BrowseSourceTitle(name = root.displayName, favorited = favorited)
+                            },
                             supportingContent = {
                                 Text(
                                     stringResource(
@@ -565,7 +617,14 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                             },
-                            modifier = Modifier.fillMaxWidth().clickable { openLocalRoot(root) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = { openLocalRoot(root) },
+                                    onLongClick = {
+                                        notifyFavoriteToggle(BrowseFavorites.toggleLocal(root.id))
+                                    },
+                                ),
                         )
                     }
                 }
@@ -626,20 +685,45 @@ private fun smbSubtitle(source: SmbSourceEntity): String = buildString {
 }
 
 @Composable
+private fun BrowseSourceTitle(
+    name: String,
+    favorited: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(name, modifier = Modifier.weight(1f, fill = false), maxLines = 2)
+        if (favorited) {
+            Icon(
+                Icons.Default.Star,
+                contentDescription = stringResource(R.string.favourite),
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+@Composable
 private fun BrowseRootCard(
     title: String,
     subtitle: String,
+    favorited: Boolean,
     icon: @Composable () -> Unit,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     com.ehviewer.core.ui.component.ElevatedCard(
         onClick = onClick,
-        onLongClick = {},
+        onLongClick = onLongClick,
         modifier = Modifier.fillMaxWidth().height(120.dp),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             icon()
-            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 2)
+            BrowseSourceTitle(name = title, favorited = favorited)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 2)
         }
     }

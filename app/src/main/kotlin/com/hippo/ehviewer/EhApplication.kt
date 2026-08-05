@@ -133,6 +133,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             launch { cleanupDownload() }
             // Library: prune dead galleries (all sources); MediaStore roots also rescan.
             launch {
+                if (!Settings.libraryStartupScan.value) return@launch
                 runCatching { LocalLibrary.startupMaintenance() }.onFailure { logcat(it) }
             }
         }

@@ -106,6 +106,18 @@ object Settings : DataStorePreferences(null) {
 
     val showGalleryPages = boolPref("show_gallery_pages", true)
     val showReadingProgress = boolPref("show_reading_progress", false)
+
+    /**
+     * When true (default), app start runs [com.hippo.ehviewer.library.LocalLibrary.startupMaintenance]
+     * (prune inaccessible galleries; MediaStore sources also rescan).
+     */
+    val libraryStartupScan = boolPref("library_startup_scan", true)
+
+    /**
+     * Browse sources pinned to Library favourites. Keys:
+     * `local:{rootId}`, `smb:{id}`, `webdav:{id}`.
+     */
+    val favoriteBrowseSources = stringSetPref("favorite_browse_sources", emptySet())
     val showVoteStatus = boolPref("show_vote_status", false)
     val showComments = boolPref("show_gallery_comments", true)
     val commentThreshold = intPref("comment_threshold", -100)

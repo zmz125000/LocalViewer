@@ -1,27 +1,37 @@
 package com.hippo.ehviewer.ui.screen
 
 import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,36 +45,52 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.FavoriteBrowseSource
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
+import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
 import com.hippo.ehviewer.library.toBaseGalleryInfo
+import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
+import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
+import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
+import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
+import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.roundToInt
+import moe.tarsin.navigate
+import moe.tarsin.snackbar
+import moe.tarsin.string
 
 @Destination<RootGraph>(start = true)
 @Composable
@@ -81,13 +107,29 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
 
     val density = LocalDensity.current
     val scanning by LocalLibrary.scanning.collectAsState()
-    val galleries by remember(keyword) {
+    val rawGalleries by remember(keyword) {
         if (keyword.isBlank()) {
             LocalLibrary.galleriesFlow()
         } else {
             LocalLibrary.searchGalleriesFlow(keyword.trim())
         }
     }.collectAsState(initial = emptyList())
+    // Hide cross-source duplicates in UI (prefer MediaStore); DB rows stay intact.
+    val galleries = remember(rawGalleries) {
+        rawGalleries.hideDuplicateGalleriesPreferMediaStore()
+    }
+
+    val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
+    val smbSources by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
+    val webDavSources by WebDavRepository.sourcesFlow().collectAsState(initial = emptyList())
+    val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
+    val favorites = remember(roots, smbSources, webDavSources, favoriteKeys, keyword) {
+        if (keyword.isNotBlank()) {
+            emptyList()
+        } else {
+            resolveFavoriteBrowseSources(roots, smbSources, webDavSources, favoriteKeys)
+        }
+    }
 
     val listMode by Settings.listMode.collectAsState()
     val showPages by Settings.showGalleryPages.collectAsState()
@@ -110,6 +152,36 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             navToReader(gallery.contentPath, info)
         } else {
             navToLocalFolderReader(gallery.contentPath, info)
+        }
+    }
+
+    fun openFavorite(fav: FavoriteBrowseSource) {
+        when (fav) {
+            is FavoriteBrowseSource.Local -> {
+                val path = LocalLibrary.rootPath(fav.root) ?: return
+                BrowseSession.localStack = listOf(
+                    BrowseSession.LocalFrame(
+                        rootId = fav.root.id,
+                        path = path.toString(),
+                        title = fav.root.displayName,
+                        relativePath = "",
+                        preferMediaStore = fav.root.prefersMediaStore,
+                    ),
+                )
+                navigate(FolderBrowserScreenDestination())
+            }
+            is FavoriteBrowseSource.Smb -> {
+                if (fav.source.share.isBlank()) {
+                    launch { snackbar(string(R.string.network_share_required)) }
+                    return
+                }
+                BrowseSession.setSmbSegments(fav.source.id, emptyList())
+                navigate(SmbBrowserScreenDestination(fav.source.id, ""))
+            }
+            is FavoriteBrowseSource.WebDav -> {
+                BrowseSession.setWebDavSegments(fav.source.id, emptyList())
+                navigate(WebDavBrowserScreenDestination(fav.source.id, ""))
+            }
         }
     }
 
@@ -165,7 +237,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
 
         Box(Modifier.fillMaxSize()) {
-            if (galleries.isEmpty() && !scanning && !refreshing) {
+            if (galleries.isEmpty() && favorites.isEmpty() && !scanning && !refreshing) {
                 Column(
                     modifier = Modifier
                         .padding(paddingValues)
@@ -191,6 +263,22 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     contentPadding = listPadding,
                     verticalArrangement = Arrangement.spacedBy(listInterval),
                 ) {
+                    if (favorites.isNotEmpty()) {
+                        item(key = "fav-hdr") {
+                            BrowseSectionHeader(stringResource(R.string.favourite))
+                        }
+                        items(favorites, key = { "fav-${it.key}" }) { fav ->
+                            FavoriteSourceListRow(
+                                fav = fav,
+                                onClick = { openFavorite(fav) },
+                            )
+                        }
+                        if (galleries.isNotEmpty()) {
+                            item(key = "gal-hdr") {
+                                BrowseSectionHeader(stringResource(R.string.library))
+                            }
+                        }
+                    }
                     items(galleries, key = { it.id }) { gallery ->
                         LocalGalleryListItem(
                             gallery = gallery,
@@ -214,6 +302,28 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     verticalArrangement = gridSpacing,
                     horizontalArrangement = gridSpacing,
                 ) {
+                    if (favorites.isNotEmpty()) {
+                        item(
+                            key = "fav-hdr",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
+                            BrowseSectionHeader(stringResource(R.string.favourite))
+                        }
+                        items(favorites, key = { "fav-${it.key}" }) { fav ->
+                            FavoriteSourceGridCell(
+                                fav = fav,
+                                onClick = { openFavorite(fav) },
+                            )
+                        }
+                        if (galleries.isNotEmpty()) {
+                            item(
+                                key = "gal-hdr",
+                                span = { GridItemSpan(maxLineSpan) },
+                            ) {
+                                BrowseSectionHeader(stringResource(R.string.library))
+                            }
+                        }
+                    }
                     items(galleries, key = { it.id }) { gallery ->
                         LocalGalleryGridItem(
                             gallery = gallery,
@@ -225,11 +335,101 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
 
-            if (scanning && galleries.isEmpty()) {
+            if (scanning && galleries.isEmpty() && favorites.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularWavyProgressIndicator()
                 }
             }
         }
     }
+}
+
+@Composable
+private fun FavoriteSourceListRow(
+    fav: FavoriteBrowseSource,
+    onClick: () -> Unit,
+) {
+    ListItem(
+        headlineContent = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(fav.displayName, modifier = Modifier.weight(1f, fill = false))
+                Icon(
+                    Icons.Default.Star,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        },
+        supportingContent = { Text(favoriteSubtitle(fav)) },
+        leadingContent = {
+            Icon(
+                favoriteIcon(fav),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        },
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+    )
+}
+
+@Composable
+private fun FavoriteSourceGridCell(
+    fav: FavoriteBrowseSource,
+    onClick: () -> Unit,
+) {
+    ElevatedCard(
+        onClick = onClick,
+        onLongClick = onClick,
+        modifier = Modifier.fillMaxWidth().height(120.dp),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(
+                favoriteIcon(fav),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    fav.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    Icons.Default.Star,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Text(
+                favoriteSubtitle(fav),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun favoriteSubtitle(fav: FavoriteBrowseSource): String = when (fav) {
+    is FavoriteBrowseSource.Local -> stringResource(
+        if (fav.root.isLibraryRole) R.string.library else R.string.folder,
+    )
+    is FavoriteBrowseSource.Smb -> stringResource(R.string.network)
+    is FavoriteBrowseSource.WebDav -> stringResource(R.string.webdav)
+}
+
+private fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
+    is FavoriteBrowseSource.Local ->
+        if (fav.root.isLibraryRole) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.Folder
+    is FavoriteBrowseSource.Smb -> Icons.Default.Lan
+    is FavoriteBrowseSource.WebDav -> Icons.Default.Cloud
 }
