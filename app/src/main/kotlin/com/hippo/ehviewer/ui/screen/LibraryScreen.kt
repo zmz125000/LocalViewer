@@ -11,11 +11,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.ViewList
@@ -39,6 +39,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -50,12 +51,18 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewModelScope
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.LocalGalleryEntity
+import com.ehviewer.core.database.model.SmbSourceEntity
+import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
+import com.ehviewer.core.ui.util.rememberInVM
+import com.ehviewer.core.ui.util.rememberUpdatedStateInVM
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.hippo.ehviewer.Settings
@@ -87,6 +94,8 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import moe.tarsin.navigate
 import moe.tarsin.snackbar
 import moe.tarsin.string
@@ -100,32 +109,69 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
 
     var searchBarExpanded by rememberSaveable { mutableStateOf(false) }
-    var searchBarOffsetY by remember { mutableIntStateOf(0) }
     var keyword by rememberSaveable { mutableStateOf("") }
     var refreshing by remember { mutableStateOf(false) }
+
+    // Survive NavHost dispose/restore (e.g. open favourite folder → back).
+    // collectAsState(initial=empty) remounted an empty list for one frame and
+    // coerced LazyList scroll to top; VM-held state keeps last data + scroll position.
+    val listState = rememberInVM { LazyListState() }
+    val gridState = rememberInVM { LazyGridState() }
+    var searchBarOffsetY by rememberInVM { mutableIntStateOf(0) }
+    val keywordState = rememberUpdatedStateInVM(keyword)
+    val rawGalleries by rememberInVM {
+        mutableStateOf(emptyList<LocalGalleryEntity>()).also { state ->
+            viewModelScope.launch {
+                snapshotFlow { keywordState.value }.collectLatest { kw ->
+                    val flow = if (kw.isBlank()) {
+                        LocalLibrary.galleriesFlow()
+                    } else {
+                        LocalLibrary.searchGalleriesFlow(kw.trim())
+                    }
+                    flow.collect { state.value = it }
+                }
+            }
+        }
+    }
+    val allGalleries by rememberInVM {
+        mutableStateOf(emptyList<LocalGalleryEntity>()).also { state ->
+            viewModelScope.launch {
+                LocalLibrary.galleriesFlow().collect { state.value = it }
+            }
+        }
+    }
+    val roots by rememberInVM {
+        mutableStateOf(emptyList<LibraryRootEntity>()).also { state ->
+            viewModelScope.launch {
+                LocalLibrary.rootsFlow().collect { state.value = it }
+            }
+        }
+    }
+    val smbSources by rememberInVM {
+        mutableStateOf(emptyList<SmbSourceEntity>()).also { state ->
+            viewModelScope.launch {
+                SmbRepository.sourcesFlow().collect { state.value = it }
+            }
+        }
+    }
+    val webDavSources by rememberInVM {
+        mutableStateOf(emptyList<WebDavSourceEntity>()).also { state ->
+            viewModelScope.launch {
+                WebDavRepository.sourcesFlow().collect { state.value = it }
+            }
+        }
+    }
 
     DrawerHandle(!searchBarExpanded)
 
     val density = LocalDensity.current
     val scanning by LocalLibrary.scanning.collectAsState()
-    val rawGalleries by remember(keyword) {
-        if (keyword.isBlank()) {
-            LocalLibrary.galleriesFlow()
-        } else {
-            LocalLibrary.searchGalleriesFlow(keyword.trim())
-        }
-    }.collectAsState(initial = emptyList())
     // Hide cross-source duplicates in UI (prefer MediaStore); DB rows stay intact.
     val galleries = remember(rawGalleries) {
         rawGalleries.hideDuplicateGalleriesPreferMediaStore()
     }
 
-    val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
-    val smbSources by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
-    val webDavSources by WebDavRepository.sourcesFlow().collectAsState(initial = emptyList())
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
-    // Favourites strip uses full library (not search-filtered) so pins stay visible while searching.
-    val allGalleries by LocalLibrary.galleriesFlow().collectAsState(initial = emptyList())
     val favorites = remember(roots, smbSources, webDavSources, allGalleries, favoriteKeys) {
         resolveFavoriteBrowseSources(roots, smbSources, webDavSources, allGalleries, favoriteKeys)
     }
@@ -284,24 +330,11 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
 
+        val isEmpty = galleries.isEmpty() && !showFavorites
         Box(Modifier.fillMaxSize()) {
-            if (galleries.isEmpty() && !showFavorites && !scanning && !refreshing) {
-                Column(
-                    modifier = Modifier
-                        .padding(paddingValues)
-                        .padding(horizontal = marginH)
-                        .fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(
-                        text = stringResource(R.string.library_empty),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else if (listMode == 0) {
-                val listState = rememberLazyListState()
+            // Always keep the Lazy list/grid mounted so scroll state is not recreated when
+            // empty ↔ non-empty briefly flips (e.g. re-subscribe after pop back).
+            if (listMode == 0) {
                 // Match GalleryList: search-bar inset + list margins so top gap under the
                 // search field equals the horizontal card inset (marginH + search padding).
                 val listPadding = paddingValues + PaddingValues(marginH, marginV)
@@ -353,7 +386,6 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     }
                 }
             } else {
-                val gridState = rememberLazyGridState()
                 val gridSpacing = GalleryGridDefaults.spacedBy()
                 FastScrollLazyVerticalGrid(
                     columns = GalleryGridDefaults.columns(),
@@ -406,7 +438,24 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
 
-            if (scanning && galleries.isEmpty() && !showFavorites) {
+            if (isEmpty && !scanning && !refreshing) {
+                Column(
+                    modifier = Modifier
+                        .padding(paddingValues)
+                        .padding(horizontal = marginH)
+                        .fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = stringResource(R.string.library_empty),
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            if (scanning && isEmpty) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularWavyProgressIndicator()
                 }
