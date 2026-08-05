@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.main
 
+import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.plus
@@ -11,26 +12,26 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.ehviewer.core.ui.util.LocalWindowSizeClass
-import com.ehviewer.core.ui.util.isExpanded
 import com.hippo.ehviewer.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import kotlin.math.ceil
 
 /**
  * Shared Library / Browse thumb-grid layout.
  *
- * Columns use [Settings.thumbColumns] with a width-class floor so tablets are not stuck at 3.
+ * Portrait columns = [Settings.thumbColumns] as set.
+ * Landscape = that value × 1.5, rounded up (e.g. 3 → 5, 4 → 6).
  * Edge inset and inter-cell gutter come from tablet-qualified dimens.
  */
 object GalleryGridDefaults {
     @Composable
     fun columnCount(): Int {
         val thumbColumns by Settings.thumbColumns.collectAsState()
-        val widthDp = LocalConfiguration.current.screenWidthDp
-        val expanded = LocalWindowSizeClass.current.isExpanded
-        return remember(thumbColumns, widthDp, expanded) {
-            effectiveColumnCount(thumbColumns, widthDp, expanded)
+        val landscape =
+            LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+        return remember(thumbColumns, landscape) {
+            effectiveColumnCount(thumbColumns, landscape)
         }
     }
 
@@ -62,11 +63,9 @@ object GalleryGridDefaults {
     fun namePaddingBottom(): Dp = dimensionResource(R.dimen.gallery_grid_name_padding_bottom)
 }
 
-internal fun effectiveColumnCount(thumbColumns: Int, widthDp: Int, expanded: Boolean): Int {
-    val floor = when {
-        expanded || widthDp >= 840 -> 5
-        widthDp >= 600 -> 4
-        else -> 3
-    }
-    return thumbColumns.coerceAtLeast(floor).coerceIn(1, 10)
+/** Portrait: setting as-is. Landscape: ceil(setting × 1.5). No width-class minimum. */
+internal fun effectiveColumnCount(thumbColumns: Int, landscape: Boolean): Int {
+    val base = thumbColumns.coerceIn(1, 10)
+    if (!landscape) return base
+    return ceil(base * 1.5).toInt().coerceAtLeast(1)
 }

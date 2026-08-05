@@ -74,8 +74,37 @@ static ssize_t max_file_size = 0;
 static bool use_zip_cd_index = false;
 /** Stream TAR opened via header-only walk (seek past bodies). */
 static bool use_tar_index = false;
-/** Bytes actually pulled through stream I/O (diagnostics). */
+/** Bytes actually pulled through stream I/O (diagnostics + scan budget). */
 static int64_t stream_bytes_read = 0;
+/**
+ * Soft budget for non-ZIP cover scans (network TAR/solid/libarchive fallback).
+ * 0 = unlimited. ZIP CD path ignores this (EOCD+CD is intentionally uncapped).
+ */
+static int64_t stream_scan_limit = 0;
+/** Set when a read was refused because [stream_scan_limit] would be exceeded. */
+static bool stream_scan_hit_limit = false;
+/**
+ * Stream open confirmed a container (ZIP CD / TAR headers) with zero playable
+ * images — callers must not fall through to another format probe.
+ */
+static bool stream_index_finished_empty = false;
+
+static void stream_scan_reset(int64_t limit) {
+    stream_bytes_read = 0;
+    stream_scan_limit = limit > 0 ? limit : 0;
+    stream_scan_hit_limit = false;
+    stream_index_finished_empty = false;
+}
+
+/** @return 1 if further stream I/O should stop (limit hit). */
+static int stream_scan_exhausted(void) {
+    if (stream_scan_limit <= 0) return 0;
+    if (stream_bytes_read >= stream_scan_limit) {
+        stream_scan_hit_limit = true;
+        return 1;
+    }
+    return 0;
+}
 
 // Progressive TAR header walk (lazy first page + grow listed count).
 // Discovery order only — never mid-session qsort (indices must stay stable for seek bar).
@@ -164,9 +193,22 @@ static la_ssize_t stream_read_cb(struct archive *a, void *client_data, const voi
         *buff = NULL;
         return 0;
     }
+    if (stream_scan_exhausted()) {
+        *buff = NULL;
+        return ARCHIVE_FATAL;
+    }
     // Chunk size; Kotlin ReadAhead coalesces sequential ranges further.
     // 1 MiB reduces JNI / bridge round-trips during solid sequential extract.
-    const jint chunk = 1024 * 1024;
+    jint chunk = 1024 * 1024;
+    if (stream_scan_limit > 0) {
+        int64_t left = stream_scan_limit - stream_bytes_read;
+        if (left <= 0) {
+            stream_scan_hit_limit = true;
+            *buff = NULL;
+            return ARCHIVE_FATAL;
+        }
+        if (left < (int64_t) chunk) chunk = (jint) left;
+    }
     jbyteArray arr = (*env)->CallObjectMethod(env, g_stream_bridge, g_mid_read, chunk);
     if ((*env)->ExceptionCheck(env)) {
         (*env)->ExceptionDescribe(env);
@@ -207,15 +249,28 @@ static int stream_pread(uint8_t *dst, la_int64_t off, size_t len) {
     if (off < 0 || (size_t) off > archiveSize) return -1;
     size_t max = archiveSize - (size_t) off;
     if (len > max) len = max;
+    if (stream_scan_exhausted()) return -1;
     JNIEnv *env = archive_get_env();
     if (!env || !g_stream_bridge || !g_mid_read || !g_mid_seek) return -1;
     g_stream_pos = off;
     if (stream_sync_java_pos(env, off) != 0) return -1;
     size_t got = 0;
     while (got < len) {
-        jint chunk = (jint) ((len - got) > (size_t) (1024 * 1024)
-                ? (1024 * 1024)
-                : (len - got));
+        if (stream_scan_limit > 0 && stream_bytes_read >= stream_scan_limit) {
+            stream_scan_hit_limit = true;
+            break;
+        }
+        size_t want = len - got;
+        if (want > (size_t) (1024 * 1024)) want = (size_t) (1024 * 1024);
+        if (stream_scan_limit > 0) {
+            int64_t left = stream_scan_limit - stream_bytes_read;
+            if (left <= 0) {
+                stream_scan_hit_limit = true;
+                break;
+            }
+            if ((int64_t) want > left) want = (size_t) left;
+        }
+        jint chunk = (jint) want;
         jbyteArray arr = (*env)->CallObjectMethod(env, g_stream_bridge, g_mid_read, chunk);
         if ((*env)->ExceptionCheck(env)) {
             (*env)->ExceptionDescribe(env);
@@ -260,7 +315,11 @@ static uint64_t zip_u64(const uint8_t *p) {
  */
 static jint zip_stream_open_from_cd(jboolean sort_entries, bool cover_only) {
     if (archiveSize < 22) return 0;
+    // ZIP CD is intentionally uncapped (EOCD + CD only — not a full-body walk).
+    int64_t saved_limit = stream_scan_limit;
+    stream_scan_limit = 0;
     stream_bytes_read = 0;
+    stream_scan_hit_limit = false;
 
     // Progressive EOCD tail: most zips have empty/short comments (EOCD in last 22–1 KiB).
     // Avoid always pulling the full 64 KiB+22 max-comment window over SMB/WebDAV.
@@ -302,6 +361,7 @@ static jint zip_stream_open_from_cd(jboolean sort_entries, bool cover_only) {
     }
     if (eocd < 0 || !tail) {
         free(tail);
+        stream_scan_limit = saved_limit;
         return 0;
     }
 
@@ -331,13 +391,18 @@ static jint zip_stream_open_from_cd(jboolean sort_entries, bool cover_only) {
 
     if (cd_size == 0 || cd_off >= archiveSize || cd_size > archiveSize ||
         cd_off + cd_size > archiveSize || cd_size > 64ull * 1024 * 1024) {
+        stream_scan_limit = saved_limit;
         return 0;
     }
 
     uint8_t *cd = (uint8_t *) malloc((size_t) cd_size);
-    if (!cd) return 0;
+    if (!cd) {
+        stream_scan_limit = saved_limit;
+        return 0;
+    }
     if (stream_pread(cd, (la_int64_t) cd_off, (size_t) cd_size) != (int) cd_size) {
         free(cd);
+        stream_scan_limit = saved_limit;
         return 0;
     }
 
@@ -347,6 +412,7 @@ static jint zip_stream_open_from_cd(jboolean sort_entries, bool cover_only) {
     entries = calloc(cap, sizeof(entry));
     if (!entries) {
         free(cd);
+        stream_scan_limit = saved_limit;
         return 0;
     }
     entryCount = 0;
@@ -467,10 +533,17 @@ static jint zip_stream_open_from_cd(jboolean sort_entries, bool cover_only) {
     if (!entryCount) {
         free(entries);
         entries = NULL;
+        // Valid ZIP CD with no playable images — do not probe TAR/libarchive.
+        stream_index_finished_empty = true;
+        use_zip_cd_index = true;
+        stream_scan_limit = saved_limit;
+        LOGI("Found 0 images in archive (ZIP CD empty, %lld bytes net)",
+             (long long) stream_bytes_read);
         return 0;
     }
     if (!cover_only && sort_entries) qsort(entries, entryCount, sizeof(entry), compare_entries);
     use_zip_cd_index = true;
+    stream_scan_limit = saved_limit;
     LOGI("Found %zu images in archive (ZIP CD%s, %lld bytes net)",
          entryCount, cover_only ? " cover" : "", (long long) stream_bytes_read);
     return (int) entryCount;
@@ -655,9 +728,21 @@ static int tar_walk_step(int stop_after_images) {
     int added = 0;
 
     while ((size_t) tar_walk_pos + TAR_BLOCK <= archiveSize) {
-        if (stream_pread(hdr, tar_walk_pos, TAR_BLOCK) != TAR_BLOCK) {
-            tar_walk_complete = true;
+        if (stream_scan_exhausted()) {
+            // Budget hit mid-walk — not EOF; leave incomplete for caller.
             tar_walk_active = false;
+            free(tar_walk_pending);
+            tar_walk_pending = NULL;
+            return 0;
+        }
+        if (stream_pread(hdr, tar_walk_pos, TAR_BLOCK) != TAR_BLOCK) {
+            // Short read under scan limit → incomplete; true EOF-ish otherwise.
+            if (stream_scan_hit_limit) {
+                tar_walk_active = false;
+            } else {
+                tar_walk_complete = true;
+                tar_walk_active = false;
+            }
             free(tar_walk_pending);
             tar_walk_pending = NULL;
             return 0;
@@ -809,7 +894,10 @@ static int tar_walk_step(int stop_after_images) {
 static jint tar_stream_open_from_headers(jboolean sort_entries, bool cover_only, bool progressive) {
     tar_walk_reset();
     if (archiveSize < TAR_BLOCK) return 0;
+    // Keep caller's scan budget (cover caps); do not zero stream_bytes_read if ZIP
+    // already ran — but ZIP path restores its own counter. Reset only walk state.
     stream_bytes_read = 0;
+    stream_scan_hit_limit = false;
 
     uint8_t hdr[TAR_BLOCK];
     if (stream_pread(hdr, 0, TAR_BLOCK) != TAR_BLOCK) return 0;
@@ -838,6 +926,16 @@ static jint tar_stream_open_from_headers(jboolean sort_entries, bool cover_only,
     if (!entryCount) {
         free(entries);
         entries = NULL;
+        // Valid TAR: finished empty, or aborted by scan budget (not a format miss).
+        if (tar_walk_complete || stream_scan_hit_limit) {
+            stream_index_finished_empty = true;
+            use_tar_index = true;
+            LOGI("Found 0 images in archive (TAR%s, %lld bytes net%s)",
+                 cover_only ? " cover" : "",
+                 (long long) stream_bytes_read,
+                 stream_scan_hit_limit ? ", scan cap" : " complete");
+            return 0;
+        }
         tar_walk_reset();
         use_tar_index = false;
         return 0;
@@ -855,6 +953,9 @@ static jint tar_stream_open_from_headers(jboolean sort_entries, bool cover_only,
         tar_walk_complete = true;
         free(tar_walk_pending);
         tar_walk_pending = NULL;
+        // Cover found — allow member extract without budget abort.
+        stream_scan_limit = 0;
+        stream_scan_hit_limit = false;
     }
 
     LOGI("Found %zu images in archive (TAR headers%s%s, %lld bytes net)",
@@ -1403,16 +1504,21 @@ static jint archive_open_stream_single_pass(jboolean sort_entries, bool cover_on
     use_zip_cd_index = false;
     use_tar_index = false;
     tar_walk_reset();
+    // stream_scan_* already set by openArchiveStream; only reset bytes for this open.
     stream_bytes_read = 0;
+    stream_scan_hit_limit = false;
+    stream_index_finished_empty = false;
 
-    // ZIP central-directory index (no member walk).
+    // ZIP central-directory index (no member walk). Uncapped inside zip helper.
     jint zip_n = zip_stream_open_from_cd(sort_entries, cover_only);
     if (zip_n > 0) return zip_n;
+    if (stream_index_finished_empty) return 0;
 
-    // TAR: progressive (reader) or full / cover-only.
+    // TAR: progressive (reader) or full / cover-only. Honours stream_scan_limit.
     jint tar_n = tar_stream_open_from_headers(
             sort_entries, cover_only, progressive_tar && !cover_only);
     if (tar_n > 0) return tar_n;
+    if (stream_index_finished_empty || stream_scan_hit_limit) return 0;
 
     // Fallback: libarchive with skip→seek (odd formats / edge cases).
     archive_ctx *ctx = archive_alloc_ctx();
@@ -1427,7 +1533,9 @@ static jint archive_open_stream_single_pass(jboolean sort_entries, bool cover_on
     entryCount = 0;
     max_file_size = 0;
 
-    while (archive_read_next_header(ctx->arc, &ctx->entry) == ARCHIVE_OK) {
+    int last_r = ARCHIVE_OK;
+    while ((last_r = archive_read_next_header(ctx->arc, &ctx->entry)) == ARCHIVE_OK) {
+        if (stream_scan_exhausted()) break;
         const char *name = archive_entry_pathname(ctx->entry);
         if (!archive_entry_is_file(ctx->entry) || !filename_is_playable_file(name))
             continue;
@@ -1453,13 +1561,23 @@ static jint archive_open_stream_single_pass(jboolean sort_entries, bool cover_on
         entries[entryCount].compression_method = 0;
         max_file_size = max(entries[entryCount].size, max_file_size);
         entryCount++;
-        if (cover_only) break;
+        if (cover_only) {
+            // Cover found — allow full page extract without budget abort.
+            stream_scan_limit = 0;
+            stream_scan_hit_limit = false;
+            break;
+        }
     }
 
-    LOGI("Found %zu images in archive (libarchive, %lld bytes net)",
-         entryCount, (long long) stream_bytes_read);
+    LOGI("Found %zu images in archive (libarchive, %lld bytes net%s)",
+         entryCount, (long long) stream_bytes_read,
+         stream_scan_hit_limit ? ", scan cap" : "");
     if (!entryCount) {
-        LOGE("%s%s", "Archive read failed: ", archive_error_string(ctx->arc));
+        if (last_r == ARCHIVE_EOF || stream_scan_hit_limit) {
+            stream_index_finished_empty = true;
+        } else {
+            LOGE("%s%s", "Archive read failed: ", archive_error_string(ctx->arc));
+        }
         archive_release_ctx(ctx);
         free(entries);
         entries = NULL;
@@ -1556,7 +1674,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchive(JNIEnv *env, jclass thiz, jint
 JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(
         JNIEnv *env, jclass thiz, jobject bridge, jlong size, jboolean sort_entries,
-        jboolean cover_only, jboolean progressive_tar) {
+        jboolean cover_only, jboolean progressive_tar, jlong max_scan_bytes) {
     EH_UNUSED(thiz);
     if (!bridge || size <= 0) return 0;
     archive_cache_vm(env);
@@ -1571,6 +1689,8 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(
     archiveSize = (size_t) size;
     archiveAddr = MAP_FAILED;
     g_stream_pos = 0;
+    // Non-ZIP cover budget (0 = unlimited). ZIP CD path clears limit while parsing.
+    stream_scan_reset(max_scan_bytes);
     g_stream_bridge = (*env)->NewGlobalRef(env, bridge);
     jclass cls = (*env)->GetObjectClass(env, bridge);
     g_mid_read = (*env)->GetMethodID(env, cls, "nativeRead", "(I)[B");
@@ -1584,6 +1704,33 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(
     // Reader progressive TAR; cover_only never progressive (thumb stops at first image).
     bool prog = progressive_tar == JNI_TRUE && cover_only != JNI_TRUE;
     return archive_open_common(env, sort_entries, cover_only == JNI_TRUE, prog);
+}
+
+/** Bytes pulled through stream I/O during the active open/extract session. */
+JNIEXPORT jlong JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamBytesRead(JNIEnv *env, jclass thiz) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    return (jlong) stream_bytes_read;
+}
+
+/** True when a non-ZIP scan budget aborted further reads. */
+JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_isArchiveScanLimited(JNIEnv *env, jclass thiz) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    return stream_scan_hit_limit ? JNI_TRUE : JNI_FALSE;
+}
+
+/**
+ * True when stream open finished a ZIP/TAR/libarchive probe with zero playable
+ * images (or hit the scan budget). Used by cover extract to decide NoImages vs Skip.
+ */
+JNIEXPORT jboolean JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_isStreamIndexFinishedEmpty(JNIEnv *env, jclass thiz) {
+    EH_UNUSED(env);
+    EH_UNUSED(thiz);
+    return stream_index_finished_empty ? JNI_TRUE : JNI_FALSE;
 }
 
 /** Continue progressive TAR index; returns total listed count. */
@@ -1612,7 +1759,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_isStreamIndexComplete(JNIEnv *env, jclass 
  */
 JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_openSolidSequential(
-        JNIEnv *env, jclass thiz, jobject bridge, jlong size) {
+        JNIEnv *env, jclass thiz, jobject bridge, jlong size, jlong max_scan_bytes) {
     EH_UNUSED(thiz);
     if (!bridge || size <= 0) return 0;
     archive_cache_vm(env);
@@ -1644,6 +1791,8 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openSolidSequential(
     archiveAddr = MAP_FAILED;
     need_encrypt = false;
     g_stream_pos = 0;
+    // Cover scans pass a budget; full solid reader passes 0 (unlimited).
+    stream_scan_reset(max_scan_bytes);
     g_stream_bridge = (*env)->NewGlobalRef(env, bridge);
     jclass cls = (*env)->GetObjectClass(env, bridge);
     g_mid_read = (*env)->GetMethodID(env, cls, "nativeRead", "(I)[B");
@@ -1679,11 +1828,18 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_solidNextPlayable(JNIEnv *env, jclass thiz
     pthread_mutex_lock(&stream_mutex);
     int r;
     while ((r = archive_read_next_header(solid_ctx->arc, &solid_ctx->entry)) == ARCHIVE_OK) {
+        if (stream_scan_exhausted()) {
+            pthread_mutex_unlock(&stream_mutex);
+            return -1; // treat as end; isArchiveScanLimited distinguishes budget
+        }
         if (archive_entry_is_encrypted(solid_ctx->entry))
             need_encrypt = true;
         if (!archive_entry_is_playable(solid_ctx->entry)) {
             // Consume non-image bodies so solid stream advances.
-            archive_read_data_skip(solid_ctx->arc);
+            if (archive_read_data_skip(solid_ctx->arc) < ARCHIVE_OK && stream_scan_hit_limit) {
+                pthread_mutex_unlock(&stream_mutex);
+                return -1;
+            }
             continue;
         }
         const char *name = archive_entry_pathname(solid_ctx->entry);
@@ -1695,11 +1851,17 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_solidNextPlayable(JNIEnv *env, jclass thiz
         solid_fill_ext_from_name(name);
         solid_unc_size = archive_entry_size(solid_ctx->entry);
         solid_have_current = 1;
+        // Found a playable member — lift cover scan budget so extract is not aborted.
+        stream_scan_limit = 0;
+        stream_scan_hit_limit = false;
         pthread_mutex_unlock(&stream_mutex);
         return solid_next_index;
     }
     pthread_mutex_unlock(&stream_mutex);
-    if (r == ARCHIVE_EOF) return -1;
+    if (r == ARCHIVE_EOF || stream_scan_hit_limit) {
+        if (r == ARCHIVE_EOF) stream_index_finished_empty = true;
+        return -1;
+    }
     LOGE("%s%s", "solidNextPlayable: ", archive_error_string(solid_ctx->arc));
     return -2;
 }

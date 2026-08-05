@@ -166,6 +166,30 @@ object ArchiveStreamPageCache {
         trimScope.launch { saveIndex(index) }
     }
 
+    /**
+     * Reader [close] helper: never readdir on the calling thread (Compose dispose / main).
+     *
+     * When [memoryComplete] is false but the stream index is finished, optionally
+     * [probeDiskForComplete] via [countPageFiles] on the IO trim scope so sessions that
+     * only filled the last missing pages still flip `complete=true`.
+     */
+    fun saveIndexOnCloseAsync(
+        index: Index,
+        memoryComplete: Boolean,
+        probeDiskForComplete: Boolean,
+        expectedPageCount: Int,
+    ) {
+        trimScope.launch {
+            val complete = when {
+                memoryComplete || index.complete -> true
+                probeDiskForComplete && expectedPageCount > 0 ->
+                    countPageFiles(index.cacheKey) >= expectedPageCount
+                else -> false
+            }
+            saveIndex(index.copy(complete = complete))
+        }
+    }
+
     fun allPagesPresent(cacheKey: String, index: Index): Boolean {
         if (index.members.isEmpty()) return false
         return index.members.all { m -> isPageCached(cacheKey, m.i, m.ext) }

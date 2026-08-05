@@ -1213,17 +1213,23 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
     if (len <= 0) return -12;
     jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
     if (!bytes) return -13;
+    // Own a native copy and release the Java array pin *before* decode/encode so
+    // GetByteArrayElements' optional copy is not live for the whole F16 peak window.
+    std::vector<uint8_t> compressed(static_cast<size_t>(len));
+    memcpy(compressed.data(), bytes, static_cast<size_t>(len));
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+    bytes = nullptr;
+
     const char* out_path = env->GetStringUTFChars(jOutput, nullptr);
-    if (!out_path) {
-        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
-        return -14;
-    }
+    if (!out_path) return -14;
 
     std::vector<uint16_t> rgba;
     unsigned w = 0, h = 0;
     int rc = -20;
-    if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
-                               rgba, w, h)) {
+    if (decode_jxr_from_memory(compressed.data(), compressed.size(), rgba, w, h)) {
+        // Compressed bitstream no longer needed during F16 encode.
+        compressed.clear();
+        compressed.shrink_to_fit();
         // HD Photo / scRGB-like: BT.709 primaries, linear extended range.
         rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709, 0.f);
     } else {
@@ -1231,7 +1237,6 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdr(JNIEnv* env, 
     }
 
     env->ReleaseStringUTFChars(jOutput, out_path);
-    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return rc;
 }
 
@@ -1244,17 +1249,19 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
     if (len <= 0) return -12;
     jbyte* bytes = env->GetByteArrayElements(jInput, nullptr);
     if (!bytes) return -13;
+    std::vector<uint8_t> compressed(static_cast<size_t>(len));
+    memcpy(compressed.data(), bytes, static_cast<size_t>(len));
+    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
+
     const char* out_path = env->GetStringUTFChars(jOutput, nullptr);
-    if (!out_path) {
-        env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
-        return -14;
-    }
+    if (!out_path) return -14;
 
     std::vector<uint16_t> rgba;
     unsigned w = 0, h = 0;
     int rc = -20;
-    if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
-                               rgba, w, h)) {
+    if (decode_jxr_from_memory(compressed.data(), compressed.size(), rgba, w, h)) {
+        compressed.clear();
+        compressed.shrink_to_fit();
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
@@ -1266,7 +1273,6 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
     }
 
     env->ReleaseStringUTFChars(jOutput, out_path);
-    env->ReleaseByteArrayElements(jInput, bytes, JNI_ABORT);
     return rc;
 }
 

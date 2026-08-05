@@ -76,6 +76,15 @@ fun isTarArchiveFileName(name: String): Boolean {
     return ext in TAR_ARCHIVE_EXTENSIONS
 }
 
+/** ZIP/CBZ — EOCD + central-directory index (range-friendly, no body walk). */
+val ZIP_ARCHIVE_EXTENSIONS = setOf("zip", "cbz")
+
+fun isZipArchiveFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in ZIP_ARCHIVE_EXTENSIONS
+}
+
 fun isDocumentFileName(name: String): Boolean {
     if (name.startsWith('.')) return false
     val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false

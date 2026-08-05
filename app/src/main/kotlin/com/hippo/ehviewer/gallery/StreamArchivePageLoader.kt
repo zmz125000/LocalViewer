@@ -151,6 +151,8 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         false,
                         /* progressiveTar = */
                         true,
+                        /* maxScanBytes = */
+                        0L,
                     )
                     check(n > 0) { "Archive have no content!" }
                     n
@@ -314,26 +316,27 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         extractJobs.values.toList().forEach { it.cancel() }
                         extractJobs.clear()
                         readyWaiters.clear()
-                        // Prefer pagePaths (no disk). Fall back to readdir count so a session
-                        // that only touched the last missing pages still flips complete.
-                        // Use live [size] (TAR may have grown past initial listedCount).
+                        // Prefer pagePaths (memory only — close runs on main via Compose dispose).
+                        // Disk readdir for "all pages present" is deferred to IO so StrictMode
+                        // does not fire on File.list during onDispose.
                         val n = size
-                        val members = streamMembersRef.get()
-                        val complete = n > 0 &&
-                            isStreamIndexComplete() &&
-                            (
-                                (0 until n).all { pagePaths.containsKey(it) } ||
-                                    ArchiveStreamPageCache.countPageFiles(cacheKey) >= n
-                                )
-                        ArchiveStreamPageCache.saveIndexAsync(
-                            ArchiveStreamPageCache.Index(
+                        val members = streamMembersRef.get().toList()
+                        val indexDone = isStreamIndexComplete()
+                        val memoryComplete = n > 0 &&
+                            indexDone &&
+                            (0 until n).all { pagePaths.containsKey(it) }
+                        ArchiveStreamPageCache.saveIndexOnCloseAsync(
+                            index = ArchiveStreamPageCache.Index(
                                 v = ArchiveStreamPageCache.INDEX_VERSION,
                                 cacheKey = cacheKey,
                                 remoteSize = archiveSizeBytes,
                                 format = format,
-                                complete = complete,
-                                members = members.toList(),
+                                complete = memoryComplete,
+                                members = members,
                             ),
+                            memoryComplete = memoryComplete,
+                            probeDiskForComplete = n > 0 && indexDone && !memoryComplete,
+                            expectedPageCount = n,
                         )
                         // Unblock any JNI read waiting on the network source.
                         runCatching { source.close() }

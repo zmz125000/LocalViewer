@@ -117,7 +117,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
                     if (solidOpen.get()) return@withLock
                     val bridge = ArchiveStreamBridge(source)
                     solidBridgeRef.set(bridge)
-                    val opened = openSolidSequential(bridge, sizeHint)
+                    val opened = openSolidSequential(bridge, sizeHint, /* maxScanBytes = */ 0L)
                     check(opened > 0) { "Solid sequential open failed" }
                     if (needPassword() && archivePasswds.none(::providePassword)) {
                         archivePasswds += passwdProvider(::providePassword)
