@@ -193,37 +193,57 @@ fun BrowseDirectoryGridItem(
     /** Top-end star badge when this dir path is favourited (O(1) set lookup — no dir scan). */
     showFavoriteStar: Boolean = false,
 ) {
-    BrowseGridCell(
-        name = name,
+    // Square cell (width from grid columns). ElevatedCard content is already a
+    // fillMaxSize Column — put icon + caption as direct children so weight(1f)
+    // centers the icon between cell top and text top (no nested Column / fixed
+    // name band that left empty space under the icon).
+    val namePadH = GalleryGridDefaults.namePaddingH()
+    val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    ElevatedCard(
         onClick = onClick,
         onLongClick = onLongClick ?: onClick,
-        modifier = modifier,
-        thumb = {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
+        modifier = modifier.fillMaxWidth().aspectRatio(1f),
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clip(ShapeDefaults.Medium),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.Folder,
+                contentDescription = null,
+                modifier = Modifier.size(48.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            if (showFavoriteStar) {
+                // No Badge container — plain star, same corner as page-count chips.
                 Icon(
-                    Icons.Default.Folder,
+                    Icons.Default.Star,
                     contentDescription = null,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(18.dp),
                     tint = MaterialTheme.colorScheme.primary,
                 )
-                if (showFavoriteStar) {
-                    // No Badge container — plain star, same corner as page-count chips.
-                    Icon(
-                        Icons.Default.Star,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(4.dp)
-                            .size(18.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
             }
-        },
-    )
+        }
+        // Same style + edge insets as gallery cells; natural height so icon
+        // centers against the real text top (not a taller empty name band).
+        Text(
+            text = name,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Start,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = namePadH)
+                .padding(bottom = namePadBottom),
+        )
+    }
 }
 
 @Composable

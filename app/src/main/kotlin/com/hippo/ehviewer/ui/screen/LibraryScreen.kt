@@ -56,6 +56,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
@@ -504,63 +505,67 @@ private fun FavoriteSourceGridCell(
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
 ) {
+    // Caption insets match gallery / folder dir cells. ElevatedCard content is
+    // already a fillMaxSize Column — direct children so weight(1f) centers the
+    // icon between cell top and text top (no nested Column / empty name band).
+    val namePadH = GalleryGridDefaults.namePaddingH()
+    val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     ElevatedCard(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = Modifier.fillMaxWidth().aspectRatio(1f),
     ) {
-        Column(Modifier.fillMaxSize()) {
-            // Icon / thumb band: vertical center is midway between cell top and text top.
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .clip(ShapeDefaults.Medium),
-                contentAlignment = Alignment.Center,
-            ) {
-                when (fav) {
-                    is FavoriteBrowseSource.Gallery -> {
-                        val gallery = fav.gallery
-                        val gridDecodePx = CoverThumb.gridDecodePx(
-                            screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                            columns = GalleryGridDefaults.columnCount(),
-                            margin = GalleryGridDefaults.margin(),
-                            gutter = GalleryGridDefaults.gutter(),
-                        )
-                        CoverImage(
-                            coverPath = gallery.coverPath,
-                            sizePx = gridDecodePx,
-                            archiveContentPath = gallery.contentPath.takeIf {
-                                gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
-                            },
-                            placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                                Icons.Default.Inventory2
-                            } else {
-                                Icons.Default.Folder
-                            },
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                    else -> {
-                        Icon(
-                            favoriteIcon(fav),
-                            contentDescription = null,
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clip(ShapeDefaults.Medium),
+            contentAlignment = Alignment.Center,
+        ) {
+            when (fav) {
+                is FavoriteBrowseSource.Gallery -> {
+                    val gallery = fav.gallery
+                    val gridDecodePx = CoverThumb.gridDecodePx(
+                        screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                        columns = GalleryGridDefaults.columnCount(),
+                        margin = GalleryGridDefaults.margin(),
+                        gutter = GalleryGridDefaults.gutter(),
+                    )
+                    CoverImage(
+                        coverPath = gallery.coverPath,
+                        sizePx = gridDecodePx,
+                        archiveContentPath = gallery.contentPath.takeIf {
+                            gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
+                        },
+                        placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                            Icons.Default.Inventory2
+                        } else {
+                            Icons.Default.Folder
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                else -> {
+                    Icon(
+                        favoriteIcon(fav),
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
                 }
             }
-            Text(
-                text = fav.displayName,
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 4.dp),
-            )
         }
+        Text(
+            text = fav.displayName,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Start,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = namePadH)
+                .padding(bottom = namePadBottom),
+        )
     }
 }
 
