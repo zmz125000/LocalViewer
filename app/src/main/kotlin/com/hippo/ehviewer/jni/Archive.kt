@@ -15,6 +15,8 @@ external fun openArchive(fd: Int, size: Long, sortEntries: Boolean): Int
  * @param coverOnly if true, only index the cover page (natural-first ZIP / first TAR image).
  * @param progressiveTar if true (reader), TAR stops after first image; call
  *   [continueStreamTarIndex] to grow the list (seek bar). ZIP still full CD open.
+ * @param maxScanBytes non-ZIP scan budget (cover extract). `0` = unlimited.
+ *   ZIP EOCD+CD is always uncapped inside native code.
  */
 external fun openArchiveStream(
     bridge: Any,
@@ -22,6 +24,7 @@ external fun openArchiveStream(
     sortEntries: Boolean,
     coverOnly: Boolean,
     progressiveTar: Boolean,
+    maxScanBytes: Long,
 ): Int
 
 /**
@@ -33,11 +36,24 @@ external fun continueStreamTarIndex(maxNew: Int): Int
 /** True when ZIP/full open finished indexing, or progressive TAR walk reached EOF. */
 external fun isStreamIndexComplete(): Boolean
 
+/** Bytes read through the stream bridge for the active session. */
+external fun getStreamBytesRead(): Long
+
+/** True when [openArchiveStream]/[openSolidSequential] hit [maxScanBytes]. */
+external fun isArchiveScanLimited(): Boolean
+
+/**
+ * True when stream open confirmed a container with zero playable images
+ * (or a finished empty probe). Cover extract uses this for [NoImages] vs Skip.
+ */
+external fun isStreamIndexFinishedEmpty(): Boolean
+
 /**
  * Open RAR/7z for sequential pull extract via [com.hippo.ehviewer.library.ArchiveStreamBridge].
+ * @param maxScanBytes cover budget; `0` = unlimited (reader).
  * @return 1 on success, 0 on failure.
  */
-external fun openSolidSequential(bridge: Any, size: Long): Int
+external fun openSolidSequential(bridge: Any, size: Long, maxScanBytes: Long): Int
 
 /**
  * Next playable image member for solid sequential session.

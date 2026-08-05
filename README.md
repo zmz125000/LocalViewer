@@ -81,6 +81,7 @@ Build with Grok 4.5.
 * Optimized navigation flow for deep folder path.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
 * JXL/JXR/JPG/AVIF/HEIC HDR support.
+* Wide Color Gamut and 10-bit color mode support.
 * Fast smbj client with concurrent connections support.
 * Ktor CIO WebDAV client with HTTP/1.1 and TLS support.
 * // Cronet WebDAV client with HTTP/2 and QUIC support.

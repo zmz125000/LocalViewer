@@ -151,6 +151,8 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         false,
                         /* progressiveTar = */
                         true,
+                        /* maxScanBytes = */
+                        0L,
                     )
                     check(n > 0) { "Archive have no content!" }
                     n

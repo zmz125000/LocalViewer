@@ -78,8 +78,9 @@
 * 根据屏幕尺寸自动旋转图片
 * 双击跳转到下一个文件夹
 * 隐私模式和历史记录
-* ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB 全格式支持边下边看.
+* ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB 全格式支持边下边看
 * **JXL/JXR/JPG/AVIF/HEIC HDR 格式支持.**
+* 广色域和10位色深支持
 * 高性能 smbj 客户端，支持并发连接，图片丝滑加载
 * Ktor CIO WebDAV client 客户端 支持 HTTP/1.1 和 TLS.
 * // Cronet WebDAV 客户端，支持 HTTP/2 和 QUIC

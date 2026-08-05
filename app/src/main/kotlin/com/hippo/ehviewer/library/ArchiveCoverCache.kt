@@ -9,8 +9,16 @@ import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.jni.closeArchive
 import com.hippo.ehviewer.jni.extractToByteBuffer
 import com.hippo.ehviewer.jni.getExtension
+import com.hippo.ehviewer.jni.getStreamMemberLength
+import com.hippo.ehviewer.jni.getStreamMemberMethod
+import com.hippo.ehviewer.jni.getStreamMemberOffset
+import com.hippo.ehviewer.jni.getStreamMemberUncSize
+import com.hippo.ehviewer.jni.isArchiveScanLimited
+import com.hippo.ehviewer.jni.isStreamIndexComplete
+import com.hippo.ehviewer.jni.isStreamIndexFinishedEmpty
+import com.hippo.ehviewer.jni.loadStreamIndex
 import com.hippo.ehviewer.jni.needPassword
-import com.hippo.ehviewer.jni.openArchive
+import com.hippo.ehviewer.jni.openArchiveStream
 import com.hippo.ehviewer.jni.openSolidSequential
 import com.hippo.ehviewer.jni.releaseByteBuffer
 import com.hippo.ehviewer.jni.solidCurrentExtension
@@ -30,7 +38,7 @@ import splitties.init.appCtx
 /**
  * Result of lazy archive cover extract.
  * [NoImages] means the archive was opened and has no playable pages — safe to hide from listings.
- * [Skip] is transient (busy, password, I/O) — keep the row.
+ * [Skip] is transient (busy, password, I/O, or scan-budget abort on a large archive) — keep the row.
  */
 sealed interface CoverEnsureResult {
     data class Hit(val path: Path) : CoverEnsureResult
@@ -44,17 +52,29 @@ sealed interface CoverEnsureResult {
  * First-page JPEG thumbs for archive galleries (library + folder / network browse).
  * Long edge [THUMB_EDGE] matches SMB/WebDAV browse thumbs ([OriginDiskCache.THUMB_EDGE]).
  *
- * - Local archives (ZIP/TAR/RAR/7z, incl. SAF `content://`): [openFileDescriptor] +
- *   libarchive page 0 — never [FileArchiveByteSource] (that only works on real file paths)
- * - Network ZIP/TAR: [ensureStreamCover] (range + coverOnly)
+ * - Local ZIP/TAR: stream open via [PfdArchiveByteSource] (SAF-safe) + same paths as network
+ * - Local/network ZIP: EOCD+CD (uncapped); seek index load/save via [ArchiveStreamPageCache]
+ * - Local/network non-ZIP: scan budget ([LOCAL_NON_ZIP_SCAN_CAP] / [NETWORK_NON_ZIP_SCAN_CAP])
  * - Network RAR/7z: [ensureSolidStreamCover] (sequential first playable only)
  * - After solid reader: [writeCoverFromExtractedPage] from extract cache page 0
+ *
+ * Confirmed empty (whole CD / EOF / archive fully inside budget) → [CoverEnsureResult.NoImages]
+ * (callers mark [EmptyArchiveRegistry] / [LocalLibrary.hideEmptyArchive]).
  *
  * Thumbs share the fixed [OriginDiskCache.THUMB_BUDGET_BYTES] pool (not origin settings).
  */
 object ArchiveCoverCache {
     /** Align with [OriginDiskCache.THUMB_EDGE] / SMB/WebDAV browse thumbs. */
     const val THUMB_EDGE = OriginDiskCache.THUMB_EDGE
+
+    /**
+     * Network TAR / solid / libarchive-fallback cover scan budget.
+     * ZIP EOCD+CD is never budgeted (always small vs archive body).
+     */
+    const val NETWORK_NON_ZIP_SCAN_CAP = 30L * 1024L * 1024L
+
+    /** Local non-ZIP cover scan budget (mmap-free stream path). */
+    const val LOCAL_NON_ZIP_SCAN_CAP = 100L * 1024L * 1024L
 
     private const val THUMB_JPEG_QUALITY = 85
     private const val FORMAT_VERSION = 2
@@ -121,12 +141,12 @@ object ArchiveCoverCache {
     /**
      * Ensure a small cover JPEG exists for a **local** [archivePath] (real file or SAF).
      *
-     * Uses [Path.openFileDescriptor] so `content://` tree documents work. Solid RAR/7z
-     * are opened the same way as the local reader ([openArchive] + page 0) — not via
-     * [FileArchiveByteSource], which only accepts filesystem paths and crashes on SAF.
+     * Uses [Path.openFileDescriptor] + [PfdArchiveByteSource] so `content://` tree documents
+     * work. ZIP reuses [ArchiveStreamPageCache] seek index (same as the stream reader).
+     * Non-ZIP scans abort after [LOCAL_NON_ZIP_SCAN_CAP] unless the whole file is smaller.
      *
-     * [CoverEnsureResult.NoImages] when libarchive reports 0 playable images (same log as
-     * "Found 0 images in archive") — callers should hide the row from library/browse.
+     * [CoverEnsureResult.NoImages] when the archive is confirmed empty — callers should
+     * hide the row ([LocalLibrary.hideEmptyArchive] / [EmptyArchiveRegistry]).
      */
     suspend fun ensureCover(archivePath: Path): CoverEnsureResult = withIOContext {
         runCatching {
@@ -135,7 +155,6 @@ object ArchiveCoverCache {
 
             val solid = isSolidArchiveFileName(name)
             val document = isDocumentFileName(name)
-            // Solid / document thumbs share the 0/0 key with tryDiskCover / reader writes.
             val key = archivePath.toString()
             if (solid || document) {
                 tryDiskCover(key)?.let { return@runCatching CoverEnsureResult.Hit(it) }
@@ -144,18 +163,37 @@ object ArchiveCoverCache {
                 return@runCatching ensureLocalDocumentCover(archivePath, key)
             }
 
+            val openLocalSource: suspend () -> ArchiveByteSource = {
+                val pfd = archivePath.openFileDescriptor("r")
+                // Dup so the source owns a FD independent of the temporary open handle.
+                val owned = ParcelFileDescriptor.dup(pfd.fileDescriptor)
+                pfd.close()
+                PfdArchiveByteSource(owned, ownsPfd = true)
+            }
+
+            if (solid) {
+                return@runCatching ensureSolidStreamCoverInternal(
+                    cacheKey = key,
+                    openSource = openLocalSource,
+                    scanCap = LOCAL_NON_ZIP_SCAN_CAP,
+                )
+            }
+
+            // ZIP/TAR (and other non-solid archives): stream path + caps / index cache.
             val file = File(key)
-            val mtime = if (solid) 0L else file.takeIf { it.isFile }?.lastModified() ?: 0L
-            val size = if (solid) 0L else file.takeIf { it.isFile }?.length() ?: 0L
-            val dest = thumbPathFor(key, mtime, size)
+            val realFile = file.isFile
+            val mtime = if (!realFile) 0L else file.lastModified()
+            val sizeHint = if (!realFile) 0L else file.length()
+            val dest = thumbPathFor(key, mtime, sizeHint)
             if (isCachedOnDisk(dest)) return@runCatching CoverEnsureResult.Hit(dest)
 
-            extractSlots.withPermit {
-                if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
-                ArchiveAccess.tryWithArchive {
-                    extractCoverLocked(archivePath, dest)
-                } ?: CoverEnsureResult.Skip
-            }
+            ensureStreamCoverInternal(
+                cacheKey = key,
+                openSource = openLocalSource,
+                destOverride = dest,
+                scanCapNonZip = LOCAL_NON_ZIP_SCAN_CAP,
+                fileName = name,
+            )
         }.onFailure { logcat("ArchiveCover", it) }.getOrElse { CoverEnsureResult.Skip }
     }
 
@@ -226,6 +264,9 @@ object ArchiveCoverCache {
      * connections are not opened for every grid cell waiting in the queue.
      * Cache key uses size=0 so hits work without a network size probe.
      *
+     * ZIP: loads/saves [ArchiveStreamPageCache] seek index (same as stream reader).
+     * Non-ZIP: [NETWORK_NON_ZIP_SCAN_CAP] budget.
+     *
      * Solid formats: use [ensureSolidStreamCover].
      * Documents (EPUB/PDF): use [ensureDocumentStreamCover].
      */
@@ -238,32 +279,86 @@ object ArchiveCoverCache {
         if (base.isNotEmpty() && isDocumentFileName(base)) {
             return@withIOContext ensureDocumentStreamCover(cacheKey, openSource)
         }
-        // Stable path without remote size (avoids opening the archive just to hash the key).
-        val dest = thumbPathFor(cacheKey, 0L, 0L)
-        if (isCachedOnDisk(dest)) return@withIOContext CoverEnsureResult.Hit(dest)
-        extractSlots.withPermit {
+        ensureStreamCoverInternal(
+            cacheKey = cacheKey,
+            openSource = openSource,
+            destOverride = null,
+            scanCapNonZip = NETWORK_NON_ZIP_SCAN_CAP,
+            fileName = base,
+        )
+    }
+
+    /**
+     * Shared ZIP/TAR cover open for local + network.
+     * @param destOverride when set (local real-file mtime/size key), write thumb there;
+     *   otherwise [thumbPathFor](cacheKey, 0, 0).
+     */
+    private suspend fun ensureStreamCoverInternal(
+        cacheKey: String,
+        openSource: suspend () -> ArchiveByteSource,
+        destOverride: Path?,
+        scanCapNonZip: Long,
+        fileName: String,
+    ): CoverEnsureResult {
+        val dest = destOverride ?: thumbPathFor(cacheKey, 0L, 0L)
+        if (isCachedOnDisk(dest)) return CoverEnsureResult.Hit(dest)
+        val isZip = fileName.isNotEmpty() && isZipArchiveFileName(fileName)
+        return extractSlots.withPermit {
             if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
+            // Cached empty ZIP from a prior thumb/reader open — skip re-parse.
+            if (isZip) {
+                val cachedEmpty = ArchiveStreamPageCache.loadIndex(cacheKey)
+                    ?.takeIf { it.format == "zip" && it.members.isEmpty() && it.complete }
+                if (cachedEmpty != null) return@withPermit CoverEnsureResult.NoImages
+            }
             ArchiveAccess.tryWithArchive {
                 openSource().use { source ->
+                    val archiveSize = runCatching { source.size }.getOrDefault(0L)
                     val bridge = ArchiveStreamBridge(source)
                     try {
-                        // coverOnly: ZIP natural-first only / TAR stop at first image (EOCD/headers).
-                        // Always pass coverOnly explicitly (no default on external JNI).
-                        val n = com.hippo.ehviewer.jni.openArchiveStream(
-                            bridge,
-                            source.size,
-                            /* sortEntries = */
-                            false,
-                            /* coverOnly = */
-                            true,
-                            /* progressiveTar = */
-                            false,
-                        )
+                        // Prefer disk seek index (reader or prior thumb EOCD parse).
+                        var n = tryOpenCoverFromSeekIndex(cacheKey, bridge, archiveSize)
+                        val openedFromDisk = n > 0
+                        if (n <= 0) {
+                            // ZIP: full CD (same net cost as coverOnly) so we persist the
+                            // full seek table for the reader. TAR: stop at first image.
+                            n = openArchiveStream(
+                                bridge,
+                                archiveSize,
+                                /* sortEntries = */
+                                false,
+                                /* coverOnly = */
+                                !isZip,
+                                /* progressiveTar = */
+                                false,
+                                /* maxScanBytes = */
+                                if (isZip) 0L else scanCapNonZip,
+                            )
+                        }
                         when {
-                            n <= 0 -> CoverEnsureResult.NoImages
-                            com.hippo.ehviewer.jni.needPassword() -> CoverEnsureResult.Skip
+                            n <= 0 -> {
+                                val empty = zeroImagesResult(
+                                    archiveSize,
+                                    if (isZip) 0L else scanCapNonZip,
+                                )
+                                if (empty is CoverEnsureResult.NoImages && isZip && !openedFromDisk) {
+                                    persistEmptyZipIndex(cacheKey, archiveSize)
+                                }
+                                empty
+                            }
+                            needPassword() -> CoverEnsureResult.Skip
                             else -> {
-                                val thumb = writeCoverFromOpenArchive(cacheKey, 0L, 0L)
+                                if (!openedFromDisk && isZip) {
+                                    persistZipSeekIndex(cacheKey, archiveSize, n)
+                                }
+                                val thumb = if (destOverride != null) {
+                                    runCatching {
+                                        extractPage0ToJpeg(dest)
+                                        dest.takeIf { isCachedOnDisk(it) }
+                                    }.getOrNull()
+                                } else {
+                                    writeCoverFromOpenArchive(cacheKey, 0L, 0L)
+                                }
                                 if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
                             }
                         }
@@ -271,11 +366,128 @@ object ArchiveCoverCache {
                         logcat("ArchiveCover", e)
                         CoverEnsureResult.Skip
                     } finally {
-                        com.hippo.ehviewer.jni.closeArchive()
+                        closeArchive()
                         bridge.close()
                     }
                 }
             } ?: CoverEnsureResult.Skip
+        }
+    }
+
+    /** Load [ArchiveStreamPageCache] seek table and bind for page-0 extract. */
+    private fun tryOpenCoverFromSeekIndex(
+        cacheKey: String,
+        bridge: ArchiveStreamBridge,
+        archiveSize: Long,
+    ): Int {
+        val idx = ArchiveStreamPageCache.loadIndex(cacheKey) ?: return 0
+        if (archiveSize > 0L && idx.remoteSize > 0L && idx.remoteSize != archiveSize) return 0
+        // Prefer full ZIP index; for cover alone the first seekable member is enough.
+        val members = when {
+            idx.format == "zip" && idx.hasFullSeekIndex() -> idx.members.sortedBy { it.i }
+            else -> {
+                val first = idx.members.filter { it.hasSeek }.minByOrNull { it.i }
+                    ?: return 0
+                listOf(first)
+            }
+        }
+        if (members.isEmpty()) return 0
+        val n = members.size
+        val offsets = LongArray(n) { members[it].offset }
+        val unc = LongArray(n) { members[it].uncSize }
+        val comp = LongArray(n) {
+            val c = members[it].compSize
+            if (c > 0L) c else members[it].uncSize
+        }
+        val methods = IntArray(n) {
+            val m = members[it].method
+            if (m >= 0) m else 0
+        }
+        val names = Array(n) { i ->
+            val ext = members[i].ext.ifBlank { "bin" }
+            members[i].name.ifBlank { "%06d.%s".format(members[i].i, ext) }
+        }
+        val isTar = idx.format == "tar"
+        return runCatching {
+            loadStreamIndex(
+                bridge,
+                archiveSize.coerceAtLeast(1L),
+                offsets,
+                unc,
+                comp,
+                methods,
+                names,
+                isTar,
+            )
+        }.getOrDefault(0)
+    }
+
+    /** Persist full ZIP CD member table after a cold cover open (warms the reader). */
+    private fun persistZipSeekIndex(cacheKey: String, archiveSize: Long, pageCount: Int) {
+        if (pageCount <= 0) return
+        val members = ArrayList<ArchiveStreamPageCache.Member>(pageCount)
+        for (i in 0 until pageCount) {
+            val ext = runCatching { getExtension(i) }.getOrNull()?.ifBlank { null } ?: "bin"
+            val off = getStreamMemberOffset(i)
+            val comp = getStreamMemberLength(i)
+            val unc = getStreamMemberUncSize(i)
+            val method = getStreamMemberMethod(i)
+            if (off < 0L || unc <= 0L) continue
+            members += ArchiveStreamPageCache.Member(
+                i = i,
+                name = "",
+                ext = ext,
+                uncSize = unc,
+                offset = off,
+                compSize = if (comp >= 0L) comp else unc,
+                method = if (method >= 0) method else 0,
+            )
+        }
+        if (members.isEmpty() || !members.all { it.hasSeek }) return
+        ArchiveStreamPageCache.saveIndexAsync(
+            ArchiveStreamPageCache.Index(
+                v = ArchiveStreamPageCache.INDEX_VERSION,
+                cacheKey = cacheKey,
+                remoteSize = archiveSize,
+                format = "zip",
+                complete = false,
+                members = members,
+            ),
+        )
+    }
+
+    private fun persistEmptyZipIndex(cacheKey: String, archiveSize: Long) {
+        ArchiveStreamPageCache.saveIndexAsync(
+            ArchiveStreamPageCache.Index(
+                v = ArchiveStreamPageCache.INDEX_VERSION,
+                cacheKey = cacheKey,
+                remoteSize = archiveSize,
+                format = "zip",
+                complete = true,
+                members = emptyList(),
+            ),
+        )
+    }
+
+    /**
+     * Decide [NoImages] vs [Skip] after a zero-page open.
+     * Confirmed empty when the container finished, or the whole file fits in the scan budget.
+     * Large archives aborted by the budget stay [Skip] (may still contain images later).
+     */
+    private fun zeroImagesResult(archiveSize: Long, scanCap: Long): CoverEnsureResult {
+        val limited = isArchiveScanLimited()
+        val finishedEmpty = isStreamIndexFinishedEmpty()
+        val complete = isStreamIndexComplete()
+        val wholeFileInBudget = scanCap > 0L && archiveSize > 0L && archiveSize <= scanCap
+        return when {
+            // Uncapped ZIP CD (or finished TAR/libarchive) with 0 playable.
+            finishedEmpty && !limited -> CoverEnsureResult.NoImages
+            complete && !limited -> CoverEnsureResult.NoImages
+            // Whole archive fits in budget — we effectively scanned it all.
+            wholeFileInBudget -> CoverEnsureResult.NoImages
+            // Budget abort on a larger archive — do not hide the row.
+            limited -> CoverEnsureResult.Skip
+            else -> CoverEnsureResult.Skip
         }
     }
 
@@ -365,40 +577,62 @@ object ArchiveCoverCache {
      * 2. Hit solid extract page 0 already on disk (after a prior reader session)
      * 3. Sequential open → first playable member only → subsample JPEG → close
      *
-     * Does **not** full-download the archive. Skips when [ArchiveAccess] is busy (reader open);
-     * grid [ON_RESUME] retries. Passworded solids are skipped.
+     * Scan budget [NETWORK_NON_ZIP_SCAN_CAP]. Does **not** full-download a huge archive
+     * when the first image is early; aborts after the budget if none found.
+     * Passworded solids are skipped. [ArchiveAccess] busy → [Skip] (grid ON_RESUME retries).
      */
     suspend fun ensureSolidStreamCover(
         cacheKey: String,
         openSource: suspend () -> ArchiveByteSource,
     ): CoverEnsureResult = withIOContext {
+        ensureSolidStreamCoverInternal(cacheKey, openSource, NETWORK_NON_ZIP_SCAN_CAP)
+    }
+
+    private suspend fun ensureSolidStreamCoverInternal(
+        cacheKey: String,
+        openSource: suspend () -> ArchiveByteSource,
+        scanCap: Long,
+    ): CoverEnsureResult {
         val dest = thumbPathFor(cacheKey, 0L, 0L)
-        if (isCachedOnDisk(dest)) return@withIOContext CoverEnsureResult.Hit(dest)
+        if (isCachedOnDisk(dest)) return CoverEnsureResult.Hit(dest)
 
         // Prefer page already extracted by a prior solid reader session.
-        coverFromSolidExtractCache(cacheKey)?.let { return@withIOContext CoverEnsureResult.Hit(it) }
+        coverFromSolidExtractCache(cacheKey)?.let { return CoverEnsureResult.Hit(it) }
 
-        extractSlots.withPermit {
+        return extractSlots.withPermit {
             if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
             coverFromSolidExtractCache(cacheKey)?.let { return@withPermit CoverEnsureResult.Hit(it) }
             val locked = ArchiveAccess.tryWithArchive {
                 openSource().use { source ->
+                    val archiveSize = runCatching { source.size }.getOrDefault(0L)
                     val bridge = ArchiveStreamBridge(source)
                     try {
-                        val opened = openSolidSequential(bridge, source.size)
+                        val opened = openSolidSequential(bridge, archiveSize, scanCap)
                         if (opened == 0) {
                             logcat("SolidCover") { "openSolidSequential failed key=$cacheKey" }
                             return@tryWithArchive CoverEnsureResult.Skip
                         }
-                        // Password only known after headers; don't check needPassword() pre-walk.
                         val idx = solidNextPlayable()
                         if (idx < 0) {
                             if (needPassword()) {
                                 logcat("SolidCover") { "passworded solid skipped key=$cacheKey" }
                                 return@tryWithArchive CoverEnsureResult.Skip
                             }
-                            logcat("SolidCover") { "no playable member key=$cacheKey" }
-                            return@tryWithArchive CoverEnsureResult.NoImages
+                            val limited = isArchiveScanLimited()
+                            val wholeFileInBudget =
+                                scanCap > 0L && archiveSize > 0L && archiveSize <= scanCap
+                            return@tryWithArchive when {
+                                limited && !wholeFileInBudget -> {
+                                    logcat("SolidCover") {
+                                        "scan cap hit key=$cacheKey size=$archiveSize cap=$scanCap"
+                                    }
+                                    CoverEnsureResult.Skip
+                                }
+                                else -> {
+                                    logcat("SolidCover") { "no playable member key=$cacheKey" }
+                                    CoverEnsureResult.NoImages
+                                }
+                            }
                         }
                         if (needPassword()) {
                             logcat("SolidCover") { "passworded solid skipped key=$cacheKey" }
@@ -424,7 +658,6 @@ object ArchiveCoverCache {
                             if (!tmp.isFile || tmp.length() == 0L) {
                                 return@tryWithArchive CoverEnsureResult.Skip
                             }
-                            // Also seed solid extract page 0 so reader cold-open can reuse.
                             runCatching {
                                 SolidExtractCache.writePageFromFdCopy(cacheKey, 0, ext, tmp)
                             }
@@ -473,28 +706,6 @@ object ArchiveCoverCache {
         val page = DocumentExtractCache.pagePath(cacheKey, 0, ext)
         if (!DocumentExtractCache.isCachedFile(page)) return null
         return writeCoverFromExtractedPage(cacheKey, page)
-    }
-
-    private fun extractCoverLocked(archivePath: Path, dest: Path): CoverEnsureResult {
-        val pfd = try {
-            archivePath.openFileDescriptor("r")
-        } catch (e: Throwable) {
-            logcat(e)
-            return CoverEnsureResult.Skip
-        }
-        pfd.use { fd ->
-            val count = openArchive(fd.fd, fd.statSize, true)
-            try {
-                // count == 0 logs "Found 0 images in archive" in native code.
-                if (count <= 0) return CoverEnsureResult.NoImages
-                if (needPassword()) return CoverEnsureResult.Skip
-                extractPage0ToJpeg(dest)
-                return dest.takeIf { isCachedOnDisk(it) }?.let { CoverEnsureResult.Hit(it) }
-                    ?: CoverEnsureResult.Skip
-            } finally {
-                closeArchive()
-            }
-        }
     }
 
     /**
