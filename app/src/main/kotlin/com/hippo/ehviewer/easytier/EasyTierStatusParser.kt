@@ -1,10 +1,10 @@
 package com.hippo.ehviewer.easytier
 
-import org.json.JSONArray
-import org.json.JSONObject
 import java.util.Locale
 import kotlin.math.ln
 import kotlin.math.pow
+import org.json.JSONArray
+import org.json.JSONObject
 
 object EasyTierStatusParser {
     private const val INSTANCE_NAME = "Default"
@@ -154,8 +154,7 @@ object EasyTierStatusParser {
         return null
     }
 
-    private fun ipFromInt(addr: Int): String =
-        "${(addr ushr 24) and 0xFF}.${(addr ushr 16) and 0xFF}.${(addr ushr 8) and 0xFF}.${addr and 0xFF}"
+    private fun ipFromInt(addr: Int): String = "${(addr ushr 24) and 0xFF}.${(addr ushr 16) and 0xFF}.${(addr ushr 8) and 0xFF}.${addr and 0xFF}"
 
     private fun formatBytes(bytes: Long): String {
         if (bytes < 1024) return "$bytes B"
@@ -178,13 +177,11 @@ object EasyTierStatusParser {
         else -> "Other ($typeCode)"
     }
 
-    private fun isInSameSubnet(ip1: String, ip2: String, prefix: Int): Boolean {
-        return try {
-            val mask = if (prefix == 0) 0 else -1 shl (32 - prefix)
-            (ipToInt(ip1) and mask) == (ipToInt(ip2) and mask)
-        } catch (_: Exception) {
-            false
-        }
+    private fun isInSameSubnet(ip1: String, ip2: String, prefix: Int): Boolean = try {
+        val mask = if (prefix == 0) 0 else -1 shl (32 - prefix)
+        (ipToInt(ip1) and mask) == (ipToInt(ip2) and mask)
+    } catch (_: Exception) {
+        false
     }
 
     private fun ipToInt(ip: String): Int {

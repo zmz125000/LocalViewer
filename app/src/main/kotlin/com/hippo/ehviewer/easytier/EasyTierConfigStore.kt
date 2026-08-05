@@ -6,11 +6,9 @@ class EasyTierConfigStore(context: Context) {
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun loadToml(): String =
-        prefs.getString(KEY_TOML, null) ?: EasyTierTomlCodec.defaultToml()
+    fun loadToml(): String = prefs.getString(KEY_TOML, null) ?: EasyTierTomlCodec.defaultToml()
 
-    fun loadUiState(): EasyTierConfigUiState =
-        EasyTierTomlCodec.parseConfig(loadToml())
+    fun loadUiState(): EasyTierConfigUiState = EasyTierTomlCodec.parseConfig(loadToml())
 
     fun saveUiState(config: EasyTierConfigUiState) {
         prefs.edit()

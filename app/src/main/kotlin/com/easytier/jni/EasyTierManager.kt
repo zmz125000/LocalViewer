@@ -203,8 +203,7 @@ class EasyTierManager(
         return null
     }
 
-    private fun ipFromInt(addr: Int): String =
-        "${(addr ushr 24) and 0xFF}.${(addr ushr 16) and 0xFF}.${(addr ushr 8) and 0xFF}.${addr and 0xFF}"
+    private fun ipFromInt(addr: Int): String = "${(addr ushr 24) and 0xFF}.${(addr ushr 16) and 0xFF}.${(addr ushr 8) and 0xFF}.${addr and 0xFF}"
 
     companion object {
         private const val TAG = "EasyTierManager"

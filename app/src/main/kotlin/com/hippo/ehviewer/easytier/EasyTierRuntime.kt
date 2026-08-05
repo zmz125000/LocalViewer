@@ -225,8 +225,7 @@ object EasyTierRuntime {
             .onFailure { logcat(TAG, LogPriority.WARN) { "SMB path notify failed: ${it.message}" } }
     }
 
-    fun isArm64Device(): Boolean =
-        Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }
+    fun isArm64Device(): Boolean = Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }
 
     private const val TAG = "EasyTierRuntime"
     private const val STATUS_POLL_MS = 1500L

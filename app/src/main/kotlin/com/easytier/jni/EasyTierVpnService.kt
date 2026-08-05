@@ -154,8 +154,7 @@ class EasyTierVpnService : VpnService() {
         }
     }
 
-    private fun isActiveSession(mySession: Int): Boolean =
-        synchronized(lock) { mySession == sessionId }
+    private fun isActiveSession(mySession: Int): Boolean = synchronized(lock) { mySession == sessionId }
 
     private fun cancelSessionAndCloseTun() {
         synchronized(lock) {

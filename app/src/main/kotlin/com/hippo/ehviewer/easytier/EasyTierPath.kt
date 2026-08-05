@@ -24,6 +24,5 @@ object EasyTierPath {
         return alt
     }
 
-    fun smbConnectHost(source: SmbSourceEntity): String =
-        resolveHost(source.host, source.easytierHost)
+    fun smbConnectHost(source: SmbSourceEntity): String = resolveHost(source.host, source.easytierHost)
 }

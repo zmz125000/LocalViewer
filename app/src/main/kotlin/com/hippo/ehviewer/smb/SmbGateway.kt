@@ -609,8 +609,7 @@ object SmbGateway {
     }
 
     /** TCP host for this source (EasyTier virtual host when tunnel is up). */
-    private fun endpointHost(source: SmbSourceEntity): String =
-        EasyTierPath.smbConnectHost(source)
+    private fun endpointHost(source: SmbSourceEntity): String = EasyTierPath.smbConnectHost(source)
 
     private fun credKey(source: SmbSourceEntity, password: String): String = buildString {
         // Pool/session identity follows the live endpoint, not the cache identity host.

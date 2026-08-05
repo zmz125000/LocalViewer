@@ -149,8 +149,7 @@ object EasyTierTomlCodec {
         appendTomlString(sb, "uri", uri)
     }
 
-    private fun nonBlankLines(value: String): List<String> =
-        value.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+    private fun nonBlankLines(value: String): List<String> = value.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
 
     private fun tomlQuoted(value: String): String {
         val escaped = StringBuilder()
