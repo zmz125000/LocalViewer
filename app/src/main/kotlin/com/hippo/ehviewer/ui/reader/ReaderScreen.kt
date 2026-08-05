@@ -230,10 +230,12 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
     // instance would show system bars after the new one already hid them (or while
     // the new one is still loading), leaving the reader out of fullscreen.
     DisposableEffect(uiController) {
+        // Status/nav icon contrast is owned by EhTheme (page bg → useDarkTheme).
+        // Only manage immersion here; restore previous icon style on leave in case
+        // the outer app theme does not recompose immediately.
         val lightStatusBar = uiController.statusBarDarkContentEnabled
         activeReaderSessions.incrementAndGet()
         uiController.showTransientSystemBarsBySwipe = true
-        uiController.statusBarDarkContentEnabled = bgColor == Color.White
         if (Settings.fullscreen.value) {
             uiController.isSystemBarsVisible = false
         }
@@ -515,13 +517,12 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
         }
         syncState.Sync(isWebtoon) { appbarVisible = false }
         val bgColor by collectBackgroundColorAsState()
-        val isDarkTheme = isSystemInDarkTheme()
-        LaunchedEffect(isDarkTheme, fullscreen, bgColor) {
+        LaunchedEffect(fullscreen) {
             snapshotFlow { appbarVisible }.collect { visible ->
                 // Show bars only for in-reader chrome; keep immersive otherwise.
+                // Icon contrast follows EhTheme(useDarkTheme = bg != White) SideEffect.
                 uiController.isSystemBarsVisible = visible || !fullscreen
                 uiController.showTransientSystemBarsBySwipe = true
-                uiController.statusBarDarkContentEnabled = if (visible) !isDarkTheme else bgColor == Color.White
             }
         }
         var showNavigationOverlay by remember {
