@@ -23,7 +23,7 @@ object CoverThumb {
     val ListDisplay = 56.dp
 
     /** Decode at 2× display size for crisp thumbs; clamp to disk thumb long edge. */
-    fun decodePx(displayPx: Int): Int = (displayPx * 2).coerceIn(128, 512)
+    fun decodePx(displayPx: Int): Int = (displayPx * 2).coerceIn(128, 768)
 
     @Composable
     fun listDecodePx(display: Dp = ListDisplay): Int {

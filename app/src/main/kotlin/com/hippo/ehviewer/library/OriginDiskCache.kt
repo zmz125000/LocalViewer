@@ -31,7 +31,7 @@ import splitties.init.appCtx
  */
 object OriginDiskCache {
     /** Generated browse/cover JPEG long edge (px). */
-    const val THUMB_EDGE = 512
+    const val THUMB_EDGE = 768
 
     /** Shared budget for all on-disk thumb stores (not Coil’s separate 256 MiB). */
     const val THUMB_BUDGET_BYTES = 256L * 1024L * 1024L
