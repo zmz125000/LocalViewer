@@ -33,7 +33,6 @@ import coil3.request.CachePolicy
 import coil3.request.ErrorResult
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
-import coil3.request.colorSpace
 import coil3.request.maxBitmapSize
 import coil3.size.Precision
 import coil3.size.Scale
@@ -232,7 +231,6 @@ class Image private constructor(
             hdrSafe: Boolean,
         ): CoilImage {
             val hardwareDirect = Settings.readerHardwareBitmap.value || hdrSafe
-            val advancedColor = Settings.readerAdvancedColor.value
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
@@ -246,11 +244,10 @@ class Image private constructor(
                         precision(Precision.INEXACT)
                     }
                     maxBitmapSize(Size.ORIGINAL)
-                    // Prefer Display P3 so ImageDecoder / BitmapFactory keep wide ICC
-                    // (requires activity wideColorGamut + runtime WCG/HDR when composed).
-                    if (advancedColor && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        colorSpace(android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.DISPLAY_P3))
-                    }
+                    // No forced colorSpace(DISPLAY_P3): preserves embedded ICC under the
+                    // reader WCG window (advanced color on). sRGB stays sRGB-tagged (no
+                    // oversaturation); P3 stays P3. 8-bit JPEGs stay 8888/HARDWARE.
+                    // Advanced color still drives lib-direct pack + reader window policy.
                     if (hardwareDirect) {
                         allowHardware(true)
                         maybeCropBorder(false)

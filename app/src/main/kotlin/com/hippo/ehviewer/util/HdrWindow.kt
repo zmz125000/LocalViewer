@@ -11,11 +11,12 @@ import androidx.core.content.ContextCompat
 /**
  * Reader window color mode for Ultra HDR / wide-gamut stills.
  *
- * Enable while any composed / near-visible page needs HDR or WCG (not only the
- * focused page). Clear on leave. Avoid flipping mode on every adjacent SDR page
- * — that causes mixed-content brightness thrash.
- *
  * Priority: **HDR > wide color gamut > default** (single [Window.colorMode] slot).
+ *
+ * **Option A (advanced color toggle, default on):** while the reader is open and
+ * advanced color is enabled, request session WCG so platform decode preserves
+ * embedded ICC (sRGB stays tagged sRGB — no oversaturation). Clear on leave.
+ * HDR still wins when composed pages need HDR.
  *
  * Panel boost ([HdrDisplayInfo]) is applied at **display** time only
  * ([Window.setDesiredHdrHeadroom] on API 35+). Never put panel boost into encode metadata.
@@ -23,7 +24,7 @@ import androidx.core.content.ContextCompat
  * Manifest: [MainActivity] declares `android:colorMode="wideColorGamut"` so the
  * activity surface *can* carry wide color (reader is Compose inside MainActivity).
  * [MainActivity.onCreate] forces [ActivityInfo.COLOR_MODE_DEFAULT] until the reader
- * requests HDR/WCG from composed content (avoid whole-app WCG cost).
+ * requests HDR/WCG (avoid whole-app WCG cost).
  *
  * @see <a href="https://developer.android.com/training/wide-color-gamut">Wide color gamut</a>
  */
@@ -38,13 +39,17 @@ fun Activity.supportsScreenHdr(): Boolean {
 }
 
 /**
- * True only when the display is WCG-capable **and** the device supports WCG rendering.
- * Matches [android.content.res.Configuration.isScreenWideColorGamut] (stricter than
- * [Display.isWideColorGamut] alone).
+ * True when this device can present wide color.
+ *
+ * Accepts either [Display.isWideColorGamut] (hardware) **or**
+ * [android.content.res.Configuration.isScreenWideColorGamut] — configuration alone
+ * can lag / disagree on multi-display Android 14+ and falsely block WCG.
  */
 fun Activity.supportsWideColorGamut(): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
-    return resources.configuration.isScreenWideColorGamut
+    val displayOk = displayOrNull()?.isWideColorGamut == true
+    val configOk = resources.configuration.isScreenWideColorGamut
+    return displayOk || configOk
 }
 
 /**
@@ -70,7 +75,8 @@ fun Activity.setReaderColorMode(
 ) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val enableHdr = hdr && supportsScreenHdr()
-    val enableWcg = !enableHdr && wideColor && supportsWideColorGamut()
+    val wcgCapable = supportsWideColorGamut()
+    val enableWcg = !enableHdr && wideColor && wcgCapable
     val targetMode = when {
         enableHdr -> ActivityInfo.COLOR_MODE_HDR
         enableWcg -> ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
@@ -79,7 +85,16 @@ fun Activity.setReaderColorMode(
     // Skip redundant setColorMode — each flip can re-trigger surface brightness ramps.
     if (window.colorMode != targetMode) {
         window.colorMode = targetMode
-        Log.d(TAG, "colorMode=$targetMode hdr=$enableHdr wcg=$enableWcg")
+        val displayOk = displayOrNull()?.isWideColorGamut == true
+        val configOk = resources.configuration.isScreenWideColorGamut
+        Log.d(
+            TAG,
+            "colorMode=$targetMode hdr=$enableHdr wcg=$enableWcg " +
+                "(wantWide=$wideColor capable=$wcgCapable display=$displayOk config=$configOk)",
+        )
+        if (wideColor && !enableHdr && !wcgCapable) {
+            Log.w(TAG, "WCG requested but display/config report no wide color gamut")
+        }
     }
     applyDesiredHdrHeadroom(enableHdr, contentBoost)
 }
