@@ -20,6 +20,12 @@
         <!-- Non-overhead workaround for ROMs enable it by default, MIUI etc. -->
         <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
 
+        <!-- Bootstrap system bar icon contrast for DayNight (Compose EhTheme re-applies after setContent). -->
+        <item name="android:windowLightStatusBar">?isLightTheme</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">?isLightTheme</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+
         <!-- Apply blur on Android 12 above -->
         <item name="android:dialogTheme">@style/DialogTheme</item>
     </style>

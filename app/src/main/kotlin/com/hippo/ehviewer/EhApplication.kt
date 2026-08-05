@@ -90,10 +90,11 @@ private val lifecycleScope = lifecycle.coroutineScope
 class EhApplication : Application(), SingletonImageLoader.Factory {
     override fun onCreate() = with(lifecycleScope) {
         initSETConnection()
-        // Initialize Settings on first access
+        // Apply night mode on main before any Activity paints system bars.
+        // observed() only runs on later pref changes; default was previously applied
+        // from launchIO (late / wrong thread), which left light-mode status bar icons white.
+        applyNightMode(Settings.theme.value)
         launchIO {
-            // Apply saved night mode once (observed() only runs on later changes).
-            updateWhenThemeChanges(Settings.theme.value)
             LogcatLogger.loggers += AndroidLogcatLogger(LogPriority.VERBOSE)
             Settings.saveCrashLog.valueFlow().collect {
                 if (it) {

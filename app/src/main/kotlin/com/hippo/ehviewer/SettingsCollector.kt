@@ -35,8 +35,8 @@ suspend fun updateWhenKeepMediaStatusChanges(mediaScan: Boolean) {
     }
 }
 
-suspend fun updateWhenThemeChanges(theme: Int) {
-    delay(100) // Avoid recompose being cancelled
+/** Apply app night mode immediately (main thread). Used at process start and after pref changes. */
+fun applyNightMode(theme: Int) {
     // minSdk 32: UiModeManager per-app night mode is always available.
     val mode = when (theme) {
         AppCompatDelegate.MODE_NIGHT_NO -> UiModeManager.MODE_NIGHT_NO
@@ -45,6 +45,11 @@ suspend fun updateWhenThemeChanges(theme: Int) {
     }
     uiModeManager.setApplicationNightMode(mode)
     AppCompatDelegate.setDefaultNightMode(theme)
+}
+
+suspend fun updateWhenThemeChanges(theme: Int) {
+    delay(100) // Avoid recompose being cancelled when toggling from settings
+    applyNightMode(theme)
 }
 
 // Stubs for removed EH prefs still referenced by Settings property initializers

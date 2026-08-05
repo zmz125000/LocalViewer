@@ -1,6 +1,9 @@
 package com.hippo.ehviewer.ui.theme
 
+import android.app.Activity
 import android.app.WallpaperManager
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.scrollbar.LocalScrollbarStyle
 import androidx.compose.material3.ColorScheme
@@ -11,9 +14,12 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import com.ehviewer.core.ui.component.scrollbarStyle
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
@@ -40,6 +46,22 @@ fun EhTheme(useDarkTheme: Boolean, content: @Composable () -> Unit) {
         dynamicLightColorScheme(context)
     }
 
+    // Keep status/nav bar *icon* contrast in sync with the theme actually drawn.
+    // enableEdgeToEdge() alone can leave light (white) icons on a light surface when
+    // app night mode / reader page theme diverges from the last configuration pass,
+    // or when nothing re-applies appearance after the reader overrides it.
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = context.findActivityOrNull()?.window ?: return@SideEffect
+            val lightBars = !useDarkTheme
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = lightBars
+                isAppearanceLightNavigationBars = lightBars
+            }
+        }
+    }
+
     MaterialTheme(colorScheme = colors, motionScheme = CustomMotionScheme) {
         val scrollbarStyle = scrollbarStyle(color = MaterialTheme.colorScheme.primary)
         CompositionLocalProvider(
@@ -48,6 +70,12 @@ fun EhTheme(useDarkTheme: Boolean, content: @Composable () -> Unit) {
             content = content,
         )
     }
+}
+
+private tailrec fun Context.findActivityOrNull(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivityOrNull()
+    else -> null
 }
 
 @Composable
