@@ -5,6 +5,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardColors
 import androidx.compose.material3.CardDefaults
@@ -40,14 +41,17 @@ fun OutlinedCard(
     interactionSource = interactionSource,
 ) {
     val hapticFeedback = LocalHapticFeedback.current
+    // fillMaxSize so long-press / ripple cover the full card, not only content height.
     Column(
-        modifier = Modifier.combinedClickable(
-            onClick = onClick,
-            onLongClick = {
-                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                onLongClick()
-            },
-        ),
+        modifier = Modifier
+            .fillMaxSize()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                },
+            ),
         content = content,
     )
 }
@@ -71,14 +75,17 @@ fun ElevatedCard(
     interactionSource = interactionSource,
 ) {
     val hapticFeedback = LocalHapticFeedback.current
+    // fillMaxSize so long-press / ripple cover the full card, not only content height.
     Column(
-        modifier = Modifier.combinedClickable(
-            onClick = onClick,
-            onLongClick = {
-                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                onLongClick()
-            },
-        ),
+        modifier = Modifier
+            .fillMaxSize()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                },
+            ),
         content = content,
     )
 }

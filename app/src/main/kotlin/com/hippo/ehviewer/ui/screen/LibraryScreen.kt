@@ -177,7 +177,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     relativePath = "",
                     preferMediaStore = fav.root.prefersMediaStore,
                 )
-                navigate(FolderBrowserScreenDestination())
+                navigate(FolderBrowserScreenDestination(fromLibrary = true))
             }
             is FavoriteBrowseSource.Smb -> {
                 if (fav.source.share.isBlank()) {
@@ -185,11 +185,11 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     return
                 }
                 BrowseSession.setSmbSegments(fav.source.id, emptyList())
-                navigate(SmbBrowserScreenDestination(fav.source.id, ""))
+                navigate(SmbBrowserScreenDestination(fav.source.id, "", fromLibrary = true))
             }
             is FavoriteBrowseSource.WebDav -> {
                 BrowseSession.setWebDavSegments(fav.source.id, emptyList())
-                navigate(WebDavBrowserScreenDestination(fav.source.id, ""))
+                navigate(WebDavBrowserScreenDestination(fav.source.id, "", fromLibrary = true))
             }
             is FavoriteBrowseSource.Gallery -> openGallery(fav.gallery)
             is FavoriteBrowseSource.LocalFolder -> {
@@ -202,7 +202,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     relativePath = fav.relativePath,
                     preferMediaStore = fav.root.prefersMediaStore,
                 )
-                navigate(FolderBrowserScreenDestination())
+                navigate(FolderBrowserScreenDestination(fromLibrary = true))
             }
             is FavoriteBrowseSource.SmbFolder -> {
                 if (fav.source.share.isBlank()) {
@@ -215,6 +215,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     SmbBrowserScreenDestination(
                         sourceId = fav.source.id,
                         initialRelativePath = fav.relativePath,
+                        fromLibrary = true,
                     ),
                 )
             }
@@ -225,6 +226,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     WebDavBrowserScreenDestination(
                         sourceId = fav.source.id,
                         initialRelativePath = fav.relativePath,
+                        fromLibrary = true,
                     ),
                 )
             }

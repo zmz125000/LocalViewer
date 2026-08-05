@@ -229,12 +229,13 @@ private val browseNestedDestinations: Set<DestinationSpec> = setOf(
 
 /**
  * Which main tab should appear selected for [dest].
- * Reader returns null (hide chrome). Nested folder screens map to Browse or History
- * via [fromHistory].
+ * Reader returns null (hide chrome). Nested folder screens map to Browse, History,
+ * or Library via [fromHistory] / [fromLibrary].
  */
 private fun selectedMainTab(
     dest: DestinationSpec?,
     fromHistory: Boolean,
+    fromLibrary: Boolean,
     navController: NavController,
 ): Direction? {
     if (dest == null) return LibraryScreenDestination
@@ -245,7 +246,11 @@ private fun selectedMainTab(
         SettingsScreenDestination -> SettingsScreenDestination
         ReaderScreenDestination -> null
         FolderBrowserScreenDestination, SmbBrowserScreenDestination, WebDavBrowserScreenDestination -> {
-            if (fromHistory) HistoryScreenDestination else BrowseScreenDestination
+            when {
+                fromHistory -> HistoryScreenDestination
+                fromLibrary -> LibraryScreenDestination
+                else -> BrowseScreenDestination
+            }
         }
         NetworkScreenDestination -> BrowseScreenDestination
         LibrarySettingsScreenDestination -> {
@@ -425,6 +430,21 @@ class MainActivity : AppCompatActivity() {
                         ?: false
                 else -> false
             }
+            val fromLibraryArg = when (currentDestination) {
+                FolderBrowserScreenDestination ->
+                    navBackStackEntry?.arguments
+                        ?.let { FolderBrowserScreenDestination.argsFrom(it).fromLibrary }
+                        ?: false
+                SmbBrowserScreenDestination ->
+                    navBackStackEntry?.arguments
+                        ?.let { SmbBrowserScreenDestination.argsFrom(it).fromLibrary }
+                        ?: false
+                WebDavBrowserScreenDestination ->
+                    navBackStackEntry?.arguments
+                        ?.let { WebDavBrowserScreenDestination.argsFrom(it).fromLibrary }
+                        ?: false
+                else -> false
+            }
             val drawerHandle = remember { mutableStateListOf<Long>() }
             var snackbarFabPadding by remember { mutableStateOf(0.dp) }
             val drawerEnabled = drawerHandle.isNotEmpty()
@@ -433,7 +453,12 @@ class MainActivity : AppCompatActivity() {
             val windowSizeClass = adaptiveInfo.windowSizeClass
             val useRail = windowSizeClass.isMediumWidthOrWider
             val persistMainNav by Settings.persistMainNav.collectAsState()
-            val selectedTab = selectedMainTab(currentDestination, fromHistoryArg, navController)
+            val selectedTab = selectedMainTab(
+                currentDestination,
+                fromHistoryArg,
+                fromLibraryArg,
+                navController,
+            )
             val showMainNav = shouldShowMainNav(currentDestination, persistMainNav, useRail)
             // Shortcut FABs only on compact phones without persistent nav.
             val showNavShortcutFab = !useRail && !persistMainNav

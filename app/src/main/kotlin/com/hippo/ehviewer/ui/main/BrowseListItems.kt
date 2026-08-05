@@ -210,18 +210,16 @@ fun BrowseDirectoryGridItem(
                     tint = MaterialTheme.colorScheme.primary,
                 )
                 if (showFavoriteStar) {
-                    Badge(
+                    // No Badge container — plain star, same corner as page-count chips.
+                    Icon(
+                        Icons.Default.Star,
+                        contentDescription = null,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .widthIn(min = 32.dp)
-                            .height(24.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.Star,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp),
-                        )
-                    }
+                            .padding(4.dp)
+                            .size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
                 }
             }
         },

@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.GridView
@@ -76,6 +77,7 @@ import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
+import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseArchiveGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseArchiveGridItem
 import com.hippo.ehviewer.ui.main.BrowseCover
@@ -102,6 +104,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     navigator: DestinationsNavigator,
     /** When opened from History, show a FAB to jump straight back (skip path climb). */
     fromHistory: Boolean = false,
+    /** When opened from Library favourites, show a FAB to jump back to Library. */
+    fromLibrary: Boolean = false,
 ) = Screen(navigator) {
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
     // Session-scoped stack survives reader navigation (unlike remember {}).
@@ -359,8 +363,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     enter = fadeIn() + scaleIn(),
                     exit = fadeOut() + scaleOut(),
                 ) {
-                    if (fromHistory) {
-                        ExtendedFloatingActionButton(
+                    when {
+                        fromHistory -> ExtendedFloatingActionButton(
                             onClick = {
                                 if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
                                     navigator.navigate(HistoryScreenDestination) {
@@ -373,8 +377,20 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             },
                             text = { Text(stringResource(R.string.back_to_history)) },
                         )
-                    } else {
-                        ExtendedFloatingActionButton(
+                        fromLibrary -> ExtendedFloatingActionButton(
+                            onClick = {
+                                if (!navigator.popBackStack(LibraryScreenDestination, inclusive = false)) {
+                                    navigator.navigate(LibraryScreenDestination) {
+                                        launchSingleTop = true
+                                    }
+                                }
+                            },
+                            icon = {
+                                Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null)
+                            },
+                            text = { Text(stringResource(R.string.back_to_library)) },
+                        )
+                        else -> ExtendedFloatingActionButton(
                             onClick = {
                                 if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
                                     navigator.navigate(BrowseScreenDestination) {

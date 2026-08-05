@@ -99,6 +99,7 @@
     <string name="history_unavailable">此項目已不可用</string>
     <string name="back_to_history">返回歷史</string>
     <string name="back_to_browse">返回瀏覽</string>
+    <string name="back_to_library">返回書庫</string>
     <string name="go_to_first_page">回到第一頁</string>
     <string name="go_to_next_gallery">下一本</string>
     <string name="settings_download_remote_thumbs">下載網路資料夾封面</string>

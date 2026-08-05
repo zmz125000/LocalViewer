@@ -348,6 +348,7 @@
     <string name="clear_all_history">清除所有阅读历史？</string>
     <string name="back_to_history">返回历史</string>
     <string name="back_to_browse">返回浏览</string>
+    <string name="back_to_library">返回书库</string>
     <string name="go_to_first_page">回到第一页</string>
     <string name="go_to_next_gallery">下一本</string>
     <string name="settings_privacy_save_history">保存历史</string>
