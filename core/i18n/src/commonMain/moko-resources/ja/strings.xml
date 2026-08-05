@@ -30,7 +30,7 @@
     <string name="library_add_folder_source">フォルダソースを追加</string>
     <string name="library_root_already_added">このフォルダは既に追加されています</string>
     <string name="source_access_saf">フォルダ選択 (SAF)</string>
-    <string name="source_access_saf_summary">任意のフォルダを選択（アーカイブ含む）。アクセス権を保持します。</string>
+    <string name="source_access_saf_summary">任意のフォルダを選択（アーカイブ含む）。</string>
     <string name="source_access_device_media">端末メディア</string>
     <string name="source_access_device_media_summary">システムのメディア権限で画像を読み取ります。アーカイブは含まれません。</string>
     <string name="source_device_media_name">端末メディア</string>

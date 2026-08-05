@@ -29,7 +29,7 @@
     <string name="library_add_folder_source">新增瀏覽資料夾</string>
     <string name="library_root_already_added">此資料夾已新增</string>
     <string name="source_access_saf">資料夾選擇器 (SAF)</string>
-    <string name="source_access_saf_summary">選擇任意資料夾（含壓縮檔）。可持久存取。</string>
+    <string name="source_access_saf_summary">選擇任意資料夾（含壓縮檔）。</string>
     <string name="source_access_device_media">裝置媒體</string>
     <string name="source_access_device_media_summary">透過系統媒體權限讀取圖片。不含壓縮檔。</string>
     <string name="source_device_media_name">裝置媒體</string>
