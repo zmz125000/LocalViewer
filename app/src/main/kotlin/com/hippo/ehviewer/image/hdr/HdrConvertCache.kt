@@ -58,11 +58,18 @@ object HdrConvertCache {
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
 
     /**
-     * Serial UHDR convert. One full-res JXR/JXL/PQ-AVIF decode holds a multi‑MB
-     * compressed buffer + F16 RGBA (w×h×8) + libultrahdr scratch — two in flight
-     * regularly trips blocking GC Alloc on mid-range heaps even with largeHeap.
+     * Full-page UHDR (reader / page cache, [maxEdge] = 0).
+     * One full-res JXR/JXL/PQ-AVIF holds multi‑MB compressed + F16 RGBA + encode
+     * scratch — keep serial so mid-range heaps do not thrash with blocking GC Alloc.
+     * **Not shared with thumbs** so library scroll MaxEdge work cannot starve the reader.
      */
-    private val convertSlots = Semaphore(2)
+    private val fullConvertSlots = Semaphore(2)
+
+    /**
+     * Browse / cover MaxEdge thumbs. Separate pool from [fullConvertSlots]: thumbs are
+     * still heavy (native decodes full F16 then scales) but must not block reader pages.
+     */
+    private val thumbConvertSlots = Semaphore(1)
 
     /**
      * Exts that *can* use the RAM → classify → UHDR convert pipeline on network download
@@ -296,7 +303,7 @@ object HdrConvertCache {
     /**
      * Network B1: bytes already in RAM → classify → lib convert to `.jpg` / else keep original.
      * With [Settings.readerLibDirectBitmap], always keep original (no convert).
-     * Uses [convertSlots] so downloads need not hold convert CPU.
+     * Uses [fullConvertSlots] so downloads need not hold convert CPU.
      */
     suspend fun finalizeNetworkBytes(
         bytes: ByteArray,
@@ -444,7 +451,7 @@ object HdrConvertCache {
     }
 
     /**
-     * Single convert path: global convert slot + per-dest mutex + tmp + native + commit.
+     * Single convert path: full vs thumb slot + per-dest mutex + tmp + native + commit.
      * @param maxEdge 0 = full page (p99.99 MaxCLL); >0 = thumb fixed 1000 nits MaxEdge JNI
      */
     private suspend fun convertToUhdr(
@@ -460,7 +467,9 @@ object HdrConvertCache {
                 1 -> return@withContext false // gain-map: keep original for platform
             }
         }
-        convertSlots.withPermit {
+        // Thumbs and full pages use separate permits so browse MaxEdge cannot block reader.
+        val slots = if (maxEdge > 0) thumbConvertSlots else fullConvertSlots
+        slots.withPermit {
             val lockKey = output.absolutePath
             val mutex = pathLocks.getOrPut(lockKey) { Mutex() }
             mutex.withLock {
@@ -557,26 +566,29 @@ object HdrConvertCache {
 
     private suspend fun convertJxrViaPath(inputPath: String, output: File): Boolean = withContext(Dispatchers.IO) {
         if (output.isFile && output.length() > 0L) return@withContext true
-        val lockKey = output.absolutePath
-        val mutex = pathLocks.getOrPut(lockKey) { Mutex() }
-        mutex.withLock {
-            if (output.isFile && output.length() > 0L) return@withLock true
-            output.parentFile?.mkdirs()
-            val tmp = File("${output.absolutePath}.tmp.${System.nanoTime()}")
-            try {
-                val code = convertJxrToUltraHdr(inputPath, tmp.absolutePath)
-                if (code != 0 || !tmp.isFile || tmp.length() <= 0L) {
-                    Log.e(TAG, "convertJxrToUltraHdr failed code=$code in=$inputPath")
+        // Full-page path convert — same pool as byte full-res so it cannot race two fulls.
+        fullConvertSlots.withPermit {
+            val lockKey = output.absolutePath
+            val mutex = pathLocks.getOrPut(lockKey) { Mutex() }
+            mutex.withLock {
+                if (output.isFile && output.length() > 0L) return@withLock true
+                output.parentFile?.mkdirs()
+                val tmp = File("${output.absolutePath}.tmp.${System.nanoTime()}")
+                try {
+                    val code = convertJxrToUltraHdr(inputPath, tmp.absolutePath)
+                    if (code != 0 || !tmp.isFile || tmp.length() <= 0L) {
+                        Log.e(TAG, "convertJxrToUltraHdr failed code=$code in=$inputPath")
+                        tmp.delete()
+                        return@withLock false
+                    }
+                    commitTmp(tmp, output)
+                    OriginDiskCache.scheduleTrim()
+                    true
+                } catch (e: Throwable) {
+                    Log.e(TAG, "convertJxrViaPath exception", e)
                     tmp.delete()
-                    return@withLock false
+                    false
                 }
-                commitTmp(tmp, output)
-                OriginDiskCache.scheduleTrim()
-                true
-            } catch (e: Throwable) {
-                Log.e(TAG, "convertJxrViaPath exception", e)
-                tmp.delete()
-                false
             }
         }
     }
