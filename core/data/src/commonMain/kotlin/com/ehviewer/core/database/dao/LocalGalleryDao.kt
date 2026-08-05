@@ -22,11 +22,17 @@ interface LocalGalleryDao {
     @Query("SELECT * FROM LOCAL_GALLERIES WHERE CONTENT_PATH = :path LIMIT 1")
     suspend fun loadByContentPath(path: String): LocalGalleryEntity?
 
+    @Query("SELECT * FROM LOCAL_GALLERIES WHERE ROOT_ID = :rootId")
+    suspend fun listByRootId(rootId: Long): List<LocalGalleryEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(galleries: List<LocalGalleryEntity>)
 
     @Query("DELETE FROM LOCAL_GALLERIES WHERE ROOT_ID = :rootId")
     suspend fun deleteByRootId(rootId: Long)
+
+    @Query("DELETE FROM LOCAL_GALLERIES WHERE ID IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
 
     @Query("DELETE FROM LOCAL_GALLERIES WHERE CONTENT_PATH = :contentPath")
     suspend fun deleteByContentPath(contentPath: String)
