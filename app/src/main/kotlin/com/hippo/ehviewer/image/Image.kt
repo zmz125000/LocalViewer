@@ -19,6 +19,7 @@ package com.hippo.ehviewer.image
 
 import android.graphics.Bitmap
 import android.hardware.HardwareBuffer
+import android.util.Log
 import androidx.compose.ui.unit.IntSize
 import arrow.core.Either
 import arrow.core.left
@@ -113,7 +114,8 @@ class Image private constructor(
 
     /**
      * Wide-gamut content (Display P3 / BT.2020 source, or Bitmap [ColorSpace.isWideGamut]).
-     * Used with [Settings.readerAdvancedColor] for window [COLOR_MODE_WIDE_COLOR_GAMUT].
+     * Diagnostic / history; Option A session WCG is gated by [Settings.readerAdvancedColor]
+     * alone (not only when this is true).
      */
     val isWideGamutContent: Boolean
 
@@ -262,7 +264,30 @@ class Image private constructor(
                 }
             }
             return when (val result = request.execute()) {
-                is SuccessResult -> result.image
+                is SuccessResult -> {
+                    // Phase 0/4 diagnostics: adb logcat -s ReaderColor:D
+                    if (Log.isLoggable("ReaderColor", Log.DEBUG)) {
+                        val bm = result.image.asBitmapImage()?.bitmap
+                        if (bm != null) {
+                            val cs = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                bm.colorSpace?.name ?: "null"
+                            } else {
+                                "n/a"
+                            }
+                            val wide = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                bm.colorSpace?.isWideGamut == true
+                            } else {
+                                false
+                            }
+                            Log.d(
+                                "ReaderColor",
+                                "coil decode config=${bm.config} cs=$cs wide=$wide " +
+                                    "${bm.width}x${bm.height}",
+                            )
+                        }
+                    }
+                    result.image
+                }
                 is ErrorResult -> throw result.throwable
             }
         }

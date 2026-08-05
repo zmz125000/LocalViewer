@@ -378,6 +378,8 @@ if (EHVIEWER_HDR_CODECS)
             ${JXRLIB_ROOT}/common/include
             ${JXRLIB_ROOT}/image/sys
             ${EH_JPEG_INCLUDE_DIRS}
+            # ultrahdr/icc.h (IccHelper) for baseline P3 ICC embed
+            ${libultrahdr_SOURCE_DIR}/lib/include
     )
     list(APPEND EHVIEWER_HDR_LIBS ${EH_JPEG_LIB})
 endif ()

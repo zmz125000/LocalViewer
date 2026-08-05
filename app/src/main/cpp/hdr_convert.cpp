@@ -18,6 +18,15 @@
 
 #include "hdr_encode.h"
 #include "ultrahdr_api.h"
+// Internal libultrahdr: build Display P3 / 709 ICC for baseline JPEG APP2.
+#include "ultrahdr/icc.h"
+// ultrahdrcommon.h may stub ALOG* to no-ops — restore Android logging for this TU.
+#ifdef ALOGE
+#undef ALOGE
+#endif
+#ifdef ALOGI
+#undef ALOGI
+#endif
 
 // libjpeg-turbo (built as libultrahdr dep) — baseline SDR JPEG only.
 extern "C" {
@@ -656,24 +665,32 @@ void jpeg_err_exit(j_common_ptr cinfo) {
 /**
  * Pure SDR → baseline JPEG (no gain map). Avoids libultrahdr epsilon-bump of
  * max_content_boost when min==max (≈1.07), which made tools show ratio ≠ 1.0.
- * Wide gamut rematrixed to BT.709; sRGB OETF; quality 92.
+ *
+ * Color policy (lib-direct **off** convert path):
+ * - **Display P3**: keep P3 primaries + sRGB-curve OETF + embed Display P3 ICC
+ *   (APP2) so Coil/ImageDecoder can present WCG without rematrix crush.
+ * - **BT.2100** (rare pure-SDR): rematrix → BT.709, untagged sRGB JPEG
+ *   (no PQ/HLG in baseline).
+ * - **BT.709**: sRGB OETF, untagged (or optional 709 ICC not required).
+ *
+ * Quality 92.
  */
 int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const char* out_path,
                              uhdr_color_gamut_t cg) {
     if (!rgba || !out_path || w == 0 || h == 0) return -30;
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     std::vector<uint8_t> rgb(pixels * 3);
-    const bool rematrix_p3 = (cg == UHDR_CG_DISPLAY_P3);
+    // Keep P3 for WCG-capable convert; only BT.2100 SDR is rematrixed to 709.
+    const bool preserve_p3 = (cg == UHDR_CG_DISPLAY_P3);
     const bool rematrix_2020 = (cg == UHDR_CG_BT_2100);
     for (size_t i = 0; i < pixels; i++) {
         float r = half_to_float(rgba[i * 4 + 0]);
         float g = half_to_float(rgba[i * 4 + 1]);
         float b = half_to_float(rgba[i * 4 + 2]);
-        if (rematrix_p3) {
-            linear_p3_to_bt709(r, g, b);
-        } else if (rematrix_2020) {
+        if (rematrix_2020) {
             linear_bt2020_to_bt709(r, g, b);
         }
+        // preserve_p3: leave linear P3 as-is; OETF matches Display P3 (same as sRGB curve).
         if (!std::isfinite(r) || r < 0.f) r = 0.f;
         if (!std::isfinite(g) || g < 0.f) g = 0.f;
         if (!std::isfinite(b) || b < 0.f) b = 0.f;
@@ -686,6 +703,29 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
     if (!fp) {
         ALOGE("fopen baseline JPEG failed: %s", out_path);
         return -31;
+    }
+
+    // P3 ICC for ImageDecoder / Coil (includes ICC_PROFILE chunk header for APP2).
+    std::shared_ptr<ultrahdr::DataStruct> icc;
+    if (preserve_p3) {
+        icc = ultrahdr::IccHelper::writeIccProfile(UHDR_CT_SRGB, UHDR_CG_DISPLAY_P3);
+        if (!icc || !icc->getData() || icc->getLength() == 0) {
+            ALOGE("P3 ICC build failed — falling back to rematrix 709 baseline");
+            icc.reset();
+            // Re-encode pixels with rematrix so untagged JPEG is not wrong-primaries.
+            for (size_t i = 0; i < pixels; i++) {
+                float r = half_to_float(rgba[i * 4 + 0]);
+                float g = half_to_float(rgba[i * 4 + 1]);
+                float b = half_to_float(rgba[i * 4 + 2]);
+                linear_p3_to_bt709(r, g, b);
+                if (!std::isfinite(r) || r < 0.f) r = 0.f;
+                if (!std::isfinite(g) || g < 0.f) g = 0.f;
+                if (!std::isfinite(b) || b < 0.f) b = 0.f;
+                rgb[i * 3 + 0] = linear_to_srgb_u8(r);
+                rgb[i * 3 + 1] = linear_to_srgb_u8(g);
+                rgb[i * 3 + 2] = linear_to_srgb_u8(b);
+            }
+        }
     }
 
     jpeg_compress_struct cinfo{};
@@ -706,6 +746,16 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
     jpeg_set_defaults(&cinfo);
     jpeg_set_quality(&cinfo, 92, TRUE);
     jpeg_start_compress(&cinfo, TRUE);
+    if (icc && icc->getData() && icc->getLength() > 0) {
+        // Same as libultrahdr JpegEncoderHelper: APP2 + ICC_PROFILE payload.
+        const auto len = static_cast<unsigned int>(icc->getLength());
+        if (len <= 65533u) {
+            jpeg_write_marker(&cinfo, JPEG_APP0 + 2, static_cast<const JOCTET*>(icc->getData()),
+                              len);
+        } else {
+            ALOGE("P3 ICC too large for single APP2 (%u) — writing without ICC", len);
+        }
+    }
     while (cinfo.next_scanline < cinfo.image_height) {
         JSAMPROW row = rgb.data() + static_cast<size_t>(cinfo.next_scanline) * w * 3;
         jpeg_write_scanlines(&cinfo, &row, 1);
@@ -713,7 +763,8 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
     jpeg_finish_compress(&cinfo);
     jpeg_destroy_compress(&cinfo);
     fclose(fp);
-    ALOGI("Wrote baseline SDR JPEG %ux%u cg=%d → %s", w, h, (int)cg, out_path);
+    ALOGI("Wrote baseline SDR JPEG %ux%u cg=%d p3_icc=%d → %s", w, h, (int)cg,
+          (icc && icc->getData() && icc->getLength() > 0) ? 1 : 0, out_path);
     return 0;
 }
 
@@ -732,7 +783,8 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
  * [fixed_peak_nits] > 0: skip full-frame peak scan (thumbs: 203 SDR / 1000 HDR).
  * [fixed_peak_nits] ≤ 0: p99.99 scan of max(R,G,B) (full pages).
  *
- * [cg] must match [rgba] primaries for Ultra HDR. Baseline rematrixes wide→709.
+ * [cg] must match [rgba] primaries for Ultra HDR. Baseline SDR keeps P3+ICC
+ * (see encode_baseline_sdr_jpeg); BT.2100 pure-SDR rematrixes to 709.
  */
 int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
                                    const char* out_path, uhdr_color_gamut_t cg,
