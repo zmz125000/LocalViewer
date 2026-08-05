@@ -6,11 +6,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -22,14 +25,17 @@ import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Badge
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -42,14 +48,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
@@ -65,7 +74,9 @@ import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.ui.util.rememberUpdatedStateInVM
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
+import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
@@ -84,6 +95,7 @@ import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.main.CoverImage
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
@@ -403,19 +415,19 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             BrowseSectionHeader(stringResource(R.string.favourite))
                         }
                         items(favorites, key = { "fav-${it.key}" }) { fav ->
-                            when (fav) {
-                                is FavoriteBrowseSource.Gallery -> LocalGalleryGridItem(
-                                    gallery = fav.gallery,
-                                    onClick = { openGallery(fav.gallery) },
-                                    onLongClick = { toggleGalleryFavorite(fav.gallery) },
-                                    showPages = showPages,
-                                    showProgress = showProgress,
-                                )
-                                else -> FavoriteSourceGridCell(
-                                    fav = fav,
-                                    onClick = { openFavorite(fav) },
-                                )
-                            }
+                            FavoriteSourceGridCell(
+                                fav = fav,
+                                onClick = { openFavorite(fav) },
+                                onLongClick = {
+                                    when (fav) {
+                                        is FavoriteBrowseSource.Gallery ->
+                                            toggleGalleryFavorite(fav.gallery)
+                                        else -> openFavorite(fav)
+                                    }
+                                },
+                                showPages = showPages,
+                                showProgress = showProgress,
+                            )
                         }
                         if (galleries.isNotEmpty()) {
                             item(
@@ -485,31 +497,97 @@ private fun FavoriteSourceListRow(
     )
 }
 
+/**
+ * Square favourite grid cell (column width from [GalleryGridDefaults]).
+ * Sources: 48.dp icon centered in the band above the caption.
+ * Galleries: cover fills that same band; caption sits under it (browse [labelMedium]).
+ */
 @Composable
 private fun FavoriteSourceGridCell(
     fav: FavoriteBrowseSource,
     onClick: () -> Unit,
+    onLongClick: () -> Unit = onClick,
+    showPages: Boolean = false,
+    showProgress: Boolean = false,
 ) {
     ElevatedCard(
         onClick = onClick,
-        onLongClick = onClick,
-        modifier = Modifier.fillMaxWidth().height(120.dp),
+        onLongClick = onLongClick,
+        modifier = Modifier.fillMaxWidth().aspectRatio(1f),
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(
-                favoriteIcon(fav),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-            )
+        Column(Modifier.fillMaxSize()) {
+            // Icon / thumb band: vertical center is midway between cell top and text top.
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clip(ShapeDefaults.Medium),
+                contentAlignment = Alignment.Center,
+            ) {
+                when (fav) {
+                    is FavoriteBrowseSource.Gallery -> {
+                        val gallery = fav.gallery
+                        val gridDecodePx = CoverThumb.gridDecodePx(
+                            screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                            columns = GalleryGridDefaults.columnCount(),
+                            margin = GalleryGridDefaults.margin(),
+                            gutter = GalleryGridDefaults.gutter(),
+                        )
+                        CoverImage(
+                            coverPath = gallery.coverPath,
+                            sizePx = gridDecodePx,
+                            archiveContentPath = gallery.contentPath.takeIf {
+                                gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
+                            },
+                            placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                                Icons.Default.Inventory2
+                            } else {
+                                Icons.Default.Folder
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        if (showPages && gallery.pageCount > 0) {
+                            Badge(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .widthIn(min = 32.dp)
+                                    .height(24.dp),
+                            ) {
+                                val readProgress = if (showProgress) {
+                                    remember(gallery.id) {
+                                        EhDB.getReadProgressFlow(gallery.id)
+                                    }.collectAsState(0).value
+                                } else {
+                                    0
+                                }
+                                Text(
+                                    text = if (readProgress > 0) {
+                                        "${readProgress + 1}/${gallery.pageCount}"
+                                    } else {
+                                        "${gallery.pageCount}"
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    else -> {
+                        Icon(
+                            favoriteIcon(fav),
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
             Text(
-                fav.displayName,
-                style = MaterialTheme.typography.titleMedium,
+                text = fav.displayName,
+                style = MaterialTheme.typography.labelMedium,
                 maxLines = 2,
-            )
-            Text(
-                favoriteSubtitle(fav),
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
             )
         }
     }

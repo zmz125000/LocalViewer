@@ -95,7 +95,7 @@ private fun coverRequest(coverPath: String?, sizePx: Int): ImageRequest? {
 }
 
 @Composable
-private fun CoverImage(
+internal fun CoverImage(
     coverPath: String?,
     sizePx: Int,
     placeholder: ImageVector,
