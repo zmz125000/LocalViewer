@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -28,7 +27,6 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Badge
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -74,7 +72,6 @@ import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.ui.util.rememberUpdatedStateInVM
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
-import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
@@ -425,8 +422,6 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                         else -> openFavorite(fav)
                                     }
                                 },
-                                showPages = showPages,
-                                showProgress = showProgress,
                             )
                         }
                         if (galleries.isNotEmpty()) {
@@ -501,14 +496,13 @@ private fun FavoriteSourceListRow(
  * Square favourite grid cell (column width from [GalleryGridDefaults]).
  * Sources: 48.dp icon centered in the band above the caption.
  * Galleries: cover fills that same band; caption sits under it (browse [labelMedium]).
+ * No page-count badge (main library grid still shows pages when enabled).
  */
 @Composable
 private fun FavoriteSourceGridCell(
     fav: FavoriteBrowseSource,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
-    showPages: Boolean = false,
-    showProgress: Boolean = false,
 ) {
     ElevatedCard(
         onClick = onClick,
@@ -546,29 +540,6 @@ private fun FavoriteSourceGridCell(
                             },
                             modifier = Modifier.fillMaxSize(),
                         )
-                        if (showPages && gallery.pageCount > 0) {
-                            Badge(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .widthIn(min = 32.dp)
-                                    .height(24.dp),
-                            ) {
-                                val readProgress = if (showProgress) {
-                                    remember(gallery.id) {
-                                        EhDB.getReadProgressFlow(gallery.id)
-                                    }.collectAsState(0).value
-                                } else {
-                                    0
-                                }
-                                Text(
-                                    text = if (readProgress > 0) {
-                                        "${readProgress + 1}/${gallery.pageCount}"
-                                    } else {
-                                        "${gallery.pageCount}"
-                                    },
-                                )
-                            }
-                        }
                     }
                     else -> {
                         Icon(
