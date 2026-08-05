@@ -57,7 +57,11 @@ object HdrConvertCache {
 
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
 
-    /** At most one full/thumb UHDR convert in flight (CPU + peak RAM). */
+    /**
+     * Serial UHDR convert. One full-res JXR/JXL/PQ-AVIF decode holds a multi‑MB
+     * compressed buffer + F16 RGBA (w×h×8) + libultrahdr scratch — two in flight
+     * regularly trips blocking GC Alloc on mid-range heaps even with largeHeap.
+     */
     private val convertSlots = Semaphore(2)
 
     /**

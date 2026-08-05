@@ -42,6 +42,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         val size = imageFileNames.size
         val interactiveSlots = Semaphore(1)
         val prefetchSlots = Semaphore(3)
+        // Match SMB / HdrConvertCache: serial convert → one lib download at a time.
         val libHdrPrefetchSlots = Semaphore(2)
         val downloadJobs = ConcurrentHashMap<Int, Job>()
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()

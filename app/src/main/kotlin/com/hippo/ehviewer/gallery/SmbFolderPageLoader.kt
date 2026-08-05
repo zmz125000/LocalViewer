@@ -53,7 +53,9 @@ suspend inline fun <T> useSmbFolderPageLoader(
         } else {
             Semaphore(maxOps - 1)
         }
-        // B1 convert mode: lib-HDR/avif — only 1 prefetch ahead (interactive + 1 = depth 2).
+        // B1 convert mode: serial UHDR convert ([HdrConvertCache] slot=1) — at most one
+        // in-flight lib download (interactive uses same pool when candidate). Avoids
+        // stacking multi‑10MB JXR buffers while convert GC is already thrashing.
         // Direct-Bitmap mode uses normal [prefetchSlots] / [keepWindow] (original on disk only).
         val libHdrPrefetchSlots = Semaphore(2)
         // In-flight downloads by page index — join small-jump overlap, cancel large jumps.

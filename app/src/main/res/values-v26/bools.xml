@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <bool name="large_heap">false</bool>
+    <!--
+      true: HDR/JXR → Ultra HDR convert peaks at tens–100+ MB of F16 RGBA + encode
+      scratch (plus concurrent page downloads). Default heap (~192–256 MB class) causes
+      blocking GC Alloc under reader prefetch. largeHeap ≈ half of device RAM on most
+      phones — needed for this app's decode pipeline, not only pre-O devices.
+    -->
+    <bool name="large_heap">true</bool>
 
 </resources>
