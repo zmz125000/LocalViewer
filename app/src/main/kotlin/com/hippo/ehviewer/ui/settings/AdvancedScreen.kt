@@ -197,12 +197,10 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
             }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_smb3_only),
-                summary = stringResource(id = R.string.settings_smb3_only_summary),
                 state = Settings.smb3Only.asMutableState(),
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_smb_encrypt),
-                summary = stringResource(id = R.string.settings_smb_encrypt_summary),
                 state = Settings.smbEncryptData.asMutableState(),
             )
             SimpleMenuPreferenceInt(
@@ -249,7 +247,6 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
             }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_advanced_webdav_insecure_tls),
-                summary = stringResource(id = R.string.settings_advanced_webdav_insecure_tls_summary),
                 state = Settings.webDavInsecureTls.asMutableState(),
             )
             IntSliderPreference(

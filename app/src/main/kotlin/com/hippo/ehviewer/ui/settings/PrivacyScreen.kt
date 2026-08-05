@@ -95,7 +95,6 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
             var previousSaveHistory by remember { mutableStateOf(saveHistory.value) }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_save_history),
-                summary = stringResource(id = R.string.settings_privacy_save_history_summary),
                 state = saveHistory,
             )
             // Turning history off also wipes existing entries.
@@ -108,7 +107,6 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
             val searchHistoryCleared = stringResource(id = R.string.search_history_cleared)
             Preference(
                 title = stringResource(id = R.string.clear_search_history),
-                summary = stringResource(id = R.string.clear_search_history_summary),
             ) {
                 launch {
                     awaitConfirmationOrCancel(

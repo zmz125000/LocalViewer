@@ -70,16 +70,36 @@ object AppConfig {
 
     val commitTime = BuildConfig.COMMIT_TIME.toString()
 
-    private val externalAppDir: File?
-        get() {
-            if (Environment.MEDIA_MOUNTED == Environment.getExternalStorageState()) {
-                return appCtx.getExternalFilesDir(null)?.takeIf { it.ensureDirectory() }
-            }
-            return null
+    /**
+     * Cached [Context.getExternalFilesDir]; may still touch disk on first resolve.
+     * Callers that only need a path string should use [create] = false so we never
+     * [File.isDirectory] / [File.ensureDirectory] on the UI thread (StrictMode).
+     */
+    private val externalFilesDir: File? by lazy {
+        if (Environment.MEDIA_MOUNTED == Environment.getExternalStorageState()) {
+            appCtx.getExternalFilesDir(null)
+        } else {
+            null
         }
+    }
 
-    private fun getDirInExternalAppDir(filename: String, create: Boolean = true) = externalAppDir?.run { File(this, filename).takeIf { if (create) it.ensureDirectory() else it.isDirectory } }
+    /**
+     * @param create When true, ensure base + subdirectory exist (mkdirs). When false, return
+     * the path only with no FS probes — required for UI reads of [defaultDownloadDir] via
+     * [com.hippo.ehviewer.download.downloadLocation] (was StrictMode DiskReadViolation).
+     */
+    private fun getDirInExternalAppDir(filename: String, create: Boolean = true): File? {
+        val base = externalFilesDir ?: return null
+        val dir = File(base, filename)
+        return if (create) {
+            if (!base.ensureDirectory()) return null
+            dir.takeIf { it.ensureDirectory() }
+        } else {
+            dir
+        }
+    }
 
+    /** Default download folder under app external files. Path only; no FS existence probe. */
     val defaultDownloadDir: File?
         get() = getDirInExternalAppDir(DOWNLOAD, false)
     val externalTempPersistDir

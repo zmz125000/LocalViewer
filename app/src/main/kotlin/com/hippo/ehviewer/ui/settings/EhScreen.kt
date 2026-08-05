@@ -90,32 +90,26 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_eh_show_gallery_pages),
-                summary = stringResource(id = R.string.settings_eh_show_gallery_pages_summary),
                 state = Settings.showGalleryPages.asMutableState(),
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_eh_show_reading_progress),
-                summary = stringResource(id = R.string.settings_eh_show_reading_progress_summary),
                 state = Settings.showReadingProgress.asMutableState(),
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_library_startup_scan),
-                summary = stringResource(id = R.string.settings_library_startup_scan_summary),
                 state = Settings.libraryStartupScan.asMutableState(),
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_download_remote_thumbs),
-                summary = stringResource(id = R.string.settings_download_remote_thumbs_summary),
                 state = Settings.downloadRemoteThumbs.asMutableState(),
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_download_network_archive_thumbs),
-                summary = stringResource(id = R.string.settings_download_network_archive_thumbs_summary),
                 state = Settings.downloadNetworkArchiveThumbs.asMutableState(),
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_persist_main_nav),
-                summary = stringResource(id = R.string.settings_persist_main_nav_summary),
                 state = Settings.persistMainNav.asMutableState(),
             )
         }
