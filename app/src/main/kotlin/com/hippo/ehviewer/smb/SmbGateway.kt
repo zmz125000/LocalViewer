@@ -113,10 +113,10 @@ object SmbGateway {
     private const val SMB_IO_TIMEOUT_SEC = 120L
 
     /** First connect-failure backoff; doubles each trip until [COOLDOWN_MAX_MS]. */
-    private const val COOLDOWN_BASE_MS = 3_000L
+    private const val COOLDOWN_BASE_MS = 1_000L
 
     /** Cap reconnect cooldown (battery drain guard) — max 10s between host retries. */
-    private const val COOLDOWN_MAX_MS = 10_000L
+    private const val COOLDOWN_MAX_MS = 3_000L
     private const val PATH_CHANGE_DEBOUNCE_MS = 1_000L
 
     /** Ops multiplexed per TCP session (fixed when the session is opened). */
@@ -664,8 +664,7 @@ object SmbGateway {
         if (now < until) {
             val leftSec = ((until - now + 999) / 1000).coerceAtLeast(1)
             throw IOException(
-                "SMB host $host unreachable or recovering — retry in ${leftSec}s " +
-                    "(avoiding reconnect battery drain)",
+                "SMB host $host unreachable or recovering — retry in ${leftSec}s ",
             )
         }
     }

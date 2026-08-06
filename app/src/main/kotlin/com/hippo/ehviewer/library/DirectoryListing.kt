@@ -292,11 +292,13 @@ data class RemoteChild(val name: String, val isDirectory: Boolean)
  * Windows / NAS system junk that must not appear as browsable folders or count as
  * child dirs for dual-gallery / leaf promotion (e.g. Synology `@eaDir` next to images).
  *
- * Names starting with `$` are admin/recycle shares; `#…` is Synology recycle/snapshot.
+ * Names starting with `$` are Windows admin/hidden shares (`ADMIN$`, `C$`, `$Recycle.Bin`).
+ * Synology recycle is the exact name `#recycle` only — do **not** hide every `#…` folder
+ * (user galleries may start with `#`).
  * Dot-prefixed names are handled separately by callers / [classifyRemoteListingWithPeeks].
  */
 fun isProtectedSystemName(name: String): Boolean {
-    if (name.startsWith('$') || name.startsWith('#')) return true
+    if (name.startsWith('$')) return true
     return when (name.uppercase(Locale.ROOT)) {
         // Windows volume / recycle
         "RECYCLER",
@@ -304,7 +306,8 @@ fun isProtectedSystemName(name: String): Boolean {
         "SYSTEM VOLUME INFORMATION",
         "RECOVERY",
         "CONFIG.MSI",
-        // Synology DSM
+        // Synology DSM (exact names — not a generic `#` prefix)
+        "#RECYCLE",
         "@EADIR",
         "@RECENTLY-SNAPSHOT",
         // QNAP

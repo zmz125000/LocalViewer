@@ -164,9 +164,6 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun toggleDirFavorite(name: String) {
         val nowFavorite = BrowseFavorites.toggleSmbFolder(sourceId, dirRelative(name))
-        launch {
-            snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
-        }
     }
 
     fun isDirFavorite(name: String): Boolean = BrowseFavorites.smbFolderKey(sourceId, dirRelative(name)) in favoriteKeys

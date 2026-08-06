@@ -131,7 +131,17 @@ sealed class FavoriteBrowseSource {
 }
 
 /**
- * Resolve favourited items that still exist, sorted by display name.
+ * Resolve favourited items that still exist.
+ *
+ * Sort order matches Browse hub sections (network before local folder), and never
+ * interleaves subtypes by name alone:
+ * 1. Network sources (SMB, then WebDAV)
+ * 2. Local/folder roots
+ * 3. Network folders (SMB, then WebDAV)
+ * 4. Local folders
+ * 5. Library galleries
+ * Within each subtype group, by display name (case-insensitive).
+ *
  * [galleries] is used to resolve `gallery:{id}` keys (missing rows are skipped).
  */
 fun resolveFavoriteBrowseSources(
@@ -177,6 +187,24 @@ fun resolveFavoriteBrowseSources(
             webDavById[sourceId]?.let { out += FavoriteBrowseSource.WebDavFolder(it, rel) }
         }
     }
-    out.sortWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayName })
+    out.sortWith(
+        compareBy<FavoriteBrowseSource> { it.sortGroup }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.displayName },
+    )
     return out
 }
+
+/**
+ * Subtype bands so network and folder kinds never mix alphabetically.
+ * Order mirrors Browse: Network (SMB → WebDAV) → Folder roots → nested folders → galleries.
+ */
+private val FavoriteBrowseSource.sortGroup: Int
+    get() = when (this) {
+        is FavoriteBrowseSource.Smb -> 0
+        is FavoriteBrowseSource.WebDav -> 1
+        is FavoriteBrowseSource.Local -> 2
+        is FavoriteBrowseSource.SmbFolder -> 3
+        is FavoriteBrowseSource.WebDavFolder -> 4
+        is FavoriteBrowseSource.LocalFolder -> 5
+        is FavoriteBrowseSource.Gallery -> 6
+    }

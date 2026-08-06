@@ -61,6 +61,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.keepScreenOn
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -117,8 +118,8 @@ import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitInputText
 import com.hippo.ehviewer.ui.tools.dialog
 import com.hippo.ehviewer.util.displayString
+import com.hippo.ehviewer.util.findActivity
 import com.hippo.ehviewer.util.hasAds
-import com.hippo.ehviewer.util.setHdrColorMode
 import com.hippo.ehviewer.util.setReaderColorMode
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
@@ -146,8 +147,10 @@ import okio.Path.Companion.toPath
 
 /**
  * Counts overlapping [ReaderScreen] destinations (e.g. prev/next folder replace with
- * exit/enter animations). System bars are only restored when the last instance leaves,
- * so a sibling switch cannot permanently exit immersive mode.
+ * exit/enter animations). System bars **and** window color mode are only restored when
+ * the last instance leaves, so a sibling switch cannot drop immersive / WCG mid-transition
+ * (old [DisposableEffect] onDispose must not clear [android.view.Window.colorMode] while
+ * the next reader is already active).
  */
 private val activeReaderSessions = AtomicInteger(0)
 
@@ -224,12 +227,14 @@ private fun Background(
 fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: DestinationsNavigator) = Screen(navigator) {
     val bgColor by collectBackgroundColorAsState()
     val fullscreen by Settings.fullscreen.collectAsState()
+    val advancedColorEnabled by Settings.readerAdvancedColor.collectAsState()
     val uiController = rememberSystemUiController()
-    // Own immersive mode for the whole destination (including page-loader wait).
+    val activity = with(LocalContext.current) { remember { findActivity<MainActivity>() } }
+    // Own immersive + session WCG for the whole destination (including page-loader wait).
     // Sibling folder nav replaces this screen; without a session refcount the exiting
-    // instance would show system bars after the new one already hid them (or while
-    // the new one is still loading), leaving the reader out of fullscreen.
-    DisposableEffect(uiController) {
+    // instance would show system bars / clear colorMode after the new one already
+    // configured them (or while the new one is still loading).
+    DisposableEffect(uiController, activity) {
         // Status/nav icon contrast is owned by EhTheme (page bg → useDarkTheme).
         // Only manage immersion here; restore previous icon style on leave in case
         // the outer app theme does not recompose immediately.
@@ -239,11 +244,19 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
         if (Settings.fullscreen.value) {
             uiController.isSystemBarsVisible = false
         }
+        // Raise WCG immediately (advanced on) so ImageDecoder under the loader
+        // wait and after double-tap replace keeps embedded ICC — do not wait for
+        // the first Ready page. HDR is still upgraded by the inner page scan.
+        if (Settings.readerAdvancedColor.value) {
+            activity.setReaderColorMode(hdr = false, wideColor = true)
+        }
         onDispose {
             uiController.statusBarDarkContentEnabled = lightStatusBar
             if (activeReaderSessions.decrementAndGet() == 0) {
                 uiController.isSystemBarsVisible = true
                 uiController.showTransientSystemBarsBySwipe = false
+                // Last reader left → DEFAULT (sibling replace keeps count > 0).
+                activity.setReaderColorMode(hdr = false, wideColor = false)
             }
         }
     }
@@ -254,6 +267,12 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
             uiController.showTransientSystemBarsBySwipe = true
         } else {
             uiController.isSystemBarsVisible = true
+        }
+    }
+    // Pref toggle / race after replace: keep session WCG while advanced is on.
+    LaunchedEffect(advancedColorEnabled, activity) {
+        if (advancedColorEnabled) {
+            activity.setReaderColorMode(hdr = false, wideColor = true)
         }
     }
 
@@ -364,14 +383,11 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
         }
     }
     // Window color mode: HDR > WCG > default.
-    // Option A: advanced color on → session WCG for the whole reader (display-capable),
-    // so ImageDecoder keeps embedded ICC before the first page is Ready. HDR still wins
-    // when a composed page is HDR. Leave reader → DEFAULT (onDispose).
+    // Session WCG enter/leave is owned by the outer destination + [activeReaderSessions]
+    // (sibling double-tap must not clear colorMode). This scan only upgrades to HDR when
+    // composed pages need it, or re-asserts WCG while advanced color stays on.
     val hdrDisplayEnabled by Settings.readerHdrDisplay.collectAsState()
     val advancedColorEnabled by Settings.readerAdvancedColor.collectAsState()
-    DisposableEffect(activity) {
-        onDispose { activity.setReaderColorMode(hdr = false, wideColor = false) }
-    }
     val webtoon = remember(info) {
         // Tags in database may or may not have the prefix "other:"
         info?.simpleTags?.any { it.endsWith("webtoon") } == true
