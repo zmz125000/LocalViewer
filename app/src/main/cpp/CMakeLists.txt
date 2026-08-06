@@ -6,8 +6,8 @@ include(FetchContent)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ExternalProject (libultrahdr/turbojpeg, aom) may use Ninja; Android Gradle
-# does not always put cmake's ninja on PATH for nested configures.
+# ExternalProject (libultrahdr/turbojpeg, dav1d via meson) may use Ninja;
+# Android Gradle does not always put cmake's ninja on PATH for nested configures.
 if (NOT CMAKE_MAKE_PROGRAM)
     file(GLOB _eh_ninja_candidates
             "$ENV{ANDROID_HOME}/cmake/*/bin/ninja"
@@ -20,6 +20,11 @@ if (NOT CMAKE_MAKE_PROGRAM)
         set(CMAKE_MAKE_PROGRAM "${CMAKE_MAKE_PROGRAM}" CACHE FILEPATH "" FORCE)
         message(STATUS "Using ninja: ${CMAKE_MAKE_PROGRAM}")
     endif ()
+endif ()
+# meson (libavif LocalDav1d) shells out to `ninja`; ensure SDK ninja is on PATH.
+if (CMAKE_MAKE_PROGRAM AND CMAKE_MAKE_PROGRAM MATCHES "ninja")
+    get_filename_component(_eh_ninja_dir "${CMAKE_MAKE_PROGRAM}" DIRECTORY)
+    set(ENV{PATH} "${_eh_ninja_dir}:$ENV{PATH}")
 endif ()
 
 if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -263,13 +268,15 @@ if (EHVIEWER_HDR_CODECS)
     )
     FetchContent_MakeAvailable(libultrahdr)
 
-    # ── libavif (+ libaom decoder) for PQ/HLG AVIF stills ────────────────
-    # libavif ≥1.1 uses OFF|LOCAL|SYSTEM (not ON/OFF bool). ON was ignored →
-    # "No codec available" at runtime.
-    set(AVIF_CODEC_AOM "LOCAL" CACHE STRING "" FORCE)
-    set(AVIF_CODEC_AOM_DECODE ON CACHE BOOL "" FORCE)
+    # ── libavif (+ dav1d only) for PQ/HLG AVIF stills ───────────────────
+    # Decode-only path: dav1d is smaller/faster than libaom. No encoders
+    # (aom/rav1e/svt) and no second decoder (gav1). libavif ≥1.1 uses
+    # OFF|LOCAL|SYSTEM (not ON/OFF bool) — ON is ignored → no codec at runtime.
+    # LocalDav1d.cmake needs host `meson` (+ ninja on PATH; see above).
+    set(AVIF_CODEC_DAV1D "LOCAL" CACHE STRING "" FORCE)
+    set(AVIF_CODEC_AOM "OFF" CACHE STRING "" FORCE)
+    set(AVIF_CODEC_AOM_DECODE OFF CACHE BOOL "" FORCE)
     set(AVIF_CODEC_AOM_ENCODE OFF CACHE BOOL "" FORCE)
-    set(AVIF_CODEC_DAV1D "OFF" CACHE STRING "" FORCE)
     set(AVIF_CODEC_LIBGAV1 "OFF" CACHE STRING "" FORCE)
     set(AVIF_CODEC_RAV1E "OFF" CACHE STRING "" FORCE)
     set(AVIF_CODEC_SVT "OFF" CACHE STRING "" FORCE)
@@ -280,14 +287,14 @@ if (EHVIEWER_HDR_CODECS)
     set(AVIF_ENABLE_GTEST OFF CACHE BOOL "" FORCE)
     set(AVIF_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
     set(AVIF_LIBYUV "OFF" CACHE STRING "" FORCE)
-    # aom (pulled by LocalAom.cmake): skip encoder/tests for faster NDK builds
-    set(ENABLE_DOCS OFF CACHE BOOL "" FORCE)
-    set(ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(ENABLE_TESTDATA OFF CACHE BOOL "" FORCE)
-    set(ENABLE_TESTS OFF CACHE BOOL "" FORCE)
-    set(ENABLE_TOOLS OFF CACHE BOOL "" FORCE)
-    set(CONFIG_AV1_ENCODER 0 CACHE STRING "" FORCE)
-    set(CONFIG_REALTIME_ONLY 0 CACHE STRING "" FORCE)
+
+    find_program(MESON_EXECUTABLE meson)
+    if (NOT MESON_EXECUTABLE)
+        message(FATAL_ERROR
+                "libavif AVIF_CODEC_DAV1D=LOCAL requires host meson "
+                "(e.g. brew install meson / pip install meson). "
+                "Ninja must also be on PATH (SDK cmake/*/bin/ninja is added above).")
+    endif ()
 
     FetchContent_Declare(
             libavif
@@ -296,8 +303,8 @@ if (EHVIEWER_HDR_CODECS)
             GIT_SHALLOW 1
     )
     FetchContent_MakeAvailable(libavif)
-    if (NOT TARGET aom AND NOT TARGET aom_av1 AND NOT TARGET aom_static)
-        message(FATAL_ERROR "libavif: AOM decoder target missing (set AVIF_CODEC_AOM=LOCAL)")
+    if (NOT TARGET dav1d::dav1d AND NOT TARGET dav1d)
+        message(FATAL_ERROR "libavif: dav1d target missing (set AVIF_CODEC_DAV1D=LOCAL)")
     endif ()
 
     # ── libjxl (JPEG XL decode → Ultra HDR) ──────────────────────────────
