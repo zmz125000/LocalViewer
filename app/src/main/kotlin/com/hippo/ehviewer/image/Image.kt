@@ -249,9 +249,11 @@ class Image private constructor(
                     // No forced colorSpace(DISPLAY_P3): preserves embedded ICC under the
                     // reader WCG window (advanced color on). sRGB stays sRGB-tagged (no
                     // oversaturation); P3 stays P3. 8-bit JPEGs stay 8888/HARDWARE.
-                    // Advanced color still drives lib-direct pack + reader window policy.
                     if (hardwareDirect) {
+                        // Decode prefers HARDWARE; late HardwareBitmapInterceptor still upgrades
+                        // if Coil falls back to software (same threshold as the soft path).
                         allowHardware(true)
+                        hardwareThreshold(Settings.hardwareBitmapThreshold.value)
                         maybeCropBorder(false)
                         detectQrCode(false)
                     } else {

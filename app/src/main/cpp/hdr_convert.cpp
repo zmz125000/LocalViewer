@@ -48,6 +48,13 @@ extern "C" {
 #endif
 
 #define LOG_TAG "HdrConvert"
+
+// Full-page convert quality (JXL/AVIF/JXR → JPEG). 4K 10-bit sources need higher
+// than libjpeg default (~75) and than our prior 92: chroma 4:2:0 + q92 showed clear
+// blocking on 3840×2160 SDR stills. Thumbs stay on Kotlin Bitmap q=85 / MaxEdge path.
+constexpr int kJpegQualityBaseline = 97;  // pure SDR baseline (no gain map)
+constexpr int kJpegQualityUhdrBase = 97;  // Ultra HDR SDR intent JPEG
+constexpr int kJpegQualityUhdrGainMap = 95;
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
@@ -673,7 +680,7 @@ void jpeg_err_exit(j_common_ptr cinfo) {
  *   (no PQ/HLG in baseline).
  * - **BT.709**: sRGB OETF, untagged (or optional 709 ICC not required).
  *
- * Quality 92.
+ * Quality [kJpegQualityBaseline], 4:4:4 chroma (no 4:2:0 color blur on 4K stills).
  */
 int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const char* out_path,
                              uhdr_color_gamut_t cg) {
@@ -744,7 +751,15 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
     cinfo.input_components = 3;
     cinfo.in_color_space = JCS_RGB;
     jpeg_set_defaults(&cinfo);
-    jpeg_set_quality(&cinfo, 92, TRUE);
+    jpeg_set_quality(&cinfo, kJpegQualityBaseline, TRUE);
+    // jpeg_set_defaults → 4:2:0; force 4:4:4 so fine color edges (text, hair) stay sharp
+    // after 10-bit JXL/AVIF → 8-bit JPEG. File size up ~15–25% vs 4:2:0 at same Q.
+    cinfo.comp_info[0].h_samp_factor = 1;
+    cinfo.comp_info[0].v_samp_factor = 1;
+    cinfo.comp_info[1].h_samp_factor = 1;
+    cinfo.comp_info[1].v_samp_factor = 1;
+    cinfo.comp_info[2].h_samp_factor = 1;
+    cinfo.comp_info[2].v_samp_factor = 1;
     jpeg_start_compress(&cinfo, TRUE);
     if (icc && icc->getData() && icc->getLength() > 0) {
         // Same as libultrahdr JpegEncoderHelper: APP2 + ICC_PROFILE payload.
@@ -842,14 +857,14 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         return -2;
     }
 
-    // Quality: base + multi-channel gain map (closer to camera Ultra HDR).
-    err = uhdr_enc_set_quality(enc, 92, UHDR_BASE_IMG);
+    // Quality: base + multi-channel gain map (libultrahdr default is 95/95).
+    err = uhdr_enc_set_quality(enc, kJpegQualityUhdrBase, UHDR_BASE_IMG);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_quality base: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
         return -6;
     }
-    err = uhdr_enc_set_quality(enc, 95, UHDR_GAIN_MAP_IMG);
+    err = uhdr_enc_set_quality(enc, kJpegQualityUhdrGainMap, UHDR_GAIN_MAP_IMG);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_quality gainmap: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);

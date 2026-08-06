@@ -64,8 +64,9 @@ jobs:
         run: rustup target add thumbv7neon-linux-androideabi
 
       # libavif LocalDav1d builds dav1d with meson (decode-only AV1 for PQ AVIF).
-      - name: Install meson (dav1d)
-        run: sudo apt-get update && sudo apt-get install -y meson ninja-build
+      # nasm is required for x86_64 asm when -Denable_asm=true (arm64 uses gas).
+      - name: Install meson/nasm (dav1d)
+        run: sudo apt-get update && sudo apt-get install -y meson ninja-build nasm
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2

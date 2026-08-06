@@ -272,7 +272,8 @@ if (EHVIEWER_HDR_CODECS)
     # Decode-only path: dav1d is smaller/faster than libaom. No encoders
     # (aom/rav1e/svt) and no second decoder (gav1). libavif ≥1.1 uses
     # OFF|LOCAL|SYSTEM (not ON/OFF bool) — ON is ignored → no codec at runtime.
-    # LocalDav1d.cmake needs host `meson` (+ ninja on PATH; see above).
+    # LocalDav1d.cmake needs host meson (+ ninja on PATH; see above).
+    # x86/x86_64 also need nasm (dav1d -Denable_asm=true); arm64 uses gas.
     set(AVIF_CODEC_DAV1D "LOCAL" CACHE STRING "" FORCE)
     set(AVIF_CODEC_AOM "OFF" CACHE STRING "" FORCE)
     set(AVIF_CODEC_AOM_DECODE OFF CACHE BOOL "" FORCE)
@@ -294,6 +295,14 @@ if (EHVIEWER_HDR_CODECS)
                 "libavif AVIF_CODEC_DAV1D=LOCAL requires host meson "
                 "(e.g. brew install meson / pip install meson). "
                 "Ninja must also be on PATH (SDK cmake/*/bin/ninja is added above).")
+    endif ()
+    if (ANDROID_ABI MATCHES "x86")
+        find_program(NASM_EXECUTABLE nasm)
+        if (NOT NASM_EXECUTABLE)
+            message(FATAL_ERROR
+                    "libavif LocalDav1d (x86/x86_64) requires host nasm "
+                    "(e.g. brew install nasm / apt install nasm).")
+        endif ()
     endif ()
 
     FetchContent_Declare(

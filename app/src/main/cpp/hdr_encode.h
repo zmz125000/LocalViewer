@@ -21,6 +21,12 @@
  * so tools report ratio 1.0 / no Ultra HDR metadata. libultrahdr would otherwise
  * epsilon-bump max boost to ~1.07 when min==max.
  *
+ * Encode quality (full page, maxEdge=0 — no downscale):
+ *   - Baseline SDR: Q97 + 4:4:4 chroma (libjpeg-turbo).
+ *   - Ultra HDR: base Q97 + gain-map Q95, UHDR_USAGE_BEST_QUALITY.
+ * Thumbs (maxEdge>0) scale long edge first, then same encode; browse platform
+ * thumbs use Bitmap JPEG Q85 @ 768px separately.
+ *
  * Baseline SDR color:
  *   - Display P3: keep primaries + embed P3 ICC (WCG-capable convert for Coil).
  *   - BT.2100 pure SDR: rematrix → 709 (no PQ/HLG in baseline).
