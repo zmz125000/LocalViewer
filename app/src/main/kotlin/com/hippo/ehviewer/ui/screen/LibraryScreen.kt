@@ -583,7 +583,7 @@ private fun FavoriteSourceGridCell(
                     .fillMaxWidth()
                     .padding(horizontal = namePadH)
                     .padding(bottom = namePadBottom),
-                verticalAlignment = Alignment.Bottom,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (networkBadge != null) {
                     Icon(
