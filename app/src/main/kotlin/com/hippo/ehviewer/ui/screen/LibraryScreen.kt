@@ -199,9 +199,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val listInterval = dimensionResource(com.hippo.ehviewer.R.dimen.gallery_list_interval)
 
     fun notifyFavoriteToggle(nowFavorite: Boolean) {
-        launch {
-            snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
-        }
+        // launch {
+        //     snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
+        // }
     }
 
     fun openGallery(gallery: LocalGalleryEntity) {

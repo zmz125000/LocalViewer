@@ -164,9 +164,6 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun toggleDirFavorite(name: String) {
         val nowFavorite = BrowseFavorites.toggleWebDavFolder(sourceId, dirRelative(name))
-        launch {
-            snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
-        }
     }
 
     fun isDirFavorite(name: String): Boolean = BrowseFavorites.webDavFolderKey(sourceId, dirRelative(name)) in favoriteKeys

@@ -122,9 +122,9 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
 
     fun notifyFavoriteToggle(nowFavorite: Boolean) {
-        launch {
-            snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
-        }
+        // launch {
+        //    snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
+        // }
     }
 
     var smbEditor by remember { mutableStateOf<SmbEditorState?>(null) }

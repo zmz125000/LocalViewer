@@ -144,9 +144,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val frame = stack.lastOrNull() ?: return
         val rel = if (frame.relativePath.isEmpty()) dir.name else "${frame.relativePath}/${dir.name}"
         val nowFavorite = BrowseFavorites.toggleLocalFolder(frame.rootId, rel)
-        launch {
-            snackbar(if (nowFavorite) addedToFavourites else removedFromFavourites)
-        }
     }
 
     fun isDirFavorite(dir: BrowseEntry.Directory): Boolean {

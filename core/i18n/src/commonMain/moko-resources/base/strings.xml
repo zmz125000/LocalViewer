@@ -566,7 +566,7 @@
     <string name="clear_search_history_confirm">Clear search history?</string>
     <string name="search_history_cleared">Search history cleared</string>
     <string name="download_service">Download Service</string>
-    <string name="favorite_name">Favorite</string>
+    <string name="favorite_name">Favorites</string>
     <string name="dark_theme">Dark theme</string>
     <string name="black_dark_theme">Black dark theme</string>
     <string name="harmonize_category_color">Harmonize category color for Dynamic Color</string>
