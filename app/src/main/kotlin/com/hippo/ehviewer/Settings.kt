@@ -261,10 +261,13 @@ object Settings : DataStorePreferences(null) {
     }
 
     /**
-     * Coil [allowHardware] for reader decode: GPU hardware bitmaps without software
-     * intermediate for crop-border / QR-ad detection. Faster + less Java-heap RAM;
-     * disables crop borders and extraneous-ad strip while on.
-     * Default on (preserves Ultra HDR gain maps; crop/QR stay off unless user disables this).
+     * Prefer GPU hardware bitmaps in the reader.
+     *
+     * When on: Coil [allowHardware] for decode (no software intermediate for crop/QR —
+     * those stay off). If decode still returns software (size policy / format / OEM),
+     * [com.hippo.ehviewer.coil.HardwareBitmapInterceptor] upgrades under
+     * [hardwareBitmapThreshold]. Gain maps stay software ([Bitmap.copy] strips them).
+     * Default on.
      */
     val readerHardwareBitmap = boolPref("pref_reader_hardware_bitmap", true)
 
