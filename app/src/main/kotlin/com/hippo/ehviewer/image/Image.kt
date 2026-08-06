@@ -337,7 +337,7 @@ class Image private constructor(
                 is PathSource -> {
                     // Pre-U GIF rewrite via mmap (platform animated decoder on U+ is fine).
                     if (!isAtLeastU) {
-                        src.source.openFileDescriptor("rw").use {
+                        src.source.openFileDescriptor("r").use {
                             val fd = it.fd
                             if (isGif(fd)) {
                                 return bracketCase(
