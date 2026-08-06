@@ -131,7 +131,8 @@ sealed class FavoriteBrowseSource {
 }
 
 /**
- * Resolve favourited items that still exist, sorted by display name.
+ * Resolve favourited items that still exist.
+ * Sort: sources first, then folders, then library galleries; within each group by name.
  * [galleries] is used to resolve `gallery:{id}` keys (missing rows are skipped).
  */
 fun resolveFavoriteBrowseSources(
@@ -177,6 +178,23 @@ fun resolveFavoriteBrowseSources(
             webDavById[sourceId]?.let { out += FavoriteBrowseSource.WebDavFolder(it, rel) }
         }
     }
-    out.sortWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayName })
+    out.sortWith(
+        compareBy<FavoriteBrowseSource> { it.sortGroup }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.displayName },
+    )
     return out
 }
+
+/** 0 = browse sources, 1 = folders, 2 = library galleries. */
+private val FavoriteBrowseSource.sortGroup: Int
+    get() = when (this) {
+        is FavoriteBrowseSource.Local,
+        is FavoriteBrowseSource.Smb,
+        is FavoriteBrowseSource.WebDav,
+        -> 0
+        is FavoriteBrowseSource.LocalFolder,
+        is FavoriteBrowseSource.SmbFolder,
+        is FavoriteBrowseSource.WebDavFolder,
+        -> 1
+        is FavoriteBrowseSource.Gallery -> 2
+    }
