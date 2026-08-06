@@ -357,9 +357,9 @@
     <string name="clear_all">Clear all</string>
     <string name="clear_all_history">Clear all history?</string>
     <string name="history_unavailable">This item is no longer available</string>
-    <string name="back_to_history">Back to history</string>
-    <string name="back_to_browse">Back to browse</string>
-    <string name="back_to_library">Back to library</string>
+    <string name="back_to_history">History</string>
+    <string name="back_to_browse">Browse</string>
+    <string name="back_to_library">Library</string>
     <string name="go_to_first_page">Go to first page</string>
     <string name="go_to_next_gallery">Next gallery</string>
     <!-- Filter -->

@@ -98,9 +98,9 @@
     <string name="settings_advanced_webdav_insecure_tls_summary">任意の証明書を信頼します（自己署名 HTTPS）。</string>
     <string name="error_ip_banned">IP がバンされています</string>
     <string name="history_unavailable">この項目は利用できなくなりました</string>
-    <string name="back_to_history">履歴に戻る</string>
-    <string name="back_to_browse">ブラウズに戻る</string>
-    <string name="back_to_library">ライブラリに戻る</string>
+    <string name="back_to_history">履歴</string>
+    <string name="back_to_browse">ブラウズ</string>
+    <string name="back_to_library">ライブラリ</string>
     <string name="go_to_first_page">最初のページへ</string>
     <string name="go_to_next_gallery">次のギャラリー</string>
     <string name="settings_download_remote_thumbs">ネットワークフォルダの表紙を取得</string>
