@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.screen
 
 import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -495,9 +496,9 @@ private fun FavoriteSourceListRow(
 
 /**
  * Square favourite grid cell (column width from [GalleryGridDefaults]).
- * Sources: 48.dp icon centered in the band above the caption.
- * Galleries: cover fills that same band; caption sits under it (browse [labelMedium]).
- * No page-count badge (main library grid still shows pages when enabled).
+ * Sources / folders: 48.dp icon above caption (browse [labelMedium]).
+ * Galleries: cover fills the whole cell; label overlays bottom with a highly
+ * transparent scrim. No page-count badge.
  */
 @Composable
 private fun FavoriteSourceGridCell(
@@ -505,9 +506,6 @@ private fun FavoriteSourceGridCell(
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
 ) {
-    // Caption insets match gallery / folder dir cells. ElevatedCard content is
-    // already a fillMaxSize Column — direct children so weight(1f) centers the
-    // icon between cell top and text top (no nested Column / empty name band).
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     ElevatedCard(
@@ -515,57 +513,72 @@ private fun FavoriteSourceGridCell(
         onLongClick = onLongClick,
         modifier = Modifier.fillMaxWidth().aspectRatio(1f),
     ) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .clip(ShapeDefaults.Medium),
-            contentAlignment = Alignment.Center,
-        ) {
-            when (fav) {
-                is FavoriteBrowseSource.Gallery -> {
-                    val gallery = fav.gallery
-                    val gridDecodePx = CoverThumb.gridDecodePx(
-                        screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                        columns = GalleryGridDefaults.columnCount(),
-                        margin = GalleryGridDefaults.margin(),
-                        gutter = GalleryGridDefaults.gutter(),
-                    )
-                    CoverImage(
-                        coverPath = gallery.coverPath,
-                        sizePx = gridDecodePx,
-                        archiveContentPath = gallery.contentPath.takeIf {
-                            gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
-                        },
-                        placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                            Icons.Default.Inventory2
-                        } else {
-                            Icons.Default.Folder
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-                else -> {
-                    Icon(
-                        favoriteIcon(fav),
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
+        if (fav is FavoriteBrowseSource.Gallery) {
+            // Full-bleed thumb; name on a highly transparent bottom bar.
+            Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
+                val gallery = fav.gallery
+                val gridDecodePx = CoverThumb.gridDecodePx(
+                    screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                    columns = GalleryGridDefaults.columnCount(),
+                    margin = GalleryGridDefaults.margin(),
+                    gutter = GalleryGridDefaults.gutter(),
+                )
+                CoverImage(
+                    coverPath = gallery.coverPath,
+                    sizePx = gridDecodePx,
+                    archiveContentPath = gallery.contentPath.takeIf {
+                        gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
+                    },
+                    placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                        Icons.Default.Inventory2
+                    } else {
+                        Icons.Default.Folder
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Text(
+                    text = fav.displayName,
+                    style = MaterialTheme.typography.labelMedium,
+                    // Same default onSurface as other fav / dir cells; scrim follows theme.
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                        .padding(horizontal = namePadH)
+                        .padding(top = 4.dp, bottom = namePadBottom),
+                )
             }
+        } else {
+            // ElevatedCard content is already a fillMaxSize Column.
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clip(ShapeDefaults.Medium),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    favoriteIcon(fav),
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Text(
+                text = fav.displayName,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Start,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = namePadH)
+                    .padding(bottom = namePadBottom),
+            )
         }
-        Text(
-            text = fav.displayName,
-            style = MaterialTheme.typography.labelMedium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Start,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = namePadH)
-                .padding(bottom = namePadBottom),
-        )
     }
 }
 

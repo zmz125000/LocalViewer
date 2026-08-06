@@ -11,7 +11,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,10 +19,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Cloud
@@ -49,12 +49,16 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_FOLDER
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
 import com.ehviewer.core.database.model.LibraryRootEntity
@@ -690,21 +694,43 @@ private fun BrowseSourceTitle(
     favorited: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(name, modifier = Modifier.weight(1f, fill = false), maxLines = 2)
-        if (favorited) {
+    // Inline star so PlaceholderVerticalAlign.TextCenter lines up with the
+    // glyph center (not the taller line box that Row+CenterVertically uses).
+    if (!favorited) {
+        Text(name, modifier = modifier, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        return
+    }
+    val starId = "fav"
+    val starTint = MaterialTheme.colorScheme.primary
+    val starCd = stringResource(R.string.favourite)
+    val text = buildAnnotatedString {
+        append(name)
+        append('\u00A0') // thin gap before star; stays with the last word
+        appendInlineContent(starId, "[★]")
+    }
+    val inline = mapOf(
+        starId to InlineTextContent(
+            Placeholder(
+                width = 18.sp,
+                height = 18.sp,
+                placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
+            ),
+        ) {
             Icon(
                 Icons.Default.Star,
-                contentDescription = stringResource(R.string.favourite),
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.primary,
+                contentDescription = starCd,
+                modifier = Modifier.fillMaxSize(),
+                tint = starTint,
             )
-        }
-    }
+        },
+    )
+    Text(
+        text = text,
+        modifier = modifier,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+        inlineContent = inline,
+    )
 }
 
 @Composable
