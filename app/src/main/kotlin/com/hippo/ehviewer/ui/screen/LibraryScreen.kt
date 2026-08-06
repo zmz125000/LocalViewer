@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -552,6 +553,16 @@ private fun FavoriteSourceGridCell(
                 )
             }
         } else {
+            // Network folders: main Folder icon + small Lan/Cloud badge left of caption
+            // (same size as labelMedium).
+            val networkBadge = when (fav) {
+                is FavoriteBrowseSource.SmbFolder -> Icons.Default.Lan
+                is FavoriteBrowseSource.WebDavFolder -> Icons.Default.Cloud
+                else -> null
+            }
+            val labelIconSize = with(LocalDensity.current) {
+                MaterialTheme.typography.labelMedium.fontSize.toDp()
+            }
             // ElevatedCard content is already a fillMaxSize Column.
             Box(
                 modifier = Modifier
@@ -567,17 +578,32 @@ private fun FavoriteSourceGridCell(
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }
-            Text(
-                text = fav.displayName,
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Start,
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = namePadH)
                     .padding(bottom = namePadBottom),
-            )
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                if (networkBadge != null) {
+                    Icon(
+                        networkBadge,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(end = 4.dp)
+                            .size(labelIconSize),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    text = fav.displayName,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }
@@ -602,6 +628,7 @@ private fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
     is FavoriteBrowseSource.WebDav -> Icons.Default.Cloud
     is FavoriteBrowseSource.Gallery -> Icons.Default.Folder
     is FavoriteBrowseSource.LocalFolder -> Icons.Default.Folder
-    is FavoriteBrowseSource.SmbFolder -> Icons.Default.Lan
-    is FavoriteBrowseSource.WebDavFolder -> Icons.Default.Cloud
+    // Network folders: Folder main glyph; grid cell adds Lan/Cloud badge.
+    is FavoriteBrowseSource.SmbFolder -> Icons.Default.Folder
+    is FavoriteBrowseSource.WebDavFolder -> Icons.Default.Folder
 }
