@@ -43,8 +43,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 private val WHITESPACE_REGEX = Regex("\\s+")
 
 /** Same normalize rules as [SearchBarScreen] live filter. */
-fun normalizeBrowseSearchQuery(raw: CharSequence): String =
-    raw.trim().toString().replace(WHITESPACE_REGEX, " ")
+fun normalizeBrowseSearchQuery(raw: CharSequence): String = raw.trim().toString().replace(WHITESPACE_REGEX, " ")
 
 /**
  * Top-bar instant filter for folder browsers (local / SMB / WebDAV).
