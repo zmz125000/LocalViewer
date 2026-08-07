@@ -294,8 +294,11 @@ object Settings : DataStorePreferences(null) {
      * Platform high bit depth (PNG / AVIF / HEIF) under [readerAdvancedColor].
      *
      * When on **and** advanced color is on: bypass Coil hardware-direct for eligible
-     * deep stills → [BitmapFactory] preferred [Bitmap.Config.RGBA_F16], linearize to
-     * scRGB, optional FP16 [HardwareBuffer] wrap (same present path as lib-direct).
+     * deep stills → software decode + linearize + optional FP16 [HardwareBuffer] wrap
+     * (same present path as lib-direct).
+     * - PNG/APNG: [BitmapFactory] preferred [Bitmap.Config.RGBA_F16]
+     * - AVIF/HEIC: ImageDecoder first (natural high depth); BitmapFactory F16 recovery
+     *   if the primary misses F16 or throws (OEM BF support is flaky for these)
      * Default off (2× RAM). When WCG/[readerAdvancedColor] changes, this value is forced
      * to match (WCG drives sub-toggle; sub-toggle never drives WCG).
      */

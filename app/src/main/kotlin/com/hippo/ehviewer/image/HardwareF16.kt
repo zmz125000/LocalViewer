@@ -40,10 +40,10 @@ fun tryHardwareF16Wrap(software: Bitmap): Bitmap? {
 }
 
 /**
- * Align platform HBD (BitmapFactory F16) with lib-direct-style present encoding:
+ * Align platform HBD (BitmapFactory / ImageDecoder F16) with lib-direct-style present encoding:
  * **linear** half-float, tagged with a **linear** color space that keeps **source primaries**.
  *
- * BitmapFactory preferred-F16 is usually still **gamma-encoded**. We apply the source EOTF
+ * Platform preferred-F16 is usually still **gamma-encoded**. We apply the source EOTF
  * (or sRGB EOTF if untagged) then re-tag:
  * - sRGB / non-wide → [ColorSpace.Named.LINEAR_EXTENDED_SRGB] (same as JXL SDR F16)
  * - wide gamut (Display P3, BT.2020, ICC) → **same primaries + white point**, linear transfer
