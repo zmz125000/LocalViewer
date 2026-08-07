@@ -19,6 +19,7 @@ package com.hippo.ehviewer.image
 
 import android.graphics.Bitmap
 import android.hardware.HardwareBuffer
+import android.os.Build
 import android.util.Log
 import androidx.compose.ui.unit.IntSize
 import arrow.core.Either
@@ -34,6 +35,7 @@ import coil3.request.CachePolicy
 import coil3.request.ErrorResult
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
+import coil3.request.bitmapConfig
 import coil3.request.maxBitmapSize
 import coil3.size.Precision
 import coil3.size.Scale
@@ -50,8 +52,12 @@ import com.hippo.ehviewer.coil.detectGainmap
 import com.hippo.ehviewer.coil.detectQrCode
 import com.hippo.ehviewer.coil.hardwareThreshold
 import com.hippo.ehviewer.coil.maybeCropBorder
+import com.hippo.ehviewer.image.hdr.BitDepthClass
 import com.hippo.ehviewer.image.hdr.HdrGainmapConvert
+import com.hippo.ehviewer.image.hdr.LibDirectDecode
 import com.hippo.ehviewer.image.hdr.LibDirectResult
+import com.hippo.ehviewer.image.hdr.PlatformBitDepth
+import com.hippo.ehviewer.image.hdr.shouldPlatformHighDepthDecode
 import com.hippo.ehviewer.jni.isGif
 import com.hippo.ehviewer.jni.mmap
 import com.hippo.ehviewer.jni.munmap
@@ -65,6 +71,7 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.updateAndFetch
 import kotlin.math.roundToInt
+import kotlinx.coroutines.sync.withPermit
 import okio.Path
 import splitties.init.appCtx
 
@@ -231,8 +238,16 @@ class Image private constructor(
             checkExtraneousAds: Boolean,
             /** Prefer hardware + no crop/QR so gain maps are not stripped. */
             hdrSafe: Boolean,
+            /**
+             * Platform HBD: software ImageDecoder (natural F16) or forced BitmapFactory F16.
+             * Mutually exclusive with hardware-direct; crop/QR off.
+             */
+            platformHbd: Boolean = false,
+            /** Force Coil [bitmapConfig] RGBA_F16 → BitmapFactoryDecoder path (F16 recovery). */
+            forceF16BitmapFactory: Boolean = false,
         ): CoilImage {
-            val hardwareDirect = Settings.readerHardwareBitmap.value || hdrSafe
+            // HBD overrides HW-direct so ImageDecoder uses ALLOCATOR_SOFTWARE + MEMORY_POLICY_DEFAULT.
+            val hardwareDirect = !platformHbd && (Settings.readerHardwareBitmap.value || hdrSafe)
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
@@ -249,48 +264,113 @@ class Image private constructor(
                     // No forced colorSpace(DISPLAY_P3): preserves embedded ICC under the
                     // reader WCG window (advanced color on). sRGB stays sRGB-tagged (no
                     // oversaturation); P3 stays P3. 8-bit JPEGs stay 8888/HARDWARE.
-                    if (hardwareDirect) {
-                        // Decode prefers HARDWARE; late HardwareBitmapInterceptor still upgrades
-                        // if Coil falls back to software (same threshold as the soft path).
-                        allowHardware(true)
-                        hardwareThreshold(Settings.hardwareBitmapThreshold.value)
-                        maybeCropBorder(false)
-                        detectQrCode(false)
-                    } else {
-                        allowHardware(false)
-                        hardwareThreshold(Settings.hardwareBitmapThreshold.value)
-                        maybeCropBorder(Settings.cropBorder.value)
-                        detectQrCode(checkExtraneousAds)
+                    when {
+                        platformHbd -> {
+                            // Primary: StaticImageDecoder (ARGB_8888 preferred) → software
+                            // ImageDecoder + natural config (F16 for deep sources).
+                            // Recovery: bitmapConfig(F16) drops StaticImageDecoder → BitmapFactory.
+                            allowHardware(false)
+                            if (forceF16BitmapFactory && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                bitmapConfig(Bitmap.Config.RGBA_F16)
+                            }
+                            hardwareThreshold(Settings.hardwareBitmapThreshold.value)
+                            maybeCropBorder(false)
+                            detectQrCode(false)
+                        }
+                        hardwareDirect -> {
+                            // Decode prefers HARDWARE; late HardwareBitmapInterceptor still upgrades
+                            // if Coil falls back to software (same threshold as the soft path).
+                            allowHardware(true)
+                            hardwareThreshold(Settings.hardwareBitmapThreshold.value)
+                            maybeCropBorder(false)
+                            detectQrCode(false)
+                        }
+                        else -> {
+                            allowHardware(false)
+                            hardwareThreshold(Settings.hardwareBitmapThreshold.value)
+                            maybeCropBorder(Settings.cropBorder.value)
+                            detectQrCode(checkExtraneousAds)
+                        }
                     }
                     memoryCachePolicy(CachePolicy.DISABLED)
                 }
             }
             return when (val result = request.execute()) {
                 is SuccessResult -> {
-                    // Phase 0/4 diagnostics: adb logcat -s ReaderColor:D
-                    if (Log.isLoggable("ReaderColor", Log.DEBUG)) {
-                        val bm = result.image.asBitmapImage()?.bitmap
-                        if (bm != null) {
-                            val cs = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    // adb logcat -s ReaderColor:I (HBD) or ReaderColor:D
+                    val bm = result.image.asBitmapImage()?.bitmap
+                    if (bm != null) {
+                        val logHbd = platformHbd && Log.isLoggable("ReaderColor", Log.INFO)
+                        val logDbg = Log.isLoggable("ReaderColor", Log.DEBUG)
+                        if (logHbd || logDbg) {
+                            val cs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 bm.colorSpace?.name ?: "null"
                             } else {
                                 "n/a"
                             }
-                            val wide = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            val wide = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 bm.colorSpace?.isWideGamut == true
                             } else {
                                 false
                             }
-                            Log.d(
-                                "ReaderColor",
-                                "coil decode config=${bm.config} cs=$cs wide=$wide " +
-                                    "${bm.width}x${bm.height}",
-                            )
+                            val msg = "coil decode config=${bm.config} cs=$cs wide=$wide " +
+                                "hbd=$platformHbd forceBfF16=$forceF16BitmapFactory " +
+                                "${bm.width}x${bm.height}"
+                            if (logHbd) Log.i("ReaderColor", msg) else Log.d("ReaderColor", msg)
                         }
                     }
                     result.image
                 }
                 is ErrorResult -> throw result.throwable
+            }
+        }
+
+        /**
+         * WCG master + HBD sub-toggle, not a gain-map page, candidate format with HIGH or
+         * UNKNOWN (format-gate) probe.
+         */
+        private fun Either<ByteBufferSource, PathSource>.resolvePlatformHbd(
+            gainMap: Boolean,
+        ): Boolean {
+            if (gainMap) return false
+            if (!Settings.readerAdvancedColor.value) return false
+            if (!Settings.readerPlatformHighDepth.value) return false
+            val hint = fileNameHint()
+            val probe = probeBitDepth(hint)
+            return shouldPlatformHighDepthDecode(probe, hint)
+        }
+
+        private fun Either<ByteBufferSource, PathSource>.fileNameHint(): String? = fold(
+            { null },
+            { it.source.name },
+        )
+
+        private fun Either<ByteBufferSource, PathSource>.probeBitDepth(hint: String?): BitDepthClass =
+            fold(
+                { buf ->
+                    val dup = buf.source.asReadOnlyBuffer()
+                    val n = minOf(dup.remaining(), 256 * 1024)
+                    if (n <= 0) {
+                        BitDepthClass.UNKNOWN
+                    } else {
+                        val bytes = ByteArray(n)
+                        dup.get(bytes)
+                        PlatformBitDepth.probe(bytes, n, hint)
+                    }
+                },
+                { path -> PlatformBitDepth.probePath(path.source, hint) },
+            )
+
+        /** Software F16 → FP16 HARDWARE wrap (shared with lib-direct). */
+        private fun CoilImage.wrapPlatformHbdF16(): CoilImage {
+            val bi = asBitmapImage() ?: return this
+            val soft = bi.bitmap
+            if (soft.config != Bitmap.Config.RGBA_F16) return this
+            val hw = tryHardwareF16Wrap(soft) ?: return this
+            val wrapped = hw.asImage()
+            return when (this) {
+                is BitmapImageWithExtraInfo -> copy(image = wrapped)
+                else -> wrapped
             }
         }
 
@@ -303,16 +383,44 @@ class Image private constructor(
             val looksHdr = isAtLeastU && sourceLooksLikeHdrGainMap(this)
             val effectiveMode = if (looksHdr) DecodeSizeType.ORIGIN else mode
             val hdrSafe = looksHdr
+            val platformHbd = resolvePlatformHbd(gainMap = looksHdr)
 
-            var image = decodeCoilOnce(effectiveMode, checkExtraneousAds, hdrSafe = hdrSafe)
+            suspend fun runDecode(
+                m: DecodeSizeType,
+                hdr: Boolean,
+                hbd: Boolean,
+                forceBfF16: Boolean,
+            ): CoilImage {
+                // Full-res F16 is heavy — share lib-direct serialize lock when HBD.
+                return if (hbd) {
+                    LibDirectDecode.heavyDecode.withPermit {
+                        decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = true, forceF16BitmapFactory = forceBfF16)
+                    }
+                } else {
+                    decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = false, forceF16BitmapFactory = false)
+                }
+            }
+
+            var image = runDecode(effectiveMode, hdrSafe, platformHbd, forceBfF16 = false)
 
             // Sniff miss: platform still attached a gain map after a downscale decode → re-do ORIGIN.
             if (isAtLeastU && !effectiveMode.isOriginal) {
                 val bm = image.asBitmapImage()
                 if (bm != null && bm.detectGainmap()) {
                     image.recycleBitmaps()
-                    image = decodeCoilOnce(DecodeSizeType.ORIGIN, checkExtraneousAds, hdrSafe = true)
+                    image = runDecode(DecodeSizeType.ORIGIN, hdr = true, hbd = false, forceBfF16 = false)
                 }
+            }
+
+            // HBD: if ImageDecoder still returned 8888, retry BitmapFactory preferred F16.
+            if (platformHbd && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val cfg = image.asBitmapImage()?.bitmap?.config
+                if (cfg != null && cfg != Bitmap.Config.RGBA_F16 && cfg != Bitmap.Config.HARDWARE) {
+                    Log.i("ReaderColor", "platform HBD fallback BitmapFactory F16 (was $cfg)")
+                    image.recycleBitmaps()
+                    image = runDecode(effectiveMode, hdrSafe, hbd = true, forceBfF16 = true)
+                }
+                image = image.wrapPlatformHbdF16()
             }
 
             // Annotate gain map when the hardware path skipped MapExtraInfoInterceptor.

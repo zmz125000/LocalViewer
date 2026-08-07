@@ -132,6 +132,8 @@
     <string name="pref_reader_hdr_display_summary">HDR 画面では Ultra HDR / ゲインマップページ向けにウィンドウ HDR モードを有効にします。HDR の変換・デコードは常に実行され、オフ時は SDR ベースのみ表示します。</string>
     <string name="pref_reader_advanced_color">高度な色（WCG / 高ビット深度）</string>
     <string name="pref_reader_advanced_color_summary">広色域ディスプレイでウィンドウ広色域モードを有効にし、高精度ビットマップを優先します。GPU とメモリを多く使います。HDR ページは引き続き HDR が優先されます。</string>
+    <string name="pref_reader_platform_high_depth">高ビット深度（PNG / AVIF / HEIF）</string>
+    <string name="pref_reader_platform_high_depth_summary">高度な色がオンのとき: 高ビット深度のプラットフォーム静止画を float16 でデコード（ハードウェア 8bit 経路を回避）。メモリ使用量が増えます。高度な色の切替に追従します。</string>
     <string name="pref_eink_refresh">電子ペーパー表示のリフレッシュ</string>
     <string name="pref_eink_refresh_summary">ページ切替後に画面をフラッシュし、電子ペーパーの残像を減らします。ギャラリーモードのみ。</string>
     <string name="pref_eink_refresh_duration">リフレッシュ点滅時間</string>

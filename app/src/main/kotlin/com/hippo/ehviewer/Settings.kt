@@ -291,7 +291,18 @@ object Settings : DataStorePreferences(null) {
     val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)
 
     /**
-     * Reader wide color + high bit depth (Option A toggle, default **on**).
+     * Platform high bit depth (PNG / AVIF / HEIF) under [readerAdvancedColor].
+     *
+     * When on **and** advanced color is on: bypass Coil hardware-direct decode for
+     * eligible high-depth platform stills → software ImageDecoder (natural F16) with
+     * BitmapFactory F16 retry, then optional FP16 [HardwareBuffer] wrap (same present
+     * path as lib-direct). Default off (2× RAM); when WCG/[readerAdvancedColor] changes,
+     * this value is forced to match (WCG drives sub-toggle; sub-toggle never drives WCG).
+     */
+    val readerPlatformHighDepth = boolPref("pref_reader_platform_high_depth", false)
+
+    /**
+     * Reader wide color + high bit depth master (default **on**).
      *
      * When on and the display supports WCG:
      * - Window [ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT] for the reader session
@@ -299,10 +310,15 @@ object Settings : DataStorePreferences(null) {
      * - Platform stills: ImageDecoder keeps embedded ICC (sRGB stays sRGB-tagged;
      *   P3 stays P3 — no forced target ColorSpace).
      * - Lib-direct: preserve P3/BT.2020 and extra F16 for SDR-709.
+     * - Drives [readerPlatformHighDepth] one-way: every WCG change copies into the
+     *   platform-HBD sub-toggle (user may still turn HBD off while WCG stays on).
      *
-     * When off: platform sRGB conversion; lib rematrix wide→709; no WCG window.
+     * When off: platform sRGB conversion; lib rematrix wide→709; no WCG window; HBD off.
      */
-    val readerAdvancedColor = boolPref("pref_reader_advanced_color", true)
+    val readerAdvancedColor = boolPref("pref_reader_advanced_color", true).observed { wcg ->
+        // WCG always updates sub-toggle; sub-toggle must never write back to WCG.
+        readerPlatformHighDepth.value = wcg
+    }
     val fullscreen = boolPref("fullscreen", true)
     val cutoutShort = boolPref("cutout_short", true)
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)
