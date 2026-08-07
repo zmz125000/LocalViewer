@@ -35,8 +35,17 @@ fun ColorScheme.amoled(amoled: Boolean) = if (amoled) {
     this
 }
 
+/**
+ * @param applySystemBarAppearance When true (default), sync status/nav bar *icon* contrast
+ * to [useDarkTheme] with normal logic (light UI → dark icons). Reader page themes pass false
+ * so they do not override app / reader-owned bar icons.
+ */
 @Composable
-fun EhTheme(useDarkTheme: Boolean, content: @Composable () -> Unit) {
+fun EhTheme(
+    useDarkTheme: Boolean,
+    applySystemBarAppearance: Boolean = true,
+    content: @Composable () -> Unit,
+) {
     val amoled by Settings.blackDarkTheme.collectAsState()
     val context = LocalContext.current
     // minSdk 32: Material You dynamic color is always available.
@@ -46,12 +55,10 @@ fun EhTheme(useDarkTheme: Boolean, content: @Composable () -> Unit) {
         dynamicLightColorScheme(context)
     }
 
-    // Keep status/nav bar *icon* contrast in sync with the theme actually drawn.
-    // enableEdgeToEdge() alone can leave light (white) icons on a light surface when
-    // app night mode / reader page theme diverges from the last configuration pass,
-    // or when nothing re-applies appearance after the reader overrides it.
+    // Root app theme only. Nested reader EhTheme must not touch bars — that leaked white
+    // icons into light mode after leaving the reader.
     val view = LocalView.current
-    if (!view.isInEditMode) {
+    if (applySystemBarAppearance && !view.isInEditMode) {
         SideEffect {
             val window = context.findActivityOrNull()?.window ?: return@SideEffect
             val lightBars = !useDarkTheme

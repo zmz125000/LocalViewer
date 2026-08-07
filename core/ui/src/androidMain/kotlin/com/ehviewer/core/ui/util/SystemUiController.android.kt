@@ -72,6 +72,8 @@ internal class AndroidSystemUiController(
     override var statusBarDarkContentEnabled: Boolean
         get() = windowInsetsController?.isAppearanceLightStatusBars == true
         set(value) {
+            // Keep status + nav icon contrast in lockstep (edge-to-edge).
             windowInsetsController?.isAppearanceLightStatusBars = value
+            windowInsetsController?.isAppearanceLightNavigationBars = value
         }
 }
