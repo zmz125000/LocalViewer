@@ -293,11 +293,11 @@ object Settings : DataStorePreferences(null) {
     /**
      * Platform high bit depth (PNG / AVIF / HEIF) under [readerAdvancedColor].
      *
-     * When on **and** advanced color is on: bypass Coil hardware-direct decode for
-     * eligible high-depth platform stills → software ImageDecoder (natural F16) with
-     * BitmapFactory F16 retry, then optional FP16 [HardwareBuffer] wrap (same present
-     * path as lib-direct). Default off (2× RAM); when WCG/[readerAdvancedColor] changes,
-     * this value is forced to match (WCG drives sub-toggle; sub-toggle never drives WCG).
+     * When on **and** advanced color is on: bypass Coil hardware-direct for eligible
+     * deep stills → [BitmapFactory] preferred [Bitmap.Config.RGBA_F16], linearize to
+     * scRGB, optional FP16 [HardwareBuffer] wrap (same present path as lib-direct).
+     * Default off (2× RAM). When WCG/[readerAdvancedColor] changes, this value is forced
+     * to match (WCG drives sub-toggle; sub-toggle never drives WCG).
      */
     val readerPlatformHighDepth = boolPref("pref_reader_platform_high_depth", false)
 

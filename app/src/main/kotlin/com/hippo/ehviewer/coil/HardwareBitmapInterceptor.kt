@@ -61,8 +61,7 @@ object HardwareBitmapInterceptor : Interceptor {
      */
     private fun tryUpgradeToHardware(bitmap: Bitmap, request: ImageRequest): Bitmap? {
         if (bitmap.config == Bitmap.Config.HARDWARE) return null
-        // High bit depth: Bitmap.copy(HARDWARE) can quantize to 8-bit. Platform HBD and
-        // lib-direct use HardwareBuffer.RGBA_FP16 wrap instead — leave F16/1010102 alone.
+        // F16/1010102: copy(HARDWARE) can quantize. Platform HBD / lib-direct use AHB FP16 wrap.
         val cfg = bitmap.config
         if (cfg == Bitmap.Config.RGBA_F16) return null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && cfg == Bitmap.Config.RGBA_1010102) {

@@ -40,12 +40,11 @@ fun tryHardwareF16Wrap(software: Bitmap): Bitmap? {
 }
 
 /**
- * Align platform-decoded F16 with lib-direct present encoding:
+ * Align platform HBD (BitmapFactory F16) with lib-direct present encoding:
  * **linear** half-float + [ColorSpace.Named.LINEAR_EXTENDED_SRGB].
  *
- * ImageDecoder / BitmapFactory typically produce **gamma-encoded** F16 (often with a weak
- * / "Unknown" color space). That can still band and make OEM 10-bit indicators stay on
- * 8-bit even when [Bitmap.Config] is RGBA_F16. JXL lib-direct is already linear scRGB.
+ * BitmapFactory preferred-F16 is still usually **gamma-encoded** (often weak / "Unknown"
+ * color space). Lib-direct JXL is already linear scRGB — normalize so OEM 10-bit paths match.
  *
  * On success recycles [software] when a new bitmap is created. On failure returns [software].
  */

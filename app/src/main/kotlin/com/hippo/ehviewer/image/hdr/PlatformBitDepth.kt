@@ -103,7 +103,7 @@ object PlatformBitDepth {
     fun probeIsobmff(bytes: ByteArray, n: Int): BitDepthClass {
         if (n < 12) return BitDepthClass.UNKNOWN
 
-        findFullBoxPayload(bytes, n, "pixi")?.let { (off, len) ->
+        findBoxPayload(bytes, n, "pixi")?.let { (off, len) ->
             // FullBox: version(1)+flags(3) then num_channels + bits[]
             if (len >= 5 && off + 5 <= n) {
                 val numCh = bytes[off + 4].toInt() and 0xff
@@ -160,27 +160,13 @@ object PlatformBitDepth {
             bytes[7] == 'p'.code.toByte()
     }
 
-    /**
-     * Scan top-level and nested (size-delimited) boxes for [type] fourcc.
-     * Returns payload start (byte after size+type) and payload length.
-     */
+    /** Payload start (after size+type) and length for the first [type] fourcc box. */
     private fun findBoxPayload(bytes: ByteArray, n: Int, type: String): Pair<Int, Int>? {
         if (type.length != 4 || n < 8) return null
-        return walkBoxes(bytes, 0, n, type, fullBox = false)
+        return walkBoxes(bytes, 0, n, type)
     }
 
-    private fun findFullBoxPayload(bytes: ByteArray, n: Int, type: String): Pair<Int, Int>? {
-        if (type.length != 4 || n < 8) return null
-        return walkBoxes(bytes, 0, n, type, fullBox = true)
-    }
-
-    private fun walkBoxes(
-        bytes: ByteArray,
-        start: Int,
-        end: Int,
-        type: String,
-        fullBox: Boolean,
-    ): Pair<Int, Int>? {
+    private fun walkBoxes(bytes: ByteArray, start: Int, end: Int, type: String): Pair<Int, Int>? {
         var i = start
         val t0 = type[0].code.toByte()
         val t1 = type[1].code.toByte()
@@ -201,7 +187,6 @@ object PlatformBitDepth {
                 size = (end - i).toLong()
             }
             if (size < header || i + size > end) {
-                // Corrupt / truncated — fall back to linear fourcc search in remaining bytes
                 return linearFourccPayload(bytes, i, end, type)
             }
             val payloadOff = i + header
@@ -209,10 +194,8 @@ object PlatformBitDepth {
             if (boxTypeOk && payloadLen >= 0) {
                 return payloadOff to payloadLen
             }
-            // Descend into containers that commonly nest sample entries / properties
-            val nest = isContainerFourcc(bytes, i + 4)
-            if (nest && payloadLen > 8) {
-                walkBoxes(bytes, payloadOff, payloadOff + payloadLen, type, fullBox)?.let { return it }
+            if (isContainerFourcc(bytes, i + 4) && payloadLen > 8) {
+                walkBoxes(bytes, payloadOff, payloadOff + payloadLen, type)?.let { return it }
             }
             i += size.toInt()
         }
