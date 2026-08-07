@@ -3,7 +3,6 @@ package com.hippo.ehviewer.ui.reader
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -30,7 +29,6 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.VerticalAlignTop
-import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -395,6 +393,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
         info?.simpleTags?.any { it.endsWith("webtoon") } == true
     }
     val showSeekbar by Settings.showReaderSeekbar.collectAsState()
+    val hideTopBar by Settings.readerHideTopBar.collectAsState()
     val readingMode by Settings.readingMode.collectAsState {
         when (val mode = ReadingModeType.fromPreference(it)) {
             ReadingModeType.DEFAULT -> if (webtoon) ReadingModeType.WEBTOON else ReadingModeType.RIGHT_TO_LEFT
@@ -836,6 +835,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
         }
         ReaderAppBars(
             visible = appbarVisible,
+            showTopBar = !hideTopBar,
             title = pageLoader.title,
             isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT,
             showSeekBar = showSeekbar,
@@ -846,23 +846,16 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 launch {
                     dialog { cont ->
                         fun dispose() = cont.resume(Unit)
-                        var isColorFilter by remember { mutableStateOf(false) }
-                        val scrim by animateColorAsState(
-                            targetValue = if (isColorFilter) Color.Transparent else BottomSheetDefaults.ScrimColor,
-                            label = "ScrimColor",
-                        )
+                        // No dim overlay while settings are open (was BottomSheetDefaults.ScrimColor
+                        // with color-filter tab force-undim). Keep reader fully visible underneath.
                         ModalBottomSheet(
                             onDismissRequest = { dispose() },
                             modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
-                            // Yeah, I know color state should not be read here, but we have to do it...
-                            scrimColor = scrim,
+                            scrimColor = Color.Transparent,
                             dragHandle = null,
                             contentWindowInsets = { WindowInsets() },
                         ) {
-                            SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize()) { page ->
-                                isColorFilter = page == 2
-                                appbarVisible = !isColorFilter
-                            }
+                            SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize())
                         }
                     }
                 }

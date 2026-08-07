@@ -32,6 +32,8 @@ private val animationSpec = tween<IntOffset>(200)
 context(navigator: DestinationsNavigator)
 fun BoxScope.ReaderAppBars(
     visible: Boolean,
+    /** When false, title/top bar stays hidden even if chrome [visible] is true. */
+    showTopBar: Boolean = true,
     title: String,
     isRtl: Boolean,
     showSeekBar: Boolean,
@@ -46,8 +48,9 @@ fun BoxScope.ReaderAppBars(
         alpha = if (isSystemInDarkTheme()) 0.72f else 0.55f,
     )
 
+    // Same gate as settings color-filter tab (`appbarVisible = false`): only the top bar.
     AnimatedVisibility(
-        visible = visible,
+        visible = visible && showTopBar,
         modifier = Modifier.windowInsetsPadding(WindowInsets.systemBarsIgnoringVisibility.only(WindowInsetsSides.Horizontal)).align(Alignment.TopStart),
         enter = slideInVertically(initialOffsetY = { -it }, animationSpec = animationSpec),
         exit = slideOutVertically(targetOffsetY = { -it }, animationSpec = animationSpec),

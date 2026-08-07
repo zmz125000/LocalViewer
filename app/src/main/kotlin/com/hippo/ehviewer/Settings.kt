@@ -233,6 +233,10 @@ object Settings : DataStorePreferences(null) {
     val orientationMode = intPref("pref_default_orientation_type_key", OrientationType.DEFAULT.prefValue)
     val showReaderSeekbar = boolPref("pref_show_reader_seekbar", true)
     val showPageNumber = boolPref("pref_show_page_number_key", true)
+    /** Hide reader title/top app bar (bottom bar + seekbar still show when chrome is visible). Default on. */
+    val readerHideTopBar = boolPref("pref_reader_hide_top_bar", true)
+    /** Last open tab in the reader settings bottom sheet (0=mode, 1=general, 2=filter). */
+    val readerSettingsTab = intPref("pref_reader_settings_tab", 0)
     val readerTheme = intPref("pref_reader_theme_key", 1)
 
     /** Off = double-tap prev/next gallery (folder mode). Default: off. */

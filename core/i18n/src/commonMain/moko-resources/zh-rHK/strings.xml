@@ -418,6 +418,7 @@
     <string name="pref_category_general">一般</string>
     <string name="pref_fullscreen">全螢幕</string>
     <string name="pref_show_page_number">顯示頁碼</string>
+    <string name="pref_reader_hide_top_bar">隱藏頂欄</string>
     <string name="pref_custom_brightness">自訂亮度</string>
     <string name="pref_custom_color_filter">色彩濾鏡</string>
     <string name="pref_keep_screen_on">保持螢幕恆亮</string>
