@@ -376,6 +376,8 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 readerLibDirectBitmap.changesFlow(),
                 // Advanced color changes F16 pack / CS for lib-direct — re-decode.
                 readerAdvancedColor.changesFlow(),
+                // Platform HBD (nested under WCG): software F16 + AHB wrap path.
+                readerPlatformHighDepth.changesFlow(),
                 // readerHdrDisplay only toggles window COLOR_MODE_HDR — no page restart.
             ).collect {
                 pageLoader.restart()

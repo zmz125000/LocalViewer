@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.coil
 
 import android.graphics.Bitmap
+import android.os.Build
 import coil3.BitmapImage
 import coil3.Extras
 import coil3.asImage
@@ -60,6 +61,12 @@ object HardwareBitmapInterceptor : Interceptor {
      */
     private fun tryUpgradeToHardware(bitmap: Bitmap, request: ImageRequest): Bitmap? {
         if (bitmap.config == Bitmap.Config.HARDWARE) return null
+        // F16/1010102: copy(HARDWARE) can quantize. Platform HBD / lib-direct use AHB FP16 wrap.
+        val cfg = bitmap.config
+        if (cfg == Bitmap.Config.RGBA_F16) return null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && cfg == Bitmap.Config.RGBA_1010102) {
+            return null
+        }
         // Large hardware bitmaps have rendering issues (e.g. crash, empty) on some devices.
         // This is not ideal but I haven't figured out how to probe the threshold.
         // All we know is that it's less than the maximum texture size.

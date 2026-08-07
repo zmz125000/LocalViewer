@@ -100,7 +100,7 @@
     <string name="settings_smb_concurrency_summary">每个主机最多 %s 个会话（该服务器上所有共享共用；用于定位与预取）</string>
     <string name="settings_smb3_only">仅 SMB 3</string>
     <string name="settings_smb3_only_summary">禁用 SMB 2 方言（仅协商 3.0 / 3.0.2 / 3.1.1）。会重置活动 SMB 连接。</string>
-    <string name="settings_smb_encrypt">强制 SMB 3 加密</string>
+    <string name="settings_smb_encrypt">允许 SMB 3 加密</string>
     <string name="settings_smb_encrypt_summary">要求加密的 SMB 会话（服务器须支持 SMB 3 加密）。会重置活动 SMB 连接。</string>
     <string name="settings_reader_preload_image">阅读器预载</string>
     <string name="settings_reader_preload_image_summary">预取后续 %s 页（SMB 会提前下载；本地按需打开）</string>
@@ -348,7 +348,7 @@
     <string name="clear_all_history">清除所有阅读历史？</string>
     <string name="back_to_history">返回历史</string>
     <string name="back_to_browse">返回浏览</string>
-    <string name="back_to_library">返回书库</string>
+    <string name="back_to_library">返回图库</string>
     <string name="go_to_first_page">回到第一页</string>
     <string name="go_to_next_gallery">下一本</string>
     <string name="settings_privacy_save_history">保存历史</string>
@@ -661,6 +661,8 @@
     <string name="pref_reader_hdr_display_summary">在 HDR 屏幕上为 Ultra HDR / 增益图页面启用窗口 HDR 色彩模式。HDR 文件的转换与解码始终进行；关闭后仅以 SDR 基底显示。</string>
     <string name="pref_reader_advanced_color">高级色彩（广色域 / 高位深）</string>
     <string name="pref_reader_advanced_color_summary">在广色域屏幕上启用窗口广色域模式，并优先使用更高精度位图。会占用更多 GPU 与内存。HDR 页面仍优先使用 HDR 窗口模式。</string>
+    <string name="pref_reader_platform_high_depth">高位深（PNG / AVIF / HEIF）</string>
+    <string name="pref_reader_platform_high_depth_summary">在高级色彩开启时：对高位深平台静图以 float16 解码（绕过硬件 8 位路径），占用更多内存。高级色彩开关变化时会同步本项。</string>
     <string name="pref_custom_brightness">自定义亮度</string>
     <string name="pref_custom_color_filter">自定义滤镜</string>
     <string name="pref_keep_screen_on">保持屏幕常亮</string>

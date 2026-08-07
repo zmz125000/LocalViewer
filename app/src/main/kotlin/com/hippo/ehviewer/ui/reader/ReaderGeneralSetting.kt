@@ -28,10 +28,17 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         title = stringResource(id = R.string.pref_reader_hdr_display),
         field = Settings.readerHdrDisplay.asMutableState(),
     )
+    val advancedColor = Settings.readerAdvancedColor.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_advanced_color),
-        field = Settings.readerAdvancedColor.asMutableState(),
+        field = advancedColor,
     )
+    AnimatedVisibility(visible = advancedColor.value) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_reader_platform_high_depth),
+            field = Settings.readerPlatformHighDepth.asMutableState(),
+        )
+    }
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_lib_direct_bitmap),
         summary = stringResource(id = R.string.pref_reader_lib_direct_bitmap_summary),

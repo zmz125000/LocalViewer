@@ -115,7 +115,7 @@
     <string name="settings_smb_concurrency_summary">ホストあたり最大 %s セッション（同一サーバー上の共有で共有；シークと先読み）</string>
     <string name="settings_smb3_only">SMB 3 のみ</string>
     <string name="settings_smb3_only_summary">SMB 2 を無効化（3.0 / 3.0.2 / 3.1.1 のみ交渉）。有効な SMB 接続をリセットします。</string>
-    <string name="settings_smb_encrypt">SMB 3 暗号化を強制</string>
+    <string name="settings_smb_encrypt">SMB 3 暗号化</string>
     <string name="settings_smb_encrypt_summary">暗号化 SMB セッションを要求（サーバーが SMB 3 暗号化に対応している必要あり）。有効な接続をリセットします。</string>
     <string name="settings_reader_preload_image">リーダー先読み</string>
     <string name="settings_reader_preload_image_summary">次の %s ページを先読み（SMB は先行ダウンロード、ローカルは必要時に開く）</string>
@@ -132,6 +132,8 @@
     <string name="pref_reader_hdr_display_summary">HDR 画面では Ultra HDR / ゲインマップページ向けにウィンドウ HDR モードを有効にします。HDR の変換・デコードは常に実行され、オフ時は SDR ベースのみ表示します。</string>
     <string name="pref_reader_advanced_color">高度な色（WCG / 高ビット深度）</string>
     <string name="pref_reader_advanced_color_summary">広色域ディスプレイでウィンドウ広色域モードを有効にし、高精度ビットマップを優先します。GPU とメモリを多く使います。HDR ページは引き続き HDR が優先されます。</string>
+    <string name="pref_reader_platform_high_depth">高ビット深度（PNG / AVIF / HEIF）</string>
+    <string name="pref_reader_platform_high_depth_summary">高度な色がオンのとき: 高ビット深度のプラットフォーム静止画を float16 でデコード（ハードウェア 8bit 経路を回避）。メモリ使用量が増えます。高度な色の切替に追従します。</string>
     <string name="pref_eink_refresh">電子ペーパー表示のリフレッシュ</string>
     <string name="pref_eink_refresh_summary">ページ切替後に画面をフラッシュし、電子ペーパーの残像を減らします。ギャラリーモードのみ。</string>
     <string name="pref_eink_refresh_duration">リフレッシュ点滅時間</string>

@@ -2,15 +2,13 @@ package com.hippo.ehviewer.image.hdr
 
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
-import android.hardware.HardwareBuffer
 import android.os.Build
 import com.ehviewer.core.files.read
-import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
-import com.hippo.ehviewer.image.copyBitmapToAHB
+import com.hippo.ehviewer.image.tryHardwareF16Wrap
 import com.hippo.ehviewer.jni.decodeAvifBytesToDirect
 import com.hippo.ehviewer.jni.decodeJxlBytesToDirect
 import com.hippo.ehviewer.jni.decodeJxrBytesToDirect
@@ -51,16 +49,13 @@ data class LibDirectResult(
  * Advanced off: rematrix wide → scRGB/sRGB (safe default).
  */
 object LibDirectDecode {
-    // Same usage flags as CropBorderInterceptor hardware crop path.
-    private const val USAGE_HW =
-        HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_WRITE_RARELY
-
     /**
      * Full-res RGBA_F16 is ~66 MiB at 3500×2500. Concurrent packs (PageLoader
      * Semaphore 4 + two pages) blow a 256 MiB Java heap → blocking GC Alloc /
      * SoftReference thrash. Serialize heavy native→Bitmap work process-wide.
+     * Also used for platform high-depth F16 frames.
      */
-    private val heavyDecode = Semaphore(1)
+    internal val heavyDecode = Semaphore(1)
 
     /**
      * BT.2020 primaries (CIE xy) for linear extended ColorSpace.
@@ -136,7 +131,7 @@ object LibDirectDecode {
         // Drop the intermediate Java pixel buffer as soon as the Bitmap owns a copy.
         // (local ref ends after this function; no extra hold.)
         val bitmap = if (packed.advanced && f16) {
-            tryHardwareBitmap(software) ?: software
+            tryHardwareF16Wrap(software) ?: software
         } else {
             software
         }
@@ -212,31 +207,4 @@ object LibDirectDecode {
         bitmap
     }.getOrNull()
 
-    /**
-     * GPU-friendly wrap via [HardwareBuffer] + [Bitmap.wrapHardwareBuffer], preserving ColorSpace.
-     * Falls back to the software bitmap on failure (caller keeps ownership of [software] then).
-     *
-     * [Bitmap.wrapHardwareBuffer] retains its own native ref; always [HardwareBuffer.close] the
-     * create() acquisition (same pattern as [com.hippo.ehviewer.coil.CropBorderInterceptor]).
-     * Omitting close() trips StrictMode [android.os.strictmode.LeakedClosableViolation].
-     */
-    private fun tryHardwareBitmap(software: Bitmap): Bitmap? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
-        if (software.config != Bitmap.Config.RGBA_F16) return null
-        return runCatching {
-            val w = software.width
-            val h = software.height
-            val buffer = HardwareBuffer.create(w, h, HardwareBuffer.RGBA_FP16, 1, USAGE_HW)
-            try {
-                copyBitmapToAHB(software, buffer, 0, 0)
-                val hw = Bitmap.wrapHardwareBuffer(buffer, software.colorSpace)
-                    ?: error("wrapHardwareBuffer returned null")
-                software.recycle()
-                hw
-            } finally {
-                // Release the create() ref; wrapped Bitmap keeps the buffer alive until recycle.
-                buffer.close()
-            }
-        }.onFailure { logcat(it) }.getOrNull()
-    }
 }
