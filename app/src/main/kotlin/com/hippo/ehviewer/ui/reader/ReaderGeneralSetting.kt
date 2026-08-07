@@ -31,13 +31,11 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
     val advancedColor = Settings.readerAdvancedColor.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_advanced_color),
-        summary = stringResource(id = R.string.pref_reader_advanced_color_summary),
         field = advancedColor,
     )
     AnimatedVisibility(visible = advancedColor.value) {
         SwitchChoice(
             title = stringResource(id = R.string.pref_reader_platform_high_depth),
-            summary = stringResource(id = R.string.pref_reader_platform_high_depth_summary),
             field = Settings.readerPlatformHighDepth.asMutableState(),
         )
     }
