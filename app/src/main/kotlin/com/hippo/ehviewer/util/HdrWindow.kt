@@ -18,8 +18,8 @@ import androidx.core.content.ContextCompat
  * embedded ICC (sRGB stays tagged sRGB — no oversaturation). Clear on leave.
  * HDR still wins when composed pages need HDR.
  *
- * Panel boost ([HdrDisplayInfo]) is applied at **display** time only
- * ([Window.setDesiredHdrHeadroom] on API 35+). Never put panel boost into encode metadata.
+ * Desired HDR headroom stays automatic (`setDesiredHdrHeadroom(0)`) so gain-map
+ * weight matches Chrome / system gallery. Never put panel boost into encode metadata.
  *
  * Manifest: [MainActivity] declares `android:colorMode="wideColorGamut"` so the
  * activity surface *can* carry wide color (reader is Compose inside MainActivity).
@@ -54,7 +54,7 @@ fun Activity.supportsWideColorGamut(): Boolean {
 
 /**
  * @param on enable HDR color mode
- * @param contentBoost content hdr capacity / peak boost (from gain map), for headroom request
+ * @param contentBoost unused for headroom (kept for call-site compatibility)
  */
 fun Activity.setHdrColorMode(on: Boolean, contentBoost: Float = 1f) {
     setReaderColorMode(hdr = on, contentBoost = contentBoost, wideColor = false)
@@ -64,7 +64,7 @@ fun Activity.setHdrColorMode(on: Boolean, contentBoost: Float = 1f) {
  * Reader color mode: HDR wins over WCG when both requested.
  *
  * @param hdr enable [ActivityInfo.COLOR_MODE_HDR] when display supports HDR
- * @param contentBoost headroom for API 35+ (only when [hdr])
+ * @param contentBoost unused; headroom is automatic on API 35+
  * @param wideColor enable [ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT] when not HDR
  *   and the display is wide-gamut (Android WCG is opt-in)
  */
@@ -100,30 +100,28 @@ fun Activity.setReaderColorMode(
 }
 
 /**
- * Request headroom for composed HDR content: min(content peak, panel max boost).
- * API 35+ [android.view.Window.setDesiredHdrHeadroom]; no-op earlier.
+ * HDR headroom on API 35+: leave **automatic** (`0f`), matching Chrome / system gallery.
+ *
+ * Forcing min(content peak, panel boost) via [Window.setDesiredHdrHeadroom] can over-apply
+ * the gain map and lift near-blacks on UHDR JPEG / gain-map AVIF. Documented default is
+ * automatic selection from panel + ambient conditions.
+ *
+ * [contentBoost] is retained for API compatibility / logging only (not applied).
+ * Presentation still relies on [ActivityInfo.COLOR_MODE_HDR].
  */
 private fun Activity.applyDesiredHdrHeadroom(enable: Boolean, contentBoost: Float) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
     val key = System.identityHashCode(window)
     try {
-        if (!enable) {
-            if (lastDesiredHeadroom[key] != 0f) {
-                window.setDesiredHdrHeadroom(0f)
-                lastDesiredHeadroom[key] = 0f
-            }
-            return
+        // 0f = automatic headroom (do not force content/panel boost).
+        if (lastDesiredHeadroom[key] != 0f) {
+            window.setDesiredHdrHeadroom(0f)
+            lastDesiredHeadroom[key] = 0f
+            Log.d(
+                TAG,
+                "desiredHdrHeadroom=auto(0) enable=$enable contentBoost=$contentBoost",
+            )
         }
-        val displayBoost = HdrDisplayInfo.maxDisplayBoost(displayOrNull())
-        val content = contentBoost.coerceIn(1f, 64f)
-        val headroom = minOf(content, displayBoost).coerceAtLeast(1f)
-        if (lastDesiredHeadroom[key] == headroom) return
-        window.setDesiredHdrHeadroom(headroom)
-        lastDesiredHeadroom[key] = headroom
-        Log.d(
-            TAG,
-            "desiredHdrHeadroom=$headroom contentBoost=$content displayBoost=$displayBoost",
-        )
     } catch (e: Throwable) {
         Log.w(TAG, "setDesiredHdrHeadroom failed", e)
     }

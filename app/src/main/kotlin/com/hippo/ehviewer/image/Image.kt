@@ -127,8 +127,10 @@ class Image private constructor(
     val isWideGamutContent: Boolean
 
     /**
-     * Content HDR boost / capacity (linear) for [android.view.Window.setDesiredHdrHeadroom].
-     * Gain-map path: metadata after [HdrGainmapConvert] clamp. Lib-direct: decode peak.
+     * Content HDR boost / capacity (linear), for diagnostics / future headroom.
+     * Gain-map path: read-only [HdrGainmapConvert.contentPeakBoost] (never rewrite
+     * [android.graphics.Gainmap.displayRatioForFullHdr]). Lib-direct: decode peak.
+     * Window headroom currently stays automatic ([com.hippo.ehviewer.util.setReaderColorMode]).
      */
     val contentHdrBoost: Float
 
@@ -146,7 +148,8 @@ class Image private constructor(
                     is BitmapImage -> image.bitmap
                     else -> null
                 }
-                if (bm != null) HdrGainmapConvert.clampOversizedCapacity(bm) else 1f
+                // Read metadata only — rewriting displayRatioForFullHdr lifts near-blacks.
+                if (bm != null) HdrGainmapConvert.contentPeakBoost(bm) else 1f
             }
             else -> 1f
         }
