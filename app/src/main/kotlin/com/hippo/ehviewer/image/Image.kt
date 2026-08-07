@@ -361,17 +361,38 @@ class Image private constructor(
                 { path -> PlatformBitDepth.probePath(path.source, hint) },
             )
 
-        /** Software F16 → FP16 HARDWARE wrap (shared with lib-direct). */
-        private fun CoilImage.wrapPlatformHbdF16(): CoilImage {
+        /**
+         * Platform HBD → same present encoding as lib-direct JXL SDR F16:
+         * gamma F16 (Coil) → linear F16 + LINEAR_EXTENDED_SRGB → optional AHB FP16 HARDWARE.
+         */
+        private fun CoilImage.presentPlatformHbdLikeLibDirect(): CoilImage {
             val bi = asBitmapImage() ?: return this
-            val soft = bi.bitmap
+            var soft = bi.bitmap
             if (soft.config != Bitmap.Config.RGBA_F16) return this
-            val hw = tryHardwareF16Wrap(soft) ?: return this
-            val wrapped = hw.asImage()
+            soft = normalizePlatformHbdToLibDirectF16(soft)
+            val finalBm = tryHardwareF16Wrap(soft) ?: soft
+            if (Log.isLoggable("ReaderColor", Log.INFO)) {
+                val cs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    finalBm.colorSpace?.name ?: "null"
+                } else {
+                    "n/a"
+                }
+                Log.i(
+                    "ReaderColor",
+                    "platform HBD present config=${finalBm.config} cs=$cs " +
+                        "${finalBm.width}x${finalBm.height}",
+                )
+            }
+            val wrapped = finalBm.asImage()
             return when (this) {
                 is BitmapImageWithExtraInfo -> copy(image = wrapped)
                 else -> wrapped
             }
+        }
+
+        private fun isPngFamilyName(name: String?): Boolean {
+            val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+            return ext == "png" || ext == "apng"
         }
 
         private suspend fun Either<ByteBufferSource, PathSource>.decodeCoil(
@@ -384,6 +405,9 @@ class Image private constructor(
             val effectiveMode = if (looksHdr) DecodeSizeType.ORIGIN else mode
             val hdrSafe = looksHdr
             val platformHbd = resolvePlatformHbd(gainMap = looksHdr)
+            // PNG: prefer BitmapFactory+F16 immediately — ImageDecoder often allocates F16
+            // but only 8-bit precision / weak CS ("Unknown"), which looks 8-bit vs JXL.
+            val preferBfF16 = platformHbd && isPngFamilyName(fileNameHint())
 
             suspend fun runDecode(
                 m: DecodeSizeType,
@@ -401,7 +425,7 @@ class Image private constructor(
                 }
             }
 
-            var image = runDecode(effectiveMode, hdrSafe, platformHbd, forceBfF16 = false)
+            var image = runDecode(effectiveMode, hdrSafe, platformHbd, forceBfF16 = preferBfF16)
 
             // Sniff miss: platform still attached a gain map after a downscale decode → re-do ORIGIN.
             if (isAtLeastU && !effectiveMode.isOriginal) {
@@ -412,7 +436,7 @@ class Image private constructor(
                 }
             }
 
-            // HBD: if ImageDecoder still returned 8888, retry BitmapFactory preferred F16.
+            // HBD: if still not F16, retry BitmapFactory preferred F16 (HEIF/AVIF ImageDecoder miss).
             if (platformHbd && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val cfg = image.asBitmapImage()?.bitmap?.config
                 if (cfg != null && cfg != Bitmap.Config.RGBA_F16 && cfg != Bitmap.Config.HARDWARE) {
@@ -420,7 +444,7 @@ class Image private constructor(
                     image.recycleBitmaps()
                     image = runDecode(effectiveMode, hdrSafe, hbd = true, forceBfF16 = true)
                 }
-                image = image.wrapPlatformHbdF16()
+                image = image.presentPlatformHbdLikeLibDirect()
             }
 
             // Annotate gain map when the hardware path skipped MapExtraInfoInterceptor.
