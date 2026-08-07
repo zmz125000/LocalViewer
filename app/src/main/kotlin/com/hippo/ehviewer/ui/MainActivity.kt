@@ -287,16 +287,15 @@ private fun navigateMainTab(navigator: DestinationsNavigator, item: MainNavItem,
         navigator.popBackStack(item.direction, inclusive = false)
         return
     }
-    if (item.direction == LibraryScreenDestination) {
-        navigator.popBackStack(LibraryScreenDestination, inclusive = false)
-    } else {
-        navigator.navigate(item.direction) {
-            popUpTo(LibraryScreenDestination) {
-                saveState = true
-            }
-            launchSingleTop = true
-            restoreState = true
+    // Same navigate pattern for every main tab (including Library). Using popBackStack only
+    // for Library forced the reverse (pop) transition while other tabs always used the
+    // forward enter animation — so left/right tab moves looked inconsistent.
+    navigator.navigate(item.direction) {
+        popUpTo(LibraryScreenDestination) {
+            saveState = true
         }
+        launchSingleTop = true
+        restoreState = true
     }
 }
 
