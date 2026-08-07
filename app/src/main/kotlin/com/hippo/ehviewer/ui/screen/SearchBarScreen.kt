@@ -192,12 +192,10 @@ fun SearchBarScreen(
     }
 
     val hasFilter = searchFieldState.text.isNotEmpty()
-    // Back: focused → unfocus; unfocused + filter → clear; else system back.
+    // Back once: unfocus and clear filter together.
     BackHandler(enabled = searchFocused || hasFilter) {
-        when {
-            searchFocused -> exitSearchFocus()
-            hasFilter -> clearSearchFilter()
-        }
+        exitSearchFocus()
+        clearSearchFilter()
     }
 
     // Scroll on the list (touch fling, mouse wheel, etc.) dismisses search focus.

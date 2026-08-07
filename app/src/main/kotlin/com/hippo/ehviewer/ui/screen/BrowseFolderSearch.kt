@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.screen
 
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
@@ -34,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -83,26 +85,14 @@ class BrowseFolderSearchState internal constructor(
     }
 
     /**
-     * Back ladder while search is open:
-     * focused → unfocus; unfocused + filter → clear text; empty → close search.
+     * Single back: unfocus + clear filter + exit search mode.
      * @return true if the event was consumed.
      */
     fun handleBack(clearFocus: () -> Unit): Boolean {
         if (!active) return false
-        return when {
-            focused -> {
-                clearFocus()
-                true
-            }
-            textFieldState.text.isNotEmpty() -> {
-                clearFilter()
-                true
-            }
-            else -> {
-                close()
-                true
-            }
-        }
+        clearFocus()
+        close()
+        return true
     }
 
     internal fun syncKeywordFromField() {
@@ -151,20 +141,9 @@ fun BrowseTopBarSearchField(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
-        trailingIcon = {
-            if (state.textFieldState.text.isNotEmpty()) {
-                IconButton(
-                    onClick = { state.clearFilter() },
-                    shapes = IconButtonDefaults.shapes(),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = stringResource(R.string.clear_all),
-                    )
-                }
-            }
-        },
         lineLimits = TextFieldLineLimits.SingleLine,
+        // Match TopAppBar title text origin — default TextField has 16.dp start inset.
+        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         onKeyboardAction = { focusManager.clearFocus() },
         colors = TextFieldDefaults.colors(
