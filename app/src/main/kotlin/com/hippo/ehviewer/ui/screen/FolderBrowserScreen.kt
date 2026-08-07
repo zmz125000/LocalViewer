@@ -51,7 +51,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
@@ -124,6 +126,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val displayEntries = remember(entries, emptyArchiveRev) {
         EmptyArchiveRegistry.filterLocalEntries(entries)
     }
+    val search = rememberBrowseFolderSearchState()
+    val focusManager = LocalFocusManager.current
+    val filteredEntries = remember(displayEntries, search.keyword) {
+        displayEntries.filterByBrowseSearch(search.keyword) { it.name }
+    }
 
     /** Path the current [entries] belong to — avoids showing the wrong dir during reload. */
     var listedPath by remember { mutableStateOf<String?>(null) }
@@ -139,6 +146,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val current = stack.lastOrNull()
     val currentPath = current?.path
     val title = current?.title ?: stringResource(R.string.folder)
+    val searchHint = stringResource(R.string.search_bar_hint, title)
 
     fun toggleDirFavorite(dir: BrowseEntry.Directory) {
         val frame = stack.lastOrNull() ?: return
@@ -158,9 +166,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         derivedStateOf { scrollBehavior.state.collapsedFraction < 0.5f }
     }
 
-    // Show the bar again when entering a different folder.
+    // Show the bar again when entering a different folder; drop per-folder filter.
     LaunchedEffect(currentPath) {
         scrollBehavior.state.heightOffset = 0f
+        search.close()
+        focusManager.clearFocus()
     }
 
     suspend fun reload(force: Boolean = false) {
@@ -248,7 +258,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
-    BackHandler { goUp() }
+    BackHandler {
+        if (!search.handleBack { focusManager.clearFocus() }) {
+            goUp()
+        }
+    }
 
     fun openFolderGallery(entry: BrowseEntry.FolderGallery) {
         val frame = stack.lastOrNull() ?: return
@@ -311,7 +325,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
-                title = { Text(title) },
+                title = {
+                    if (search.active) {
+                        BrowseTopBarSearchField(state = search, hint = searchHint)
+                    } else {
+                        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                },
                 windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 colors = adaptiveTopAppBarColors(),
                 navigationIcon = {
@@ -320,6 +340,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     }
                 },
                 actions = {
+                    BrowseTopBarSearchAction(
+                        state = search,
+                        onBeforeClose = { focusManager.clearFocus() },
+                    )
                     IconButton(
                         onClick = {
                             Settings.listMode.value = if (listMode == 0) 1 else 0
@@ -443,12 +467,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 displayEntries.isEmpty() -> {
                     BrowseEmptyHint(stringResource(R.string.folder_empty))
                 }
+                filteredEntries.isEmpty() -> {
+                    BrowseEmptyHint(stringResource(R.string.folder_empty))
+                }
                 else -> {
                     // List only composes when this path's entries are ready. State is keyed by
                     // path+mode so parent/child never share one LazyList scroll index.
                     val pathKey = listedPath ?: currentPath!!
-                    val dirs = displayEntries.filterIsInstance<BrowseEntry.Directory>()
-                    val galleries = displayEntries.filter { it !is BrowseEntry.Directory }
+                    val dirs = filteredEntries.filterIsInstance<BrowseEntry.Directory>()
+                    val galleries = filteredEntries.filter { it !is BrowseEntry.Directory }
                     if (useGrid) {
                         val gridState = rememberBrowseGridState(pathKey, listMode)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
