@@ -56,6 +56,12 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -153,6 +159,20 @@ fun SearchBarScreen(
         if (searchFocused) refreshHistoryTags()
     }
 
+    fun exitSearchFocus() {
+        if (searchFocused) focusManager.clearFocus()
+    }
+
+    // Scroll on the list (touch fling, mouse wheel, etc.) dismisses search focus.
+    val clearFocusOnScroll = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available != Offset.Zero) exitSearchFocus()
+                return Offset.Zero
+            }
+        }
+    }
+
     // Match gallery list side inset so the search field edges line up with cards.
     val searchBarHorizontalPadding = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
     // M3 SearchBar uses 8.dp above and below the field when collapsed; reserve that total.
@@ -186,7 +206,29 @@ fun SearchBarScreen(
                 }
             },
             floatingActionButton = floatingActionButton,
-            content = content,
+            content = { paddingValues ->
+                // Tap / press on list content (not the search chrome above) exits focus.
+                // Initial pass observes without consuming so item clicks still work.
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .nestedScroll(clearFocusOnScroll)
+                        .pointerInput(searchFocused) {
+                            if (!searchFocused) return@pointerInput
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val pressedDown = event.changes.any {
+                                        it.pressed && !it.previousPressed
+                                    }
+                                    if (pressedDown) exitSearchFocus()
+                                }
+                            }
+                        },
+                ) {
+                    content(paddingValues)
+                }
+            },
         )
 
         // Workaround for can't exit SearchBar due to refocus in non-touch mode
