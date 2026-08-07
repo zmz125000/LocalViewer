@@ -331,21 +331,20 @@ class Image private constructor(
             { it.source.name },
         )
 
-        private fun Either<ByteBufferSource, PathSource>.probeBitDepth(hint: String?): BitDepthClass =
-            fold(
-                { buf ->
-                    val dup = buf.source.asReadOnlyBuffer()
-                    val n = minOf(dup.remaining(), 64)
-                    if (n <= 0) {
-                        BitDepthClass.UNKNOWN
-                    } else {
-                        val bytes = ByteArray(n)
-                        dup.get(bytes)
-                        PlatformBitDepth.probe(bytes, n, hint)
-                    }
-                },
-                { path -> PlatformBitDepth.probePath(path.source, hint) },
-            )
+        private fun Either<ByteBufferSource, PathSource>.probeBitDepth(hint: String?): BitDepthClass = fold(
+            { buf ->
+                val dup = buf.source.asReadOnlyBuffer()
+                val n = minOf(dup.remaining(), 64)
+                if (n <= 0) {
+                    BitDepthClass.UNKNOWN
+                } else {
+                    val bytes = ByteArray(n)
+                    dup.get(bytes)
+                    PlatformBitDepth.probe(bytes, n, hint)
+                }
+            },
+            { path -> PlatformBitDepth.probePath(path.source, hint) },
+        )
 
         /**
          * After BitmapFactory F16: linearize (keep source primaries; sRGB → linear extended
@@ -387,15 +386,14 @@ class Image private constructor(
             val hdrSafe = looksHdr
             val platformHbd = resolvePlatformHbd(gainMap = looksHdr)
 
-            suspend fun runDecode(m: DecodeSizeType, hdr: Boolean, hbd: Boolean): CoilImage =
-                if (hbd) {
-                    // Full-res F16: share lib-direct serialize lock.
-                    LibDirectDecode.heavyDecode.withPermit {
-                        decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = true)
-                    }
-                } else {
-                    decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = false)
+            suspend fun runDecode(m: DecodeSizeType, hdr: Boolean, hbd: Boolean): CoilImage = if (hbd) {
+                // Full-res F16: share lib-direct serialize lock.
+                LibDirectDecode.heavyDecode.withPermit {
+                    decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = true)
                 }
+            } else {
+                decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = false)
+            }
 
             var image = runDecode(effectiveMode, hdrSafe, platformHbd)
 

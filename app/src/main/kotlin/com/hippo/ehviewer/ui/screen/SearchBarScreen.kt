@@ -91,10 +91,10 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val WhitespaceRegex = Regex("\\s+")
-private val M3SearchBarMaxWidth = 720.dp
-private const val SearchHistoryLimit = 24
-private const val HistoryTagMaxRows = 2
+private val WHITESPACE_REGEX = Regex("\\s+")
+private val M3_SEARCH_BAR_MAX_WIDTH = 720.dp
+private const val SEARCH_HISTORY_LIMIT = 24
+private const val HISTORY_TAG_MAX_ROWS = 2
 
 /**
  * Persist a device search query when Privacy → Save history is enabled.
@@ -102,7 +102,7 @@ private const val HistoryTagMaxRows = 2
  */
 suspend fun recordDeviceSearchHistory(raw: String) {
     if (!Settings.saveHistory.value) return
-    val query = raw.trim().replace(WhitespaceRegex, " ")
+    val query = raw.trim().replace(WHITESPACE_REGEX, " ")
     if (query.isEmpty()) return
     val dao = searchDatabase.searchDao()
     dao.deleteQuery(query)
@@ -143,13 +143,12 @@ fun SearchBarScreen(
         }
         scope.launch {
             historyTags = withContext(Dispatchers.IO) {
-                mSearchDatabase.list(SearchHistoryLimit)
+                mSearchDatabase.list(SEARCH_HISTORY_LIMIT)
             }
         }
     }
 
-    fun normalizeQuery(raw: CharSequence = searchFieldState.text): String =
-        raw.trim().replace(WhitespaceRegex, " ").toString()
+    fun normalizeQuery(raw: CharSequence = searchFieldState.text): String = raw.trim().replace(WHITESPACE_REGEX, " ").toString()
 
     fun applyFilter(raw: CharSequence = searchFieldState.text) {
         onFilterChange(normalizeQuery(raw))
@@ -167,7 +166,7 @@ fun SearchBarScreen(
         scope.launch(Dispatchers.IO) {
             recordDeviceSearchHistory(query)
             if (searchFocused) {
-                historyTags = mSearchDatabase.list(SearchHistoryLimit)
+                historyTags = mSearchDatabase.list(SEARCH_HISTORY_LIMIT)
             }
         }
     }
@@ -195,10 +194,10 @@ fun SearchBarScreen(
     val hasFilter = searchFieldState.text.isNotEmpty()
     // Back: focused → unfocus; unfocused + filter → clear; else system back.
     BackHandler(enabled = searchFocused || hasFilter) {
-        when{
+        when {
             searchFocused -> exitSearchFocus()
             hasFilter -> clearSearchFilter()
-        } 
+        }
     }
 
     // Scroll on the list (touch fling, mouse wheel, etc.) dismisses search focus.
@@ -230,7 +229,7 @@ fun SearchBarScreen(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val fieldMaxWidth = (maxWidth - searchBarHorizontalPadding * 2).coerceAtMost(M3SearchBarMaxWidth)
+        val fieldMaxWidth = (maxWidth - searchBarHorizontalPadding * 2).coerceAtMost(M3_SEARCH_BAR_MAX_WIDTH)
 
         Scaffold(
             // Do not reflow list content when reader toggles system bar visibility.
@@ -358,7 +357,7 @@ fun SearchBarScreen(
                                 .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
-                            maxLines = HistoryTagMaxRows,
+                            maxLines = HISTORY_TAG_MAX_ROWS,
                         ) {
                             historyTags.forEach { tag ->
                                 InputChip(
@@ -384,7 +383,7 @@ fun SearchBarScreen(
                                                     scope.launch(Dispatchers.IO) {
                                                         mSearchDatabase.deleteQuery(tag)
                                                         historyTags =
-                                                            mSearchDatabase.list(SearchHistoryLimit)
+                                                            mSearchDatabase.list(SEARCH_HISTORY_LIMIT)
                                                     }
                                                 },
                                         )

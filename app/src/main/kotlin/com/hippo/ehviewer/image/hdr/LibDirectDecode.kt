@@ -206,5 +206,4 @@ object LibDirectDecode {
         bitmap.prepareToDraw()
         bitmap
     }.getOrNull()
-
 }
