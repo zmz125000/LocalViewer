@@ -443,7 +443,7 @@
     <string name="settings_smb_concurrency_summary">Up to %s sessions per host (shared by all shares on that server; seek + prefetch)</string>
     <string name="settings_smb3_only">SMB 3 only</string>
     <string name="settings_smb3_only_summary">Disable SMB 2 dialects (negotiate 3.0 / 3.0.2 / 3.1.1 only). Resets active SMB connections.</string>
-    <string name="settings_smb_encrypt">Force SMB 3 encryption</string>
+    <string name="settings_smb_encrypt">Allow SMB 3 encryption</string>
     <string name="settings_smb_encrypt_summary">Require encrypted SMB sessions (server must support SMB 3 encryption). Resets active SMB connections.</string>
     <string name="settings_reader_preload_image">Reader preload</string>
     <string name="settings_reader_preload_image_summary">Prefetch next %s pages (SMB downloads ahead; local opens on demand)</string>

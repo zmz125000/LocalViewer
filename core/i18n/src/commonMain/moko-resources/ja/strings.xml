@@ -115,7 +115,7 @@
     <string name="settings_smb_concurrency_summary">ホストあたり最大 %s セッション（同一サーバー上の共有で共有；シークと先読み）</string>
     <string name="settings_smb3_only">SMB 3 のみ</string>
     <string name="settings_smb3_only_summary">SMB 2 を無効化（3.0 / 3.0.2 / 3.1.1 のみ交渉）。有効な SMB 接続をリセットします。</string>
-    <string name="settings_smb_encrypt">SMB 3 暗号化を強制</string>
+    <string name="settings_smb_encrypt">SMB 3 暗号化</string>
     <string name="settings_smb_encrypt_summary">暗号化 SMB セッションを要求（サーバーが SMB 3 暗号化に対応している必要あり）。有効な接続をリセットします。</string>
     <string name="settings_reader_preload_image">リーダー先読み</string>
     <string name="settings_reader_preload_image_summary">次の %s ページを先読み（SMB は先行ダウンロード、ローカルは必要時に開く）</string>

@@ -100,7 +100,7 @@
     <string name="settings_smb_concurrency_summary">每个主机最多 %s 个会话（该服务器上所有共享共用；用于定位与预取）</string>
     <string name="settings_smb3_only">仅 SMB 3</string>
     <string name="settings_smb3_only_summary">禁用 SMB 2 方言（仅协商 3.0 / 3.0.2 / 3.1.1）。会重置活动 SMB 连接。</string>
-    <string name="settings_smb_encrypt">强制 SMB 3 加密</string>
+    <string name="settings_smb_encrypt">允许 SMB 3 加密</string>
     <string name="settings_smb_encrypt_summary">要求加密的 SMB 会话（服务器须支持 SMB 3 加密）。会重置活动 SMB 连接。</string>
     <string name="settings_reader_preload_image">阅读器预载</string>
     <string name="settings_reader_preload_image_summary">预取后续 %s 页（SMB 会提前下载；本地按需打开）</string>
@@ -348,7 +348,7 @@
     <string name="clear_all_history">清除所有阅读历史？</string>
     <string name="back_to_history">返回历史</string>
     <string name="back_to_browse">返回浏览</string>
-    <string name="back_to_library">返回书库</string>
+    <string name="back_to_library">返回图库</string>
     <string name="go_to_first_page">回到第一页</string>
     <string name="go_to_next_gallery">下一本</string>
     <string name="settings_privacy_save_history">保存历史</string>
