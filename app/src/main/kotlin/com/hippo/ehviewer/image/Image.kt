@@ -348,8 +348,8 @@ class Image private constructor(
             )
 
         /**
-         * After BitmapFactory F16: linearize + [LINEAR_EXTENDED_SRGB] + optional AHB FP16
-         * (same present encoding as lib-direct JXL SDR F16).
+         * After BitmapFactory F16: linearize (keep source primaries; sRGB → linear extended
+         * sRGB) + optional AHB FP16. Do not force BT.709 on BT.2020/P3 WCG files.
          */
         private fun CoilImage.presentPlatformHbdLikeLibDirect(): CoilImage {
             val bi = asBitmapImage() ?: return this
