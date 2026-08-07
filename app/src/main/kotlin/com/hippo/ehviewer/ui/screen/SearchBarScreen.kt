@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.expandVertically
@@ -79,6 +80,8 @@ import androidx.compose.ui.unit.dp
 import com.ehviewer.core.database.model.Search
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.EhApplication.Companion.searchDatabase
+import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.ui.theme.scrim
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -93,8 +96,12 @@ private val M3SearchBarMaxWidth = 720.dp
 private const val SearchHistoryLimit = 24
 private const val HistoryTagMaxRows = 2
 
-/** Normalize and persist a device search query (Library / History filter history). */
+/**
+ * Persist a device search query when Privacy → Save history is enabled.
+ * No-op when the toggle is off (same gate as browse/library history).
+ */
 suspend fun recordDeviceSearchHistory(raw: String) {
+    if (!Settings.saveHistory.value) return
     val query = raw.trim().replace(WhitespaceRegex, " ")
     if (query.isEmpty()) return
     val dao = searchDatabase.searchDao()
@@ -122,6 +129,7 @@ fun SearchBarScreen(
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val mSearchDatabase = searchDatabase.searchDao()
+    val saveHistory by Settings.saveHistory.collectAsState()
 
     var searchFocused by remember { mutableStateOf(false) }
     var historyTags by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -129,6 +137,10 @@ fun SearchBarScreen(
     var searchChromeHeightPx by remember { mutableIntStateOf(0) }
 
     fun refreshHistoryTags() {
+        if (!saveHistory) {
+            historyTags = emptyList()
+            return
+        }
         scope.launch {
             historyTags = withContext(Dispatchers.IO) {
                 mSearchDatabase.list(SearchHistoryLimit)
@@ -143,7 +155,13 @@ fun SearchBarScreen(
         onFilterChange(normalizeQuery(raw))
     }
 
+    fun clearSearchFilter() {
+        searchFieldState.clearText()
+        onFilterChange("")
+    }
+
     fun recordCurrentQuery() {
+        if (!saveHistory) return
         val query = normalizeQuery()
         if (query.isEmpty()) return
         scope.launch(Dispatchers.IO) {
@@ -161,13 +179,26 @@ fun SearchBarScreen(
             .collectLatest { applyFilter(it) }
     }
 
-    LaunchedEffect(searchFocused) {
+    LaunchedEffect(searchFocused, saveHistory) {
         onFocusChange(searchFocused)
-        if (searchFocused) refreshHistoryTags()
+        if (searchFocused && saveHistory) {
+            refreshHistoryTags()
+        } else if (!saveHistory) {
+            historyTags = emptyList()
+        }
     }
 
     fun exitSearchFocus() {
         if (searchFocused) focusManager.clearFocus()
+    }
+
+    val hasFilter = searchFieldState.text.isNotEmpty()
+    // Back: focused → unfocus; unfocused + filter → clear; else system back.
+    BackHandler(enabled = searchFocused || hasFilter) {
+        when{
+            searchFocused -> exitSearchFocus()
+            hasFilter -> clearSearchFilter()
+        } 
     }
 
     // Scroll on the list (touch fling, mouse wheel, etc.) dismisses search focus.
@@ -184,7 +215,7 @@ fun SearchBarScreen(
     val searchBarHorizontalPadding = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
     // M3 SearchBar uses 8.dp above and below the field when collapsed; reserve that total.
     val searchBarVerticalPadding = 8.dp
-    val wantHistory = searchFocused && historyTags.isNotEmpty()
+    val wantHistory = saveHistory && searchFocused && historyTags.isNotEmpty()
     // Drive expand/collapse with a transition state so the surface shape stays stable for the
     // whole animation (no pill↔docked snap mid-collapse).
     val historyVisibleState = remember { MutableTransitionState(false) }
@@ -299,12 +330,9 @@ fun SearchBarScreen(
                         leadingIcon = leadingIcon,
                         trailingIcon = {
                             Row {
-                                if (searchFieldState.text.isNotEmpty()) {
+                                if (hasFilter) {
                                     IconButton(
-                                        onClick = {
-                                            searchFieldState.clearText()
-                                            onFilterChange("")
-                                        },
+                                        onClick = { clearSearchFilter() },
                                         shapes = IconButtonDefaults.shapes(),
                                     ) {
                                         Icon(

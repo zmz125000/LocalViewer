@@ -97,10 +97,13 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 title = stringResource(id = R.string.settings_privacy_save_history),
                 state = saveHistory,
             )
-            // Turning history off also wipes existing entries.
+            // Turning history off also wipes browse history and device search history.
             LaunchedEffect(saveHistory.value) {
                 if (previousSaveHistory && !saveHistory.value) {
-                    withIOContext { EhDB.clearHistoryInfo() }
+                    withIOContext {
+                        EhDB.clearHistoryInfo()
+                        searchDatabase.searchDao().clear()
+                    }
                 }
                 previousSaveHistory = saveHistory.value
             }
