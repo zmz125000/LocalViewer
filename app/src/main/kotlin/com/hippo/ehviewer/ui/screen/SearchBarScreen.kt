@@ -1,6 +1,11 @@
 package com.hippo.ehviewer.ui.screen
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -40,9 +45,9 @@ import androidx.compose.material3.InputChip
 import androidx.compose.material3.InputChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.SearchBarDefaults.InputField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -86,6 +91,7 @@ import kotlinx.coroutines.withContext
 private val WhitespaceRegex = Regex("\\s+")
 private val M3SearchBarMaxWidth = 720.dp
 private const val SearchHistoryLimit = 24
+private const val HistoryTagMaxRows = 2
 
 /** Normalize and persist a device search query (Library / History filter history). */
 suspend fun recordDeviceSearchHistory(raw: String) {
@@ -119,7 +125,8 @@ fun SearchBarScreen(
 
     var searchFocused by remember { mutableStateOf(false) }
     var historyTags by remember { mutableStateOf<List<String>>(emptyList()) }
-    var historyBlockHeightPx by remember { mutableIntStateOf(0) }
+    // Full search chrome height (field + expanded history) for list top inset.
+    var searchChromeHeightPx by remember { mutableIntStateOf(0) }
 
     fun refreshHistoryTags() {
         scope.launch {
@@ -177,8 +184,19 @@ fun SearchBarScreen(
     val searchBarHorizontalPadding = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
     // M3 SearchBar uses 8.dp above and below the field when collapsed; reserve that total.
     val searchBarVerticalPadding = 8.dp
-    val showHistory = searchFocused && historyTags.isNotEmpty()
-    val historyBlockHeight = with(density) { historyBlockHeightPx.toDp() }
+    val wantHistory = searchFocused && historyTags.isNotEmpty()
+    // Drive expand/collapse with a transition state so the surface shape stays stable for the
+    // whole animation (no pill↔docked snap mid-collapse).
+    val historyVisibleState = remember { MutableTransitionState(false) }
+    historyVisibleState.targetState = wantHistory
+    val searchBarColors = SearchBarDefaults.colors()
+    val searchChromeHeight = with(density) {
+        if (searchChromeHeightPx > 0) {
+            searchChromeHeightPx.toDp()
+        } else {
+            SearchBarDefaults.InputFieldHeight
+        }
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val fieldMaxWidth = (maxWidth - searchBarHorizontalPadding * 2).coerceAtMost(M3SearchBarMaxWidth)
@@ -196,11 +214,10 @@ fun SearchBarScreen(
                             .background(scrim),
                     )
 
-                    // Placeholder: field + margins + focused history chips (measured).
+                    // Placeholder tracks animated search surface height.
                     Spacer(
                         modifier = Modifier.height(
-                            SearchBarDefaults.InputFieldHeight + searchBarVerticalPadding * 2 +
-                                if (showHistory) historyBlockHeight else 0.dp,
+                            searchChromeHeight + searchBarVerticalPadding * 2,
                         ),
                     )
                 }
@@ -235,18 +252,34 @@ fun SearchBarScreen(
         // https://issuetracker.google.com/337191298
         Box(Modifier.size(1.dp).focusable())
 
-        Column(
+        Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset { IntOffset(0, searchBarOffsetY()) }
                 .windowInsetsPadding(
+                    WindowInsets.statusBarsIgnoringVisibility.only(WindowInsetsSides.Top),
+                )
+                .windowInsetsPadding(
                     WindowInsets.navigationBarsIgnoringVisibility.only(WindowInsetsSides.Horizontal),
-                ),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                )
+                .padding(top = searchBarVerticalPadding)
+                .widthIn(max = fieldMaxWidth)
+                .fillMaxWidth()
+                .padding(horizontal = searchBarHorizontalPadding)
+                .onGloballyPositioned { searchChromeHeightPx = it.size.height },
         ) {
-            // Always collapsed: no full-screen suggestion overlay. Filtering is live in-list.
-            SearchBar(
-                inputField = {
+            // One surface holds the field and animates open for history tags (max 2 rows).
+            // Always use dockedShape so expand/collapse only changes height — no mid-animation
+            // pill ↔ docked corner jump.
+            Surface(
+                shape = SearchBarDefaults.dockedShape,
+                color = searchBarColors.containerColor,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                tonalElevation = SearchBarDefaults.TonalElevation,
+                shadowElevation = SearchBarDefaults.ShadowElevation,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.fillMaxWidth()) {
                     InputField(
                         state = searchFieldState,
                         onSearch = {
@@ -254,9 +287,8 @@ fun SearchBarScreen(
                             focusManager.clearFocus()
                         },
                         expanded = false,
-                        onExpandedChange = { /* never expand overlay */ },
+                        onExpandedChange = { /* docked surface holds history; never full-screen */ },
                         modifier = Modifier
-                            .widthIn(max = fieldMaxWidth)
                             .fillMaxWidth()
                             .onFocusChanged { searchFocused = it.isFocused },
                         placeholder = {
@@ -284,55 +316,54 @@ fun SearchBarScreen(
                                 trailingIcon()
                             }
                         },
+                        colors = searchBarColors.inputFieldColors,
                     )
-                },
-                expanded = false,
-                onExpandedChange = { /* never expand overlay */ },
-                modifier = Modifier.widthIn(max = fieldMaxWidth).fillMaxWidth(),
-            ) {
-                // Expanded content never shown (expanded is always false).
-            }
 
-            AnimatedVisibility(visible = showHistory) {
-                FlowRow(
-                    modifier = Modifier
-                        .widthIn(max = fieldMaxWidth)
-                        .fillMaxWidth()
-                        .padding(horizontal = searchBarHorizontalPadding)
-                        .padding(top = 6.dp, bottom = 2.dp)
-                        .onGloballyPositioned { historyBlockHeightPx = it.size.height },
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    historyTags.forEach { tag ->
-                        InputChip(
-                            selected = false,
-                            onClick = {
-                                searchFieldState.setTextAndPlaceCursorAtEnd(tag)
-                                onFilterChange(normalizeQuery(tag))
-                            },
-                            label = {
-                                Text(
-                                    text = tag,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
+                    AnimatedVisibility(
+                        visibleState = historyVisibleState,
+                        enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                        exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+                    ) {
+                        FlowRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            maxLines = HistoryTagMaxRows,
+                        ) {
+                            historyTags.forEach { tag ->
+                                InputChip(
+                                    selected = false,
+                                    onClick = {
+                                        searchFieldState.setTextAndPlaceCursorAtEnd(tag)
+                                        onFilterChange(normalizeQuery(tag))
+                                    },
+                                    label = {
+                                        Text(
+                                            text = tag,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                    trailingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = stringResource(R.string.delete),
+                                            modifier = Modifier
+                                                .size(InputChipDefaults.IconSize)
+                                                .clickable {
+                                                    scope.launch(Dispatchers.IO) {
+                                                        mSearchDatabase.deleteQuery(tag)
+                                                        historyTags =
+                                                            mSearchDatabase.list(SearchHistoryLimit)
+                                                    }
+                                                },
+                                        )
+                                    },
                                 )
-                            },
-                            trailingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = stringResource(R.string.delete),
-                                    modifier = Modifier
-                                        .size(InputChipDefaults.IconSize)
-                                        .clickable {
-                                            scope.launch(Dispatchers.IO) {
-                                                mSearchDatabase.deleteQuery(tag)
-                                                historyTags = mSearchDatabase.list(SearchHistoryLimit)
-                                            }
-                                        },
-                                )
-                            },
-                        )
+                            }
+                        }
                     }
                 }
             }
