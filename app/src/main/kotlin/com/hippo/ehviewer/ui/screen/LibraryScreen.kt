@@ -45,7 +45,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,7 +71,6 @@ import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.util.rememberInVM
-import com.ehviewer.core.ui.util.rememberUpdatedStateInVM
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.hippo.ehviewer.Settings
@@ -106,7 +104,6 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.roundToInt
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import moe.tarsin.navigate
 import moe.tarsin.snackbar
@@ -120,8 +117,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
 
-    var searchBarExpanded by rememberSaveable { mutableStateOf(false) }
     var keyword by rememberSaveable { mutableStateOf("") }
+    var searchFocused by rememberSaveable { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
 
     // Survive NavHost dispose/restore (e.g. open favourite folder → back).
@@ -130,28 +127,15 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val listState = rememberInVM { LazyListState() }
     val gridState = rememberInVM { LazyGridState() }
     var searchBarOffsetY by rememberInVM { mutableIntStateOf(0) }
-    val keywordState = rememberUpdatedStateInVM(keyword)
+    // Always keep the full library stream; filter client-side as the user types.
     val rawGalleries by rememberInVM {
-        mutableStateOf(emptyList<LocalGalleryEntity>()).also { state ->
-            viewModelScope.launch {
-                snapshotFlow { keywordState.value }.collectLatest { kw ->
-                    val flow = if (kw.isBlank()) {
-                        LocalLibrary.galleriesFlow()
-                    } else {
-                        LocalLibrary.searchGalleriesFlow(kw.trim())
-                    }
-                    flow.collect { state.value = it }
-                }
-            }
-        }
-    }
-    val allGalleries by rememberInVM {
         mutableStateOf(emptyList<LocalGalleryEntity>()).also { state ->
             viewModelScope.launch {
                 LocalLibrary.galleriesFlow().collect { state.value = it }
             }
         }
     }
+    val allGalleries = rawGalleries
     val roots by rememberInVM {
         mutableStateOf(emptyList<LibraryRootEntity>()).also { state ->
             viewModelScope.launch {
@@ -174,20 +158,29 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
     }
 
-    DrawerHandle(!searchBarExpanded)
+    DrawerHandle(!searchFocused)
 
     val density = LocalDensity.current
     val scanning by LocalLibrary.scanning.collectAsState()
     // Hide cross-source duplicates in UI (prefer MediaStore); DB rows stay intact.
-    val galleries = remember(rawGalleries) {
+    val allVisibleGalleries = remember(rawGalleries) {
         rawGalleries.hideDuplicateGalleriesPreferMediaStore()
+    }
+    // Live in-list filter (no re-query / submit).
+    val galleries = remember(allVisibleGalleries, keyword) {
+        val q = keyword.trim()
+        if (q.isEmpty()) {
+            allVisibleGalleries
+        } else {
+            allVisibleGalleries.filter { it.title.contains(q, ignoreCase = true) }
+        }
     }
 
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val favorites = remember(roots, smbSources, webDavSources, allGalleries, favoriteKeys) {
         resolveFavoriteBrowseSources(roots, smbSources, webDavSources, allGalleries, favoriteKeys)
     }
-    // Hide favourites section while searching (matches previous behaviour for source pins).
+    // Hide favourites section while filtering.
     val showFavorites = keyword.isBlank() && favorites.isNotEmpty()
 
     val listMode by Settings.listMode.collectAsState()
@@ -209,6 +202,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         // called from Dispatchers.IO ("Cannot start a writer when a reader is pending").
         // Playlist = visible library list so double-tap prev/next walks that order,
         // not filesystem parent siblings (often only one folder under a path).
+        if (keyword.isNotBlank()) launchIO { recordDeviceSearchHistory(keyword) }
         ReaderGalleryPlaylist.setFromLibrary(galleries)
         val info = gallery.toBaseGalleryInfo()
         launchIO { LocalHistory.recordLibraryGallery(gallery) }
@@ -300,9 +294,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     }
 
     SearchBarScreen(
-        onApplySearch = { keyword = it },
-        expanded = searchBarExpanded,
-        onExpandedChange = { searchBarExpanded = it },
+        onFilterChange = { keyword = it },
+        onFocusChange = { searchFocused = it },
         title = title,
         searchFieldHint = hint,
         searchBarOffsetY = { searchBarOffsetY },

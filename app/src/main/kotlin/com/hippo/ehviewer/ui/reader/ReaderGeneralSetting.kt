@@ -54,6 +54,10 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         field = Settings.showPageNumber.asMutableState(),
     )
     SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_hide_top_bar),
+        field = Settings.readerHideTopBar.asMutableState(),
+    )
+    SwitchChoice(
         title = stringResource(id = R.string.pref_show_reader_seekbar),
         field = Settings.showReaderSeekbar.asMutableState(),
     )

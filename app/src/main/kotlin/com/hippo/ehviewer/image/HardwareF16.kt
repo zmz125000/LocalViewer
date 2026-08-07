@@ -40,7 +40,7 @@ fun tryHardwareF16Wrap(software: Bitmap): Bitmap? {
 }
 
 /**
- * Align platform HBD (BitmapFactory / ImageDecoder F16) with lib-direct-style present encoding:
+ * Align platform PNG HBD (BitmapFactory F16) with lib-direct-style present encoding:
  * **linear** half-float, tagged with a **linear** color space that keeps **source primaries**.
  *
  * Platform preferred-F16 is usually still **gamma-encoded**. We apply the source EOTF

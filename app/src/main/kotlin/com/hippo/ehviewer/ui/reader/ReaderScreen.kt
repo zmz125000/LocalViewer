@@ -3,7 +3,6 @@ package com.hippo.ehviewer.ui.reader
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -30,7 +29,6 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.VerticalAlignTop
-import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -44,6 +42,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -219,7 +218,8 @@ private fun Background(
     color: Color,
     content: @Composable () -> Unit,
 ) = Box(Modifier.fillMaxSize().background(color), contentAlignment = Alignment.Center) {
-    EhTheme(useDarkTheme = color != Color.White, content = content)
+    // Page-bg theme for content colors only — do not rewrite system bar icons.
+    EhTheme(useDarkTheme = color != Color.White, applySystemBarAppearance = false, content = content)
 }
 
 @Destination<RootGraph>
@@ -234,11 +234,13 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
     // Sibling folder nav replaces this screen; without a session refcount the exiting
     // instance would show system bars / clear colorMode after the new one already
     // configured them (or while the new one is still loading).
+    // Reader wants *reversed* bar icons vs app theme: light mode → white icons,
+    // dark mode → dark icons. Nested EhTheme must not own bars (see applySystemBarAppearance).
+    val appDarkTheme = isSystemInDarkTheme()
+    SideEffect {
+        uiController.statusBarDarkContentEnabled = appDarkTheme
+    }
     DisposableEffect(uiController, activity) {
-        // Status/nav icon contrast is owned by EhTheme (page bg → useDarkTheme).
-        // Only manage immersion here; restore previous icon style on leave in case
-        // the outer app theme does not recompose immediately.
-        val lightStatusBar = uiController.statusBarDarkContentEnabled
         activeReaderSessions.incrementAndGet()
         uiController.showTransientSystemBarsBySwipe = true
         if (Settings.fullscreen.value) {
@@ -251,12 +253,18 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
             activity.setReaderColorMode(hdr = false, wideColor = true)
         }
         onDispose {
-            uiController.statusBarDarkContentEnabled = lightStatusBar
             if (activeReaderSessions.decrementAndGet() == 0) {
                 uiController.isSystemBarsVisible = true
                 uiController.showTransientSystemBarsBySwipe = false
                 // Last reader left → DEFAULT (sibling replace keeps count > 0).
                 activity.setReaderColorMode(hdr = false, wideColor = false)
+                // Restore *normal* app bar icons from current night mode (not a stale
+                // enter-time snapshot). Outer EhTheme SideEffect may not re-run.
+                val night = activity.resources.configuration.uiMode and
+                    android.content.res.Configuration.UI_MODE_NIGHT_MASK
+                val appNight =
+                    night == android.content.res.Configuration.UI_MODE_NIGHT_YES
+                uiController.statusBarDarkContentEnabled = !appNight
             }
         }
     }
@@ -395,6 +403,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
         info?.simpleTags?.any { it.endsWith("webtoon") } == true
     }
     val showSeekbar by Settings.showReaderSeekbar.collectAsState()
+    val hideTopBar by Settings.readerHideTopBar.collectAsState()
     val readingMode by Settings.readingMode.collectAsState {
         when (val mode = ReadingModeType.fromPreference(it)) {
             ReadingModeType.DEFAULT -> if (webtoon) ReadingModeType.WEBTOON else ReadingModeType.RIGHT_TO_LEFT
@@ -538,7 +547,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
         LaunchedEffect(fullscreen) {
             snapshotFlow { appbarVisible }.collect { visible ->
                 // Show bars only for in-reader chrome; keep immersive otherwise.
-                // Icon contrast follows EhTheme(useDarkTheme = bg != White) SideEffect.
+                // Icon contrast is owned by the outer ReaderScreen (reversed app theme).
                 uiController.isSystemBarsVisible = visible || !fullscreen
                 uiController.showTransientSystemBarsBySwipe = true
             }
@@ -679,7 +688,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 }
             }
         }
-        EhTheme(useDarkTheme = bgColor != Color.White) {
+        EhTheme(useDarkTheme = bgColor != Color.White, applySystemBarAppearance = false) {
             val insets = if (fullscreen) {
                 if (cutoutShort) {
                     WindowInsets()
@@ -836,6 +845,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
         }
         ReaderAppBars(
             visible = appbarVisible,
+            showTopBar = !hideTopBar,
             title = pageLoader.title,
             isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT,
             showSeekBar = showSeekbar,
@@ -846,23 +856,16 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 launch {
                     dialog { cont ->
                         fun dispose() = cont.resume(Unit)
-                        var isColorFilter by remember { mutableStateOf(false) }
-                        val scrim by animateColorAsState(
-                            targetValue = if (isColorFilter) Color.Transparent else BottomSheetDefaults.ScrimColor,
-                            label = "ScrimColor",
-                        )
+                        // No dim overlay while settings are open (was BottomSheetDefaults.ScrimColor
+                        // with color-filter tab force-undim). Keep reader fully visible underneath.
                         ModalBottomSheet(
                             onDismissRequest = { dispose() },
                             modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
-                            // Yeah, I know color state should not be read here, but we have to do it...
-                            scrimColor = scrim,
+                            scrimColor = Color.Transparent,
                             dragHandle = null,
                             contentWindowInsets = { WindowInsets() },
                         ) {
-                            SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize()) { page ->
-                                isColorFilter = page == 2
-                                appbarVisible = !isColorFilter
-                            }
+                            SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize())
                         }
                     }
                 }

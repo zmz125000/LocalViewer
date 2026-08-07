@@ -4,13 +4,14 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
@@ -41,12 +42,6 @@ import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
-import androidx.paging.Pager
-import androidx.paging.PagingConfig
-import androidx.paging.cachedIn
-import androidx.paging.compose.collectAsLazyPagingItems
-import androidx.paging.compose.itemContentType
-import androidx.paging.compose.itemKey
 import com.ehviewer.core.database.model.GalleryEntity
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.i18n.R
@@ -56,7 +51,6 @@ import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.icons.EhIcons
 import com.ehviewer.core.ui.icons.big.History
-import com.ehviewer.core.ui.util.Await
 import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
@@ -92,7 +86,7 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import moe.tarsin.navigate
 import moe.tarsin.snackbar
 import moe.tarsin.string
@@ -104,22 +98,33 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     val hint = stringResource(R.string.search_bar_hint, title)
     val animateItems by Settings.animateItems.collectAsState()
 
-    var searchBarExpanded by rememberSaveable { mutableStateOf(false) }
+    var searchFocused by rememberSaveable { mutableStateOf(false) }
     var searchBarOffsetY by remember { mutableIntStateOf(0) }
+    // Live filter text from the search field (updates as the user types).
     var keyword by rememberSaveable { mutableStateOf("") }
 
-    DrawerHandle(!searchBarExpanded)
+    DrawerHandle(!searchFocused)
 
     val density = LocalDensity.current
-    val historyData = rememberInVM(keyword) {
-        Pager(config = PagingConfig(pageSize = 20, jumpThreshold = 40)) {
-            if (keyword.isNotEmpty()) {
-                EhDB.searchHistory(keyword)
-            } else {
-                EhDB.historyLazyList
+    // Full history stream; filter client-side so typing does not rebuild a PagingSource.
+    val allHistory by rememberInVM {
+        mutableStateOf(emptyList<GalleryEntity>()).also { state ->
+            viewModelScope.launch {
+                EhDB.historyListFlow.collect { state.value = it }
             }
-        }.flow.cachedIn(viewModelScope)
-    }.collectAsLazyPagingItems()
+        }
+    }
+    val filterQuery = keyword.trim()
+    val historyItems = remember(allHistory, filterQuery) {
+        if (filterQuery.isEmpty()) {
+            allHistory
+        } else {
+            allHistory.filter { info ->
+                info.title?.contains(filterQuery, ignoreCase = true) == true ||
+                    info.titleJpn?.contains(filterQuery, ignoreCase = true) == true
+            }
+        }
+    }
 
     val listMode by Settings.listMode.collectAsState()
     val showPages by Settings.showGalleryPages.collectAsState()
@@ -130,6 +135,9 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     val listInterval = dimensionResource(com.hippo.ehviewer.R.dimen.gallery_list_interval)
 
     fun openEntry(info: GalleryEntity) {
+        if (filterQuery.isNotEmpty()) {
+            launch { withIOContext { recordDeviceSearchHistory(filterQuery) } }
+        }
         launch {
             when (val target = LocalHistory.parse(info)) {
                 is LocalHistoryTarget.LibraryGallery -> {
@@ -137,7 +145,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (local == null) {
                         snackbar(string(R.string.history_unavailable))
                         withIOContext { EhDB.deleteHistoryInfo(info) }
-                        historyData.refresh()
                         return@launch
                     }
                     if (local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
@@ -152,7 +159,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (root == null || rootPath == null) {
                         snackbar(string(R.string.history_unavailable))
                         withIOContext { EhDB.deleteHistoryInfo(info) }
-                        historyData.refresh()
                         return@launch
                     }
                     BrowseSession.localStack = buildLocalBrowseStack(
@@ -169,7 +175,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (source == null) {
                         snackbar(string(R.string.history_unavailable))
                         withIOContext { EhDB.deleteHistoryInfo(info) }
-                        historyData.refresh()
                         return@launch
                     }
                     val segments = target.relativePath.split('/').filter { it.isNotEmpty() }
@@ -187,7 +192,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (source == null) {
                         snackbar(string(R.string.history_unavailable))
                         withIOContext { EhDB.deleteHistoryInfo(info) }
-                        historyData.refresh()
                         return@launch
                     }
                     val segments = target.relativePath.split('/').filter { it.isNotEmpty() }
@@ -224,7 +228,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (source == null) {
                         snackbar(string(R.string.history_unavailable))
                         withIOContext { EhDB.deleteHistoryInfo(info) }
-                        historyData.refresh()
                         return@launch
                     }
                     val remote = target.remotePath.trim('/')
@@ -253,7 +256,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (source == null) {
                         snackbar(string(R.string.history_unavailable))
                         withIOContext { EhDB.deleteHistoryInfo(info) }
-                        historyData.refresh()
                         return@launch
                     }
                     val remote = target.remotePath.trim('/')
@@ -289,7 +291,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     } else {
                         snackbar(string(R.string.history_unavailable))
                         withIOContext { EhDB.deleteHistoryInfo(info) }
-                        historyData.refresh()
                     }
                 }
             }
@@ -299,17 +300,12 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     fun deleteEntry(info: GalleryEntity) {
         launch {
             EhDB.deleteHistoryInfo(info)
-            historyData.refresh()
         }
     }
 
     SearchBarScreen(
-        onApplySearch = {
-            keyword = it
-            historyData.refresh()
-        },
-        expanded = searchBarExpanded,
-        onExpandedChange = { searchBarExpanded = it },
+        onFilterChange = { keyword = it },
+        onFocusChange = { searchFocused = it },
         title = title,
         searchFieldHint = hint,
         searchBarOffsetY = { searchBarOffsetY },
@@ -337,7 +333,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             text = { Text(text = stringResource(id = R.string.clear_all_history)) },
                         )
                         EhDB.clearHistoryInfo()
-                        historyData.refresh()
                     }
                 },
                 shapes = IconButtonDefaults.shapes(),
@@ -366,32 +361,23 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                 contentPadding = listPadding,
                 verticalArrangement = Arrangement.spacedBy(listInterval),
             ) {
-                items(
-                    count = historyData.itemCount,
-                    key = historyData.itemKey(key = { item -> item.gid }),
-                    contentType = historyData.itemContentType(),
-                ) { index ->
-                    val info = historyData[index]
-                    if (info != null) {
-                        val dismissState = rememberSwipeToDismissBoxState()
-                        SwipeToDismissBox(
-                            state = dismissState,
-                            backgroundContent = {},
-                            modifier = Modifier.thenIf(animateItems) { animateItem() },
-                            enableDismissFromStartToEnd = false,
-                            onDismiss = { deleteEntry(info) },
-                        ) {
-                            HistoryListItem(
-                                onClick = { openEntry(info) },
-                                onLongClick = { deleteEntry(info) },
-                                info = info,
-                                showPages = showPages,
-                                showProgress = showProgress,
-                                modifier = Modifier.height(cardHeight).fillMaxWidth(),
-                            )
-                        }
-                    } else {
-                        Spacer(modifier = Modifier.height(cardHeight).fillMaxWidth())
+                items(historyItems, key = { it.gid }) { info ->
+                    val dismissState = rememberSwipeToDismissBoxState()
+                    SwipeToDismissBox(
+                        state = dismissState,
+                        backgroundContent = {},
+                        modifier = Modifier.thenIf(animateItems) { animateItem() },
+                        enableDismissFromStartToEnd = false,
+                        onDismiss = { deleteEntry(info) },
+                    ) {
+                        HistoryListItem(
+                            onClick = { openEntry(info) },
+                            onLongClick = { deleteEntry(info) },
+                            info = info,
+                            showPages = showPages,
+                            showProgress = showProgress,
+                            modifier = Modifier.height(cardHeight).fillMaxWidth(),
+                        )
                     }
                 }
             }
@@ -406,50 +392,31 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                 verticalArrangement = gridSpacing,
                 horizontalArrangement = gridSpacing,
             ) {
-                items(
-                    count = historyData.itemCount,
-                    key = historyData.itemKey(key = { item -> item.gid }),
-                    contentType = historyData.itemContentType(),
-                ) { index ->
-                    val info = historyData[index]
-                    if (info != null) {
-                        HistoryGridItem(
-                            info = info,
-                            onClick = { openEntry(info) },
-                            onLongClick = { deleteEntry(info) },
-                            showPages = showPages,
-                            showProgress = showProgress,
-                            modifier = Modifier.thenIf(animateItems) { animateItem() },
-                        )
-                    }
+                items(historyItems, key = { it.gid }) { info ->
+                    HistoryGridItem(
+                        info = info,
+                        onClick = { openEntry(info) },
+                        onLongClick = { deleteEntry(info) },
+                        showPages = showPages,
+                        showProgress = showProgress,
+                        modifier = Modifier.thenIf(animateItems) { animateItem() },
+                    )
                 }
             }
         }
 
-        Await(keyword, { delay(200) }) {
-            if (historyData.itemCount == 0) {
-                Column(
-                    modifier = Modifier.padding(paddingValues).padding(horizontal = marginH).fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Icon(
-                        imageVector = EhIcons.Big.Default.History,
-                        contentDescription = null,
-                        modifier = Modifier.padding(16.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    val saveHistory by Settings.saveHistory.collectAsState()
-                    // val emptyHint = when {
-                    //     !saveHistory && keyword.isEmpty() -> stringResource(id = R.string.history_disabled)
-                    //     keyword.isEmpty() -> stringResource(id = R.string.no_history)
-                    //     else -> stringResource(id = R.string.gallery_list_empty_hit)
-                    // }
-                    // Text(
-                    //     text = emptyHint,
-                    //     style = MaterialTheme.typography.headlineMedium,
-                    // )
-                }
+        if (historyItems.isEmpty()) {
+            Column(
+                modifier = Modifier.padding(paddingValues).padding(horizontal = marginH).fillMaxSize(),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    imageVector = EhIcons.Big.Default.History,
+                    contentDescription = null,
+                    modifier = Modifier.padding(16.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
             }
         }
     }

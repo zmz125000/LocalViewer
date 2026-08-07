@@ -15,6 +15,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavBackStackEntry
 import com.ehviewer.core.ui.util.ProvideVectorPainterCache
+import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
+import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
+import com.hippo.ehviewer.ui.destinations.LibraryScreenDestination
+import com.hippo.ehviewer.ui.destinations.SettingsScreenDestination
 import com.hippo.ehviewer.ui.theme.EhTheme
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.LocalGlobalDialogState
@@ -47,15 +51,52 @@ inline fun ComponentActivity.setMD3Content(crossinline content: @Composable Dial
 
 private typealias Ty = AnimatedContentTransitionScope<NavBackStackEntry>
 
+/** Main bar/rail order: Library → Browse → History → Settings. */
+private val mainTabRoutes = listOf(
+    LibraryScreenDestination.route,
+    BrowseScreenDestination.route,
+    HistoryScreenDestination.route,
+    SettingsScreenDestination.route,
+)
+
+private fun NavBackStackEntry.mainTabIndex(): Int? {
+    val route = destination.route ?: return null
+    val index = mainTabRoutes.indexOfFirst { tab ->
+        route == tab || route.startsWith("$tab?") || route.startsWith("$tab/")
+    }
+    return index.takeIf { it >= 0 }
+}
+
+/**
+ * For main-tab ↔ main-tab moves, `true` = left→right (higher index), `false` = right→left.
+ * `null` = not a pure main-tab switch (use default forward/back nav animation).
+ */
+private fun Ty.mainTabForward(): Boolean? {
+    val from = initialState.mainTabIndex() ?: return null
+    val to = targetState.mainTabIndex() ?: return null
+    if (from == to) return null
+    return to > from
+}
+
 @Composable
 fun rememberEhNavAnim(): NavHostAnimatedDestinationStyle {
     val slideDistance = rememberSlideDistance()
     return remember(slideDistance) {
         object : NavHostAnimatedDestinationStyle() {
-            override val enterTransition: Ty.() -> EnterTransition = { materialSharedAxisXIn(true, slideDistance) }
-            override val exitTransition: Ty.() -> ExitTransition = { materialSharedAxisXOut(true, slideDistance) }
-            override val popEnterTransition: Ty.() -> EnterTransition = { materialSharedAxisXIn(false, slideDistance) }
-            override val popExitTransition: Ty.() -> ExitTransition = { materialSharedAxisXOut(false, slideDistance) }
+            // Main tabs: same fade+slide, direction from bar order.
+            // Other screens: keep previous always-forward push / reverse pop.
+            override val enterTransition: Ty.() -> EnterTransition = {
+                materialSharedAxisXIn(mainTabForward() ?: true, slideDistance)
+            }
+            override val exitTransition: Ty.() -> ExitTransition = {
+                materialSharedAxisXOut(mainTabForward() ?: true, slideDistance)
+            }
+            override val popEnterTransition: Ty.() -> EnterTransition = {
+                materialSharedAxisXIn(mainTabForward() ?: false, slideDistance)
+            }
+            override val popExitTransition: Ty.() -> ExitTransition = {
+                materialSharedAxisXOut(mainTabForward() ?: false, slideDistance)
+            }
         }
     }
 }

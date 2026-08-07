@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import com.ehviewer.core.i18n.R
+import com.hippo.ehviewer.Settings
 import kotlinx.coroutines.launch
 
 private val tabs = intArrayOf(
@@ -25,11 +26,12 @@ private val tabs = intArrayOf(
 )
 
 @Composable
-fun SettingsPager(isWebtoon: Boolean, modifier: Modifier = Modifier, onPageSelected: (Int) -> Unit) {
-    val pagerState = rememberPagerState { tabs.size }
-    LaunchedEffect(onPageSelected) {
+fun SettingsPager(isWebtoon: Boolean, modifier: Modifier = Modifier) {
+    val initialPage = Settings.readerSettingsTab.value.coerceIn(0, tabs.lastIndex)
+    val pagerState = rememberPagerState(initialPage = initialPage) { tabs.size }
+    LaunchedEffect(Unit) {
         snapshotFlow { pagerState.currentPage }.collect { page ->
-            onPageSelected(page)
+            Settings.readerSettingsTab.value = page
         }
     }
     val scope = rememberCoroutineScope()
@@ -50,6 +52,7 @@ fun SettingsPager(isWebtoon: Boolean, modifier: Modifier = Modifier, onPageSelec
         modifier = modifier,
         state = pagerState,
         verticalAlignment = Alignment.Top,
+        overscrollEffect = null,
     ) { page ->
         ProvideTextStyle(value = MaterialTheme.typography.labelLarge) {
             when (page) {

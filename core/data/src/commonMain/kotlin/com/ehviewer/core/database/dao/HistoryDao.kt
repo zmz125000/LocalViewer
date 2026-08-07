@@ -8,6 +8,7 @@ import androidx.room.Query
 import androidx.room.Upsert
 import com.ehviewer.core.database.model.GalleryEntity
 import com.ehviewer.core.database.model.HistoryInfo
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface HistoryDao {
@@ -16,6 +17,10 @@ interface HistoryDao {
 
     @Query("SELECT GALLERIES.* FROM HISTORY JOIN GALLERIES USING(GID) ORDER BY TIME DESC")
     fun joinListLazy(): PagingSource<Int, GalleryEntity>
+
+    /** Full history for live in-UI filtering (Library/History search box). */
+    @Query("SELECT GALLERIES.* FROM HISTORY JOIN GALLERIES USING(GID) ORDER BY TIME DESC")
+    fun joinListFlow(): Flow<List<GalleryEntity>>
 
     @Query(
         """SELECT GALLERIES.* FROM HISTORY JOIN GALLERIES USING(GID)

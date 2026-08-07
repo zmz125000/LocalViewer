@@ -48,7 +48,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -174,10 +176,18 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             "webdav:$sourceId:${joinRemoteArchivePath(relativeDir, arch.parentRelativeName, arch.fileName)}"
         }
     }
+    val search = rememberBrowseFolderSearchState()
+    val focusManager = LocalFocusManager.current
+    val filteredEntries = remember(displayEntries, search.keyword) {
+        displayEntries.filterByBrowseSearch(search.keyword) { it.name }
+    }
+    val searchHint = stringResource(R.string.search_bar_hint, title)
 
-    // Show the bar again when entering a different folder.
+    // Show the bar again when entering a different folder; drop per-folder filter.
     LaunchedEffect(relativeDir) {
         scrollBehavior.state.heightOffset = 0f
+        search.close()
+        focusManager.clearFocus()
     }
 
     /** Detect share/pathPrefix/host edits while this screen stays on the back stack. */
@@ -338,8 +348,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
-    BackHandler(enabled = segments.isNotEmpty()) {
-        goUp()
+    BackHandler(enabled = search.active || segments.isNotEmpty()) {
+        if (!search.handleBack { focusManager.clearFocus() }) {
+            goUp()
+        }
     }
 
     fun openFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
@@ -449,7 +461,13 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
-                title = { Text(title) },
+                title = {
+                    if (search.active) {
+                        BrowseTopBarSearchField(state = search, hint = searchHint)
+                    } else {
+                        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                },
                 windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 colors = adaptiveTopAppBarColors(),
                 navigationIcon = {
@@ -458,6 +476,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     }
                 },
                 actions = {
+                    BrowseTopBarSearchAction(
+                        state = search,
+                        onBeforeClose = { focusManager.clearFocus() },
+                    )
                     IconButton(
                         onClick = {
                             Settings.listMode.value = if (listMode == 0) 1 else 0
@@ -560,10 +582,13 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 displayEntries.isEmpty() -> {
                     BrowseEmptyHint(stringResource(R.string.folder_empty))
                 }
+                filteredEntries.isEmpty() -> {
+                    BrowseEmptyHint(stringResource(R.string.folder_empty))
+                }
                 else -> {
                     val dirKey = listedDir ?: relativeDir
-                    val dirs = displayEntries.filterIsInstance<BrowseEntryRemote.Directory>()
-                    val galleries = displayEntries.filter { it !is BrowseEntryRemote.Directory }
+                    val dirs = filteredEntries.filterIsInstance<BrowseEntryRemote.Directory>()
+                    val galleries = filteredEntries.filter { it !is BrowseEntryRemote.Directory }
 
                     // Keys must stay unique when dual-list + "this folder as gallery" share a name
                     // (e.g. parent/ff has images and a child dir also named ff → g-self vs g-child-ff).

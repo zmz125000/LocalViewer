@@ -233,6 +233,12 @@ object Settings : DataStorePreferences(null) {
     val orientationMode = intPref("pref_default_orientation_type_key", OrientationType.DEFAULT.prefValue)
     val showReaderSeekbar = boolPref("pref_show_reader_seekbar", true)
     val showPageNumber = boolPref("pref_show_page_number_key", true)
+
+    /** Hide reader title/top app bar (bottom bar + seekbar still show when chrome is visible). Default on. */
+    val readerHideTopBar = boolPref("pref_reader_hide_top_bar", true)
+
+    /** Last open tab in the reader settings bottom sheet (0=mode, 1=general, 2=filter). */
+    val readerSettingsTab = intPref("pref_reader_settings_tab", 0)
     val readerTheme = intPref("pref_reader_theme_key", 1)
 
     /** Off = double-tap prev/next gallery (folder mode). Default: off. */
@@ -291,16 +297,13 @@ object Settings : DataStorePreferences(null) {
     val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)
 
     /**
-     * Platform high bit depth (PNG / AVIF / HEIF) under [readerAdvancedColor].
+     * Platform high bit depth for **PNG/APNG** under [readerAdvancedColor].
      *
-     * When on **and** advanced color is on: bypass Coil hardware-direct for eligible
-     * deep stills → software decode + linearize + optional FP16 [HardwareBuffer] wrap
-     * (same present path as lib-direct).
-     * - PNG/APNG: [BitmapFactory] preferred [Bitmap.Config.RGBA_F16]
-     * - AVIF/HEIC: ImageDecoder first (natural high depth); BitmapFactory F16 recovery
-     *   if the primary misses F16 or throws (OEM BF support is flaky for these)
-     * Default off (2× RAM). When WCG/[readerAdvancedColor] changes, this value is forced
-     * to match (WCG drives sub-toggle; sub-toggle never drives WCG).
+     * When on **and** advanced color is on: bypass Coil hardware-direct for high-depth
+     * PNG → [BitmapFactory] preferred [Bitmap.Config.RGBA_F16], then linearize + optional
+     * FP16 [HardwareBuffer] wrap (same present path as lib-direct). AVIF/HEIF stay on the
+     * normal platform path. Default off (2× RAM). When WCG/[readerAdvancedColor] changes,
+     * this value is forced to match (WCG drives sub-toggle; sub-toggle never drives WCG).
      */
     val readerPlatformHighDepth = boolPref("pref_reader_platform_high_depth", false)
 

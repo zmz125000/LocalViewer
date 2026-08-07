@@ -57,7 +57,6 @@ import com.hippo.ehviewer.image.hdr.HdrGainmapConvert
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
 import com.hippo.ehviewer.image.hdr.LibDirectResult
 import com.hippo.ehviewer.image.hdr.PlatformBitDepth
-import com.hippo.ehviewer.image.hdr.isHeicImageExtension
 import com.hippo.ehviewer.image.hdr.shouldPlatformHighDepthDecode
 import com.hippo.ehviewer.jni.isGif
 import com.hippo.ehviewer.jni.mmap
@@ -240,17 +239,11 @@ class Image private constructor(
             /** Prefer hardware + no crop/QR so gain maps are not stripped. */
             hdrSafe: Boolean,
             /**
-             * Platform high bit depth: software decode, crop/QR off; present step linearizes
-             * + AHB-wraps like lib-direct. Decoder choice depends on [forceF16BitmapFactory].
+             * PNG high bit depth: software [BitmapFactory] + preferred [Bitmap.Config.RGBA_F16]
+             * (bypasses Coil hardware-direct / ImageDecoder, which often keep only 8-bit).
+             * Crop/QR off; present step linearizes + AHB-wraps like lib-direct.
              */
             platformHbd: Boolean = false,
-            /**
-             * When true with [platformHbd]: [bitmapConfig] RGBA_F16 so Coil skips
-             * StaticImageDecoder → BitmapFactoryDecoder (PNG preferred path).
-             * When false: software ImageDecoder (natural config / MEMORY_POLICY_DEFAULT) —
-             * primary for AVIF/HEIC where BitmapFactory is OEM-flaky or missing.
-             */
-            forceF16BitmapFactory: Boolean = false,
         ): CoilImage {
             val hardwareDirect = !platformHbd && (Settings.readerHardwareBitmap.value || hdrSafe)
             val request = with(appCtx) {
@@ -271,11 +264,9 @@ class Image private constructor(
                     // oversaturation); P3 stays P3. 8-bit JPEGs stay 8888/HARDWARE.
                     when {
                         platformHbd -> {
+                            // bitmapConfig(F16) → Coil skips StaticImageDecoder → BitmapFactoryDecoder.
                             allowHardware(false)
-                            // F16 preferred → BitmapFactory only; omit so StaticImageDecoder runs.
-                            if (forceF16BitmapFactory &&
-                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                            ) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 bitmapConfig(Bitmap.Config.RGBA_F16)
                             }
                             hardwareThreshold(Settings.hardwareBitmapThreshold.value)
@@ -314,7 +305,7 @@ class Image private constructor(
                                 "n/a"
                             }
                             val msg = "coil decode config=${bm.config} cs=$cs hbd=$platformHbd " +
-                                "forceBfF16=$forceF16BitmapFactory ${bm.width}x${bm.height}"
+                                "${bm.width}x${bm.height}"
                             if (logHbd) Log.i("ReaderColor", msg) else Log.d("ReaderColor", msg)
                         }
                     }
@@ -324,7 +315,7 @@ class Image private constructor(
             }
         }
 
-        /** WCG + HBD sub-toggle, not gain-map, candidate ext with HIGH or UNKNOWN probe. */
+        /** WCG + HBD sub-toggle, not gain-map, PNG/APNG with HIGH or UNKNOWN probe. */
         private fun Either<ByteBufferSource, PathSource>.resolvePlatformHbd(
             gainMap: Boolean,
         ): Boolean {
@@ -340,24 +331,23 @@ class Image private constructor(
             { it.source.name },
         )
 
-        private fun Either<ByteBufferSource, PathSource>.probeBitDepth(hint: String?): BitDepthClass =
-            fold(
-                { buf ->
-                    val dup = buf.source.asReadOnlyBuffer()
-                    val n = minOf(dup.remaining(), 256 * 1024)
-                    if (n <= 0) {
-                        BitDepthClass.UNKNOWN
-                    } else {
-                        val bytes = ByteArray(n)
-                        dup.get(bytes)
-                        PlatformBitDepth.probe(bytes, n, hint)
-                    }
-                },
-                { path -> PlatformBitDepth.probePath(path.source, hint) },
-            )
+        private fun Either<ByteBufferSource, PathSource>.probeBitDepth(hint: String?): BitDepthClass = fold(
+            { buf ->
+                val dup = buf.source.asReadOnlyBuffer()
+                val n = minOf(dup.remaining(), 64)
+                if (n <= 0) {
+                    BitDepthClass.UNKNOWN
+                } else {
+                    val bytes = ByteArray(n)
+                    dup.get(bytes)
+                    PlatformBitDepth.probe(bytes, n, hint)
+                }
+            },
+            { path -> PlatformBitDepth.probePath(path.source, hint) },
+        )
 
         /**
-         * After HBD software decode: linearize (keep source primaries; sRGB → linear extended
+         * After BitmapFactory F16: linearize (keep source primaries; sRGB → linear extended
          * sRGB) + optional AHB FP16. Do not force BT.709 on BT.2020/P3 WCG files.
          */
         private fun CoilImage.presentPlatformHbdLikeLibDirect(): CoilImage {
@@ -385,16 +375,6 @@ class Image private constructor(
             }
         }
 
-        /**
-         * AVIF / HEIC family: ImageDecoder is the platform decoder; BitmapFactory is
-         * OEM-dependent (often missing for HEIC). Dual-path HBD uses ImageDecoder first
-         * then BitmapFactory F16 recovery (and the reverse if the primary throws).
-         */
-        private fun isAvifOrHeicName(name: String?): Boolean {
-            val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
-            return ext == "avif" || isHeicImageExtension(ext)
-        }
-
         private suspend fun Either<ByteBufferSource, PathSource>.decodeCoil(
             checkExtraneousAds: Boolean,
             forceOriginal: Boolean,
@@ -405,82 +385,24 @@ class Image private constructor(
             val effectiveMode = if (looksHdr) DecodeSizeType.ORIGIN else mode
             val hdrSafe = looksHdr
             val platformHbd = resolvePlatformHbd(gainMap = looksHdr)
-            val hint = fileNameHint()
-            // PNG → BF F16 primary. AVIF/HEIC → ImageDecoder primary (BF F16 as recovery).
-            val preferBfF16 = platformHbd && !isAvifOrHeicName(hint)
 
-            suspend fun runDecode(
-                m: DecodeSizeType,
-                hdr: Boolean,
-                hbd: Boolean,
-                forceBfF16: Boolean,
-            ): CoilImage = if (hbd) {
+            suspend fun runDecode(m: DecodeSizeType, hdr: Boolean, hbd: Boolean): CoilImage = if (hbd) {
                 // Full-res F16: share lib-direct serialize lock.
                 LibDirectDecode.heavyDecode.withPermit {
-                    decodeCoilOnce(
-                        m,
-                        checkExtraneousAds,
-                        hdrSafe = hdr,
-                        platformHbd = true,
-                        forceF16BitmapFactory = forceBfF16,
-                    )
+                    decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = true)
                 }
             } else {
-                decodeCoilOnce(
-                    m,
-                    checkExtraneousAds,
-                    hdrSafe = hdr,
-                    platformHbd = false,
-                    forceF16BitmapFactory = false,
-                )
+                decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = false)
             }
 
-            var usedBfF16 = preferBfF16
-            var image = try {
-                runDecode(effectiveMode, hdrSafe, platformHbd, forceBfF16 = preferBfF16)
-            } catch (t: Throwable) {
-                // AVIF/HEIC: primary may be ImageDecoder or (after a soft miss) BF — try the other.
-                if (platformHbd && isAvifOrHeicName(hint)) {
-                    val altBf = !preferBfF16
-                    Log.i(
-                        "ReaderColor",
-                        "platform HBD primary failed forceBfF16=$preferBfF16; " +
-                            "fallback forceBfF16=$altBf: ${t.message}",
-                    )
-                    usedBfF16 = altBf
-                    runDecode(effectiveMode, hdrSafe, hbd = true, forceBfF16 = altBf)
-                } else {
-                    throw t
-                }
-            }
+            var image = runDecode(effectiveMode, hdrSafe, platformHbd)
 
             // Sniff miss: platform still attached a gain map after a downscale decode → re-do ORIGIN.
             if (isAtLeastU && !effectiveMode.isOriginal) {
                 val bm = image.asBitmapImage()
                 if (bm != null && bm.detectGainmap()) {
                     image.recycleBitmaps()
-                    image = runDecode(DecodeSizeType.ORIGIN, hdr = true, hbd = false, forceBfF16 = false)
-                }
-            }
-
-            // AVIF/HEIC: if still not F16/HW, try the alternate decoder once.
-            if (platformHbd &&
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                isAvifOrHeicName(hint)
-            ) {
-                val cfg = image.asBitmapImage()?.bitmap?.config
-                val softMiss = cfg != null &&
-                    cfg != Bitmap.Config.RGBA_F16 &&
-                    cfg != Bitmap.Config.HARDWARE
-                if (softMiss) {
-                    val altBf = !usedBfF16
-                    Log.i(
-                        "ReaderColor",
-                        "platform HBD not F16 (was $cfg forceBfF16=$usedBfF16); " +
-                            "fallback forceBfF16=$altBf",
-                    )
-                    image.recycleBitmaps()
-                    image = runDecode(effectiveMode, hdrSafe, hbd = true, forceBfF16 = altBf)
+                    image = runDecode(DecodeSizeType.ORIGIN, hdr = true, hbd = false)
                 }
             }
 

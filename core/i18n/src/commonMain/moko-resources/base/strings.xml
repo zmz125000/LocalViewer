@@ -676,6 +676,7 @@
     <string name="pref_cutout_short">Show content in cutout area</string>
     <string name="pref_page_transitions">Animate page transitions</string>
     <string name="pref_show_page_number">Show page number</string>
+    <string name="pref_reader_hide_top_bar">Hide top bar</string>
     <string name="pref_show_reader_seekbar">Show page jumping seekbar</string>
     <string name="pref_double_tap_to_zoom">Double tap to zoom (off: prev/next gallery)</string>
     <string name="pref_auto_rotate_to_fit">Auto-rotate to fit screen</string>
@@ -703,8 +704,8 @@
     <string name="pref_reader_hdr_display_summary">On HDR screens, enable window HDR color mode for Ultra HDR / gain-map pages. Conversion and decoding of HDR files always run; turn off to present the SDR base only.</string>
     <string name="pref_reader_advanced_color">Advanced color (WCG / high bit depth)</string>
     <string name="pref_reader_advanced_color_summary">On wide-gamut displays, enable window wide color mode and prefer higher-precision bitmaps. Uses more GPU and memory. HDR mode still takes priority for HDR pages.</string>
-    <string name="pref_reader_platform_high_depth">High bit depth (PNG / AVIF / HEIF)</string>
-    <string name="pref_reader_platform_high_depth_summary">Under advanced color: decode deep platform stills as float16 (bypass hardware 8-bit). Uses more memory. Follows the advanced-color switch when that switch changes.</string>
+    <string name="pref_reader_platform_high_depth">High bit depth (PNG)</string>
+    <string name="pref_reader_platform_high_depth_summary">Under advanced color: decode high-depth PNG as float16 (bypass hardware 8-bit). Uses more memory. Follows the advanced-color switch when that switch changes.</string>
     <string name="pref_custom_brightness">Custom brightness</string>
     <string name="pref_grayscale">Grayscale</string>
     <string name="pref_inverted_colors">Inverted</string>
