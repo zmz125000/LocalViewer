@@ -30,10 +30,12 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.yield
 import moe.tarsin.kt.install
 import okio.Path
 
@@ -228,10 +230,13 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
-                    requestDiscoveryThrough(index + prefetchN)
+                    // Extract first: progressive index shares [extractMutex] with page I/O.
+                    // Queue the visible page before discovery so scroll does not wait on a
+                    // multi-page page-tree walk (TAR index never holds the extract mutex).
                     ensureExtract(index, interactive = true) {
                         notifySourceReady(index, orgImg)
                     }
+                    requestDiscoveryThrough(index + prefetchN)
                     // One neighbor is enough here; PageLoader also supplies a preload list.
                     if (prefetchN > 0 && index + 1 < engine.pageCount) {
                         ensureExtract(index + 1, interactive = false)
@@ -304,7 +309,11 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     onReady: (() -> Unit)? = null,
                 ) {
                     if (index !in 0 until engine.pageCount) return
-                    if (interactive) interactivePending.add(index)
+                    if (interactive) {
+                        interactivePending.add(index)
+                        // Stop index walk between pages so the mutex frees for this extract.
+                        discoveryJob.get()?.cancel()
+                    }
                     if (onReady != null) {
                         readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
                         if (isPageMapped(index)) {
@@ -398,7 +407,14 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     }
                 }
 
-                /** Grow a remote PDF only a small distance ahead of actual reading. */
+                /**
+                 * Grow a remote PDF only a small distance ahead of actual reading.
+                 *
+                 * Unlike TAR stream index (native walk never holds extract mutex), PDF
+                 * discovery shares [extractMutex] with [extractToCache] because [PdfParser]
+                 * is not concurrent-safe. Keep each hold to **one** image page, yield while
+                 * interactive extracts are pending, and persist index async/throttled like TAR.
+                 */
                 private fun requestDiscoveryThrough(index: Int) {
                     val progressive = progressiveEngine ?: return
                     if (index < 0 || progressive.structureComplete) return
@@ -412,27 +428,49 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                             start = CoroutineStart.LAZY,
                         ) {
                             try {
+                                var lastSavedCount = progressive.pageCount
                                 while (!progressive.structureComplete) {
+                                    ensureActive()
+                                    // Prefer visible-page extract over page-tree Range storms.
+                                    if (interactivePending.isNotEmpty()) {
+                                        delay(PDF_INDEX_YIELD_MS)
+                                        continue
+                                    }
                                     val wanted = discoveryTarget.get()
                                     val before = progressive.pageCount
                                     if (before > wanted) break
-                                    val batchTarget = minOf(
-                                        wanted,
-                                        before + PDF_INDEX_BATCH - 1,
-                                    )
+                                    // One image page per mutex hold so scroll can snatch the lock
+                                    // between kids/resource walks (BATCH>1 blocked extract for seconds).
                                     val after = extractMutex.withLock {
-                                        progressive.ensureListedThrough(batchTarget)
+                                        ensureActive()
+                                        if (interactivePending.isNotEmpty()) {
+                                            return@withLock progressive.pageCount
+                                        }
+                                        progressive.ensureListedThrough(before)
                                     }
                                     if (after > before) {
                                         growTo(after)
-                                        DocumentExtractCache.saveIndex(
-                                            progressive.toIndex(cacheKey, complete = false),
-                                        )
+                                        val shouldSave = progressive.structureComplete ||
+                                            after - lastSavedCount >= PDF_INDEX_SAVE_EVERY ||
+                                            after > wanted
+                                        if (shouldSave) {
+                                            lastSavedCount = after
+                                            DocumentExtractCache.saveIndexAsync(
+                                                progressive.toIndex(cacheKey, complete = false),
+                                            )
+                                        }
+                                    } else {
+                                        // No progress: transport blip or true end — do not spin hot.
+                                        if (interactivePending.isNotEmpty()) {
+                                            delay(PDF_INDEX_YIELD_MS)
+                                            continue
+                                        }
+                                        break
                                     }
-                                    if (after <= before) break
+                                    yield()
                                 }
                                 if (progressive.structureComplete) {
-                                    DocumentExtractCache.saveIndex(
+                                    DocumentExtractCache.saveIndexAsync(
                                         progressive.toIndex(cacheKey, complete = false),
                                     )
                                 }
@@ -457,8 +495,17 @@ suspend inline fun <T> useDocumentExtractPageLoader(
     }
 }
 
+/**
+ * Persist progressive PDF structure every N newly listed images (TAR persists ~every 24).
+ * Sync [DocumentExtractCache.saveIndex] under discovery used to freeze scroll while encoding
+ * a large JSON index on the same mutex path as the visible page extract.
+ */
 @PublishedApi
-internal const val PDF_INDEX_BATCH = 4
+internal const val PDF_INDEX_SAVE_EVERY = 16
+
+/** Back off while interactive pages wait for [extractMutex]. */
+@PublishedApi
+internal const val PDF_INDEX_YIELD_MS = 16L
 
 suspend inline fun <T> useLocalDocumentExtractPageLoader(
     file: Path,
