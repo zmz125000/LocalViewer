@@ -77,9 +77,9 @@ android {
         applicationId = "moe.tarsin.localviewer"
         versionCode = 38
         versionName = if (snapshot) {
-            "1.9.5-SNAPSHOT"
+            "1.9.6-SNAPSHOT"
         } else {
-            "1.9.5"
+            "1.9.6"
         }
         buildConfigField("boolean", "SNAPSHOT", "$snapshot")
         buildConfigField("String", "RAW_VERSION_NAME", "\"$versionName\"")
