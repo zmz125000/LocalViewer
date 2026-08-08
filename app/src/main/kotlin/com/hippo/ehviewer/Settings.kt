@@ -287,6 +287,16 @@ object Settings : DataStorePreferences(null) {
     val readerLibDirectBitmap = boolPref("pref_reader_lib_direct_bitmap", false)
 
     /**
+     * Render PDF pages with Android's platform [android.graphics.pdf.PdfRenderer].
+     *
+     * Default off keeps the lightweight embedded-image extractor for comic PDFs.
+     * The platform renderer is opt-in for complete PDF pages (text/vector content) and
+     * takes effect the next time a PDF reader is opened. Browse thumbnails deliberately
+     * remain on the custom extractor.
+     */
+    val readerSystemPdfRenderer = boolPref("pref_reader_system_pdf_renderer", false)
+
+    /**
      * Window HDR presentation only: when a composed page has a gain map and the
      * display supports HDR, set [android.view.Window.setColorMode] to
      * [android.content.pm.ActivityInfo.COLOR_MODE_HDR].

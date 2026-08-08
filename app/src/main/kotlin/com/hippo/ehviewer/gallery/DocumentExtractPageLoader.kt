@@ -15,6 +15,7 @@ import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.document.DocumentImageEngine
 import com.hippo.ehviewer.library.document.EpubEngine
 import com.hippo.ehviewer.library.document.PdfImageEngine
+import com.hippo.ehviewer.library.document.SystemPdfEngine
 import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import java.io.File
@@ -34,8 +35,8 @@ import moe.tarsin.kt.install
 import okio.Path
 
 /**
- * Image-only document reader (PDF/EPUB): index + extract pages into
- * [DocumentExtractCache], same delivery model as solid/stream.
+ * Document reader: extract EPUB / comic-PDF images or render complete system-PDF pages
+ * into [DocumentExtractCache], using the same delivery model as solid/stream.
  *
  * Does **not** hold [com.hippo.ehviewer.library.ArchiveAccess] (pure Kotlin ZIP / PDF).
  */
@@ -53,20 +54,33 @@ suspend inline fun <T> useDocumentExtractPageLoader(
     crossinline block: suspend (PageLoader) -> T,
 ): T = autoCloseScope {
     coroutineScope {
+        val useSystemPdfRenderer = Settings.readerSystemPdfRenderer.value && (
+            formatHint.equals("pdf", ignoreCase = true) ||
+                isPdfFileName(titleHint) ||
+                isPdfFileName(cacheKey)
+            )
+        // Rendered pages are not interchangeable with original embedded images. Keep a
+        // separate versioned cache so toggling engines cannot reuse the wrong page count,
+        // format or pixels. The unsuffixed key remains owned by custom covers/thumbnails.
+        val pageCacheKey = if (useSystemPdfRenderer) {
+            "${SystemPdfEngine.INDEX_FORMAT}:$cacheKey"
+        } else {
+            cacheKey
+        }
         val sizeHint = remoteSize.takeIf { it > 0L }
             ?: runCatching { source.size }.getOrDefault(0L)
-        DocumentExtractCache.invalidateIfRemoteSizeMismatch(cacheKey, sizeHint)
-        DocumentExtractCache.pin(cacheKey)
-        install({ }, { _, _ -> DocumentExtractCache.unpin(cacheKey) })
+        DocumentExtractCache.invalidateIfRemoteSizeMismatch(pageCacheKey, sizeHint)
+        DocumentExtractCache.pin(pageCacheKey)
+        install({ }, { _, _ -> DocumentExtractCache.unpin(pageCacheKey) })
         install({ source }, { s, _ -> s.close() })
 
-        val ready = DocumentExtractCache.isCompleteAndReady(cacheKey, remoteSize = sizeHint)
+        val ready = DocumentExtractCache.isCompleteAndReady(pageCacheKey, remoteSize = sizeHint)
         if (ready != null) {
-            DocumentExtractCache.touchAsync(cacheKey)
+            DocumentExtractCache.touchAsync(pageCacheKey)
             val loader = install(
                 cachedDocumentLoader(
                     scope = this,
-                    cacheKey = cacheKey,
+                    cacheKey = pageCacheKey,
                     docIndex = ready,
                     titleHint = titleHint,
                     info = info,
@@ -80,20 +94,26 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         check(sizeHint > 0L) { "Cannot open document (size unknown): $cacheKey" }
 
         // Prefer durable page list: skip PDF page-tree / EPUB OPF on reopen.
-        val cachedIdx = DocumentExtractCache.loadUsableIndex(cacheKey, remoteSize = sizeHint)
-        val engine: DocumentImageEngine = openDocumentEngine(
-            source = source,
-            sizeHint = sizeHint,
-            formatHint = formatHint,
-            titleHint = titleHint,
-            cacheKey = cacheKey,
-            cachedIndex = cachedIdx,
+        val cachedIdx = DocumentExtractCache.loadUsableIndex(pageCacheKey, remoteSize = sizeHint)
+        val engine: DocumentImageEngine = install(
+            {
+                openDocumentEngine(
+                    source = source,
+                    sizeHint = sizeHint,
+                    formatHint = formatHint,
+                    titleHint = titleHint,
+                    cacheKey = cacheKey,
+                    cachedIndex = cachedIdx,
+                    useSystemPdfRenderer = useSystemPdfRenderer,
+                )
+            },
+            { value, _ -> value.close() },
         )
 
         check(engine.pageCount > 0) { "Document has no playable images" }
 
         // Persist index early (incomplete until all pages extracted).
-        DocumentExtractCache.saveIndex(engine.toIndex(cacheKey, complete = false))
+        DocumentExtractCache.saveIndex(engine.toIndex(pageCacheKey, complete = false))
 
         val pagePaths = ConcurrentHashMap<Int, Path>()
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
@@ -110,12 +130,12 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         // Seed the page the reader will actually show. Extracting page 0 first made a
         // resumed network document pay for two image streams before it could present.
         extractMutex.withLock {
-            engine.extractToCache(cacheKey, resumePage)?.let { pagePaths[resumePage] = it }
+            engine.extractToCache(pageCacheKey, resumePage)?.let { pagePaths[resumePage] = it }
         }
         check(
             pagePaths[resumePage] != null ||
                 DocumentExtractCache.isPageCached(
-                    cacheKey,
+                    pageCacheKey,
                     resumePage,
                     engine.extOf(resumePage) ?: "bin",
                 ),
@@ -124,7 +144,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         }
         pagePaths[resumePage] = pagePaths[resumePage]
             ?: DocumentExtractCache.pagePath(
-                cacheKey,
+                pageCacheKey,
                 resumePage,
                 engine.extOf(resumePage) ?: "bin",
             )
@@ -133,14 +153,14 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         // of a different resume page just for metadata.
         if (resumePage != 0) {
             val ext = engine.extOf(0)
-            if (ext != null && DocumentExtractCache.isPageCached(cacheKey, 0, ext)) {
-                pagePaths[0] = DocumentExtractCache.pagePath(cacheKey, 0, ext)
+            if (ext != null && DocumentExtractCache.isPageCached(pageCacheKey, 0, ext)) {
+                pagePaths[0] = DocumentExtractCache.pagePath(pageCacheKey, 0, ext)
             }
         }
 
         // Cover / library metadata after loader publish (never blocks open on encode).
         val page0Cached = pagePaths[0]
-        if (page0Cached != null && coverWritten.compareAndSet(false, true)) {
+        if (!useSystemPdfRenderer && page0Cached != null && coverWritten.compareAndSet(false, true)) {
             ArchiveCoverCache.scheduleEncodeFromExtractedPage(cacheKey, page0Cached) { cover ->
                 localPathForLibrary?.let { pathStr ->
                     val resolved = cover ?: ArchiveCoverCache.tryDiskCover(pathStr)
@@ -173,7 +193,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 override fun save(index: Int, file: Path): Boolean = runCatching {
                     val ext = engine.extOf(index) ?: return@runCatching false
                     val path = pagePaths[index]
-                        ?: DocumentExtractCache.pagePath(cacheKey, index, ext)
+                        ?: DocumentExtractCache.pagePath(pageCacheKey, index, ext)
                             .takeIf { DocumentExtractCache.isCachedFile(it) }
                         ?: error("Not cached")
                     pagePaths[index] = path
@@ -184,7 +204,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 override fun openSource(index: Int): ImageSource {
                     val ext = engine.extOf(index) ?: "bin"
                     val path = pagePaths[index]
-                        ?: DocumentExtractCache.pagePath(cacheKey, index, ext)
+                        ?: DocumentExtractCache.pagePath(pageCacheKey, index, ext)
                             .takeIf { DocumentExtractCache.isCachedFile(it) }
                     checkNotNull(path) { "Document page $index not extracted" }
                     pagePaths[index] = path
@@ -224,7 +244,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     val complete = pageCount > 0 &&
                         (0 until pageCount).all { pagePaths.containsKey(it) }
                     DocumentExtractCache.saveIndexAsync(
-                        engine.toIndex(cacheKey, complete = complete),
+                        engine.toIndex(pageCacheKey, complete = complete),
                     )
                     super.close()
                 }
@@ -236,7 +256,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 private fun probePageOnDisk(index: Int): Boolean {
                     if (pagePaths.containsKey(index)) return true
                     val ext = engine.extOf(index) ?: return false
-                    val p = DocumentExtractCache.pagePath(cacheKey, index, ext)
+                    val p = DocumentExtractCache.pagePath(pageCacheKey, index, ext)
                     if (DocumentExtractCache.isCachedFile(p)) {
                         pagePaths[index] = p
                         return true
@@ -246,7 +266,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
 
                 private fun markReady(index: Int) {
                     val path = pagePaths[index] ?: return
-                    if (index == 0 && coverWritten.compareAndSet(false, true)) {
+                    if (!useSystemPdfRenderer && index == 0 && coverWritten.compareAndSet(false, true)) {
                         ArchiveCoverCache.scheduleEncodeFromExtractedPage(cacheKey, path) { cover ->
                             localPathForLibrary?.let { pathStr ->
                                 val resolved = cover ?: ArchiveCoverCache.tryDiskCover(pathStr)
@@ -311,7 +331,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                 extractMutex.withLock {
                                     ensureActive()
                                     if (!probePageOnDisk(index)) {
-                                        engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
+                                        engine.extractToCache(pageCacheKey, index)?.let { pagePaths[index] = it }
                                     }
                                 }
                             } else {
@@ -323,7 +343,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                 try {
                                     ensureActive()
                                     if (interactivePending.isEmpty() && !probePageOnDisk(index)) {
-                                        engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
+                                        engine.extractToCache(pageCacheKey, index)?.let { pagePaths[index] = it }
                                     }
                                 } finally {
                                     extractMutex.unlock()
@@ -333,7 +353,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                 markReady(index)
                                 if (pagePaths.size >= pageCount) {
                                     DocumentExtractCache.saveIndexAsync(
-                                        engine.toIndex(cacheKey, complete = true),
+                                        engine.toIndex(pageCacheKey, complete = true),
                                     )
                                 }
                             } else {
@@ -412,6 +432,7 @@ internal fun openDocumentEngine(
     titleHint: String,
     cacheKey: String,
     cachedIndex: DocumentExtractCache.Index? = null,
+    useSystemPdfRenderer: Boolean = false,
 ): DocumentImageEngine {
     val isEpub = formatHint == "epub" ||
         isEpubFileName(titleHint) ||
@@ -424,7 +445,8 @@ internal fun openDocumentEngine(
         isPdfFileName(cacheKey) ||
         cacheKey.endsWith(".pdf", ignoreCase = true) ||
         titleHint.endsWith(".pdf", ignoreCase = true) ||
-        cachedIndex?.format == "pdf"
+        cachedIndex?.format == "pdf" ||
+        cachedIndex?.format == SystemPdfEngine.INDEX_FORMAT
     return when {
         isEpub -> {
             if (cachedIndex != null) {
@@ -435,7 +457,9 @@ internal fun openDocumentEngine(
             } ?: error("Not a readable EPUB/ZIP")
         }
         isPdf -> {
-            if (cachedIndex != null) {
+            if (useSystemPdfRenderer) {
+                SystemPdfEngine.open(source, remoteSize = sizeHint)
+            } else if (cachedIndex != null) {
                 PdfImageEngine.openFromIndex(source, cachedIndex, remoteSize = sizeHint)
                     ?: PdfImageEngine.open(source, remoteSize = sizeHint, coverOnly = false)
             } else {

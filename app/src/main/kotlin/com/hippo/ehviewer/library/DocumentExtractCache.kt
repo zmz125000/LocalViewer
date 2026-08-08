@@ -1,6 +1,8 @@
 package com.hippo.ehviewer.library
 
+import android.graphics.Bitmap
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -244,6 +246,34 @@ object DocumentExtractCache {
                 ext = ext,
             ),
         ) { "Failed to publish document cache page $index" }
+        touch(cacheKey)
+        scheduleTrim()
+        return dest
+    }
+
+    /** Encode a rendered platform PDF page without retaining a second full-size byte array. */
+    fun writePngPage(cacheKey: String, index: Int, bitmap: Bitmap): Path {
+        val ext = "png"
+        val dest = pagePath(cacheKey, index, ext)
+        val tmp = File("$dest.tmp.${System.nanoTime()}")
+        try {
+            tmp.parentFile?.mkdirs()
+            FileOutputStream(tmp).use { output ->
+                check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                    "Failed to encode rendered PDF page $index"
+                }
+            }
+            check(
+                CachePagePublish.publishTmp(
+                    tmp = tmp,
+                    dest = File(dest.toString()),
+                    expectedSize = tmp.length(),
+                    ext = ext,
+                ),
+            ) { "Failed to publish rendered PDF page $index" }
+        } finally {
+            tmp.delete()
+        }
         touch(cacheKey)
         scheduleTrim()
         return dest
