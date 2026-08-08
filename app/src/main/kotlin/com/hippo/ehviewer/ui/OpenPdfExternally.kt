@@ -5,7 +5,6 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.core.net.toUri
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.logcat
@@ -24,7 +23,6 @@ import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
 import java.io.IOException
-import okio.Path
 import okio.Path.Companion.toPath
 
 /**
@@ -46,25 +44,21 @@ object OpenPdfExternally {
 
     /**
      * Local browse path (filesystem, SAF document, or MediaStore-style string).
+     *
+     * Browse stores SAF paths as okio [Path] strings. Okio collapses `content://` →
+     * `content:/` (single slash), which [Uri.parse] treats as **no authority**
+     * ("No content provider: content:/…"). Always open via [Path.openFileDescriptor],
+     * which uses [com.ehviewer.core.files.toUri] to restore `content://` and rebuild
+     * tree/document ids (spaces like `Quick Share`, multi-segment document paths).
      */
     suspend fun openLocal(context: Context, pathStr: String, displayName: String = File(pathStr).name) {
-        // applicationContext: openSource may run later on the FUSE handler thread after the
-        // Activity is stopped (user already switched to the PDF viewer).
-        val app = context.applicationContext
         openStreaming(context, displayName) {
-            when {
-                pathStr.startsWith("content:") -> {
-                    val pfd = app.contentResolver.openFileDescriptor(pathStr.toUri(), "r")
-                        ?: error("cannot open document: $displayName")
-                    PfdArchiveByteSource(pfd, ownsPfd = true)
-                }
-                File(pathStr).isFile -> FileArchiveByteSource(File(pathStr))
-                else -> {
-                    // MediaStore virtual / okio Path SAF document string.
-                    val path: Path = pathStr.toPath()
-                    val pfd = path.openFileDescriptor("r")
-                    PfdArchiveByteSource(pfd, ownsPfd = true)
-                }
+            // Real absolute file only — do not treat content:/… as File.
+            if (pathStr.startsWith('/') && File(pathStr).isFile) {
+                FileArchiveByteSource(File(pathStr))
+            } else {
+                val pfd = pathStr.toPath().openFileDescriptor("r")
+                PfdArchiveByteSource(pfd, ownsPfd = true)
             }
         }
     }
