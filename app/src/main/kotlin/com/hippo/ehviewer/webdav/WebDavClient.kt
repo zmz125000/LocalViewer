@@ -522,7 +522,10 @@ object WebDavClient {
                         var total = 0
                         while (total < len) {
                             val n = input.read(buf, off + total, len - total)
-                            if (n < 0) break
+                            // InputStream normally blocks or returns data, but treating a
+                            // zero-length result as progress would spin forever on a broken
+                            // WebDAV/ContentProvider bridge.
+                            if (n <= 0) break
                             total += n
                         }
                         total

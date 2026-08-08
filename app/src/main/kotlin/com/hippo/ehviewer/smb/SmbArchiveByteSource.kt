@@ -77,6 +77,8 @@ private class KeepOpenSmbFileSource(
     private val closed = AtomicBoolean(false)
     private val sizeReady = CompletableDeferred<Long>()
     private val ops = Channel<Op>(capacity = 64)
+    /** Opens/reopens the remote handle only when size/read demand exists. */
+    private val demand = Channel<Unit>(capacity = Channel.CONFLATED)
     private val worker: Job
 
     private data class Op(
@@ -89,53 +91,71 @@ private class KeepOpenSmbFileSource(
 
     init {
         worker = scope.launch {
-            var backoffMs = 50L
             while (isActive && !closed.get()) {
+                if (demand.receiveCatching().getOrNull() == null) break
+                var openAttempts = 0
                 try {
-                    SmbGateway.withOpenFile(source, password, remote) { file, fileSize ->
-                        if (closed.get()) {
-                            runCatching { file.close() }
-                            return@withOpenFile
-                        }
-                        if (!sizeReady.isCompleted) sizeReady.complete(fileSize)
-                        backoffMs = 50L
-                        // Blocking drain: withOpenFile callback is not a suspend lambda.
-                        runBlocking {
-                            for (op in ops) {
+                    while (isActive && !closed.get()) {
+                        var opened = false
+                        try {
+                            SmbGateway.withOpenFile(source, password, remote) { file, fileSize ->
+                                opened = true
                                 if (closed.get()) {
-                                    op.result.complete(-1)
-                                    continue
+                                    runCatching { file.close() }
+                                    return@withOpenFile
                                 }
-                                try {
-                                    op.result.complete(
-                                        readFully(file, op.offset, op.buf, op.off, op.len),
-                                    )
-                                } catch (e: Throwable) {
-                                    logcat("SmbArchive", e)
-                                    if (isShareClosedError(e) || closed.get()) {
-                                        op.result.completeExceptionally(e)
-                                        // Exit withOpenFile so outer loop reopens the share.
-                                        throw e
+                                if (!sizeReady.isCompleted) sizeReady.complete(fileSize)
+                                // Blocking drain: withOpenFile callback is not a suspend lambda.
+                                runBlocking {
+                                    for (op in ops) {
+                                        // Consume the coalesced signal corresponding to this op.
+                                        // If the handle dies, only a later/pending request wakes reopen.
+                                        demand.tryReceive()
+                                        if (closed.get()) {
+                                            op.result.complete(-1)
+                                            continue
+                                        }
+                                        try {
+                                            op.result.complete(
+                                                readFully(file, op.offset, op.buf, op.off, op.len),
+                                            )
+                                        } catch (e: Throwable) {
+                                            logcat("SmbArchive", e)
+                                            if (isShareClosedError(e) || closed.get()) {
+                                                op.result.completeExceptionally(e)
+                                                throw e
+                                            }
+                                            op.result.completeExceptionally(e)
+                                        }
                                     }
-                                    op.result.completeExceptionally(e)
                                 }
                             }
+                            break
+                        } catch (e: Throwable) {
+                            if (closed.get() || !isActive) throw e
+                            logcat("SmbArchive", e)
+                            if (opened) {
+                                // The active request already received its failure. Do not spin
+                                // reconnecting with no consumer; wait for fresh read demand.
+                                break
+                            }
+                            openAttempts++
+                            if (!isShareClosedError(e) || openAttempts >= MAX_OPEN_ATTEMPTS) {
+                                if (!sizeReady.isCompleted) sizeReady.completeExceptionally(e)
+                                while (true) {
+                                    val op = ops.tryReceive().getOrNull() ?: break
+                                    op.result.completeExceptionally(e)
+                                }
+                                ops.close(e)
+                                demand.close(e)
+                                return@launch
+                            }
+                            delay(OPEN_RETRY_BACKOFF_MS * openAttempts)
                         }
                     }
                 } catch (e: Throwable) {
                     if (closed.get() || !isActive) break
                     logcat("SmbArchive", e)
-                    if (!sizeReady.isCompleted && !isShareClosedError(e)) {
-                        sizeReady.completeExceptionally(e)
-                        // Fail pending ops and stop — non-recoverable open error.
-                        for (op in ops) {
-                            op.result.completeExceptionally(e)
-                        }
-                        break
-                    }
-                    // Share/session gone (pool ON_STOP, idle kill): wait and reconnect.
-                    delay(backoffMs)
-                    backoffMs = (backoffMs * 2).coerceAtMost(2_000L)
                 }
             }
             failClosedSizeReady()
@@ -151,6 +171,7 @@ private class KeepOpenSmbFileSource(
             if (closed.get() && !sizeReady.isCompleted) {
                 throw IOException("SMB archive source closed")
             }
+            if (!sizeReady.isCompleted) demand.trySend(Unit)
             return runBlocking { sizeReady.await() }
         }
 
@@ -168,6 +189,7 @@ private class KeepOpenSmbFileSource(
         return try {
             runBlocking {
                 if (closed.get()) return@runBlocking -1
+                demand.trySend(Unit)
                 ops.send(Op(offset, buf, off, toRead, result))
                 result.await()
             }
@@ -181,6 +203,7 @@ private class KeepOpenSmbFileSource(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         ops.close()
+        demand.close()
         failClosedSizeReady()
         worker.cancel()
         scope.coroutineContext[Job]?.cancel()
@@ -193,6 +216,9 @@ private class KeepOpenSmbFileSource(
     }
 
     private companion object {
+        const val MAX_OPEN_ATTEMPTS = 2
+        const val OPEN_RETRY_BACKOFF_MS = 100L
+
         /**
          * Per-op size for smbj. Use a large chunk so an 8 MiB readahead window is only a
          * few READ requests (keeps multi-credit SMB3 busy instead of 64 KiB chatter).

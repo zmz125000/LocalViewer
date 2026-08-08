@@ -60,6 +60,7 @@ import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbCache
@@ -495,7 +496,12 @@ fun BrowseCoverThumb(
                             val source = SmbRepository.load(cover.sourceId)
                                 ?: error("SMB source missing")
                             val password = SmbPasswordStore.get(cover.sourceId)
-                            SmbArchiveByteSource(source, password, cover.remoteRelativeFile)
+                            SmbArchiveByteSource(
+                                source,
+                                password,
+                                cover.remoteRelativeFile,
+                                pipeline = !isDocumentFileName(name),
+                            )
                         }
                     }
                 }
@@ -541,7 +547,12 @@ fun BrowseCoverThumb(
                             val source = WebDavRepository.load(cover.sourceId)
                                 ?: error("WebDAV source missing")
                             val password = WebDavPasswordStore.get(cover.sourceId)
-                            WebDavArchiveByteSource(source, password, cover.remoteRelativeFile)
+                            WebDavArchiveByteSource(
+                                source,
+                                password,
+                                cover.remoteRelativeFile,
+                                pipeline = !isDocumentFileName(name),
+                            )
                         }
                     }
                 }

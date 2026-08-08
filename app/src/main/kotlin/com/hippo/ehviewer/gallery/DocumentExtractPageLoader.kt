@@ -98,6 +98,8 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         val pagePaths = ConcurrentHashMap<Int, Path>()
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         val extractJobs = ConcurrentHashMap<Int, Job>()
+        val backgroundJobs = ConcurrentHashMap.newKeySet<Int>()
+        val interactivePending = ConcurrentHashMap.newKeySet<Int>()
         val extractMutex = Mutex()
         val coverWritten = AtomicBoolean(false)
         val hostScope = this
@@ -105,25 +107,34 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         val pageCount = engine.pageCount
         val resumePage = startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
 
-        // LKG seed: extract page 0 before publish so PDF/EPUB open is immediately useful.
-        // Cover encode stays async and never holds extractMutex after publish.
+        // Seed the page the reader will actually show. Extracting page 0 first made a
+        // resumed network document pay for two image streams before it could present.
         extractMutex.withLock {
-            engine.extractToCache(cacheKey, 0)?.let { pagePaths[0] = it }
+            engine.extractToCache(cacheKey, resumePage)?.let { pagePaths[resumePage] = it }
         }
         check(
-            pagePaths[0] != null ||
-                DocumentExtractCache.isPageCached(cacheKey, 0, engine.extOf(0) ?: "bin"),
+            pagePaths[resumePage] != null ||
+                DocumentExtractCache.isPageCached(
+                    cacheKey,
+                    resumePage,
+                    engine.extOf(resumePage) ?: "bin",
+                ),
         ) {
-            "Failed to extract document page 0"
+            "Failed to extract document page $resumePage"
         }
-        pagePaths[0] = pagePaths[0]
-            ?: DocumentExtractCache.pagePath(cacheKey, 0, engine.extOf(0) ?: "bin")
+        pagePaths[resumePage] = pagePaths[resumePage]
+            ?: DocumentExtractCache.pagePath(
+                cacheKey,
+                resumePage,
+                engine.extOf(resumePage) ?: "bin",
+            )
 
-        // Also map resume page when already on disk (no extra extract).
+        // Reuse page 0 for the cover when it is already cached. Do not fetch it ahead
+        // of a different resume page just for metadata.
         if (resumePage != 0) {
-            val ext = engine.extOf(resumePage)
-            if (ext != null && DocumentExtractCache.isPageCached(cacheKey, resumePage, ext)) {
-                pagePaths[resumePage] = DocumentExtractCache.pagePath(cacheKey, resumePage, ext)
+            val ext = engine.extOf(0)
+            if (ext != null && DocumentExtractCache.isPageCached(cacheKey, 0, ext)) {
+                pagePaths[0] = DocumentExtractCache.pagePath(cacheKey, 0, ext)
             }
         }
 
@@ -185,16 +196,21 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 }
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
-                    pages.forEach { ensureExtract(it, interactive = false) }
+                    // A PDF page is commonly a multi-megabyte Range request. Queueing the
+                    // whole preload set behind one mutex lets stale background work delay
+                    // the visible page. Keep at most one opportunistic extraction active.
+                    pages.firstOrNull { !isPageMapped(it) }?.let {
+                        ensureExtract(it, interactive = false)
+                    }
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
                     ensureExtract(index, interactive = true) {
                         notifySourceReady(index, orgImg)
                     }
-                    // Warm neighbors
-                    for (d in 1..prefetchN) {
-                        if (index + d < pageCount) ensureExtract(index + d, interactive = false)
+                    // One neighbor is enough here; PageLoader also supplies a preload list.
+                    if (prefetchN > 0 && index + 1 < pageCount) {
+                        ensureExtract(index + 1, interactive = false)
                     }
                 }
 
@@ -260,17 +276,30 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     onReady: (() -> Unit)? = null,
                 ) {
                     if (index !in 0 until pageCount) return
+                    if (interactive) interactivePending.add(index)
                     if (onReady != null) {
                         readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
                         if (isPageMapped(index)) {
+                            interactivePending.remove(index)
                             markReady(index)
                             return
                         }
                     } else if (isPageMapped(index)) {
+                        if (interactive) interactivePending.remove(index)
                         return
                     }
                     val existing = extractJobs[index]
-                    if (existing != null && existing.isActive) return
+                    if (existing != null && existing.isActive) {
+                        if (interactive && backgroundJobs.contains(index)) {
+                            // Upgrade an enqueued prefetch into a visible-page request.
+                            existing.cancel()
+                            extractJobs.remove(index, existing)
+                        } else {
+                            if (interactive) interactivePending.remove(index)
+                            return
+                        }
+                    }
+                    if (!interactive) backgroundJobs.add(index)
                     val job = hostScope.launch(Dispatchers.IO) {
                         try {
                             ensureActive()
@@ -278,10 +307,26 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                 markReady(index)
                                 return@launch
                             }
-                            extractMutex.withLock {
-                                ensureActive()
-                                if (!probePageOnDisk(index)) {
-                                    engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
+                            if (interactive) {
+                                extractMutex.withLock {
+                                    ensureActive()
+                                    if (!probePageOnDisk(index)) {
+                                        engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
+                                    }
+                                }
+                            } else {
+                                // Background work never queues behind another extraction and
+                                // never starts while a visible-page request is pending.
+                                if (interactivePending.isNotEmpty() || !extractMutex.tryLock()) {
+                                    return@launch
+                                }
+                                try {
+                                    ensureActive()
+                                    if (interactivePending.isEmpty() && !probePageOnDisk(index)) {
+                                        engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
+                                    }
+                                } finally {
+                                    extractMutex.unlock()
                                 }
                             }
                             if (probePageOnDisk(index)) {
@@ -306,12 +351,19 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                 notifyPageFailed(index, e.message)
                             }
                         } finally {
+                            if (interactive) interactivePending.remove(index)
+                            if (!interactive) backgroundJobs.remove(index)
                             extractJobs.remove(index, coroutineContext[Job])
                         }
                     }
                     val prev = extractJobs.putIfAbsent(index, job)
                     if (prev != null) {
-                        if (prev.isActive) job.cancel() else extractJobs[index] = job
+                        if (prev.isActive) {
+                            job.cancel()
+                            if (!interactive) backgroundJobs.remove(index)
+                        } else {
+                            extractJobs[index] = job
+                        }
                     }
                 }
             },
