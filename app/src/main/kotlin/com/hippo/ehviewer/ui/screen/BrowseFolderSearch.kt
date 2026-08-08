@@ -25,13 +25,20 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -110,6 +117,47 @@ fun rememberBrowseFolderSearchState(): BrowseFolderSearchState {
             .collectLatest { state.syncKeywordFromField() }
     }
     return state
+}
+
+/**
+ * Tap or scroll on folder-list content dismisses search keyboard/focus.
+ * Same interaction model as [SearchBarScreen] content, but only for folder browsers
+ * (local / SMB / WebDAV) — do not attach to the main Library/History search bar.
+ *
+ * Apply to the content area under the top bar (e.g. PullToRefreshBox), not the search field.
+ */
+@Composable
+fun Modifier.browseSearchClearFocusOnInteract(state: BrowseFolderSearchState): Modifier {
+    val focusManager = LocalFocusManager.current
+    val focused = state.focused
+    val clearFocus = rememberUpdatedState {
+        if (state.focused) focusManager.clearFocus()
+    }
+    // Scroll (touch fling, mouse wheel, nested list scroll) unfocuses without consuming delta.
+    val clearFocusOnScroll = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available != Offset.Zero) clearFocus.value()
+                return Offset.Zero
+            }
+        }
+    }
+    return this
+        .nestedScroll(clearFocusOnScroll)
+        // Tap/press on list content (not the top-bar field) exits focus.
+        // Initial pass observes without consuming so item clicks still work.
+        .pointerInput(focused) {
+            if (!focused) return@pointerInput
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val pressedDown = event.changes.any {
+                        it.pressed && !it.previousPressed
+                    }
+                    if (pressedDown) clearFocus.value()
+                }
+            }
+        }
 }
 
 /** Inline search field for [androidx.compose.material3.TopAppBar] title slot. */

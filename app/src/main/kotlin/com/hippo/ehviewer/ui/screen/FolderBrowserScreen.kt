@@ -438,7 +438,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     refreshing = false
                 }
             },
-            modifier = Modifier.padding(padding).fillMaxSize(),
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .browseSearchClearFocusOnInteract(search),
         ) {
             when {
                 stack.isEmpty() -> {
