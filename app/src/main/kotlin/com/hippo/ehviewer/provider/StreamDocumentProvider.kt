@@ -108,11 +108,13 @@ class StreamDocumentProvider : ContentProvider() {
 
         val thread = HandlerThread("LocalViewer-streamdoc").apply { start() }
         return try {
-            storage.openProxyFileDescriptor(
+            val pfd = storage.openProxyFileDescriptor(
                 ParcelFileDescriptor.MODE_READ_ONLY,
-                SourceProxyCallback(source, size, thread),
+                SourceProxyCallback(source, size, thread, token),
                 Handler(thread.looper),
             )
+            StreamDocumentRegistry.retain(token)
+            pfd
         } catch (e: Throwable) {
             runCatching { source.close() }
             thread.quitSafely()
@@ -165,6 +167,7 @@ private class SourceProxyCallback(
     private val source: ArchiveByteSource,
     private val size: Long,
     private val thread: HandlerThread,
+    private val token: String,
 ) : ProxyFileDescriptorCallback() {
     @Volatile
     private var released = false
@@ -250,6 +253,8 @@ private class SourceProxyCallback(
         released = true
         runCatching { source.close() }
         thread.quitSafely()
+        // Drop token when the last proxy FD for this grant is closed (refcount).
+        StreamDocumentRegistry.release(token)
     }
 
     private companion object {

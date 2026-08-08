@@ -35,13 +35,34 @@ class WebDavArchiveByteSource(
     /** Fixed window size (default 8 MiB). */
     sequentialWindow: Int = ReadAheadArchiveByteSource.SEQUENTIAL_WINDOW,
     stickySession: Boolean = false,
+    /**
+     * When known (e.g. external PDF registration HEAD), skip a second size probe
+     * on first [readAt]. Must match the remote file.
+     */
+    knownSize: Long = -1L,
+    /**
+     * Windowed readahead for sequential archive parsing. Off when a higher layer
+     * (e.g. [com.hippo.ehviewer.library.BlockCacheArchiveByteSource]) owns caching.
+     */
+    readahead: Boolean = true,
 ) : ArchiveByteSource {
-    private val inner = ReadAheadArchiveByteSource(
-        inner = RawWebDavArchiveByteSource(source, password, remoteRelativeFile, stickySession),
-        sequentialWindow = sequentialWindow,
-        preferSequential = preferSequential,
-        pipeline = pipeline,
+    private val raw = RawWebDavArchiveByteSource(
+        source,
+        password,
+        remoteRelativeFile,
+        stickySession,
+        knownSize,
     )
+    private val inner: ArchiveByteSource = if (readahead) {
+        ReadAheadArchiveByteSource(
+            inner = raw,
+            sequentialWindow = sequentialWindow,
+            preferSequential = preferSequential,
+            pipeline = pipeline,
+        )
+    } else {
+        raw
+    }
 
     override val size: Long get() = inner.size
 
@@ -57,11 +78,12 @@ private class RawWebDavArchiveByteSource(
     private val password: String,
     remoteRelativeFile: String,
     private val stickySession: Boolean = false,
+    knownSize: Long = -1L,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
 
     /** Cached size; ≤0 means unknown. AtomicLong avoids identity-equality issues with Long boxes. */
-    private val sizeBytes = AtomicLong(0L)
+    private val sizeBytes = AtomicLong(if (knownSize > 0L) knownSize else 0L)
 
     /** Epoch ms until which failed stats fail-fast (avoid readahead hammering a down server). */
     private val failFastUntilMs = AtomicLong(0L)

@@ -51,13 +51,34 @@ class SmbArchiveByteSource(
      * Use for [com.hippo.ehviewer.provider.StreamDocumentProvider] / external apps.
      */
     stickySession: Boolean = false,
+    /**
+     * When known (e.g. external PDF registration), skip a separate size open before
+     * the first [readAt]. Must match the remote file.
+     */
+    knownSize: Long = -1L,
+    /**
+     * Windowed readahead for sequential archive parsing. Off when a higher layer
+     * (e.g. [com.hippo.ehviewer.library.BlockCacheArchiveByteSource]) owns caching.
+     */
+    readahead: Boolean = true,
 ) : ArchiveByteSource {
-    private val inner = ReadAheadArchiveByteSource(
-        inner = KeepOpenSmbFileSource(source, password, remoteRelativeFile, stickySession),
-        sequentialWindow = sequentialWindow,
-        preferSequential = preferSequential,
-        pipeline = pipeline,
+    private val raw = KeepOpenSmbFileSource(
+        source,
+        password,
+        remoteRelativeFile,
+        stickySession,
+        knownSize,
     )
+    private val inner: ArchiveByteSource = if (readahead) {
+        ReadAheadArchiveByteSource(
+            inner = raw,
+            sequentialWindow = sequentialWindow,
+            preferSequential = preferSequential,
+            pipeline = pipeline,
+        )
+    } else {
+        raw
+    }
 
     override val size: Long get() = inner.size
 
@@ -80,11 +101,14 @@ private class KeepOpenSmbFileSource(
     private val password: String,
     remoteRelativeFile: String,
     private val stickySession: Boolean = false,
+    knownSize: Long = -1L,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val closed = AtomicBoolean(false)
-    private val sizeReady = CompletableDeferred<Long>()
+    private val sizeReady = CompletableDeferred<Long>().also { deferred ->
+        if (knownSize > 0L) deferred.complete(knownSize)
+    }
     private val ops = Channel<Op>(capacity = 64)
     /** Opens/reopens the remote handle only when size/read demand exists. */
     private val demand = Channel<Unit>(capacity = Channel.CONFLATED)

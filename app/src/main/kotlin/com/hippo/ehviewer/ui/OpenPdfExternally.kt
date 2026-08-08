@@ -15,9 +15,11 @@ import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
+import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
+import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
@@ -94,22 +96,35 @@ object OpenPdfExternally {
             SmbRepository.load(sourceId) ?: throw IOException("SMB source missing")
         }
         val password = SmbPasswordStore.get(sourceId)
-        openStreaming(context, displayName) {
-            // External PDF viewers seek randomly (xref / page objects). Pipeline + 8 MiB
-            // sequential windows thrash the single SMB handle and surface as Fuse EIO spam.
-            // stickySession: dedicated TCP outside the browse/reader pool so ON_STOP
-            // (user switched to Drive) does not kill the FUSE stream mid-read.
-            // Size is published on the registry entry; BlockCache wraps the source in the provider.
-            SmbArchiveByteSource(
-                source = source,
-                password = password,
-                remoteRelativeFile = remoteRelativeFile,
-                preferSequential = false,
-                pipeline = false,
-                sequentialWindow = EXTERNAL_PDF_WINDOW,
-                stickySession = true,
-            )
+        // Cheap size probe (open+stat+close on the browse pool) — do not spin a sticky
+        // keep-open ArchiveByteSource only to throw it away before the viewer attaches.
+        val sizeBytes = withIOContext {
+            SmbGateway.fileSizeOrNull(source, password, remoteRelativeFile)
+                ?.takeIf { it > 0L }
+                ?: error("empty or unreachable PDF")
         }
+        val token = StreamDocumentRegistry.register(
+            displayName = displayName,
+            mimeType = "application/pdf",
+            sizeBytes = sizeBytes,
+            openSource = {
+                // stickySession: dedicated TCP outside the browse/reader pool so ON_STOP
+                // (user switched to Drive) does not kill the FUSE stream mid-read.
+                // readahead off: BlockCacheArchiveByteSource owns multi-region caching.
+                // knownSize: no second size open on first Fuse read.
+                SmbArchiveByteSource(
+                    source = source,
+                    password = password,
+                    remoteRelativeFile = remoteRelativeFile,
+                    preferSequential = false,
+                    pipeline = false,
+                    stickySession = true,
+                    knownSize = sizeBytes,
+                    readahead = false,
+                )
+            },
+        )
+        launchRegistered(context, token, displayName)
     }
 
     suspend fun openWebDav(
@@ -122,48 +137,34 @@ object OpenPdfExternally {
             WebDavRepository.load(sourceId) ?: throw IOException("WebDAV source missing")
         }
         val password = WebDavPasswordStore.get(sourceId)
-        openStreaming(context, displayName) {
-            // stickySession: separate CIO client that survives ON_STOP when Drive is foreground.
-            WebDavArchiveByteSource(
-                source = source,
-                password = password,
-                remoteRelativeFile = remoteRelativeFile,
-                preferSequential = false,
-                pipeline = false,
-                sequentialWindow = EXTERNAL_PDF_WINDOW,
-                stickySession = true,
-            )
+        // One sticky HEAD (or 0–0 Range) for size; seed knownSize so first readAt never re-HEADs.
+        val sizeBytes = withIOContext {
+            WebDavClient.fileSizeOrNull(
+                source,
+                password,
+                remoteRelativeFile,
+                sticky = true,
+            )?.takeIf { it > 0L } ?: error("empty or unreachable PDF")
         }
-    }
-
-    private suspend fun openStreaming(
-        context: Context,
-        displayName: String,
-        openSource: () -> com.hippo.ehviewer.library.ArchiveByteSource,
-    ) {
-        val token = withIOContext {
-            // Fail fast if we cannot open/size (clearer snackbar than a dead chooser).
-            // Publish size so external apps (Drive) can stop at EOF without probing past end.
-            val sizeBytes = openSource().use { src ->
-                val n = src.size
-                if (n < 1L) error("empty PDF")
-                n
-            }
-            StreamDocumentRegistry.register(
-                displayName = displayName,
-                mimeType = "application/pdf",
-                sizeBytes = sizeBytes,
-                openSource = openSource,
-            )
-        }
+        val token = StreamDocumentRegistry.register(
+            displayName = displayName,
+            mimeType = "application/pdf",
+            sizeBytes = sizeBytes,
+            openSource = {
+                WebDavArchiveByteSource(
+                    source = source,
+                    password = password,
+                    remoteRelativeFile = remoteRelativeFile,
+                    preferSequential = false,
+                    pipeline = false,
+                    stickySession = true,
+                    knownSize = sizeBytes,
+                    readahead = false,
+                )
+            },
+        )
         launchRegistered(context, token, displayName)
     }
-
-    /**
-     * Window for external viewers: enough for Fuse page-sized reads, small enough that a
-     * jump to page N does not pull multi‑MiB dead weight on the keep-open SMB/WebDAV handle.
-     */
-    private const val EXTERNAL_PDF_WINDOW = 256 * 1024
 
     private suspend fun launchView(context: Context, uri: Uri, displayName: String) {
         val view = Intent(Intent.ACTION_VIEW).apply {
