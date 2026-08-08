@@ -48,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -77,12 +78,14 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.isDocumentFileName
+import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
+import com.hippo.ehviewer.ui.OpenPdfExternally
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
@@ -123,6 +126,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     navigator: DestinationsNavigator,
 ) = Screen(navigator) {
     DrawerHandle(false)
+    val context = LocalContext.current
     var source by remember { mutableStateOf<WebDavSourceEntity?>(null) }
 
     // Session-scoped path. Empty list = share root and is *not* "unset":
@@ -384,6 +388,29 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         // When capped or partial, pass empty names so reader re-lists full set
         val names = if (entry.pageCountCapped) emptyList() else entry.imageFileNames
         navToWebDavFolderReader(src.id, remote, names, info)
+    }
+
+    fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
+        if (!isPdfFileName(entry.fileName)) return
+        val src = source ?: return
+        val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
+        launchIO {
+            try {
+                OpenPdfExternally.openWebDav(
+                    context = context,
+                    sourceId = src.id,
+                    remoteRelativeFile = remote,
+                    displayName = entry.name,
+                )
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(
+                        R.string.open_pdf_external_failed,
+                        e.message ?: e.toString(),
+                    ),
+                )
+            }
+        }
     }
 
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery) {
@@ -686,6 +713,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 cover = archiveCoverFor(entry),
                                                 thumbRetryKey = refreshToken,
                                                 onClick = { openArchive(entry) },
+                                                onLongClick = if (isPdfFileName(entry.fileName)) {
+                                                    { openPdfInOtherApp(entry) }
+                                                } else {
+                                                    null
+                                                },
                                             )
                                         is BrowseEntryRemote.Directory -> Unit
                                     }
@@ -731,6 +763,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 cover = archiveCoverFor(entry),
                                                 thumbRetryKey = refreshToken,
                                                 onClick = { openArchive(entry) },
+                                                onLongClick = if (isPdfFileName(entry.fileName)) {
+                                                    { openPdfInOtherApp(entry) }
+                                                } else {
+                                                    null
+                                                },
                                             )
                                         is BrowseEntryRemote.Directory -> Unit
                                     }

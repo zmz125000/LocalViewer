@@ -128,6 +128,12 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/filepaths" />
         </provider>
+        <!-- Range-backed PDF stream for external viewers (long-press open). -->
+        <provider
+            android:name="com.hippo.ehviewer.provider.StreamDocumentProvider"
+            android:authorities="${applicationId}.streamdoc"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 
 </manifest>

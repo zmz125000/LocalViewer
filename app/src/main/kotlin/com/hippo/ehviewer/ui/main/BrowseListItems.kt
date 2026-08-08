@@ -163,7 +163,10 @@ fun BrowseArchiveGalleryRow(
     modifier: Modifier = Modifier,
     cover: BrowseCover? = null,
     thumbRetryKey: Any? = null,
+    /** e.g. PDF long-press → open in external app; null keeps click-only. */
+    onLongClick: (() -> Unit)? = null,
 ) {
+    val haptic = LocalHapticFeedback.current
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = { Text(stringResource(R.string.library_gallery_archive)) },
@@ -179,7 +182,21 @@ fun BrowseArchiveGalleryRow(
                 placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
             )
         },
-        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = onClick,
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick()
+                        },
+                    )
+                } else {
+                    Modifier.clickable(onClick = onClick)
+                },
+            ),
     )
 }
 
@@ -302,11 +319,14 @@ fun BrowseArchiveGridItem(
     modifier: Modifier = Modifier,
     cover: BrowseCover? = null,
     thumbRetryKey: Any? = null,
+    /** e.g. PDF long-press → open in external app. */
+    onLongClick: (() -> Unit)? = null,
 ) {
     BrowseGridCell(
         name = name,
         onClick = onClick,
         modifier = modifier,
+        onLongClick = onLongClick ?: onClick,
         thumb = {
             BrowseCoverThumb(
                 cover = cover,

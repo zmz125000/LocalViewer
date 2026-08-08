@@ -51,6 +51,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,9 +74,11 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.listLocalDirectory
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
+import com.hippo.ehviewer.ui.OpenPdfExternally
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
@@ -109,6 +112,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     /** When opened from Library favourites, show a FAB to jump back to Library. */
     fromLibrary: Boolean = false,
 ) = Screen(navigator) {
+    val context = LocalContext.current
     val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
     // Session-scoped stack survives reader navigation (unlike remember {}).
     // When opened from Browse with a pre-set stack, start inside that root (no root picker).
@@ -319,6 +323,24 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             LocalHistory.recordLocalArchive(path, title = entry.name)
         }
         navToReader(path)
+    }
+
+    /** Long-press PDF → system / third-party reader (tap still uses in-app image PDF engine). */
+    fun openPdfInOtherApp(entry: BrowseEntry.ArchiveGallery) {
+        if (!isPdfFileName(entry.name)) return
+        val path = entry.path.toString()
+        launchIO {
+            try {
+                OpenPdfExternally.openLocal(context, path, displayName = entry.name)
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(
+                        R.string.open_pdf_external_failed,
+                        e.message ?: e.toString(),
+                    ),
+                )
+            }
+        }
     }
 
     Scaffold(
@@ -538,6 +560,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             name = entry.name,
                                             cover = BrowseCover.LocalArchive(entry.path),
                                             onClick = { openArchive(entry) },
+                                            onLongClick = if (isPdfFileName(entry.name)) {
+                                                { openPdfInOtherApp(entry) }
+                                            } else {
+                                                null
+                                            },
                                         )
                                         is BrowseEntry.Directory -> Unit
                                     }
@@ -588,6 +615,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             name = entry.name,
                                             cover = BrowseCover.LocalArchive(entry.path),
                                             onClick = { openArchive(entry) },
+                                            onLongClick = if (isPdfFileName(entry.name)) {
+                                                { openPdfInOtherApp(entry) }
+                                            } else {
+                                                null
+                                            },
                                         )
                                         is BrowseEntry.Directory -> Unit
                                     }
