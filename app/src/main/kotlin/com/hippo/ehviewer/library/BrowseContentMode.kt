@@ -29,10 +29,13 @@ enum class BrowseContentMode(val prefValue: Int) {
 /** Whether this directory row is visible under [mode]. */
 fun DirPresence.visibleIn(mode: BrowseContentMode): Boolean = when (mode) {
     BrowseContentMode.Galleries -> this == DirPresence.Navigable
-    // Media includes pure-video dirs so the user can enter and open videos.
+    // Media/Video: real enter-able dirs + pure-video dirs + virtual `@` video leaf promotes.
     BrowseContentMode.Media, BrowseContentMode.Video ->
-        this == DirPresence.Navigable || this == DirPresence.VideoOnly
-    BrowseContentMode.Folder -> true
+        this == DirPresence.Navigable ||
+            this == DirPresence.VideoOnly ||
+            this == DirPresence.PromotedVideoLeaf
+    // Folder = real FS: hide virtual promoted video dirs (PromotedShell parent stays).
+    BrowseContentMode.Folder -> this != DirPresence.PromotedVideoLeaf
 }
 
 fun List<BrowseEntry>.filterByContentMode(mode: BrowseContentMode): List<BrowseEntry> = filter { e ->
@@ -53,7 +56,7 @@ fun List<BrowseEntry>.filterByContentMode(mode: BrowseContentMode): List<BrowseE
             is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> false
         }
         BrowseContentMode.Folder -> when (e) {
-            is BrowseEntry.Directory -> true
+            is BrowseEntry.Directory -> e.presence.visibleIn(mode)
             is BrowseEntry.ArchiveGallery, is BrowseEntry.VideoFile, is BrowseEntry.RegularFile -> true
             is BrowseEntry.FolderGallery -> false // raw files only
         }
@@ -84,7 +87,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(mode: BrowseContentMode): 
             -> false
         }
         BrowseContentMode.Folder -> when (e) {
-            is BrowseEntryRemote.Directory -> true
+            is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode)
             is BrowseEntryRemote.ArchiveGallery,
             is BrowseEntryRemote.VideoFile,
             is BrowseEntryRemote.RegularFile,

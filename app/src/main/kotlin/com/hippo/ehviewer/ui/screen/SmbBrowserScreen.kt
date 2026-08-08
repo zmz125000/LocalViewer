@@ -146,9 +146,17 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
         mutableStateOf(initial)
     }
+    /**
+     * How many path segments each [enterDir] appended. Promoted video leaves append
+     * `S/leaf` (2); goUp pops that many so one back action returns to the listing
+     * that showed the `@` row. Deep-links leave this empty → goUp drops 1.
+     */
+    var enterHopStack by remember { mutableStateOf(emptyList<Int>()) }
+
     fun updateSegments(new: List<String>) {
         segments = new
         BrowseSession.setSmbSegments(sourceId, new)
+        if (new.isEmpty()) enterHopStack = emptyList()
     }
 
     var entries by remember { mutableStateOf<List<BrowseEntryRemote>>(emptyList()) }
@@ -257,8 +265,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         if (configChanged) {
             // Path/share changed: drop stack (session already cleared by disconnect).
             if (segments.isNotEmpty()) {
-                segments = emptyList()
-                BrowseSession.setSmbSegments(sourceId, emptyList())
+                updateSegments(emptyList())
             }
             entries = emptyList()
             listedDir = null
@@ -334,9 +341,17 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    fun enterDir(name: String) {
-        val next = segments + name
+    /**
+     * Enter a directory by real relative path under the current listing.
+     * [relativeName] may be multi-segment for promoted video leaves (`S/leaf`) —
+     * never use display names like `@S-leaf` as path segments.
+     */
+    fun enterDir(relativeName: String) {
+        val parts = relativeName.split('/').filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return
+        val next = segments + parts
         val nextDir = next.joinToString("/")
+        enterHopStack = enterHopStack + parts.size
         updateSegments(next)
         if (!applyCachedListing(nextDir)) {
             // Show spinner for uncached child; effect will load.
@@ -348,7 +363,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun goUp() {
         if (segments.isNotEmpty()) {
-            val next = segments.dropLast(1)
+            val hop = (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
+            enterHopStack = if (enterHopStack.isNotEmpty()) enterHopStack.dropLast(1) else enterHopStack
+            val next = segments.dropLast(hop)
             val nextDir = next.joinToString("/")
             updateSegments(next)
             // History deep-link parents are often already in session cache — paint now so
@@ -704,12 +721,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(stringResource(R.string.browse_directories))
                                 }
-                                items(dirs, key = { "d-${it.name}" }) { dir ->
+                                items(dirs, key = { "d-${it.relativeName}" }) { dir ->
                                     BrowseDirectoryGridItem(
                                         name = dir.name,
-                                        onClick = { enterDir(dir.name) },
-                                        onLongClick = { toggleDirFavorite(dir.name) },
-                                        showFavoriteStar = isDirFavorite(dir.name),
+                                        onClick = { enterDir(dir.relativeName) },
+                                        onLongClick = { toggleDirFavorite(dir.relativeName) },
+                                        showFavoriteStar = isDirFavorite(dir.relativeName),
                                     )
                                 }
                             }
@@ -786,11 +803,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 item(key = "hdr-dirs") {
                                     BrowseSectionHeader(stringResource(R.string.browse_directories))
                                 }
-                                items(dirs, key = { "d-${it.name}" }) { dir ->
+                                items(dirs, key = { "d-${it.relativeName}" }) { dir ->
                                     BrowseDirectoryRow(
                                         name = dir.name,
-                                        onClick = { enterDir(dir.name) },
-                                        onLongClick = { toggleDirFavorite(dir.name) },
+                                        onClick = { enterDir(dir.relativeName) },
+                                        onLongClick = { toggleDirFavorite(dir.relativeName) },
                                     )
                                 }
                             }
