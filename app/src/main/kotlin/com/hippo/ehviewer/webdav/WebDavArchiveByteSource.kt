@@ -20,6 +20,9 @@ import kotlinx.coroutines.runBlocking
 /**
  * Random-access WebDAV archive source for stream open (HTTP Range).
  * Same [ReadAheadArchiveByteSource] windowing as SMB; each miss is one Range GET.
+ *
+ * @param stickySession Use [WebDavClient] sticky CIO client (survives app ON_STOP).
+ *   Required for external FUSE PDF so ranging keeps working after LocalViewer backgrounds.
  */
 class WebDavArchiveByteSource(
     source: WebDavSourceEntity,
@@ -31,9 +34,10 @@ class WebDavArchiveByteSource(
     pipeline: Boolean = true,
     /** Fixed window size (default 8 MiB). */
     sequentialWindow: Int = ReadAheadArchiveByteSource.SEQUENTIAL_WINDOW,
+    stickySession: Boolean = false,
 ) : ArchiveByteSource {
     private val inner = ReadAheadArchiveByteSource(
-        inner = RawWebDavArchiveByteSource(source, password, remoteRelativeFile),
+        inner = RawWebDavArchiveByteSource(source, password, remoteRelativeFile, stickySession),
         sequentialWindow = sequentialWindow,
         preferSequential = preferSequential,
         pipeline = pipeline,
@@ -52,6 +56,7 @@ private class RawWebDavArchiveByteSource(
     private val source: WebDavSourceEntity,
     private val password: String,
     remoteRelativeFile: String,
+    private val stickySession: Boolean = false,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
 
@@ -107,7 +112,7 @@ private class RawWebDavArchiveByteSource(
             var last: Long? = null
             repeat(SIZE_ATTEMPTS) { attempt ->
                 if (closed.get()) return@withTrackedJob null
-                val size = WebDavClient.fileSizeOrNull(source, password, remote)
+                val size = WebDavClient.fileSizeOrNull(source, password, remote, sticky = stickySession)
                 last = size
                 if (size != null && size > 0L) return@withTrackedJob size
                 if (attempt < SIZE_ATTEMPTS - 1) {
@@ -144,6 +149,7 @@ private class RawWebDavArchiveByteSource(
                     buf,
                     off,
                     toRead,
+                    sticky = stickySession,
                 )
             }
         } catch (e: RemoteRangeNotSupportedException) {

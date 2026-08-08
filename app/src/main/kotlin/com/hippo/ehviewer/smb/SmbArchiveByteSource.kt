@@ -22,13 +22,16 @@ import kotlinx.coroutines.runBlocking
 /**
  * Random-access SMB archive source for stream open.
  *
- * Holds **one** open file for the reader session (via [SmbGateway.withOpenFile]) and
- * wraps it in [ReadAheadArchiveByteSource] for sequential/random windowing.
- * Dialects come from the shared gateway pool (SMB3 preferred when negotiated) —
- * smbj still uses SMB2-family message types for SMB 2.x/3.x.
+ * Holds **one** open file for the reader session and wraps it in
+ * [ReadAheadArchiveByteSource] for sequential/random windowing.
  *
- * Reconnects when the host pool closes the DiskShare (e.g. app ON_STOP) so a later
- * resume does not fail with "DiskShare has already been closed".
+ * - Default: [SmbGateway.withOpenFile] on the **shared host pool** (browse/reader).
+ *   Pool is dropped on app [Lifecycle.Event.ON_STOP].
+ * - [stickySession] = true: [SmbGateway.withStickyOpenFile] — dedicated TCP outside the
+ *   pool so external FUSE PDF viewers keep working after LocalViewer backgrounds.
+ *
+ * Reconnects when the share dies under us so a later resume does not stick on
+ * "DiskShare has already been closed".
  */
 class SmbArchiveByteSource(
     source: SmbSourceEntity,
@@ -43,9 +46,14 @@ class SmbArchiveByteSource(
     pipeline: Boolean = true,
     /** Fixed window size (default 8 MiB). */
     sequentialWindow: Int = ReadAheadArchiveByteSource.SEQUENTIAL_WINDOW,
+    /**
+     * Dedicated session outside the shared pool (survives app background).
+     * Use for [com.hippo.ehviewer.provider.StreamDocumentProvider] / external apps.
+     */
+    stickySession: Boolean = false,
 ) : ArchiveByteSource {
     private val inner = ReadAheadArchiveByteSource(
-        inner = KeepOpenSmbFileSource(source, password, remoteRelativeFile),
+        inner = KeepOpenSmbFileSource(source, password, remoteRelativeFile, stickySession),
         sequentialWindow = sequentialWindow,
         preferSequential = preferSequential,
         pipeline = pipeline,
@@ -71,6 +79,7 @@ private class KeepOpenSmbFileSource(
     private val source: SmbSourceEntity,
     private val password: String,
     remoteRelativeFile: String,
+    private val stickySession: Boolean = false,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -98,14 +107,16 @@ private class KeepOpenSmbFileSource(
                     while (isActive && !closed.get()) {
                         var opened = false
                         try {
-                            SmbGateway.withOpenFile(source, password, remote) { file, fileSize ->
+                            // Sticky: dedicated TCP for FUSE/external viewers (not ON_STOP pool).
+                            // Default: shared host pool for in-app reader/cover.
+                            fun drain(file: com.hierynomus.smbj.share.File, fileSize: Long) {
                                 opened = true
                                 if (closed.get()) {
                                     runCatching { file.close() }
-                                    return@withOpenFile
+                                    return
                                 }
                                 if (!sizeReady.isCompleted) sizeReady.complete(fileSize)
-                                // Blocking drain: withOpenFile callback is not a suspend lambda.
+                                // Blocking drain: open-file callback is not a suspend lambda.
                                 runBlocking {
                                     for (op in ops) {
                                         // Consume the coalesced signal corresponding to this op.
@@ -129,6 +140,11 @@ private class KeepOpenSmbFileSource(
                                         }
                                     }
                                 }
+                            }
+                            if (stickySession) {
+                                SmbGateway.withStickyOpenFile(source, password, remote, ::drain)
+                            } else {
+                                SmbGateway.withOpenFile(source, password, remote, ::drain)
                             }
                             break
                         } catch (e: Throwable) {

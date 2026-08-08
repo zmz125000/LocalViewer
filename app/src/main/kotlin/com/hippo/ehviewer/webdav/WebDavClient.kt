@@ -57,8 +57,10 @@ import org.xmlpull.v1.XmlPullParserFactory
  * **Engine: Ktor CIO** (pure Kotlin sockets) — not Cronet / Android HUC (they reject PROPFIND).
  *
  * Lifecycle (aligned with SMB):
- * - [onAppBackgrounded] / [onNetworkPathChanged] → [resetClient] + clear listing cache
- * - Transport / timeout errors → reset client + **one** retry
+ * - [onAppBackgrounded] → drop **browse/reader** CIO client only ([resetClient]).
+ *   Sticky client for external FUSE PDF survives so Drive can keep ranging after ON_STOP.
+ * - [onNetworkPathChanged] → drop **both** clients (path is actually gone)
+ * - Transport / timeout errors → reset the client used by that call + **one** retry
  *
  * Timeouts: list/PROPFIND shorter; GET downloads longer (per-request [timeout]).
  *
@@ -127,12 +129,23 @@ object WebDavClient {
     )
     private val cioDispatcher = cioExecutor.asCoroutineDispatcher()
 
+    /** Browse / in-app reader CIO client — closed on [onAppBackgrounded]. */
     @Volatile
     private var client: HttpClient? = null
+
+    /**
+     * External FUSE / other-app stream client — **not** closed on app background.
+     * Closing it when the user switches to Drive would kill mid-PDF range I/O.
+     */
+    @Volatile
+    private var stickyClient: HttpClient? = null
 
     // True when client was built with insecure TLS trust-all.
     @Volatile
     private var clientInsecure: Boolean = false
+
+    @Volatile
+    private var stickyClientInsecure: Boolean = false
 
     private val lastPathChangeMs = AtomicLong(0L)
 
@@ -142,7 +155,8 @@ object WebDavClient {
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
 
-    private fun http(): HttpClient {
+    private fun http(sticky: Boolean = false): HttpClient {
+        if (sticky) return stickyHttp()
         val wantInsecure = Settings.webDavInsecureTls.value
         client?.let { existing ->
             if (clientInsecure == wantInsecure) return existing
@@ -155,6 +169,23 @@ object WebDavClient {
             val built = buildClient(wantInsecure)
             client = built
             clientInsecure = wantInsecure
+            return built
+        }
+    }
+
+    private fun stickyHttp(): HttpClient {
+        val wantInsecure = Settings.webDavInsecureTls.value
+        stickyClient?.let { existing ->
+            if (stickyClientInsecure == wantInsecure) return existing
+            resetStickyClient()
+        }
+        synchronized(this) {
+            stickyClient?.let { existing ->
+                if (stickyClientInsecure == wantInsecure) return existing
+            }
+            val built = buildClient(wantInsecure)
+            stickyClient = built
+            stickyClientInsecure = wantInsecure
             return built
         }
     }
@@ -181,8 +212,8 @@ object WebDavClient {
     }
 
     /**
-     * Close CIO client (drops keep-alive sockets). Safe from any thread.
-     * Next request opens a fresh client.
+     * Close browse/reader CIO client (drops keep-alive sockets). Safe from any thread.
+     * Next request opens a fresh client. Does **not** touch the sticky FUSE client.
      */
     fun resetClient() {
         synchronized(this) {
@@ -192,37 +223,52 @@ object WebDavClient {
         }
     }
 
-    /** App background — drop half-open HTTP sockets + stale directory listings. */
+    /** Close external-stream sticky client only. */
+    fun resetStickyClient() {
+        synchronized(this) {
+            val old = stickyClient
+            stickyClient = null
+            runCatching { old?.close() }
+        }
+    }
+
+    /**
+     * App background — drop browse/reader half-open sockets + listings.
+     * Sticky FUSE client is left alone (external PDF viewers stay foreground).
+     */
     fun onAppBackgrounded() {
-        logcat { "WebDavClient: app background — reset client + listings" }
+        logcat { "WebDavClient: app background — reset browse client + listings (sticky kept)" }
         resetClient()
         BrowseSession.invalidateAllWebDavListings()
     }
 
     /**
      * Network identity change (Wi‑Fi/cell/VPN/EasyTier). Debounced like SMB.
-     * Drops CIO pool so the next PROPFIND/GET does not hang on a dead keep-alive.
+     * Drops **both** CIO pools so the next request does not hang on a dead keep-alive.
      */
     fun onNetworkPathChanged(reason: String) {
         val now = System.currentTimeMillis()
         val prev = lastPathChangeMs.getAndSet(now)
         if (prev != 0L && now - prev < PATH_CHANGE_DEBOUNCE_MS) return
-        logcat { "WebDavClient: network path changed ($reason) — reset client + listings" }
+        logcat { "WebDavClient: network path changed ($reason) — reset browse + sticky clients" }
         resetClient()
+        resetStickyClient()
         BrowseSession.invalidateAllWebDavListings()
     }
 
     /**
-     * Run [block]; on transport/timeout, [resetClient] and retry **once**.
+     * Run [block]; on transport/timeout, reset the matching client and retry **once**.
      * Auth / 4xx-style failures are not retried (they rethrow immediately).
      */
-    private suspend fun <T> withTransportRetry(block: suspend () -> T): T {
+    private suspend fun <T> withTransportRetry(sticky: Boolean = false, block: suspend () -> T): T {
         try {
             return block()
         } catch (e: Throwable) {
             if (!isRetryableTransport(e)) throw e
-            logcat { "WebDavClient: transport error — reset + one retry: ${e.message}" }
-            resetClient()
+            logcat {
+                "WebDavClient: transport error — reset ${if (sticky) "sticky" else "browse"} + one retry: ${e.message}"
+            }
+            if (sticky) resetStickyClient() else resetClient()
             return block()
         }
     }
@@ -388,20 +434,23 @@ object WebDavClient {
      * 2. Range GET `bytes=0-0` → Content-Range total (some servers restart and drop HEAD briefly)
      *
      * Null if unknown / unreachable. Never throws to callers (transport blips return null).
+     *
+     * @param sticky Use the external-FUSE CIO client (survives [onAppBackgrounded]).
      */
     suspend fun fileSizeOrNull(
         source: WebDavSourceEntity,
         password: String,
         relativeFilePath: String,
+        sticky: Boolean = false,
     ): Long? = withIOContext {
         runCatching {
             downloadSlots.withPermit {
-                withTransportRetry {
+                withTransportRetry(sticky) {
                     val url = absoluteUrl(source, relativeFilePath)
                     val auth = basicAuthHeader(source.username, password)
                     // HEAD first (cheap).
                     runCatching {
-                        val response = http().request(url) {
+                        val response = http(sticky).request(url) {
                             method = HttpMethod.Head
                             timeout {
                                 connectTimeoutMillis = LIST_CONNECT_MS
@@ -419,7 +468,7 @@ object WebDavClient {
                     }.getOrNull()?.takeIf { it > 0L }?.let { return@withTransportRetry it }
 
                     // Fallback: 1-byte Range — works when HEAD is unsupported/broken after restart.
-                    val response = http().prepareGet(url) {
+                    val response = http(sticky).prepareGet(url) {
                         timeout {
                             connectTimeoutMillis = LIST_CONNECT_MS
                             requestTimeoutMillis = LIST_REQUEST_MS
@@ -462,6 +511,7 @@ object WebDavClient {
      * Accepting that as a ranged read corrupts ZIP/TAR/PDF parsers at nonzero offsets.
      * Only `206` with a matching [Content-Range] start, or `200` at offset 0, is accepted.
      *
+     * @param sticky Use the external-FUSE CIO client (survives [onAppBackgrounded]).
      * @return bytes copied into [buf]
      * @throws RemoteRangeNotSupportedException when the server ignores Range at nonzero offset
      */
@@ -473,13 +523,14 @@ object WebDavClient {
         buf: ByteArray,
         off: Int,
         len: Int,
+        sticky: Boolean = false,
     ): Int = withIOContext {
         downloadSlots.withPermit {
-            withTransportRetry {
+            withTransportRetry(sticky) {
                 val url = absoluteUrl(source, relativeFilePath)
                 val auth = basicAuthHeader(source.username, password)
                 val end = fileOffset + len - 1
-                http().prepareGet(url) {
+                http(sticky).prepareGet(url) {
                     timeout {
                         connectTimeoutMillis = DL_CONNECT_MS
                         requestTimeoutMillis = DL_REQUEST_MS

@@ -72,6 +72,8 @@ object OpenPdfExternally {
         openStreaming(context, displayName) {
             // External PDF viewers seek randomly (xref / page objects). Pipeline + 8 MiB
             // sequential windows thrash the single SMB handle and surface as Fuse EIO spam.
+            // stickySession: dedicated TCP outside the browse/reader pool so ON_STOP
+            // (user switched to Drive) does not kill the FUSE stream mid-read.
             SmbArchiveByteSource(
                 source = source,
                 password = password,
@@ -79,6 +81,7 @@ object OpenPdfExternally {
                 preferSequential = false,
                 pipeline = false,
                 sequentialWindow = EXTERNAL_PDF_WINDOW,
+                stickySession = true,
             )
         }
     }
@@ -94,6 +97,7 @@ object OpenPdfExternally {
         }
         val password = WebDavPasswordStore.get(sourceId)
         openStreaming(context, displayName) {
+            // stickySession: separate CIO client that survives ON_STOP when Drive is foreground.
             WebDavArchiveByteSource(
                 source = source,
                 password = password,
@@ -101,6 +105,7 @@ object OpenPdfExternally {
                 preferSequential = false,
                 pipeline = false,
                 sequentialWindow = EXTERNAL_PDF_WINDOW,
+                stickySession = true,
             )
         }
     }
