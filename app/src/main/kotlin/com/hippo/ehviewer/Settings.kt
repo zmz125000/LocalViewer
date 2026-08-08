@@ -300,9 +300,10 @@ object Settings : DataStorePreferences(null) {
      * Platform high bit depth for **PNG/APNG** under [readerAdvancedColor].
      *
      * When on **and** advanced color is on: bypass Coil hardware-direct for high-depth
-     * PNG → [BitmapFactory] preferred [Bitmap.Config.RGBA_F16], preserving its source
-     * [android.graphics.ColorSpace], then optional FP16 [HardwareBuffer] wrap. AVIF/HEIF
-     * stay on the normal platform path. Default off (2× RAM). When
+     * PNG → [BitmapFactory] preferred [Bitmap.Config.RGBA_F16] in linear extended sRGB,
+     * then optional FP16 [HardwareBuffer] wrap. The decoder maps embedded WCG profiles into
+     * extended scRGB values without a post-decode pixel loop. AVIF/HEIF stay on the normal
+     * platform path. Default off (2× RAM). When
      * WCG/[readerAdvancedColor] changes, this value is forced to match (WCG drives
      * sub-toggle; sub-toggle never drives WCG).
      */

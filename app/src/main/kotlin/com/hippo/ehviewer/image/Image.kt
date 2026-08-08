@@ -18,6 +18,7 @@
 package com.hippo.ehviewer.image
 
 import android.graphics.Bitmap
+import android.graphics.ColorSpace
 import android.hardware.HardwareBuffer
 import android.os.Build
 import android.util.Log
@@ -36,6 +37,7 @@ import coil3.request.ErrorResult
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
 import coil3.request.bitmapConfig
+import coil3.request.colorSpace
 import coil3.request.maxBitmapSize
 import coil3.size.Precision
 import coil3.size.Scale
@@ -244,7 +246,8 @@ class Image private constructor(
             /**
              * PNG high bit depth: software [BitmapFactory] + preferred [Bitmap.Config.RGBA_F16]
              * (bypasses Coil hardware-direct / ImageDecoder, which often keep only 8-bit).
-             * Crop/QR off; present step preserves source color metadata and may AHB-wrap.
+             * Decode into linear extended sRGB so BitmapFactory preserves deep color and WCG
+             * without a slow post-decode transfer pass. Crop/QR off; present may AHB-wrap.
              */
             platformHbd: Boolean = false,
         ): CoilImage {
@@ -271,6 +274,7 @@ class Image private constructor(
                             allowHardware(false)
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 bitmapConfig(Bitmap.Config.RGBA_F16)
+                                colorSpace(ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB))
                             }
                             hardwareThreshold(Settings.hardwareBitmapThreshold.value)
                             maybeCropBorder(false)
@@ -350,10 +354,9 @@ class Image private constructor(
         )
 
         /**
-         * After BitmapFactory F16: preserve decoder samples + source [ColorSpace] unchanged,
-         * then optionally copy once into an FP16 HardwareBuffer. Android performs the tagged
-         * transfer/gamut conversion at draw time; a Kotlin per-pixel linearization is both
-         * redundant and prohibitively expensive for large 16-bit PNGs.
+         * BitmapFactory already converted the source profile into linear extended sRGB F16.
+         * Optionally copy those samples once into an FP16 HardwareBuffer; no post-decode
+         * transfer or gamut conversion is required.
          */
         private fun CoilImage.presentPlatformHbdLikeLibDirect(): CoilImage {
             val bi = asBitmapImage() ?: return this
