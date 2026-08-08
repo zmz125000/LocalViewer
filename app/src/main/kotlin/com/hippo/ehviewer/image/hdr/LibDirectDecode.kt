@@ -41,8 +41,8 @@ data class LibDirectResult(
  * reader present mode ([com.hippo.ehviewer.Settings.readerLibDirectBitmap]).
  *
  * ## Color management (advanced color on)
- * - **SDR Display P3:** keep P3 → [ColorSpace.Named.DISPLAY_P3] 8888 + WCG window
- * - **HDR BT.2100:** keep BT.2020 linear F16 → custom linear-BT2020 (or named PQ/HLG hint)
+ * - **Display P3:** keep linear P3 in RGBA_F16 + WCG window
+ * - **BT.2020:** keep linear BT.2020 in RGBA_F16 + WCG/HDR window as appropriate
  * - **SDR BT.709:** F16 [LINEAR_EXTENDED_SRGB] (high bit depth)
  * - Optional [HardwareBuffer] wrap for F16 (GPU-sampled)
  *
@@ -72,6 +72,26 @@ object LibDirectDecode {
                 0.797f,
                 0.131f,
                 0.046f,
+            ),
+            ColorSpace.ILLUMINANT_D65,
+            DoubleUnaryOperator { x -> x },
+            DoubleUnaryOperator { x -> x },
+            0.0f,
+            64.0f,
+        )
+    }
+
+    /** Linear extended Display P3; matches native gamut=1 F16 samples exactly. */
+    private val displayP3LinearExtended: ColorSpace by lazy {
+        ColorSpace.Rgb(
+            "Display-P3-Linear-Extended",
+            floatArrayOf(
+                0.680f,
+                0.320f,
+                0.265f,
+                0.690f,
+                0.150f,
+                0.060f,
             ),
             ColorSpace.ILLUMINANT_D65,
             DoubleUnaryOperator { x -> x },
@@ -176,6 +196,8 @@ object LibDirectDecode {
         @Suppress("UNUSED_VARIABLE")
         val tf = transferCICP
         return when {
+            // Linear F16 in Display P3 primaries (advanced WCG/deep color).
+            f16 && gamut == 1 -> displayP3LinearExtended
             // Linear F16 in BT.2020 primaries (advanced HDR preserve).
             f16 && gamut == 2 -> bt2020LinearExtended
             f16 -> ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)

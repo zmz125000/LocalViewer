@@ -20,6 +20,8 @@
 #include "ultrahdr_api.h"
 // Internal libultrahdr: build Display P3 / 709 ICC for baseline JPEG APP2.
 #include "ultrahdr/icc.h"
+// skcms (libjxl third_party) — honor JXR embedded color context (ICC).
+#include "skcms.h"
 // ultrahdrcommon.h may stub ALOG* to no-ops — restore Android logging for this TU.
 #ifdef ALOGE
 #undef ALOGE
@@ -119,39 +121,62 @@ float half_to_float(uint16_t h) {
     return v.f;
 }
 
-/**
- * Content peak of max(R,G,B) in linear scRGB (1.0 ≈ SDR / [kSdrWhiteNits] nits).
- *
- * Uses the **99.99th percentile** brightest max-component (not raw single-pixel max):
- * industry MaxCLL-like firefly rejection (CTA-861.3 strict MaxCLL is single-pixel).
- * JXR half-float fireflies otherwise inflate hdr_capacity_max and collapse Android
- * gain-map weight to SDR.
- *
- * Returns linear boost (peak_nits / 203), clamped to [1, kMaxLinear].
- */
 // jxrlib JXRGlue.h defines min/max macros — avoid std::max/min after that include.
 static inline float fmax3(float a, float b, float c) {
     float m = a > b ? a : b;
     return m > c ? m : c;
 }
 
-/** Percentile for content MaxCLL (0.9999 = top 0.01% of valid pixels). */
-static constexpr double kContentPeakPercentile = 0.9999;
+}  // namespace
 
+// Shared with jxl_hdr thumbs (declared in hdr_encode.h). Uses local half→float.
 float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count) {
     if (!rgba || pixel_count == 0) return 1.0f;
 
-    // Histogram of max(R,G,B) as absolute nits (1.0 linear → 203 nits), 1-nit bins 0..10000.
-    constexpr int kNitBins = 10001;  // 0..10000 inclusive
+    auto half_f = [](uint16_t h) -> float {
+        const uint32_t sign = (static_cast<uint32_t>(h) & 0x8000u) << 16;
+        uint32_t exp = (h >> 10) & 0x1fu;
+        uint32_t mant = h & 0x3ffu;
+        uint32_t out;
+        if (exp == 0) {
+            if (mant == 0) {
+                out = sign;
+            } else {
+                exp = 1;
+                while ((mant & 0x400u) == 0) {
+                    mant <<= 1;
+                    exp--;
+                }
+                mant &= 0x3ffu;
+                out = sign | ((127 - 15 + exp) << 23) | (mant << 13);
+            }
+        } else if (exp == 31) {
+            out = sign | 0x7f800000u | (mant << 13);
+        } else {
+            out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+        }
+        union {
+            uint32_t u;
+            float f;
+        } v{out};
+        return v.f;
+    };
+    auto mx3 = [](float a, float b, float c) {
+        float m = a > b ? a : b;
+        return m > c ? m : c;
+    };
+
+    constexpr double kPct = 0.9999;
+    constexpr int kNitBins = 10001;
     std::vector<uint32_t> nit_counts(static_cast<size_t>(kNitBins), 0);
     int raw_max_nits = 0;
     uint64_t valid = 0;
 
     for (size_t i = 0; i < pixel_count; i++) {
-        const float r = half_to_float(rgba[i * 4 + 0]);
-        const float g = half_to_float(rgba[i * 4 + 1]);
-        const float b = half_to_float(rgba[i * 4 + 2]);
-        float m = fmax3(r, g, b);
+        const float r = half_f(rgba[i * 4 + 0]);
+        const float g = half_f(rgba[i * 4 + 1]);
+        const float b = half_f(rgba[i * 4 + 2]);
+        float m = mx3(r, g, b);
         if (!std::isfinite(m) || m <= 0.f) continue;
         valid++;
         float nits_f = m * kSdrWhiteNits;
@@ -164,9 +189,8 @@ float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count) {
     }
     if (valid == 0) return 1.0f;
 
-    // Walk from brightest bin until we have covered the top (1 - percentile) of valid pixels.
-    const uint64_t count_target = static_cast<uint64_t>(
-        std::llround((1.0 - kContentPeakPercentile) * static_cast<double>(valid)));
+    const uint64_t count_target =
+        static_cast<uint64_t>(std::llround((1.0 - kPct) * static_cast<double>(valid)));
     const uint64_t need = count_target < 1 ? 1 : count_target;
     uint64_t count = 0;
     int maxcll_nits = raw_max_nits;
@@ -184,6 +208,8 @@ float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count) {
     return peak;
 }
 
+namespace {
+
 bool guid_eq(const PKPixelFormatGUID& a, const PKPixelFormatGUID& b) {
     return memcmp(&a, &b, sizeof(PKPixelFormatGUID)) == 0;
 }
@@ -191,43 +217,45 @@ bool guid_eq(const PKPixelFormatGUID& a, const PKPixelFormatGUID& b) {
 /**
  * JXR/WDP pixel families we expand to linear F16 RGBA.
  *
- * HDR (linear scRGB, 1.0 ≈ paper white): half / float / 13.3 fixed-point / 101010.
- * SDR (gamma-encoded, typically sRGB): 8/16-bit integer RGB(A)/BGR(A)/gray —
- * common for classic .wdp from Windows Photo Gallery / cameras (libjxr decodes
- * these; we previously rejected them as "Unsupported").
+ * Microsoft default (no color context): integer → sRGB; half/float/fixed → scRGB.
+ * With embedded color context, ICC takes priority (skcms after expand).
+ *
+ * HDR (linear scRGB, 1.0 ≈ paper white): half / float / 13.3 fixed-point.
+ * SDR unsigned integer (sRGB-encoded by default): 8/16-bit RGB(A)/BGR(A)/gray + RGB101010.
  */
 enum class JxrPix {
     RgbaF32,
+    RgbaF32Prem,  // 128bppPRGBAFloat — must unpremultiply
     RgbaF16,
-    Rgb101010,
-    Fixed16,   // signed 13.3 fixed-point linear scRGB (HD Photo HDR)
-    Bgr8,      // 24bppBGR / 32bppBGR (B,G,R[,X])
-    Bgra8,     // 32bppBGRA
-    Pbgra8,    // 32bppPBGRA (premultiplied)
-    Rgb8,      // 24bppRGB
-    Rgba8,     // 32bppRGBA / 32bppRGB (R,G,B[,A])
-    Prgba8,    // 32bppPRGBA
-    Rgb16,     // 48bppRGB (u16 gamma)
-    Rgba16,    // 64bppRGBA / PRGBA (u16 gamma)
+    Rgb101010,    // unsigned 10-bit; jxrlib R@20 G@10 B@0; default sRGB-encoded
+    Fixed16,      // signed 13.3 fixed-point linear scRGB (HD Photo HDR)
+    Bgr8,         // 24bppBGR / 32bppBGR (B,G,R[,X])
+    Bgra8,        // 32bppBGRA
+    Pbgra8,       // 32bppPBGRA (premultiplied)
+    Rgb8,         // 24bppRGB
+    Rgba8,        // 32bppRGBA / 32bppRGB (R,G,B[,A])
+    Prgba8,       // 32bppPRGBA
+    Rgb16,        // 48bppRGB (u16 gamma)
+    Rgba16,       // 64bppRGBA / PRGBA (u16 gamma)
     Gray8,
     Gray16,
     Unsupported,
 };
 
 JxrPix classify_guid(const PKPixelFormatGUID& g) {
-    // ── HDR linear ────────────────────────────────────────────────────────
+    // ── HDR linear (scRGB when untagged) ──────────────────────────────────
     if (guid_eq(g, GUID_PKPixelFormat128bppRGBAFloat)) return JxrPix::RgbaF32;
-    if (guid_eq(g, GUID_PKPixelFormat128bppPRGBAFloat)) return JxrPix::RgbaF32;
+    if (guid_eq(g, GUID_PKPixelFormat128bppPRGBAFloat)) return JxrPix::RgbaF32Prem;
     if (guid_eq(g, GUID_PKPixelFormat128bppRGBFloat)) return JxrPix::RgbaF32;
     if (guid_eq(g, GUID_PKPixelFormat96bppRGBFloat)) return JxrPix::RgbaF32;
     if (guid_eq(g, GUID_PKPixelFormat64bppRGBAHalf)) return JxrPix::RgbaF16;
     if (guid_eq(g, GUID_PKPixelFormat64bppRGBHalf)) return JxrPix::RgbaF16;
     if (guid_eq(g, GUID_PKPixelFormat48bppRGBHalf)) return JxrPix::RgbaF16;
-    if (guid_eq(g, GUID_PKPixelFormat32bppRGB101010)) return JxrPix::Rgb101010;
     if (guid_eq(g, GUID_PKPixelFormat48bppRGBFixedPoint)) return JxrPix::Fixed16;
     if (guid_eq(g, GUID_PKPixelFormat64bppRGBAFixedPoint)) return JxrPix::Fixed16;
     if (guid_eq(g, GUID_PKPixelFormat64bppRGBFixedPoint)) return JxrPix::Fixed16;
-    // ── SDR integer (gamma → linear via sRGB EOTF) ────────────────────────
+    // ── Unsigned integer (default sRGB-encoded; RGB101010 bit order per jxrlib PFC) ──
+    if (guid_eq(g, GUID_PKPixelFormat32bppRGB101010)) return JxrPix::Rgb101010;
     if (guid_eq(g, GUID_PKPixelFormat24bppBGR)) return JxrPix::Bgr8;
     if (guid_eq(g, GUID_PKPixelFormat32bppBGR)) return JxrPix::Bgr8;
     if (guid_eq(g, GUID_PKPixelFormat32bppBGRA)) return JxrPix::Bgra8;
@@ -242,6 +270,115 @@ JxrPix classify_guid(const PKPixelFormatGUID& g) {
     if (guid_eq(g, GUID_PKPixelFormat8bppGray)) return JxrPix::Gray8;
     if (guid_eq(g, GUID_PKPixelFormat16bppGray)) return JxrPix::Gray16;
     return JxrPix::Unsupported;
+}
+
+/**
+ * Build linear sRGB destination for skcms (BT.709/sRGB primaries + identity TRC).
+ * Output floats are linear light suitable for libultrahdr (1.0 ≈ paper white).
+ */
+void skcms_linear_srgb_profile(skcms_ICCProfile* dst) {
+    skcms_Init(dst);
+    skcms_SetTransferFunction(dst, skcms_Identity_TransferFunction());
+    const skcms_ICCProfile* srgb = skcms_sRGB_profile();
+    if (srgb && srgb->has_toXYZD50) {
+        skcms_SetXYZD50(dst, &srgb->toXYZD50);
+    }
+}
+
+/**
+ * Apply embedded JXR color context with its **full** ICC (TRC + matrix).
+ *
+ * WIC: pixel format does not define color space; color context takes priority.
+ * Callers must expand numeric samples as **encoded** in the ICC (no default
+ * sRGB EOTF / scRGB linear assumption). Do not strip TRC based on float vs int.
+ *
+ * Output is linear sRGB F16 (1.0 ≈ paper white).
+ */
+bool apply_jxr_color_context(std::vector<uint16_t>& rgba, size_t npx, const uint8_t* icc,
+                             size_t icc_len) {
+    if (!icc || icc_len < 128 || npx == 0) return false;
+    skcms_ICCProfile src{};
+    if (!skcms_Parse(icc, icc_len, &src)) {
+        ALOGI("JXR ICC present (%zu B) but skcms_Parse failed", icc_len);
+        return false;
+    }
+    skcms_ICCProfile dst{};
+    skcms_linear_srgb_profile(&dst);
+    if (!skcms_MakeUsableAsDestination(&dst)) {
+        ALOGI("JXR ICC: linear sRGB dest not usable");
+        return false;
+    }
+    // skcms supports IEEE-754 half pixels directly. Transforming the existing
+    // F16 frame in place avoids a second full-frame RGBA_F32 allocation (16 B/px),
+    // which otherwise causes GC/native-memory pressure before Bitmap presentation.
+    if (!skcms_Transform(rgba.data(), skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul, &src,
+                         rgba.data(), skcms_PixelFormat_RGBA_hhhh, skcms_AlphaFormat_Unpremul, &dst,
+                         npx)) {
+        ALOGI("JXR ICC skcms_Transform failed");
+        return false;
+    }
+    for (size_t i = 0; i < npx; i++) {
+        auto clamp01p = [](float v) {
+            if (!std::isfinite(v) || v < 0.f) return 0.f;
+            if (v > kMaxLinear) return kMaxLinear;
+            return v;
+        };
+        rgba[i * 4 + 0] = float_to_half(clamp01p(half_to_float(rgba[i * 4 + 0])));
+        rgba[i * 4 + 1] = float_to_half(clamp01p(half_to_float(rgba[i * 4 + 1])));
+        rgba[i * 4 + 2] = float_to_half(clamp01p(half_to_float(rgba[i * 4 + 2])));
+        float a = half_to_float(rgba[i * 4 + 3]);
+        if (!std::isfinite(a) || a < 0.f) a = 0.f;
+        if (a > 1.f) a = 1.f;
+        rgba[i * 4 + 3] = float_to_half(a);
+    }
+    ALOGI("JXR ICC applied via skcms (%zu B, full TRC)", icc_len);
+    return true;
+}
+
+/** Encoded [0,1] F16 samples → linear via sRGB EOTF (ICC transform fallback). */
+void apply_srgb_eotf_in_place(std::vector<uint16_t>& rgba, size_t npx) {
+    for (size_t i = 0; i < npx; i++) {
+        const float r = srgb_eotf(half_to_float(rgba[i * 4 + 0]));
+        const float g = srgb_eotf(half_to_float(rgba[i * 4 + 1]));
+        const float b = srgb_eotf(half_to_float(rgba[i * 4 + 2]));
+        rgba[i * 4 + 0] = float_to_half(r);
+        rgba[i * 4 + 1] = float_to_half(g);
+        rgba[i * 4 + 2] = float_to_half(b);
+        // alpha unchanged
+    }
+}
+
+/**
+ * Straight-alpha → composite on black, force opaque.
+ * JPEG / libultrahdr read only RGB and ignore A; transparent edges otherwise show
+ * pre-composite colors. Matches JXL path.
+ */
+void composite_straight_alpha_on_black(std::vector<uint16_t>& rgba, size_t npx) {
+    for (size_t i = 0; i < npx; i++) {
+        float a = half_to_float(rgba[i * 4 + 3]);
+        if (!std::isfinite(a) || a < 0.f) a = 0.f;
+        if (a > 1.f) a = 1.f;
+        if (a >= 1.f) {
+            rgba[i * 4 + 3] = float_to_half(1.f);
+            continue;
+        }
+        float r = half_to_float(rgba[i * 4 + 0]);
+        float g = half_to_float(rgba[i * 4 + 1]);
+        float b = half_to_float(rgba[i * 4 + 2]);
+        if (!std::isfinite(r) || r < 0.f) r = 0.f;
+        if (!std::isfinite(g) || g < 0.f) g = 0.f;
+        if (!std::isfinite(b) || b < 0.f) b = 0.f;
+        r *= a;
+        g *= a;
+        b *= a;
+        if (r > kMaxLinear) r = kMaxLinear;
+        if (g > kMaxLinear) g = kMaxLinear;
+        if (b > kMaxLinear) b = kMaxLinear;
+        rgba[i * 4 + 0] = float_to_half(r);
+        rgba[i * 4 + 1] = float_to_half(g);
+        rgba[i * 4 + 2] = float_to_half(b);
+        rgba[i * 4 + 3] = float_to_half(1.f);
+    }
 }
 
 /** Log GUID for Unsupported diagnostics (family last byte is often enough). */
@@ -301,9 +438,12 @@ bool setup_full_frame(PKImageDecode* dec, PKPixelFormatGUID* fmt) {
  * Decode JXR from an in-memory buffer (no temp file).
  * Same approach as branch `hdr` HdrJxr: CreateStreamFromMemory + native pixel format.
  * SAF/local paths: Kotlin reads via Okio → bytes → this (skips copy-to-temp.jxr).
+ *
+ * @param composite_alpha_on_black true for JPEG/UHDR (no alpha plane) — flatten
+ *   straight alpha onto black. false for direct Bitmap display — keep A.
  */
 bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
-                            unsigned& w, unsigned& h) {
+                            unsigned& w, unsigned& h, bool composite_alpha_on_black = true) {
     if (!data || len == 0) return false;
 
     PKFactory* factory = nullptr;
@@ -386,6 +526,36 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
         return false;
     }
 
+    // Embedded color context (ICC) takes priority over pixel-format defaults (WIC).
+    std::vector<uint8_t> color_ctx;
+    {
+        U32 cb = 0;
+        ERR cc = decoder->GetColorContext(decoder, nullptr, &cb);
+        if (!Failed(cc) && cb > 0 && cb < (16u * 1024u * 1024u)) {
+            color_ctx.resize(cb);
+            cc = decoder->GetColorContext(decoder, color_ctx.data(), &cb);
+            if (Failed(cc) || cb == 0) {
+                color_ctx.clear();
+            } else {
+                color_ctx.resize(cb);
+            }
+        }
+    }
+    // WIC: valid color context wins over integer→sRGB / float→scRGB inference.
+    // Any parseable ICC (including ≈sRGB) is applied with its full TRC — do not
+    // assume float storage is linear when a context is present.
+    bool have_valid_icc = false;
+    if (!color_ctx.empty()) {
+        skcms_ICCProfile probe{};
+        have_valid_icc = skcms_Parse(color_ctx.data(), color_ctx.size(), &probe);
+        if (!have_valid_icc) {
+            ALOGI("JXR color context %zu B unparsable — Microsoft default inference",
+                  color_ctx.size());
+        }
+    }
+    // Expand numeric samples as encoded for skcms; without ICC use default TF.
+    const bool expand_as_encoded = have_valid_icc;
+
     /* Decode in native format — no jxrlib format conversion (half→float Convert
      * produces vertical stripe garbage). Integer SDR expands below with sRGB EOTF. */
     if (!setup_full_frame(decoder, &guid)) {
@@ -408,6 +578,7 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
         guid_eq(guid, GUID_PKPixelFormat96bppRGBFloat);
     const bool rgba_float = guid_eq(guid, GUID_PKPixelFormat128bppRGBAFloat) ||
         guid_eq(guid, GUID_PKPixelFormat128bppPRGBAFloat);
+    const bool rgba_float_prem = guid_eq(guid, GUID_PKPixelFormat128bppPRGBAFloat);
     const bool fixed_has_a = guid_eq(guid, GUID_PKPixelFormat64bppRGBAFixedPoint);
     const bool rgba16_has_a = guid_eq(guid, GUID_PKPixelFormat64bppRGBA) ||
         guid_eq(guid, GUID_PKPixelFormat64bppPRGBA);
@@ -451,10 +622,15 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
         out_rgba[i * 4 + 3] = float_to_half(a);
     };
     auto store_enc_rgb = [&](size_t i, float er, float eg, float eb, float ea) {
-        out_rgba[i * 4 + 0] = enc_to_lin_half(er);
-        out_rgba[i * 4 + 1] = enc_to_lin_half(eg);
-        out_rgba[i * 4 + 2] = enc_to_lin_half(eb);
-        out_rgba[i * 4 + 3] = float_to_half(ea);
+        if (expand_as_encoded) {
+            // Keep encoded; skcms applies ICC TRC + matrix → linear sRGB.
+            store_lin(i, er, eg, eb, ea);
+        } else {
+            out_rgba[i * 4 + 0] = enc_to_lin_half(er);
+            out_rgba[i * 4 + 1] = enc_to_lin_half(eg);
+            out_rgba[i * 4 + 2] = enc_to_lin_half(eb);
+            out_rgba[i * 4 + 3] = float_to_half(ea);
+        }
     };
 
     if (rgba_half || rgb_half) {
@@ -479,18 +655,31 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
                 const float* p =
                     reinterpret_cast<const float*>(row + static_cast<size_t>(x) * src_bpp);
                 const size_t i = static_cast<size_t>(y) * w + x;
-                store_lin(i, p[0], p[1], p[2], has_a ? p[3] : 1.0f);
+                float r = p[0], g = p[1], b = p[2];
+                float a = has_a ? p[3] : 1.0f;
+                if (rgba_float_prem) {
+                    if (a > 1e-6f) {
+                        r /= a;
+                        g /= a;
+                        b /= a;
+                    } else {
+                        r = g = b = 0.f;
+                    }
+                }
+                store_lin(i, r, g, b, a);
             }
         }
         ok = true;
     } else if (pix == JxrPix::Rgb101010) {
-        // Keep prior linear 0–1 expand (rare for Win screenshots; not gamma-encoded sRGB).
+        // jxrlib RGB101010_RGB48: R = (v>>20)&0x3FF, G = (v>>10)&0x3FF, B = v&0x3FF.
+        // Unsigned integer → sRGB-encoded by Microsoft default (not linear scRGB).
         for (size_t i = 0; i < npx; i++) {
             uint32_t p;
             memcpy(&p, raw.data() + i * 4, 4);
-            store_lin(i, static_cast<float>((p >> 0) & 0x3ff) / 1023.0f,
-                      static_cast<float>((p >> 10) & 0x3ff) / 1023.0f,
-                      static_cast<float>((p >> 20) & 0x3ff) / 1023.0f, 1.0f);
+            const float r = static_cast<float>((p >> 20) & 0x3ff) / 1023.0f;
+            const float g = static_cast<float>((p >> 10) & 0x3ff) / 1023.0f;
+            const float b = static_cast<float>((p >> 0) & 0x3ff) / 1023.0f;
+            store_enc_rgb(i, r, g, b, 1.0f);
         }
         ok = true;
     } else if (pix == JxrPix::Fixed16) {
@@ -623,10 +812,28 @@ bool decode_jxr_from_memory(const uint8_t* data, size_t len, std::vector<uint16_
     }
 
     release_all();
-    return ok;
+    if (!ok) return false;
+
+    // Honor embedded ICC after expand (color context > pixel-format inference).
+    if (have_valid_icc) {
+        // Samples are still encoded in the ICC; apply full TRC + matrix.
+        if (!apply_jxr_color_context(out_rgba, npx, color_ctx.data(), color_ctx.size())) {
+            // Transform failed while we skipped default TF — recover with sRGB EOTF
+            // so encoded integers/floats are not left as fake linear.
+            ALOGI("JXR ICC transform failed — fallback sRGB EOTF");
+            apply_srgb_eotf_in_place(out_rgba, npx);
+        }
+    }
+    // JPEG/UHDR have no alpha plane — flatten only when the caller will encode
+    // to those formats. Direct display keeps straight alpha for transparency.
+    if (composite_alpha_on_black) {
+        composite_straight_alpha_on_black(out_rgba, npx);
+    }
+    return true;
 }
 
 // Path helper: load whole file into memory then decode (no jxrlib file I/O).
+// Path convert is always UHDR/JPEG → composite alpha.
 bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, unsigned& w,
                             unsigned& h) {
     std::ifstream in(path, std::ios::binary | std::ios::ate);
@@ -642,7 +849,8 @@ bool decode_jxr_to_rgba_f16(const char* path, std::vector<uint16_t>& out_rgba, u
         ALOGE("read JXR failed: %s", path);
         return false;
     }
-    return decode_jxr_from_memory(buf.data(), buf.size(), out_rgba, w, h);
+    return decode_jxr_from_memory(buf.data(), buf.size(), out_rgba, w, h,
+                                  /*composite_alpha_on_black=*/true);
 }
 
 }  // namespace
@@ -788,10 +996,12 @@ int encode_baseline_sdr_jpeg(unsigned w, unsigned h, const uint16_t* rgba, const
 /**
  * Encode LINEAR half-float RGB → Ultra HDR JPEG (HDR) or baseline JPEG (pure SDR).
  *
- * Default libultrahdr LINEAR peak is 10000 nits → hdr_capacity_max ≈ 49.
- * On a phone with display boost ≈ 4, Android applies:
- *   weight = log(display) / log(capacity) ≈ log(4)/log(49) ≈ 0.25  → looks SDR.
- * Match camera Ultra HDR: capacity ≈ content peak so weight ≈ 1 on phones.
+ * Capacity: uhdr_enc_set_target_display_peak_brightness sets displayRatioForFullHdr
+ * (hdr_capacity_max) ≈ peak_nits/203. Prefer that field at display time — not ratioMax.
+ *
+ * Note (libultrahdr API-0, HDR raw only): set_min_max_content_boost may not fully
+ * shrink gain-map ratioMax to content_peak; one-pass path can leave ratioMax near
+ * 10000/203 ≈ 49. Keep target_display_peak_brightness for correct capacity.
  *
  * Pure SDR ([force_hdr] false and peak ≤ 1.0): baseline JPEG only — no gain map.
  *
@@ -896,14 +1106,14 @@ int encode_linear_rgba_f16_to_uhdr(unsigned w, unsigned h, const uint16_t* rgba,
         return -6;
     }
 
-    // Content boost (linear): min=1 (SDR base), max=content peak.
+    // Hint only — API-0 one-pass may still emit ratioMax ≈ 49; capacity is set below.
     err = uhdr_enc_set_min_max_content_boost(enc, 1.0f, content_peak);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_min_max_content_boost: %s", err.has_detail ? err.detail : "error");
         uhdr_release_encoder(enc);
         return -7;
     }
-    // Sets hdr_capacity_max ≈ peak_nits / 203 ≈ content_peak (not 49).
+    // Sets displayRatioForFullHdr / hdr_capacity_max ≈ peak_nits / 203.
     err = uhdr_enc_set_target_display_peak_brightness(enc, peak_nits);
     if (err.error_code != UHDR_CODEC_OK) {
         ALOGE("uhdr_enc_set_target_display_peak_brightness: %s",
@@ -961,17 +1171,22 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
         const float r = half_to_float(rgba[i * 4 + 0]);
         const float g = half_to_float(rgba[i * 4 + 1]);
         const float b = half_to_float(rgba[i * 4 + 2]);
-        float m = fmax3(r, g, b);
+        float a = half_to_float(rgba[i * 4 + 3]);
+        if (!std::isfinite(a) || a <= 0.f) continue;
+        if (a > 1.f) a = 1.f;
+        // Buffers are straight-alpha. Invisible RGB must not force HDR mode;
+        // evaluate the linear contribution that Android actually composites.
+        float m = fmax3(r, g, b) * a;
         if (std::isfinite(m) && m > peak) peak = m;
     }
     if (peak < 1.f) peak = 1.f;
     if (peak > kMaxLinear) peak = kMaxLinear;
 
     const bool is_hdr = force_hdr || peak > 1.25f;
-    // Advanced + SDR Display P3: keep source primaries for true WCG.
-    const bool preserve_p3 = advanced_color && !is_hdr && cg == UHDR_CG_DISPLAY_P3;
-    // Advanced + HDR BT.2100: keep BT.2020 linear for correct WCG+HDR tagging.
-    const bool preserve_bt2100 = advanced_color && is_hdr && cg == UHDR_CG_BT_2100;
+    // Advanced color preserves the decoded working gamut at every precision/DR.
+    // Kotlin tags the Bitmap with the matching linear ColorSpace.
+    const bool preserve_p3 = advanced_color && cg == UHDR_CG_DISPLAY_P3;
+    const bool preserve_bt2100 = advanced_color && cg == UHDR_CG_BT_2100;
     const bool need_rematrix = (cg == UHDR_CG_DISPLAY_P3 || cg == UHDR_CG_BT_2100) &&
         !preserve_p3 && !preserve_bt2100;
 
@@ -1012,13 +1227,29 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
         *out_transfer = preserve_bt2100 ? transfer_cicp : 0;
     }
 
-    // High bit depth F16: HDR always; advanced SDR unless preserving P3 as 8888+DISPLAY_P3.
-    const bool use_f16 = is_hdr || (advanced_color && !preserve_p3);
+    // HDR always needs extended F16. Advanced color keeps deep precision for all
+    // gamuts, including SDR P3/BT.2020 (never silently quantize those paths to 8-bit).
+    const bool use_f16 = is_hdr || advanced_color;
     if (out_is_hdr) *out_is_hdr = is_hdr ? 1 : 0;
     if (out_boost) *out_boost = is_hdr ? peak : 1.f;
     if (out_format) *out_format = use_f16 ? 1 : 0;
 
     if (use_f16) {
+        // Android Canvas/View rendering requires premultiplied bitmap storage.
+        // Decoder handoff is straight alpha, so associate it once at this final
+        // presentation boundary, after gamut conversion and peak measurement.
+        for (size_t i = 0; i < pixels; i++) {
+            float r = half_to_float(rgba[i * 4 + 0]);
+            float g = half_to_float(rgba[i * 4 + 1]);
+            float b = half_to_float(rgba[i * 4 + 2]);
+            float a = half_to_float(rgba[i * 4 + 3]);
+            if (!std::isfinite(a) || a < 0.f) a = 0.f;
+            if (a > 1.f) a = 1.f;
+            rgba[i * 4 + 0] = float_to_half(clamp_nonneg(r) * a);
+            rgba[i * 4 + 1] = float_to_half(clamp_nonneg(g) * a);
+            rgba[i * 4 + 2] = float_to_half(clamp_nonneg(b) * a);
+            rgba[i * 4 + 3] = float_to_half(a);
+        }
         // Leave packed F16 in [rgba] — no second 66 MiB memcpy buffer.
         out_pixels.clear();
         ALOGI("direct pack F16 %ux%u peak=%.3f hdr=%d advanced=%d gamut=%d tf=%d", w, h, peak,
@@ -1035,9 +1266,10 @@ int pack_linear_f16_for_direct(std::vector<uint16_t>& rgba, unsigned w, unsigned
         float a = half_to_float(rgba[i * 4 + 3]);
         if (!std::isfinite(a) || a < 0.f) a = 0.f;
         if (a > 1.f) a = 1.f;
-        out_pixels[i * 4 + 0] = linear_to_srgb_u8(r);
-        out_pixels[i * 4 + 1] = linear_to_srgb_u8(g);
-        out_pixels[i * 4 + 2] = linear_to_srgb_u8(b);
+        // RGBA_8888 is premultiplied in its encoded color space.
+        out_pixels[i * 4 + 0] = static_cast<uint8_t>(srgb_oetf(r) * a * 255.f + 0.5f);
+        out_pixels[i * 4 + 1] = static_cast<uint8_t>(srgb_oetf(g) * a * 255.f + 0.5f);
+        out_pixels[i * 4 + 2] = static_cast<uint8_t>(srgb_oetf(b) * a * 255.f + 0.5f);
         out_pixels[i * 4 + 3] = static_cast<uint8_t>(a * 255.f + 0.5f);
     }
     // Drop F16 staging before caller allocates the Java byte[] / Bitmap.
@@ -1280,9 +1512,11 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_convertJxrBytesToUltraHdrMaxEdge(
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }
-        // JXR thumbs: HDR-oriented format → fixed 1000 nits, no scan.
+        // JXR thumbs: HDR from scanned peak (not format); capacity = content peak nits.
+        const float peak = scan_scrgb_peak(rgba.data(), static_cast<size_t>(w) * h);
+        const bool force_hdr = peak > 1.25f;
         rc = encode_linear_rgba_f16_to_uhdr(w, h, rgba.data(), out_path, UHDR_CG_BT_709,
-                                           kHdrThumbNits, /*force_hdr=*/true);
+                                           thumb_peak_nits_from_linear(peak), force_hdr);
     } else {
         rc = -21;
     }
@@ -1314,8 +1548,9 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxrBytesToDirect(JNIEnv* env, jcl
     std::vector<uint16_t> rgba;
     unsigned w = 0, h = 0;
     jbyteArray result = nullptr;
+    // Preserve transparency: do not composite onto black (UHDR convert paths do).
     if (decode_jxr_from_memory(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len),
-                               rgba, w, h)) {
+                               rgba, w, h, /*composite_alpha_on_black=*/false)) {
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));
         }

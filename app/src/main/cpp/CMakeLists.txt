@@ -396,6 +396,8 @@ if (EHVIEWER_HDR_CODECS)
             ${EH_JPEG_INCLUDE_DIRS}
             # ultrahdr/icc.h (IccHelper) for baseline P3 ICC embed
             ${libultrahdr_SOURCE_DIR}/lib/include
+            # skcms (bundled with libjxl) for JXR embedded color-context transform
+            ${libjxl_SOURCE_DIR}/third_party/skcms
     )
     list(APPEND EHVIEWER_HDR_LIBS ${EH_JPEG_LIB})
 endif ()
