@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui
 
 import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -29,9 +30,14 @@ import okio.Path.Companion.toPath
 /**
  * Open a PDF in an external app (system / third-party reader).
  *
- * Local + network use a grantable [StreamDocumentProvider] URI backed by
+ * Local + network always use a grantable [StreamDocumentProvider] URI backed by
  * [com.hippo.ehviewer.library.ArchiveByteSource] range I/O — **no full download**
- * for SMB/WebDAV when the viewer seeks. SAF `content://` paths are passed through.
+ * for SMB/WebDAV when the viewer seeks.
+ *
+ * SAF tree document URIs (`content://…externalstorage…/tree/…/document/…`) are **not**
+ * passed through: the grant lives on LocalViewer; chooser + Drive often cannot open them
+ * (spaces in tree ids like `Quick Share` make it worse). We open the PFD ourselves and
+ * re-export via streamdoc.
  *
  * Tap-to-open in the in-app image PDF engine is unchanged; call this from long-press.
  */
@@ -42,20 +48,24 @@ object OpenPdfExternally {
      * Local browse path (filesystem, SAF document, or MediaStore-style string).
      */
     suspend fun openLocal(context: Context, pathStr: String, displayName: String = File(pathStr).name) {
-        if (pathStr.startsWith("content:")) {
-            launchView(context, pathStr.toUri(), displayName)
-            return
-        }
-        val file = File(pathStr)
-        if (file.isFile) {
-            openStreaming(context, displayName) { FileArchiveByteSource(file) }
-            return
-        }
-        // SAF / other path types: open via PFD like the in-app document reader.
-        val path: Path = pathStr.toPath()
+        // applicationContext: openSource may run later on the FUSE handler thread after the
+        // Activity is stopped (user already switched to the PDF viewer).
+        val app = context.applicationContext
         openStreaming(context, displayName) {
-            val pfd = path.openFileDescriptor("r")
-            PfdArchiveByteSource(pfd, ownsPfd = true)
+            when {
+                pathStr.startsWith("content:") -> {
+                    val pfd = app.contentResolver.openFileDescriptor(pathStr.toUri(), "r")
+                        ?: error("cannot open document: $displayName")
+                    PfdArchiveByteSource(pfd, ownsPfd = true)
+                }
+                File(pathStr).isFile -> FileArchiveByteSource(File(pathStr))
+                else -> {
+                    // MediaStore virtual / okio Path SAF document string.
+                    val path: Path = pathStr.toPath()
+                    val pfd = path.openFileDescriptor("r")
+                    PfdArchiveByteSource(pfd, ownsPfd = true)
+                }
+            }
         }
     }
 
@@ -151,10 +161,14 @@ object OpenPdfExternally {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             // Chooser may run in a new task when not started from an Activity base.
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // Without ClipData, FLAG_GRANT_READ_URI_PERMISSION is often ignored for the
+            // app the user picks in createChooser (streamdoc grant would not reach Drive).
+            clipData = ClipData.newRawUri(displayName, uri)
         }
         val title = context.getString(R.string.open_in_other_app)
         val chooser = Intent.createChooser(view, title).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         withUIContext {
             try {
