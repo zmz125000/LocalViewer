@@ -81,13 +81,19 @@ suspend inline fun <T> useDocumentExtractPageLoader(
 
         // Prefer durable page list: skip PDF page-tree / EPUB OPF on reopen.
         val cachedIdx = DocumentExtractCache.loadUsableIndex(cacheKey, remoteSize = sizeHint)
-        val engine: DocumentImageEngine = openDocumentEngine(
-            source = source,
-            sizeHint = sizeHint,
-            formatHint = formatHint,
-            titleHint = titleHint,
-            cacheKey = cacheKey,
-            cachedIndex = cachedIdx,
+        // Close engine with the reader session (DocumentImageEngine is AutoCloseable).
+        val engine: DocumentImageEngine = install(
+            {
+                openDocumentEngine(
+                    source = source,
+                    sizeHint = sizeHint,
+                    formatHint = formatHint,
+                    titleHint = titleHint,
+                    cacheKey = cacheKey,
+                    cachedIndex = cachedIdx,
+                )
+            },
+            { value, _ -> value.close() },
         )
 
         check(engine.pageCount > 0) { "Document has no playable images" }
@@ -427,20 +433,24 @@ internal fun openDocumentEngine(
         cachedIndex?.format == "pdf"
     return when {
         isEpub -> {
-            if (cachedIndex != null) {
+            // Bind elvis to the whole if (not only the last branch).
+            val engine = if (cachedIndex != null) {
                 EpubEngine.openFromIndex(source, cachedIndex, remoteSize = sizeHint)
                     ?: EpubEngine.open(source, remoteSize = sizeHint, coverOnly = false)
             } else {
                 EpubEngine.open(source, remoteSize = sizeHint, coverOnly = false)
-            } ?: error("Not a readable EPUB/ZIP")
+            }
+            engine ?: error("Not a readable EPUB/ZIP")
         }
         isPdf -> {
-            if (cachedIndex != null) {
+            // Same: openFromIndex / open are nullable; elvis must cover both branches.
+            val engine = if (cachedIndex != null) {
                 PdfImageEngine.openFromIndex(source, cachedIndex, remoteSize = sizeHint)
                     ?: PdfImageEngine.open(source, remoteSize = sizeHint, coverOnly = false)
             } else {
                 PdfImageEngine.open(source, remoteSize = sizeHint, coverOnly = false)
-            } ?: error("Not a readable PDF (encrypted or unsupported)")
+            }
+            engine ?: error("Not a readable PDF (encrypted or unsupported)")
         }
         else -> error("Unsupported document format: $formatHint")
     }
