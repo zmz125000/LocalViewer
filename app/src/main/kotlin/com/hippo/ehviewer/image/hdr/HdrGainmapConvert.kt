@@ -23,19 +23,25 @@ import com.ehviewer.core.util.isAtLeastU
  */
 object HdrGainmapConvert {
     /**
-     * Content peak boost from gain-map [Gainmap.ratioMax] (linear), read-only.
-     * Prefer max(ratioMax); include [Gainmap.displayRatioForFullHdr] only when it is
-     * already content-sized (&lt; 20×), never clamp or reattach the gain map.
+     * Content / display capacity from gain-map metadata (linear), read-only.
+     *
+     * Prefer [Gainmap.displayRatioForFullHdr] (Ultra HDR HDRCapacityMax) — that is
+     * what we set via libultrahdr target peak brightness. Do **not** trust
+     * [Gainmap.ratioMax] as capacity: libultrahdr API-0 (HDR raw only) often leaves
+     * ratioMax near 10000/203 ≈ 49 even when content peak is much lower.
      */
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     fun contentPeakBoost(gm: Gainmap): Float {
+        val full = gm.displayRatioForFullHdr
+        if (full.isFinite() && full >= 1f) {
+            return full.coerceIn(1f, 64f)
+        }
+        // Fallback only when capacity is missing/invalid.
         val maxArr = gm.ratioMax
         var m = 1f
         for (v in maxArr) {
             if (v.isFinite() && v > m) m = v
         }
-        val full = gm.displayRatioForFullHdr
-        if (full.isFinite() && full > 1f && full < 20f && full > m) m = full
         return m.coerceIn(1f, 64f)
     }
 

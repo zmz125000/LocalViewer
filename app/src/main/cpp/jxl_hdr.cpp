@@ -1,8 +1,8 @@
 /*
- * JPEG XL → Ultra HDR JPEG via libjxl + libultrahdr.
+ * JPEG XL → one linear RGBA_F16 working contract via libjxl's CMS.
  *
- * Always-convert path (platform ImageDecoder is unreliable for HDR JXL).
- * Linear half-float in source-ish primaries → encode_linear_rgba_f16_to_uhdr.
+ * The decoder CMS owns transfer + gamut conversion for both XYB and original-
+ * profile/modular images. This file never applies a second manual EOTF.
  *
  * JNI: com.hippo.ehviewer.jni.HdrConvertKt.convertJxlBytesToUltraHdr
  */
@@ -15,6 +15,8 @@
 #include <cstring>
 #include <vector>
 
+#include <jxl/cms.h>
+#include <jxl/color_encoding.h>
 #include <jxl/decode.h>
 #include <jxl/decode_cxx.h>
 #include <jxl/resizable_parallel_runner_cxx.h>
@@ -54,57 +56,44 @@ uint16_t float_to_half(float f) {
     return static_cast<uint16_t>(half);
 }
 
-float pq_eotf(float n) {
-    if (n <= 0.f) return 0.f;
-    if (n >= 1.f) n = 1.f;
-    const float m1 = 0.1593017578125f;
-    const float m2 = 78.84375f;
-    const float c1 = 0.8359375f;
-    const float c2 = 18.8515625f;
-    const float c3 = 18.6875f;
-    const float np = std::pow(n, 1.f / m2);
-    float num = np - c1;
-    if (num < 0.f) num = 0.f;
-    const float den = c2 - c3 * np;
-    if (den <= 1e-6f) return 10000.f;
-    return 10000.f * std::pow(num / den, 1.f / m1);
+void set_linear_rgb(JxlColorEncoding* enc, JxlPrimaries primaries) {
+    *enc = {};
+    enc->color_space = JXL_COLOR_SPACE_RGB;
+    enc->white_point = JXL_WHITE_POINT_D65;
+    enc->primaries = primaries;
+    enc->transfer_function = JXL_TRANSFER_FUNCTION_LINEAR;
+    enc->rendering_intent = JXL_RENDERING_INTENT_RELATIVE;
 }
 
-float hlg_inv_oetf(float x) {
-    if (x <= 0.f) return 0.f;
-    if (x >= 1.f) x = 1.f;
-    const float a = 0.17883277f;
-    const float b = 0.28466892f;
-    const float c = 0.55991073f;
-    if (x <= 0.5f) return (x * x) / 3.f;
-    return (std::exp((x - c) / a) + b) / 12.f;
-}
-
-uhdr_color_gamut_t map_jxl_primaries(const JxlColorEncoding& enc) {
-    // JXL primaries enum: 1=sRGB, 9=P3, 11=BT.2100/BT.2020 (values follow CICP-ish)
-    switch (enc.primaries) {
-        case JXL_PRIMARIES_SRGB:
-            return UHDR_CG_BT_709;
-        case JXL_PRIMARIES_P3:
-            return UHDR_CG_DISPLAY_P3;
-        case JXL_PRIMARIES_2100:
-            return UHDR_CG_BT_2100;
-        default:
-            if (enc.transfer_function == JXL_TRANSFER_FUNCTION_PQ ||
-                enc.transfer_function == JXL_TRANSFER_FUNCTION_HLG) {
-                return UHDR_CG_BT_2100;
-            }
-            return UHDR_CG_BT_709;
+/** Pick a known linear destination; [out_cg] always names the resulting samples. */
+void choose_linear_output(const JxlColorEncoding* src, bool have_src, bool is_pq, bool is_hlg,
+                          JxlColorEncoding* out, uhdr_color_gamut_t* out_cg) {
+    if (is_pq || is_hlg || (have_src && src->primaries == JXL_PRIMARIES_2100)) {
+        set_linear_rgb(out, JXL_PRIMARIES_2100);
+        *out_cg = UHDR_CG_BT_2100;
+    } else if (have_src && src->primaries == JXL_PRIMARIES_P3) {
+        set_linear_rgb(out, JXL_PRIMARIES_P3);
+        *out_cg = UHDR_CG_DISPLAY_P3;
+    } else if (have_src && src->primaries == JXL_PRIMARIES_SRGB) {
+        set_linear_rgb(out, JXL_PRIMARIES_SRGB);
+        *out_cg = UHDR_CG_BT_709;
+    } else {
+        // ICC-only/custom content gets a wide linear intermediate. The CMS does
+        // the conversion, so tagging it BT.2020 is accurate rather than a hint.
+        set_linear_rgb(out, JXL_PRIMARIES_2100);
+        *out_cg = UHDR_CG_BT_2100;
     }
 }
 
 /**
- * Decode JXL → linear RGBA half (1.0 ≈ SDR white).
+ * Decode JXL → straight-alpha linear RGBA half (1.0 ≈ 203-nit SDR white).
+ * [composite_alpha_on_black] is true only for JPEG/UHDR destinations.
  * @return 0 OK
  */
 int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16_t>& out_rgba,
                              unsigned& w, unsigned& h, uhdr_color_gamut_t* out_cg,
-                             bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr) {
+                             bool* out_force_hdr = nullptr, int* out_transfer_cicp = nullptr,
+                             bool composite_alpha_on_black = true) {
     if (out_cg) *out_cg = UHDR_CG_BT_709;
     if (out_force_hdr) *out_force_hdr = false;
     if (out_transfer_cicp) *out_transfer_cicp = 0;
@@ -114,10 +103,21 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
     auto dec = JxlDecoderMake(nullptr);
     if (!dec) return -2;
 
+    const JxlCmsInterface* cms = JxlGetDefaultCms();
+    if (!cms) {
+        ALOGE("libjxl default CMS unavailable");
+        return -3;
+    }
+    if (JxlDecoderSetCms(dec.get(), *cms) != JXL_DEC_SUCCESS) {
+        ALOGE("libjxl default CMS setup failed");
+        return -3;
+    }
+    (void)JxlDecoderSetUnpremultiplyAlpha(dec.get(), JXL_TRUE);
+
     if (JxlDecoderSubscribeEvents(dec.get(),
                                   JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE) !=
         JXL_DEC_SUCCESS) {
-        return -3;
+        return -4;
     }
     JxlDecoderSetParallelRunner(dec.get(), JxlResizableParallelRunner, runner.get());
 
@@ -125,8 +125,11 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
     JxlDecoderCloseInput(dec.get());
 
     JxlBasicInfo info{};
-    JxlColorEncoding color_encoding{};
-    bool have_color = false;
+    JxlColorEncoding src_encoding{};
+    bool have_src = false;
+    bool is_pq = false;
+    bool is_hlg = false;
+    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
     std::vector<float> pixels;
     JxlPixelFormat format = {4, JXL_TYPE_FLOAT, JXL_NATIVE_ENDIAN, 0};
 
@@ -134,33 +137,45 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
         JxlDecoderStatus status = JxlDecoderProcessInput(dec.get());
         if (status == JXL_DEC_ERROR) {
             ALOGE("JxlDecoderProcessInput error");
-            return -4;
+            return -5;
         }
         if (status == JXL_DEC_NEED_MORE_INPUT) {
             ALOGE("JXL truncated");
-            return -5;
+            return -6;
         }
         if (status == JXL_DEC_BASIC_INFO) {
-            if (JxlDecoderGetBasicInfo(dec.get(), &info) != JXL_DEC_SUCCESS) return -6;
+            if (JxlDecoderGetBasicInfo(dec.get(), &info) != JXL_DEC_SUCCESS) return -7;
             w = info.xsize;
             h = info.ysize;
-            if (w == 0 || h == 0 || w > 16384 || h > 16384) return -7;
+            if (w == 0 || h == 0 || w > 16384 || h > 16384) return -8;
             JxlResizableParallelRunnerSetThreads(
                 runner.get(), JxlResizableParallelRunnerSuggestThreads(w, h));
         } else if (status == JXL_DEC_COLOR_ENCODING) {
-            if (JxlDecoderGetColorAsEncodedProfile(dec.get(), JXL_COLOR_PROFILE_TARGET_DATA,
-                                                   &color_encoding) == JXL_DEC_SUCCESS) {
-                have_color = true;
+            have_src = JxlDecoderGetColorAsEncodedProfile(
+                           dec.get(), JXL_COLOR_PROFILE_TARGET_ORIGINAL, &src_encoding) ==
+                JXL_DEC_SUCCESS;
+            if (have_src) {
+                is_pq = src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_PQ;
+                is_hlg = src_encoding.transfer_function == JXL_TRANSFER_FUNCTION_HLG;
             }
+            JxlColorEncoding linear_output{};
+            choose_linear_output(have_src ? &src_encoding : nullptr, have_src, is_pq, is_hlg,
+                                 &linear_output, &cg);
+            if (JxlDecoderSetOutputColorProfile(dec.get(), &linear_output, nullptr, 0) !=
+                JXL_DEC_SUCCESS) {
+                ALOGE("libjxl cannot convert source profile to linear output");
+                return -9;
+            }
+            if (out_cg) *out_cg = cg;
         } else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
             size_t buffer_size = 0;
             if (JxlDecoderImageOutBufferSize(dec.get(), &format, &buffer_size) != JXL_DEC_SUCCESS) {
-                return -8;
+                return -10;
             }
             pixels.resize(buffer_size / sizeof(float));
             if (JxlDecoderSetImageOutBuffer(dec.get(), &format, pixels.data(), buffer_size) !=
                 JXL_DEC_SUCCESS) {
-                return -9;
+                return -11;
             }
         } else if (status == JXL_DEC_FULL_IMAGE) {
             break;
@@ -169,36 +184,13 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
         }
     }
 
-    if (pixels.empty() || w == 0 || h == 0) return -10;
-
-    uhdr_color_gamut_t cg = UHDR_CG_BT_709;
-    bool is_pq = false;
-    bool is_hlg = false;
-    // No color box → treat as sRGB-encoded (not linear). Linear default wrongly
-    // applied intensity scaling to ordinary gallery JXL.
-    bool is_linear = false;
-    if (have_color) {
-        cg = map_jxl_primaries(color_encoding);
-        is_pq = color_encoding.transfer_function == JXL_TRANSFER_FUNCTION_PQ;
-        is_hlg = color_encoding.transfer_function == JXL_TRANSFER_FUNCTION_HLG;
-        // PQ/HLG are absolute; LINEAR is relative linear. sRGB/709/gamma stay encoded.
-        is_linear = color_encoding.transfer_function == JXL_TRANSFER_FUNCTION_LINEAR;
-        if (is_pq || is_hlg) {
-            is_linear = false;  // absolute TF path below, not the relative-linear branch
-        }
-    }
-    if (out_cg) *out_cg = cg;
+    if (pixels.empty() || w == 0 || h == 0) return -12;
 
     // BasicInfo.intensity_target: libjxl default for SDR is **255** nits — NOT HDR.
-    // Only treat as absolute-HDR white when PQ/HLG, or clearly HDR linear (≥400).
     const float intensity = info.intensity_target;
-    const bool intensity_hdr =
-        std::isfinite(intensity) && intensity >= 400.f;
-    // force_hdr drives window COLOR_MODE_HDR. Never use intensity alone: SDR
-    // JXL commonly has intensity_target=255 → was falsely force_hdr with ">250".
-    if (out_force_hdr) {
-        *out_force_hdr = is_pq || is_hlg;
-    }
+    const bool intensity_hdr = std::isfinite(intensity) && intensity >= 400.f;
+    const bool declared_hdr = is_pq || is_hlg || intensity_hdr;
+    if (out_force_hdr) *out_force_hdr = declared_hdr;
     if (out_transfer_cicp) {
         if (is_pq) {
             *out_transfer_cicp = 16;  // SMPTE ST 2084 PQ (CICP)
@@ -212,40 +204,33 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
     const size_t pixels_n = static_cast<size_t>(w) * static_cast<size_t>(h);
     out_rgba.resize(pixels_n * 4);
 
+    // CMS output is normalized linear RGB. Preserve absolute HDR headroom using
+    // the codestream intensity target; SDR's common 255-nit metadata stays 1.0.
+    float scale = 1.f;
+    if (declared_hdr) {
+        float peak_nits = intensity;
+        if (!std::isfinite(peak_nits) || peak_nits < 1.f) peak_nits = 1000.f;
+        scale = peak_nits / kSdrWhiteNits;
+        if (scale < 1.f) scale = 1.f;
+        if (scale > kMaxLinear) scale = kMaxLinear;
+    }
+
     for (size_t i = 0; i < pixels_n; i++) {
         float r = pixels[i * 4 + 0];
         float g = pixels[i * 4 + 1];
         float b = pixels[i * 4 + 2];
         float a = pixels[i * 4 + 3];
 
-        float rl, gl, bl;
-        if (is_pq) {
-            rl = pq_eotf(r) / kSdrWhiteNits;
-            gl = pq_eotf(g) / kSdrWhiteNits;
-            bl = pq_eotf(b) / kSdrWhiteNits;
-        } else if (is_hlg) {
-            rl = hlg_inv_oetf(r) * 12.f;
-            gl = hlg_inv_oetf(g) * 12.f;
-            bl = hlg_inv_oetf(b) * 12.f;
-        } else if (is_linear) {
-            // Relative linear from libjxl (1.0 ≈ white). Scale only when the
-            // container declares a clear HDR peak (≥400 nits); 255 is SDR default.
-            if (intensity_hdr) {
-                const float s = intensity / kSdrWhiteNits;
-                rl = r * s;
-                gl = g * s;
-                bl = b * s;
-            } else {
-                rl = r;
-                gl = g;
-                bl = b;
-            }
-        } else {
-            // sRGB / BT.709 / gamma-encoded 0..1 → linear (IEC 61966-2-1 sRGB EOTF).
-            // Do **not** use r*r (gamma 2.0) — that mismatches pack's sRGB OETF.
-            rl = srgb_eotf(r);
-            gl = srgb_eotf(g);
-            bl = srgb_eotf(b);
+        float rl = r * scale;
+        float gl = g * scale;
+        float bl = b * scale;
+        if (!std::isfinite(a) || a < 0.f) a = 0.f;
+        if (a > 1.f) a = 1.f;
+        if (composite_alpha_on_black && a < 1.f) {
+            rl *= a;
+            gl *= a;
+            bl *= a;
+            a = 1.f;
         }
 
         auto clamp_hf = [](float v) {
@@ -256,18 +241,15 @@ int decode_jxl_to_linear_f16(const uint8_t* data, size_t len, std::vector<uint16
         rl = clamp_hf(rl);
         gl = clamp_hf(gl);
         bl = clamp_hf(bl);
-        if (a < 0.f) a = 0.f;
-        if (a > 1.f) a = 1.f;
-
         out_rgba[i * 4 + 0] = float_to_half(rl);
         out_rgba[i * 4 + 1] = float_to_half(gl);
         out_rgba[i * 4 + 2] = float_to_half(bl);
         out_rgba[i * 4 + 3] = float_to_half(a);
     }
 
-    ALOGI("JXL %ux%u cg=%d pq=%d hlg=%d lin=%d intensity=%.1f force_hdr=%d", w, h, (int)cg,
-          is_pq ? 1 : 0, is_hlg ? 1 : 0, is_linear ? 1 : 0, intensity,
-          (is_pq || is_hlg) ? 1 : 0);
+    ALOGI("JXL CMS %ux%u cg=%d pq=%d hlg=%d intensity=%.1f scale=%.3f hdr=%d composite=%d",
+          w, h, (int)cg, is_pq ? 1 : 0, is_hlg ? 1 : 0, intensity, scale,
+          declared_hdr ? 1 : 0, composite_alpha_on_black ? 1 : 0);
     return 0;
 }
 
@@ -374,7 +356,7 @@ Java_com_hippo_ehviewer_jni_HdrConvertKt_decodeJxlBytesToDirect(JNIEnv* env, jcl
     jbyteArray result = nullptr;
     int rc = decode_jxl_to_linear_f16(reinterpret_cast<const uint8_t*>(bytes),
                                       static_cast<size_t>(len), rgba, w, h, &cg, &force_hdr,
-                                      &transfer_cicp);
+                                      &transfer_cicp, /*composite_alpha_on_black=*/false);
     if (rc == 0) {
         if (maxEdge > 0) {
             scale_rgba_f16_max_edge(rgba, w, h, static_cast<unsigned>(maxEdge));

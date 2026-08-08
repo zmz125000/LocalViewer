@@ -9,13 +9,22 @@
 #include "ultrahdr_api.h"
 
 /**
- * Shared Ultra HDR / baseline JPEG encode (google/libultrahdr + libjpeg-turbo).
- * Linear half-float RGBA in the declared gamut, 1.0 ≈ SDR / 203 nits graphics white.
+ * Shared contract for native still decode, direct Bitmap pack, and JPEG/UHDR encode.
+ *
+ * Every decoder must hand off straight-alpha RGBA F16 in linear light. [cg] names
+ * the actual RGB primaries of those samples; it is never a source-profile hint.
+ * 1.0 is SDR reference white (203 nits), HDR is represented by values above 1.0,
+ * and transfer conversion must already be complete before this API is called.
+ * JPEG/UHDR callers flatten alpha once. Direct Bitmap pack preserves alpha and
+ * premultiplies RGB exactly once, as required by Android's drawing pipeline.
  *
  * Capacity / content boost (Ultra HDR only):
  * - [fixed_peak_nits] ≤ 0: p99.99 MaxCLL-style pixel scan (full pages).
  * - [fixed_peak_nits] > 0: skip scan; use this MaxCLL in nits.
  *   Thumbs: [kSdrWhiteNits] when known SDR, [kHdrThumbNits] when known HDR — no scan.
+ * - displayRatioForFullHdr is set via target_display_peak_brightness (trust this).
+ * - ratioMax may stay ~49 under libultrahdr API-0 HDR-raw one-pass — do not assume
+ *   set_min_max_content_boost fully content-matches the gain-map range.
  *
  * Pure SDR ([force_hdr] false and content peak ≤ 1.0): **baseline JPEG** (no gain map),
  * so tools report ratio 1.0 / no Ultra HDR metadata. libultrahdr would otherwise
@@ -56,9 +65,24 @@ constexpr float kMaxLinear = kMaxNits / kSdrWhiteNits;
 /** Fixed MaxCLL for known-HDR thumbs (no peak scan). */
 constexpr float kHdrThumbNits = 1000.0f;
 
-/** Thumb fixed peak: 203 for known SDR, 1000 for known HDR — never scan. */
+/** Thumb fixed peak: 203 for known SDR, 1000 for known HDR. */
 inline float thumb_fixed_peak_nits(bool force_hdr) {
     return force_hdr ? kHdrThumbNits : kSdrWhiteNits;
+}
+
+/**
+ * Content peak of max(R,G,B) in linear F16 (1.0 ≈ [kSdrWhiteNits] nits).
+ * 99.99th percentile MaxCLL-style (rejects fireflies). Used by full-page encode
+ * and by JXL/JXR thumbs after resize.
+ */
+float scan_scrgb_peak(const uint16_t* rgba, size_t pixel_count);
+
+/** Nits for thumb encode from scanned linear peak (clamped). */
+inline float thumb_peak_nits_from_linear(float peak_linear) {
+    float nits = kSdrWhiteNits * peak_linear;
+    if (nits < kSdrWhiteNits) nits = kSdrWhiteNits;
+    if (nits > kMaxNits) nits = kMaxNits;
+    return nits;
 }
 
 // ── IEC 61966-2-1 sRGB transfer (shared by pack + JXL/AVIF decode) ───────────
@@ -117,15 +141,14 @@ inline void linear_bt2020_to_bt709(float& r, float& g, float& b) {
  * Pack linear F16 RGBA (1.0 ≈ SDR / 203 nits) for direct Android Bitmap present
  * (skip Ultra HDR JPEG convert).
  *
- * Linear RGB is assumed in [cg] primaries. [rgba] is mutated in-place when a
- * rematrix is required (no second full-frame buffer).
+ * Linear straight-alpha RGB is assumed in [cg] primaries. [rgba] is mutated
+ * in-place for any rematrix and for Android premultiplication (no second frame).
  *
  * Color policy:
  * - Default HDR: rematrix wide → BT.709/scRGB, RGBA_F16 linear.
- * - Advanced + HDR BT.2100: **keep BT.2020 primaries**, F16 linear (Kotlin tags
- *   linear-BT2020 / BT2020_PQ|HLG metadata via [out_transfer]).
- * - Advanced + SDR Display P3: **keep P3**, gamma OETF → RGBA_8888 (DISPLAY_P3).
- * - Advanced + SDR BT.709: RGBA_F16 linear scRGB (high bit depth).
+ * - Advanced + BT.2100: **keep BT.2020 primaries**, RGBA_F16 linear.
+ * - Advanced + Display P3: **keep P3 primaries**, RGBA_F16 linear.
+ * - Advanced + BT.709: RGBA_F16 linear scRGB.
  * - Default SDR: rematrix wide → 709, RGBA_8888 sRGB OETF.
  *
  * Memory contract (critical on 256 MiB Java heaps):
