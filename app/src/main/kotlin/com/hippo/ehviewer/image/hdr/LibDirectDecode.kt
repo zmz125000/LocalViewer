@@ -8,7 +8,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
-import com.hippo.ehviewer.image.tryHardwareF16Wrap
+import com.hippo.ehviewer.image.tryHardwareF16FromPixels
 import com.hippo.ehviewer.jni.decodeAvifBytesToDirect
 import com.hippo.ehviewer.jni.decodeJxlBytesToDirect
 import com.hippo.ehviewer.jni.decodeJxrBytesToDirect
@@ -127,14 +127,18 @@ object LibDirectDecode {
         if (w <= 0 || h <= 0) return null
         val f16 = format == 1
         val colorSpace = resolveColorSpace(f16, gamut, transfer)
-        val software = pixelsToSoftwareBitmap(packed.pixels, w, h, f16, colorSpace) ?: return null
-        // Drop the intermediate Java pixel buffer as soon as the Bitmap owns a copy.
-        // (local ref ends after this function; no extra hold.)
-        val bitmap = if (packed.advanced && f16) {
-            tryHardwareF16Wrap(software) ?: software
+        // Default advanced/F16 path: copy the JNI result straight into a HardwareBuffer.
+        // This removes the ByteArray → software Bitmap → AHB double copy while preserving
+        // the exact linear scRGB/BT.2020 ColorSpace chosen above. Fall back to software on
+        // unsupported devices or when the reader hardware-bitmap preference is disabled.
+        val hardware = if (packed.advanced && f16 && Settings.readerHardwareBitmap.value) {
+            tryHardwareF16FromPixels(packed.pixels, w, h, colorSpace)
         } else {
-            software
+            null
         }
+        val bitmap = hardware
+            ?: pixelsToSoftwareBitmap(packed.pixels, w, h, f16, colorSpace)
+            ?: return null
         val boost = packed.outBoost[0].coerceIn(1f, 64f)
         val wide = gamut == 1 || gamut == 2 ||
             (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && bitmap.colorSpace?.isWideGamut == true)

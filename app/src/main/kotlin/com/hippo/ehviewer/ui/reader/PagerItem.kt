@@ -72,17 +72,20 @@ fun PagerItem(
     modifier: Modifier = Modifier,
     contentModifier: Modifier = Modifier,
     viewportSize: Size = Size.Zero,
+    prioritizeDecode: Boolean = false,
 ) {
     // Do NOT cancelRequest on dispose — that raced with notifySourceReady and left pages
     // in Queued with no active decode job (forever spinner) even when the file was cached.
     // Decodes are semaphore-limited and finish into the memory cache for revisit.
-    LaunchedEffect(page.index, pageLoader) {
-        pageLoader.request(page.index)
+    LaunchedEffect(page.index, pageLoader, prioritizeDecode) {
+        pageLoader.request(page.index, prioritize = prioritizeDecode)
         // Re-request when status falls back to Queued (eviction / restart) or blank Error.
         page.statusFlow.drop(1).collect { status ->
             when (status) {
-                PageStatus.Queued -> pageLoader.request(page.index)
-                is PageStatus.Error -> if (status.message == null) pageLoader.request(page.index)
+                PageStatus.Queued -> pageLoader.request(page.index, prioritize = prioritizeDecode)
+                is PageStatus.Error -> if (status.message == null) {
+                    pageLoader.request(page.index, prioritize = prioritizeDecode)
+                }
                 else -> Unit
             }
         }
@@ -120,7 +123,7 @@ fun PagerItem(
                     // Recycled / dead image still marked Ready — force a clean reload.
                     painter = null
                     pageLoader.notifyPageWait(page.index)
-                    pageLoader.request(page.index)
+                    pageLoader.request(page.index, prioritize = prioritizeDecode)
                     return@LaunchedEffect
                 }
                 painter = image.toPainter()

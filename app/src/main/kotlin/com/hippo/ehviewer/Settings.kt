@@ -300,10 +300,11 @@ object Settings : DataStorePreferences(null) {
      * Platform high bit depth for **PNG/APNG** under [readerAdvancedColor].
      *
      * When on **and** advanced color is on: bypass Coil hardware-direct for high-depth
-     * PNG → [BitmapFactory] preferred [Bitmap.Config.RGBA_F16], then linearize + optional
-     * FP16 [HardwareBuffer] wrap (same present path as lib-direct). AVIF/HEIF stay on the
-     * normal platform path. Default off (2× RAM). When WCG/[readerAdvancedColor] changes,
-     * this value is forced to match (WCG drives sub-toggle; sub-toggle never drives WCG).
+     * PNG → [BitmapFactory] preferred [Bitmap.Config.RGBA_F16], preserving its source
+     * [android.graphics.ColorSpace], then optional FP16 [HardwareBuffer] wrap. AVIF/HEIF
+     * stay on the normal platform path. Default off (2× RAM). When
+     * WCG/[readerAdvancedColor] changes, this value is forced to match (WCG drives
+     * sub-toggle; sub-toggle never drives WCG).
      */
     val readerPlatformHighDepth = boolPref("pref_reader_platform_high_depth", false)
 

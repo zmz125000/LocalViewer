@@ -3,12 +3,10 @@ package com.hippo.ehviewer.gallery
 import android.os.Handler
 import android.os.Looper
 import androidx.collection.SieveCache
-import androidx.collection.mutableIntObjectMapOf
 import androidx.compose.runtime.mutableIntStateOf
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.bracketCase
 import com.ehviewer.core.model.GalleryInfo
-import com.ehviewer.core.util.withNonCancellableContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
@@ -32,6 +30,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -83,7 +83,7 @@ abstract class PageLoader(
 
     var startPage = if (size <= 0) 0 else startPage.coerceIn(0, size - 1)
 
-    private val jobs = mutableIntObjectMapOf<Job>()
+    private val jobs = HashMap<Int, Job>()
     private val mutex = NamedMutex<Int>()
 
     /**
@@ -123,16 +123,20 @@ abstract class PageLoader(
         bracketCase(
             { openSource(index) },
             { raw ->
-                withNonCancellableContext {
-                    val checkAds = hasAds && detectAds(index, size)
-                    val image = tryDecodeLibDirect(raw, forceOriginal)
-                        ?: Image.decode(
-                            DisplaySource.ensureReady(raw),
-                            checkExtraneousAds = checkAds,
-                            forceOriginal = forceOriginal,
-                        )
-                    notifyPageSucceed(index, image)
+                val checkAds = hasAds && detectAds(index, size)
+                val image = tryDecodeLibDirect(raw, forceOriginal)
+                    ?: Image.decode(
+                        DisplaySource.ensureReady(raw),
+                        checkExtraneousAds = checkAds,
+                        forceOriginal = forceOriginal,
+                    )
+                try {
+                    currentCoroutineContext().ensureActive()
+                } catch (e: CancellationException) {
+                    image.unpin()
+                    throw e
                 }
+                notifyPageSucceed(index, image)
             },
             { src, case -> if (case !is ExitCase.Completed) src.close() },
         )
@@ -200,8 +204,31 @@ abstract class PageLoader(
     private val prefetchPageCount = Settings.preloadImage.value
 
     fun restart() {
+        cancelDecodeJobs()
         lock.write { cache.evictAll() }
         pages.forEach(Page::reset)
+    }
+
+    /**
+     * Cancel queued/offscreen work before a pager-current request. Native codec calls cannot
+     * be interrupted mid-call, but removing non-cancellable wrapping prevents obsolete jobs
+     * from continuing through bitmap copies and publishing stale results afterward.
+     */
+    private fun prioritizeDecode(index: Int) {
+        val obsolete = synchronized(jobs) {
+            jobs.entries
+                .filter { (jobIndex, job) -> jobIndex != index && job.isActive }
+                .map { it.key to it.value }
+                .also { stale -> stale.forEach { (jobIndex, _) -> jobs.remove(jobIndex) } }
+        }
+        obsolete.forEach { (_, job) -> job.cancel() }
+    }
+
+    private fun cancelDecodeJobs() {
+        val active = synchronized(jobs) {
+            jobs.values.toList().also { jobs.clear() }
+        }
+        active.forEach { it.cancel() }
     }
 
     private val prevIndex = AtomicInt(-1)
@@ -251,6 +278,7 @@ abstract class PageLoader(
     }
 
     override fun close() {
+        cancelDecodeJobs()
         lock.write { cache.evictAll() }
         info?.let { gallery ->
             progressScope.launch {
@@ -268,8 +296,9 @@ abstract class PageLoader(
         FileUtils.sanitizeFilename("$title - ${index + 1}.${it.lowercase()}")
     }
 
-    fun request(index: Int) {
+    fun request(index: Int, prioritize: Boolean = false) {
         if (index !in 0 until size) return
+        if (prioritize) prioritizeDecode(index)
         val prefetchRange = if (index >= prevIndex.load()) {
             index + 1..(index + prefetchPageCount).coerceAtMost(size - 1)
         } else {
