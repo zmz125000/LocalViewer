@@ -91,9 +91,11 @@ import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
+import com.hippo.ehviewer.ui.destinations.EasyTierScreenDestination
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
+import com.hippo.ehviewer.ui.easytier.EasyTierDialog
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.CoverImage
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
@@ -122,6 +124,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     var keyword by rememberSaveable { mutableStateOf("") }
     var searchFocused by rememberSaveable { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
+    var showEasyTierDialog by remember { mutableStateOf(false) }
 
     // Survive NavHost dispose/restore (e.g. open favourite folder → back).
     // collectAsState(initial=empty) remounted an empty list for one frame and
@@ -371,7 +374,10 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 ) {
                     if (showFavorites) {
                         item(key = "fav-hdr") {
-                            BrowseSectionHeader(stringResource(R.string.favourite))
+                            BrowseSectionHeader(
+                                text = stringResource(R.string.favourite),
+                                onClick = { showEasyTierDialog = true },
+                            )
                         }
                         items(favorites, key = { "fav-${it.key}" }) { fav ->
                             when (fav) {
@@ -426,7 +432,10 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             key = "fav-hdr",
                             span = { GridItemSpan(maxLineSpan) },
                         ) {
-                            BrowseSectionHeader(stringResource(R.string.favourite))
+                            BrowseSectionHeader(
+                                text = stringResource(R.string.favourite),
+                                onClick = { showEasyTierDialog = true },
+                            )
                         }
                         items(favorites, key = { "fav-${it.key}" }) { fav ->
                             FavoriteSourceGridCell(
@@ -479,6 +488,16 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
         }
+    }
+
+    if (showEasyTierDialog) {
+        EasyTierDialog(
+            onDismiss = { showEasyTierDialog = false },
+            onOpenFullSettings = {
+                showEasyTierDialog = false
+                navigate(EasyTierScreenDestination)
+            },
+        )
     }
 }
 
