@@ -6,6 +6,13 @@ external fun releaseByteBuffer(buffer: ByteBuffer)
 external fun openArchive(fd: Int, size: Long, sortEntries: Boolean): Int
 
 /**
+ * Request cooperative abort of in-flight native archive work (stream pread / libarchive
+ * callbacks / extract loops). Cleared when a new native session opens.
+ * Pair with [com.hippo.ehviewer.library.ArchiveAccess] reader preemption.
+ */
+external fun requestArchiveAbort()
+
+/**
  * Open archive via [com.hippo.ehviewer.library.ArchiveStreamBridge] (seek/read callbacks).
  * Does not mmap the full file — for remote ZIP/CBZ/TAR/CBT stream open.
  *

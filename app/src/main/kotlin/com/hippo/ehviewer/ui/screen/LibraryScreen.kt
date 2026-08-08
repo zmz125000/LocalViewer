@@ -2,7 +2,7 @@ package com.hippo.ehviewer.ui.screen
 
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,11 +50,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -218,6 +220,24 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         notifyFavoriteToggle(BrowseFavorites.toggleGallery(gallery.id))
     }
 
+    /** Favourites strip: long-press always unfavourites (toggle on a pin removes it). */
+    fun toggleFavorite(fav: FavoriteBrowseSource) {
+        notifyFavoriteToggle(
+            when (fav) {
+                is FavoriteBrowseSource.Local -> BrowseFavorites.toggleLocal(fav.root.id)
+                is FavoriteBrowseSource.Smb -> BrowseFavorites.toggleSmb(fav.source.id)
+                is FavoriteBrowseSource.WebDav -> BrowseFavorites.toggleWebDav(fav.source.id)
+                is FavoriteBrowseSource.Gallery -> BrowseFavorites.toggleGallery(fav.gallery.id)
+                is FavoriteBrowseSource.LocalFolder ->
+                    BrowseFavorites.toggleLocalFolder(fav.root.id, fav.relativePath)
+                is FavoriteBrowseSource.SmbFolder ->
+                    BrowseFavorites.toggleSmbFolder(fav.source.id, fav.relativePath)
+                is FavoriteBrowseSource.WebDavFolder ->
+                    BrowseFavorites.toggleWebDavFolder(fav.source.id, fav.relativePath)
+            },
+        )
+    }
+
     fun openFavorite(fav: FavoriteBrowseSource) {
         when (fav) {
             is FavoriteBrowseSource.Local -> {
@@ -358,7 +378,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                 is FavoriteBrowseSource.Gallery -> LocalGalleryListItem(
                                     gallery = fav.gallery,
                                     onClick = { openGallery(fav.gallery) },
-                                    onLongClick = { toggleGalleryFavorite(fav.gallery) },
+                                    onLongClick = { toggleFavorite(fav) },
                                     showPages = showPages,
                                     showProgress = showProgress,
                                     modifier = Modifier
@@ -368,6 +388,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                 else -> FavoriteSourceListRow(
                                     fav = fav,
                                     onClick = { openFavorite(fav) },
+                                    onLongClick = { toggleFavorite(fav) },
                                 )
                             }
                         }
@@ -411,13 +432,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             FavoriteSourceGridCell(
                                 fav = fav,
                                 onClick = { openFavorite(fav) },
-                                onLongClick = {
-                                    when (fav) {
-                                        is FavoriteBrowseSource.Gallery ->
-                                            toggleGalleryFavorite(fav.gallery)
-                                        else -> openFavorite(fav)
-                                    }
-                                },
+                                onLongClick = { toggleFavorite(fav) },
                             )
                         }
                         if (galleries.isNotEmpty()) {
@@ -471,7 +486,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
 private fun FavoriteSourceListRow(
     fav: FavoriteBrowseSource,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
+    val haptic = LocalHapticFeedback.current
     ListItem(
         headlineContent = {
             Text(fav.displayName)
@@ -484,7 +501,15 @@ private fun FavoriteSourceListRow(
                 tint = MaterialTheme.colorScheme.primary,
             )
         },
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                },
+            ),
     )
 }
 

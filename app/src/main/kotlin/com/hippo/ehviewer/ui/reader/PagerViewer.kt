@@ -263,6 +263,7 @@ private fun PageContainer(
             pageLoader = pageLoader,
             contentScale = ContentScale.Inside,
             viewportSize = layoutSize,
+            prioritizeDecode = pagerState.currentPage == page.index,
             modifier = Modifier.pointerInput(onTap) {
                 detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
             },

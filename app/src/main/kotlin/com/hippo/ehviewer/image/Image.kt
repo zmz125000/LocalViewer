@@ -18,6 +18,7 @@
 package com.hippo.ehviewer.image
 
 import android.graphics.Bitmap
+import android.graphics.ColorSpace
 import android.hardware.HardwareBuffer
 import android.os.Build
 import android.util.Log
@@ -36,6 +37,7 @@ import coil3.request.ErrorResult
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
 import coil3.request.bitmapConfig
+import coil3.request.colorSpace
 import coil3.request.maxBitmapSize
 import coil3.size.Precision
 import coil3.size.Scale
@@ -127,8 +129,10 @@ class Image private constructor(
     val isWideGamutContent: Boolean
 
     /**
-     * Content HDR boost / capacity (linear) for [android.view.Window.setDesiredHdrHeadroom].
-     * Gain-map path: metadata after [HdrGainmapConvert] clamp. Lib-direct: decode peak.
+     * Content HDR boost / capacity (linear), for diagnostics / future headroom.
+     * Gain-map path: read-only [HdrGainmapConvert.contentPeakBoost] (never rewrite
+     * [android.graphics.Gainmap.displayRatioForFullHdr]). Lib-direct: decode peak.
+     * Window headroom currently stays automatic ([com.hippo.ehviewer.util.setReaderColorMode]).
      */
     val contentHdrBoost: Float
 
@@ -146,7 +150,8 @@ class Image private constructor(
                     is BitmapImage -> image.bitmap
                     else -> null
                 }
-                if (bm != null) HdrGainmapConvert.clampOversizedCapacity(bm) else 1f
+                // Read metadata only — rewriting displayRatioForFullHdr lifts near-blacks.
+                if (bm != null) HdrGainmapConvert.contentPeakBoost(bm) else 1f
             }
             else -> 1f
         }
@@ -241,7 +246,8 @@ class Image private constructor(
             /**
              * PNG high bit depth: software [BitmapFactory] + preferred [Bitmap.Config.RGBA_F16]
              * (bypasses Coil hardware-direct / ImageDecoder, which often keep only 8-bit).
-             * Crop/QR off; present step linearizes + AHB-wraps like lib-direct.
+             * Decode into linear extended sRGB so BitmapFactory preserves deep color and WCG
+             * without a slow post-decode transfer pass. Crop/QR off; present may AHB-wrap.
              */
             platformHbd: Boolean = false,
         ): CoilImage {
@@ -268,6 +274,7 @@ class Image private constructor(
                             allowHardware(false)
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 bitmapConfig(Bitmap.Config.RGBA_F16)
+                                colorSpace(ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB))
                             }
                             hardwareThreshold(Settings.hardwareBitmapThreshold.value)
                             maybeCropBorder(false)
@@ -347,15 +354,19 @@ class Image private constructor(
         )
 
         /**
-         * After BitmapFactory F16: linearize (keep source primaries; sRGB → linear extended
-         * sRGB) + optional AHB FP16. Do not force BT.709 on BT.2020/P3 WCG files.
+         * BitmapFactory already converted the source profile into linear extended sRGB F16.
+         * Optionally copy those samples once into an FP16 HardwareBuffer; no post-decode
+         * transfer or gamut conversion is required.
          */
         private fun CoilImage.presentPlatformHbdLikeLibDirect(): CoilImage {
             val bi = asBitmapImage() ?: return this
-            var soft = bi.bitmap
+            val soft = bi.bitmap
             if (soft.config != Bitmap.Config.RGBA_F16) return this
-            soft = normalizePlatformHbdToLibDirectF16(soft)
-            val finalBm = tryHardwareF16Wrap(soft) ?: soft
+            val finalBm = if (Settings.readerHardwareBitmap.value) {
+                tryHardwareF16Wrap(soft) ?: soft
+            } else {
+                soft
+            }
             if (Log.isLoggable("ReaderColor", Log.INFO)) {
                 val cs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     finalBm.colorSpace?.name ?: "null"
@@ -542,3 +553,4 @@ private fun ByteArray.indexOfAscii(needle: String, length: Int = size): Int {
 external fun detectBorder(bitmap: Bitmap): IntArray
 external fun hasQrCode(bitmap: Bitmap): Boolean
 external fun copyBitmapToAHB(src: Bitmap, dst: HardwareBuffer, x: Int, y: Int)
+external fun copyByteArrayToAHB(src: ByteArray, dst: HardwareBuffer)

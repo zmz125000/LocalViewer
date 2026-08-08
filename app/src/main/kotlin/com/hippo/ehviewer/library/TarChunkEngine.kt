@@ -81,7 +81,10 @@ class TarChunkEngine(
             noteIndex(i)
         }
 
-        if (idx != null && idx.hasFullSeekIndex() && idx.members.isNotEmpty()) {
+        // Only structure-complete indexes authorize skip of TAR header walk.
+        // hasFullSeekIndex alone is true for partial progressive walks (all known
+        // members have offsets) and would permanently freeze a truncated page count.
+        if (idx != null && idx.canOpenFromSeekIndexOnly()) {
             for (m in idx.members.sortedBy { it.i }) {
                 members.add(m)
                 noteIndex(m.i)
@@ -190,6 +193,8 @@ class TarChunkEngine(
         remoteSize = archiveSize,
         format = "tar",
         complete = completePages,
+        // Structural completion is independent of page-body cache completeness.
+        structureComplete = isComplete,
         members = membersSnapshot(),
     )
 
@@ -205,7 +210,8 @@ class TarChunkEngine(
      * Parse next header at [cursor].
      * @param targetIndex resume page — bodies for indices `< target` that are already
      *   cached are **skipped** (header-only advance); [targetIndex] and later extract.
-     * @return false at EOF/error
+     * @return false at verified EOF (caller must not treat network errors as complete)
+     * @throws java.io.IOException on transient read failure (retryable; not structure-complete)
      */
     private fun stepOneMember(targetIndex: Int): Boolean {
         if (cursor + BLOCK > archiveSize) {
@@ -213,9 +219,14 @@ class TarChunkEngine(
             return false
         }
         val hdr = ByteArray(BLOCK)
-        if (readFully(cursor, hdr) != BLOCK) {
-            markComplete()
-            return false
+        val hdrGot = readFully(cursor, hdr)
+        if (hdrGot != BLOCK) {
+            // Past logical end → structure complete; short mid-archive read is an error.
+            if (cursor >= archiveSize || cursor + BLOCK > archiveSize) {
+                markComplete()
+                return false
+            }
+            error("TAR header short read at $cursor (got $hdrGot/$BLOCK) — network error, not EOF")
         }
         if (isZeroBlock(hdr)) {
             zeroBlocks++
@@ -228,6 +239,7 @@ class TarChunkEngine(
         }
         zeroBlocks = 0
         if (!checksumOk(hdr)) {
+            // Compatibility: preserve the usable prefix of TARs with junk/corrupt tails.
             markComplete()
             return false
         }
@@ -242,6 +254,7 @@ class TarChunkEngine(
         var padded = paddedSize(size)
         if (dataOff + padded > archiveSize + BLOCK) {
             if (dataOff + size > archiveSize) {
+                // Declared body past EOF — verified archive boundary, not a network blip.
                 markComplete()
                 return false
             }
@@ -295,30 +308,38 @@ class TarChunkEngine(
                 compSize = size,
                 method = 0,
             )
-            if (existing != null) {
-                members.removeAll { it.i == pageIndex }
+            val cached = pageIndex in onDisk ||
+                ArchiveStreamPageCache.isPageCached(cacheKey, pageIndex, m.ext)
+            // Body first — only then commit member/index so a short read cannot
+            // leave nextPageIndex advanced and duplicate this member on retry.
+            val body: ByteArray? = if (!cached) {
+                ByteArray(size.toInt()).also {
+                    val bodyGot = readFully(dataOff, it)
+                    if (bodyGot != it.size) {
+                        throw java.io.IOException(
+                            "TAR body short read at $dataOff page=$pageIndex " +
+                                "(got $bodyGot/${it.size})",
+                        )
+                    }
+                }
+            } else {
+                null
             }
+            throwIfAborted()
+
+            members.removeAll { it.i == pageIndex }
             members.add(m)
             nextPageIndex = pageIndex + 1
             noteIndex(pageIndex)
             onListed?.invoke(listedCount())
 
-            val cached = pageIndex in onDisk ||
-                ArchiveStreamPageCache.isPageCached(cacheKey, pageIndex, m.ext)
             if (cached) {
                 // Reopen / hole fill: header only — advance cursor past body, no re-download.
                 onDisk.add(pageIndex)
                 onPageReady?.invoke(pageIndex)
             } else {
-                // Cold or cache miss: extract body via sequential readAt (fixed readahead).
-                val body = ByteArray(size.toInt())
-                if (readFully(dataOff, body) != body.size) {
-                    cursor = dataOff + padded
-                    return true
-                }
-                throwIfAborted()
                 runCatching {
-                    ArchiveStreamPageCache.writePageBytes(cacheKey, pageIndex, m.ext, body)
+                    ArchiveStreamPageCache.writePageBytes(cacheKey, pageIndex, m.ext, body!!)
                     onDisk.add(pageIndex)
                     onPageReady?.invoke(pageIndex)
                 }.onFailure { logcat("TarChunk", it) }
@@ -340,7 +361,10 @@ class TarChunkEngine(
         }
         if (m.offset < 0L || m.uncSize <= 0L) return
         val body = ByteArray(m.uncSize.toInt())
-        if (readFully(m.offset, body) != body.size) return
+        val got = readFully(m.offset, body)
+        if (got != body.size) {
+            throw java.io.IOException("TAR extract page $index short read (got $got/${body.size})")
+        }
         throwIfAborted()
         ArchiveStreamPageCache.writePageBytes(cacheKey, index, m.ext, body)
         onDisk.add(index)
@@ -351,12 +375,19 @@ class TarChunkEngine(
         complete.set(true)
     }
 
+    /**
+     * @return bytes read, or throws on [ArchiveByteSource] error (`-1`).
+     * True EOF (`0` before filling) returns the short count — callers decide completeness.
+     */
     private fun readFully(offset: Long, buf: ByteArray): Int {
         var got = 0
         while (got < buf.size) {
             throwIfAborted()
             val n = source.readAt(offset + got, buf, got, buf.size - got)
-            if (n <= 0) break
+            if (n < 0) {
+                throw java.io.IOException("TAR network read error at ${offset + got}")
+            }
+            if (n == 0) break // true EOF
             got += n
         }
         return got

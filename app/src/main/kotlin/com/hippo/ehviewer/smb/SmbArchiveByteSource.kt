@@ -6,6 +6,7 @@ import com.hierynomus.smbj.share.File
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ReadAheadArchiveByteSource
 import com.hippo.ehviewer.library.RemoteArchiveOpen
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -40,7 +41,7 @@ class SmbArchiveByteSource(
     preferSequential: Boolean = false,
     /** Pipeline next fixed window (reader solid/TAR). Off for cover thumbs. */
     pipeline: Boolean = true,
-    /** Fixed window size (default 8 MiB). Cover thumbs use a smaller fixed window. */
+    /** Fixed window size (default 8 MiB). */
     sequentialWindow: Int = ReadAheadArchiveByteSource.SEQUENTIAL_WINDOW,
 ) : ArchiveByteSource {
     private val inner = ReadAheadArchiveByteSource(
@@ -63,6 +64,8 @@ class SmbArchiveByteSource(
  * Single open handle + looped reads. No readahead (see [ReadAheadArchiveByteSource]).
  * All I/O is serialized on a worker that owns the pool borrow for the session.
  * Worker **reconnects** if the share/session dies under us.
+ *
+ * [close] completes [sizeReady] so cancellation during open cannot wait forever.
  */
 private class KeepOpenSmbFileSource(
     private val source: SmbSourceEntity,
@@ -90,6 +93,10 @@ private class KeepOpenSmbFileSource(
             while (isActive && !closed.get()) {
                 try {
                     SmbGateway.withOpenFile(source, password, remote) { file, fileSize ->
+                        if (closed.get()) {
+                            runCatching { file.close() }
+                            return@withOpenFile
+                        }
                         if (!sizeReady.isCompleted) sizeReady.complete(fileSize)
                         backoffMs = 50L
                         // Blocking drain: withOpenFile callback is not a suspend lambda.
@@ -105,7 +112,7 @@ private class KeepOpenSmbFileSource(
                                     )
                                 } catch (e: Throwable) {
                                     logcat("SmbArchive", e)
-                                    if (isShareClosedError(e)) {
+                                    if (isShareClosedError(e) || closed.get()) {
                                         op.result.completeExceptionally(e)
                                         // Exit withOpenFile so outer loop reopens the share.
                                         throw e
@@ -131,6 +138,7 @@ private class KeepOpenSmbFileSource(
                     backoffMs = (backoffMs * 2).coerceAtMost(2_000L)
                 }
             }
+            failClosedSizeReady()
             // Source closed or worker ending: fail anything still waiting.
             for (op in ops) {
                 op.result.complete(-1)
@@ -139,21 +147,32 @@ private class KeepOpenSmbFileSource(
     }
 
     override val size: Long
-        get() = runBlocking { sizeReady.await() }
+        get() {
+            if (closed.get() && !sizeReady.isCompleted) {
+                throw IOException("SMB archive source closed")
+            }
+            return runBlocking { sizeReady.await() }
+        }
 
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
         if (len <= 0) return 0
         if (closed.get()) return -1
-        val fileSize = size
+        val fileSize = try {
+            size
+        } catch (_: Throwable) {
+            return -1
+        }
         if (offset >= fileSize) return 0
         val toRead = minOf(len.toLong(), fileSize - offset).toInt()
         val result = CompletableDeferred<Int>()
         return try {
             runBlocking {
+                if (closed.get()) return@runBlocking -1
                 ops.send(Op(offset, buf, off, toRead, result))
                 result.await()
             }
         } catch (e: Throwable) {
+            if (closed.get()) return -1
             logcat("SmbArchive", e)
             -1
         }
@@ -162,8 +181,15 @@ private class KeepOpenSmbFileSource(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         ops.close()
+        failClosedSizeReady()
         worker.cancel()
         scope.coroutineContext[Job]?.cancel()
+    }
+
+    private fun failClosedSizeReady() {
+        if (!sizeReady.isCompleted) {
+            sizeReady.completeExceptionally(IOException("SMB archive source closed"))
+        }
     }
 
     private companion object {

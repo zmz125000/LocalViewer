@@ -83,6 +83,8 @@ class ReadAheadArchiveByteSource(
 
             val fetch = chooseFetch(offset, want, fileSize)
             fillWindowSync(offset, fetch, want, buf, off, fileSize)
+        } catch (e: RemoteRangeNotSupportedException) {
+            throw e
         } catch (_: Throwable) {
             -1
         }
@@ -231,6 +233,8 @@ class ReadAheadArchiveByteSource(
         val tail = ByteArray(fetch)
         val got = try {
             inner.readAt(fetchOff, tail, 0, fetch)
+        } catch (e: RemoteRangeNotSupportedException) {
+            throw e
         } catch (_: Throwable) {
             -1
         }
@@ -391,6 +395,8 @@ class ReadAheadArchiveByteSource(
         val fresh = ByteArray(fetch)
         val got = try {
             inner.readAt(offset, fresh, 0, fetch)
+        } catch (e: RemoteRangeNotSupportedException) {
+            throw e
         } catch (_: Throwable) {
             -1
         }
