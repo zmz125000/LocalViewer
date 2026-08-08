@@ -49,7 +49,9 @@ typealias PasswdInvalidator = (String) -> Boolean
 typealias PasswdProvider = suspend (PasswdInvalidator) -> String
 
 /** Library metadata must finish even if the reader destination is replaced. */
-private val archiveMetadataScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+// Public inline [useArchivePageLoader] inlines at call sites; property must be @PublishedApi.
+@PublishedApi
+internal val archiveMetadataScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 suspend inline fun <T> useArchivePageLoader(
     file: Path,
