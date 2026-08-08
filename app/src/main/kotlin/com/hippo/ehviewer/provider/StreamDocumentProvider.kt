@@ -16,15 +16,16 @@ import android.system.OsConstants
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.library.ArchiveByteSource
+import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
 import java.io.FileNotFoundException
 import java.io.IOException
 
 /**
- * Exposes a random-access [ArchiveByteSource] as a grantable `content://` URI so
- * external PDF apps can open network/local documents without a full download.
+ * Exposes a document as a grantable `content://` URI for external viewers.
  *
- * Uses [StorageManager.openProxyFileDescriptor]: the peer reads with seek; we
- * fulfill via [ArchiveByteSource.readAt] (SMB/WebDAV Range, local pread).
+ * Local/SAF documents return their real seekable descriptor. Network documents use
+ * [StorageManager.openProxyFileDescriptor]; the peer seeks and [ArchiveByteSource.readAt]
+ * fulfills reads through SMB/WebDAV ranges and a bounded block cache.
  *
  * Not all viewers behave equally well with proxy FDs — some still buffer large
  * spans — but we never stage a complete file first.
@@ -67,12 +68,28 @@ class StreamDocumentProvider : ContentProvider() {
         val token = tokenOf(uri) ?: throw FileNotFoundException("bad uri: $uri")
         val entry = StreamDocumentRegistry.get(token)
             ?: throw FileNotFoundException("expired or unknown document: $token")
+
+        // A real local/SAF descriptor is already seekable. Hand it straight through so
+        // external viewers get the same kernel-backed I/O path as opening from a file manager.
+        // Wrapping local files in openProxyFileDescriptor serializes every read through FUSE
+        // and is dramatically slower when a viewer scans or renders the whole document.
+        entry.openFileDescriptor?.let { openDirect ->
+            return try {
+                openDirect()
+            } catch (e: Throwable) {
+                logcat("StreamDoc", e)
+                throw FileNotFoundException(e.message ?: "open failed")
+            }
+        }
+
+        val openSource = entry.openSource
+            ?: throw FileNotFoundException("document has no readable source: $token")
         val context = context ?: throw FileNotFoundException("no context")
         val storage = context.getSystemService(StorageManager::class.java)
             ?: throw FileNotFoundException("StorageManager unavailable")
 
         val source = try {
-            entry.openSource()
+            BlockCacheArchiveByteSource(openSource(), knownSize = entry.sizeBytes)
         } catch (e: Throwable) {
             logcat("StreamDoc", e)
             throw FileNotFoundException(e.message ?: "open failed")

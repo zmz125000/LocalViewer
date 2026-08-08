@@ -5,13 +5,12 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
-import com.hippo.ehviewer.library.FileArchiveByteSource
-import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
@@ -28,9 +27,9 @@ import okio.Path.Companion.toPath
 /**
  * Open a PDF in an external app (system / third-party reader).
  *
- * Local + network always use a grantable [StreamDocumentProvider] URI backed by
- * [com.hippo.ehviewer.library.ArchiveByteSource] range I/O — **no full download**
- * for SMB/WebDAV when the viewer seeks.
+ * Local + network always use a grantable [StreamDocumentProvider] URI. Local and SAF
+ * documents pass their real seekable descriptor through the provider; SMB/WebDAV use
+ * range I/O with a bounded sparse block cache — **no full download** when the viewer seeks.
  *
  * SAF tree document URIs (`content://…externalstorage…/tree/…/document/…`) are **not**
  * passed through: the grant lives on LocalViewer; chooser + Drive often cannot open them
@@ -52,14 +51,36 @@ object OpenPdfExternally {
      * tree/document ids (spaces like `Quick Share`, multi-segment document paths).
      */
     suspend fun openLocal(context: Context, pathStr: String, displayName: String = File(pathStr).name) {
-        openStreaming(context, displayName) {
+        val openPfd: () -> ParcelFileDescriptor = {
+            val file = File(pathStr)
             // Real absolute file only — do not treat content:/… as File.
-            if (pathStr.startsWith('/') && File(pathStr).isFile) {
-                FileArchiveByteSource(File(pathStr))
+            if (pathStr.startsWith('/') && file.isFile) {
+                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
             } else {
-                val pfd = pathStr.toPath().openFileDescriptor("r")
-                PfdArchiveByteSource(pfd, ownsPfd = true)
+                pathStr.toPath().openFileDescriptor("r")
             }
+        }
+        val token = withIOContext {
+            val sizeBytes = openPfd().use { pfd ->
+                pfd.statSize.takeIf { it > 0L } ?: error("empty PDF")
+            }
+            StreamDocumentRegistry.registerDirect(
+                displayName = displayName,
+                mimeType = "application/pdf",
+                sizeBytes = sizeBytes,
+                openFileDescriptor = openPfd,
+            )
+        }
+        launchRegistered(context, token, displayName)
+    }
+
+    private suspend fun launchRegistered(context: Context, token: String, displayName: String) {
+        val uri = StreamDocumentProvider.uriFor(token)
+        try {
+            launchView(context, uri, displayName)
+        } catch (e: Throwable) {
+            StreamDocumentRegistry.remove(token)
+            throw e
         }
     }
 
@@ -78,6 +99,7 @@ object OpenPdfExternally {
             // sequential windows thrash the single SMB handle and surface as Fuse EIO spam.
             // stickySession: dedicated TCP outside the browse/reader pool so ON_STOP
             // (user switched to Drive) does not kill the FUSE stream mid-read.
+            // Size is published on the registry entry; BlockCache wraps the source in the provider.
             SmbArchiveByteSource(
                 source = source,
                 password = password,
@@ -134,13 +156,7 @@ object OpenPdfExternally {
                 openSource = openSource,
             )
         }
-        val uri = StreamDocumentProvider.uriFor(token)
-        try {
-            launchView(context, uri, displayName)
-        } catch (e: Throwable) {
-            StreamDocumentRegistry.remove(token)
-            throw e
-        }
+        launchRegistered(context, token, displayName)
     }
 
     /**
