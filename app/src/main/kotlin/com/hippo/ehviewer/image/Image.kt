@@ -244,7 +244,7 @@ class Image private constructor(
             /**
              * PNG high bit depth: software [BitmapFactory] + preferred [Bitmap.Config.RGBA_F16]
              * (bypasses Coil hardware-direct / ImageDecoder, which often keep only 8-bit).
-             * Crop/QR off; present step linearizes + AHB-wraps like lib-direct.
+             * Crop/QR off; present step preserves source color metadata and may AHB-wrap.
              */
             platformHbd: Boolean = false,
         ): CoilImage {
@@ -350,15 +350,20 @@ class Image private constructor(
         )
 
         /**
-         * After BitmapFactory F16: linearize (keep source primaries; sRGB → linear extended
-         * sRGB) + optional AHB FP16. Do not force BT.709 on BT.2020/P3 WCG files.
+         * After BitmapFactory F16: preserve decoder samples + source [ColorSpace] unchanged,
+         * then optionally copy once into an FP16 HardwareBuffer. Android performs the tagged
+         * transfer/gamut conversion at draw time; a Kotlin per-pixel linearization is both
+         * redundant and prohibitively expensive for large 16-bit PNGs.
          */
         private fun CoilImage.presentPlatformHbdLikeLibDirect(): CoilImage {
             val bi = asBitmapImage() ?: return this
-            var soft = bi.bitmap
+            val soft = bi.bitmap
             if (soft.config != Bitmap.Config.RGBA_F16) return this
-            soft = normalizePlatformHbdToLibDirectF16(soft)
-            val finalBm = tryHardwareF16Wrap(soft) ?: soft
+            val finalBm = if (Settings.readerHardwareBitmap.value) {
+                tryHardwareF16Wrap(soft) ?: soft
+            } else {
+                soft
+            }
             if (Log.isLoggable("ReaderColor", Log.INFO)) {
                 val cs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     finalBm.colorSpace?.name ?: "null"
@@ -545,3 +550,4 @@ private fun ByteArray.indexOfAscii(needle: String, length: Int = size): Int {
 external fun detectBorder(bitmap: Bitmap): IntArray
 external fun hasQrCode(bitmap: Bitmap): Boolean
 external fun copyBitmapToAHB(src: Bitmap, dst: HardwareBuffer, x: Int, y: Int)
+external fun copyByteArrayToAHB(src: ByteArray, dst: HardwareBuffer)
