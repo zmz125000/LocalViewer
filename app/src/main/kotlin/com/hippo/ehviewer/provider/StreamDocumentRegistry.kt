@@ -15,6 +15,8 @@ object StreamDocumentRegistry {
     data class Entry(
         val displayName: String,
         val mimeType: String,
+        /** Known size when probed at register time; -1 if unknown. Helps viewers avoid over-read. */
+        val sizeBytes: Long = -1L,
         val openSource: () -> ArchiveByteSource,
     )
 
@@ -23,10 +25,16 @@ object StreamDocumentRegistry {
     fun register(
         displayName: String,
         mimeType: String = "application/pdf",
+        sizeBytes: Long = -1L,
         openSource: () -> ArchiveByteSource,
     ): String {
         val token = UUID.randomUUID().toString()
-        entries[token] = Entry(displayName = displayName, mimeType = mimeType, openSource = openSource)
+        entries[token] = Entry(
+            displayName = displayName,
+            mimeType = mimeType,
+            sizeBytes = sizeBytes,
+            openSource = openSource,
+        )
         return token
     }
 

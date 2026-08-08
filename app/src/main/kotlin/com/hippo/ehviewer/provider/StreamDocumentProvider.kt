@@ -47,15 +47,17 @@ class StreamDocumentProvider : ContentProvider() {
         val token = tokenOf(uri) ?: return null
         val entry = StreamDocumentRegistry.get(token) ?: return null
         val columns = projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
-        val row = Array(columns.size) { idx ->
-            when (columns[idx]) {
+        val cursor = MatrixCursor(columns)
+        val values = arrayOfNulls<Any>(columns.size)
+        for (i in columns.indices) {
+            values[i] = when (columns[i]) {
                 OpenableColumns.DISPLAY_NAME -> entry.displayName
-                // Opening the source for size can be slow on network; name is enough for choosers.
-                OpenableColumns.SIZE -> null
+                OpenableColumns.SIZE -> if (entry.sizeBytes >= 0L) entry.sizeBytes else null
                 else -> null
             }
         }
-        return MatrixCursor(columns).apply { addRow(row) }
+        cursor.addRow(values)
+        return cursor
     }
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
@@ -132,35 +134,74 @@ class StreamDocumentProvider : ContentProvider() {
     }
 }
 
-/** Bridges [ArchiveByteSource] to a seekable PFD for external PDF viewers. */
+/**
+ * Bridges [ArchiveByteSource] to a seekable PFD for external PDF viewers.
+ *
+ * FuseAppLoop logs every thrown [ErrnoException] as **E** (noisy stack traces). Prefer
+ * returning **0** (EOF) for closed/out-of-range, and only throw EIO after retries fail
+ * on a live source — Drive/Samsung often race reads past release or hit brief SMB glitches.
+ */
 private class SourceProxyCallback(
     private val source: ArchiveByteSource,
     private val size: Long,
     private val thread: HandlerThread,
 ) : ProxyFileDescriptorCallback() {
+    @Volatile
+    private var released = false
+
     override fun onGetSize(): Long = size
 
     @Throws(ErrnoException::class)
     override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
-        if (size <= 0) return 0
+        if (size <= 0 || released) return 0
         if (offset < 0L || offset >= this.size) return 0
-        return try {
-            val n = source.readAt(offset, data, 0, size)
-            if (n < 0) throw ErrnoException("readAt", OsConstants.EIO)
-            n
-        } catch (e: ErrnoException) {
-            throw e
-        } catch (e: IOException) {
-            logcat("StreamDoc", e)
-            throw ErrnoException("readAt", OsConstants.EIO)
-        } catch (e: Throwable) {
-            logcat("StreamDoc", e)
-            throw ErrnoException("readAt", OsConstants.EIO)
+        val want = minOf(size.toLong(), this.size - offset).toInt()
+        if (want <= 0) return 0
+
+        var lastError: Throwable? = null
+        repeat(READ_ATTEMPTS) { attempt ->
+            if (released) return 0
+            try {
+                val n = source.readAt(offset, data, 0, want)
+                when {
+                    // EOF or closed mid-session: Fuse treats 0 as end-of-file (no E log).
+                    n == 0 -> return 0
+                    n < 0 -> {
+                        // ArchiveByteSource uses -1 for error *or* closed; if released, soft EOF.
+                        if (released) return 0
+                        lastError = IOException("readAt returned -1 at offset=$offset want=$want")
+                    }
+                    else -> return n
+                }
+            } catch (e: ErrnoException) {
+                throw e
+            } catch (e: Throwable) {
+                if (released) return 0
+                lastError = e
+            }
+            if (attempt < READ_ATTEMPTS - 1) {
+                try {
+                    Thread.sleep(RETRY_BACKOFF_MS * (attempt + 1L))
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return 0
+                }
+            }
         }
+        // True failure after retries — still EIO for the peer, but only log once (no stack spam).
+        val msg = lastError?.message ?: "I/O error"
+        logcat("StreamDoc") { "proxy read failed after $READ_ATTEMPTS tries offset=$offset: $msg" }
+        throw ErrnoException("readAt", OsConstants.EIO)
     }
 
     override fun onRelease() {
+        released = true
         runCatching { source.close() }
         thread.quitSafely()
+    }
+
+    private companion object {
+        const val READ_ATTEMPTS = 3
+        const val RETRY_BACKOFF_MS = 40L
     }
 }

@@ -108,12 +108,16 @@ object OpenPdfExternally {
     ) {
         val token = withIOContext {
             // Fail fast if we cannot open/size (clearer snackbar than a dead chooser).
-            openSource().use { src ->
-                if (src.size < 1L) error("empty PDF")
+            // Publish size so external apps (Drive) can stop at EOF without probing past end.
+            val sizeBytes = openSource().use { src ->
+                val n = src.size
+                if (n < 1L) error("empty PDF")
+                n
             }
             StreamDocumentRegistry.register(
                 displayName = displayName,
                 mimeType = "application/pdf",
+                sizeBytes = sizeBytes,
                 openSource = openSource,
             )
         }
