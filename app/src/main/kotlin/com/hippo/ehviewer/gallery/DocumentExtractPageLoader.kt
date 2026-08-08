@@ -15,14 +15,18 @@ import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.document.DocumentImageEngine
 import com.hippo.ehviewer.library.document.EpubEngine
 import com.hippo.ehviewer.library.document.PdfImageEngine
+import com.hippo.ehviewer.library.document.ProgressiveDocumentImageEngine
 import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -48,6 +52,8 @@ suspend inline fun <T> useDocumentExtractPageLoader(
     startPage: Int = 0,
     hasAds: Boolean = false,
     remoteSize: Long = 0L,
+    /** Network PDFs may publish a prefix and grow their page list on demand. */
+    progressivePdf: Boolean = false,
     /** Optional local path for library page-count updates. */
     localPathForLibrary: String? = null,
     crossinline block: suspend (PageLoader) -> T,
@@ -91,10 +97,12 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     titleHint = titleHint,
                     cacheKey = cacheKey,
                     cachedIndex = cachedIdx,
+                    progressivePdf = progressivePdf,
                 )
             },
             { value, _ -> value.close() },
         )
+        val progressiveEngine = engine as? ProgressiveDocumentImageEngine
 
         check(engine.pageCount > 0) { "Document has no playable images" }
 
@@ -108,10 +116,11 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         val interactivePending = ConcurrentHashMap.newKeySet<Int>()
         val extractMutex = Mutex()
         val coverWritten = AtomicBoolean(false)
+        val discoveryTarget = AtomicInteger(-1)
+        val discoveryJob = AtomicReference<Job?>(null)
         val hostScope = this
         val prefetchN = Settings.preloadImage.value.coerceAtLeast(1)
-        val pageCount = engine.pageCount
-        val resumePage = startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        val resumePage = startPage.coerceIn(0, (engine.pageCount - 1).coerceAtLeast(0))
 
         // Seed the page the reader will actually show. Extracting page 0 first made a
         // resumed network document pay for two image streams before it could present.
@@ -152,11 +161,15 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     val resolved = cover ?: ArchiveCoverCache.tryDiskCover(pathStr)
                     val gid = info?.gid
                     if (gid != null && gid != 0L) {
-                        LocalLibrary.updateGalleryPageAndCover(gid, pageCount, resolved?.toString())
+                        LocalLibrary.updateGalleryPageAndCover(
+                            gid,
+                            engine.pageCount,
+                            resolved?.toString(),
+                        )
                     } else {
                         LocalLibrary.updateGalleryPageAndCoverByContentPath(
                             pathStr,
-                            pageCount,
+                            engine.pageCount,
                             resolved?.toString(),
                         )
                     }
@@ -169,10 +182,14 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 hostScope,
                 info,
                 resumePage,
-                pageCount,
+                engine.pageCount,
                 hasAds,
             ) {
                 override val title by lazy { info?.title ?: titleHint }
+
+                init {
+                    requestDiscoveryThrough(resumePage + prefetchN)
+                }
 
                 override fun getImageExtension(index: Int) = engine.extOf(index)
 
@@ -211,11 +228,12 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
+                    requestDiscoveryThrough(index + prefetchN)
                     ensureExtract(index, interactive = true) {
                         notifySourceReady(index, orgImg)
                     }
                     // One neighbor is enough here; PageLoader also supplies a preload list.
-                    if (prefetchN > 0 && index + 1 < pageCount) {
+                    if (prefetchN > 0 && index + 1 < engine.pageCount) {
                         ensureExtract(index + 1, interactive = false)
                     }
                 }
@@ -223,12 +241,16 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 override fun close() {
                     // Snapshot: cancel handlers remove from extractJobs concurrently
                     // (live CHM.values iter on main → NoSuchElementException).
+                    discoveryJob.getAndSet(null)?.cancel()
                     extractJobs.values.toList().forEach { it.cancel() }
                     extractJobs.clear()
                     readyWaiters.clear()
                     // Trust in-memory extract map only — never stat/write on main (onDispose).
-                    val complete = pageCount > 0 &&
-                        (0 until pageCount).all { pagePaths.containsKey(it) }
+                    val count = engine.pageCount
+                    val structureComplete = progressiveEngine?.structureComplete ?: true
+                    val complete = count > 0 &&
+                        structureComplete &&
+                        (0 until count).all { pagePaths.containsKey(it) }
                     DocumentExtractCache.saveIndexAsync(
                         engine.toIndex(cacheKey, complete = complete),
                     )
@@ -260,13 +282,13 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                 if (gid != null && gid != 0L) {
                                     LocalLibrary.updateGalleryPageAndCover(
                                         gid,
-                                        pageCount,
+                                        engine.pageCount,
                                         resolved?.toString(),
                                     )
                                 } else {
                                     LocalLibrary.updateGalleryPageAndCoverByContentPath(
                                         pathStr,
-                                        pageCount,
+                                        engine.pageCount,
                                         resolved?.toString(),
                                     )
                                 }
@@ -281,7 +303,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     interactive: Boolean,
                     onReady: (() -> Unit)? = null,
                 ) {
-                    if (index !in 0 until pageCount) return
+                    if (index !in 0 until engine.pageCount) return
                     if (interactive) interactivePending.add(index)
                     if (onReady != null) {
                         readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
@@ -337,7 +359,10 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                             }
                             if (probePageOnDisk(index)) {
                                 markReady(index)
-                                if (pagePaths.size >= pageCount) {
+                                if (
+                                    (progressiveEngine?.structureComplete ?: true) &&
+                                    pagePaths.size >= engine.pageCount
+                                ) {
                                     DocumentExtractCache.saveIndexAsync(
                                         engine.toIndex(cacheKey, complete = true),
                                     )
@@ -372,11 +397,69 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                         }
                     }
                 }
+
+                /** Grow a remote PDF only a small distance ahead of actual reading. */
+                private fun requestDiscoveryThrough(index: Int) {
+                    val progressive = progressiveEngine ?: return
+                    if (index < 0 || progressive.structureComplete) return
+                    discoveryTarget.updateAndGet { current -> maxOf(current, index) }
+                    while (true) {
+                        val active = discoveryJob.get()
+                        if (active?.isActive == true) return
+                        if (active != null && !discoveryJob.compareAndSet(active, null)) continue
+                        val job = hostScope.launch(
+                            context = Dispatchers.IO,
+                            start = CoroutineStart.LAZY,
+                        ) {
+                            try {
+                                while (!progressive.structureComplete) {
+                                    val wanted = discoveryTarget.get()
+                                    val before = progressive.pageCount
+                                    if (before > wanted) break
+                                    val batchTarget = minOf(
+                                        wanted,
+                                        before + PDF_INDEX_BATCH - 1,
+                                    )
+                                    val after = extractMutex.withLock {
+                                        progressive.ensureListedThrough(batchTarget)
+                                    }
+                                    if (after > before) {
+                                        growTo(after)
+                                        DocumentExtractCache.saveIndex(
+                                            progressive.toIndex(cacheKey, complete = false),
+                                        )
+                                    }
+                                    if (after <= before) break
+                                }
+                                if (progressive.structureComplete) {
+                                    DocumentExtractCache.saveIndex(
+                                        progressive.toIndex(cacheKey, complete = false),
+                                    )
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Throwable) {
+                                logcat("PdfProgressiveIndex", e)
+                            } finally {
+                                discoveryJob.compareAndSet(coroutineContext[Job], null)
+                            }
+                        }
+                        if (discoveryJob.compareAndSet(null, job)) {
+                            job.start()
+                            return
+                        }
+                        job.cancel()
+                    }
+                }
             },
         )
         block(loader)
     }
 }
+
+@PublishedApi
+internal const val PDF_INDEX_BATCH = 4
+
 suspend inline fun <T> useLocalDocumentExtractPageLoader(
     file: Path,
     info: GalleryInfo? = null,
@@ -418,6 +501,7 @@ internal fun openDocumentEngine(
     titleHint: String,
     cacheKey: String,
     cachedIndex: DocumentExtractCache.Index? = null,
+    progressivePdf: Boolean = false,
 ): DocumentImageEngine {
     val isEpub = formatHint == "epub" ||
         isEpubFileName(titleHint) ||
@@ -445,10 +529,24 @@ internal fun openDocumentEngine(
         isPdf -> {
             // Same: openFromIndex / open are nullable; elvis must cover both branches.
             val engine = if (cachedIndex != null) {
-                PdfImageEngine.openFromIndex(source, cachedIndex, remoteSize = sizeHint)
-                    ?: PdfImageEngine.open(source, remoteSize = sizeHint, coverOnly = false)
+                PdfImageEngine.openFromIndex(
+                    source,
+                    cachedIndex,
+                    remoteSize = sizeHint,
+                    progressive = progressivePdf,
+                ) ?: PdfImageEngine.open(
+                    source,
+                    remoteSize = sizeHint,
+                    coverOnly = false,
+                    progressive = progressivePdf,
+                )
             } else {
-                PdfImageEngine.open(source, remoteSize = sizeHint, coverOnly = false)
+                PdfImageEngine.open(
+                    source,
+                    remoteSize = sizeHint,
+                    coverOnly = false,
+                    progressive = progressivePdf,
+                )
             }
             engine ?: error("Not a readable PDF (encrypted or unsupported)")
         }

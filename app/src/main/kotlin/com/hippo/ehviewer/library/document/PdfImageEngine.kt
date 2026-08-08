@@ -17,9 +17,12 @@ import okio.Path
  */
 class PdfImageEngine private constructor(
     private val parser: PdfParser,
-    private val pages: List<ImageRef>,
+    private val pages: ArrayList<ImageRef>,
     private val remoteSize: Long,
-) : DocumentImageEngine {
+    private var pageCursor: PdfParser.PageImageCursor? = null,
+    structureComplete: Boolean = true,
+    private val discoveryAllowed: Boolean = false,
+) : ProgressiveDocumentImageEngine {
 
     data class ImageRef(
         val objNum: Int,
@@ -34,32 +37,82 @@ class PdfImageEngine private constructor(
         val hasSeek: Boolean get() = streamOffset >= 0L && streamLen > 0L
     }
 
-    override val pageCount: Int get() = pages.size
+    private val discoveryLock = Any()
+    @Volatile
+    private var discoveryStopped = false
+    @Volatile
+    private var structureCompleteState = structureComplete
+    private var cursorImageIndex = 0
 
-    override fun extOf(index: Int): String? = pages.getOrNull(index)?.ext
+    override val pageCount: Int
+        get() = synchronized(discoveryLock) { pages.size }
+
+    override val structureComplete: Boolean
+        get() = structureCompleteState
+
+    override fun extOf(index: Int): String? = synchronized(discoveryLock) {
+        pages.getOrNull(index)?.ext
+    }
 
     /** File offset of page image stream for high-water ordering; -1 if unknown. */
-    fun streamOffsetOf(index: Int): Long = pages.getOrNull(index)?.streamOffset ?: -1L
+    fun streamOffsetOf(index: Int): Long = synchronized(discoveryLock) {
+        pages.getOrNull(index)?.streamOffset ?: -1L
+    }
 
-    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index = DocumentExtractCache.Index(
-        v = DocumentExtractCache.INDEX_VERSION,
-        cacheKey = cacheKey,
-        remoteSize = remoteSize,
-        format = "pdf",
-        complete = complete,
-        members = pages.mapIndexed { i, p ->
-            DocumentExtractCache.Member(
-                i = i,
-                name = "${p.objNum}_${p.gen}",
-                ext = p.ext,
-                uncSize = p.streamLen,
-                offset = p.streamOffset,
+    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index =
+        synchronized(discoveryLock) {
+            DocumentExtractCache.Index(
+                v = DocumentExtractCache.INDEX_VERSION,
+                cacheKey = cacheKey,
+                remoteSize = remoteSize,
+                format = "pdf",
+                complete = complete && structureCompleteState,
+                structureComplete = structureCompleteState,
+                members = pages.mapIndexed { i, p ->
+                    DocumentExtractCache.Member(
+                        i = i,
+                        name = "${p.objNum}_${p.gen}",
+                        ext = p.ext,
+                        uncSize = p.streamLen,
+                        offset = p.streamOffset,
+                    )
+                },
             )
-        },
-    )
+        }
+
+    /** Walk only far enough to expose [index]; cached refs are skipped while resuming. */
+    override fun ensureListedThrough(index: Int): Int = synchronized(discoveryLock) {
+        if (index < 0 || structureCompleteState || discoveryStopped || !discoveryAllowed) {
+            return@synchronized pages.size
+        }
+        var cursor = pageCursor
+        if (cursor == null) {
+            if (!parser.bootstrap() || parser.encrypted) {
+                discoveryStopped = true
+                return@synchronized pages.size
+            }
+            cursor = parser.openPageImageCursor()
+            if (cursor == null) {
+                discoveryStopped = true
+                return@synchronized pages.size
+            }
+            pageCursor = cursor
+        }
+        while (pages.size <= index && !cursor.isComplete) {
+            val next = cursor.nextImage() ?: break
+            // A partial disk index can serve its known seek ranges immediately. The
+            // resumed cursor replays that prefix, then appends newly discovered refs.
+            if (cursorImageIndex >= pages.size) {
+                pages += next
+            }
+            cursorImageIndex++
+        }
+        if (cursor.isComplete) structureCompleteState = true
+        pages.size
+    }
 
     override fun extractToCache(cacheKey: String, index: Int): Path? {
-        val ref = pages.getOrNull(index) ?: return null
+        val ref = synchronized(discoveryLock) { pages.getOrNull(index) } ?: return null
         if (DocumentExtractCache.isPageCached(cacheKey, index, ref.ext)) {
             return DocumentExtractCache.pagePath(cacheKey, index, ref.ext)
         }
@@ -94,6 +147,7 @@ class PdfImageEngine private constructor(
             source: ArchiveByteSource,
             remoteSize: Long = 0L,
             coverOnly: Boolean = false,
+            progressive: Boolean = false,
         ): PdfImageEngine? {
             val size = remoteSize.takeIf { it > 0L }
                 ?: runCatching { source.size }.getOrDefault(-1L)
@@ -108,17 +162,33 @@ class PdfImageEngine private constructor(
                     logcat("PdfImage") { "encrypted PDF, skip" }
                     return null
                 }
-                val images = parser.collectPageImages(coverOnly)
+                val cursor = parser.openPageImageCursor(
+                    maxPages = if (coverOnly) MAX_COVER_SCAN_PAGES else MAX_PAGES,
+                ) ?: return null
+                val progressiveOpen = progressive &&
+                    !coverOnly &&
+                    cursor.declaredPageCount !in 0..NETWORK_EAGER_PAGE_LIMIT
+                val engine = PdfImageEngine(
+                    parser = parser,
+                    pages = ArrayList(),
+                    remoteSize = size,
+                    pageCursor = cursor,
+                    structureComplete = false,
+                    discoveryAllowed = true,
+                )
+                engine.ensureListedThrough(if (progressiveOpen || coverOnly) 0 else Int.MAX_VALUE)
                 logcat("PdfImage") {
-                    "open ok pages=${images.size} coverOnly=$coverOnly " +
+                    "open ok pages=${engine.pageCount} declared=${cursor.declaredPageCount} " +
+                        "progressive=$progressiveOpen structureComplete=${engine.structureComplete} " +
+                        "coverOnly=$coverOnly " +
                         "xref=${parser.xrefCount} objStm=${parser.objStreamMemberCount}"
                 }
-                PdfImageEngine(parser, images, size)
+                engine
             }.onFailure { logcat("PdfImage", it) }.getOrNull()
         }
 
         /**
-         * Rebuild page image refs from a durable [DocumentExtractCache.Index]. A v3 index
+         * Rebuild page image refs from a durable [DocumentExtractCache.Index]. A v3+ index
          * has absolute stream ranges, so reopen needs only the requested image header and
          * payload ranges. Older indexes bootstrap xref once as a compatibility fallback.
          */
@@ -126,11 +196,13 @@ class PdfImageEngine private constructor(
             source: ArchiveByteSource,
             index: DocumentExtractCache.Index,
             remoteSize: Long = 0L,
+            progressive: Boolean = false,
         ): PdfImageEngine? {
             val size = remoteSize.takeIf { it > 0L }
                 ?: index.remoteSize.takeIf { it > 0L }
                 ?: runCatching { source.size }.getOrDefault(-1L)
             if (size < 32L || index.members.isEmpty()) return null
+            if (!index.structureComplete && !progressive) return null
             return runCatching {
                 val parser = PdfParser(source, size)
                 val images = index.members.sortedBy { it.i }.mapNotNull { m ->
@@ -160,9 +232,19 @@ class PdfImageEngine private constructor(
                     "openFromIndex ok pages=${images.size} direct=${images.all { it.hasSeek }} " +
                         "xref=${parser.xrefCount}"
                 }
-                PdfImageEngine(parser, images, size)
+                PdfImageEngine(
+                    parser = parser,
+                    pages = ArrayList(images),
+                    remoteSize = size,
+                    structureComplete = index.structureComplete,
+                    discoveryAllowed = progressive && !index.structureComplete,
+                )
             }.onFailure { logcat("PdfImage", it) }.getOrNull()
         }
+
+        private const val NETWORK_EAGER_PAGE_LIMIT = 24
+        private const val MAX_COVER_SCAN_PAGES = 16
+        private const val MAX_PAGES = 100_000
     }
 }
 
@@ -175,6 +257,12 @@ internal class PdfParser(
     private val fileSize: Long,
 ) {
     data class XRefEntry(val offset: Long, val gen: Int, val free: Boolean)
+
+    private data class PendingPageNode(
+        val value: PdfValue,
+        val inheritedResources: PdfValue?,
+        val depth: Int,
+    )
 
     sealed interface DirectExtractResult {
         data class Success(val bytes: ByteArray) : DirectExtractResult
@@ -216,47 +304,99 @@ internal class PdfParser(
         return bootstrapOk
     }
 
-    fun collectPageImages(coverOnly: Boolean): List<PdfImageEngine.ImageRef> {
+    fun openPageImageCursor(maxPages: Int = MAX_PAGES): PageImageCursor? {
         val root = rootRef?.let { resolve(it) as? PdfDict } ?: run {
-            logcat("PdfImage") { "collectPageImages: no root dict (rootRef=$rootRef)" }
-            return emptyList()
+            logcat("PdfImage") { "openPageImageCursor: no root dict (rootRef=$rootRef)" }
+            return null
         }
         val pagesNode = root["/Pages"]?.let { resolveValue(it) } as? PdfDict ?: run {
-            logcat("PdfImage") { "collectPageImages: no /Pages under catalog" }
-            return emptyList()
+            logcat("PdfImage") { "openPageImageCursor: no /Pages under catalog" }
+            return null
         }
-        val pageDicts = ArrayList<PdfDict>()
-        val visited = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<PdfDict, Boolean>())
-        collectPages(
-            pagesNode,
-            pageDicts,
-            depth = 0,
-            inheritedResources = null,
-            visited = visited,
-            maxPages = if (coverOnly) MAX_COVER_SCAN_PAGES else MAX_PAGES,
+        return PageImageCursor(pagesNode, maxPages)
+    }
+
+    /** Lazy, ordered page-tree walk used by remote PDFs. */
+    inner class PageImageCursor internal constructor(
+        pagesNode: PdfDict,
+        private val maxPages: Int,
+    ) {
+        private val pending = java.util.ArrayDeque<PendingPageNode>().apply {
+            addLast(PendingPageNode(pagesNode, null, 0))
+        }
+        private val visited = java.util.Collections.newSetFromMap(
+            java.util.IdentityHashMap<PdfDict, Boolean>(),
         )
-        val out = ArrayList<PdfImageEngine.ImageRef>()
-        var pagesWithoutImage = 0
-        for (page in pageDicts) {
-            val images = ArrayList<PdfImageEngine.ImageRef>()
-            collectImagesFromResources(page["/Resources"]?.let { resolveValue(it) }, images, depth = 0)
-            // Comic PDFs: one dominant full-page image; take largest by area then stream length.
-            val best = images.maxWithOrNull(
-                compareBy<PdfImageEngine.ImageRef> { it.width.toLong() * it.height.toLong() }
-                    .thenBy { it.streamLen },
-            )
-            if (best != null) {
-                out += best
-                if (coverOnly) break
-            } else {
-                pagesWithoutImage++
+        var scannedPageCount: Int = 0
+            private set
+        var pagesWithoutImage: Int = 0
+            private set
+        var isComplete: Boolean = false
+            private set
+        val declaredPageCount: Int = pagesNode.intValue("/Count")?.coerceAtLeast(0) ?: -1
+
+        /** Return the next supported dominant page image without walking later pages. */
+        fun nextImage(): PdfImageEngine.ImageRef? {
+            while (pending.isNotEmpty() && scannedPageCount < maxPages) {
+                val task = pending.removeLast()
+                if (task.depth > 64) continue
+                val node = resolveValue(task.value) as? PdfDict
+                if (node == null) {
+                    // A short/failed remote read is not end-of-tree. Retain the node so a
+                    // later reader request can retry instead of persisting a false full index.
+                    pending.addLast(task)
+                    return null
+                }
+                if (!visited.add(node)) continue
+                val type = (node["/Type"] as? PdfName)?.name
+                if (type == "/Page") {
+                    val resources = node["/Resources"] ?: task.inheritedResources
+                    val images = ArrayList<PdfImageEngine.ImageRef>()
+                    val resourcesReady = collectImagesFromResources(
+                        resources,
+                        images,
+                        depth = 0,
+                    )
+                    if (!resourcesReady) {
+                        visited.remove(node)
+                        pending.addLast(task)
+                        return null
+                    }
+                    scannedPageCount++
+                    val best = images.maxWithOrNull(
+                        compareBy<PdfImageEngine.ImageRef> {
+                            it.width.toLong() * it.height.toLong()
+                        }.thenBy { it.streamLen },
+                    )
+                    if (best != null) return best
+                    pagesWithoutImage++
+                    continue
+                }
+
+                // /Pages node (or a producer that omitted /Type): defer each child so
+                // only the requested prefix causes object/range reads.
+                val resources = node["/Resources"] ?: task.inheritedResources
+                val rawKids = node["/Kids"]
+                val kids = rawKids?.let { resolveValue(it) } as? PdfArray
+                if (rawKids != null && kids == null) {
+                    visited.remove(node)
+                    pending.addLast(task)
+                    return null
+                }
+                if (kids == null) continue
+                for (i in kids.items.indices.reversed()) {
+                    pending.addLast(PendingPageNode(kids.items[i], resources, task.depth + 1))
+                }
             }
+            isComplete = pending.isEmpty() || scannedPageCount >= maxPages
+            if (isComplete) {
+                logcat("PdfImage") {
+                    "page cursor complete scanned=$scannedPageCount " +
+                        "withoutImage=$pagesWithoutImage declared=$declaredPageCount"
+                }
+            }
+            return null
         }
-        logcat("PdfImage") {
-            "collectPageImages: pageDicts=${pageDicts.size} withImage=${out.size} " +
-                "withoutImage=$pagesWithoutImage coverOnly=$coverOnly"
-        }
-        return out
     }
 
     fun extractImageBytes(objNum: Int, gen: Int): ByteArray? {
@@ -316,53 +456,25 @@ internal class PdfParser(
 
     // --- page / image walk ---
 
-    private fun collectPages(
-        node: PdfDict,
-        out: ArrayList<PdfDict>,
-        depth: Int,
-        inheritedResources: PdfValue?,
-        visited: MutableSet<PdfDict>,
-        maxPages: Int,
-    ) {
-        if (depth > 64 || out.size >= maxPages || !visited.add(node)) return
-        val type = (node["/Type"] as? PdfName)?.name
-        if (type == "/Page") {
-            if (node["/Resources"] == null && inheritedResources != null) {
-                node.map["/Resources"] = inheritedResources
-            }
-            out += node
-            return
-        }
-        // Pages node or missing Type: walk Kids
-        val resources = node["/Resources"] ?: inheritedResources
-        val kids = node["/Kids"]?.let { resolveValue(it) } as? PdfArray ?: return
-        for (k in kids.items) {
-            if (out.size >= maxPages) break
-            when (val v = resolveValue(k)) {
-                is PdfDict -> collectPages(v, out, depth + 1, resources, visited, maxPages)
-                else -> Unit
-            }
-        }
-    }
-
     private fun collectImagesFromResources(
         resources: PdfValue?,
         out: ArrayList<PdfImageEngine.ImageRef>,
         depth: Int,
-    ) {
-        if (depth > 8) return
+    ): Boolean {
+        if (depth > 8) return true
         val res = when (resources) {
             is PdfDict -> resources
             is PdfRef -> resolve(resources) as? PdfDict
             else -> null
-        } ?: return
-        val xobj = res["/XObject"]?.let { resolveValue(it) } as? PdfDict ?: return
+        } ?: return resources == null
+        val rawXObject = res["/XObject"] ?: return true
+        val xobj = resolveValue(rawXObject) as? PdfDict ?: return false
         // Stable name order for multi-image pages
         val names = xobj.map.keys.sorted()
         for (name in names) {
             val raw = xobj[name] ?: continue
             val ref = raw as? PdfRef
-            val obj = resolveValue(raw) as? PdfDict ?: continue
+            val obj = resolveValue(raw) as? PdfDict ?: return false
             val subtype = (obj["/Subtype"] as? PdfName)?.name
             when (subtype) {
                 "/Image" -> {
@@ -371,10 +483,13 @@ internal class PdfParser(
                     imageRefFromDict(obj, objNum, gen)?.let { out += it }
                 }
                 "/Form" -> {
-                    collectImagesFromResources(obj["/Resources"], out, depth + 1)
+                    if (!collectImagesFromResources(obj["/Resources"], out, depth + 1)) {
+                        return false
+                    }
                 }
             }
         }
+        return true
     }
 
     private fun imageRefFromDict(dict: PdfDict, objNum: Int, gen: Int): PdfImageEngine.ImageRef? {

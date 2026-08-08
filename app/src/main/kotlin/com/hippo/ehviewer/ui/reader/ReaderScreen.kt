@@ -992,14 +992,16 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             }
         }
         if (document) {
+            val documentFormat = if (isEpubFileName(remote)) "epub" else "pdf"
             useDocumentExtractPageLoader(
                 source = byteSource,
                 cacheKey = cacheKey,
                 titleHint = titleHint,
-                formatHint = if (isEpubFileName(remote)) "epub" else "pdf",
+                formatHint = documentFormat,
                 info = info,
                 startPage = page,
                 remoteSize = runCatching { byteSource.size }.getOrDefault(0L),
+                progressivePdf = documentFormat == "pdf",
                 block = block,
             )
         } else if (solid) {
@@ -1093,14 +1095,16 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             pipeline = !document,
         )
         if (document) {
+            val documentFormat = if (isEpubFileName(remote)) "epub" else "pdf"
             useDocumentExtractPageLoader(
                 source = byteSource,
                 cacheKey = cacheKey,
                 titleHint = titleHint,
-                formatHint = if (isEpubFileName(remote)) "epub" else "pdf",
+                formatHint = documentFormat,
                 info = info,
                 startPage = page,
                 remoteSize = runCatching { byteSource.size }.getOrDefault(0L),
+                progressivePdf = documentFormat == "pdf",
                 block = block,
             )
         } else if (solid) {
