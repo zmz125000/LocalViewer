@@ -6,7 +6,6 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
-import com.hippo.ehviewer.library.ArchiveAccess
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.ArchiveStreamPageCache
@@ -44,9 +43,8 @@ suspend inline fun <T> useTarChunkPageLoader(
     startPage: Int = 0,
     hasAds: Boolean = false,
     crossinline block: suspend (PageLoader) -> T,
-): T = ArchiveAccess.withArchive {
-    autoCloseScope {
-        coroutineScope {
+): T = autoCloseScope {
+    coroutineScope {
             ArchiveStreamPageCache.pin(cacheKey)
             install({ }, { _, _ -> ArchiveStreamPageCache.unpin(cacheKey) })
             install({ source }, { s, _ -> s.close() })
@@ -106,13 +104,6 @@ suspend inline fun <T> useTarChunkPageLoader(
             }
 
             ArchiveStreamPageCache.saveIndexAsync(engine.toIndex(completePages = false))
-            runCatching {
-                val ext = engine.extOf(0) ?: "jpg"
-                val p = ArchiveStreamPageCache.pagePath(cacheKey, 0, ext)
-                if (ArchiveStreamPageCache.isCached(p)) {
-                    ArchiveCoverCache.writeCoverFromExtractedPage(cacheKey, p)
-                }
-            }.onFailure { logcat(it) }
 
             val pagePaths = ConcurrentHashMap<Int, Path>()
             // Map every cached page (index members and/or readdir) for instant resume.
@@ -134,6 +125,12 @@ suspend inline fun <T> useTarChunkPageLoader(
             val prefetchN = Settings.preloadImage.value.coerceAtLeast(1)
             val extractTarget = AtomicInteger((startPage + prefetchN).coerceAtLeast(0))
             val bgJob = AtomicReference<Job?>(null)
+
+            // Cover encode after loader publish (page 0 may already be on disk from open).
+            val page0ForCover = pagePaths[0]
+            if (page0ForCover != null && coverWritten.compareAndSet(false, true)) {
+                ArchiveCoverCache.scheduleEncodeFromExtractedPage(cacheKey, page0ForCover)
+            }
 
             val loader = install(
                 object : PageLoader(
@@ -309,6 +306,5 @@ suspend inline fun <T> useTarChunkPageLoader(
                 extractJobs.values.toList().forEach { it.cancel() }
                 extractJobs.clear()
             }
-        }
     }
 }

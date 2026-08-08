@@ -36,12 +36,20 @@ import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.util.displayName
 import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import moe.tarsin.kt.install
 import okio.Path
 
 typealias PasswdInvalidator = (String) -> Boolean
 typealias PasswdProvider = suspend (PasswdInvalidator) -> String
+
+/** Library metadata must finish even if the reader destination is replaced. */
+private val archiveMetadataScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 suspend inline fun <T> useArchivePageLoader(
     file: Path,
@@ -70,25 +78,12 @@ suspend inline fun <T> useArchivePageLoader(
             if (needPassword() && archivePasswds.none(::providePassword)) {
                 archivePasswds += passwdProvider(::providePassword)
             }
-            // Persist page count + first-page cover for library/browse (incl. local solid).
-            runCatching {
-                val pathStr = file.toString()
-                val f = File(pathStr)
-                val cover = ArchiveCoverCache.writeCoverFromOpenArchive(
-                    pathStr,
-                    f.takeIf { it.isFile }?.lastModified() ?: 0L,
-                    f.takeIf { it.isFile }?.length() ?: 0L,
-                )
-                val coverStr = cover?.toString()
-                val gid = info?.gid
-                withIOContext {
-                    if (gid != null && gid != 0L) {
-                        LocalLibrary.updateGalleryPageAndCover(gid, size, coverStr)
-                    } else {
-                        LocalLibrary.updateGalleryPageAndCoverByContentPath(pathStr, size, coverStr)
-                    }
-                }
-            }.onFailure { logcat(it) }
+            // Serialize JNI extract; libarchive is process-global and not MT-safe.
+            val extractLock = Any()
+            val pathStr = file.toString()
+            val f = File(pathStr)
+            val mtime = f.takeIf { it.isFile }?.lastModified() ?: 0L
+            val len = f.takeIf { it.isFile }?.length() ?: 0L
             val loader = install(
                 object : PageLoader(this, info, startPage, size, hasAds) {
                     override val title by lazy {
@@ -104,7 +99,9 @@ suspend inline fun <T> useArchivePageLoader(
 
                     override fun save(index: Int, file: Path) = runCatching {
                         file.openFileDescriptor("w").use {
-                            extractToFd(index, it.fd)
+                            synchronized(extractLock) {
+                                extractToFd(index, it.fd)
+                            }
                         }
                     }.getOrElse {
                         logcat(it)
@@ -112,7 +109,9 @@ suspend inline fun <T> useArchivePageLoader(
                     }
 
                     override fun openSource(index: Int): ImageSource {
-                        val buffer = extractToByteBuffer(index)
+                        val buffer = synchronized(extractLock) {
+                            extractToByteBuffer(index)
+                        }
                         checkNotNull(buffer) { "Extract archive content $index failed!" }
                         check(buffer.isDirect)
                         return byteBufferSource(buffer) { releaseByteBuffer(buffer) }
@@ -120,10 +119,53 @@ suspend inline fun <T> useArchivePageLoader(
 
                     override fun prefetchPages(pages: List<Int>, bounds: IntRange) = Unit
 
-                    override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) = notifySourceReady(index, orgImg)
+                    override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
+                        notifySourceReady(index, orgImg)
+                    }
                 },
             )
+            // Page count (and any existing cover) independent of cover encode path.
+            // DAO COALESCE keeps a null cover from wiping a prior thumb path.
+            archiveMetadataScope.launch {
+                updateLocalArchiveLibraryCover(
+                    pathStr = pathStr,
+                    mtime = mtime,
+                    len = len,
+                    pageCount = size,
+                    info = info,
+                )
+            }
             block(loader)
         }
+    }
+}
+
+suspend fun updateLocalArchiveLibraryCover(
+    pathStr: String,
+    mtime: Long,
+    len: Long,
+    pageCount: Int,
+    info: GalleryInfo?,
+    coverStr: String? = null,
+) {
+    // Called either from the reader for the initial count or from the application-owned
+    // cover encoder for the final path. The latter must survive reader navigation.
+    try {
+        val resolved = coverStr
+            ?: ArchiveCoverCache.resolveCoverDest(pathStr, mtime, len)
+                .takeIf { ArchiveCoverCache.isCachedOnDisk(it) }
+                ?.toString()
+        val gid = info?.gid
+        withIOContext {
+            if (gid != null && gid != 0L) {
+                LocalLibrary.updateGalleryPageAndCover(gid, pageCount, resolved)
+            } else {
+                LocalLibrary.updateGalleryPageAndCoverByContentPath(pathStr, pageCount, resolved)
+            }
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        logcat("ArchiveCover", e)
     }
 }

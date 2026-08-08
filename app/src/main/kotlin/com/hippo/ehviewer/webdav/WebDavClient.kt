@@ -7,6 +7,7 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.RemoteChild
+import com.hippo.ehviewer.library.RemoteRangeNotSupportedException
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.naturalCompare
 import io.ktor.client.HttpClient
@@ -230,6 +231,8 @@ object WebDavClient {
         var cur: Throwable? = t
         while (cur != null) {
             when (cur) {
+                // Permanent capability failure — do not reset pool or re-send Range.
+                is RemoteRangeNotSupportedException -> return false
                 is SocketException,
                 is SocketTimeoutException,
                 is ConnectException,
@@ -435,7 +438,10 @@ object WebDavClient {
                     response?.takeIf { it > 0L }
                 }
             }
-        }.onFailure { logcat("WebDavSize", it) }.getOrNull()
+        }.onFailure {
+            if (it is kotlinx.coroutines.CancellationException) throw it
+            logcat("WebDavSize", it)
+        }.getOrNull()
     }
 
     /** Parse Content-Range total length (RFC 7233 complete-length after the slash). */
@@ -451,7 +457,13 @@ object WebDavClient {
 
     /**
      * HTTP Range read for stream archives.
-     * @return bytes copied into [buf], or -1 on error.
+     *
+     * Per RFC 7233, servers may ignore Range and return `200` with the full entity.
+     * Accepting that as a ranged read corrupts ZIP/TAR/PDF parsers at nonzero offsets.
+     * Only `206` with a matching [Content-Range] start, or `200` at offset 0, is accepted.
+     *
+     * @return bytes copied into [buf]
+     * @throws RemoteRangeNotSupportedException when the server ignores Range at nonzero offset
      */
     suspend fun readRange(
         source: WebDavSourceEntity,
@@ -477,8 +489,34 @@ object WebDavClient {
                     header(HttpHeaders.Range, "bytes=$fileOffset-$end")
                 }.execute { response ->
                     val code = response.status.value
-                    if (code != 206 && code !in 200..299) {
-                        error("WebDAV Range GET $code for $relativeFilePath")
+                    when (code) {
+                        206 -> {
+                            val cr = response.headers[HttpHeaders.ContentRange]
+                                ?: response.headers["Content-Range"]
+                            val rangeStart = parseContentRangeStart(cr)
+                            // Invalid 206 is a permanent capability failure, not a transient error.
+                            if (rangeStart == null || rangeStart != fileOffset) {
+                                throw RemoteRangeNotSupportedException(
+                                    remotePath = relativeFilePath,
+                                    requestedOffset = fileOffset,
+                                    message = "WebDAV invalid 206 Content-Range for " +
+                                        "$relativeFilePath offset=$fileOffset range=$cr",
+                                )
+                            }
+                        }
+                        // Offset 0: full-entity 200 is the only non-206 success allowed.
+                        200 if fileOffset == 0L -> Unit
+                        200 -> throw RemoteRangeNotSupportedException(
+                            remotePath = relativeFilePath,
+                            requestedOffset = fileOffset,
+                        )
+                        in 201..299 -> {
+                            error(
+                                "WebDAV Range GET unexpected $code for " +
+                                    "$relativeFilePath offset=$fileOffset",
+                            )
+                        }
+                        else -> error("WebDAV Range GET $code for $relativeFilePath")
                     }
                     response.bodyAsChannel().toInputStream().use { input ->
                         var total = 0
@@ -492,6 +530,19 @@ object WebDavClient {
                 }
             }
         }
+    }
+
+    /** Parse Content-Range first-byte-pos (`bytes START-END/TOTAL`). */
+    private fun parseContentRangeStart(header: String?): Long? {
+        if (header.isNullOrBlank()) return null
+        // RFC 7233: bytes <first>-<last>/<complete-length>
+        val s = header.trim()
+        if (!s.startsWith("bytes", ignoreCase = true)) return null
+        val afterUnit = s.substring(5).trimStart()
+        if (afterUnit.startsWith("*")) return null
+        val dash = afterUnit.indexOf('-')
+        if (dash <= 0) return null
+        return afterUnit.substring(0, dash).trim().toLongOrNull()
     }
 
     private suspend fun propfindChildren(

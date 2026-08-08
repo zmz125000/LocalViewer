@@ -5,9 +5,16 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ReadAheadArchiveByteSource
 import com.hippo.ehviewer.library.RemoteArchiveOpen
+import com.hippo.ehviewer.library.RemoteRangeNotSupportedException
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -22,7 +29,7 @@ class WebDavArchiveByteSource(
     preferSequential: Boolean = false,
     /** Pipeline next fixed window (reader). Off for cover thumbs. */
     pipeline: Boolean = true,
-    /** Fixed window size (default 8 MiB). Cover thumbs use a smaller fixed window. */
+    /** Fixed window size (default 8 MiB). */
     sequentialWindow: Int = ReadAheadArchiveByteSource.SEQUENTIAL_WINDOW,
 ) : ArchiveByteSource {
     private val inner = ReadAheadArchiveByteSource(
@@ -54,6 +61,14 @@ private class RawWebDavArchiveByteSource(
     /** Epoch ms until which failed stats fail-fast (avoid readahead hammering a down server). */
     private val failFastUntilMs = AtomicLong(0L)
 
+    private val closed = AtomicBoolean(false)
+
+    /**
+     * All in-flight CIO coroutines (size HEAD/GET and Range reads, including readahead).
+     * A single [AtomicReference] would drop concurrent jobs; close must cancel every one.
+     */
+    private val activeJobs = ConcurrentHashMap.newKeySet<Job>()
+
     /**
      * Resolved archive size. Once known, never re-stats (survives brief server restarts).
      * On failure throws [IOException] (not [IllegalStateException]) so open/read paths
@@ -61,6 +76,9 @@ private class RawWebDavArchiveByteSource(
      */
     override val size: Long
         get() {
+            if (closed.get()) {
+                throw IOException("WebDAV archive source closed: $remote")
+            }
             val cached = sizeBytes.get()
             if (cached > 0L) return cached
             val now = System.currentTimeMillis()
@@ -68,6 +86,9 @@ private class RawWebDavArchiveByteSource(
                 throw IOException("Cannot stat WebDAV archive (recent fail): $remote")
             }
             val s = resolveSizeWithRetry()
+            if (closed.get()) {
+                throw IOException("WebDAV archive source closed: $remote")
+            }
             if (s != null && s > 0L) {
                 sizeBytes.compareAndSet(0L, s)
                 val after = sizeBytes.get()
@@ -79,37 +100,91 @@ private class RawWebDavArchiveByteSource(
 
     /**
      * Brief multi-try for server restart windows (most restarts recover within ~1–2 s).
-     * Returns null only after all attempts fail.
+     * Returns null only after all attempts fail (or [close] cancelled the work).
      */
-    private fun resolveSizeWithRetry(): Long? = runBlocking {
-        var last: Long? = null
-        repeat(SIZE_ATTEMPTS) { attempt ->
-            val size = WebDavClient.fileSizeOrNull(source, password, remote)
-            last = size
-            if (size != null && size > 0L) return@runBlocking size
-            if (attempt < SIZE_ATTEMPTS - 1) {
-                delay(SIZE_BACKOFF_MS * (attempt + 1))
+    private fun resolveSizeWithRetry(): Long? = try {
+        withTrackedJob {
+            var last: Long? = null
+            repeat(SIZE_ATTEMPTS) { attempt ->
+                if (closed.get()) return@withTrackedJob null
+                val size = WebDavClient.fileSizeOrNull(source, password, remote)
+                last = size
+                if (size != null && size > 0L) return@withTrackedJob size
+                if (attempt < SIZE_ATTEMPTS - 1) {
+                    delay(SIZE_BACKOFF_MS * (attempt + 1))
+                }
             }
+            last?.takeIf { it > 0L }
         }
-        last?.takeIf { it > 0L }
+    } catch (_: CancellationException) {
+        null
+    } catch (e: Throwable) {
+        if (closed.get()) {
+            null
+        } else {
+            logcat("WebDavArchive", e)
+            null
+        }
     }
 
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
         if (len <= 0) return 0
+        if (closed.get()) return -1
         return try {
             val fileSize = size
             if (offset >= fileSize) return 0
             val toRead = minOf(len.toLong(), fileSize - offset).toInt()
-            runBlocking {
-                WebDavClient.readRange(source, password, remote, offset, buf, off, toRead)
+            withTrackedJob {
+                if (closed.get()) return@withTrackedJob -1
+                WebDavClient.readRange(
+                    source,
+                    password,
+                    remote,
+                    offset,
+                    buf,
+                    off,
+                    toRead,
+                )
             }
+        } catch (e: RemoteRangeNotSupportedException) {
+            // Permanent capability failure must not be masked as EOF/-1.
+            throw e
+        } catch (e: CancellationException) {
+            -1
         } catch (e: Throwable) {
+            if (closed.get()) return -1
             logcat("WebDavArchive", e)
             -1
         }
     }
 
-    override fun close() = Unit
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        // Snapshot then cancel — concurrent withTrackedJob finally-removes are fine.
+        val jobs = activeJobs.toTypedArray()
+        activeJobs.clear()
+        for (job in jobs) {
+            job.cancel()
+        }
+    }
+
+    /**
+     * Run [block] under [runBlocking], tracking the coroutine [Job] so [close] can
+     * cancel size resolution and overlapping Range reads (foreground + readahead).
+     */
+    private fun <T> withTrackedJob(block: suspend () -> T): T {
+        if (closed.get()) throw CancellationException("WebDAV archive source closed")
+        return runBlocking {
+            val job = currentCoroutineContext().job
+            activeJobs.add(job)
+            try {
+                if (closed.get()) throw CancellationException("WebDAV archive source closed")
+                block()
+            } finally {
+                activeJobs.remove(job)
+            }
+        }
+    }
 
     private companion object {
         const val SIZE_ATTEMPTS = 3

@@ -103,39 +103,55 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         val hostScope = this
         val prefetchN = Settings.preloadImage.value.coerceAtLeast(1)
         val pageCount = engine.pageCount
+        val resumePage = startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
 
-        // Seed page 0 so open is useful immediately (hits cache if already extracted).
+        // LKG seed: extract page 0 before publish so PDF/EPUB open is immediately useful.
+        // Cover encode stays async and never holds extractMutex after publish.
         extractMutex.withLock {
             engine.extractToCache(cacheKey, 0)?.let { pagePaths[0] = it }
         }
-        check(pagePaths[0] != null || DocumentExtractCache.isPageCached(cacheKey, 0, engine.extOf(0) ?: "bin")) {
+        check(
+            pagePaths[0] != null ||
+                DocumentExtractCache.isPageCached(cacheKey, 0, engine.extOf(0) ?: "bin"),
+        ) {
             "Failed to extract document page 0"
         }
         pagePaths[0] = pagePaths[0]
             ?: DocumentExtractCache.pagePath(cacheKey, 0, engine.extOf(0) ?: "bin")
 
-        // Cover + library update off the open critical path when page 0 was already cached.
-        hostScope.launch(Dispatchers.IO) {
-            runCatching {
-                ArchiveCoverCache.writeCoverFromExtractedPage(cacheKey, pagePaths[0]!!)
+        // Also map resume page when already on disk (no extra extract).
+        if (resumePage != 0) {
+            val ext = engine.extOf(resumePage)
+            if (ext != null && DocumentExtractCache.isPageCached(cacheKey, resumePage, ext)) {
+                pagePaths[resumePage] = DocumentExtractCache.pagePath(cacheKey, resumePage, ext)
+            }
+        }
+
+        // Cover / library metadata after loader publish (never blocks open on encode).
+        val page0Cached = pagePaths[0]
+        if (page0Cached != null && coverWritten.compareAndSet(false, true)) {
+            ArchiveCoverCache.scheduleEncodeFromExtractedPage(cacheKey, page0Cached) { cover ->
                 localPathForLibrary?.let { pathStr ->
-                    val cover = ArchiveCoverCache.tryDiskCover(cacheKey) ?: ArchiveCoverCache.tryDiskCover(pathStr)
-                    val coverStr = cover?.toString()
+                    val resolved = cover ?: ArchiveCoverCache.tryDiskCover(pathStr)
                     val gid = info?.gid
                     if (gid != null && gid != 0L) {
-                        LocalLibrary.updateGalleryPageAndCover(gid, pageCount, coverStr)
+                        LocalLibrary.updateGalleryPageAndCover(gid, pageCount, resolved?.toString())
                     } else {
-                        LocalLibrary.updateGalleryPageAndCoverByContentPath(pathStr, pageCount, coverStr)
+                        LocalLibrary.updateGalleryPageAndCoverByContentPath(
+                            pathStr,
+                            pageCount,
+                            resolved?.toString(),
+                        )
                     }
                 }
-            }.onFailure { logcat("DocumentExtract", it) }
+            }
         }
 
         val loader = install(
             object : PageLoader(
                 hostScope,
                 info,
-                startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0)),
+                resumePage,
                 pageCount,
                 hasAds,
             ) {
@@ -215,9 +231,25 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 private fun markReady(index: Int) {
                     val path = pagePaths[index] ?: return
                     if (index == 0 && coverWritten.compareAndSet(false, true)) {
-                        runCatching {
-                            ArchiveCoverCache.writeCoverFromExtractedPage(cacheKey, path)
-                        }.onFailure { logcat("DocumentExtract", it) }
+                        ArchiveCoverCache.scheduleEncodeFromExtractedPage(cacheKey, path) { cover ->
+                            localPathForLibrary?.let { pathStr ->
+                                val resolved = cover ?: ArchiveCoverCache.tryDiskCover(pathStr)
+                                val gid = info?.gid
+                                if (gid != null && gid != 0L) {
+                                    LocalLibrary.updateGalleryPageAndCover(
+                                        gid,
+                                        pageCount,
+                                        resolved?.toString(),
+                                    )
+                                } else {
+                                    LocalLibrary.updateGalleryPageAndCoverByContentPath(
+                                        pathStr,
+                                        pageCount,
+                                        resolved?.toString(),
+                                    )
+                                }
+                            }
+                        }
                     }
                     readyWaiters.remove(index)?.forEach { runCatching { it() } }
                 }
@@ -287,7 +319,6 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         block(loader)
     }
 }
-
 suspend inline fun <T> useLocalDocumentExtractPageLoader(
     file: Path,
     info: GalleryInfo? = null,

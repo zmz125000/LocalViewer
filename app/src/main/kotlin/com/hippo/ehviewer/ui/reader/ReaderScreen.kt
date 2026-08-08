@@ -133,6 +133,7 @@ import eu.kanade.tachiyomi.ui.reader.ReaderPageSheetMeta
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.collectLatest
@@ -1012,6 +1013,8 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                     passwdProvider = passwdProvider,
                     block = block,
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 com.ehviewer.core.util.logcat("SolidExtract", e)
                 runCatching { byteSource.close() }
@@ -1064,14 +1067,6 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
         val solid = isSolidArchiveFileName(remote)
         val tar = isTarArchiveFileName(remote)
         val document = isDocumentFileName(remote)
-        val byteSource = com.hippo.ehviewer.webdav.WebDavArchiveByteSource(
-            source,
-            password,
-            remote,
-            // Archives: sequential windows (RAR-like). Documents (PDF) keep sparse probes.
-            preferSequential = !document,
-            pipeline = true,
-        )
         val cacheKey = "webdav:${source.id}:$remote"
         val titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName }
         val passwdProvider: PasswdProvider = { invalidator ->
@@ -1084,7 +1079,18 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 ensure(invalidator(text)) { string(R.string.passwd_wrong) }
             }
         }
+        // Offline-first: loaders hit disk cache before any HEAD/Range. No proactive probe
+        // at entry — that delayed fully-cached opens and failed offline with timeouts.
+        val byteSource = com.hippo.ehviewer.webdav.WebDavArchiveByteSource(
+            source,
+            password,
+            remote,
+            // Archives: sequential windows (RAR-like). Documents (PDF) keep sparse probes.
+            preferSequential = !document,
+            pipeline = true,
+        )
         if (document) {
+            // PDF/EPUB path left at LKG behavior (chatgpt PDF stack reverted).
             useDocumentExtractPageLoader(
                 source = byteSource,
                 cacheKey = cacheKey,
@@ -1106,6 +1112,8 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                     passwdProvider = passwdProvider,
                     block = block,
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 com.ehviewer.core.util.logcat("SolidExtract", e)
                 runCatching { byteSource.close() }

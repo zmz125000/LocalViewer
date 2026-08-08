@@ -34,9 +34,18 @@ object ArchiveStreamPageCache {
         encodeDefaults = true
     }
 
-    private val root: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
+    /**
+     * Unit-test override for [root] (no Android [appCtx]). Production always null.
+     */
+    @Volatile
+    internal var rootOverrideForTests: Path? = null
+
+    private val defaultRoot: Path by lazy(LazyThreadSafetyMode.PUBLICATION) {
         File(appCtx.applicationInfo.dataDir, "cache/archive_pages").toOkioPath()
     }
+
+    private val root: Path
+        get() = rootOverrideForTests ?: defaultRoot
 
     private val trimScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pinnedKeys = ConcurrentHashMap.newKeySet<String>()
@@ -74,20 +83,48 @@ object ArchiveStreamPageCache {
         /**
          * v1: ext list only. v2+: optional [Member.offset]/[Member.compSize]/[Member.method]
          * so reopen can skip ZIP EOCD/CD or TAR header walk.
+         * v3+: [structureComplete] independent of [complete] (pages cached).
          */
         val v: Int = INDEX_VERSION,
         val cacheKey: String,
         val remoteSize: Long = 0L,
         /** "zip" | "tar" | "stream" (unknown / legacy). */
         val format: String = "stream",
+        /**
+         * Every **discovered** page image is present on disk (pages complete).
+         * Does **not** imply the TAR header walk finished — see [structureComplete].
+         */
         val complete: Boolean = false,
+        /**
+         * Every archive member has been discovered (ZIP CD fully parsed, or TAR reached
+         * verified end-of-archive). Independent of whether page bodies are cached.
+         *
+         * Partial TAR indexes often have seek offsets for every *known* member; without
+         * this flag they must not be treated as a full member list.
+         */
+        val structureComplete: Boolean = false,
         val members: List<Member> = emptyList(),
     ) {
-        /** True when every member has a usable random-seek offset. */
+        /** True when every listed member has a usable random-seek offset. */
         fun hasFullSeekIndex(): Boolean = members.isNotEmpty() && members.all { it.hasSeek }
+
+        /**
+         * Safe to open solely from the seek table without continuing discovery.
+         * ZIP CD is always a full member list when we persist offsets; TAR requires
+         * [structureComplete] so a partial progressive walk cannot freeze page count.
+         */
+        fun canOpenFromSeekIndexOnly(): Boolean {
+            if (!hasFullSeekIndex()) return false
+            return when (format) {
+                "zip" -> true
+                "tar" -> structureComplete
+                // Legacy "stream" / unknown: only when explicitly structure-complete.
+                else -> structureComplete
+            }
+        }
     }
 
-    const val INDEX_VERSION: Int = 2
+    const val INDEX_VERSION: Int = 3
 
     fun dirFor(cacheKey: String): Path = root / sha256Hex(cacheKey)
 
@@ -186,6 +223,7 @@ object ArchiveStreamPageCache {
                     countPageFiles(index.cacheKey) >= expectedPageCount
                 else -> false
             }
+            // Preserve structureComplete from the session; only flip pages-complete.
             saveIndex(index.copy(complete = complete))
         }
     }
@@ -213,13 +251,18 @@ object ArchiveStreamPageCache {
             return null
         }
         if (idx.members.isEmpty()) return null
+        // Partial TAR / legacy "stream" must resume header discovery — page-file count
+        // matching members.size is not structural completeness. Use structureComplete
+        // (not index version bumps) so good ZIP caches and fully-walked TARs stay valid.
+        if (idx.format == "tar" && !idx.structureComplete) return null
+        if (idx.format == "stream" && !idx.structureComplete) return null
         val first = idx.members.minBy { it.i }
         if (!isPageCached(cacheKey, first.i, first.ext)) return null
         val nFiles = countPageFiles(cacheKey)
         if (nFiles >= 0 && nFiles < idx.members.size) return null
         if (!idx.complete) {
             // Disk has a full page set; promote so next open skips the repair check path.
-            saveIndexAsync(idx.copy(complete = true))
+            saveIndexAsync(idx.copy(complete = true, structureComplete = idx.structureComplete))
         }
         return if (idx.complete) idx else idx.copy(complete = true)
     }

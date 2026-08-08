@@ -27,7 +27,13 @@ import com.hippo.ehviewer.jni.solidNextPlayable
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import okio.Path
@@ -81,6 +87,21 @@ object ArchiveCoverCache {
 
     private val extractSlots = Semaphore(1)
 
+    /**
+     * JPEG/UHDR cover encode runs here — **not** as a child of [ArchiveAccess.withArchive].
+     * Superseding a reader must not wait for ImageDecoder/libultrahdr to finish.
+     */
+    private val coverEncodeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private data class FileEncodeWork(
+        val archiveKey: String,
+        var pageFile: Path,
+        val callbacks: MutableList<suspend (Path?) -> Unit>,
+    )
+
+    private val fileEncodeLock = Any()
+    private val fileEncodes = HashMap<String, FileEncodeWork>()
+
     /** Paths known present on disk — main-thread [isCached] must not touch the filesystem. */
     private val knownPresent = ConcurrentHashMap.newKeySet<String>()
 
@@ -91,6 +112,106 @@ object ArchiveCoverCache {
     fun thumbPathFor(archivePath: String, mtimeMs: Long = 0L, sizeBytes: Long = 0L): Path {
         val key = "archthumb:v$FORMAT_VERSION:$archivePath:$mtimeMs:$sizeBytes@$THUMB_EDGE"
         return thumbRoot / "${sha256Hex(key)}.jpg"
+    }
+
+    /**
+     * Remote stream cache keys (`smb:…`, `webdav:…`) and solid archives always use mtime/size 0
+     * so browse [ensureStreamCover] and the reader share one JPEG path.
+     */
+    private fun stableCoverHints(
+        archiveKey: String,
+        destHintMtime: Long,
+        destHintSize: Long,
+    ): Pair<Long, Long> {
+        val base = archiveKey.substringAfterLast('/').substringAfterLast('\\').substringAfterLast(':')
+        val solid = base.isNotEmpty() && isSolidArchiveFileName(base)
+        val remote = isRemoteStreamArchiveKey(archiveKey)
+        return if (solid || remote) 0L to 0L else destHintMtime to destHintSize
+    }
+
+    /** True for reader/browse keys that are not real local file paths with mtime/size. */
+    fun isRemoteStreamArchiveKey(archiveKey: String): Boolean {
+        // Reader cacheKey shapes: "smb:id:path", "webdav:id:path"
+        return archiveKey.startsWith("smb:") || archiveKey.startsWith("webdav:")
+    }
+
+    /**
+     * Final cover JPEG destination for [archiveKey].
+     * Solid + remote stream keys force mtime/size = 0 (shared browse/reader path).
+     */
+    fun resolveCoverDest(
+        archiveKey: String,
+        destHintMtime: Long = 0L,
+        destHintSize: Long = 0L,
+    ): Path {
+        val (mtime, size) = stableCoverHints(archiveKey, destHintMtime, destHintSize)
+        return thumbPathFor(archiveKey, mtime, size)
+    }
+
+    /**
+     * True if the cover JPEG already exists — check **before** archive extract / heap copy.
+     * Safe on IO threads (disk probe).
+     */
+    fun isCoverCached(
+        archiveKey: String,
+        destHintMtime: Long = 0L,
+        destHintSize: Long = 0L,
+    ): Boolean = isCachedOnDisk(resolveCoverDest(archiveKey, destHintMtime, destHintSize))
+
+    /**
+     * Encode from a page file already published by the reader. The worker is application-owned:
+     * navigation can close the reader/archive session without waiting for thumbnail conversion.
+     * Work is deduplicated by destination, but unrelated covers are never dropped.
+     */
+    fun scheduleEncodeFromExtractedPage(
+        archiveKey: String,
+        pageFile: Path,
+        onDone: (suspend (Path?) -> Unit)? = null,
+    ) {
+        val dest = resolveCoverDest(archiveKey)
+        val destKey = dest.toString()
+        if (isCachedOnDisk(dest)) {
+            dispatchEncodeDone(onDone, dest)
+            return
+        }
+        val start = synchronized(fileEncodeLock) {
+            val existing = fileEncodes[destKey]
+            if (existing != null) {
+                existing.pageFile = pageFile
+                if (onDone != null) existing.callbacks += onDone
+                false
+            } else {
+                fileEncodes[destKey] = FileEncodeWork(
+                    archiveKey = archiveKey,
+                    pageFile = pageFile,
+                    callbacks = if (onDone != null) mutableListOf(onDone) else mutableListOf(),
+                )
+                true
+            }
+        }
+        if (!start) return
+        coverEncodeScope.launch {
+            val work = synchronized(fileEncodeLock) { fileEncodes[destKey] } ?: return@launch
+            val path = writeCoverFromExtractedPage(work.archiveKey, work.pageFile)
+            val callbacks = synchronized(fileEncodeLock) {
+                fileEncodes.remove(destKey)?.callbacks?.toList().orEmpty()
+            }
+            callbacks.forEach { runEncodeDone(it, path) }
+        }
+    }
+
+    private fun dispatchEncodeDone(done: (suspend (Path?) -> Unit)?, path: Path?) {
+        if (done != null) coverEncodeScope.launch { runEncodeDone(done, path) }
+    }
+
+    private suspend fun runEncodeDone(done: (suspend (Path?) -> Unit)?, path: Path?) {
+        if (done == null) return
+        try {
+            done(path)
+        } catch (e: Throwable) {
+            // Completion belongs to a caller lifecycle; it must never cancel the global worker.
+            logcat("ArchiveCover", e)
+        }
     }
 
     /**
@@ -149,18 +270,18 @@ object ArchiveCoverCache {
      * hide the row ([LocalLibrary.hideEmptyArchive] / [EmptyArchiveRegistry]).
      */
     suspend fun ensureCover(archivePath: Path): CoverEnsureResult = withIOContext {
-        runCatching {
+        try {
             val name = archivePath.name
-            if (!isArchiveFileName(name)) return@runCatching CoverEnsureResult.Skip
+            if (!isArchiveFileName(name)) return@withIOContext CoverEnsureResult.Skip
 
             val solid = isSolidArchiveFileName(name)
             val document = isDocumentFileName(name)
             val key = archivePath.toString()
             if (solid || document) {
-                tryDiskCover(key)?.let { return@runCatching CoverEnsureResult.Hit(it) }
+                tryDiskCover(key)?.let { return@withIOContext CoverEnsureResult.Hit(it) }
             }
             if (document) {
-                return@runCatching ensureLocalDocumentCover(archivePath, key)
+                return@withIOContext ensureLocalDocumentCover(archivePath, key)
             }
 
             val openLocalSource: suspend () -> ArchiveByteSource = {
@@ -172,7 +293,7 @@ object ArchiveCoverCache {
             }
 
             if (solid) {
-                return@runCatching ensureSolidStreamCoverInternal(
+                return@withIOContext ensureSolidStreamCoverInternal(
                     cacheKey = key,
                     openSource = openLocalSource,
                     scanCap = LOCAL_NON_ZIP_SCAN_CAP,
@@ -185,7 +306,7 @@ object ArchiveCoverCache {
             val mtime = if (!realFile) 0L else file.lastModified()
             val sizeHint = if (!realFile) 0L else file.length()
             val dest = thumbPathFor(key, mtime, sizeHint)
-            if (isCachedOnDisk(dest)) return@runCatching CoverEnsureResult.Hit(dest)
+            if (isCachedOnDisk(dest)) return@withIOContext CoverEnsureResult.Hit(dest)
 
             ensureStreamCoverInternal(
                 cacheKey = key,
@@ -194,44 +315,49 @@ object ArchiveCoverCache {
                 scanCapNonZip = LOCAL_NON_ZIP_SCAN_CAP,
                 fileName = name,
             )
-        }.onFailure { logcat("ArchiveCover", it) }.getOrElse { CoverEnsureResult.Skip }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            logcat("ArchiveCover", e)
+            CoverEnsureResult.Skip
+        }
     }
 
     /**
-     * Write cover from an **already open** archive (reader holds [ArchiveAccess]).
-     * Extracts page 0 without reopening ([extractToByteBuffer]).
-     *
-     * Works for local solid after [openArchive] full index. Network solid stream
-     * readers should use [writeCoverFromExtractedPage] instead (different extract API).
-     *
-     * Solid keys always use mtime/size = 0 so browse [ensureCover] / [tryDiskCover] hit
-     * the same path as the reader-written thumb.
-     *
-     * [archiveKey] may be a local path or a remote stream key (`smb:id:path`).
+     * Encode a cover JPEG from already-extracted page-0 bytes (no archive lock needed).
+     * Use when the caller extracted under a short critical section and wants encode outside.
      */
-    fun writeCoverFromOpenArchive(archiveKey: String, destHintMtime: Long = 0L, destHintSize: Long = 0L): Path? {
-        val base = archiveKey.substringAfterLast('/').substringAfterLast('\\').substringAfterLast(':')
-        val solid = base.isNotEmpty() && isSolidArchiveFileName(base)
-        val dest = thumbPathFor(
-            archiveKey,
-            if (solid) 0L else destHintMtime,
-            if (solid) 0L else destHintSize,
-        )
+    suspend fun writeCoverFromPageBytes(
+        archiveKey: String,
+        bytes: ByteArray,
+        extHint: String,
+        destHintMtime: Long = 0L,
+        destHintSize: Long = 0L,
+    ): Path? {
+        val dest = resolveCoverDest(archiveKey, destHintMtime, destHintSize)
         if (isCachedOnDisk(dest)) return dest
-        return runCatching {
-            extractPage0ToJpeg(dest)
+        return try {
+            encodePage0Jpeg(bytes, extHint, dest)
             dest.takeIf { isCachedOnDisk(it) }
-        }.onFailure { logcat(it) }.getOrNull()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            logcat(e)
+            null
+        }
     }
+
+    // Note: [resolveCoverDest] already forces remote-stream keys to mtime/size 0.
 
     /**
      * Cover from an already-extracted page file (solid fake-stream page 0).
-     * Allows solid remote keys that [writeCoverFromOpenArchive] would skip.
+     * Handles solid/remote keys without reopening native archive state.
+     * Encode only — safe to call outside [ArchiveAccess].
      */
-    fun writeCoverFromExtractedPage(archiveKey: String, pageFile: Path): Path? {
+    suspend fun writeCoverFromExtractedPage(archiveKey: String, pageFile: Path): Path? {
         val dest = thumbPathFor(archiveKey, 0L, 0L)
         if (isCachedOnDisk(dest)) return dest
-        return runCatching {
+        return try {
             val src = File(pageFile.toString())
             if (!src.isFile || src.length() == 0L) return null
             File(dest.parent!!.toString()).mkdirs()
@@ -254,7 +380,12 @@ object ArchiveCoverCache {
             } finally {
                 if (jpgTmp.exists()) jpgTmp.delete()
             }
-        }.onFailure { logcat(it) }.getOrNull()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            logcat(e)
+            null
+        }
     }
 
     /**
@@ -289,6 +420,15 @@ object ArchiveCoverCache {
     }
 
     /**
+     * Native open/extract outcome held only long enough to leave [ArchiveAccess]
+     * before JPEG/UHDR encode.
+     */
+    private sealed interface StreamExtractOutcome {
+        data class Terminal(val result: CoverEnsureResult) : StreamExtractOutcome
+        data class Page0(val bytes: ByteArray, val extHint: String) : StreamExtractOutcome
+    }
+
+    /**
      * Shared ZIP/TAR cover open for local + network.
      * @param destOverride when set (local real-file mtime/size key), write thumb there;
      *   otherwise [thumbPathFor](cacheKey, 0, 0).
@@ -303,74 +443,106 @@ object ArchiveCoverCache {
         val dest = destOverride ?: thumbPathFor(cacheKey, 0L, 0L)
         if (isCachedOnDisk(dest)) return CoverEnsureResult.Hit(dest)
         val isZip = fileName.isNotEmpty() && isZipArchiveFileName(fileName)
-        return extractSlots.withPermit {
-            if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
+        val outcome = extractSlots.withPermit {
+            if (isCachedOnDisk(dest)) {
+                return@withPermit StreamExtractOutcome.Terminal(CoverEnsureResult.Hit(dest))
+            }
             // Cached empty ZIP from a prior thumb/reader open — skip re-parse.
             if (isZip) {
                 val cachedEmpty = ArchiveStreamPageCache.loadIndex(cacheKey)
                     ?.takeIf { it.format == "zip" && it.members.isEmpty() && it.complete }
-                if (cachedEmpty != null) return@withPermit CoverEnsureResult.NoImages
+                if (cachedEmpty != null) {
+                    return@withPermit StreamExtractOutcome.Terminal(CoverEnsureResult.NoImages)
+                }
             }
-            ArchiveAccess.tryWithArchive {
-                openSource().use { source ->
-                    val archiveSize = runCatching { source.size }.getOrDefault(0L)
-                    val bridge = ArchiveStreamBridge(source)
-                    try {
-                        // Prefer disk seek index (reader or prior thumb EOCD parse).
-                        var n = tryOpenCoverFromSeekIndex(cacheKey, bridge, archiveSize)
-                        val openedFromDisk = n > 0
-                        if (n <= 0) {
-                            // ZIP: full CD (same net cost as coverOnly) so we persist the
-                            // full seek table for the reader. TAR: stop at first image.
-                            n = openArchiveStream(
-                                bridge,
-                                archiveSize,
-                                /* sortEntries = */
-                                false,
-                                /* coverOnly = */
-                                !isZip,
-                                /* progressiveTar = */
-                                false,
-                                /* maxScanBytes = */
-                                if (isZip) 0L else scanCapNonZip,
-                            )
-                        }
-                        when {
-                            n <= 0 -> {
-                                val empty = zeroImagesResult(
-                                    archiveSize,
-                                    if (isZip) 0L else scanCapNonZip,
-                                )
-                                if (empty is CoverEnsureResult.NoImages && isZip && !openedFromDisk) {
-                                    persistEmptyZipIndex(cacheKey, archiveSize)
+            // Hold ArchiveAccess only for open + page-0 extract; encode outside.
+            // registerAbortAction closes the network source so blocking Range reads unblock
+            // when a reader preempts (native abort alone cannot cancel CIO/smbj mid-read).
+            try {
+                ArchiveAccess.tryWithArchive {
+                    openSource().use { source ->
+                        ArchiveAccess.registerAbortAction {
+                            runCatching { source.close() }
+                        }.use {
+                            val archiveSize = runCatching { source.size }.getOrDefault(0L)
+                            val bridge = ArchiveStreamBridge(source)
+                            try {
+                                currentCoroutineContext().ensureActive()
+                                // Prefer disk seek index (reader or prior thumb EOCD parse).
+                                var n = tryOpenCoverFromSeekIndex(cacheKey, bridge, archiveSize)
+                                val openedFromDisk = n > 0
+                                if (n <= 0) {
+                                    currentCoroutineContext().ensureActive()
+                                    // ZIP: full CD (same net cost as coverOnly) so we persist the
+                                    // full seek table for the reader. TAR: stop at first image.
+                                    n = bridge.checkedNative {
+                                        openArchiveStream(
+                                            bridge,
+                                            archiveSize,
+                                            /* sortEntries = */
+                                            false,
+                                            /* coverOnly = */
+                                            !isZip,
+                                            /* progressiveTar = */
+                                            false,
+                                            /* maxScanBytes = */
+                                            if (isZip) 0L else scanCapNonZip,
+                                        )
+                                    }
                                 }
-                                empty
+                                currentCoroutineContext().ensureActive()
+                                when {
+                                    n <= 0 -> {
+                                        val empty = zeroImagesResult(
+                                            archiveSize,
+                                            if (isZip) 0L else scanCapNonZip,
+                                        )
+                                        if (empty is CoverEnsureResult.NoImages && isZip && !openedFromDisk) {
+                                            persistEmptyZipIndex(cacheKey, archiveSize)
+                                        }
+                                        StreamExtractOutcome.Terminal(empty)
+                                    }
+                                    needPassword() -> StreamExtractOutcome.Terminal(CoverEnsureResult.Skip)
+                                    else -> {
+                                        if (!openedFromDisk && isZip) {
+                                            persistZipSeekIndex(cacheKey, archiveSize, n)
+                                        }
+                                        currentCoroutineContext().ensureActive()
+                                        val page0 = extractPage0Bytes(bridge)
+                                        StreamExtractOutcome.Page0(page0.bytes, page0.extHint)
+                                    }
+                                }
+                            } finally {
+                                closeArchive()
+                                bridge.close()
                             }
-                            needPassword() -> CoverEnsureResult.Skip
-                            else -> {
-                                if (!openedFromDisk && isZip) {
-                                    persistZipSeekIndex(cacheKey, archiveSize, n)
-                                }
-                                val thumb = if (destOverride != null) {
-                                    runCatching {
-                                        extractPage0ToJpeg(dest)
-                                        dest.takeIf { isCachedOnDisk(it) }
-                                    }.getOrNull()
-                                } else {
-                                    writeCoverFromOpenArchive(cacheKey, 0L, 0L)
-                                }
-                                if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
-                            }
                         }
-                    } catch (e: Throwable) {
-                        logcat("ArchiveCover", e)
-                        CoverEnsureResult.Skip
-                    } finally {
-                        closeArchive()
-                        bridge.close()
                     }
                 }
-            } ?: CoverEnsureResult.Skip
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                logcat("ArchiveCover", e)
+                null
+            } ?: StreamExtractOutcome.Terminal(CoverEnsureResult.Skip)
+        }
+
+        return when (outcome) {
+            is StreamExtractOutcome.Terminal -> outcome.result
+            is StreamExtractOutcome.Page0 -> {
+                // Release both ArchiveAccess and the scarce extraction permit before conversion.
+                currentCoroutineContext().ensureActive()
+                val thumb = try {
+                    encodePage0Jpeg(outcome.bytes, outcome.extHint, dest)
+                    dest.takeIf { isCachedOnDisk(it) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    logcat("ArchiveCover", e)
+                    null
+                }
+                if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
+            }
         }
     }
 
@@ -409,16 +581,18 @@ object ArchiveCoverCache {
         }
         val isTar = idx.format == "tar"
         return runCatching {
-            loadStreamIndex(
-                bridge,
-                archiveSize.coerceAtLeast(1L),
-                offsets,
-                unc,
-                comp,
-                methods,
-                names,
-                isTar,
-            )
+            bridge.checkedNative {
+                loadStreamIndex(
+                    bridge,
+                    archiveSize.coerceAtLeast(1L),
+                    offsets,
+                    unc,
+                    comp,
+                    methods,
+                    names,
+                    isTar,
+                )
+            }
         }.getOrDefault(0)
     }
 
@@ -451,6 +625,7 @@ object ArchiveCoverCache {
                 remoteSize = archiveSize,
                 format = "zip",
                 complete = false,
+                structureComplete = true, // full ZIP CD
                 members = members,
             ),
         )
@@ -464,6 +639,7 @@ object ArchiveCoverCache {
                 remoteSize = archiveSize,
                 format = "zip",
                 complete = true,
+                structureComplete = true,
                 members = emptyList(),
             ),
         )
@@ -519,6 +695,8 @@ object ArchiveCoverCache {
                     val thumb = writeCoverFromExtractedPage(cacheKey, page)
                     if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 logcat("ArchiveCover", e)
                 CoverEnsureResult.Skip
@@ -547,6 +725,8 @@ object ArchiveCoverCache {
                         if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 logcat("ArchiveCover", e)
                 CoverEnsureResult.Skip
@@ -588,6 +768,15 @@ object ArchiveCoverCache {
         ensureSolidStreamCoverInternal(cacheKey, openSource, NETWORK_NON_ZIP_SCAN_CAP)
     }
 
+    /**
+     * Solid extract under [ArchiveAccess]: either a terminal cover result or a temp page file
+     * path that must be encoded (and deleted) **outside** the archive lock.
+     */
+    private sealed interface SolidExtractOutcome {
+        data class Terminal(val result: CoverEnsureResult) : SolidExtractOutcome
+        data class PageFile(val tmp: File, val cacheKey: String) : SolidExtractOutcome
+    }
+
     private suspend fun ensureSolidStreamCoverInternal(
         cacheKey: String,
         openSource: suspend () -> ArchiveByteSource,
@@ -599,101 +788,134 @@ object ArchiveCoverCache {
         // Prefer page already extracted by a prior solid reader session.
         coverFromSolidExtractCache(cacheKey)?.let { return CoverEnsureResult.Hit(it) }
 
-        return extractSlots.withPermit {
-            if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
-            coverFromSolidExtractCache(cacheKey)?.let { return@withPermit CoverEnsureResult.Hit(it) }
-            val locked = ArchiveAccess.tryWithArchive {
-                openSource().use { source ->
-                    val archiveSize = runCatching { source.size }.getOrDefault(0L)
-                    val bridge = ArchiveStreamBridge(source)
-                    try {
-                        val opened = openSolidSequential(bridge, archiveSize, scanCap)
-                        if (opened == 0) {
-                            logcat("SolidCover") { "openSolidSequential failed key=$cacheKey" }
-                            return@tryWithArchive CoverEnsureResult.Skip
-                        }
-                        val idx = solidNextPlayable()
-                        if (idx < 0) {
-                            if (needPassword()) {
-                                logcat("SolidCover") { "passworded solid skipped key=$cacheKey" }
-                                return@tryWithArchive CoverEnsureResult.Skip
-                            }
-                            val limited = isArchiveScanLimited()
-                            val wholeFileInBudget =
-                                scanCap > 0L && archiveSize > 0L && archiveSize <= scanCap
-                            return@tryWithArchive when {
-                                limited && !wholeFileInBudget -> {
-                                    logcat("SolidCover") {
-                                        "scan cap hit key=$cacheKey size=$archiveSize cap=$scanCap"
+        val outcome = extractSlots.withPermit {
+            if (isCachedOnDisk(dest)) {
+                return@withPermit SolidExtractOutcome.Terminal(CoverEnsureResult.Hit(dest))
+            }
+
+            try {
+                ArchiveAccess.tryWithArchive {
+                    openSource().use { source ->
+                        ArchiveAccess.registerAbortAction {
+                            runCatching { source.close() }
+                        }.use {
+                            val archiveSize = runCatching { source.size }.getOrDefault(0L)
+                            val bridge = ArchiveStreamBridge(source)
+                            try {
+                                currentCoroutineContext().ensureActive()
+                                val opened = bridge.checkedNative {
+                                    openSolidSequential(bridge, archiveSize, scanCap)
+                                }
+                                if (opened == 0) {
+                                    logcat("SolidCover") { "openSolidSequential failed key=$cacheKey" }
+                                    return@tryWithArchive SolidExtractOutcome.Terminal(CoverEnsureResult.Skip)
+                                }
+                                currentCoroutineContext().ensureActive()
+                                val idx = bridge.checkedNative { solidNextPlayable() }
+                                if (idx < 0) {
+                                    if (needPassword()) {
+                                        logcat("SolidCover") { "passworded solid skipped key=$cacheKey" }
+                                        return@tryWithArchive SolidExtractOutcome.Terminal(CoverEnsureResult.Skip)
                                     }
-                                    CoverEnsureResult.Skip
+                                    val limited = isArchiveScanLimited()
+                                    val wholeFileInBudget =
+                                        scanCap > 0L && archiveSize > 0L && archiveSize <= scanCap
+                                    return@tryWithArchive SolidExtractOutcome.Terminal(
+                                        when {
+                                            limited && !wholeFileInBudget -> {
+                                                logcat("SolidCover") {
+                                                    "scan cap hit key=$cacheKey size=$archiveSize cap=$scanCap"
+                                                }
+                                                CoverEnsureResult.Skip
+                                            }
+                                            else -> {
+                                                logcat("SolidCover") { "no playable member key=$cacheKey" }
+                                                CoverEnsureResult.NoImages
+                                            }
+                                        },
+                                    )
                                 }
-                                else -> {
-                                    logcat("SolidCover") { "no playable member key=$cacheKey" }
-                                    CoverEnsureResult.NoImages
+                                currentCoroutineContext().ensureActive()
+                                if (needPassword()) {
+                                    logcat("SolidCover") { "passworded solid skipped key=$cacheKey" }
+                                    return@tryWithArchive SolidExtractOutcome.Terminal(CoverEnsureResult.Skip)
                                 }
+                                val ext = solidCurrentExtension().ifBlank { "bin" }.take(8)
+                                val tmp = File(
+                                    appCtx.cacheDir,
+                                    "solid_cover_${System.nanoTime()}.$ext",
+                                )
+                                currentCoroutineContext().ensureActive()
+                                ParcelFileDescriptor.open(
+                                    tmp,
+                                    ParcelFileDescriptor.MODE_READ_WRITE or
+                                        ParcelFileDescriptor.MODE_CREATE or
+                                        ParcelFileDescriptor.MODE_TRUNCATE,
+                                ).use { pfd ->
+                                    if (!bridge.checkedNative { solidExtractCurrentToFd(pfd.fd) }) {
+                                        logcat("SolidCover") { "extract page0 failed key=$cacheKey" }
+                                        tmp.delete()
+                                        return@tryWithArchive SolidExtractOutcome.Terminal(CoverEnsureResult.Skip)
+                                    }
+                                }
+                                if (!tmp.isFile || tmp.length() == 0L) {
+                                    tmp.delete()
+                                    return@tryWithArchive SolidExtractOutcome.Terminal(CoverEnsureResult.Skip)
+                                }
+                                runCatching {
+                                    SolidExtractCache.writePageFromFdCopy(cacheKey, 0, ext, tmp)
+                                }
+                                // Leave tmp for encode outside ArchiveAccess (caller deletes).
+                                SolidExtractOutcome.PageFile(tmp, cacheKey)
+                            } finally {
+                                closeArchive()
+                                bridge.close()
                             }
                         }
-                        if (needPassword()) {
-                            logcat("SolidCover") { "passworded solid skipped key=$cacheKey" }
-                            return@tryWithArchive CoverEnsureResult.Skip
-                        }
-                        val ext = solidCurrentExtension().ifBlank { "bin" }.take(8)
-                        val tmp = File(
-                            appCtx.cacheDir,
-                            "solid_cover_${System.nanoTime()}.$ext",
-                        )
-                        try {
-                            ParcelFileDescriptor.open(
-                                tmp,
-                                ParcelFileDescriptor.MODE_READ_WRITE or
-                                    ParcelFileDescriptor.MODE_CREATE or
-                                    ParcelFileDescriptor.MODE_TRUNCATE,
-                            ).use { pfd ->
-                                if (!solidExtractCurrentToFd(pfd.fd)) {
-                                    logcat("SolidCover") { "extract page0 failed key=$cacheKey" }
-                                    return@tryWithArchive CoverEnsureResult.Skip
-                                }
-                            }
-                            if (!tmp.isFile || tmp.length() == 0L) {
-                                return@tryWithArchive CoverEnsureResult.Skip
-                            }
-                            runCatching {
-                                SolidExtractCache.writePageFromFdCopy(cacheKey, 0, ext, tmp)
-                            }
-                            val thumb = writeCoverFromExtractedPage(cacheKey, tmp.toOkioPath())
-                            if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
-                        } finally {
-                            tmp.delete()
-                        }
-                    } catch (e: Throwable) {
-                        logcat("SolidCover", e)
-                        CoverEnsureResult.Skip
-                    } finally {
-                        closeArchive()
-                        bridge.close()
                     }
                 }
-            }
-            if (locked == null) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                logcat("SolidCover", e)
+                null
+            } ?: run {
                 logcat("SolidCover") { "archive busy key=$cacheKey" }
+                SolidExtractOutcome.Terminal(CoverEnsureResult.Skip)
             }
-            locked ?: CoverEnsureResult.Skip
+        }
+
+        return when (outcome) {
+            is SolidExtractOutcome.Terminal -> outcome.result
+            is SolidExtractOutcome.PageFile -> {
+                try {
+                    // Temp file is complete; release archive + extraction permit before encode.
+                    currentCoroutineContext().ensureActive()
+                    val thumb = writeCoverFromExtractedPage(
+                        outcome.cacheKey,
+                        outcome.tmp.toOkioPath(),
+                    )
+                    if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
+                } finally {
+                    outcome.tmp.delete()
+                }
+            }
         }
     }
 
     /**
-     * Disk-only cover resolve (no network): existing JPEG thumb, or extract page 0
-     * (solid / document). Used by browse rows when network covers are off or before extract.
+     * Disk-only cover resolve (no network): existing JPEG thumb, or encode from page 0
+     * (solid / document extract cache). Used by browse rows when network covers are off
+     * or before extract. May encode a thumb if only the raw page is present.
      */
-    fun tryDiskCover(cacheKey: String): Path? {
+    suspend fun tryDiskCover(cacheKey: String): Path? {
         val dest = thumbPathFor(cacheKey, 0L, 0L)
         if (isCachedOnDisk(dest)) return dest
         return coverFromSolidExtractCache(cacheKey) ?: coverFromDocumentExtractCache(cacheKey)
     }
 
     /** Cover from solid_extract pages/000000.* if present. */
-    private fun coverFromSolidExtractCache(cacheKey: String): Path? {
+    private suspend fun coverFromSolidExtractCache(cacheKey: String): Path? {
         val ext = SolidExtractCache.extensionFor(cacheKey, 0) ?: return null
         val page = SolidExtractCache.pagePath(cacheKey, 0, ext)
         if (!SolidExtractCache.isCachedFile(page)) return null
@@ -701,19 +923,22 @@ object ArchiveCoverCache {
     }
 
     /** Cover from document_extract pages/000000.* if present. */
-    private fun coverFromDocumentExtractCache(cacheKey: String): Path? {
+    private suspend fun coverFromDocumentExtractCache(cacheKey: String): Path? {
         val ext = DocumentExtractCache.extensionFor(cacheKey, 0) ?: return null
         val page = DocumentExtractCache.pagePath(cacheKey, 0, ext)
         if (!DocumentExtractCache.isCachedFile(page)) return null
         return writeCoverFromExtractedPage(cacheKey, page)
     }
 
+    private data class Page0Bytes(val bytes: ByteArray, val extHint: String)
+
     /**
-     * Page 0 → small JPEG under [dest]. Bytes stay in RAM (no full-page dump under
-     * archive_thumb — a 25 MB `.raw.*` thrash would wear flash for every new cover).
+     * Page 0 raw bytes from an **already open** archive. Does not encode —
+     * keep this under [ArchiveAccess] and run [encodePage0Jpeg] after release.
      */
-    private fun extractPage0ToJpeg(dest: Path) {
-        val buffer = extractToByteBuffer(0) ?: error("extract page 0 failed")
+    private fun extractPage0Bytes(bridge: ArchiveStreamBridge): Page0Bytes {
+        val buffer = bridge.checkedNative { extractToByteBuffer(0) }
+            ?: error("extract page 0 failed")
         val bytes = try {
             check(buffer.isDirect)
             val dup = buffer.duplicate()
@@ -725,19 +950,25 @@ object ArchiveCoverCache {
         val ext = runCatching { getExtension(0) }.getOrNull()
             ?.trim()?.removePrefix(".")?.ifBlank { null }
             ?: "bin"
+        return Page0Bytes(bytes, ext)
+    }
+
+    /**
+     * Page 0 bytes → small JPEG under [dest]. Safe outside [ArchiveAccess]
+     * (ImageDecoder / libultrahdr). No full-page dump under archive_thumb.
+     */
+    private suspend fun encodePage0Jpeg(bytes: ByteArray, ext: String, dest: Path) {
         val hint = "page0.$ext"
         File(dest.parent!!.toString()).mkdirs()
         val jpgTmp = File("$dest.jpg.${System.nanoTime()}")
         try {
-            val ok = runBlocking {
-                HdrConvertCache.writeThumbFromBytes(
-                    bytes = bytes,
-                    destJpeg = jpgTmp,
-                    maxEdge = THUMB_EDGE,
-                    quality = THUMB_JPEG_QUALITY,
-                    fileNameHint = hint,
-                )
-            }
+            val ok = HdrConvertCache.writeThumbFromBytes(
+                bytes = bytes,
+                destJpeg = jpgTmp,
+                maxEdge = THUMB_EDGE,
+                quality = THUMB_JPEG_QUALITY,
+                fileNameHint = hint,
+            )
             check(ok && jpgTmp.isFile && jpgTmp.length() > 0L) {
                 "thumb encode failed: $hint size=${bytes.size}"
             }
@@ -755,18 +986,16 @@ object ArchiveCoverCache {
         }
     }
 
-    private fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {
+    private suspend fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {
         // Already-on-disk extract page (solid/document cache). Convert-path → lib MaxEdge;
         // else ImageDecoder. No full re-copy of the source into archive_thumb.
-        val ok = runBlocking {
-            HdrConvertCache.writeThumbJpeg(
-                source = source.toOkioPath(),
-                destJpeg = destJpeg,
-                maxEdge = maxEdge,
-                quality = quality,
-                fileNameHint = source.name,
-            )
-        }
+        val ok = HdrConvertCache.writeThumbJpeg(
+            source = source.toOkioPath(),
+            destJpeg = destJpeg,
+            maxEdge = maxEdge,
+            quality = quality,
+            fileNameHint = source.name,
+        )
         check(ok && destJpeg.isFile && destJpeg.length() > 0L) {
             "thumb encode failed: ${source.name}"
         }

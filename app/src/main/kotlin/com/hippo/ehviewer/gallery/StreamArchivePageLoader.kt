@@ -28,6 +28,7 @@ import com.hippo.ehviewer.library.ArchiveStreamBridge
 import com.hippo.ehviewer.library.ArchiveStreamPageCache
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
@@ -70,57 +71,59 @@ suspend inline fun <T> useStreamArchivePageLoader(
     hasAds: Boolean = false,
     crossinline passwdProvider: PasswdProvider,
     crossinline block: suspend (PageLoader) -> T,
-) = ArchiveAccess.withArchive {
-    autoCloseScope {
-        coroutineScope {
-            ArchiveStreamPageCache.pin(cacheKey)
-            install({ }, { _, _ -> ArchiveStreamPageCache.unpin(cacheKey) })
+) = autoCloseScope {
+    coroutineScope {
+        ArchiveStreamPageCache.pin(cacheKey)
+        install({ }, { _, _ -> ArchiveStreamPageCache.unpin(cacheKey) })
+        // Own the transport from entry, including stat/cache validation failures.
+        install({ source }, { s, _ -> s.close() })
 
-            // Offline-first: fully cached ZIP/TAR must not wait on remote size/stat
-            // (SMB/WebDAV HEAD) or re-run EOCD/TAR header index.
-            val offlineReady = ArchiveStreamPageCache.isCompleteAndReady(cacheKey, remoteSize = 0L)
-            if (offlineReady != null) {
-                ArchiveStreamPageCache.touchAsync(cacheKey)
-                val loader = install(
-                    cachedStreamLoader(
-                        scope = this,
-                        cacheKey = cacheKey,
-                        streamIndex = offlineReady,
-                        titleHint = titleHint,
-                        info = info,
-                        startPage = startPage,
-                        hasAds = hasAds,
-                    ),
-                )
-                install({ source }, { s, _ -> s.close() })
-                return@coroutineScope block(loader)
-            }
+        // Offline-first: fully cached ZIP/TAR must not wait on remote size/stat
+        // (SMB/WebDAV HEAD) or re-run EOCD/TAR header index.
+        val offlineReady = ArchiveStreamPageCache.isCompleteAndReady(cacheKey, remoteSize = 0L)
+        if (offlineReady != null) {
+            ArchiveStreamPageCache.touchAsync(cacheKey)
+            val loader = install(
+                cachedStreamLoader(
+                    scope = this,
+                    cacheKey = cacheKey,
+                    streamIndex = offlineReady,
+                    titleHint = titleHint,
+                    info = info,
+                    startPage = startPage,
+                    hasAds = hasAds,
+                ),
+            )
+            return@coroutineScope block(loader)
+        }
 
-            // Soft-fail remote size (WebDAV restart): IOException → open fails cleanly, no process crash.
-            val archiveSizeBytes = runCatching { source.size }.getOrDefault(-1L)
-            check(archiveSizeBytes > 0L) {
-                "Cannot open stream archive (size unknown): $cacheKey"
-            }
-            ArchiveStreamPageCache.invalidateIfRemoteSizeMismatch(cacheKey, archiveSizeBytes)
-            // Re-check after size match (index may have been purged on mismatch).
-            val ready = ArchiveStreamPageCache.isCompleteAndReady(cacheKey, remoteSize = archiveSizeBytes)
-            if (ready != null) {
-                ArchiveStreamPageCache.touchAsync(cacheKey)
-                val loader = install(
-                    cachedStreamLoader(
-                        scope = this,
-                        cacheKey = cacheKey,
-                        streamIndex = ready,
-                        titleHint = titleHint,
-                        info = info,
-                        startPage = startPage,
-                        hasAds = hasAds,
-                    ),
-                )
-                install({ source }, { s, _ -> s.close() })
-                return@coroutineScope block(loader)
-            }
+        // Soft-fail remote size (WebDAV restart): IOException → open fails cleanly, no process crash.
+        val archiveSizeBytes = runCatching { source.size }.getOrDefault(-1L)
+        check(archiveSizeBytes > 0L) {
+            "Cannot open stream archive (size unknown): $cacheKey"
+        }
+        ArchiveStreamPageCache.invalidateIfRemoteSizeMismatch(cacheKey, archiveSizeBytes)
+        // Re-check after size match (index may have been purged on mismatch).
+        val ready = ArchiveStreamPageCache.isCompleteAndReady(cacheKey, remoteSize = archiveSizeBytes)
+        if (ready != null) {
+            ArchiveStreamPageCache.touchAsync(cacheKey)
+            val loader = install(
+                cachedStreamLoader(
+                    scope = this,
+                    cacheKey = cacheKey,
+                    streamIndex = ready,
+                    titleHint = titleHint,
+                    info = info,
+                    startPage = startPage,
+                    hasAds = hasAds,
+                ),
+            )
+            return@coroutineScope block(loader)
+        }
 
+        // Cache-only readers never touch process-global libarchive state. Acquire the
+        // archive lease only after both offline checks miss.
+        return@coroutineScope ArchiveAccess.withArchive {
             val bridge = install(
                 { ArchiveStreamBridge(source) },
                 { b, _ -> b.close() },
@@ -130,7 +133,9 @@ suspend inline fun <T> useStreamArchivePageLoader(
                 ?.takeIf {
                     it.remoteSize <= 0L || it.remoteSize == archiveSizeBytes
                 }
-                ?.takeIf { it.hasFullSeekIndex() }
+                // TAR: require structureComplete so partial progressive walks cannot freeze
+                // page count. ZIP CD is always a full member list when offsets are present.
+                ?.takeIf { it.canOpenFromSeekIndexOnly() }
             val openedFromDisk = AtomicInteger(0)
             val pageCount = install(
                 {
@@ -142,18 +147,21 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         return@install fromDisk
                     }
                     // progressiveTar=true: TAR first image only; ZIP still full CD.
-                    val n = openArchiveStream(
-                        bridge,
-                        archiveSizeBytes,
-                        /* sortEntries = */
-                        true,
-                        /* coverOnly = */
-                        false,
-                        /* progressiveTar = */
-                        true,
-                        /* maxScanBytes = */
-                        0L,
-                    )
+                    // checkedNative surfaces RemoteRangeNotSupportedException cleared by C.
+                    val n = bridge.checkedNative {
+                        openArchiveStream(
+                            bridge,
+                            archiveSizeBytes,
+                            /* sortEntries = */
+                            true,
+                            /* coverOnly = */
+                            false,
+                            /* progressiveTar = */
+                            true,
+                            /* maxScanBytes = */
+                            0L,
+                        )
+                    }
                     check(n > 0) { "Archive have no content!" }
                     n
                 },
@@ -162,9 +170,6 @@ suspend inline fun <T> useStreamArchivePageLoader(
             if (needPassword() && archivePasswds.none(::providePassword)) {
                 archivePasswds += passwdProvider(::providePassword)
             }
-            runCatching {
-                ArchiveCoverCache.writeCoverFromOpenArchive(cacheKey, 0L, archiveSizeBytes)
-            }.onFailure { logcat(it) }
 
             val format = when (val fmt = diskIndex?.format) {
                 "zip", "tar" -> fmt
@@ -178,7 +183,9 @@ suspend inline fun <T> useStreamArchivePageLoader(
                 startPage > 0
             ) {
                 while (listedCount <= startPage && !isStreamIndexComplete()) {
-                    listedCount = continueStreamTarIndex(16).coerceAtLeast(listedCount)
+                    listedCount = bridge.checkedNative {
+                        continueStreamTarIndex(16)
+                    }.coerceAtLeast(listedCount)
                 }
             }
             val streamMembersRef = AtomicReference(
@@ -200,6 +207,8 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         remoteSize = archiveSizeBytes,
                         format = format,
                         complete = false, // page completeness tracked separately
+                        // ZIP CD is full; TAR only when progressive walk finished.
+                        structureComplete = format == "zip" || isStreamIndexComplete(),
                         members = rebuilt.toList(),
                     ),
                 )
@@ -215,6 +224,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
             val keepWindow = 4
             val hostScope = this
             val tarIndexJob = AtomicReference<Job?>(null)
+            val coverScheduled = AtomicBoolean(false)
 
             val loader = install(
                 object : PageLoader(
@@ -236,7 +246,10 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 hostScope.launch(Dispatchers.IO) {
                                     try {
                                         while (isActive && !isStreamIndexComplete()) {
-                                            val n = continueStreamTarIndex(12)
+                                            val before = size
+                                            val n = bridge.checkedNative {
+                                                continueStreamTarIndex(12)
+                                            }
                                             if (n > size) {
                                                 streamMembersRef.set(
                                                     buildStreamMembers(n, prior = null),
@@ -254,6 +267,14 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                                     ),
                                                 )
                                                 persistMembers(true)
+                                                break
+                                            } else if (n <= before) {
+                                                // Native walk stopped incomplete (I/O/corruption/abort).
+                                                // Do not spin forever; keep structureComplete=false so
+                                                // a later open retries discovery.
+                                                logcat("StreamTarIndex") {
+                                                    "TAR index stopped without progress key=$cacheKey count=$n"
+                                                }
                                                 break
                                             }
                                         }
@@ -305,6 +326,16 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         cancelDistantExtracts(index)
                         ensureExtract(index, interactive = true) {
                             notifySourceReady(index, orgImg)
+                            // Any interactive page: reuse cached page 0 for cover if present.
+                            // Helper never performs native extract when page 0 is missing.
+                            scheduleStreamArchiveCoverFromPage0(
+                                coverScheduled = coverScheduled,
+                                cacheKey = cacheKey,
+                                pagePaths = pagePaths,
+                                page0Ext = streamMembersRef.get()
+                                    .firstOrNull { it.i == 0 }
+                                    ?.ext,
+                            )
                         }
                     }
 
@@ -332,6 +363,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 remoteSize = archiveSizeBytes,
                                 format = format,
                                 complete = memoryComplete,
+                                structureComplete = format == "zip" || indexDone,
                                 members = members,
                             ),
                             memoryComplete = memoryComplete,
@@ -453,6 +485,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 remoteSize = archiveSizeBytes,
                                 format = format,
                                 complete = true,
+                                structureComplete = true,
                                 members = streamMembersRef.get().toList(),
                             ),
                         )
@@ -482,7 +515,9 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 return@withLock hit
                             }
                             val ext = getExtension(index).ifBlank { return@withLock null }
-                            val buffer = extractToByteBuffer(index) ?: return@withLock null
+                            val buffer = bridge.checkedNative {
+                                extractToByteBuffer(index)
+                            } ?: return@withLock null
                             try {
                                 // Reader exit may cancel while native extract was finishing —
                                 // do not publish a buffer we no longer own the session for.
@@ -545,16 +580,18 @@ internal fun openFromSeekIndex(
     // Only trust explicit format — ZIP store also uses method 0.
     val isTar = idx.format == "tar"
     return runCatching {
-        loadStreamIndex(
-            bridge,
-            archiveSizeBytes,
-            offsets,
-            unc,
-            comp,
-            methods,
-            names,
-            isTar,
-        )
+        bridge.checkedNative {
+            loadStreamIndex(
+                bridge,
+                archiveSizeBytes,
+                offsets,
+                unc,
+                comp,
+                methods,
+                names,
+                isTar,
+            )
+        }
     }.getOrDefault(0)
 }
 
@@ -585,6 +622,34 @@ internal fun buildStreamMembers(
     return out
 }
 
+/**
+ * Encode cover from reader-published page 0 only (session map or stream page cache).
+ * Never acquires [extractMutex] / native extract — covers must not block interactive pages.
+ * Remote keys use mtime/size 0 (shared with browse).
+ */
+fun scheduleStreamArchiveCoverFromPage0(
+    coverScheduled: AtomicBoolean,
+    cacheKey: String,
+    pagePaths: ConcurrentHashMap<Int, Path>,
+    page0Ext: String?,
+) {
+    if (!coverScheduled.compareAndSet(false, true)) return
+    val cachedPath = pagePaths[0]
+        ?: page0Ext?.ifBlank { null }?.let {
+            ArchiveStreamPageCache.pagePath(cacheKey, 0, it)
+        }
+    if (cachedPath == null) {
+        // Reader has not published/listed page 0 yet — do not extract solely for cover.
+        coverScheduled.set(false)
+        return
+    }
+    ArchiveCoverCache.scheduleEncodeFromExtractedPage(cacheKey, cachedPath) { cover ->
+        // Missing page or failed encode: permit a later request to retry.
+        // Success remains single-shot for this reader session.
+        if (cover == null) coverScheduled.set(false)
+    }
+}
+
 @PublishedApi
 internal fun cachedStreamLoader(
     scope: CoroutineScope,
@@ -597,6 +662,17 @@ internal fun cachedStreamLoader(
 ): PageLoader {
     val pageCount = streamIndex.members.size
     val exts = streamIndex.members.associate { it.i to it.ext }
+    // Offline complete path never hits onRequest extract — regenerate cover from page 0 file.
+    val page0 = streamIndex.members.firstOrNull { it.i == 0 }?.let {
+        ArchiveStreamPageCache.pagePath(cacheKey, 0, it.ext)
+    }
+    if (
+        page0 != null &&
+        ArchiveStreamPageCache.isCached(page0) &&
+        !ArchiveCoverCache.isCoverCached(cacheKey)
+    ) {
+        ArchiveCoverCache.scheduleEncodeFromExtractedPage(cacheKey, page0)
+    }
     return object : PageLoader(
         scope,
         info,

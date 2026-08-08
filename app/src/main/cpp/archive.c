@@ -23,6 +23,7 @@
 #include <string.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <sys/mman.h>
 
 #include <jni.h>
@@ -36,6 +37,28 @@
 
 #include "natsort/strnatcmp.h"
 #include "ehviewer.h"
+
+/**
+ * Cooperative abort for long native archive work (browse cover open/extract).
+ * Reader sets this before waiting on ArchiveAccess so blocking JNI can exit
+ * promptly — coroutine cancellation alone cannot interrupt stream_pread.
+ */
+static atomic_bool archive_abort_requested = false;
+
+static inline int archive_should_abort(void) {
+    return atomic_load_explicit(&archive_abort_requested, memory_order_acquire);
+}
+
+static inline void archive_clear_abort(void) {
+    atomic_store_explicit(&archive_abort_requested, false, memory_order_release);
+}
+
+JNIEXPORT void JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_requestArchiveAbort(JNIEnv *env, jclass clazz) {
+    EH_UNUSED(env);
+    EH_UNUSED(clazz);
+    atomic_store_explicit(&archive_abort_requested, true, memory_order_release);
+}
 
 typedef struct {
     int using;
@@ -189,6 +212,10 @@ static la_ssize_t stream_read_cb(struct archive *a, void *client_data, const voi
     EH_UNUSED(client_data);
     JNIEnv *env = archive_get_env();
     if (!env || !g_stream_bridge || !g_mid_read) return ARCHIVE_FATAL;
+    if (archive_should_abort()) {
+        *buff = NULL;
+        return ARCHIVE_FATAL;
+    }
     if ((size_t) g_stream_pos >= archiveSize) {
         *buff = NULL;
         return 0;
@@ -246,6 +273,7 @@ static la_ssize_t stream_read_cb(struct archive *a, void *client_data, const voi
 /** Absolute pread for ZIP CD indexing / direct extract (counts toward stream_bytes_read). */
 static int stream_pread(uint8_t *dst, la_int64_t off, size_t len) {
     if (!dst || len == 0) return 0;
+    if (archive_should_abort()) return -1;
     if (off < 0 || (size_t) off > archiveSize) return -1;
     size_t max = archiveSize - (size_t) off;
     if (len > max) len = max;
@@ -256,6 +284,7 @@ static int stream_pread(uint8_t *dst, la_int64_t off, size_t len) {
     if (stream_sync_java_pos(env, off) != 0) return -1;
     size_t got = 0;
     while (got < len) {
+        if (archive_should_abort()) return -1;
         if (stream_scan_limit > 0 && stream_bytes_read >= stream_scan_limit) {
             stream_scan_hit_limit = true;
             break;
@@ -728,6 +757,12 @@ static int tar_walk_step(int stop_after_images) {
     int added = 0;
 
     while ((size_t) tar_walk_pos + TAR_BLOCK <= archiveSize) {
+        if (archive_should_abort()) {
+            tar_walk_active = false;
+            free(tar_walk_pending);
+            tar_walk_pending = NULL;
+            return 0;
+        }
         if (stream_scan_exhausted()) {
             // Budget hit mid-walk — not EOF; leave incomplete for caller.
             tar_walk_active = false;
@@ -735,12 +770,17 @@ static int tar_walk_step(int stop_after_images) {
             tar_walk_pending = NULL;
             return 0;
         }
-        if (stream_pread(hdr, tar_walk_pos, TAR_BLOCK) != TAR_BLOCK) {
-            // Short read under scan limit → incomplete; true EOF-ish otherwise.
+        int nread = stream_pread(hdr, tar_walk_pos, TAR_BLOCK);
+        if (nread != TAR_BLOCK) {
+            // Three outcomes: scan-limit stop, retryable error, or incomplete short read.
+            // Only verified end (loop exit / double zero blocks) sets tar_walk_complete.
+            // Network/JNI failure (nread < 0) must NOT freeze a truncated member list.
             if (stream_scan_hit_limit) {
                 tar_walk_active = false;
+            } else if (nread < 0) {
+                tar_walk_active = false; /* incomplete/retryable — not structure-complete */
             } else {
-                tar_walk_complete = true;
+                /* Short/zero while a full block was still inside archiveSize — incomplete. */
                 tar_walk_active = false;
             }
             free(tar_walk_pending);
@@ -761,6 +801,7 @@ static int tar_walk_step(int stop_after_images) {
         }
         tar_walk_zero_blocks = 0;
         if (!tar_checksum_ok(hdr)) {
+            /* Compatibility: preserve usable members before a corrupt/junk tail. */
             tar_walk_complete = true;
             tar_walk_active = false;
             free(tar_walk_pending);
@@ -1652,6 +1693,7 @@ JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_openArchive(JNIEnv *env, jclass thiz, jint fd, jlong size, jboolean sort_entries) {
     EH_UNUSED(thiz);
     archive_cache_vm(env);
+    archive_clear_abort();
     solid_seq_reset_state();
     stream_bridge_clear(env);
     use_stream_io = false;
@@ -1678,6 +1720,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(
     EH_UNUSED(thiz);
     if (!bridge || size <= 0) return 0;
     archive_cache_vm(env);
+    archive_clear_abort();
     solid_seq_reset_state();
     stream_bridge_clear(env);
     if (archiveAddr != MAP_FAILED) {
@@ -1763,6 +1806,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openSolidSequential(
     EH_UNUSED(thiz);
     if (!bridge || size <= 0) return 0;
     archive_cache_vm(env);
+    archive_clear_abort();
     // Tear down any prior archive session (mmap / zip stream / solid).
     if (ctx_pool) {
         for (int i = 0; i < CTX_POOL_SIZE; i++)
@@ -1828,6 +1872,10 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_solidNextPlayable(JNIEnv *env, jclass thiz
     pthread_mutex_lock(&stream_mutex);
     int r;
     while ((r = archive_read_next_header(solid_ctx->arc, &solid_ctx->entry)) == ARCHIVE_OK) {
+        if (archive_should_abort()) {
+            pthread_mutex_unlock(&stream_mutex);
+            return -2;
+        }
         if (stream_scan_exhausted()) {
             pthread_mutex_unlock(&stream_mutex);
             return -1; // treat as end; isArchiveScanLimited distinguishes budget
@@ -1933,6 +1981,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_extractToByteBuffer(JNIEnv *env, jclass th
     EH_UNUSED(env);
     EH_UNUSED(thiz);
     if (index < 0 || (size_t) index >= entryCount || !entries) return 0;
+    if (archive_should_abort()) return 0;
     entry *entry = &entries[index];
     ssize_t size = entry->size;
     if (entry->addr) {
@@ -1940,6 +1989,10 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_extractToByteBuffer(JNIEnv *env, jclass th
     }
 
     if (use_stream_io) pthread_mutex_lock(&stream_mutex);
+    if (archive_should_abort()) {
+        if (use_stream_io) pthread_mutex_unlock(&stream_mutex);
+        return 0;
+    }
 
     jobject result = 0;
     void *addr = acquire_decode_buffer();
@@ -2170,6 +2223,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_loadStreamIndex(
     if (!bridge || size <= 0 || !offsets || !uncSizes || !compSizes || !methods || !names) {
         return 0;
     }
+    archive_clear_abort();
     jsize n = (*env)->GetArrayLength(env, offsets);
     if (n <= 0 ||
         (*env)->GetArrayLength(env, uncSizes) != n ||
@@ -2313,8 +2367,13 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_extractToFd(JNIEnv *env, jclass thiz, jint
     EH_UNUSED(env);
     EH_UNUSED(thiz);
     if (index < 0 || (size_t) index >= entryCount || !entries) return JNI_FALSE;
+    if (archive_should_abort()) return JNI_FALSE;
     int arcIndex = entries[index].index;
     if (use_stream_io) pthread_mutex_lock(&stream_mutex);
+    if (archive_should_abort()) {
+        if (use_stream_io) pthread_mutex_unlock(&stream_mutex);
+        return JNI_FALSE;
+    }
     archive_ctx *ctx = NULL;
     int ret = archive_get_ctx(&ctx, arcIndex);
     if (!ret) {
