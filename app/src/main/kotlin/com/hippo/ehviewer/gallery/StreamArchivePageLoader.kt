@@ -35,12 +35,15 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import moe.tarsin.kt.install
 import okio.Path
 
@@ -541,10 +544,18 @@ suspend inline fun <T> useStreamArchivePageLoader(
             try {
                 block(loader)
             } finally {
-                tarIndexJob.getAndSet(null)?.cancel()
-                extractJobs.values.toList().forEach { it.cancel() }
+                // AutoCloseScope calls closeArchive after this block. Cancellation alone is
+                // not enough: a JNI extract may still be unwinding on Dispatchers.IO.
+                val indexJob = tarIndexJob.getAndSet(null)
+                val jobs = extractJobs.values.toSet().toList()
+                indexJob?.cancel()
+                jobs.forEach { it.cancel() }
                 extractJobs.clear()
+                // Unblock SMB/WebDAV reads before waiting, even when this scope was preempted.
                 runCatching { source.close() }
+                withContext(NonCancellable) {
+                    (jobs + listOfNotNull(indexJob)).joinAll()
+                }
             }
         }
     }
