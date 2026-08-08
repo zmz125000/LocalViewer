@@ -77,6 +77,12 @@ object Settings : DataStorePreferences(null) {
     val listMode = intPref("list_mode_2", 1)
 
     /**
+     * Folder browser content filter: 0=Galleries (default), 1=Media, 2=Video, 3=Folder.
+     * See [com.hippo.ehviewer.library.BrowseContentMode].
+     */
+    val browseContentMode = intPref("browse_content_mode", 0)
+
+    /**
      * When true, keep the main NavigationBar/Rail visible on nested Browse/History folder
      * screens and Settings children so re-tapping the tab returns to that root.
      * When false (default on phones), hide the bar on those screens and use the

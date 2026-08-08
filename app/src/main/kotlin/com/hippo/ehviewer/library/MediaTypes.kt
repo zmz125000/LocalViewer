@@ -137,6 +137,64 @@ fun isArchiveFileName(name: String): Boolean {
 }
 
 /**
+ * Common container formats treated as playable video in folder browse.
+ * Opened externally via StreamDocumentProvider (no in-app player).
+ */
+val VIDEO_EXTENSIONS = setOf(
+    "mp4", "m4v", "mkv", "webm", "avi", "mov", "wmv", "flv",
+    "ts", "m2ts", "mts", "3gp", "mpg", "mpeg", "vob", "ogv",
+)
+
+fun isVideoFileName(name: String): Boolean {
+    if (name.startsWith('.')) return false
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext in VIDEO_EXTENSIONS
+}
+
+/** MIME for external open; falls back to application/octet-stream. */
+fun mimeTypeForFileName(name: String): String {
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return "application/octet-stream"
+    return when {
+        ext in IMAGE_EXTENSIONS -> when (ext) {
+            "jpg", "jpe", "jfif" -> "image/jpeg"
+            "svg", "svgz" -> "image/svg+xml"
+            "jxr", "wdp", "hdp" -> "image/vnd.ms-photo"
+            else -> "image/$ext"
+        }
+        ext in VIDEO_EXTENSIONS -> when (ext) {
+            "mp4", "m4v" -> "video/mp4"
+            "mkv" -> "video/x-matroska"
+            "webm" -> "video/webm"
+            "avi" -> "video/x-msvideo"
+            "mov" -> "video/quicktime"
+            "wmv" -> "video/x-ms-wmv"
+            "flv" -> "video/x-flv"
+            "ts", "m2ts", "mts" -> "video/mp2t"
+            "3gp" -> "video/3gpp"
+            "mpg", "mpeg", "vob" -> "video/mpeg"
+            "ogv" -> "video/ogg"
+            else -> "video/*"
+        }
+        ext in ARCHIVE_EXTENSIONS -> when (ext) {
+            "pdf" -> "application/pdf"
+            "epub" -> "application/epub+zip"
+            "zip", "cbz" -> "application/zip"
+            "rar", "cbr" -> "application/vnd.rar"
+            "7z" -> "application/x-7z-compressed"
+            "tar", "cbt" -> "application/x-tar"
+            else -> "application/octet-stream"
+        }
+        else -> when (ext) {
+            "txt" -> "text/plain"
+            "json" -> "application/json"
+            "xml" -> "application/xml"
+            "html", "htm" -> "text/html"
+            else -> "application/octet-stream"
+        }
+    }
+}
+
+/**
  * Turn a SAF tree document-id path segment into a human folder name.
  *
  * Okio [okio.Path.name] for a tree root is often the raw/URL-encoded document id,
