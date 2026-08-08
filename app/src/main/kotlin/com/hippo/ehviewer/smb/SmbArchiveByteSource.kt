@@ -117,7 +117,7 @@ private class KeepOpenSmbFileSource(
                                         }
                                         try {
                                             op.result.complete(
-                                                readFully(file, op.offset, op.buf, op.off, op.len),
+                                                readFullyWithRetry(file, op.offset, op.buf, op.off, op.len),
                                             )
                                         } catch (e: Throwable) {
                                             logcat("SmbArchive", e)
@@ -218,12 +218,48 @@ private class KeepOpenSmbFileSource(
     private companion object {
         const val MAX_OPEN_ATTEMPTS = 2
         const val OPEN_RETRY_BACKOFF_MS = 100L
+        const val READ_ATTEMPTS = 3
+        const val READ_RETRY_BACKOFF_MS = 30L
 
         /**
          * Per-op size for smbj. Use a large chunk so an 8 MiB readahead window is only a
          * few READ requests (keeps multi-credit SMB3 busy instead of 64 KiB chatter).
          */
         const val READ_CHUNK = 2 * 1024 * 1024
+
+        /**
+         * Transient SMB READ blips (credit / stall) should not surface as Fuse EIO. Retry a
+         * few times on the same handle before failing the op (share-closed still reconnects).
+         */
+        private fun readFullyWithRetry(
+            file: File,
+            fileOffset: Long,
+            buf: ByteArray,
+            off: Int,
+            len: Int,
+        ): Int {
+            var last: Throwable? = null
+            for (attempt in 0 until READ_ATTEMPTS) {
+                try {
+                    val n = readFully(file, fileOffset, buf, off, len)
+                    // n==0 on a positive request is rare; treat as retryable empty.
+                    if (n > 0 || len == 0) return n
+                    last = IOException("SMB read returned 0 at offset=$fileOffset len=$len")
+                } catch (e: Throwable) {
+                    if (isShareClosedError(e)) throw e
+                    last = e
+                }
+                if (attempt < READ_ATTEMPTS - 1) {
+                    try {
+                        Thread.sleep(READ_RETRY_BACKOFF_MS * (attempt + 1L))
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break
+                    }
+                }
+            }
+            throw last ?: IOException("SMB read failed")
+        }
 
         private fun readFully(
             file: File,

@@ -137,9 +137,12 @@ class StreamDocumentProvider : ContentProvider() {
 /**
  * Bridges [ArchiveByteSource] to a seekable PFD for external PDF viewers.
  *
- * FuseAppLoop logs every thrown [ErrnoException] as **E** (noisy stack traces). Prefer
- * returning **0** (EOF) for closed/out-of-range, and only throw EIO after retries fail
- * on a live source — Drive/Samsung often race reads past release or hit brief SMB glitches.
+ * **FuseAppLoop always Log.e's any thrown [ErrnoException]** (full stack). So we must not
+ * throw on transient network blips: fill the exact byte count Android requires, retry with
+ * backoff, and only fail after a long deadline. Soft EOF (return 0) for released / past-size.
+ *
+ * PDF jump-to-page hammers random offsets; SMB/WebDAV glitches are common and Drive retries
+ * EIO — but that floods logcat. Prefer wait-and-succeed over throw.
  */
 private class SourceProxyCallback(
     private val source: ArchiveByteSource,
@@ -158,39 +161,71 @@ private class SourceProxyCallback(
         val want = minOf(size.toLong(), this.size - offset).toInt()
         if (want <= 0) return 0
 
+        // ProxyFileDescriptorCallback contract: exact [want] bytes unless true EOF.
+        var filled = 0
+        var attempt = 0
         var lastError: Throwable? = null
-        repeat(READ_ATTEMPTS) { attempt ->
-            if (released) return 0
+        val deadline = System.nanoTime() + MAX_WAIT_NS
+
+        while (filled < want) {
+            if (released) return filled // soft EOF on close race (no Fuse E log)
+            val absOff = offset + filled
+            if (absOff >= this.size) return filled
+
+            val need = want - filled
             try {
-                val n = source.readAt(offset, data, 0, want)
+                val n = source.readAt(absOff, data, filled, need)
                 when {
-                    // EOF or closed mid-session: Fuse treats 0 as end-of-file (no E log).
-                    n == 0 -> return 0
-                    n < 0 -> {
-                        // ArchiveByteSource uses -1 for error *or* closed; if released, soft EOF.
-                        if (released) return 0
-                        lastError = IOException("readAt returned -1 at offset=$offset want=$want")
+                    n > 0 -> {
+                        filled += n
+                        attempt = 0 // progress → reset backoff
+                        continue
                     }
-                    else -> return n
+                    n == 0 -> {
+                        // Mid-file 0 is often a transient empty range / reconnect race, not EOF.
+                        if (absOff >= this.size || filled > 0) return filled
+                        lastError = IOException("readAt returned 0 at offset=$absOff need=$need")
+                    }
+                    else -> {
+                        if (released) return filled
+                        lastError = IOException("readAt returned -1 at offset=$absOff need=$need")
+                    }
                 }
             } catch (e: ErrnoException) {
-                throw e
+                // Do not rethrow immediately — Fuse logs every throw as E.
+                if (released) return filled
+                lastError = e
             } catch (e: Throwable) {
-                if (released) return 0
+                if (released) return filled
                 lastError = e
             }
-            if (attempt < READ_ATTEMPTS - 1) {
-                try {
-                    Thread.sleep(RETRY_BACKOFF_MS * (attempt + 1L))
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    return 0
-                }
+
+            if (System.nanoTime() >= deadline) break
+            attempt++
+            val sleepMs = minOf(
+                RETRY_BACKOFF_MS * attempt,
+                RETRY_BACKOFF_MAX_MS,
+            )
+            try {
+                Thread.sleep(sleepMs)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return filled
             }
         }
-        // True failure after retries — still EIO for the peer, but only log once (no stack spam).
+
+        if (filled == want) return want
+        if (filled > 0) {
+            // Partial progress is better than EIO: client re-reads remainder without Fuse E spam.
+            return filled
+        }
+        if (released) return 0
+
+        // Last resort only — still logged once by FuseAppLoop (unavoidable if we throw).
         val msg = lastError?.message ?: "I/O error"
-        logcat("StreamDoc") { "proxy read failed after $READ_ATTEMPTS tries offset=$offset: $msg" }
+        logcat("StreamDoc") {
+            "proxy read gave up offset=$offset want=$want after ${MAX_WAIT_NS / 1_000_000}ms: $msg"
+        }
         throw ErrnoException("readAt", OsConstants.EIO)
     }
 
@@ -201,7 +236,9 @@ private class SourceProxyCallback(
     }
 
     private companion object {
-        const val READ_ATTEMPTS = 3
-        const val RETRY_BACKOFF_MS = 40L
+        /** Cap total stall per onRead so Fuse does not hang forever on a dead share. */
+        const val MAX_WAIT_NS = 8_000_000_000L // 8s
+        const val RETRY_BACKOFF_MS = 50L
+        const val RETRY_BACKOFF_MAX_MS = 400L
     }
 }

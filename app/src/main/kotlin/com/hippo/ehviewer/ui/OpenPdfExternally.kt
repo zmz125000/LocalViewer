@@ -70,12 +70,15 @@ object OpenPdfExternally {
         }
         val password = SmbPasswordStore.get(sourceId)
         openStreaming(context, displayName) {
+            // External PDF viewers seek randomly (xref / page objects). Pipeline + 8 MiB
+            // sequential windows thrash the single SMB handle and surface as Fuse EIO spam.
             SmbArchiveByteSource(
                 source = source,
                 password = password,
                 remoteRelativeFile = remoteRelativeFile,
                 preferSequential = false,
-                pipeline = true,
+                pipeline = false,
+                sequentialWindow = EXTERNAL_PDF_WINDOW,
             )
         }
     }
@@ -96,7 +99,8 @@ object OpenPdfExternally {
                 password = password,
                 remoteRelativeFile = remoteRelativeFile,
                 preferSequential = false,
-                pipeline = true,
+                pipeline = false,
+                sequentialWindow = EXTERNAL_PDF_WINDOW,
             )
         }
     }
@@ -129,6 +133,12 @@ object OpenPdfExternally {
             throw e
         }
     }
+
+    /**
+     * Window for external viewers: enough for Fuse page-sized reads, small enough that a
+     * jump to page N does not pull multi‑MiB dead weight on the keep-open SMB/WebDAV handle.
+     */
+    private const val EXTERNAL_PDF_WINDOW = 256 * 1024
 
     private suspend fun launchView(context: Context, uri: Uri, displayName: String) {
         val view = Intent(Intent.ACTION_VIEW).apply {
