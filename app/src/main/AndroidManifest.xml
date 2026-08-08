@@ -138,6 +138,12 @@
                 <action android:name="android.net.VpnService" />
             </intent-filter>
         </service>
+        <!-- Range-backed PDF stream for external viewers (long-press open). -->
+        <provider
+            android:name="com.hippo.ehviewer.provider.StreamDocumentProvider"
+            android:authorities="${applicationId}.streamdoc"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 
 </manifest>

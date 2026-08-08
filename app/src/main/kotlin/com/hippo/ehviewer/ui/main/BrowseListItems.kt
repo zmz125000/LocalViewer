@@ -60,6 +60,7 @@ import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbCache
@@ -162,7 +163,10 @@ fun BrowseArchiveGalleryRow(
     modifier: Modifier = Modifier,
     cover: BrowseCover? = null,
     thumbRetryKey: Any? = null,
+    /** e.g. PDF long-press → open in external app; null keeps click-only. */
+    onLongClick: (() -> Unit)? = null,
 ) {
+    val haptic = LocalHapticFeedback.current
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = { Text(stringResource(R.string.library_gallery_archive)) },
@@ -178,7 +182,21 @@ fun BrowseArchiveGalleryRow(
                 placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
             )
         },
-        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = onClick,
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick()
+                        },
+                    )
+                } else {
+                    Modifier.clickable(onClick = onClick)
+                },
+            ),
     )
 }
 
@@ -301,11 +319,14 @@ fun BrowseArchiveGridItem(
     modifier: Modifier = Modifier,
     cover: BrowseCover? = null,
     thumbRetryKey: Any? = null,
+    /** e.g. PDF long-press → open in external app. */
+    onLongClick: (() -> Unit)? = null,
 ) {
     BrowseGridCell(
         name = name,
         onClick = onClick,
         modifier = modifier,
+        onLongClick = onLongClick ?: onClick,
         thumb = {
             BrowseCoverThumb(
                 cover = cover,
@@ -495,7 +516,12 @@ fun BrowseCoverThumb(
                             val source = SmbRepository.load(cover.sourceId)
                                 ?: error("SMB source missing")
                             val password = SmbPasswordStore.get(cover.sourceId)
-                            SmbArchiveByteSource(source, password, cover.remoteRelativeFile)
+                            SmbArchiveByteSource(
+                                source,
+                                password,
+                                cover.remoteRelativeFile,
+                                pipeline = !isDocumentFileName(name),
+                            )
                         }
                     }
                 }
@@ -541,7 +567,12 @@ fun BrowseCoverThumb(
                             val source = WebDavRepository.load(cover.sourceId)
                                 ?: error("WebDAV source missing")
                             val password = WebDavPasswordStore.get(cover.sourceId)
-                            WebDavArchiveByteSource(source, password, cover.remoteRelativeFile)
+                            WebDavArchiveByteSource(
+                                source,
+                                password,
+                                cover.remoteRelativeFile,
+                                pipeline = !isDocumentFileName(name),
+                            )
                         }
                     }
                 }

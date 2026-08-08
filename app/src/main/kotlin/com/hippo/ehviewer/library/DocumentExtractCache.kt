@@ -66,17 +66,21 @@ object DocumentExtractCache {
          * v1: early indexes; cover-only extract could persist a 1-member list and poison open.
          * v2+: page list is always from a full structure walk (reader), never coverOnly.
          * v3+: optional [Member.offset] for direct stream Range extract.
+         * v4+: [structureComplete] distinguishes progressive network-PDF indexes from a
+         * complete page list. Missing on v1-v3 and therefore defaults to true.
          */
         val v: Int = INDEX_VERSION,
         val cacheKey: String,
         val remoteSize: Long = 0L,
         val format: String = "unknown",
         val complete: Boolean = false,
+        /** True after all document pages have been inspected for playable images. */
+        val structureComplete: Boolean = true,
         val members: List<Member> = emptyList(),
     )
 
     /** Minimum [Index.v] trusted for openFromIndex / complete-and-ready. */
-    const val INDEX_VERSION: Int = 3
+    const val INDEX_VERSION: Int = 4
     const val MIN_USABLE_INDEX_VERSION: Int = 2
 
     fun dirFor(cacheKey: String): Path = root / sha256Hex(cacheKey)
@@ -144,7 +148,7 @@ object DocumentExtractCache {
             purge(cacheKey)
             return null
         }
-        if (!idx.complete || idx.members.isEmpty()) return null
+        if (!idx.complete || !idx.structureComplete || idx.members.isEmpty()) return null
         val first = idx.members.minBy { it.i }
         if (!isPageCached(cacheKey, first.i, first.ext)) return null
         val nFiles = countPageFiles(cacheKey)
@@ -153,7 +157,9 @@ object DocumentExtractCache {
     }
 
     /**
-     * Index with a trustworthy page list and matching size — enough to skip structure re-parse.
+     * Index with a trustworthy page prefix and matching size. A structure-complete index
+     * skips parsing; a progressive PDF index serves known ranges immediately and resumes
+     * discovery after the loader is visible.
      *
      * Rejects v1 indexes (cover-only could persist a 1-member list that made multi-page PDFs
      * open as 1 page via openFromIndex). One full re-parse upgrades to [INDEX_VERSION].

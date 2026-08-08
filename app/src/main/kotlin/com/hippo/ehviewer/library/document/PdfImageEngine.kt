@@ -17,9 +17,12 @@ import okio.Path
  */
 class PdfImageEngine private constructor(
     private val parser: PdfParser,
-    private val pages: List<ImageRef>,
+    private val pages: ArrayList<ImageRef>,
     private val remoteSize: Long,
-) : DocumentImageEngine {
+    private var pageCursor: PdfParser.PageImageCursor? = null,
+    structureComplete: Boolean = true,
+    private val discoveryAllowed: Boolean = false,
+) : ProgressiveDocumentImageEngine {
 
     data class ImageRef(
         val objNum: Int,
@@ -34,40 +37,104 @@ class PdfImageEngine private constructor(
         val hasSeek: Boolean get() = streamOffset >= 0L && streamLen > 0L
     }
 
-    override val pageCount: Int get() = pages.size
+    private val discoveryLock = Any()
+    @Volatile
+    private var discoveryStopped = false
+    @Volatile
+    private var structureCompleteState = structureComplete
+    private var cursorImageIndex = 0
 
-    override fun extOf(index: Int): String? = pages.getOrNull(index)?.ext
+    override val pageCount: Int
+        get() = synchronized(discoveryLock) { pages.size }
+
+    override val structureComplete: Boolean
+        get() = structureCompleteState
+
+    override fun extOf(index: Int): String? = synchronized(discoveryLock) {
+        pages.getOrNull(index)?.ext
+    }
 
     /** File offset of page image stream for high-water ordering; -1 if unknown. */
-    fun streamOffsetOf(index: Int): Long = pages.getOrNull(index)?.streamOffset ?: -1L
+    fun streamOffsetOf(index: Int): Long = synchronized(discoveryLock) {
+        pages.getOrNull(index)?.streamOffset ?: -1L
+    }
 
-    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index = DocumentExtractCache.Index(
-        v = DocumentExtractCache.INDEX_VERSION,
-        cacheKey = cacheKey,
-        remoteSize = remoteSize,
-        format = "pdf",
-        complete = complete,
-        members = pages.mapIndexed { i, p ->
-            DocumentExtractCache.Member(
-                i = i,
-                name = "${p.objNum}_${p.gen}",
-                ext = p.ext,
-                uncSize = p.streamLen,
-                offset = p.streamOffset,
+    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index =
+        synchronized(discoveryLock) {
+            DocumentExtractCache.Index(
+                v = DocumentExtractCache.INDEX_VERSION,
+                cacheKey = cacheKey,
+                remoteSize = remoteSize,
+                format = "pdf",
+                complete = complete && structureCompleteState,
+                structureComplete = structureCompleteState,
+                members = pages.mapIndexed { i, p ->
+                    DocumentExtractCache.Member(
+                        i = i,
+                        name = "${p.objNum}_${p.gen}",
+                        ext = p.ext,
+                        uncSize = p.streamLen,
+                        offset = p.streamOffset,
+                    )
+                },
             )
-        },
-    )
+        }
+
+    /** Walk only far enough to expose [index]; cached refs are skipped while resuming. */
+    override fun ensureListedThrough(index: Int): Int = synchronized(discoveryLock) {
+        if (index < 0 || structureCompleteState || discoveryStopped || !discoveryAllowed) {
+            return@synchronized pages.size
+        }
+        var cursor = pageCursor
+        if (cursor == null) {
+            if (!parser.bootstrap() || parser.encrypted) {
+                discoveryStopped = true
+                return@synchronized pages.size
+            }
+            cursor = parser.openPageImageCursor()
+            if (cursor == null) {
+                discoveryStopped = true
+                return@synchronized pages.size
+            }
+            pageCursor = cursor
+        }
+        while (pages.size <= index && !cursor.isComplete) {
+            val next = cursor.nextImage() ?: break
+            // A partial disk index can serve its known seek ranges immediately. The
+            // resumed cursor replays that prefix, then appends newly discovered refs.
+            if (cursorImageIndex >= pages.size) {
+                pages += next
+            }
+            cursorImageIndex++
+        }
+        if (cursor.isComplete) structureCompleteState = true
+        pages.size
+    }
 
     override fun extractToCache(cacheKey: String, index: Int): Path? {
-        val ref = pages.getOrNull(index) ?: return null
+        val ref = synchronized(discoveryLock) { pages.getOrNull(index) } ?: return null
         if (DocumentExtractCache.isPageCached(cacheKey, index, ref.ext)) {
             return DocumentExtractCache.pagePath(cacheKey, index, ref.ext)
         }
         val bytes = if (ref.hasSeek) {
-            parser.extractImageBytesAt(ref.streamOffset, ref.streamLen, ref.objNum, ref.gen)
-                ?: parser.extractImageBytes(ref.objNum, ref.gen)
+            when (
+                val direct = parser.extractImageBytesAt(
+                    ref.streamOffset,
+                    ref.streamLen,
+                    ref.objNum,
+                    ref.gen,
+                )
+            ) {
+                is PdfParser.DirectExtractResult.Success -> direct.bytes
+                PdfParser.DirectExtractResult.RetryWithXref -> {
+                    // A stale/old index may lack enough object metadata. Rebuild once;
+                    // transport failures deliberately do not trigger a duplicate fetch.
+                    if (parser.bootstrap()) parser.extractImageBytes(ref.objNum, ref.gen) else null
+                }
+                PdfParser.DirectExtractResult.Failed -> null
+            }
         } else {
-            parser.extractImageBytes(ref.objNum, ref.gen)
+            if (parser.bootstrap()) parser.extractImageBytes(ref.objNum, ref.gen) else null
         } ?: return null
         return DocumentExtractCache.writePage(cacheKey, index, ref.ext, bytes)
     }
@@ -80,6 +147,7 @@ class PdfImageEngine private constructor(
             source: ArchiveByteSource,
             remoteSize: Long = 0L,
             coverOnly: Boolean = false,
+            progressive: Boolean = false,
         ): PdfImageEngine? {
             val size = remoteSize.takeIf { it > 0L }
                 ?: runCatching { source.size }.getOrDefault(-1L)
@@ -94,38 +162,49 @@ class PdfImageEngine private constructor(
                     logcat("PdfImage") { "encrypted PDF, skip" }
                     return null
                 }
-                val images = parser.collectPageImages(coverOnly)
+                val cursor = parser.openPageImageCursor(
+                    maxPages = if (coverOnly) MAX_COVER_SCAN_PAGES else MAX_PAGES,
+                ) ?: return null
+                val progressiveOpen = progressive &&
+                    !coverOnly &&
+                    cursor.declaredPageCount !in 0..NETWORK_EAGER_PAGE_LIMIT
+                val engine = PdfImageEngine(
+                    parser = parser,
+                    pages = ArrayList(),
+                    remoteSize = size,
+                    pageCursor = cursor,
+                    structureComplete = false,
+                    discoveryAllowed = true,
+                )
+                engine.ensureListedThrough(if (progressiveOpen || coverOnly) 0 else Int.MAX_VALUE)
                 logcat("PdfImage") {
-                    "open ok pages=${images.size} coverOnly=$coverOnly " +
+                    "open ok pages=${engine.pageCount} declared=${cursor.declaredPageCount} " +
+                        "progressive=$progressiveOpen structureComplete=${engine.structureComplete} " +
+                        "coverOnly=$coverOnly " +
                         "xref=${parser.xrefCount} objStm=${parser.objStreamMemberCount}"
                 }
-                PdfImageEngine(parser, images, size)
+                engine
             }.onFailure { logcat("PdfImage", it) }.getOrNull()
         }
 
         /**
-         * Bootstrap xref only; rebuild page image refs from a durable [DocumentExtractCache.Index]
-         * (skips catalog / page-tree / XObject walk — big network win on reopen).
+         * Rebuild page image refs from a durable [DocumentExtractCache.Index]. A v3+ index
+         * has absolute stream ranges, so reopen needs only the requested image header and
+         * payload ranges. Older indexes bootstrap xref once as a compatibility fallback.
          */
         fun openFromIndex(
             source: ArchiveByteSource,
             index: DocumentExtractCache.Index,
             remoteSize: Long = 0L,
+            progressive: Boolean = false,
         ): PdfImageEngine? {
             val size = remoteSize.takeIf { it > 0L }
                 ?: index.remoteSize.takeIf { it > 0L }
                 ?: runCatching { source.size }.getOrDefault(-1L)
             if (size < 32L || index.members.isEmpty()) return null
+            if (!index.structureComplete && !progressive) return null
             return runCatching {
                 val parser = PdfParser(source, size)
-                if (!parser.bootstrap()) {
-                    logcat("PdfImage") { "openFromIndex bootstrap failed size=$size" }
-                    return null
-                }
-                if (parser.encrypted) {
-                    logcat("PdfImage") { "openFromIndex encrypted, skip" }
-                    return null
-                }
                 val images = index.members.sortedBy { it.i }.mapNotNull { m ->
                     val parts = m.name.split('_')
                     val objNum = parts.getOrNull(0)?.toIntOrNull() ?: return@mapNotNull null
@@ -141,12 +220,31 @@ class PdfImageEngine private constructor(
                     )
                 }
                 if (images.isEmpty()) return null
-                logcat("PdfImage") {
-                    "openFromIndex ok pages=${images.size} xref=${parser.xrefCount}"
+                if (images.any { !it.hasSeek } && !parser.bootstrap()) {
+                    logcat("PdfImage") { "openFromIndex legacy bootstrap failed size=$size" }
+                    return null
                 }
-                PdfImageEngine(parser, images, size)
+                if (parser.encrypted) {
+                    logcat("PdfImage") { "openFromIndex encrypted, skip" }
+                    return null
+                }
+                logcat("PdfImage") {
+                    "openFromIndex ok pages=${images.size} direct=${images.all { it.hasSeek }} " +
+                        "xref=${parser.xrefCount}"
+                }
+                PdfImageEngine(
+                    parser = parser,
+                    pages = ArrayList(images),
+                    remoteSize = size,
+                    structureComplete = index.structureComplete,
+                    discoveryAllowed = progressive && !index.structureComplete,
+                )
             }.onFailure { logcat("PdfImage", it) }.getOrNull()
         }
+
+        private const val NETWORK_EAGER_PAGE_LIMIT = 24
+        private const val MAX_COVER_SCAN_PAGES = 16
+        private const val MAX_PAGES = 100_000
     }
 }
 
@@ -160,60 +258,145 @@ internal class PdfParser(
 ) {
     data class XRefEntry(val offset: Long, val gen: Int, val free: Boolean)
 
-    /** objNum → entry (last wins for multi-section xref). */
+    private data class PendingPageNode(
+        val value: PdfValue,
+        val inheritedResources: PdfValue?,
+        val depth: Int,
+    )
+
+    sealed interface DirectExtractResult {
+        data class Success(val bytes: ByteArray) : DirectExtractResult
+        data object RetryWithXref : DirectExtractResult
+        data object Failed : DirectExtractResult
+    }
+
+    /** objNum → entry (newest section wins for incremental PDFs). */
     private val xref = HashMap<Int, XRefEntry>()
     private val objCache = HashMap<Long, PdfValue>() // key = objNum.toLong() shl 32 or just objNum
+    private val streamDataOffsets = HashMap<Int, Long>()
     private var rootRef: PdfRef? = null
+    private var headerValid: Boolean? = null
+    private var bootstrapAttempted = false
+    private var bootstrapOk = false
+    private val visitedXrefOffsets = HashSet<Long>()
     var encrypted: Boolean = false
         private set
     val xrefCount: Int get() = xref.size
     val objStreamMemberCount: Int get() = objStreamOf.size
 
-    fun bootstrap(): Boolean {
-        // Header
-        val head = readBytes(0, minOf(16, fileSize.toInt())) ?: return false
-        if (head.size < 5) return false
-        val sig = String(head, 0, minOf(8, head.size), Charsets.ISO_8859_1)
-        if (!sig.startsWith("%PDF-")) return false
-
-        val startxref = findStartXref() ?: return false
-        if (!loadXref(startxref)) return false
-        return rootRef != null
+    @Synchronized
+    fun validateHeader(): Boolean {
+        headerValid?.let { return it }
+        val head = readBytes(0, minOf(16L, fileSize).toInt()) ?: return false
+        val valid = head.size >= 5 &&
+            String(head, 0, minOf(8, head.size), Charsets.ISO_8859_1).startsWith("%PDF-")
+        headerValid = valid
+        return valid
     }
 
-    fun collectPageImages(coverOnly: Boolean): List<PdfImageEngine.ImageRef> {
+    @Synchronized
+    fun bootstrap(): Boolean {
+        if (bootstrapAttempted) return bootstrapOk
+        bootstrapAttempted = true
+        if (!validateHeader()) return false
+        val startxref = findStartXref() ?: return false
+        bootstrapOk = loadXref(startxref) && rootRef != null
+        return bootstrapOk
+    }
+
+    fun openPageImageCursor(maxPages: Int = MAX_PAGES): PageImageCursor? {
         val root = rootRef?.let { resolve(it) as? PdfDict } ?: run {
-            logcat("PdfImage") { "collectPageImages: no root dict (rootRef=$rootRef)" }
-            return emptyList()
+            logcat("PdfImage") { "openPageImageCursor: no root dict (rootRef=$rootRef)" }
+            return null
         }
         val pagesNode = root["/Pages"]?.let { resolveValue(it) } as? PdfDict ?: run {
-            logcat("PdfImage") { "collectPageImages: no /Pages under catalog" }
-            return emptyList()
+            logcat("PdfImage") { "openPageImageCursor: no /Pages under catalog" }
+            return null
         }
-        val pageDicts = ArrayList<PdfDict>()
-        collectPages(pagesNode, pageDicts, depth = 0)
-        val out = ArrayList<PdfImageEngine.ImageRef>()
-        var pagesWithoutImage = 0
-        for (page in pageDicts) {
-            val images = ArrayList<PdfImageEngine.ImageRef>()
-            collectImagesFromResources(page["/Resources"]?.let { resolveValue(it) }, images, depth = 0)
-            // Comic PDFs: one dominant full-page image; take largest by area then stream length.
-            val best = images.maxWithOrNull(
-                compareBy<PdfImageEngine.ImageRef> { it.width.toLong() * it.height.toLong() }
-                    .thenBy { it.streamLen },
-            )
-            if (best != null) {
-                out += best
-                if (coverOnly) break
-            } else {
-                pagesWithoutImage++
+        return PageImageCursor(pagesNode, maxPages)
+    }
+
+    /** Lazy, ordered page-tree walk used by remote PDFs. */
+    inner class PageImageCursor internal constructor(
+        pagesNode: PdfDict,
+        private val maxPages: Int,
+    ) {
+        private val pending = java.util.ArrayDeque<PendingPageNode>().apply {
+            addLast(PendingPageNode(pagesNode, null, 0))
+        }
+        private val visited = java.util.Collections.newSetFromMap(
+            java.util.IdentityHashMap<PdfDict, Boolean>(),
+        )
+        var scannedPageCount: Int = 0
+            private set
+        var pagesWithoutImage: Int = 0
+            private set
+        var isComplete: Boolean = false
+            private set
+        val declaredPageCount: Int = pagesNode.intValue("/Count")?.coerceAtLeast(0) ?: -1
+
+        /** Return the next supported dominant page image without walking later pages. */
+        fun nextImage(): PdfImageEngine.ImageRef? {
+            while (pending.isNotEmpty() && scannedPageCount < maxPages) {
+                val task = pending.removeLast()
+                if (task.depth > 64) continue
+                val node = resolveValue(task.value) as? PdfDict
+                if (node == null) {
+                    // A short/failed remote read is not end-of-tree. Retain the node so a
+                    // later reader request can retry instead of persisting a false full index.
+                    pending.addLast(task)
+                    return null
+                }
+                if (!visited.add(node)) continue
+                val type = (node["/Type"] as? PdfName)?.name
+                if (type == "/Page") {
+                    val resources = node["/Resources"] ?: task.inheritedResources
+                    val images = ArrayList<PdfImageEngine.ImageRef>()
+                    val resourcesReady = collectImagesFromResources(
+                        resources,
+                        images,
+                        depth = 0,
+                    )
+                    if (!resourcesReady) {
+                        visited.remove(node)
+                        pending.addLast(task)
+                        return null
+                    }
+                    scannedPageCount++
+                    val best = images.maxWithOrNull(
+                        compareBy<PdfImageEngine.ImageRef> {
+                            it.width.toLong() * it.height.toLong()
+                        }.thenBy { it.streamLen },
+                    )
+                    if (best != null) return best
+                    pagesWithoutImage++
+                    continue
+                }
+
+                // /Pages node (or a producer that omitted /Type): defer each child so
+                // only the requested prefix causes object/range reads.
+                val resources = node["/Resources"] ?: task.inheritedResources
+                val rawKids = node["/Kids"]
+                val kids = rawKids?.let { resolveValue(it) } as? PdfArray
+                if (rawKids != null && kids == null) {
+                    visited.remove(node)
+                    pending.addLast(task)
+                    return null
+                }
+                if (kids == null) continue
+                for (i in kids.items.indices.reversed()) {
+                    pending.addLast(PendingPageNode(kids.items[i], resources, task.depth + 1))
+                }
             }
+            isComplete = pending.isEmpty() || scannedPageCount >= maxPages
+            if (isComplete) {
+                logcat("PdfImage") {
+                    "page cursor complete scanned=$scannedPageCount " +
+                        "withoutImage=$pagesWithoutImage declared=$declaredPageCount"
+                }
+            }
+            return null
         }
-        logcat("PdfImage") {
-            "collectPageImages: pageDicts=${pageDicts.size} withImage=${out.size} " +
-                "withoutImage=$pagesWithoutImage coverOnly=$coverOnly"
-        }
-        return out
     }
 
     fun extractImageBytes(objNum: Int, gen: Int): ByteArray? {
@@ -230,23 +413,39 @@ internal class PdfParser(
         streamLen: Long,
         objNum: Int,
         gen: Int,
-    ): ByteArray? {
-        if (streamOffset < 0L || streamLen <= 0L) return null
-        if (streamOffset + streamLen > fileSize) return null
+    ): DirectExtractResult {
+        if (streamOffset < 0L || streamLen <= 0L || streamLen > MAX_IMAGE_STREAM_BYTES) {
+            return DirectExtractResult.RetryWithXref
+        }
+        if (streamOffset >= fileSize || streamLen > fileSize - streamOffset) {
+            return DirectExtractResult.RetryWithXref
+        }
         val entry = xref[objNum]
-        val dictOff = entry?.offset?.takeIf { it > 0L } ?: (streamOffset - 512).coerceAtLeast(0L)
-        val dictLen = (streamOffset - dictOff).toInt().coerceIn(64, 32 * 1024)
-        val probe = readBytes(dictOff, dictLen) ?: return null
-        val dict = parseDictOnly(probe, objNum, gen) ?: return null
-        // Exact payload — single read of streamLen bytes.
-        val data = readBytes(streamOffset, streamLen.toInt()) ?: return null
-        return decodeImageStream(StreamObj(dict, data))
+        val dictOff = entry?.offset?.takeIf { it > 0L && it < streamOffset }
+            ?: (streamOffset - MAX_STREAM_HEADER_BYTES).coerceAtLeast(0L)
+        val dictLen = (streamOffset - dictOff).toInt()
+        if (dictLen <= 0 || dictLen > MAX_STREAM_HEADER_BYTES) {
+            return DirectExtractResult.RetryWithXref
+        }
+        val probe = readBytes(dictOff, dictLen, requireFull = true)
+            ?: return DirectExtractResult.Failed
+        val dict = parseDictOnly(probe, objNum, gen)
+            ?: return DirectExtractResult.RetryWithXref
+        // Exact payload; a short/error read is terminal for this request and must not
+        // fall through into a second full-object network request.
+        val data = readBytes(streamOffset, streamLen.toInt(), requireFull = true)
+            ?: return DirectExtractResult.Failed
+        val decoded = decodeImageStream(StreamObj(dict, data))
+            ?: return DirectExtractResult.Failed
+        return DirectExtractResult.Success(decoded)
     }
 
     /** Parse object dict from a header probe that may not include the full stream body. */
     private fun parseDictOnly(raw: ByteArray, objNum: Int, gen: Int): PdfDict? {
         val text = String(raw, Charsets.ISO_8859_1)
-        val objMatch = Regex("""(\d+)\s+(\d+)\s+obj""").find(text) ?: return null
+        val objMatch = Regex("""\b$objNum\s+$gen\s+obj\b""").findAll(text).lastOrNull()
+            ?: Regex("""(\d+)\s+(\d+)\s+obj""").findAll(text).lastOrNull()
+            ?: return null
         val dictStart = text.indexOf("<<", objMatch.range.last)
         if (dictStart < 0) return null
         val (dict, _) = parseDict(raw, dictStart) ?: return null
@@ -257,41 +456,25 @@ internal class PdfParser(
 
     // --- page / image walk ---
 
-    private fun collectPages(node: PdfDict, out: ArrayList<PdfDict>, depth: Int) {
-        if (depth > 64) return
-        val type = (node["/Type"] as? PdfName)?.name
-        if (type == "/Page") {
-            out += node
-            return
-        }
-        // Pages node or missing Type: walk Kids
-        val kids = node["/Kids"]?.let { resolveValue(it) } as? PdfArray ?: return
-        for (k in kids.items) {
-            when (val v = resolveValue(k)) {
-                is PdfDict -> collectPages(v, out, depth + 1)
-                else -> Unit
-            }
-        }
-    }
-
     private fun collectImagesFromResources(
         resources: PdfValue?,
         out: ArrayList<PdfImageEngine.ImageRef>,
         depth: Int,
-    ) {
-        if (depth > 8) return
+    ): Boolean {
+        if (depth > 8) return true
         val res = when (resources) {
             is PdfDict -> resources
             is PdfRef -> resolve(resources) as? PdfDict
             else -> null
-        } ?: return
-        val xobj = res["/XObject"]?.let { resolveValue(it) } as? PdfDict ?: return
+        } ?: return resources == null
+        val rawXObject = res["/XObject"] ?: return true
+        val xobj = resolveValue(rawXObject) as? PdfDict ?: return false
         // Stable name order for multi-image pages
         val names = xobj.map.keys.sorted()
         for (name in names) {
             val raw = xobj[name] ?: continue
             val ref = raw as? PdfRef
-            val obj = resolveValue(raw) as? PdfDict ?: continue
+            val obj = resolveValue(raw) as? PdfDict ?: return false
             val subtype = (obj["/Subtype"] as? PdfName)?.name
             when (subtype) {
                 "/Image" -> {
@@ -300,10 +483,13 @@ internal class PdfParser(
                     imageRefFromDict(obj, objNum, gen)?.let { out += it }
                 }
                 "/Form" -> {
-                    collectImagesFromResources(obj["/Resources"], out, depth + 1)
+                    if (!collectImagesFromResources(obj["/Resources"], out, depth + 1)) {
+                        return false
+                    }
                 }
             }
         }
+        return true
     }
 
     private fun imageRefFromDict(dict: PdfDict, objNum: Int, gen: Int): PdfImageEngine.ImageRef? {
@@ -319,7 +505,7 @@ internal class PdfParser(
             filter.isEmpty() -> "png"
             else -> return null // CCITT, JBIG2, etc.
         }
-        val streamOffset = locateStreamDataOffset(objNum) ?: -1L
+        val streamOffset = streamDataOffsets[objNum] ?: locateStreamDataOffset(objNum) ?: -1L
         return PdfImageEngine.ImageRef(
             objNum = objNum,
             gen = gen,
@@ -341,16 +527,21 @@ internal class PdfParser(
         val probe = readBytes(entry.offset, minOf(16 * 1024, (fileSize - entry.offset).toInt()))
             ?: return null
         val text = String(probe, Charsets.ISO_8859_1)
-        val streamIdx = text.indexOf("stream")
-        if (streamIdx < 0) return null
-        var i = streamIdx + "stream".length
+        val objMatch = Regex("""\b$objNum\s+\d+\s+obj\b""").find(text) ?: return null
+        val dictStart = text.indexOf("<<", objMatch.range.last)
+        if (dictStart < 0) return null
+        val (_, dictEnd) = parseDict(probe, dictStart) ?: return null
+        var i = dictEnd
+        while (i < probe.size && probe[i].toInt().toChar().isPdfWs()) i++
+        if (!matchWord(probe, i, "stream")) return null
+        i += "stream".length
         if (i < probe.size && probe[i] == '\r'.code.toByte()) {
             i++
             if (i < probe.size && probe[i] == '\n'.code.toByte()) i++
         } else if (i < probe.size && probe[i] == '\n'.code.toByte()) {
             i++
         }
-        return entry.offset + i
+        return (entry.offset + i).also { streamDataOffsets[objNum] = it }
     }
 
     private fun filterNames(v: PdfValue?): List<String> = when (val r = v?.let { resolveValue(it) }) {
@@ -372,8 +563,18 @@ internal class PdfParser(
             // Object stream (PDF 1.5): offset == 0 and gen is index — limited support
             return loadFromObjectStream(objNum)
         }
-        val raw = readObjectBytes(entry.offset) ?: return null
-        return parseStreamAt(raw, objNum, gen)
+        // Read only the object header/dictionary first, then the exact payload. Using
+        // the general object reader here used to download the image once to resolve
+        // its dictionary and again to extract it.
+        val raw = readObjectBytes(entry.offset, includeStreamData = false) ?: return null
+        val dict = parseDictOnly(raw, objNum, gen) ?: return null
+        val streamOffset = streamDataOffsets[objNum] ?: locateStreamDataOffset(objNum) ?: return null
+        val length = resolveLength(dict["/Length"]) ?: return null
+        if (length <= 0L || length > MAX_IMAGE_STREAM_BYTES || length > fileSize - streamOffset) {
+            return null
+        }
+        val data = readBytes(streamOffset, length.toInt(), requireFull = true) ?: return null
+        return StreamObj(dict, data)
     }
 
     private fun loadFromObjectStream(_objNum: Int): StreamObj? {
@@ -411,12 +612,13 @@ internal class PdfParser(
         }
         val length = resolveLength(dict["/Length"])
             ?: return null
-        if (length < 0 || i + length > raw.size) {
+        if (length < 0 || length > MAX_IMAGE_STREAM_BYTES) return null
+        if (i.toLong() + length > raw.size.toLong()) {
             // Length extends past probe: one exact re-read of object header + body (capped).
             val entry = xref[objNum] ?: return null
-            val need = (length + 8192L).coerceAtMost(fileSize - entry.offset).toInt()
+            val need = boundedReadLength(entry.offset, length, 8192L) ?: return null
             if (need <= raw.size) return null
-            val full = readBytes(entry.offset, need) ?: return null
+            val full = readBytes(entry.offset, need, requireFull = true) ?: return null
             return parseStreamAt(full, objNum, gen)
         }
         val data = raw.copyOfRange(i, i + length.toInt())
@@ -720,6 +922,8 @@ internal class PdfParser(
 
     private fun loadXref(offset: Long): Boolean {
         if (offset < 0 || offset >= fileSize) return false
+        if (!visitedXrefOffsets.add(offset)) return rootRef != null
+        if (visitedXrefOffsets.size > MAX_XREF_SECTIONS) return false
         // Peek: "xref" vs object stream
         val peek = readBytes(offset, minOf(64, (fileSize - offset).toInt())) ?: return false
         val peekStr = String(peek, Charsets.ISO_8859_1).trimStart()
@@ -762,7 +966,9 @@ internal class PdfParser(
                     val free = lm.groupValues[3] == "f"
                     val objNum = start + i
                     if (!free) {
-                        xref[objNum] = XRefEntry(off, gen, free = false)
+                        // Newest xref section is loaded first. Older /Prev sections
+                        // must fill gaps, never overwrite revisions from the head.
+                        xref.putIfAbsent(objNum, XRefEntry(off, gen, free = false))
                     }
                 }
                 // advance to next line
@@ -778,6 +984,12 @@ internal class PdfParser(
         if (trailer["/Encrypt"] != null) encrypted = true
         if (rootRef == null) {
             rootRef = trailer["/Root"] as? PdfRef
+        }
+        // Hybrid-reference PDFs keep compressed-object entries in a supplemental
+        // xref stream referenced by the classic trailer.
+        val xrefStream = trailer.intValue("/XRefStm")?.toLong()
+        if (xrefStream != null && xrefStream > 0L && xrefStream != offset) {
+            loadXref(xrefStream)
         }
         // Prev chain (older xref sections)
         val prev = trailer.intValue("/Prev")?.toLong()
@@ -850,14 +1062,20 @@ internal class PdfParser(
                 when (type.toInt()) {
                     0 -> Unit // free
                     1 -> {
-                        xref[objNum] = XRefEntry(offset = f2, gen = f3.toInt(), free = false)
+                        xref.putIfAbsent(
+                            objNum,
+                            XRefEntry(offset = f2, gen = f3.toInt(), free = false),
+                        )
                         type1++
                     }
                     2 -> {
                         // object stream: f2 = stream obj, f3 = index — mark special
-                        xref[objNum] = XRefEntry(offset = 0L, gen = f3.toInt(), free = false)
+                        xref.putIfAbsent(
+                            objNum,
+                            XRefEntry(offset = 0L, gen = f3.toInt(), free = false),
+                        )
                         // Store stream obj in high bits via side map
-                        objStreamOf[objNum] = f2.toInt()
+                        objStreamOf.putIfAbsent(objNum, f2.toInt())
                         type2++
                     }
                 }
@@ -905,8 +1123,8 @@ internal class PdfParser(
         objCache[key.toLong()]?.let { return it }
         val entry = xref[ref.num]
         if (entry != null && !entry.free && entry.offset > 0L) {
-            val raw = readObjectBytes(entry.offset) ?: return null
-            val v = parseObjectBody(raw, ref.num, ref.gen) ?: return null
+            val raw = readObjectBytes(entry.offset, includeStreamData = false) ?: return null
+            val v = parseObjectBody(raw, ref.num, ref.gen, entry.offset) ?: return null
             objCache[key.toLong()] = v
             return v
         }
@@ -952,7 +1170,12 @@ internal class PdfParser(
         return value
     }
 
-    private fun parseObjectBody(raw: ByteArray, objNum: Int, gen: Int): PdfValue? {
+    private fun parseObjectBody(
+        raw: ByteArray,
+        objNum: Int,
+        gen: Int,
+        objectOffset: Long = -1L,
+    ): PdfValue? {
         val text = String(raw, Charsets.ISO_8859_1)
         val m = Regex("""(\d+)\s+(\d+)\s+obj""").find(text) ?: return null
         var i = m.range.last + 1
@@ -969,6 +1192,16 @@ internal class PdfParser(
                 var j = dictEnd
                 while (j < raw.size && raw[j].toInt().toChar().isPdfWs()) j++
                 if (j + 6 <= raw.size && String(raw, j, 6, Charsets.ISO_8859_1) == "stream") {
+                    var payload = j + 6
+                    if (payload < raw.size && raw[payload] == '\r'.code.toByte()) {
+                        payload++
+                        if (payload < raw.size && raw[payload] == '\n'.code.toByte()) payload++
+                    } else if (payload < raw.size && raw[payload] == '\n'.code.toByte()) {
+                        payload++
+                    }
+                    if (objectOffset >= 0L) {
+                        streamDataOffsets[objNum] = objectOffset + payload
+                    }
                     // Keep as dict (stream body loaded on demand)
                     objCache[objNum.toLong()] = dict
                     return dict
@@ -985,31 +1218,38 @@ internal class PdfParser(
         return value
     }
 
-    private fun readObjectBytes(offset: Long): ByteArray? {
+    private fun readObjectBytes(
+        offset: Long,
+        includeStreamData: Boolean = true,
+    ): ByteArray? {
         // Small header probe first — never jump 1 MiB → 16 MiB on every object.
         val probeCap = minOf(fileSize - offset, 16L * 1024L).toInt().coerceAtLeast(64)
         var data = readBytes(offset, probeCap) ?: return null
         val s = String(data, Charsets.ISO_8859_1)
 
         // Stream with known /Length: one exact-sized read (dict + stream keyword + body).
-        val lenMatch = Regex("""/Length\s+(\d+)""").find(s)
+        val lenMatch = Regex("""/Length\s+(\d+)(?!\s+\d+\s+R)""").find(s)
         if (lenMatch != null) {
+            if (!includeStreamData) return data
             val len = lenMatch.groupValues[1].toLong()
             // Object header + dict + "stream\n" + body + "\nendstream" slack
-            val need = (len + 8192L).coerceAtMost(fileSize - offset).toInt()
+            val need = boundedReadLength(offset, len, 8192L) ?: return data
             if (need > data.size) {
-                data = readBytes(offset, need) ?: data
+                data = readBytes(offset, need, requireFull = true) ?: return null
             }
             return data
         }
 
         // Non-stream or indirect Length: grow once to find endobj (cap 256 KiB).
-        if ("endobj" !in s && probeCap.toLong() < fileSize - offset) {
+        if ("endobj" !in s && (includeStreamData || "stream" !in s) &&
+            probeCap.toLong() < fileSize - offset
+        ) {
             val bigger = minOf(fileSize - offset, 256L * 1024L).toInt()
             if (bigger > data.size) {
                 data = readBytes(offset, bigger) ?: data
             }
         }
+        if (!includeStreamData) return data
         // Indirect /Length N 0 R — resolve and re-read exact once.
         val indLen = Regex("""/Length\s+(\d+)\s+(\d+)\s+R""").find(String(data, Charsets.ISO_8859_1))
         if (indLen != null) {
@@ -1018,14 +1258,22 @@ internal class PdfParser(
                 val len = (resolve(PdfRef(objN, indLen.groupValues[2].toIntOrNull() ?: 0)) as? PdfNumber)
                     ?.value?.toLong()
                 if (len != null && len > 0L) {
-                    val need = (len + 8192L).coerceAtMost(fileSize - offset).toInt()
+                    val need = boundedReadLength(offset, len, 8192L) ?: return data
                     if (need > data.size) {
-                        data = readBytes(offset, need) ?: data
+                        data = readBytes(offset, need, requireFull = true) ?: return null
                     }
                 }
             }
         }
         return data
+    }
+
+    private fun boundedReadLength(offset: Long, payloadLength: Long, slack: Long): Int? {
+        if (offset < 0L || offset >= fileSize || payloadLength < 0L) return null
+        if (payloadLength > MAX_IMAGE_STREAM_BYTES) return null
+        val requested = if (payloadLength > Long.MAX_VALUE - slack) Long.MAX_VALUE else payloadLength + slack
+        return minOf(requested, fileSize - offset, Int.MAX_VALUE.toLong()).toInt()
+            .takeIf { it > 0 }
     }
 
     private fun resolveLength(v: PdfValue?): Long? = when (val r = v?.let { resolveValue(it) }) {
@@ -1242,23 +1490,39 @@ internal class PdfParser(
         return true
     }
 
-    private fun readBytes(offset: Long, len: Int): ByteArray? {
+    private fun readBytes(
+        offset: Long,
+        len: Int,
+        requireFull: Boolean = false,
+    ): ByteArray? {
         if (len <= 0 || offset < 0 || offset >= fileSize) return null
         val n = minOf(len.toLong(), fileSize - offset).toInt()
         val buf = ByteArray(n)
         var got = 0
-        while (got < n) {
+        var calls = 0
+        while (got < n && calls++ < MAX_READ_CALLS) {
             val r = source.readAt(offset + got, buf, got, n - got)
             if (r <= 0) break
+            // Broken adapters must not advance beyond the requested destination range.
+            if (r > n - got) return null
             got += r
         }
         return if (got == n) {
             buf
-        } else if (got > 0) {
+        } else if (got > 0 && !requireFull) {
             buf.copyOf(got)
         } else {
             null
         }
+    }
+
+    private companion object {
+        const val MAX_READ_CALLS = 8
+        const val MAX_XREF_SECTIONS = 64
+        const val MAX_COVER_SCAN_PAGES = 16
+        const val MAX_PAGES = 100_000
+        const val MAX_STREAM_HEADER_BYTES = 32 * 1024L
+        const val MAX_IMAGE_STREAM_BYTES = 256L * 1024L * 1024L
     }
 }
 

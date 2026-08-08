@@ -22,13 +22,16 @@ import kotlinx.coroutines.runBlocking
 /**
  * Random-access SMB archive source for stream open.
  *
- * Holds **one** open file for the reader session (via [SmbGateway.withOpenFile]) and
- * wraps it in [ReadAheadArchiveByteSource] for sequential/random windowing.
- * Dialects come from the shared gateway pool (SMB3 preferred when negotiated) —
- * smbj still uses SMB2-family message types for SMB 2.x/3.x.
+ * Holds **one** open file for the reader session and wraps it in
+ * [ReadAheadArchiveByteSource] for sequential/random windowing.
  *
- * Reconnects when the host pool closes the DiskShare (e.g. app ON_STOP) so a later
- * resume does not fail with "DiskShare has already been closed".
+ * - Default: [SmbGateway.withOpenFile] on the **shared host pool** (browse/reader).
+ *   Pool is dropped on app [Lifecycle.Event.ON_STOP].
+ * - [stickySession] = true: [SmbGateway.withStickyOpenFile] — dedicated TCP outside the
+ *   pool so external FUSE PDF viewers keep working after LocalViewer backgrounds.
+ *
+ * Reconnects when the share dies under us so a later resume does not stick on
+ * "DiskShare has already been closed".
  */
 class SmbArchiveByteSource(
     source: SmbSourceEntity,
@@ -43,13 +46,39 @@ class SmbArchiveByteSource(
     pipeline: Boolean = true,
     /** Fixed window size (default 8 MiB). */
     sequentialWindow: Int = ReadAheadArchiveByteSource.SEQUENTIAL_WINDOW,
+    /**
+     * Dedicated session outside the shared pool (survives app background).
+     * Use for [com.hippo.ehviewer.provider.StreamDocumentProvider] / external apps.
+     */
+    stickySession: Boolean = false,
+    /**
+     * When known (e.g. external PDF registration), skip a separate size open before
+     * the first [readAt]. Must match the remote file.
+     */
+    knownSize: Long = -1L,
+    /**
+     * Windowed readahead for sequential archive parsing. Off when a higher layer
+     * (e.g. [com.hippo.ehviewer.library.BlockCacheArchiveByteSource]) owns caching.
+     */
+    readahead: Boolean = true,
 ) : ArchiveByteSource {
-    private val inner = ReadAheadArchiveByteSource(
-        inner = KeepOpenSmbFileSource(source, password, remoteRelativeFile),
-        sequentialWindow = sequentialWindow,
-        preferSequential = preferSequential,
-        pipeline = pipeline,
+    private val raw = KeepOpenSmbFileSource(
+        source,
+        password,
+        remoteRelativeFile,
+        stickySession,
+        knownSize,
     )
+    private val inner: ArchiveByteSource = if (readahead) {
+        ReadAheadArchiveByteSource(
+            inner = raw,
+            sequentialWindow = sequentialWindow,
+            preferSequential = preferSequential,
+            pipeline = pipeline,
+        )
+    } else {
+        raw
+    }
 
     override val size: Long get() = inner.size
 
@@ -71,12 +100,18 @@ private class KeepOpenSmbFileSource(
     private val source: SmbSourceEntity,
     private val password: String,
     remoteRelativeFile: String,
+    private val stickySession: Boolean = false,
+    knownSize: Long = -1L,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val closed = AtomicBoolean(false)
-    private val sizeReady = CompletableDeferred<Long>()
+    private val sizeReady = CompletableDeferred<Long>().also { deferred ->
+        if (knownSize > 0L) deferred.complete(knownSize)
+    }
     private val ops = Channel<Op>(capacity = 64)
+    /** Opens/reopens the remote handle only when size/read demand exists. */
+    private val demand = Channel<Unit>(capacity = Channel.CONFLATED)
     private val worker: Job
 
     private data class Op(
@@ -89,53 +124,78 @@ private class KeepOpenSmbFileSource(
 
     init {
         worker = scope.launch {
-            var backoffMs = 50L
             while (isActive && !closed.get()) {
+                if (demand.receiveCatching().getOrNull() == null) break
+                var openAttempts = 0
                 try {
-                    SmbGateway.withOpenFile(source, password, remote) { file, fileSize ->
-                        if (closed.get()) {
-                            runCatching { file.close() }
-                            return@withOpenFile
-                        }
-                        if (!sizeReady.isCompleted) sizeReady.complete(fileSize)
-                        backoffMs = 50L
-                        // Blocking drain: withOpenFile callback is not a suspend lambda.
-                        runBlocking {
-                            for (op in ops) {
+                    while (isActive && !closed.get()) {
+                        var opened = false
+                        try {
+                            // Sticky: dedicated TCP for FUSE/external viewers (not ON_STOP pool).
+                            // Default: shared host pool for in-app reader/cover.
+                            fun drain(file: com.hierynomus.smbj.share.File, fileSize: Long) {
+                                opened = true
                                 if (closed.get()) {
-                                    op.result.complete(-1)
-                                    continue
+                                    runCatching { file.close() }
+                                    return
                                 }
-                                try {
-                                    op.result.complete(
-                                        readFully(file, op.offset, op.buf, op.off, op.len),
-                                    )
-                                } catch (e: Throwable) {
-                                    logcat("SmbArchive", e)
-                                    if (isShareClosedError(e) || closed.get()) {
-                                        op.result.completeExceptionally(e)
-                                        // Exit withOpenFile so outer loop reopens the share.
-                                        throw e
+                                if (!sizeReady.isCompleted) sizeReady.complete(fileSize)
+                                // Blocking drain: open-file callback is not a suspend lambda.
+                                runBlocking {
+                                    for (op in ops) {
+                                        // Consume the coalesced signal corresponding to this op.
+                                        // If the handle dies, only a later/pending request wakes reopen.
+                                        demand.tryReceive()
+                                        if (closed.get()) {
+                                            op.result.complete(-1)
+                                            continue
+                                        }
+                                        try {
+                                            op.result.complete(
+                                                readFullyWithRetry(file, op.offset, op.buf, op.off, op.len),
+                                            )
+                                        } catch (e: Throwable) {
+                                            logcat("SmbArchive", e)
+                                            if (isShareClosedError(e) || closed.get()) {
+                                                op.result.completeExceptionally(e)
+                                                throw e
+                                            }
+                                            op.result.completeExceptionally(e)
+                                        }
                                     }
-                                    op.result.completeExceptionally(e)
                                 }
                             }
+                            if (stickySession) {
+                                SmbGateway.withStickyOpenFile(source, password, remote, ::drain)
+                            } else {
+                                SmbGateway.withOpenFile(source, password, remote, ::drain)
+                            }
+                            break
+                        } catch (e: Throwable) {
+                            if (closed.get() || !isActive) throw e
+                            logcat("SmbArchive", e)
+                            if (opened) {
+                                // The active request already received its failure. Do not spin
+                                // reconnecting with no consumer; wait for fresh read demand.
+                                break
+                            }
+                            openAttempts++
+                            if (!isShareClosedError(e) || openAttempts >= MAX_OPEN_ATTEMPTS) {
+                                if (!sizeReady.isCompleted) sizeReady.completeExceptionally(e)
+                                while (true) {
+                                    val op = ops.tryReceive().getOrNull() ?: break
+                                    op.result.completeExceptionally(e)
+                                }
+                                ops.close(e)
+                                demand.close(e)
+                                return@launch
+                            }
+                            delay(OPEN_RETRY_BACKOFF_MS * openAttempts)
                         }
                     }
                 } catch (e: Throwable) {
                     if (closed.get() || !isActive) break
                     logcat("SmbArchive", e)
-                    if (!sizeReady.isCompleted && !isShareClosedError(e)) {
-                        sizeReady.completeExceptionally(e)
-                        // Fail pending ops and stop — non-recoverable open error.
-                        for (op in ops) {
-                            op.result.completeExceptionally(e)
-                        }
-                        break
-                    }
-                    // Share/session gone (pool ON_STOP, idle kill): wait and reconnect.
-                    delay(backoffMs)
-                    backoffMs = (backoffMs * 2).coerceAtMost(2_000L)
                 }
             }
             failClosedSizeReady()
@@ -151,6 +211,7 @@ private class KeepOpenSmbFileSource(
             if (closed.get() && !sizeReady.isCompleted) {
                 throw IOException("SMB archive source closed")
             }
+            if (!sizeReady.isCompleted) demand.trySend(Unit)
             return runBlocking { sizeReady.await() }
         }
 
@@ -168,6 +229,7 @@ private class KeepOpenSmbFileSource(
         return try {
             runBlocking {
                 if (closed.get()) return@runBlocking -1
+                demand.trySend(Unit)
                 ops.send(Op(offset, buf, off, toRead, result))
                 result.await()
             }
@@ -181,6 +243,7 @@ private class KeepOpenSmbFileSource(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         ops.close()
+        demand.close()
         failClosedSizeReady()
         worker.cancel()
         scope.coroutineContext[Job]?.cancel()
@@ -193,11 +256,50 @@ private class KeepOpenSmbFileSource(
     }
 
     private companion object {
+        const val MAX_OPEN_ATTEMPTS = 2
+        const val OPEN_RETRY_BACKOFF_MS = 100L
+        const val READ_ATTEMPTS = 3
+        const val READ_RETRY_BACKOFF_MS = 30L
+
         /**
          * Per-op size for smbj. Use a large chunk so an 8 MiB readahead window is only a
          * few READ requests (keeps multi-credit SMB3 busy instead of 64 KiB chatter).
          */
         const val READ_CHUNK = 2 * 1024 * 1024
+
+        /**
+         * Transient SMB READ blips (credit / stall) should not surface as Fuse EIO. Retry a
+         * few times on the same handle before failing the op (share-closed still reconnects).
+         */
+        private fun readFullyWithRetry(
+            file: File,
+            fileOffset: Long,
+            buf: ByteArray,
+            off: Int,
+            len: Int,
+        ): Int {
+            var last: Throwable? = null
+            for (attempt in 0 until READ_ATTEMPTS) {
+                try {
+                    val n = readFully(file, fileOffset, buf, off, len)
+                    // n==0 on a positive request is rare; treat as retryable empty.
+                    if (n > 0 || len == 0) return n
+                    last = IOException("SMB read returned 0 at offset=$fileOffset len=$len")
+                } catch (e: Throwable) {
+                    if (isShareClosedError(e)) throw e
+                    last = e
+                }
+                if (attempt < READ_ATTEMPTS - 1) {
+                    try {
+                        Thread.sleep(READ_RETRY_BACKOFF_MS * (attempt + 1L))
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break
+                    }
+                }
+            }
+            throw last ?: IOException("SMB read failed")
+        }
 
         private fun readFully(
             file: File,

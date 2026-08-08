@@ -1028,6 +1028,9 @@ object SmbGateway {
      * Uses the same smbj [DiskShare.openFile] API as folder downloads. Enum names are
      * SMB2-* because SMB 3.x still speaks the SMB2 protocol family; dialect selection
      * is the shared pool [buildSmbConfig] (SMB3 preferred when the server negotiates it).
+     *
+     * **Not for external FUSE / other-app viewers** — those go background and
+     * [onAppBackgrounded] drops this pool. Use [withStickyOpenFile] instead.
      */
     suspend fun <T> withOpenFile(
         source: SmbSourceEntity,
@@ -1047,6 +1050,64 @@ object SmbGateway {
             ).use { file ->
                 val size = file.fileInformation.standardInformation.endOfFile
                 block(file, size)
+            }
+        }
+    }
+
+    /**
+     * Dedicated TCP session **outside** the browse/reader [hostPools].
+     *
+     * Survives [onAppBackgrounded] so an external PDF viewer (Drive, etc.) can keep
+     * reading via [com.hippo.ehviewer.provider.StreamDocumentProvider] after LocalViewer
+     * is stopped. Session lives only for [block]; closed in `finally` (not pooled).
+     *
+     * Still subject to real path loss (caller reconnects). Does not consume pool op slots.
+     */
+    suspend fun <T> withStickyOpenFile(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
+    ): T = withIOContext {
+        // Own client+connection so smbj host Connection cache cannot couple sticky to
+        // the shared pool (and so dropAllSessions never closes this handle).
+        val smbClient = SMBClient(smbConfig())
+        val prevTag = TrafficStats.getThreadStatsTag()
+        TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
+        try {
+            val connection = smbClient.connect(source.host, source.port)
+            try {
+                val session = connection.authenticate(auth(source, password))
+                try {
+                    val share = session.connectShare(shareName(source)) as DiskShare
+                    try {
+                        val path = remotePath(source, relativeFilePath)
+                        share.openFile(
+                            path,
+                            EnumSet.of(AccessMask.GENERIC_READ),
+                            null,
+                            SMB2ShareAccess.ALL,
+                            SMB2CreateDisposition.FILE_OPEN,
+                            null,
+                        ).use { file ->
+                            val size = file.fileInformation.standardInformation.endOfFile
+                            block(file, size)
+                        }
+                    } finally {
+                        runCatching { share.close() }
+                    }
+                } finally {
+                    runCatching { session.close() }
+                }
+            } finally {
+                runCatching { connection.close() }
+            }
+        } finally {
+            runCatching { smbClient.close() }
+            if (prevTag == -1) {
+                TrafficStats.clearThreadStatsTag()
+            } else {
+                TrafficStats.setThreadStatsTag(prevTag)
             }
         }
     }

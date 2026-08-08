@@ -975,7 +975,9 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             remote,
             // Archives: sequential windows (RAR-like). Documents (PDF) keep sparse probes.
             preferSequential = !document,
-            pipeline = true,
+            // PDF/EPUB issue sparse object/member reads. Sequential pipeline would
+            // download an unsolicited 8 MiB window after every large page fetch.
+            pipeline = !document,
         )
         val cacheKey = "smb:${source.id}:$remote"
         val titleHint = remote.substringAfterLast('/').ifEmpty { source.displayName }
@@ -990,14 +992,16 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             }
         }
         if (document) {
+            val documentFormat = if (isEpubFileName(remote)) "epub" else "pdf"
             useDocumentExtractPageLoader(
                 source = byteSource,
                 cacheKey = cacheKey,
                 titleHint = titleHint,
-                formatHint = if (isEpubFileName(remote)) "epub" else "pdf",
+                formatHint = documentFormat,
                 info = info,
                 startPage = page,
                 remoteSize = runCatching { byteSource.size }.getOrDefault(0L),
+                progressivePdf = documentFormat == "pdf",
                 block = block,
             )
         } else if (solid) {
@@ -1087,18 +1091,20 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             remote,
             // Archives: sequential windows (RAR-like). Documents (PDF) keep sparse probes.
             preferSequential = !document,
-            pipeline = true,
+            // Keep document I/O demand-driven; archive pipelines stay unchanged.
+            pipeline = !document,
         )
         if (document) {
-            // PDF/EPUB path left at LKG behavior (chatgpt PDF stack reverted).
+            val documentFormat = if (isEpubFileName(remote)) "epub" else "pdf"
             useDocumentExtractPageLoader(
                 source = byteSource,
                 cacheKey = cacheKey,
                 titleHint = titleHint,
-                formatHint = if (isEpubFileName(remote)) "epub" else "pdf",
+                formatHint = documentFormat,
                 info = info,
                 startPage = page,
                 remoteSize = runCatching { byteSource.size }.getOrDefault(0L),
+                progressivePdf = documentFormat == "pdf",
                 block = block,
             )
         } else if (solid) {
