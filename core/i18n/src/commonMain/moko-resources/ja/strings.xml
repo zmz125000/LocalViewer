@@ -67,6 +67,10 @@
     <string name="browse_layout_grid">グリッド</string>
     <string name="browse_view_mode">表示モード</string>
     <string name="browse_folder_thumbs">フォルダサムネイル</string>
+    <string name="browse_menu_page_count">ページ数</string>
+    <string name="browse_menu_reading_progress">読書進捗</string>
+    <string name="browse_menu_gallery_covers">ギャラリー表紙</string>
+    <string name="browse_menu_archive_covers">アーカイブ表紙</string>
     <string name="browse_open_failed">このファイルを開くアプリが見つかりません。</string>
     <string name="folder_empty">このフォルダは空です。</string>
     <string name="folder_no_roots">ライブラリフォルダがありません。設定 → ライブラリ で追加してください。</string>
@@ -116,8 +120,8 @@
     <string name="back_to_library">ライブラリに戻る</string>
     <string name="go_to_first_page">最初のページへ</string>
     <string name="go_to_next_gallery">次のギャラリー</string>
-    <string name="settings_download_remote_thumbs">ネットワークフォルダの表紙を取得</string>
-    <string name="settings_download_remote_thumbs_summary">ネットワークフォルダのサムネイルを取得します。</string>
+    <string name="settings_download_remote_thumbs">ネットワークギャラリーの表紙を取得</string>
+    <string name="settings_download_remote_thumbs_summary">ネットワークギャラリーのサムネイルを取得します。</string>
     <string name="settings_download_network_archive_thumbs">ネットワークアーカイブの表紙を取得</string>
     <string name="settings_download_network_archive_thumbs_summary">ネットワーク上の ZIP/TAR/RAR/7z の先頭ページをサムネイルにします。</string>
     <string name="settings_persist_main_nav">フォルダ画面でメインナビを維持</string>

@@ -108,22 +108,22 @@ fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
             )
             HorizontalDivider()
             ToggleMenuItem(
-                label = stringResource(R.string.settings_eh_show_gallery_pages),
+                label = stringResource(R.string.browse_menu_page_count),
                 checked = showGalleryPages,
                 onClick = { showGalleryPages = !showGalleryPages },
             )
             ToggleMenuItem(
-                label = stringResource(R.string.settings_eh_show_reading_progress),
+                label = stringResource(R.string.browse_menu_reading_progress),
                 checked = showReadingProgress,
                 onClick = { showReadingProgress = !showReadingProgress },
             )
             ToggleMenuItem(
-                label = stringResource(R.string.settings_download_remote_thumbs),
+                label = stringResource(R.string.browse_menu_gallery_covers),
                 checked = downloadRemoteThumbs,
                 onClick = { downloadRemoteThumbs = !downloadRemoteThumbs },
             )
             ToggleMenuItem(
-                label = stringResource(R.string.settings_download_network_archive_thumbs),
+                label = stringResource(R.string.browse_menu_archive_covers),
                 checked = downloadNetworkArchiveThumbs,
                 onClick = { downloadNetworkArchiveThumbs = !downloadNetworkArchiveThumbs },
             )

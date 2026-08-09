@@ -66,6 +66,10 @@
     <string name="browse_layout_grid">網格</string>
     <string name="browse_view_mode">檢視模式</string>
     <string name="browse_folder_thumbs">資料夾縮圖</string>
+    <string name="browse_menu_page_count">頁數</string>
+    <string name="browse_menu_reading_progress">閱讀進度</string>
+    <string name="browse_menu_gallery_covers">圖庫封面</string>
+    <string name="browse_menu_archive_covers">壓縮檔封面</string>
     <string name="browse_open_failed">沒有可開啟此檔案的應用程式。</string>
     <string name="folder_empty">此資料夾是空的。</string>
     <string name="folder_no_roots">尚無圖庫資料夾。請到設定 → 圖庫 新增。</string>
@@ -115,8 +119,8 @@
     <string name="back_to_library">返回圖庫</string>
     <string name="go_to_first_page">回到第一頁</string>
     <string name="go_to_next_gallery">下一本</string>
-    <string name="settings_download_remote_thumbs">下載網路資料夾封面</string>
-    <string name="settings_download_remote_thumbs_summary">取得網路資料夾縮圖。</string>
+    <string name="settings_download_remote_thumbs">下載網路圖庫封面</string>
+    <string name="settings_download_remote_thumbs_summary">取得網路圖庫縮圖。</string>
     <string name="settings_download_network_archive_thumbs">下載網路壓縮檔封面</string>
     <string name="settings_download_network_archive_thumbs_summary">擷取網路 ZIP/TAR/RAR/7z 的首頁縮圖。</string>
     <string name="settings_persist_main_nav">資料夾頁面保留主導覽</string>
