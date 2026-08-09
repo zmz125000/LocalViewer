@@ -58,7 +58,7 @@
     <string name="browse_files">Files</string>
     <string name="browse_video">Video</string>
     <string name="browse_file">File</string>
-    <string name="browse_mode_galleries">Galleries</string>
+    <string name="browse_mode_galleries">Photo</string>
     <string name="browse_mode_media">Media</string>
     <string name="browse_mode_video">Video</string>
     <string name="browse_mode_folder">Folder</string>
