@@ -467,9 +467,16 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
         videoPaths.clear()
     }
 
-    // No direct cover: promote first image from ≤3 leaf peeks (same budget as remote grand-peek).
-    if (coverPath == null && leafDirs.size in 1..SMB_PROMOTE_MAX_LEAVES) {
-        for (leaf in leafDirs) {
+    // No direct cover: peek leaves for folder-thumb cover.
+    // ≤3 leaves: try each (same budget as remote promote). >3: only first leaf (fallback).
+    if (coverPath == null && leafDirs.isNotEmpty()) {
+        val leavesToTry = if (leafDirs.size in 1..SMB_PROMOTE_MAX_LEAVES) {
+            leafDirs
+        } else {
+            // size == SMB_PROMOTE_MAX_LEAVES+1 means we saw more than 3; first only.
+            listOf(leafDirs.first())
+        }
+        for (leaf in leavesToTry) {
             val leafCover = peekFirstImageCover(leaf.path, preferMediaStore)
             if (leafCover != null) {
                 coverPath = leafCover
@@ -938,13 +945,14 @@ fun classifyRemoteListingWithPeeks(
 
                 when (val kind = classifyRemoteChild(e.name, peek)) {
                     is RemoteChildKind.Navigable -> {
+                        // Direct image, else first-leaf cover (including >3-leaf fallback peek).
+                        val navCover = remoteDirCoverFileName(peek, e.name, leaves, grandPeeks)
                         dirs += BrowseEntryRemote.Directory(
                             name = e.name,
                             hasVideo = kind.hasVideo || hasUnscannedLargeSubtree,
                             hasGallery = kind.hasGallery,
                             presence = DirPresence.Navigable,
-                            coverFileName = kind.gallery?.coverFileName
-                                ?: firstImageNameInPeek(peek),
+                            coverFileName = navCover,
                         )
                         // Mixed folder: also list as gallery for direct images.
                         kind.gallery?.let { g ->
@@ -1113,6 +1121,9 @@ private fun firstImageNameInPeek(peek: List<RemoteChild>): String? {
 /**
  * Folder-thumb cover relative to dir S: direct image basename, else first image from
  * leaf grand-peeks as `leafName/file.jpg` (scan order of [leaves]).
+ *
+ * When [leaves] has more than [SMB_PROMOTE_MAX_LEAVES], only the first leaf is expected
+ * in [grandPeeks] (cover-only fallback; full promote is skipped).
  */
 private fun remoteDirCoverFileName(
     peek: List<RemoteChild>,
@@ -1121,8 +1132,13 @@ private fun remoteDirCoverFileName(
     grandPeeks: Map<String, List<RemoteChild>>,
 ): String? {
     firstImageNameInPeek(peek)?.let { return it }
-    if (leaves.size !in 1..SMB_PROMOTE_MAX_LEAVES) return null
-    for (leaf in leaves) {
+    if (leaves.isEmpty()) return null
+    val leavesToCheck = if (leaves.size in 1..SMB_PROMOTE_MAX_LEAVES) {
+        leaves
+    } else {
+        listOf(leaves.first())
+    }
+    for (leaf in leavesToCheck) {
         val leafPeek = grandPeeks["$parentName/${leaf.name}"].orEmpty()
         firstImageNameInPeek(leafPeek)?.let { return "${leaf.name}/$it" }
     }
