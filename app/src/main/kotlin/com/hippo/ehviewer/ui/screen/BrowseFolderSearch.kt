@@ -7,6 +7,7 @@ import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
@@ -20,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -44,6 +46,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
+import com.hippo.ehviewer.library.BrowseSession
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
@@ -101,6 +104,35 @@ class BrowseFolderSearchState internal constructor(
         return true
     }
 
+    fun snapshot(): BrowseSession.FolderSearchUi =
+        BrowseSession.FolderSearchUi(active = active, keyword = keyword)
+
+    /**
+     * Restore a previously saved filter for this folder.
+     * Does not request focus (returning from reader / climbing path stack).
+     */
+    fun restore(saved: BrowseSession.FolderSearchUi) {
+        if (saved.isEmpty) {
+            close()
+            return
+        }
+        val k = normalizeBrowseSearchQuery(saved.keyword)
+        if (k.isEmpty()) {
+            textFieldState.clearText()
+            keyword = ""
+            active = saved.active
+            focused = false
+            return
+        }
+        if (textFieldState.text.toString() != k) {
+            textFieldState.setTextAndPlaceCursorAtEnd(k)
+        }
+        keyword = k
+        // Keep the search field visible when a filter is restored.
+        active = saved.active || k.isNotEmpty()
+        focused = false
+    }
+
     internal fun syncKeywordFromField() {
         keyword = normalizeBrowseSearchQuery(textFieldState.text)
     }
@@ -117,6 +149,48 @@ fun rememberBrowseFolderSearchState(): BrowseFolderSearchState {
             .collectLatest { state.syncKeywordFromField() }
     }
     return state
+}
+
+/**
+ * Persist folder search across dir enter/up and reader navigation (session lifetime).
+ * Call instead of unconditionally [BrowseFolderSearchState.close] on path change.
+ *
+ * Saves the leaving folder on dispose (path change or leave screen), then restores
+ * the destination folder's saved filter (or clears if none).
+ */
+@Composable
+fun BindBrowseFolderSearch(
+    folderKey: String?,
+    search: BrowseFolderSearchState,
+    onPathChange: () -> Unit = {},
+) {
+    val focusManager = LocalFocusManager.current
+    val latestSearch = rememberUpdatedState(search)
+    // Save on leave (path change / reader / screen dispose).
+    DisposableEffect(folderKey) {
+        onDispose {
+            if (folderKey != null) {
+                BrowseSession.putFolderSearch(folderKey, latestSearch.value.snapshot())
+            }
+        }
+    }
+    // Restore for the destination folder (or clear). Declared before the persist
+    // effect so a same-frame path change restores first, then persists the result.
+    LaunchedEffect(folderKey) {
+        onPathChange()
+        focusManager.clearFocus()
+        if (folderKey == null) {
+            search.close()
+        } else {
+            search.restore(BrowseSession.getFolderSearch(folderKey))
+        }
+    }
+    // Persist while typing / closing search so X-clear is not re-applied after reader.
+    LaunchedEffect(folderKey, search.keyword, search.active) {
+        if (folderKey != null) {
+            BrowseSession.putFolderSearch(folderKey, search.snapshot())
+        }
+    }
 }
 
 /**

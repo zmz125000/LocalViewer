@@ -207,12 +207,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
-    // Show the bar again when entering a different folder; drop per-folder filter.
-    LaunchedEffect(relativeDir) {
-        scrollBehavior.state.heightOffset = 0f
-        search.close()
-        focusManager.clearFocus()
-    }
+    // Per-folder search: restore when climbing back / returning from reader.
+    BindBrowseFolderSearch(
+        folderKey = BrowseSession.smbFolderSearchKey(sourceId, relativeDir),
+        search = search,
+        onPathChange = { scrollBehavior.state.heightOffset = 0f },
+    )
 
     /** Detect share/pathPrefix/host edits while this screen stays on the back stack. */
     var lastConfigKey by remember { mutableStateOf<String?>(null) }

@@ -184,12 +184,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         derivedStateOf { scrollBehavior.state.collapsedFraction < 0.5f }
     }
 
-    // Show the bar again when entering a different folder; drop per-folder filter.
-    LaunchedEffect(currentPath) {
-        scrollBehavior.state.heightOffset = 0f
-        search.close()
-        focusManager.clearFocus()
-    }
+    // Per-folder search: restore when climbing back / returning from reader.
+    BindBrowseFolderSearch(
+        folderKey = currentPath?.let { BrowseSession.localFolderSearchKey(it) },
+        search = search,
+        onPathChange = { scrollBehavior.state.heightOffset = 0f },
+    )
 
     suspend fun reload(force: Boolean = false) {
         val frame = stack.lastOrNull()
