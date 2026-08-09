@@ -54,7 +54,7 @@ sealed interface BrowseEntry {
         val presence: DirPresence,
         /**
          * Lazy-scan cover for folder thumbs: first direct image, else first image
-         * from ≤[SMB_PROMOTE_MAX_LEAVES] leaf peeks. Null when none found.
+         * from a single first-leaf peek (at most 10 entries). Null if none.
          */
         val coverPath: Path? = null,
     ) : BrowseEntry
@@ -291,7 +291,7 @@ fun listLocalDirectoryUncached(
 private sealed interface ChildDirKind {
     val hasVideo: Boolean
     val hasGallery: Boolean
-    /** Folder-thumb cover: direct image or first leaf image (≤3 leaves). */
+    /** Folder-thumb cover: direct image or first-leaf peek (metadata only). */
     val coverPath: Path? get() = null
 
     /**
@@ -303,11 +303,13 @@ private sealed interface ChildDirKind {
         val gallery: LeafGallery? = null,
         override val hasVideo: Boolean = false,
         override val hasGallery: Boolean = true,
+        /** Folder thumb: dual-gallery cover and/or leaf-promoted path (metadata only). */
         override val coverPath: Path? = gallery?.coverPath,
     ) : ChildDirKind
     data class LeafGallery(
         val pageCount: Int,
         val pageCountCapped: Boolean,
+        /** Always a *direct* image cover from the one-level walk (listing, not leaf peek). */
         override val coverPath: Path?,
         /** Browse video paths (excludes sample-*); single entry → promote to parent Videos. */
         val videoPaths: List<Path> = emptyList(),
@@ -385,8 +387,8 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
     var afterSubdirBudget = 0
     val archives = ArrayList<BrowseEntry.ArchiveGallery>()
     val videoPaths = ArrayList<Path>()
-    // Track promotable leaves for folder-thumb cover when this dir has no direct images.
-    val leafDirs = ArrayList<BrowseChild>(SMB_PROMOTE_MAX_LEAVES + 1)
+    // First promotable leaf only — used for folder-thumb cover fallback (no multi-leaf re-list).
+    var firstLeafDir: BrowseChild? = null
     val uncapped = path.isMediaStorePath()
 
     path.forEachBrowseChild { child ->
@@ -397,9 +399,7 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
             // sample/ preview leaves do not make the parent Navigable.
             if (isPromotableLeafDirName(child.name)) {
                 sawSubdir = true
-                if (leafDirs.size <= SMB_PROMOTE_MAX_LEAVES) {
-                    leafDirs += child
-                }
+                if (firstLeafDir == null) firstLeafDir = child
             }
             // Have dir + cover (or image sample) → dual-list complete (SAF).
             // MediaStore: keep walking images for exact dual-list counts when mixed.
@@ -467,41 +467,27 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
         videoPaths.clear()
     }
 
-    // No direct cover: peek leaves for folder-thumb cover.
-    // ≤3 leaves: try each (same budget as remote promote). >3: only first leaf (fallback).
-    if (coverPath == null && leafDirs.isNotEmpty()) {
-        val leavesToTry = if (leafDirs.size in 1..SMB_PROMOTE_MAX_LEAVES) {
-            leafDirs
-        } else {
-            // size == SMB_PROMOTE_MAX_LEAVES+1 means we saw more than 3; first only.
-            listOf(leafDirs.first())
-        }
-        for (leaf in leavesToTry) {
-            val leafCover = peekFirstImageCover(leaf.path, preferMediaStore)
-            if (leafCover != null) {
-                coverPath = leafCover
-                break
-            }
-        }
-    }
-
-    val gallery = if (coverPath != null || imagesCapped) {
-        // Only dual-list when the cover is a *direct* image (or image sample capped).
-        // Leaf-promoted covers alone do not make this dir a FolderGallery.
-        val dualCover = if (imageCount > 0 || imagesCapped) coverPath else null
-        if (dualCover != null || imagesCapped) {
-            ChildDirKind.LeafGallery(
-                pageCount = imageCount,
-                pageCountCapped = imagesCapped,
-                coverPath = dualCover,
-                videoPaths = videoPaths.toList(),
-                hasVideo = sawVideo,
-            )
-        } else {
-            null
-        }
+    // Listing kind uses only the one-level walk above (same as pre–folder-thumb).
+    // Snapshot direct cover before leaf peeks so thumb I/O cannot dual-list a dir.
+    val directCoverPath = coverPath
+    val gallery = if (imageCount > 0 || imagesCapped) {
+        ChildDirKind.LeafGallery(
+            pageCount = imageCount,
+            pageCountCapped = imagesCapped,
+            coverPath = directCoverPath,
+            videoPaths = videoPaths.toList(),
+            hasVideo = sawVideo,
+        )
     } else {
         null
+    }
+
+    // Folder-thumb only: no multi-leaf peeks (those would be pure extra local I/O).
+    // No direct cover → single first-leaf peek, hard-capped at [FOLDER_THUMB_LEAF_PEEK_MAX].
+    // Does not change [gallery] / presence / hasGallery.
+    var thumbCoverPath = directCoverPath
+    if (thumbCoverPath == null) {
+        firstLeafDir?.let { thumbCoverPath = peekFirstImageCover(it.path, preferMediaStore) }
     }
 
     // Archives only show as files in the folder you open — never promote to parent.
@@ -515,7 +501,7 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
             // conservative because the local SAF peek is only one level deep.
             hasGallery = gallery != null || archives.isNotEmpty() || sawSubdir,
             // Prefer dual gallery cover; else leaf-promoted cover for folder thumbs.
-            coverPath = gallery?.coverPath ?: coverPath,
+            coverPath = gallery?.coverPath ?: thumbCoverPath,
         )
     }
     if (gallery != null) return gallery
@@ -523,14 +509,20 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
     return ChildDirKind.Empty()
 }
 
-/** First image child only — used for folder-thumb leaf promote (not a full classify). */
+/** Max entries visited in a local folder-thumb first-leaf peek (cheap cover fallback). */
+private const val FOLDER_THUMB_LEAF_PEEK_MAX = 10
+
+/**
+ * First image child only — local folder-thumb cover fallback (not a full classify).
+ * Stops after [FOLDER_THUMB_LEAF_PEEK_MAX] children so leaf re-list stays cheap.
+ */
 private fun peekFirstImageCover(dir: Path, preferMediaStore: Boolean): Path? {
     val path = resolveBrowsePath(dir, preferMediaStore = preferMediaStore)
     var found: Path? = null
     var seen = 0
     path.forEachBrowseChild { child ->
         seen++
-        if (seen > PEEK_MAX_ENTRIES) return@forEachBrowseChild false
+        if (seen > FOLDER_THUMB_LEAF_PEEK_MAX) return@forEachBrowseChild false
         if (child.isDirectory) return@forEachBrowseChild true
         if (isImageFileName(child.name)) {
             found = child.path
@@ -654,8 +646,9 @@ fun isPromotableLeafDirName(name: String): Boolean = !name.startsWith('.') &&
  * local [BROWSE_IMAGE_SCAN_CAP] early-exit does not save network work — we keep full
  * image lists and exact page counts here.
  *
- * [grandPeeks] keys are `SubName/LeafName` (relative to the listed dir). Populated only
- * when a subfolder has 1..[SMB_PROMOTE_MAX_LEAVES] child dirs — see SmbGateway.
+ * [grandPeeks] keys are `SubName/LeafName` (relative to the listed dir).
+ * Promote fills all leaves when count is 1..[SMB_PROMOTE_MAX_LEAVES]; when more,
+ * gateways may still supply the first leaf for folder-thumb cover only (not promote).
  *
  * Scan order (by design): **S is listed first** (to discover leaves), then each leaf.
  * Dual gallery for images **in S** reuses the first peek of S — no third scan of S.
