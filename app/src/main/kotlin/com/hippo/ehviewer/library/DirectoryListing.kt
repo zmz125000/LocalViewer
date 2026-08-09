@@ -545,6 +545,10 @@ fun classifyRemoteListingWithPeeks(
                     grandPeeks.containsKey("${e.name}/${leaf.name}")
                 }
                 val canPromote = leaves.size in 1..SMB_PROMOTE_MAX_LEAVES && hasAllGrandPeeks
+                // >3 child dirs: no grand-peek (same as old scan). Classify as Navigable from
+                // one-level peek only — mark hasVideo so Video mode still lists the branch
+                // (deeper video content is unknown without scanning every leaf).
+                val hasUnscannedLargeSubtree = leaves.size > SMB_PROMOTE_MAX_LEAVES
 
                 if (canPromote) {
                     // Promote image leaves as @ galleries and every video-bearing leaf as @ dirs.
@@ -742,7 +746,7 @@ fun classifyRemoteListingWithPeeks(
                     is RemoteChildKind.Navigable -> {
                         dirs += BrowseEntryRemote.Directory(
                             name = e.name,
-                            hasVideo = kind.hasVideo,
+                            hasVideo = kind.hasVideo || hasUnscannedLargeSubtree,
                             hasGallery = kind.hasGallery,
                             presence = DirPresence.Navigable,
                         )
