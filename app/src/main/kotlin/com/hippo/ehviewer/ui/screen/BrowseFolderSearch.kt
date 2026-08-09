@@ -73,11 +73,19 @@ class BrowseFolderSearchState internal constructor(
     var keyword by mutableStateOf("")
         private set
 
+    /**
+     * One-shot: request keyboard focus when the search field composes.
+     * Set by [open] only — [restore] keeps the filter without focusing.
+     */
+    var wantFocus by mutableStateOf(false)
+        internal set
+
     val hasFilter: Boolean
         get() = keyword.isNotEmpty()
 
     fun open() {
         active = true
+        wantFocus = true
     }
 
     fun clearFilter() {
@@ -91,6 +99,7 @@ class BrowseFolderSearchState internal constructor(
         keyword = ""
         active = false
         focused = false
+        wantFocus = false
     }
 
     /**
@@ -112,6 +121,7 @@ class BrowseFolderSearchState internal constructor(
      * Does not request focus (returning from reader / climbing path stack).
      */
     fun restore(saved: BrowseSession.FolderSearchUi) {
+        wantFocus = false
         if (saved.isEmpty) {
             close()
             return
@@ -243,9 +253,12 @@ fun BrowseTopBarSearchField(
     focusRequester: FocusRequester = remember { FocusRequester() },
 ) {
     val focusManager = LocalFocusManager.current
-    LaunchedEffect(state.active) {
-        if (state.active) {
+    // Only auto-focus when the user taps search ([BrowseFolderSearchState.open]),
+    // not when restoring a filter after go-back / reader return.
+    LaunchedEffect(state.active, state.wantFocus) {
+        if (state.active && state.wantFocus) {
             focusRequester.requestFocus()
+            state.wantFocus = false
         }
     }
     TextField(
