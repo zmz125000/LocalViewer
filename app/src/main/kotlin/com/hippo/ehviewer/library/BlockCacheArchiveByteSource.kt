@@ -97,10 +97,10 @@ class BlockCacheArchiveByteSource(
          * External video: larger aligned fetches cut RTT so LAN can approach multi‑100 Mbps
          * fill (content up to ~200 Mbps). Still sparse — only blocks actually read are kept.
          */
-        const val VIDEO_BLOCK_SIZE = 4 * 1024 * 1024
+        const val VIDEO_BLOCK_SIZE = 2 * 1024 * 1024
 
         /** 128 MiB LRU (~5 s at 200 Mbps) — enough headroom without unbounded download. */
-        const val VIDEO_MAX_BLOCKS = 32
+        const val VIDEO_MAX_BLOCKS = 24
 
         fun forMimeType(mimeType: String, displayName: String = ""): Pair<Int, Int> {
             val video = mimeType.startsWith("video/", ignoreCase = true) ||
