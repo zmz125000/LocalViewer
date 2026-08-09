@@ -12,6 +12,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Network streamdoc FUSE for external players (SMB/WebDAV movies/PDFs). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Device media access (alternative to SAF tree picker), same model as Aves gallery. -->
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission
@@ -128,12 +132,17 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/filepaths" />
         </provider>
-        <!-- Range-backed PDF stream for external viewers (long-press open). -->
+        <!-- Range-backed stream for external viewers (PDF / video open-with). -->
         <provider
             android:name="com.hippo.ehviewer.provider.StreamDocumentProvider"
             android:authorities="${applicationId}.streamdoc"
             android:exported="false"
             android:grantUriPermissions="true" />
+        <!-- Holds process out of freeze while a network streamdoc proxy FD is open. -->
+        <service
+            android:name="com.hippo.ehviewer.provider.StreamKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>

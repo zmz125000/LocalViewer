@@ -1,11 +1,19 @@
 package com.hippo.ehviewer.provider
 
+import android.content.Context
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import com.hippo.ehviewer.library.ArchiveByteSource
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import splitties.init.appCtx
 
 /**
  * In-memory tokens for [StreamDocumentProvider] URIs.
@@ -13,8 +21,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * External apps receive a short-lived `content://…/streamdoc/{token}` grant.
  *
  * - **Network** ([register]): provider opens [ArchiveByteSource] on demand (SMB/WebDAV
- *   range I/O + block cache via proxy FD). [retain]/[release] track live proxy FDs;
- *   token is removed when the last FD is released.
+ *   range I/O + block cache via proxy FD). [retain]/[release] track live proxy FDs and
+ *   drive [StreamKeepAliveService]. Tokens are **not** removed on last FD close so a
+ *   player can reopen the same URI after buffering / seek / resume; [pruneStale] ages them out.
  * - **Local/SAF** ([registerDirect]): provider returns a real seekable
  *   [ParcelFileDescriptor] (no FUSE proxy). Tokens age out via [MAX_AGE_MS] / cap
  *   (no close hook on the kernel FD).
@@ -37,11 +46,26 @@ object StreamDocumentRegistry {
 
     private val entries = ConcurrentHashMap<String, Entry>()
 
+    /** Sum of network proxy FDs across tokens — drives the keep-alive FGS. */
+    private val totalNetworkOpen = AtomicInteger(0)
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var stopKeepAliveJob: Job? = null
+
     /** Soft cap so repeated long-press PDF does not retain unbounded lambdas. */
     private const val MAX_ENTRIES = 24
 
-    /** Local direct tokens have no close hook; age them out after one hour idle. */
-    private const val MAX_AGE_MS = 60L * 60L * 1000L
+    /**
+     * Age out idle tokens (no live proxy FD). Long enough for multi-hour movies that
+     * briefly close/reopen the content URI between seeks or after buffer drain.
+     */
+    private const val MAX_AGE_MS = 6L * 60L * 60L * 1000L
+
+    /**
+     * Keep FGS a bit after the last proxy FD closes so players that close/reopen the
+     * content URI (seek, rebuffer, resume) do not hit background-start restrictions.
+     */
+    private const val KEEP_ALIVE_STOP_DELAY_MS = 3L * 60L * 1000L
 
     fun register(
         displayName: String,
@@ -88,22 +112,40 @@ object StreamDocumentRegistry {
     }
 
     /** Call when a network proxy FD is successfully opened for [token]. */
-    fun retain(token: String) {
-        entries[token]?.let {
-            it.openCount.incrementAndGet()
-            it.lastAccessMs = SystemClock.elapsedRealtime()
+    fun retain(token: String, context: Context = appCtx) {
+        val entry = entries[token] ?: return
+        entry.openCount.incrementAndGet()
+        entry.lastAccessMs = SystemClock.elapsedRealtime()
+        stopKeepAliveJob?.cancel()
+        stopKeepAliveJob = null
+        if (totalNetworkOpen.incrementAndGet() == 1) {
+            StreamKeepAliveService.setActive(context, true)
         }
     }
 
     /**
      * Call from proxy [android.os.ProxyFileDescriptorCallback.onRelease].
-     * Removes the token when no proxy FDs remain.
+     * Keeps the token so external players can reopen the same URI (resume / rebuffer).
+     * [pruneStale] eventually drops idle grants.
      */
-    fun release(token: String) {
+    fun release(token: String, context: Context = appCtx) {
         val entry = entries[token] ?: return
-        val left = entry.openCount.decrementAndGet()
-        if (left <= 0) {
-            entries.remove(token, entry)
+        // Floor at 0 — duplicate release must not go negative.
+        var left: Int
+        do {
+            left = entry.openCount.get()
+            if (left <= 0) return
+        } while (!entry.openCount.compareAndSet(left, left - 1))
+        entry.lastAccessMs = SystemClock.elapsedRealtime()
+        val total = totalNetworkOpen.updateAndGet { (it - 1).coerceAtLeast(0) }
+        if (total == 0) {
+            stopKeepAliveJob?.cancel()
+            stopKeepAliveJob = scope.launch {
+                delay(KEEP_ALIVE_STOP_DELAY_MS)
+                if (totalNetworkOpen.get() == 0) {
+                    StreamKeepAliveService.setActive(context, false)
+                }
+            }
         }
     }
 
