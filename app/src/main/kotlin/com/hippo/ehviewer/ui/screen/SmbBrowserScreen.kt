@@ -204,10 +204,17 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val search = rememberBrowseFolderSearchState()
     val focusManager = LocalFocusManager.current
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
-    val filteredEntries = remember(displayEntries, search.keyword, contentMode, showSmallGalleries) {
+    val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
+    val filteredEntries = remember(
+        displayEntries,
+        search.keyword,
+        contentMode,
+        showSmallGalleries,
+        smallGalleryMinPages,
+    ) {
         displayEntries
             .filterRemoteByContentMode(contentMode)
-            .filterRemoteSmallGalleries(showSmallGalleries)
+            .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
             .filterByBrowseSearch(search.keyword) { it.name }
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)

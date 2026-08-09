@@ -71,6 +71,9 @@
     <string name="browse_menu_gallery_covers">Gallery covers</string>
     <string name="browse_menu_archive_covers">Archive covers</string>
     <string name="browse_menu_small_galleries">Small galleries</string>
+    <string name="settings_browse_small_galleries_summary">Show folder galleries below the minimum page count. Off hides them in the UI only.</string>
+    <string name="settings_browse_small_gallery_min_pages">Minimum gallery pages</string>
+    <string name="settings_browse_small_gallery_min_pages_summary">Hide folder galleries with fewer pages when Small galleries is off.</string>
     <string name="browse_open_failed">No app found to open this file.</string>
     <string name="folder_empty">This folder is empty.</string>
     <string name="folder_no_roots">No library folders. Add one in Settings → Library.</string>

@@ -72,6 +72,9 @@
     <string name="browse_menu_gallery_covers">ギャラリー表紙</string>
     <string name="browse_menu_archive_covers">アーカイブ表紙</string>
     <string name="browse_menu_small_galleries">小さいギャラリー</string>
+    <string name="settings_browse_small_galleries_summary">最小ページ数未満のフォルダギャラリーを表示します。オフ時は UI のみ非表示（スキャンは変更しません）。</string>
+    <string name="settings_browse_small_gallery_min_pages">最小ギャラリーページ数</string>
+    <string name="settings_browse_small_gallery_min_pages_summary">小さいギャラリーがオフのとき、このページ数未満のフォルダギャラリーを隠します。</string>
     <string name="browse_open_failed">このファイルを開くアプリが見つかりません。</string>
     <string name="folder_empty">このフォルダは空です。</string>
     <string name="folder_no_roots">ライブラリフォルダがありません。設定 → ライブラリ で追加してください。</string>

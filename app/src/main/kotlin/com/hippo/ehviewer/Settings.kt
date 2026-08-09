@@ -89,10 +89,16 @@ object Settings : DataStorePreferences(null) {
     val browseFolderThumbs = boolPref("browse_folder_thumbs", false)
 
     /**
-     * When true, folder-view shows folder galleries with fewer than 3 images.
+     * When true, folder-view shows folder galleries below [browseSmallGalleryMinPages].
      * Default false: UI hides those rows (scanner listing is unchanged).
      */
     val browseShowSmallGalleries = boolPref("browse_show_small_galleries", false)
+
+    /**
+     * Minimum image count for a folder gallery when [browseShowSmallGalleries] is off.
+     * Galleries with fewer pages are hidden in the UI only. Default 3.
+     */
+    val browseSmallGalleryMinPages = intPref("browse_small_gallery_min_pages", 3)
 
     /**
      * When true, keep the main NavigationBar/Rail visible on nested Browse/History folder

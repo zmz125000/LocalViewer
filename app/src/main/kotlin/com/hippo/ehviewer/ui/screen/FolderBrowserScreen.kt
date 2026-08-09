@@ -143,10 +143,17 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val contentModePref by Settings.browseContentMode.collectAsState()
     val contentMode = BrowseContentMode.fromPref(contentModePref)
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
-    val filteredEntries = remember(displayEntries, search.keyword, contentMode, showSmallGalleries) {
+    val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
+    val filteredEntries = remember(
+        displayEntries,
+        search.keyword,
+        contentMode,
+        showSmallGalleries,
+        smallGalleryMinPages,
+    ) {
         displayEntries
             .filterByContentMode(contentMode)
-            .filterSmallGalleries(showSmallGalleries)
+            .filterSmallGalleries(showSmallGalleries, smallGalleryMinPages)
             .filterByBrowseSearch(search.keyword) { it.name }
     }
 

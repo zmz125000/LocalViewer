@@ -96,6 +96,21 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.settings_eh_show_reading_progress),
                 state = Settings.showReadingProgress.asMutableState(),
             )
+            val showSmallGalleries = Settings.browseShowSmallGalleries.asMutableState()
+            SwitchPreference(
+                title = stringResource(id = R.string.browse_menu_small_galleries),
+                summary = stringResource(id = R.string.settings_browse_small_galleries_summary),
+                state = showSmallGalleries,
+            )
+            AnimatedVisibility(visible = !showSmallGalleries.value) {
+                IntSliderPreference(
+                    maxValue = 20,
+                    minValue = 1,
+                    title = stringResource(id = R.string.settings_browse_small_gallery_min_pages),
+                    summary = stringResource(id = R.string.settings_browse_small_gallery_min_pages_summary),
+                    state = Settings.browseSmallGalleryMinPages.asMutableState(),
+                )
+            }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_library_startup_scan),
                 state = Settings.libraryStartupScan.asMutableState(),

@@ -94,31 +94,39 @@ fun List<BrowseEntry>.filterByContentMode(mode: BrowseContentMode): List<BrowseE
     }
 }
 
-/** Minimum images for a folder gallery when "Small galleries" is off. */
-const val BROWSE_SMALL_GALLERY_MIN_PAGES = 3
+/** Default minimum images for a folder gallery when "Small galleries" is off. */
+const val BROWSE_SMALL_GALLERY_MIN_PAGES_DEFAULT = 3
 
 /**
  * UI-only filter: when [showSmall] is false, drop folder galleries with fewer than
- * [BROWSE_SMALL_GALLERY_MIN_PAGES] images. Capped counts are treated as large enough.
+ * [minPages] images. Capped counts are treated as large enough.
  * Does not touch the lazy scanner or listing cache.
  */
-fun List<BrowseEntry>.filterSmallGalleries(showSmall: Boolean): List<BrowseEntry> {
+fun List<BrowseEntry>.filterSmallGalleries(
+    showSmall: Boolean,
+    minPages: Int = BROWSE_SMALL_GALLERY_MIN_PAGES_DEFAULT,
+): List<BrowseEntry> {
     if (showSmall) return this
+    val threshold = minPages.coerceAtLeast(1)
     return filter { e ->
         when (e) {
-            is BrowseEntry.FolderGallery -> e.pageCountCapped || e.pageCount >= BROWSE_SMALL_GALLERY_MIN_PAGES
+            is BrowseEntry.FolderGallery -> e.pageCountCapped || e.pageCount >= threshold
             else -> true
         }
     }
 }
 
 /** Same as [filterSmallGalleries] for remote (SMB / WebDAV) entries. */
-fun List<BrowseEntryRemote>.filterRemoteSmallGalleries(showSmall: Boolean): List<BrowseEntryRemote> {
+fun List<BrowseEntryRemote>.filterRemoteSmallGalleries(
+    showSmall: Boolean,
+    minPages: Int = BROWSE_SMALL_GALLERY_MIN_PAGES_DEFAULT,
+): List<BrowseEntryRemote> {
     if (showSmall) return this
+    val threshold = minPages.coerceAtLeast(1)
     return filter { e ->
         when (e) {
             is BrowseEntryRemote.FolderGallery ->
-                e.pageCountCapped || e.pageCount >= BROWSE_SMALL_GALLERY_MIN_PAGES
+                e.pageCountCapped || e.pageCount >= threshold
             else -> true
         }
     }

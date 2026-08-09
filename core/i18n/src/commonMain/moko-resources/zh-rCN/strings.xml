@@ -67,6 +67,9 @@
     <string name="browse_menu_gallery_covers">画廊封面</string>
     <string name="browse_menu_archive_covers">压缩包封面</string>
     <string name="browse_menu_small_galleries">小图库</string>
+    <string name="settings_browse_small_galleries_summary">显示低于最少页数的文件夹画廊。关闭时仅在界面隐藏，不改扫描。</string>
+    <string name="settings_browse_small_gallery_min_pages">最少画廊页数</string>
+    <string name="settings_browse_small_gallery_min_pages_summary">关闭小图库时，隐藏页数少于此值的文件夹画廊。</string>
     <string name="browse_open_failed">没有可打开此文件的应用。</string>
     <string name="folder_empty">此文件夹为空。</string>
     <string name="folder_no_roots">暂无图库文件夹。请到设置 → 图库 添加。</string>
