@@ -102,6 +102,13 @@ fun WebDavEditDialog(
 
     val canSave = baseUrl.trim().isNotEmpty()
 
+    fun submit() {
+        if (!canSave) return
+        focusManager.clearFocus()
+        val cur = current()
+        onSave(cur, if (anonymous) "" else password)
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -156,11 +163,12 @@ fun WebDavEditDialog(
                     label = { Text(stringResource(R.string.webdav_path_prefix)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().focusRequester(pathFocus),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardOptions = KeyboardOptions(
+                        imeAction = if (anonymous) ImeAction.Done else ImeAction.Next,
+                    ),
                     keyboardActions = KeyboardActions(
-                        onNext = {
-                            if (anonymous) focusManager.clearFocus() else userFocus.requestFocus()
-                        },
+                        onNext = { userFocus.requestFocus() },
+                        onDone = { submit() },
                     ),
                 )
                 Row(
@@ -196,17 +204,14 @@ fun WebDavEditDialog(
                             keyboardType = KeyboardType.Password,
                             imeAction = ImeAction.Done,
                         ),
-                        keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                        keyboardActions = KeyboardActions(onDone = { submit() }),
                     )
                 }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = {
-                    val cur = current()
-                    onSave(cur, if (anonymous) "" else password)
-                },
+                onClick = { submit() },
                 enabled = canSave,
             ) {
                 Text(stringResource(R.string.network_save))
