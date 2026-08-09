@@ -339,11 +339,23 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         navToReader(path)
     }
 
+    /** History path link for the folder currently listed (parent of the opened file). */
+    suspend fun recordCurrentBrowseFolderHistory() {
+        val frame = stack.lastOrNull() ?: return
+        LocalHistory.recordLocalBrowseFolder(
+            rootId = frame.rootId,
+            relativePath = frame.relativePath,
+            title = frame.title,
+        )
+    }
+
     /** Long-press PDF → system / third-party reader (tap still uses in-app image PDF engine). */
     fun openPdfInOtherApp(entry: BrowseEntry.ArchiveGallery) {
         if (!isPdfFileName(entry.name)) return
         val path = entry.path.toString()
         launchIO {
+            // On tap: record containing browse folder (cannot know if external app succeeded).
+            recordCurrentBrowseFolderHistory()
             try {
                 OpenPdfExternally.openLocal(context, path, displayName = entry.name)
             } catch (e: Throwable) {
@@ -359,6 +371,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun openExternalFile(name: String, path: okio.Path) {
         launchIO {
+            // On tap: record containing browse folder (cannot know if external app succeeded).
+            recordCurrentBrowseFolderHistory()
             try {
                 OpenFileExternally.openLocal(
                     context,

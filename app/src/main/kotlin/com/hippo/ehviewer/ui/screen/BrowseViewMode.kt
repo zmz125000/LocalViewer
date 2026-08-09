@@ -53,18 +53,18 @@ fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
             onDismissRequest = { expanded = false },
         ) {
             ContentModeItem(
-                label = stringResource(R.string.browse_mode_galleries),
-                selected = contentMode == BrowseContentMode.Galleries,
-                onClick = {
-                    contentModePref = BrowseContentMode.Galleries.prefValue
-                    expanded = false
-                },
-            )
-            ContentModeItem(
                 label = stringResource(R.string.browse_mode_media),
                 selected = contentMode == BrowseContentMode.Media,
                 onClick = {
                     contentModePref = BrowseContentMode.Media.prefValue
+                    expanded = false
+                },
+            )
+            ContentModeItem(
+                label = stringResource(R.string.browse_mode_galleries),
+                selected = contentMode == BrowseContentMode.Galleries,
+                onClick = {
+                    contentModePref = BrowseContentMode.Galleries.prefValue
                     expanded = false
                 },
             )
