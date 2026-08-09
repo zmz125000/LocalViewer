@@ -367,7 +367,10 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
         if (!uncapped && entriesSeen > PEEK_MAX_ENTRIES) return@forEachBrowseChild false
 
         if (child.isDirectory) {
-            sawSubdir = true
+            // sample/ preview leaves do not make the parent Navigable.
+            if (isPromotableLeafDirName(child.name)) {
+                sawSubdir = true
+            }
             // Have dir + cover (or image sample) → dual-list complete (SAF).
             // MediaStore: keep walking images for exact dual-list counts when mixed.
             if (!uncapped && (coverPath != null || imagesCapped)) {
@@ -551,6 +554,16 @@ const val SMB_PROMOTE_MAX_LEAVES = 3
 fun promotedSubGalleryName(subName: String) = "@$subName"
 
 /**
+ * Child directory that counts for structure / grand-peek promote.
+ * [isSampleDirName] folders are ignored so a single-video dir that only has a
+ * `sample/` preview leaf still classifies as VideoOnly and can promote the file.
+ */
+fun isPromotableLeafDirName(name: String): Boolean =
+    !name.startsWith('.') &&
+        !isProtectedSystemName(name) &&
+        !isSampleDirName(name)
+
+/**
  * Classify an SMB (or other remote) directory listing.
  *
  * Unlike local SAF, remote [share.list] already returns every child name, so the
@@ -586,9 +599,8 @@ fun classifyRemoteListingWithPeeks(
                     !it.isDirectory && !it.name.startsWith('.') &&
                         !isProtectedSystemName(it.name) && isBrowseVideoFileName(it.name)
                 }
-                val leaves = peek.filter {
-                    it.isDirectory && !it.name.startsWith('.') && !isProtectedSystemName(it.name)
-                }
+                // Exclude sample/ so 1 real leaf + sample still promotes; sample never grand-peeked.
+                val leaves = peek.filter { it.isDirectory && isPromotableLeafDirName(it.name) }
                 // Only classify/promote from the shared second scan when every requested
                 // leaf has a result. A grand peek belonging to another sibling must not
                 // make a missing leaf look empty and hide its real directory.
@@ -1021,7 +1033,8 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
     for (e in peek) {
         if (e.name.startsWith('.') || isProtectedSystemName(e.name)) continue
         if (e.isDirectory) {
-            sawSubdir = true
+            // Ignore sample/ so `movie.mp4` + `sample/` still classifies as VideoOnly.
+            if (isPromotableLeafDirName(e.name)) sawSubdir = true
             continue
         }
         when {

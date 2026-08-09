@@ -22,6 +22,7 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
+import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isProtectedSystemName
@@ -900,9 +901,8 @@ object SmbGateway {
         val grandPeeks = ConcurrentHashMap<String, List<RemoteChild>>()
         val leavesToPeek = ArrayList<Pair<String, String>>() // (subName, leafName)
         for ((subName, peek) in peeks) {
-            val leaves = peek.filter {
-                it.isDirectory && !it.name.startsWith('.') && !isProtectedSystemName(it.name)
-            }
+            // sample/ does not count toward the 1..3 leaf budget or grand-peek work.
+            val leaves = peek.filter { it.isDirectory && isPromotableLeafDirName(it.name) }
             if (leaves.size in 1..SMB_PROMOTE_MAX_LEAVES) {
                 for (leaf in leaves) {
                     leavesToPeek += subName to leaf.name
