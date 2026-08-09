@@ -43,7 +43,7 @@ import splitties.init.appCtx
 
 /**
  * Result of lazy archive cover extract.
- * [NoImages] means the archive was opened and has no playable pages — safe to hide from listings.
+ * [NoImages] means the archive was opened and has no playable pages — demote gallery tag / drop library row.
  * [Skip] is transient (busy, password, I/O, or scan-budget abort on a large archive) — keep the row.
  */
 sealed interface CoverEnsureResult {
@@ -266,8 +266,8 @@ object ArchiveCoverCache {
      * work. ZIP reuses [ArchiveStreamPageCache] seek index (same as the stream reader).
      * Non-ZIP scans abort after [LOCAL_NON_ZIP_SCAN_CAP] unless the whole file is smaller.
      *
-     * [CoverEnsureResult.NoImages] when the archive is confirmed empty — callers should
-     * hide the row ([LocalLibrary.hideEmptyArchive] / [EmptyArchiveRegistry]).
+     * [CoverEnsureResult.NoImages] when the archive is confirmed empty — callers demote the
+     * gallery tag ([EmptyArchiveRegistry]) and/or drop the library row ([LocalLibrary.hideEmptyArchive]).
      */
     suspend fun ensureCover(archivePath: Path): CoverEnsureResult = withIOContext {
         try {

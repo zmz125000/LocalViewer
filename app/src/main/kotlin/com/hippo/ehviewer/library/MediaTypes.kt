@@ -151,6 +151,22 @@ fun isVideoFileName(name: String): Boolean {
     return ext in VIDEO_EXTENSIONS
 }
 
+/** Leaf folder name excluded from video promote/tag (preview packs). */
+fun isSampleDirName(name: String): Boolean = name.equals("sample", ignoreCase = true)
+
+/**
+ * Preview clip filenames (`sample-….mp4`) — still playable by extension, but not
+ * tagged/promoted as browse video content.
+ */
+fun isSampleVideoFileName(name: String): Boolean {
+    val base = name.substringAfterLast('/').substringAfterLast('\\')
+    return base.startsWith("sample-", ignoreCase = true)
+}
+
+/** Video that counts for browse tags / promote (excludes sample previews). */
+fun isBrowseVideoFileName(name: String): Boolean =
+    isVideoFileName(name) && !isSampleVideoFileName(name)
+
 /** MIME for external open; falls back to application/octet-stream. */
 fun mimeTypeForFileName(name: String): String {
     val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return "application/octet-stream"

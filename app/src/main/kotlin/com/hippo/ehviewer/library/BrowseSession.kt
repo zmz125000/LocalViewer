@@ -64,18 +64,24 @@ object BrowseSession {
     }
 
     /**
-     * Drop a known-empty archive from every cached listing so the row stays gone
-     * without requiring pull-to-refresh (process lifetime).
+     * Demote a known-empty archive gallery to a regular file in every cached listing
+     * so the row stays visible without the gallery tag (process lifetime).
      *
      * [archiveKey] is a local content path, or `smb:id:rel` / `webdav:id:rel`.
      */
-    fun stripArchiveFromListings(archiveKey: String) {
+    fun demoteArchiveInListings(archiveKey: String) {
         if (archiveKey.isEmpty()) return
         for ((k, list) in localListings) {
-            val filtered = list.filterNot {
-                it is BrowseEntry.ArchiveGallery && it.path.toString() == archiveKey
+            var changed = false
+            val next = list.map { e ->
+                if (e is BrowseEntry.ArchiveGallery && e.path.toString() == archiveKey) {
+                    changed = true
+                    BrowseEntry.RegularFile(name = e.name, path = e.path)
+                } else {
+                    e
+                }
             }
-            if (filtered.size != list.size) localListings[k] = filtered
+            if (changed) localListings[k] = next
         }
         val remoteRel = when {
             archiveKey.startsWith("smb:") ->
@@ -85,18 +91,25 @@ object BrowseSession {
             else -> null
         }
         if (remoteRel.isNullOrEmpty()) return
-        fun stripRemote(map: ConcurrentHashMap<String, List<BrowseEntryRemote>>) {
+        fun demoteRemote(map: ConcurrentHashMap<String, List<BrowseEntryRemote>>) {
             for ((k, list) in map) {
                 val dir = k.substringAfterLast('|')
-                val filtered = list.filterNot { e ->
-                    e is BrowseEntryRemote.ArchiveGallery &&
+                var changed = false
+                val next = list.map { e ->
+                    if (e is BrowseEntryRemote.ArchiveGallery &&
                         joinRemoteArchivePath(dir, e.parentRelativeName, e.fileName) == remoteRel
+                    ) {
+                        changed = true
+                        BrowseEntryRemote.RegularFile(name = e.name, fileName = e.fileName)
+                    } else {
+                        e
+                    }
                 }
-                if (filtered.size != list.size) map[k] = filtered
+                if (changed) map[k] = next
             }
         }
-        stripRemote(smbListings)
-        stripRemote(webDavListings)
+        demoteRemote(smbListings)
+        demoteRemote(webDavListings)
     }
 
     fun smbListingKey(sourceId: Long, relativeDir: String) = "$sourceId|$relativeDir"
