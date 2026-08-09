@@ -137,7 +137,7 @@ class AndroidFileSystem(context: Context) : FileSystem() {
             }
         }
 
-        // Virtual MediaStore folder tree (READ_MEDIA_IMAGES) — not a DocumentsProvider path.
+        // Virtual MediaStore folder tree (images + videos) — not a DocumentsProvider path.
         if (dir.isMediaStoreVirtualDir()) {
             return runCatching {
                 listMediaStoreVirtualChildren(dir)
@@ -205,7 +205,7 @@ class AndroidFileSystem(context: Context) : FileSystem() {
     }
 
     /**
-     * List virtual folder children via MediaStore RELATIVE_PATH.
+     * List virtual folder children via MediaStore RELATIVE_PATH (images + videos).
      * Files use `mediastore:/…/name.jpg` so natural sort keeps real filenames.
      */
     private fun listMediaStoreVirtualChildren(dir: Path): List<Path> {
@@ -214,52 +214,65 @@ class AndroidFileSystem(context: Context) : FileSystem() {
             .trimStart('/')
             .trimEnd('/')
         val dirs = linkedMapOf<String, Path>()
-        val images = ArrayList<Path>()
+        val files = linkedMapOf<String, Path>()
         val prefix = if (relativeDir.isEmpty()) "" else "$relativeDir/"
-        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
         val projection = arrayOf(
-            MediaStore.Images.Media.DISPLAY_NAME,
-            MediaStore.Images.Media.RELATIVE_PATH,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.RELATIVE_PATH,
         )
-        contentResolver.query(
-            collection,
-            projection,
-            null,
-            null,
-            "${MediaStore.Images.Media.DISPLAY_NAME} ASC",
-        )?.use { c ->
-            val nameIdx = c.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-            val pathIdx = c.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH)
-            while (c.moveToNext()) {
-                val displayName = c.getString(nameIdx) ?: continue
-                if (displayName.startsWith('.')) continue
-                val relPath = (c.getString(pathIdx) ?: "").trim('/').trimEnd('/')
-                if (relativeDir.isEmpty()) {
-                    if (relPath.isEmpty()) {
-                        images += "mediastore:/$displayName".toPath()
-                    } else {
-                        val top = relPath.substringBefore('/')
-                        if (top.isNotEmpty()) {
-                            dirs.putIfAbsent(top, "mediastore:/$top".toPath())
+        val collections = listOf(
+            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+        )
+        for (collection in collections) {
+            runCatching {
+                contentResolver.query(
+                    collection,
+                    projection,
+                    null,
+                    null,
+                    "${MediaStore.MediaColumns.DISPLAY_NAME} ASC",
+                )?.use { c ->
+                    val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                    val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+                    while (c.moveToNext()) {
+                        val displayName = c.getString(nameIdx) ?: continue
+                        if (displayName.startsWith('.')) continue
+                        val relPath = (c.getString(pathIdx) ?: "").trim('/').trimEnd('/')
+                        if (relativeDir.isEmpty()) {
+                            if (relPath.isEmpty()) {
+                                files.putIfAbsent(displayName, "mediastore:/$displayName".toPath())
+                            } else {
+                                val top = relPath.substringBefore('/')
+                                if (top.isNotEmpty()) {
+                                    dirs.putIfAbsent(top, "mediastore:/$top".toPath())
+                                }
+                            }
+                            continue
                         }
-                    }
-                    continue
-                }
-                if (relPath == relativeDir) {
-                    images += "mediastore:/$relativeDir/$displayName".toPath()
-                    continue
-                }
-                if (relPath.startsWith(prefix)) {
-                    val rest = relPath.removePrefix(prefix)
-                    if (rest.isEmpty()) continue
-                    val childName = rest.substringBefore('/')
-                    if (childName.isNotEmpty()) {
-                        dirs.putIfAbsent(childName, "mediastore:/$relativeDir/$childName".toPath())
+                        if (relPath == relativeDir) {
+                            files.putIfAbsent(
+                                displayName,
+                                "mediastore:/$relativeDir/$displayName".toPath(),
+                            )
+                            continue
+                        }
+                        if (relPath.startsWith(prefix)) {
+                            val rest = relPath.removePrefix(prefix)
+                            if (rest.isEmpty()) continue
+                            val childName = rest.substringBefore('/')
+                            if (childName.isNotEmpty()) {
+                                dirs.putIfAbsent(
+                                    childName,
+                                    "mediastore:/$relativeDir/$childName".toPath(),
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
-        return dirs.values.toList() + images
+        return dirs.values.toList() + files.values
     }
 
     override fun openReadOnly(file: Path): FileHandle {
@@ -311,31 +324,37 @@ class AndroidFileSystem(context: Context) : FileSystem() {
         val fileName = s.substringAfterLast('/')
         val relativeDir = s.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
         if (fileName.isEmpty() || !fileName.contains('.')) return null
-        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-        val projection = arrayOf(MediaStore.Images.Media._ID)
+        val projection = arrayOf(MediaStore.MediaColumns._ID)
         val relWithSlash = if (relativeDir.isEmpty()) "" else "$relativeDir/"
         val selection: String
         val args: Array<String>
         if (relativeDir.isEmpty()) {
-            selection = "(${MediaStore.Images.Media.RELATIVE_PATH} IS NULL OR " +
-                "${MediaStore.Images.Media.RELATIVE_PATH} = '' OR " +
-                "${MediaStore.Images.Media.RELATIVE_PATH} = '/') AND " +
-                "${MediaStore.Images.Media.DISPLAY_NAME} = ?"
+            selection = "(${MediaStore.MediaColumns.RELATIVE_PATH} IS NULL OR " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = '' OR " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = '/') AND " +
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
             args = arrayOf(fileName)
         } else {
-            selection = "(${MediaStore.Images.Media.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.Images.Media.RELATIVE_PATH} = ?) AND " +
-                "${MediaStore.Images.Media.DISPLAY_NAME} = ?"
+            selection = "(${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ?) AND " +
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
             args = arrayOf(relWithSlash, relativeDir, fileName)
         }
-        contentResolver.query(collection, projection, selection, args, null)?.use { c ->
-            if (c.moveToFirst()) {
-                return MediaStore.Images.Media
-                    .getContentUri(MediaStore.VOLUME_EXTERNAL)
-                    .buildUpon()
-                    .appendPath(c.getLong(0).toString())
-                    .build()
-            }
+        val collections = listOf(
+            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+        )
+        for (collection in collections) {
+            val found = runCatching {
+                contentResolver.query(collection, projection, selection, args, null)?.use { c ->
+                    if (c.moveToFirst()) {
+                        collection.buildUpon().appendPath(c.getLong(0).toString()).build()
+                    } else {
+                        null
+                    }
+                }
+            }.getOrNull()
+            if (found != null) return found
         }
         return null
     }
@@ -347,7 +366,7 @@ class AndroidFileSystem(context: Context) : FileSystem() {
 
 private fun Path.isPhysicalFile() = toString().startsWith('/')
 
-/** Virtual directory from READ_MEDIA_IMAGES / MediaStore RELATIVE_PATH tree. */
+/** Virtual directory from READ_MEDIA_* / MediaStore RELATIVE_PATH tree. */
 private fun Path.isMediaStoreVirtualDir() = toString().startsWith("mediastore:")
 
 private fun Uri.isCifsDocument() = authority == "com.wa2c.android.cifsdocumentsprovider.documents"

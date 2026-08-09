@@ -28,7 +28,7 @@
     <string name="source_access_saf">文件夹选择器 (SAF)</string>
     <string name="source_access_saf_summary">选择任意文件夹（含压缩包）。</string>
     <string name="source_access_device_media">设备媒体</string>
-    <string name="source_access_device_media_summary">通过系统媒体权限读取图片。不包含压缩包。</string>
+    <string name="source_access_device_media_summary">通过系统媒体权限读取图片和视频。不包含压缩包。</string>
     <string name="source_device_media_name">设备媒体</string>
     <string name="source_media_permission_denied">媒体权限被拒绝</string>
     <string name="source_access_mode_media">媒体 (MediaStore)</string>

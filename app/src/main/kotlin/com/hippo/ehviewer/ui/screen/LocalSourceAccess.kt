@@ -42,7 +42,7 @@ import com.hippo.ehviewer.library.MediaPermissions
 /**
  * Access method when adding a library / folder source:
  * - SAF tree picker (full folder incl. archives)
- * - Device media via [READ_MEDIA_IMAGES] (Aves-style; images only)
+ * - Device media via [READ_MEDIA_IMAGES] / [READ_MEDIA_VIDEO] (Aves-style)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -188,8 +188,9 @@ fun rememberMediaPermissionLauncher(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
         val granted = result[Manifest.permission.READ_MEDIA_IMAGES] == true ||
+            result[Manifest.permission.READ_MEDIA_VIDEO] == true ||
             result[Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED] == true ||
-            MediaPermissions.hasImageAccess(context)
+            MediaPermissions.hasMediaAccess(context)
         if (granted) {
             onGranted(pendingRole)
         } else {
@@ -200,7 +201,8 @@ fun rememberMediaPermissionLauncher(
         MediaPermissionLauncher(
             launcher = launcher,
             setPendingRole = { pendingRole = it },
-            hasAccess = { MediaPermissions.hasImageAccess(context) },
+            // Re-prompt when only images were granted (pre-video) so video is requested.
+            hasAccess = { MediaPermissions.hasCompleteMediaAccess(context) },
             onAlreadyGranted = onGranted,
         )
     }

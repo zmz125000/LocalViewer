@@ -11,7 +11,7 @@ const val LIBRARY_ROOT_ROLE_LIBRARY = 1
 const val LIBRARY_ROOT_ROLE_FOLDER = 2
 
 /**
- * Prefer MediaStore for this source (images only, fast index).
+ * Prefer MediaStore for this source (images + videos, fast index).
  * Pure device-media roots are always this mode.
  */
 const val LIBRARY_ROOT_ACCESS_MEDIA = 0

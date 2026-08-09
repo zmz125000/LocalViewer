@@ -203,7 +203,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
         if (isMediaStoreRootUri(root.treeUri)) return
         if (root.includesArchives) {
             // Switch to MediaStore — need media permission first.
-            if (MediaPermissions.hasImageAccess(context)) {
+            if (MediaPermissions.hasCompleteMediaAccess(context)) {
                 launchIO {
                     LocalLibrary.setRootAccessMode(root.id, LIBRARY_ROOT_ACCESS_MEDIA)
                 }

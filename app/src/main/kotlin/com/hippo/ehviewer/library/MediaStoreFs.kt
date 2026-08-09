@@ -13,8 +13,8 @@ import okio.Path.Companion.toPath
 import splitties.init.appCtx
 
 /**
- * Synthetic root for “all device images” via [READ_MEDIA_IMAGES].
- * Stored as [LibraryRootEntity.treeUri]; not a SAF tree.
+ * Synthetic root for device images + videos via [READ_MEDIA_IMAGES] /
+ * [READ_MEDIA_VIDEO]. Stored as [LibraryRootEntity.treeUri]; not a SAF tree.
  *
  * Subfolder roots: `mediastore://external/Pictures/Comics`
  */
@@ -59,7 +59,7 @@ fun mediaStoreTreeUriToPath(treeUri: String): Path {
  * ExternalStorageProvider document ids look like `primary:Pictures/Comics`.
  */
 fun tryMediaStoreTreeUriFromSaf(treeUri: Uri): String? {
-    if (!MediaPermissions.hasImageAccess()) return null
+    if (!MediaPermissions.hasMediaAccess()) return null
     val authority = treeUri.authority
     if (authority != null && authority != "com.android.externalstorage.documents") {
         return null
@@ -91,10 +91,10 @@ fun resolveBrowsePath(path: Path, preferMediaStore: Boolean = true): Path {
 /**
  * Convert a SAF / DocumentsProvider [Path] to `mediastore:/…` when possible.
  * Keeps non-external or unmappable paths as-is (caller falls back to SAF).
- * Requires image media permission; callers gate with [preferMediaStore] / root access mode.
+ * Requires media permission; callers gate with [preferMediaStore] / root access mode.
  */
 fun tryConvertSafPathToMediaStore(path: Path): Path? {
-    if (!MediaPermissions.hasImageAccess()) return null
+    if (!MediaPermissions.hasMediaAccess()) return null
     val str = path.toString()
     if (!str.contains("content:")) return null
     return runCatching {
@@ -155,26 +155,51 @@ object MediaPermissions {
     val required: Array<String>
         get() = arrayOf(
             Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VIDEO,
             Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
         )
 
-    fun hasImageAccess(context: Context = appCtx): Boolean {
-        val full = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.READ_MEDIA_IMAGES,
-        ) == PackageManager.PERMISSION_GRANTED
-        if (full) return true
-        return ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
-        ) == PackageManager.PERMISSION_GRANTED
+    /**
+     * Any visual media access (images and/or videos, full or user-selected partial).
+     * Used to keep MediaStore roots alive when permission is only partly granted.
+     */
+    fun hasMediaAccess(context: Context = appCtx): Boolean {
+        if (isGranted(context, Manifest.permission.READ_MEDIA_IMAGES)) return true
+        if (isGranted(context, Manifest.permission.READ_MEDIA_VIDEO)) return true
+        return isGranted(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
     }
+
+    /**
+     * Enough access to skip the runtime permission prompt: either partial selection,
+     * or both image and video grants. Users who only granted images (pre-video
+     * support) are re-prompted for video.
+     */
+    fun hasCompleteMediaAccess(context: Context = appCtx): Boolean {
+        if (isGranted(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)) return true
+        return isGranted(context, Manifest.permission.READ_MEDIA_IMAGES) &&
+            isGranted(context, Manifest.permission.READ_MEDIA_VIDEO)
+    }
+
+    /** @see hasMediaAccess */
+    fun hasImageAccess(context: Context = appCtx): Boolean = hasMediaAccess(context)
+
+    fun hasImagePermission(context: Context = appCtx): Boolean =
+        isGranted(context, Manifest.permission.READ_MEDIA_IMAGES) ||
+            isGranted(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+
+    fun hasVideoPermission(context: Context = appCtx): Boolean =
+        isGranted(context, Manifest.permission.READ_MEDIA_VIDEO) ||
+            isGranted(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
 
     /**
      * Prompt for media permission before the SAF picker so new sources can
      * default to MediaStore when the user grants access.
      */
-    fun shouldRequestMediaPermissionForSafAdd(context: Context = appCtx): Boolean = !hasImageAccess(context)
+    fun shouldRequestMediaPermissionForSafAdd(context: Context = appCtx): Boolean =
+        !hasCompleteMediaAccess(context)
+
+    private fun isGranted(context: Context, permission: String): Boolean =
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 }
 
 /**
@@ -184,7 +209,7 @@ object MediaPermissions {
  * - Directory: `mediastore:/Pictures/Comics`
  * - File: `mediastore:/Pictures/Comics/001.jpg` (DISPLAY_NAME; resolved to content:// on open)
  *
- * Archives (cbz/zip) are **not** visible — MediaStore only indexes images.
+ * Archives (cbz/zip) are **not** visible — MediaStore only indexes images and videos.
  */
 object MediaStoreFs {
     data class Child(
@@ -195,11 +220,13 @@ object MediaStoreFs {
 
     fun listChildren(dir: Path): List<Child> {
         if (!dir.isMediaStorePath()) return emptyList()
-        if (!MediaPermissions.hasImageAccess()) return emptyList()
+        if (!MediaPermissions.hasMediaAccess()) return emptyList()
         return listChildrenRelative(dir.mediaStoreRelativeDir())
     }
 
-    fun listImagePaths(dir: Path): List<Path> = listChildren(dir).filter { !it.isDirectory }.map { it.path }
+    fun listImagePaths(dir: Path): List<Path> = listChildren(dir)
+        .filter { !it.isDirectory && isImageFileName(it.name) }
+        .map { it.path }
 
     /**
      * Resolve a virtual file path to a MediaStore content URI for open/decode.
@@ -210,53 +237,68 @@ object MediaStoreFs {
         if (s.isEmpty()) return null
         val fileName = s.substringAfterLast('/')
         val relativeDir = s.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
-        if (fileName.isEmpty() || !isImageFileName(fileName)) return null
+        if (fileName.isEmpty()) return null
+        val preferVideo = isVideoFileName(fileName)
+        val preferImage = isImageFileName(fileName)
+        if (!preferVideo && !preferImage) return null
 
-        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-        val projection = arrayOf(MediaStore.Images.Media._ID)
+        // Try the matching collection first; fall back in case of odd MIME indexing.
+        if (preferVideo && MediaPermissions.hasVideoPermission()) {
+            queryMediaId(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL), relativeDir, fileName)
+                ?.let { return contentUriFor(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL), it) }
+        }
+        if (preferImage && MediaPermissions.hasImagePermission()) {
+            queryMediaId(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL), relativeDir, fileName)
+                ?.let { return contentUriFor(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL), it) }
+        }
+        if (preferVideo && MediaPermissions.hasImagePermission()) {
+            queryMediaId(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL), relativeDir, fileName)
+                ?.let { return contentUriFor(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL), it) }
+        }
+        if (preferImage && MediaPermissions.hasVideoPermission()) {
+            queryMediaId(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL), relativeDir, fileName)
+                ?.let { return contentUriFor(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL), it) }
+        }
+        return null
+    }
+
+    private fun contentUriFor(collection: Uri, id: Long): Uri =
+        collection.buildUpon().appendPath(id.toString()).build()
+
+    private fun queryMediaId(collection: Uri, relativeDir: String, fileName: String): Long? {
+        val projection = arrayOf(MediaStore.MediaColumns._ID)
         // RELATIVE_PATH is stored with trailing slash by MediaStore.
         val relWithSlash = if (relativeDir.isEmpty()) "" else "$relativeDir/"
         val selection = if (relativeDir.isEmpty()) {
-            "(${MediaStore.Images.Media.RELATIVE_PATH} IS NULL OR " +
-                "${MediaStore.Images.Media.RELATIVE_PATH} = '' OR " +
-                "${MediaStore.Images.Media.RELATIVE_PATH} = '/') AND " +
-                "${MediaStore.Images.Media.DISPLAY_NAME} = ?"
+            "(${MediaStore.MediaColumns.RELATIVE_PATH} IS NULL OR " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = '' OR " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = '/') AND " +
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
         } else {
-            "(${MediaStore.Images.Media.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.Images.Media.RELATIVE_PATH} = ?) AND " +
-                "${MediaStore.Images.Media.DISPLAY_NAME} = ?"
+            "(${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ?) AND " +
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
         }
         val args = if (relativeDir.isEmpty()) {
             arrayOf(fileName)
         } else {
             arrayOf(relWithSlash, relativeDir, fileName)
         }
-        appCtx.contentResolver.query(collection, projection, selection, args, null)?.use { c ->
-            if (c.moveToFirst()) {
-                val id = c.getLong(0)
-                return MediaStore.Images.Media
-                    .getContentUri(MediaStore.VOLUME_EXTERNAL)
-                    .buildUpon()
-                    .appendPath(id.toString())
-                    .build()
+        return runCatching {
+            appCtx.contentResolver.query(collection, projection, selection, args, null)?.use { c ->
+                if (c.moveToFirst()) c.getLong(0) else null
             }
-        }
-        return null
+        }.getOrNull()
     }
 
     private fun listChildrenRelative(relativeDir: String): List<Child> {
         val dirs = linkedMapOf<String, Path>()
-        val images = ArrayList<Child>()
+        // Deduplicate files that appear under both collections (unlikely) or same name.
+        val files = linkedMapOf<String, Child>()
         val prefix = if (relativeDir.isEmpty()) "" else "$relativeDir/"
 
-        val projection = arrayOf(
-            MediaStore.Images.Media.DISPLAY_NAME,
-            MediaStore.Images.Media.RELATIVE_PATH,
-        )
-        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-
         // Root needs a full index walk to discover top-level folders. Nested dirs filter
-        // by RELATIVE_PATH so peeks don't re-scan every image on the device.
+        // by RELATIVE_PATH so peeks don't re-scan every media item on the device.
         val selection: String?
         val selectionArgs: Array<String>?
         if (relativeDir.isEmpty()) {
@@ -264,9 +306,9 @@ object MediaStoreFs {
             selectionArgs = null
         } else {
             selection =
-                "${MediaStore.Images.Media.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.Images.Media.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
             selectionArgs = arrayOf(
                 "$relativeDir/",
                 relativeDir,
@@ -274,51 +316,73 @@ object MediaStoreFs {
             )
         }
 
-        appCtx.contentResolver.query(
-            collection,
-            projection,
-            selection,
-            selectionArgs,
-            "${MediaStore.Images.Media.DISPLAY_NAME} ASC",
-        )?.use { c ->
-            val nameIdx = c.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-            val pathIdx = c.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH)
-            while (c.moveToNext()) {
-                val displayName = c.getString(nameIdx) ?: continue
-                if (displayName.startsWith('.')) continue
-                val relPath = (c.getString(pathIdx) ?: "").trim('/').trimEnd('/')
+        fun absorbCollection(collection: Uri) {
+            val projection = arrayOf(
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.RELATIVE_PATH,
+            )
+            runCatching {
+                appCtx.contentResolver.query(
+                    collection,
+                    projection,
+                    selection,
+                    selectionArgs,
+                    "${MediaStore.MediaColumns.DISPLAY_NAME} ASC",
+                )?.use { c ->
+                    val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                    val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+                    while (c.moveToNext()) {
+                        val displayName = c.getString(nameIdx) ?: continue
+                        if (displayName.startsWith('.')) continue
+                        val relPath = (c.getString(pathIdx) ?: "").trim('/').trimEnd('/')
 
-                if (relativeDir.isEmpty()) {
-                    if (relPath.isEmpty()) {
-                        images += Child(displayName, false, mediaStoreFilePath("", displayName))
-                    } else {
-                        val top = relPath.substringBefore('/')
-                        if (top.isNotEmpty()) {
-                            dirs.putIfAbsent(top, mediaStoreDirPath(top))
+                        if (relativeDir.isEmpty()) {
+                            if (relPath.isEmpty()) {
+                                files.putIfAbsent(
+                                    displayName,
+                                    Child(displayName, false, mediaStoreFilePath("", displayName)),
+                                )
+                            } else {
+                                val top = relPath.substringBefore('/')
+                                if (top.isNotEmpty()) {
+                                    dirs.putIfAbsent(top, mediaStoreDirPath(top))
+                                }
+                            }
+                            continue
                         }
-                    }
-                    continue
-                }
 
-                if (relPath == relativeDir) {
-                    images += Child(displayName, false, mediaStoreFilePath(relativeDir, displayName))
-                    continue
-                }
+                        if (relPath == relativeDir) {
+                            files.putIfAbsent(
+                                displayName,
+                                Child(displayName, false, mediaStoreFilePath(relativeDir, displayName)),
+                            )
+                            continue
+                        }
 
-                if (relPath.startsWith(prefix)) {
-                    val rest = relPath.removePrefix(prefix)
-                    if (rest.isEmpty()) continue
-                    val childName = rest.substringBefore('/')
-                    if (childName.isNotEmpty()) {
-                        dirs.putIfAbsent(childName, mediaStoreDirPath("$relativeDir/$childName"))
+                        if (relPath.startsWith(prefix)) {
+                            val rest = relPath.removePrefix(prefix)
+                            if (rest.isEmpty()) continue
+                            val childName = rest.substringBefore('/')
+                            if (childName.isNotEmpty()) {
+                                dirs.putIfAbsent(childName, mediaStoreDirPath("$relativeDir/$childName"))
+                            }
+                        }
                     }
                 }
             }
         }
 
+        if (MediaPermissions.hasImagePermission()) {
+            absorbCollection(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))
+        }
+        if (MediaPermissions.hasVideoPermission()) {
+            absorbCollection(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))
+        }
+
         val dirChildren = dirs.map { (name, path) -> Child(name, true, path) }
             .sortedWith { a, b -> naturalCompare(a.name, b.name) }
-        images.sortWith { a, b -> naturalCompare(a.name, b.name) }
-        return dirChildren + images
+        val fileChildren = files.values.toMutableList()
+            .also { it.sortWith { a, b -> naturalCompare(a.name, b.name) } }
+        return dirChildren + fileChildren
     }
 }
