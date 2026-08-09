@@ -22,9 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
-import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularWavyProgressIndicator
@@ -66,6 +64,7 @@ import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseEntry
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
@@ -74,10 +73,14 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.listLocalDirectory
+import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.stableGalleryId
+import com.hippo.ehviewer.library.toBrowseSections
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
+import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.OpenPdfExternally
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
@@ -89,9 +92,13 @@ import com.hippo.ehviewer.ui.main.BrowseCover
 import com.hippo.ehviewer.ui.main.BrowseDirectoryGridItem
 import com.hippo.ehviewer.ui.main.BrowseDirectoryRow
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
+import com.hippo.ehviewer.ui.main.BrowseFileGridItem
+import com.hippo.ehviewer.ui.main.BrowseFileRow
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
+import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
@@ -132,8 +139,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
     val search = rememberBrowseFolderSearchState()
     val focusManager = LocalFocusManager.current
-    val filteredEntries = remember(displayEntries, search.keyword) {
-        displayEntries.filterByBrowseSearch(search.keyword) { it.name }
+    val contentModePref by Settings.browseContentMode.collectAsState()
+    val contentMode = BrowseContentMode.fromPref(contentModePref)
+    val filteredEntries = remember(displayEntries, search.keyword, contentMode) {
+        displayEntries
+            .filterByContentMode(contentMode)
+            .filterByBrowseSearch(search.keyword) { it.name }
     }
 
     /** Path the current [entries] belong to — avoids showing the wrong dir during reload. */
@@ -143,6 +154,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
+
+    /** Scroll restore key: layout (list/grid) + content mode. */
+    val scrollLayoutKey = listMode * 10 + contentMode.prefValue
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
@@ -343,6 +357,25 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    fun openExternalFile(name: String, path: okio.Path) {
+        launchIO {
+            try {
+                OpenFileExternally.openLocal(
+                    context,
+                    path.toString(),
+                    displayName = name,
+                    mimeType = mimeTypeForFileName(name),
+                )
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(
+                        R.string.browse_open_failed,
+                    ) + " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
@@ -366,20 +399,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         state = search,
                         onBeforeClose = { focusManager.clearFocus() },
                     )
-                    IconButton(
-                        onClick = {
-                            Settings.listMode.value = if (listMode == 0) 1 else 0
-                        },
-                        shapes = IconButtonDefaults.shapes(),
-                    ) {
-                        val icon = if (listMode == 1) Icons.Default.GridView else Icons.AutoMirrored.Filled.ViewList
-                        val desc = if (listMode == 0) {
-                            stringResource(R.string.settings_eh_list_mode_thumb)
-                        } else {
-                            stringResource(R.string.settings_eh_list_mode_detail)
-                        }
-                        Icon(imageVector = icon, contentDescription = desc)
-                    }
+                    BrowseViewModeMenu()
                     IconButton(
                         onClick = {
                             launch {
@@ -497,12 +517,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 }
                 else -> {
                     // List only composes when this path's entries are ready. State is keyed by
-                    // path+mode so parent/child never share one LazyList scroll index.
+                    // path+layout so parent/child never share one LazyList scroll index.
                     val pathKey = listedPath ?: currentPath!!
-                    val dirs = filteredEntries.filterIsInstance<BrowseEntry.Directory>()
-                    val galleries = filteredEntries.filter { it !is BrowseEntry.Directory }
+                    val sections = filteredEntries.toBrowseSections()
+                    val dirs = sections.directories.filterIsInstance<BrowseEntry.Directory>()
+                    val galleries = sections.galleries
+                    val videos = sections.videos.filterIsInstance<BrowseEntry.VideoFile>()
+                    val files = sections.files.filterIsInstance<BrowseEntry.RegularFile>()
                     if (useGrid) {
-                        val gridState = rememberBrowseGridState(pathKey, listMode)
+                        val gridState = rememberBrowseGridState(pathKey, scrollLayoutKey)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
                             columns = GalleryGridDefaults.columns(),
@@ -541,10 +564,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     galleries,
                                     key = { entry ->
                                         when (entry) {
-                                            // path distinguishes self-as-gallery vs child gallery with same name
                                             is BrowseEntry.FolderGallery -> "g-${entry.path}"
                                             is BrowseEntry.ArchiveGallery -> "a-${entry.path}"
-                                            is BrowseEntry.Directory -> "d-${entry.path}"
+                                            else -> "x-${entry.name}"
                                         }
                                     },
                                 ) { entry ->
@@ -566,13 +588,41 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 null
                                             },
                                         )
-                                        is BrowseEntry.Directory -> Unit
+                                        else -> Unit
                                     }
+                                }
+                            }
+                            if (videos.isNotEmpty()) {
+                                item(
+                                    key = "hdr-vid",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
+                                    BrowseSectionHeader(stringResource(R.string.browse_videos))
+                                }
+                                items(videos, key = { "v-${it.path}" }) { video ->
+                                    BrowseVideoGridItem(
+                                        name = video.name,
+                                        onClick = { openExternalFile(video.name, video.path) },
+                                    )
+                                }
+                            }
+                            if (files.isNotEmpty()) {
+                                item(
+                                    key = "hdr-files",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
+                                    BrowseSectionHeader(stringResource(R.string.browse_files))
+                                }
+                                items(files, key = { "f-${it.path}" }) { file ->
+                                    BrowseFileGridItem(
+                                        name = file.name,
+                                        onClick = { openExternalFile(file.name, file.path) },
+                                    )
                                 }
                             }
                         }
                     } else {
-                        val listState = rememberBrowseListState(pathKey, listMode)
+                        val listState = rememberBrowseListState(pathKey, scrollLayoutKey)
                         FastScrollLazyColumn(
                             state = listState,
                             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
@@ -599,7 +649,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         when (entry) {
                                             is BrowseEntry.FolderGallery -> "g-${entry.path}"
                                             is BrowseEntry.ArchiveGallery -> "a-${entry.path}"
-                                            is BrowseEntry.Directory -> "d-${entry.path}"
+                                            else -> "x-${entry.name}"
                                         }
                                     },
                                 ) { entry ->
@@ -621,8 +671,30 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 null
                                             },
                                         )
-                                        is BrowseEntry.Directory -> Unit
+                                        else -> Unit
                                     }
+                                }
+                            }
+                            if (videos.isNotEmpty()) {
+                                item(key = "hdr-vid") {
+                                    BrowseSectionHeader(stringResource(R.string.browse_videos))
+                                }
+                                items(videos, key = { "v-${it.path}" }) { video ->
+                                    BrowseVideoRow(
+                                        name = video.name,
+                                        onClick = { openExternalFile(video.name, video.path) },
+                                    )
+                                }
+                            }
+                            if (files.isNotEmpty()) {
+                                item(key = "hdr-files") {
+                                    BrowseSectionHeader(stringResource(R.string.browse_files))
+                                }
+                                items(files, key = { "f-${it.path}" }) { file ->
+                                    BrowseFileRow(
+                                        name = file.name,
+                                        onClick = { openExternalFile(file.name, file.path) },
+                                    )
                                 }
                             }
                         }

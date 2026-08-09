@@ -152,7 +152,9 @@ static inline int filename_is_playable_file(const char *name);
 static inline int compare_entries(const void *a, const void *b);
 
 // --- Stream I/O via Kotlin ArchiveStreamBridge (remote ZIP/TAR) ---
-// Single position + buffer; serialize extracts with stream_mutex.
+// Process-global archive lifetime barrier. JNI operations that dereference or replace
+// native session resources hold this mutex. In particular, open/close must not free a
+// libarchive handle or stream bridge while an extract/solid callback is still unwinding.
 // ZIP: EOCD+CD index; TAR: 512-byte headers only (seek past member data).
 // Do NOT define JNI_OnLoad here — Rust libehviewer already exports it.
 static JavaVM *g_vm = NULL;
@@ -1009,17 +1011,21 @@ static jint tar_stream_open_from_headers(jboolean sort_entries, bool cover_only,
 
 /** Continue progressive TAR walk; add up to max_new images. Returns total count. */
 static jint tar_stream_continue(int max_new) {
+    pthread_mutex_lock(&stream_mutex);
     if (!use_tar_index || !tar_walk_active || tar_walk_complete) {
-        return (jint) entryCount;
+        jint n = (jint) entryCount;
+        pthread_mutex_unlock(&stream_mutex);
+        return n;
     }
     if (max_new <= 0) max_new = 8;
-    pthread_mutex_lock(&stream_mutex);
     tar_walk_step(max_new);
     jint n = (jint) entryCount;
+    bool complete = tar_walk_complete;
+    int64_t bytes_read = stream_bytes_read;
     pthread_mutex_unlock(&stream_mutex);
-    if (tar_walk_complete) {
+    if (complete) {
         LOGI("TAR progressive walk complete: %zu images, %lld bytes net",
-             entryCount, (long long) stream_bytes_read);
+             (size_t) n, (long long) bytes_read);
     }
     return n;
 }
@@ -1692,6 +1698,7 @@ static jint archive_open_common(JNIEnv *env, jboolean sort_entries, bool cover_o
 JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_openArchive(JNIEnv *env, jclass thiz, jint fd, jlong size, jboolean sort_entries) {
     EH_UNUSED(thiz);
+    pthread_mutex_lock(&stream_mutex);
     archive_cache_vm(env);
     archive_clear_abort();
     solid_seq_reset_state();
@@ -1700,10 +1707,13 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchive(JNIEnv *env, jclass thiz, jint
     archiveAddr = mmap(0, (size_t) size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (archiveAddr == MAP_FAILED) {
         LOGE("%s%s", "mmap failed with error ", strerror(errno));
+        pthread_mutex_unlock(&stream_mutex);
         return 0;
     }
     archiveSize = (size_t) size;
-    return archive_open_common(env, sort_entries, false, false);
+    jint result = archive_open_common(env, sort_entries, false, false);
+    pthread_mutex_unlock(&stream_mutex);
+    return result;
 }
 
 /**
@@ -1719,6 +1729,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(
         jboolean cover_only, jboolean progressive_tar, jlong max_scan_bytes) {
     EH_UNUSED(thiz);
     if (!bridge || size <= 0) return 0;
+    pthread_mutex_lock(&stream_mutex);
     archive_cache_vm(env);
     archive_clear_abort();
     solid_seq_reset_state();
@@ -1742,11 +1753,14 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openArchiveStream(
     if (!g_mid_read || !g_mid_seek) {
         LOGE("%s", "ArchiveStreamBridge methods missing");
         stream_bridge_clear(env);
+        pthread_mutex_unlock(&stream_mutex);
         return 0;
     }
     // Reader progressive TAR; cover_only never progressive (thumb stops at first image).
     bool prog = progressive_tar == JNI_TRUE && cover_only != JNI_TRUE;
-    return archive_open_common(env, sort_entries, cover_only == JNI_TRUE, prog);
+    jint result = archive_open_common(env, sort_entries, cover_only == JNI_TRUE, prog);
+    pthread_mutex_unlock(&stream_mutex);
+    return result;
 }
 
 /** Bytes pulled through stream I/O during the active open/extract session. */
@@ -1805,6 +1819,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openSolidSequential(
         JNIEnv *env, jclass thiz, jobject bridge, jlong size, jlong max_scan_bytes) {
     EH_UNUSED(thiz);
     if (!bridge || size <= 0) return 0;
+    pthread_mutex_lock(&stream_mutex);
     archive_cache_vm(env);
     archive_clear_abort();
     // Tear down any prior archive session (mmap / zip stream / solid).
@@ -1845,16 +1860,19 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_openSolidSequential(
     if (!g_mid_read || !g_mid_seek) {
         LOGE("%s", "ArchiveStreamBridge methods missing (solid)");
         stream_bridge_clear(env);
+        pthread_mutex_unlock(&stream_mutex);
         return 0;
     }
     solid_ctx = archive_alloc_solid_seq_ctx();
     if (!solid_ctx) {
         stream_bridge_clear(env);
         use_stream_io = false;
+        pthread_mutex_unlock(&stream_mutex);
         return 0;
     }
     use_solid_seq = true;
     LOGI("Solid sequential open ok (size=%lld)", (long long) size);
+    pthread_mutex_unlock(&stream_mutex);
     return 1;
 }
 
@@ -1866,10 +1884,16 @@ JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_solidNextPlayable(JNIEnv *env, jclass thiz) {
     EH_UNUSED(env);
     EH_UNUSED(thiz);
-    if (!use_solid_seq || !solid_ctx) return -2;
-    if (solid_have_current) return solid_next_index;
-
     pthread_mutex_lock(&stream_mutex);
+    if (!use_solid_seq || !solid_ctx) {
+        pthread_mutex_unlock(&stream_mutex);
+        return -2;
+    }
+    if (solid_have_current) {
+        jint result = solid_next_index;
+        pthread_mutex_unlock(&stream_mutex);
+        return result;
+    }
     int r;
     while ((r = archive_read_next_header(solid_ctx->arc, &solid_ctx->entry)) == ARCHIVE_OK) {
         if (archive_should_abort()) {
@@ -1902,15 +1926,17 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_solidNextPlayable(JNIEnv *env, jclass thiz
         // Found a playable member — lift cover scan budget so extract is not aborted.
         stream_scan_limit = 0;
         stream_scan_hit_limit = false;
+        jint result = solid_next_index;
         pthread_mutex_unlock(&stream_mutex);
-        return solid_next_index;
+        return result;
     }
-    pthread_mutex_unlock(&stream_mutex);
     if (r == ARCHIVE_EOF || stream_scan_hit_limit) {
         if (r == ARCHIVE_EOF) stream_index_finished_empty = true;
+        pthread_mutex_unlock(&stream_mutex);
         return -1;
     }
     LOGE("%s%s", "solidNextPlayable: ", archive_error_string(solid_ctx->arc));
+    pthread_mutex_unlock(&stream_mutex);
     return -2;
 }
 
@@ -1943,8 +1969,11 @@ JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_solidExtractCurrentToFd(JNIEnv *env, jclass thiz, jint fd) {
     EH_UNUSED(env);
     EH_UNUSED(thiz);
-    if (!use_solid_seq || !solid_ctx || !solid_have_current || fd < 0) return JNI_FALSE;
     pthread_mutex_lock(&stream_mutex);
+    if (!use_solid_seq || !solid_ctx || !solid_have_current || fd < 0) {
+        pthread_mutex_unlock(&stream_mutex);
+        return JNI_FALSE;
+    }
     int ret = archive_read_data_into_fd(solid_ctx->arc, fd);
     if (ret == ARCHIVE_OK) {
         solid_have_current = 0;
@@ -1962,8 +1991,11 @@ JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_solidSkipCurrent(JNIEnv *env, jclass thiz) {
     EH_UNUSED(env);
     EH_UNUSED(thiz);
-    if (!use_solid_seq || !solid_ctx || !solid_have_current) return JNI_FALSE;
     pthread_mutex_lock(&stream_mutex);
+    if (!use_solid_seq || !solid_ctx || !solid_have_current) {
+        pthread_mutex_unlock(&stream_mutex);
+        return JNI_FALSE;
+    }
     int ret = archive_read_data_skip(solid_ctx->arc);
     if (ret == ARCHIVE_OK || ret == ARCHIVE_EOF) {
         solid_have_current = 0;
@@ -1980,25 +2012,24 @@ JNIEXPORT jobject JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_extractToByteBuffer(JNIEnv *env, jclass thiz, jint index) {
     EH_UNUSED(env);
     EH_UNUSED(thiz);
-    if (index < 0 || (size_t) index >= entryCount || !entries) return 0;
-    if (archive_should_abort()) return 0;
+    pthread_mutex_lock(&stream_mutex);
+    if (index < 0 || (size_t) index >= entryCount || !entries || archive_should_abort()) {
+        pthread_mutex_unlock(&stream_mutex);
+        return 0;
+    }
     entry *entry = &entries[index];
     ssize_t size = entry->size;
     if (entry->addr) {
-        return (*env)->NewDirectByteBuffer(env, entry->addr, size);
-    }
-
-    if (use_stream_io) pthread_mutex_lock(&stream_mutex);
-    if (archive_should_abort()) {
-        if (use_stream_io) pthread_mutex_unlock(&stream_mutex);
-        return 0;
+        jobject result = (*env)->NewDirectByteBuffer(env, entry->addr, size);
+        pthread_mutex_unlock(&stream_mutex);
+        return result;
     }
 
     jobject result = 0;
     void *addr = acquire_decode_buffer();
     if (!addr) {
         LOGE("%s", "Decode buffer alloc failed");
-        if (use_stream_io) pthread_mutex_unlock(&stream_mutex);
+        pthread_mutex_unlock(&stream_mutex);
         return 0;
     }
 
@@ -2038,13 +2069,14 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_extractToByteBuffer(JNIEnv *env, jclass th
         }
     }
 
-    if (use_stream_io) pthread_mutex_unlock(&stream_mutex);
+    pthread_mutex_unlock(&stream_mutex);
     return result;
 }
 
 JNIEXPORT void JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_closeArchive(JNIEnv *env, jclass thiz) {
     EH_UNUSED(thiz);
+    pthread_mutex_lock(&stream_mutex);
     solid_seq_reset_state();
     if (ctx_pool) {
         for (int i = 0; i < CTX_POOL_SIZE; i++)
@@ -2078,6 +2110,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_closeArchive(JNIEnv *env, jclass thiz) {
         entries = NULL;
     }
     entryCount = 0;
+    pthread_mutex_unlock(&stream_mutex);
 }
 
 JNIEXPORT jboolean JNICALL
@@ -2090,6 +2123,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_needPassword(JNIEnv *env, jclass thiz) {
 JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_providePassword(JNIEnv *env, jclass thiz, jstring str) {
     EH_UNUSED(thiz);
+    pthread_mutex_lock(&stream_mutex);
     struct archive_entry *entry;
     archive_ctx *ctx;
     jboolean ret = true;
@@ -2107,7 +2141,10 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_providePassword(JNIEnv *env, jclass thiz, 
         solid_next_index = 0;
         solid_have_current = 0;
         solid_ctx = archive_alloc_solid_seq_ctx();
-        if (!solid_ctx) return JNI_FALSE;
+        if (!solid_ctx) {
+            pthread_mutex_unlock(&stream_mutex);
+            return JNI_FALSE;
+        }
         // Probe first encrypted playable.
         char tmpBuf[4096];
         while (archive_read_next_header(solid_ctx->arc, &solid_ctx->entry) == ARCHIVE_OK) {
@@ -2129,10 +2166,16 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_providePassword(JNIEnv *env, jclass thiz, 
         solid_next_index = 0;
         solid_have_current = 0;
         need_encrypt = false;
-        return ret && solid_ctx != NULL;
+        jboolean result = ret && solid_ctx != NULL;
+        pthread_mutex_unlock(&stream_mutex);
+        return result;
     }
 
     ctx = archive_alloc_ctx();
+    if (!ctx) {
+        pthread_mutex_unlock(&stream_mutex);
+        return JNI_FALSE;
+    }
     char tmpBuf[4096];
     while (archive_read_next_header(ctx->arc, &entry) == ARCHIVE_OK) {
         if (!archive_entry_is_playable(entry))
@@ -2146,14 +2189,18 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_providePassword(JNIEnv *env, jclass thiz, 
         break;
     }
     archive_release_ctx(ctx);
+    pthread_mutex_unlock(&stream_mutex);
     return ret;
 }
 
 JNIEXPORT jstring JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_getExtension(JNIEnv *env, jclass thiz, jint index) {
-    EH_UNUSED(env);
     EH_UNUSED(thiz);
-    const char *ext = strrchr(entries[index].filename, '.') + 1;
+    const char *ext = "";
+    if (entries && index >= 0 && (size_t) index < entryCount && entries[index].filename) {
+        const char *dot = strrchr(entries[index].filename, '.');
+        if (dot && dot[1]) ext = dot + 1;
+    }
     return (*env)->NewStringUTF(env, ext);
 }
 
@@ -2165,9 +2212,11 @@ JNIEXPORT jlong JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamMemberOffset(JNIEnv *env, jclass thiz, jint index) {
     EH_UNUSED(env);
     EH_UNUSED(thiz);
-    if (!use_stream_io || !entries || index < 0 || (size_t) index >= entryCount) return -1;
-    if (!(use_zip_cd_index || use_tar_index)) return -1;
-    return entries[index].local_header_offset;
+    if (use_stream_io && entries && index >= 0 && (size_t) index < entryCount &&
+        (use_zip_cd_index || use_tar_index)) {
+        return entries[index].local_header_offset;
+    }
+    return -1;
 }
 
 /**
@@ -2177,9 +2226,11 @@ JNIEXPORT jlong JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamMemberLength(JNIEnv *env, jclass thiz, jint index) {
     EH_UNUSED(env);
     EH_UNUSED(thiz);
-    if (!use_stream_io || !entries || index < 0 || (size_t) index >= entryCount) return -1;
-    if (!(use_zip_cd_index || use_tar_index)) return -1;
-    return entries[index].compressed_size;
+    if (use_stream_io && entries && index >= 0 && (size_t) index < entryCount &&
+        (use_zip_cd_index || use_tar_index)) {
+        return entries[index].compressed_size;
+    }
+    return -1;
 }
 
 /** Uncompressed size for decode buffer. */
@@ -2187,9 +2238,11 @@ JNIEXPORT jlong JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamMemberUncSize(JNIEnv *env, jclass thiz, jint index) {
     EH_UNUSED(env);
     EH_UNUSED(thiz);
-    if (!use_stream_io || !entries || index < 0 || (size_t) index >= entryCount) return -1;
-    if (!(use_zip_cd_index || use_tar_index)) return -1;
-    return (jlong) entries[index].size;
+    if (use_stream_io && entries && index >= 0 && (size_t) index < entryCount &&
+        (use_zip_cd_index || use_tar_index)) {
+        return (jlong) entries[index].size;
+    }
+    return -1;
 }
 
 /** ZIP method or 0 for TAR. */
@@ -2197,9 +2250,11 @@ JNIEXPORT jint JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_getStreamMemberMethod(JNIEnv *env, jclass thiz, jint index) {
     EH_UNUSED(env);
     EH_UNUSED(thiz);
-    if (!use_stream_io || !entries || index < 0 || (size_t) index >= entryCount) return -1;
-    if (!(use_zip_cd_index || use_tar_index)) return -1;
-    return (jint) entries[index].compression_method;
+    if (use_stream_io && entries && index >= 0 && (size_t) index < entryCount &&
+        (use_zip_cd_index || use_tar_index)) {
+        return (jint) entries[index].compression_method;
+    }
+    return -1;
 }
 
 /** True when active stream index is TAR (store). */
@@ -2223,7 +2278,6 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_loadStreamIndex(
     if (!bridge || size <= 0 || !offsets || !uncSizes || !compSizes || !methods || !names) {
         return 0;
     }
-    archive_clear_abort();
     jsize n = (*env)->GetArrayLength(env, offsets);
     if (n <= 0 ||
         (*env)->GetArrayLength(env, uncSizes) != n ||
@@ -2234,6 +2288,8 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_loadStreamIndex(
     }
     if (n > 500000) return 0;
 
+    pthread_mutex_lock(&stream_mutex);
+    archive_clear_abort();
     archive_cache_vm(env);
     solid_seq_reset_state();
     stream_bridge_clear(env);
@@ -2273,6 +2329,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_loadStreamIndex(
         stream_bridge_clear(env);
         use_zip_cd_index = false;
         use_tar_index = false;
+        pthread_mutex_unlock(&stream_mutex);
         return 0;
     }
 
@@ -2281,6 +2338,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_loadStreamIndex(
         stream_bridge_clear(env);
         use_zip_cd_index = false;
         use_tar_index = false;
+        pthread_mutex_unlock(&stream_mutex);
         return 0;
     }
 
@@ -2298,6 +2356,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_loadStreamIndex(
         stream_bridge_clear(env);
         use_zip_cd_index = false;
         use_tar_index = false;
+        pthread_mutex_unlock(&stream_mutex);
         return 0;
     }
 
@@ -2349,6 +2408,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_loadStreamIndex(
         stream_bridge_clear(env);
         use_zip_cd_index = false;
         use_tar_index = false;
+        pthread_mutex_unlock(&stream_mutex);
         return 0;
     }
 
@@ -2359,6 +2419,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_loadStreamIndex(
     }
     LOGI("loadStreamIndex: %d entries (%s) size=%lld",
          (int) n, is_tar ? "tar" : "zip", (long long) size);
+    pthread_mutex_unlock(&stream_mutex);
     return (jint) n;
 }
 
@@ -2366,14 +2427,12 @@ JNIEXPORT jboolean JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_extractToFd(JNIEnv *env, jclass thiz, jint index, jint fd) {
     EH_UNUSED(env);
     EH_UNUSED(thiz);
-    if (index < 0 || (size_t) index >= entryCount || !entries) return JNI_FALSE;
-    if (archive_should_abort()) return JNI_FALSE;
-    int arcIndex = entries[index].index;
-    if (use_stream_io) pthread_mutex_lock(&stream_mutex);
-    if (archive_should_abort()) {
-        if (use_stream_io) pthread_mutex_unlock(&stream_mutex);
+    pthread_mutex_lock(&stream_mutex);
+    if (index < 0 || (size_t) index >= entryCount || !entries || archive_should_abort()) {
+        pthread_mutex_unlock(&stream_mutex);
         return JNI_FALSE;
     }
+    int arcIndex = entries[index].index;
     archive_ctx *ctx = NULL;
     int ret = archive_get_ctx(&ctx, arcIndex);
     if (!ret) {
@@ -2384,17 +2443,19 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_extractToFd(JNIEnv *env, jclass thiz, jint
             archive_drop_ctx(ctx);
         }
     }
-    if (use_stream_io) pthread_mutex_unlock(&stream_mutex);
+    pthread_mutex_unlock(&stream_mutex);
     return ret == ARCHIVE_OK;
 }
 
 JNIEXPORT void JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_releaseByteBuffer(JNIEnv *env, jclass thiz, jobject buffer) {
     EH_UNUSED(thiz);
+    pthread_mutex_lock(&stream_mutex);
     void *addr = (*env)->GetDirectBufferAddress(env, buffer);
     if (!ADDR_IN_FILE_MAPPING(addr)) {
         release_decode_buffer(addr);
     }
+    pthread_mutex_unlock(&stream_mutex);
 }
 
 JNIEXPORT void JNICALL

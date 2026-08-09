@@ -110,6 +110,7 @@ private class KeepOpenSmbFileSource(
         if (knownSize > 0L) deferred.complete(knownSize)
     }
     private val ops = Channel<Op>(capacity = 64)
+
     /** Opens/reopens the remote handle only when size/read demand exists. */
     private val demand = Channel<Unit>(capacity = Channel.CONFLATED)
     private val worker: Job

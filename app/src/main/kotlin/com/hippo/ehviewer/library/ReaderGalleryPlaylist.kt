@@ -99,7 +99,10 @@ object ReaderGalleryPlaylist {
                     Item.LocalFolder(e.path.toString(), info)
                 }
                 is BrowseEntry.ArchiveGallery -> Item.Archive(e.path.toString())
-                is BrowseEntry.Directory -> null
+                is BrowseEntry.Directory,
+                is BrowseEntry.VideoFile,
+                is BrowseEntry.RegularFile,
+                -> null
             }
         }
     }
@@ -153,7 +156,10 @@ object ReaderGalleryPlaylist {
                     )
                     Item.SmbStreamArchive(sourceId, remote, info)
                 }
-                is BrowseEntryRemote.Directory -> null
+                is BrowseEntryRemote.Directory,
+                is BrowseEntryRemote.VideoFile,
+                is BrowseEntryRemote.RegularFile,
+                -> null
             }
         }
     }
@@ -206,7 +212,10 @@ object ReaderGalleryPlaylist {
                     )
                     Item.WebDavStreamArchive(sourceId, remote, info)
                 }
-                is BrowseEntryRemote.Directory -> null
+                is BrowseEntryRemote.Directory,
+                is BrowseEntryRemote.VideoFile,
+                is BrowseEntryRemote.RegularFile,
+                -> null
             }
         }
     }

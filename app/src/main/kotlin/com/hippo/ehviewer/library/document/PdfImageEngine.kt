@@ -38,8 +38,10 @@ class PdfImageEngine private constructor(
     }
 
     private val discoveryLock = Any()
+
     @Volatile
     private var discoveryStopped = false
+
     @Volatile
     private var structureCompleteState = structureComplete
     private var cursorImageIndex = 0
@@ -59,26 +61,25 @@ class PdfImageEngine private constructor(
         pages.getOrNull(index)?.streamOffset ?: -1L
     }
 
-    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index =
-        synchronized(discoveryLock) {
-            DocumentExtractCache.Index(
-                v = DocumentExtractCache.INDEX_VERSION,
-                cacheKey = cacheKey,
-                remoteSize = remoteSize,
-                format = "pdf",
-                complete = complete && structureCompleteState,
-                structureComplete = structureCompleteState,
-                members = pages.mapIndexed { i, p ->
-                    DocumentExtractCache.Member(
-                        i = i,
-                        name = "${p.objNum}_${p.gen}",
-                        ext = p.ext,
-                        uncSize = p.streamLen,
-                        offset = p.streamOffset,
-                    )
-                },
-            )
-        }
+    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index = synchronized(discoveryLock) {
+        DocumentExtractCache.Index(
+            v = DocumentExtractCache.INDEX_VERSION,
+            cacheKey = cacheKey,
+            remoteSize = remoteSize,
+            format = "pdf",
+            complete = complete && structureCompleteState,
+            structureComplete = structureCompleteState,
+            members = pages.mapIndexed { i, p ->
+                DocumentExtractCache.Member(
+                    i = i,
+                    name = "${p.objNum}_${p.gen}",
+                    ext = p.ext,
+                    uncSize = p.streamLen,
+                    offset = p.streamOffset,
+                )
+            },
+        )
+    }
 
     /** Walk only far enough to expose [index]; cached refs are skipped while resuming. */
     override fun ensureListedThrough(index: Int): Int = synchronized(discoveryLock) {

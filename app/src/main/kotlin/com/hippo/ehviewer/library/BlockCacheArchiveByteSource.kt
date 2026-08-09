@@ -23,8 +23,7 @@ class BlockCacheArchiveByteSource(
     private data class Block(val bytes: ByteArray, val length: Int)
 
     private val blocks = object : LinkedHashMap<Long, Block>(maxBlocks, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Block>?): Boolean =
-            size > maxBlocks
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Block>?): Boolean = size > maxBlocks
     }
     private var closed = false
 

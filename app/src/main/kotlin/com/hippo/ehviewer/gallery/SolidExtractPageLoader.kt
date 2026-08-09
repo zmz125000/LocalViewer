@@ -34,14 +34,17 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import moe.tarsin.kt.install
 import okio.Path
 
@@ -377,10 +380,17 @@ suspend inline fun <T> useSolidExtractPageLoader(
             } finally {
                 // Reader exited or session preempted: stop extract + release network/JNI ASAP.
                 engine.abort()
-                bgExtractJob.getAndSet(null)?.cancel()
-                extractJobs.values.toList().forEach { it.cancel() }
+                val background = bgExtractJob.getAndSet(null)
+                val jobs = extractJobs.values.toSet().toList()
+                background?.cancel()
+                jobs.forEach { it.cancel() }
                 extractJobs.clear()
+                // Close transport first so a blocking libarchive callback can return, then
+                // wait for every native child before AutoCloseScope invokes closeArchive.
                 runCatching { source.close() }
+                withContext(NonCancellable) {
+                    (jobs + listOfNotNull(background)).joinAll()
+                }
             }
         }
     }

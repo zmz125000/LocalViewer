@@ -54,7 +54,10 @@ object GallerySiblingNavigator {
             when (e) {
                 is BrowseEntry.FolderGallery -> e
                 is BrowseEntry.ArchiveGallery -> e
-                else -> null
+                is BrowseEntry.Directory,
+                is BrowseEntry.VideoFile,
+                is BrowseEntry.RegularFile,
+                -> null
             }
         }
         if (openable.isEmpty()) return null
@@ -62,7 +65,10 @@ object GallerySiblingNavigator {
             when (e) {
                 is BrowseEntry.FolderGallery -> e.path.toString() == currentPath
                 is BrowseEntry.ArchiveGallery -> e.path.toString() == currentPath
-                else -> false
+                is BrowseEntry.Directory,
+                is BrowseEntry.VideoFile,
+                is BrowseEntry.RegularFile,
+                -> false
             }
         }
         if (idx < 0) return null
@@ -89,7 +95,10 @@ object GallerySiblingNavigator {
                 )
                 ReaderScreenArgs.LocalFolder(target.path.toString(), page = -1, info = info)
             }
-            else -> null
+            is BrowseEntry.Directory,
+            is BrowseEntry.VideoFile,
+            is BrowseEntry.RegularFile,
+            -> null
         }
     }
 
