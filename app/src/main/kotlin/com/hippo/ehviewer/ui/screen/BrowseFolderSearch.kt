@@ -113,8 +113,7 @@ class BrowseFolderSearchState internal constructor(
         return true
     }
 
-    fun snapshot(): BrowseSession.FolderSearchUi =
-        BrowseSession.FolderSearchUi(active = active, keyword = keyword)
+    fun snapshot(): BrowseSession.FolderSearchUi = BrowseSession.FolderSearchUi(active = active, keyword = keyword)
 
     /**
      * Restore a previously saved filter for this folder.

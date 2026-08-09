@@ -578,10 +578,9 @@ fun promotedSubGalleryName(subName: String) = "@$subName"
  * [isSampleDirName] folders are ignored so a single-video dir that only has a
  * `sample/` preview leaf still classifies as VideoOnly and can promote the file.
  */
-fun isPromotableLeafDirName(name: String): Boolean =
-    !name.startsWith('.') &&
-        !isProtectedSystemName(name) &&
-        !isSampleDirName(name)
+fun isPromotableLeafDirName(name: String): Boolean = !name.startsWith('.') &&
+    !isProtectedSystemName(name) &&
+    !isSampleDirName(name)
 
 /**
  * Classify an SMB (or other remote) directory listing.
@@ -646,6 +645,7 @@ fun classifyRemoteListingWithPeeks(
                         val leafName: String,
                         val relativeName: String,
                     )
+
                     /** Single video file lifted to parent Videos section (`@S-leaf` display). */
                     data class PromotedVideoFile(
                         val leafName: String,

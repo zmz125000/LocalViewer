@@ -183,23 +183,19 @@ object MediaPermissions {
     /** @see hasMediaAccess */
     fun hasImageAccess(context: Context = appCtx): Boolean = hasMediaAccess(context)
 
-    fun hasImagePermission(context: Context = appCtx): Boolean =
-        isGranted(context, Manifest.permission.READ_MEDIA_IMAGES) ||
-            isGranted(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+    fun hasImagePermission(context: Context = appCtx): Boolean = isGranted(context, Manifest.permission.READ_MEDIA_IMAGES) ||
+        isGranted(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
 
-    fun hasVideoPermission(context: Context = appCtx): Boolean =
-        isGranted(context, Manifest.permission.READ_MEDIA_VIDEO) ||
-            isGranted(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+    fun hasVideoPermission(context: Context = appCtx): Boolean = isGranted(context, Manifest.permission.READ_MEDIA_VIDEO) ||
+        isGranted(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
 
     /**
      * Prompt for media permission before the SAF picker so new sources can
      * default to MediaStore when the user grants access.
      */
-    fun shouldRequestMediaPermissionForSafAdd(context: Context = appCtx): Boolean =
-        !hasCompleteMediaAccess(context)
+    fun shouldRequestMediaPermissionForSafAdd(context: Context = appCtx): Boolean = !hasCompleteMediaAccess(context)
 
-    private fun isGranted(context: Context, permission: String): Boolean =
-        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+    private fun isGranted(context: Context, permission: String): Boolean = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 }
 
 /**
@@ -262,8 +258,7 @@ object MediaStoreFs {
         return null
     }
 
-    private fun contentUriFor(collection: Uri, id: Long): Uri =
-        collection.buildUpon().appendPath(id.toString()).build()
+    private fun contentUriFor(collection: Uri, id: Long): Uri = collection.buildUpon().appendPath(id.toString()).build()
 
     private fun queryMediaId(collection: Uri, relativeDir: String, fileName: String): Long? {
         val projection = arrayOf(MediaStore.MediaColumns._ID)

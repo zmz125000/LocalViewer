@@ -164,8 +164,7 @@ fun isSampleVideoFileName(name: String): Boolean {
 }
 
 /** Video that counts for browse tags / promote (excludes sample previews). */
-fun isBrowseVideoFileName(name: String): Boolean =
-    isVideoFileName(name) && !isSampleVideoFileName(name)
+fun isBrowseVideoFileName(name: String): Boolean = isVideoFileName(name) && !isSampleVideoFileName(name)
 
 /** MIME for external open; falls back to application/octet-stream. */
 fun mimeTypeForFileName(name: String): String {

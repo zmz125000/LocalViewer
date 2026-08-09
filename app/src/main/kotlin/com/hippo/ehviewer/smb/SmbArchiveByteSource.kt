@@ -285,6 +285,7 @@ private class KeepOpenSmbFileSource(
         const val OPEN_RETRY_BACKOFF_MS = 100L
         const val READ_ATTEMPTS = 3
         const val READ_RETRY_BACKOFF_MS = 30L
+
         /** Sticky external stream: ping before typical NAS idle drop (~2–5 min). */
         const val STICKY_IDLE_PING_MS = 45_000L
 
