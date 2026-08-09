@@ -79,8 +79,11 @@ fun WebDavEditDialog(
     var pathPrefix by remember(state.id) { mutableStateOf(state.pathPrefix) }
     var username by remember(state.id) { mutableStateOf(state.username) }
     var password by remember(state.id) { mutableStateOf(state.password) }
+    // Default off for new adds. For edit, only on if already blank credentials.
     var anonymous by remember(state.id) {
-        mutableStateOf(state.username.isBlank() && state.password.isBlank() && state.id == 0L)
+        mutableStateOf(
+            state.id != 0L && state.username.isBlank() && state.password.isBlank(),
+        )
     }
     val focusManager = LocalFocusManager.current
     val baseFocus = remember { FocusRequester() }
