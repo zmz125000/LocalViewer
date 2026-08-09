@@ -67,7 +67,11 @@ sealed interface BrowseEntry {
         val path: Path,
     ) : BrowseEntry
 
-    /** Playable video file (tag: video). */
+    /**
+     * Playable video file (tag: video).
+     * [name] may be a promoted virtual label (`@dir`); [path] is always the real file.
+     * External open must use [path].name for MIME/title.
+     */
     data class VideoFile(
         override val name: String,
         val path: Path,
@@ -545,6 +549,10 @@ sealed interface BrowseEntryRemote {
         val parentRelativeName: String = "",
     ) : BrowseEntryRemote
 
+    /**
+     * Playable video. [name] may be a promoted virtual label (`@S` / `@S-leaf`);
+     * [fileName] is the real relative path used for open (often multi-segment).
+     */
     data class VideoFile(
         override val name: String,
         val fileName: String = name,
@@ -570,10 +578,9 @@ fun promotedSubGalleryName(subName: String) = "@$subName"
  * [isSampleDirName] folders are ignored so a single-video dir that only has a
  * `sample/` preview leaf still classifies as VideoOnly and can promote the file.
  */
-fun isPromotableLeafDirName(name: String): Boolean =
-    !name.startsWith('.') &&
-        !isProtectedSystemName(name) &&
-        !isSampleDirName(name)
+fun isPromotableLeafDirName(name: String): Boolean = !name.startsWith('.') &&
+    !isProtectedSystemName(name) &&
+    !isSampleDirName(name)
 
 /**
  * Classify an SMB (or other remote) directory listing.
@@ -638,6 +645,7 @@ fun classifyRemoteListingWithPeeks(
                         val leafName: String,
                         val relativeName: String,
                     )
+
                     /** Single video file lifted to parent Videos section (`@S-leaf` display). */
                     data class PromotedVideoFile(
                         val leafName: String,

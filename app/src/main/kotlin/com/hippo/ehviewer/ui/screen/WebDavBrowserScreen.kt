@@ -208,12 +208,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
-    // Show the bar again when entering a different folder; drop per-folder filter.
-    LaunchedEffect(relativeDir) {
-        scrollBehavior.state.heightOffset = 0f
-        search.close()
-        focusManager.clearFocus()
-    }
+    // Per-folder search: restore when climbing back / returning from reader.
+    BindBrowseFolderSearch(
+        folderKey = BrowseSession.webDavFolderSearchKey(sourceId, relativeDir),
+        search = search,
+        onPathChange = { scrollBehavior.state.heightOffset = 0f },
+    )
 
     /** Detect share/pathPrefix/host edits while this screen stays on the back stack. */
     var lastConfigKey by remember { mutableStateOf<String?>(null) }
@@ -456,6 +456,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun openExternalFile(fileName: String) {
         val src = source ?: return
+        // fileName may be multi-segment for promoted single-video rows (`S/leaf/movie.mp4`).
+        // Launch with the real basename so MIME and player title stay correct.
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
         launchIO {
             // On tap: record containing browse folder (cannot know if external app succeeded).
@@ -465,8 +468,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     context = context,
                     sourceId = src.id,
                     remoteRelativeFile = remote,
-                    displayName = fileName,
-                    mimeType = mimeTypeForFileName(fileName),
+                    displayName = actualName,
+                    mimeType = mimeTypeForFileName(actualName),
                 )
             } catch (e: Throwable) {
                 snackbar(

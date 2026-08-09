@@ -59,33 +59,38 @@ private fun resolveMediaStorePathToContentUri(pathStr: String): Uri? {
     val fileName = s.substringAfterLast('/')
     val relativeDir = s.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
     if (fileName.isEmpty() || !fileName.contains('.')) return null
-    val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-    val projection = arrayOf(MediaStore.Images.Media._ID)
+    val projection = arrayOf(MediaStore.MediaColumns._ID)
     val relWithSlash = if (relativeDir.isEmpty()) "" else "$relativeDir/"
     val selection: String
     val args: Array<String>
     if (relativeDir.isEmpty()) {
-        selection = "(${MediaStore.Images.Media.RELATIVE_PATH} IS NULL OR " +
-            "${MediaStore.Images.Media.RELATIVE_PATH} = '' OR " +
-            "${MediaStore.Images.Media.RELATIVE_PATH} = '/') AND " +
-            "${MediaStore.Images.Media.DISPLAY_NAME} = ?"
+        selection = "(${MediaStore.MediaColumns.RELATIVE_PATH} IS NULL OR " +
+            "${MediaStore.MediaColumns.RELATIVE_PATH} = '' OR " +
+            "${MediaStore.MediaColumns.RELATIVE_PATH} = '/') AND " +
+            "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
         args = arrayOf(fileName)
     } else {
-        selection = "(${MediaStore.Images.Media.RELATIVE_PATH} = ? OR " +
-            "${MediaStore.Images.Media.RELATIVE_PATH} = ?) AND " +
-            "${MediaStore.Images.Media.DISPLAY_NAME} = ?"
+        selection = "(${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
+            "${MediaStore.MediaColumns.RELATIVE_PATH} = ?) AND " +
+            "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
         args = arrayOf(relWithSlash, relativeDir, fileName)
     }
-    val resolved = appCtx.contentResolver.query(collection, projection, selection, args, null)?.use { c ->
-        if (c.moveToFirst()) {
-            MediaStore.Images.Media
-                .getContentUri(MediaStore.VOLUME_EXTERNAL)
-                .buildUpon()
-                .appendPath(c.getLong(0).toString())
-                .build()
-        } else {
-            null
-        }
+    val collections = listOf(
+        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+        MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+    )
+    var resolved: Uri? = null
+    for (collection in collections) {
+        resolved = runCatching {
+            appCtx.contentResolver.query(collection, projection, selection, args, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    collection.buildUpon().appendPath(c.getLong(0).toString()).build()
+                } else {
+                    null
+                }
+            }
+        }.getOrNull()
+        if (resolved != null) break
     }
     if (resolved != null) {
         // Bound growth: drop oldest-ish entries if huge (simple size cap).

@@ -23,9 +23,9 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
-import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.isImageFileName
+import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.naturalCompare
 import java.io.IOException

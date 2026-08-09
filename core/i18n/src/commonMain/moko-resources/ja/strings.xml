@@ -32,7 +32,7 @@
     <string name="source_access_saf">フォルダ選択 (SAF)</string>
     <string name="source_access_saf_summary">任意のフォルダを選択（アーカイブ含む）。</string>
     <string name="source_access_device_media">端末メディア</string>
-    <string name="source_access_device_media_summary">システムのメディア権限で画像を読み取ります。アーカイブは含まれません。</string>
+    <string name="source_access_device_media_summary">システムのメディア権限で画像と動画を読み取ります。アーカイブは含まれません。</string>
     <string name="source_device_media_name">端末メディア</string>
     <string name="source_media_permission_denied">メディア権限が拒否されました</string>
     <string name="source_access_mode_media">メディア (MediaStore)</string>

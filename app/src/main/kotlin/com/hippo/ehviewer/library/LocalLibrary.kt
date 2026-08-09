@@ -201,7 +201,8 @@ object LocalLibrary {
     }
 
     /**
-     * Add the whole device image library via [READ_MEDIA_IMAGES] (Aves-style), not SAF.
+     * Add the whole device media library via [READ_MEDIA_IMAGES] /
+     * [READ_MEDIA_VIDEO] (Aves-style), not SAF.
      * One root per role; reuses [MEDIASTORE_ROOT_URI] as the tree identity.
      */
     suspend fun addMediaStoreRoot(
@@ -294,7 +295,7 @@ object LocalLibrary {
             }
             return
         }
-        if (isMediaStoreRootUri(root.treeUri) && !MediaPermissions.hasImageAccess()) {
+        if (isMediaStoreRootUri(root.treeUri) && !MediaPermissions.hasMediaAccess()) {
             // Don't wipe the library when permission is temporarily missing.
             logcat("LocalLibrary") { "Startup cleanup: skip device media root without permission" }
             return
@@ -331,7 +332,7 @@ object LocalLibrary {
         val path = gallery.contentPath.toPath()
         when {
             path.isMediaStorePath() -> {
-                if (!MediaPermissions.hasImageAccess()) {
+                if (!MediaPermissions.hasMediaAccess()) {
                     // Keep rows until permission returns; scan will refresh then.
                     return@runCatching true
                 }
@@ -396,8 +397,8 @@ object LocalLibrary {
             }
             return
         }
-        if (isMediaStoreRootUri(root.treeUri) && !MediaPermissions.hasImageAccess()) {
-            logcat("LocalLibrary") { "Device media library root without READ_MEDIA_IMAGES" }
+        if (isMediaStoreRootUri(root.treeUri) && !MediaPermissions.hasMediaAccess()) {
+            logcat("LocalLibrary") { "Device media library root without media permission" }
             if (db.libraryRootDao().load(root.id) != null) {
                 db.localGalleryDao().deleteByRootId(root.id)
             }

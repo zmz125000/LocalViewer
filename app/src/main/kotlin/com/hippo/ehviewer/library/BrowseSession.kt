@@ -167,6 +167,30 @@ object BrowseSession {
 
     fun pathKey(path: Path): String = path.toString()
 
+    // --- Folder search filter (per directory; process lifetime) ---
+    // Survives reader navigation and restores when climbing back to a parent folder.
+    data class FolderSearchUi(
+        val active: Boolean = false,
+        val keyword: String = "",
+    ) {
+        val isEmpty: Boolean get() = !active && keyword.isEmpty()
+    }
+
+    private val folderSearch = ConcurrentHashMap<String, FolderSearchUi>()
+
+    fun localFolderSearchKey(path: String) = "local:$path"
+
+    fun smbFolderSearchKey(sourceId: Long, relativeDir: String) = "smb:$sourceId|$relativeDir"
+
+    fun webDavFolderSearchKey(sourceId: Long, relativeDir: String) = "dav:$sourceId|$relativeDir"
+
+    fun getFolderSearch(key: String): FolderSearchUi = folderSearch[key] ?: FolderSearchUi()
+
+    fun putFolderSearch(key: String, ui: FolderSearchUi) {
+        if (key.isEmpty()) return
+        if (ui.isEmpty) folderSearch.remove(key) else folderSearch[key] = ui
+    }
+
     // --- Browse list scroll (per directory; process lifetime) ---
     data class ListScrollPosition(val index: Int, val offset: Int = 0)
 
