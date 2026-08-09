@@ -169,6 +169,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
+    val showGalleryPages by Settings.showGalleryPages.collectAsState()
+    val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val contentModePref by Settings.browseContentMode.collectAsState()
     val contentMode = BrowseContentMode.fromPref(contentModePref)
     val scrollLayoutKey = listMode * 10 + contentMode.prefValue
@@ -700,6 +702,13 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         }
                         BrowseCover.WebDav(sourceId, remote)
                     }
+                    fun dirCoverFor(dir: BrowseEntryRemote.Directory): BrowseCover.WebDav? = dir.coverFileName?.let { fileName ->
+                        val remote = WebDavGateway.joinRelative(
+                            WebDavGateway.joinRelative(relativeDir, dir.relativeName),
+                            fileName,
+                        )
+                        BrowseCover.WebDav(sourceId, remote)
+                    }
                     fun archiveCoverFor(entry: BrowseEntryRemote.ArchiveGallery): BrowseCover? {
                         // ZIP/TAR/EPUB stream + solid RAR/7z + documents.
                         if (!isStreamableArchiveFileName(entry.fileName) &&
@@ -742,6 +751,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         onClick = { enterDir(dir.relativeName) },
                                         onLongClick = { toggleDirFavorite(dir.relativeName) },
                                         showFavoriteStar = isDirFavorite(dir.relativeName),
+                                        cover = dirCoverFor(dir),
+                                        showFolderThumb = browseFolderThumbs,
+                                        thumbRetryKey = refreshToken,
                                     )
                                 }
                             }
@@ -761,6 +773,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 pageCountCapped = entry.pageCountCapped,
                                                 cover = coverFor(entry),
                                                 thumbRetryKey = refreshToken,
+                                                showPages = showGalleryPages,
                                                 onClick = { openFolderGallery(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
@@ -823,6 +836,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         name = dir.name,
                                         onClick = { enterDir(dir.relativeName) },
                                         onLongClick = { toggleDirFavorite(dir.relativeName) },
+                                        cover = dirCoverFor(dir),
+                                        showFolderThumb = browseFolderThumbs,
+                                        thumbRetryKey = refreshToken,
                                     )
                                 }
                             }
@@ -839,6 +855,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 pageCountCapped = entry.pageCountCapped,
                                                 cover = coverFor(entry),
                                                 thumbRetryKey = refreshToken,
+                                                showPages = showGalleryPages,
                                                 onClick = { openFolderGallery(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->

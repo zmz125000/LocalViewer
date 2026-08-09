@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.main
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
@@ -95,13 +96,25 @@ fun BrowseDirectoryRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
+    cover: BrowseCover? = null,
+    showFolderThumb: Boolean = false,
+    thumbRetryKey: Any? = null,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = { Text(stringResource(R.string.browse_directory)) },
         leadingContent = {
-            Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            if (showFolderThumb && cover != null) {
+                BrowseCoverThumb(
+                    cover = cover,
+                    decodeSizePx = CoverThumb.listDecodePx(),
+                    retryKey = thumbRetryKey,
+                    placeholderIcon = Icons.Default.Folder,
+                )
+            } else {
+                Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            }
         },
         modifier = modifier
             .fillMaxWidth()
@@ -133,6 +146,7 @@ fun BrowseFolderGalleryRow(
     pageCountCapped: Boolean = false,
     /** See [BrowseCoverThumb.retryKey] (SMB pull-to-refresh / parent bump). */
     thumbRetryKey: Any? = null,
+    showPages: Boolean = true,
 ) {
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
     ListItem(
@@ -140,6 +154,7 @@ fun BrowseFolderGalleryRow(
         supportingContent = {
             Text(
                 when {
+                    !showPages -> stringResource(R.string.library_gallery_folder)
                     pageCountCapped -> stringResource(R.string.browse_folder_gallery_pages_many)
                     pageCount > 0 -> stringResource(R.string.browse_folder_gallery_pages, pageCount)
                     else -> stringResource(R.string.library_gallery_folder)
@@ -251,57 +266,113 @@ fun BrowseDirectoryGridItem(
     onLongClick: (() -> Unit)? = null,
     /** Top-end star badge when this dir path is favourited (O(1) set lookup — no dir scan). */
     showFavoriteStar: Boolean = false,
+    /**
+     * Lazy-scan cover for folder thumbs. When [showFolderThumb] and non-null, cell uses
+     * library favourite-gallery style (full-bleed cover + bottom label scrim).
+     */
+    cover: BrowseCover? = null,
+    showFolderThumb: Boolean = false,
+    thumbRetryKey: Any? = null,
 ) {
-    // Square cell (width from grid columns). ElevatedCard content is already a
-    // fillMaxSize Column — put icon + caption as direct children so weight(1f)
-    // centers the icon between cell top and text top (no nested Column / fixed
-    // name band that left empty space under the icon).
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val useThumbStyle = showFolderThumb
     ElevatedCard(
         onClick = onClick,
         onLongClick = onLongClick ?: onClick,
         modifier = modifier.fillMaxWidth().aspectRatio(1f),
     ) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .clip(ShapeDefaults.Medium),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Default.Folder,
-                contentDescription = null,
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.primary,
-            )
-            if (showFavoriteStar) {
-                // No Badge container — plain star, same corner as page-count chips.
-                Icon(
-                    Icons.Default.Star,
-                    contentDescription = null,
+        if (useThumbStyle) {
+            // Same as Library [FavoriteSourceGridCell] gallery: cover fills cell; label on scrim.
+            Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
+                if (cover != null) {
+                    BrowseCoverThumb(
+                        cover = cover,
+                        modifier = Modifier.fillMaxSize(),
+                        placeholderSize = 40.dp,
+                        decodeSizePx = CoverThumb.gridDecodePx(
+                            screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                            columns = GalleryGridDefaults.columnCount(),
+                            margin = GalleryGridDefaults.margin(),
+                            gutter = GalleryGridDefaults.gutter(),
+                        ),
+                        retryKey = thumbRetryKey,
+                        placeholderIcon = Icons.Default.Folder,
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.Folder,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                if (showFavoriteStar) {
+                    Icon(
+                        Icons.Default.Star,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(4.dp)
+                            .size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
-                        .size(18.dp),
-                    tint = MaterialTheme.colorScheme.primary,
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                        .padding(horizontal = namePadH)
+                        .padding(top = 4.dp, bottom = namePadBottom),
                 )
             }
+        } else {
+            // Icon + caption (default when folder thumbs off).
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clip(ShapeDefaults.Medium),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.Folder,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                if (showFavoriteStar) {
+                    Icon(
+                        Icons.Default.Star,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(4.dp)
+                            .size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            Text(
+                text = name,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Start,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = namePadH)
+                    .padding(bottom = namePadBottom),
+            )
         }
-        // Same style + edge insets as gallery cells; natural height so icon
-        // centers against the real text top (not a taller empty name band).
-        Text(
-            text = name,
-            style = MaterialTheme.typography.labelMedium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Start,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = namePadH)
-                .padding(bottom = namePadBottom),
-        )
     }
 }
 
@@ -314,6 +385,7 @@ fun BrowseFolderGalleryGridItem(
     cover: BrowseCover? = null,
     pageCountCapped: Boolean = false,
     thumbRetryKey: Any? = null,
+    showPages: Boolean = true,
 ) {
     BrowseGridCell(
         name = name,
@@ -333,7 +405,7 @@ fun BrowseFolderGalleryGridItem(
                     ),
                     retryKey = thumbRetryKey,
                 )
-                if (pageCount > 0 || pageCountCapped) {
+                if (showPages && (pageCount > 0 || pageCountCapped)) {
                     Badge(
                         modifier = Modifier
                             .align(Alignment.TopEnd)

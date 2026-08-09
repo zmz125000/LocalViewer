@@ -61,6 +61,7 @@
     <string name="browse_layout_list">列表</string>
     <string name="browse_layout_grid">网格</string>
     <string name="browse_view_mode">视图模式</string>
+    <string name="browse_folder_thumbs">文件夹缩略图</string>
     <string name="browse_open_failed">没有可打开此文件的应用。</string>
     <string name="folder_empty">此文件夹为空。</string>
     <string name="folder_no_roots">暂无图库文件夹。请到设置 → 图库 添加。</string>

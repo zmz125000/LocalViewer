@@ -154,6 +154,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
+    val showGalleryPages by Settings.showGalleryPages.collectAsState()
+    val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
 
     /** Scroll restore key: layout (list/grid) + content mode. */
     val scrollLayoutKey = listMode * 10 + contentMode.prefValue
@@ -567,6 +569,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         onClick = { enterDir(dir) },
                                         onLongClick = { toggleDirFavorite(dir) },
                                         showFavoriteStar = isDirFavorite(dir),
+                                        cover = dir.coverPath?.let { BrowseCover.Local(it) },
+                                        showFolderThumb = browseFolderThumbs,
                                     )
                                 }
                             }
@@ -593,6 +597,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             pageCount = entry.pageCount,
                                             pageCountCapped = entry.pageCountCapped,
                                             cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                            showPages = showGalleryPages,
                                             onClick = { openFolderGallery(entry) },
                                         )
                                         is BrowseEntry.ArchiveGallery -> BrowseArchiveGridItem(
@@ -653,6 +658,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         name = dir.name,
                                         onClick = { enterDir(dir) },
                                         onLongClick = { toggleDirFavorite(dir) },
+                                        cover = dir.coverPath?.let { BrowseCover.Local(it) },
+                                        showFolderThumb = browseFolderThumbs,
                                     )
                                 }
                             }
@@ -676,6 +683,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             pageCount = entry.pageCount,
                                             pageCountCapped = entry.pageCountCapped,
                                             cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                            showPages = showGalleryPages,
                                             onClick = { openFolderGallery(entry) },
                                         )
                                         is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(

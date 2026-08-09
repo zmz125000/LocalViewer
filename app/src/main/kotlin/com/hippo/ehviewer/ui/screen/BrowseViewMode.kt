@@ -26,8 +26,8 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseContentMode
 
 /**
- * Top-bar menu for folder browsers: content filter preset + list/grid layout.
- * Replaces the old list↔grid toggle icon.
+ * Top-bar menu for folder browsers: content filter, list/grid layout, and
+ * general display toggles (page count, progress, covers, folder thumbs).
  */
 @Composable
 fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
@@ -36,6 +36,11 @@ fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
     var contentModePref by Settings.browseContentMode.asMutableState()
     val contentMode = BrowseContentMode.fromPref(contentModePref)
     val useGrid = listMode == 1
+    var showGalleryPages by Settings.showGalleryPages.asMutableState()
+    var showReadingProgress by Settings.showReadingProgress.asMutableState()
+    var downloadRemoteThumbs by Settings.downloadRemoteThumbs.asMutableState()
+    var downloadNetworkArchiveThumbs by Settings.downloadNetworkArchiveThumbs.asMutableState()
+    var browseFolderThumbs by Settings.browseFolderThumbs.asMutableState()
 
     Box(modifier) {
         IconButton(
@@ -101,6 +106,32 @@ fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
                     expanded = false
                 },
             )
+            HorizontalDivider()
+            ToggleMenuItem(
+                label = stringResource(R.string.settings_eh_show_gallery_pages),
+                checked = showGalleryPages,
+                onClick = { showGalleryPages = !showGalleryPages },
+            )
+            ToggleMenuItem(
+                label = stringResource(R.string.settings_eh_show_reading_progress),
+                checked = showReadingProgress,
+                onClick = { showReadingProgress = !showReadingProgress },
+            )
+            ToggleMenuItem(
+                label = stringResource(R.string.settings_download_remote_thumbs),
+                checked = downloadRemoteThumbs,
+                onClick = { downloadRemoteThumbs = !downloadRemoteThumbs },
+            )
+            ToggleMenuItem(
+                label = stringResource(R.string.settings_download_network_archive_thumbs),
+                checked = downloadNetworkArchiveThumbs,
+                onClick = { downloadNetworkArchiveThumbs = !downloadNetworkArchiveThumbs },
+            )
+            ToggleMenuItem(
+                label = stringResource(R.string.browse_folder_thumbs),
+                checked = browseFolderThumbs,
+                onClick = { browseFolderThumbs = !browseFolderThumbs },
+            )
         }
     }
 }
@@ -115,6 +146,26 @@ private fun ContentModeItem(
         text = { Text(label) },
         onClick = onClick,
         trailingIcon = if (selected) {
+            {
+                Icon(Icons.Default.Check, contentDescription = null)
+            }
+        } else {
+            null
+        },
+    )
+}
+
+/** Toggle that stays open so several settings can be flipped without reopening. */
+@Composable
+private fun ToggleMenuItem(
+    label: String,
+    checked: Boolean,
+    onClick: () -> Unit,
+) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        onClick = onClick,
+        trailingIcon = if (checked) {
             {
                 Icon(Icons.Default.Check, contentDescription = null)
             }

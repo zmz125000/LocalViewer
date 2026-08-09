@@ -52,6 +52,11 @@ sealed interface BrowseEntry {
         val hasVideo: Boolean,
         val hasGallery: Boolean,
         val presence: DirPresence,
+        /**
+         * Lazy-scan cover for folder thumbs: first direct image, else first image
+         * from ≤[SMB_PROMOTE_MAX_LEAVES] leaf peeks. Null when none found.
+         */
+        val coverPath: Path? = null,
     ) : BrowseEntry
 
     data class FolderGallery(
@@ -168,6 +173,7 @@ fun listLocalDirectoryUncached(
                     hasVideo = kind.hasVideo,
                     hasGallery = kind.hasGallery,
                     presence = DirPresence.Navigable,
+                    coverPath = kind.coverPath,
                 )
                 // Mixed folder: also list as a gallery so direct images are openable.
                 kind.gallery?.let { g ->
@@ -197,6 +203,7 @@ fun listLocalDirectoryUncached(
                     hasVideo = kind.hasVideo && singleVideo == null,
                     hasGallery = true,
                     presence = DirPresence.LeafImages,
+                    coverPath = kind.coverPath,
                 )
                 leafGalleries += BrowseEntry.FolderGallery(
                     name = sub.name,
@@ -284,6 +291,8 @@ fun listLocalDirectoryUncached(
 private sealed interface ChildDirKind {
     val hasVideo: Boolean
     val hasGallery: Boolean
+    /** Folder-thumb cover: direct image or first leaf image (≤3 leaves). */
+    val coverPath: Path? get() = null
 
     /**
      * Enter-able: has child directories and/or archives.
@@ -294,11 +303,12 @@ private sealed interface ChildDirKind {
         val gallery: LeafGallery? = null,
         override val hasVideo: Boolean = false,
         override val hasGallery: Boolean = true,
+        override val coverPath: Path? = gallery?.coverPath,
     ) : ChildDirKind
     data class LeafGallery(
         val pageCount: Int,
         val pageCountCapped: Boolean,
-        val coverPath: Path?,
+        override val coverPath: Path?,
         /** Browse video paths (excludes sample-*); single entry → promote to parent Videos. */
         val videoPaths: List<Path> = emptyList(),
         override val hasVideo: Boolean = false,
@@ -375,6 +385,8 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
     var afterSubdirBudget = 0
     val archives = ArrayList<BrowseEntry.ArchiveGallery>()
     val videoPaths = ArrayList<Path>()
+    // Track promotable leaves for folder-thumb cover when this dir has no direct images.
+    val leafDirs = ArrayList<BrowseChild>(SMB_PROMOTE_MAX_LEAVES + 1)
     val uncapped = path.isMediaStorePath()
 
     path.forEachBrowseChild { child ->
@@ -385,6 +397,9 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
             // sample/ preview leaves do not make the parent Navigable.
             if (isPromotableLeafDirName(child.name)) {
                 sawSubdir = true
+                if (leafDirs.size <= SMB_PROMOTE_MAX_LEAVES) {
+                    leafDirs += child
+                }
             }
             // Have dir + cover (or image sample) → dual-list complete (SAF).
             // MediaStore: keep walking images for exact dual-list counts when mixed.
@@ -452,14 +467,32 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
         videoPaths.clear()
     }
 
+    // No direct cover: promote first image from ≤3 leaf peeks (same budget as remote grand-peek).
+    if (coverPath == null && leafDirs.size in 1..SMB_PROMOTE_MAX_LEAVES) {
+        for (leaf in leafDirs) {
+            val leafCover = peekFirstImageCover(leaf.path, preferMediaStore)
+            if (leafCover != null) {
+                coverPath = leafCover
+                break
+            }
+        }
+    }
+
     val gallery = if (coverPath != null || imagesCapped) {
-        ChildDirKind.LeafGallery(
-            pageCount = imageCount,
-            pageCountCapped = imagesCapped,
-            coverPath = coverPath,
-            videoPaths = videoPaths.toList(),
-            hasVideo = sawVideo,
-        )
+        // Only dual-list when the cover is a *direct* image (or image sample capped).
+        // Leaf-promoted covers alone do not make this dir a FolderGallery.
+        val dualCover = if (imageCount > 0 || imagesCapped) coverPath else null
+        if (dualCover != null || imagesCapped) {
+            ChildDirKind.LeafGallery(
+                pageCount = imageCount,
+                pageCountCapped = imagesCapped,
+                coverPath = dualCover,
+                videoPaths = videoPaths.toList(),
+                hasVideo = sawVideo,
+            )
+        } else {
+            null
+        }
     } else {
         null
     }
@@ -474,11 +507,31 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
             // and archives are known gallery content; subdirectories are deliberately
             // conservative because the local SAF peek is only one level deep.
             hasGallery = gallery != null || archives.isNotEmpty() || sawSubdir,
+            // Prefer dual gallery cover; else leaf-promoted cover for folder thumbs.
+            coverPath = gallery?.coverPath ?: coverPath,
         )
     }
     if (gallery != null) return gallery
     if (sawVideo) return ChildDirKind.VideoOnly(videoPaths = videoPaths.toList())
     return ChildDirKind.Empty()
+}
+
+/** First image child only — used for folder-thumb leaf promote (not a full classify). */
+private fun peekFirstImageCover(dir: Path, preferMediaStore: Boolean): Path? {
+    val path = resolveBrowsePath(dir, preferMediaStore = preferMediaStore)
+    var found: Path? = null
+    var seen = 0
+    path.forEachBrowseChild { child ->
+        seen++
+        if (seen > PEEK_MAX_ENTRIES) return@forEachBrowseChild false
+        if (child.isDirectory) return@forEachBrowseChild true
+        if (isImageFileName(child.name)) {
+            found = child.path
+            return@forEachBrowseChild false
+        }
+        true
+    }
+    return found
 }
 
 // ---------------------------------------------------------------------------
@@ -532,6 +585,11 @@ sealed interface BrowseEntryRemote {
         val hasVideo: Boolean,
         val hasGallery: Boolean,
         val presence: DirPresence,
+        /**
+         * Cover image relative to this directory ([relativeName]): basename for a
+         * direct child, or `leaf/file.jpg` when promoted from a ≤3-leaf grand peek.
+         */
+        val coverFileName: String? = null,
     ) : BrowseEntryRemote
 
     data class FolderGallery(
@@ -658,6 +716,8 @@ fun classifyRemoteListingWithPeeks(
                     var hasNavigableLeaf = false
                     var leafHasVideo = false
                     var leafHasGallery = false
+                    // Folder-thumb cover for real dir S (direct image or first leaf image).
+                    val sCoverFileName = remoteDirCoverFileName(peek, e.name, leaves, grandPeeks)
                     val sHasImages = peek.any {
                         !it.isDirectory && !it.name.startsWith('.') &&
                             !isProtectedSystemName(it.name) && isImageFileName(it.name)
@@ -810,6 +870,7 @@ fun classifyRemoteListingWithPeeks(
                             hasVideo = sHasVideoFlag,
                             hasGallery = sHasGalleryFlag,
                             presence = presence,
+                            coverFileName = sCoverFileName,
                         )
                         continue
                     }
@@ -829,6 +890,7 @@ fun classifyRemoteListingWithPeeks(
                                 hasVideo = sHasVideoFlag,
                                 hasGallery = true,
                                 presence = DirPresence.LeafImages,
+                                coverFileName = sCoverFileName,
                             )
                         } else if (sHasVideoFlag) {
                             dirs += BrowseEntryRemote.Directory(
@@ -837,6 +899,7 @@ fun classifyRemoteListingWithPeeks(
                                 hasVideo = true,
                                 hasGallery = false,
                                 presence = DirPresence.VideoOnly,
+                                coverFileName = sCoverFileName,
                             )
                         } else {
                             dirs += BrowseEntryRemote.Directory(
@@ -845,6 +908,7 @@ fun classifyRemoteListingWithPeeks(
                                 hasVideo = false,
                                 hasGallery = false,
                                 presence = DirPresence.Empty,
+                                coverFileName = sCoverFileName,
                             )
                         }
                         continue
@@ -867,6 +931,7 @@ fun classifyRemoteListingWithPeeks(
                         hasVideo = sHasVideoFlag,
                         hasGallery = sHasGalleryFlag,
                         presence = DirPresence.Navigable,
+                        coverFileName = sCoverFileName,
                     )
                     continue
                 }
@@ -878,6 +943,8 @@ fun classifyRemoteListingWithPeeks(
                             hasVideo = kind.hasVideo || hasUnscannedLargeSubtree,
                             hasGallery = kind.hasGallery,
                             presence = DirPresence.Navigable,
+                            coverFileName = kind.gallery?.coverFileName
+                                ?: firstImageNameInPeek(peek),
                         )
                         // Mixed folder: also list as gallery for direct images.
                         kind.gallery?.let { g ->
@@ -906,6 +973,7 @@ fun classifyRemoteListingWithPeeks(
                             hasVideo = kind.hasVideo && singleVideo == null,
                             hasGallery = true,
                             presence = DirPresence.LeafImages,
+                            coverFileName = kind.coverFileName,
                         )
                         leafGalleries += BrowseEntryRemote.FolderGallery(
                             name = e.name,
@@ -1031,6 +1099,34 @@ private fun imagesInPeekAsGallery(
         coverFileName = cover,
         imageFileNames = images,
     )
+}
+
+/** First image basename in a one-level peek (folder-thumb direct cover). */
+private fun firstImageNameInPeek(peek: List<RemoteChild>): String? {
+    for (c in peek) {
+        if (c.isDirectory || c.name.startsWith('.') || isProtectedSystemName(c.name)) continue
+        if (isImageFileName(c.name)) return c.name
+    }
+    return null
+}
+
+/**
+ * Folder-thumb cover relative to dir S: direct image basename, else first image from
+ * leaf grand-peeks as `leafName/file.jpg` (scan order of [leaves]).
+ */
+private fun remoteDirCoverFileName(
+    peek: List<RemoteChild>,
+    parentName: String,
+    leaves: List<RemoteChild>,
+    grandPeeks: Map<String, List<RemoteChild>>,
+): String? {
+    firstImageNameInPeek(peek)?.let { return it }
+    if (leaves.size !in 1..SMB_PROMOTE_MAX_LEAVES) return null
+    for (leaf in leaves) {
+        val leafPeek = grandPeeks["$parentName/${leaf.name}"].orEmpty()
+        firstImageNameInPeek(leafPeek)?.let { return "${leaf.name}/$it" }
+    }
+    return null
 }
 
 private sealed interface RemoteChildKind {
