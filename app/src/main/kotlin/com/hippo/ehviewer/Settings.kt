@@ -85,8 +85,9 @@ object Settings : DataStorePreferences(null) {
     /**
      * When true, folder browser directory grid cells show a cover thumb from lazy-scan
      * metadata (direct image, else first image from ≤3 leaf peeks). Off = icon only.
+     * Default on; also exposed under Settings → General.
      */
-    val browseFolderThumbs = boolPref("browse_folder_thumbs", false)
+    val browseFolderThumbs = boolPref("browse_folder_thumbs", true)
 
     /**
      * When true, folder-view shows folder galleries below [browseSmallGalleryMinPages].

@@ -84,6 +84,10 @@ object LocalHistory {
     /**
      * Record a browse folder location (not the ephemeral gallery).
      * [relativePath] empty or "." means the library root / share root.
+     *
+     * [coverPath] / thumb key: local absolute cover path, or [HistoryThumbKey.smb] /
+     * [HistoryThumbKey.webdav] logical key. Null keeps any previously stored thumbKey
+     * so re-records from the reader / parent-folder path do not wipe covers.
      */
     suspend fun recordLocalBrowseFolder(
         rootId: Long,
@@ -93,11 +97,12 @@ object LocalHistory {
         pages: Int = 0,
     ) {
         val rel = normalizeRel(relativePath)
+        val gid = stableGalleryId(rootId, "browse:$rel")
         val info = BaseGalleryInfo(
-            gid = stableGalleryId(rootId, "browse:$rel"),
+            gid = gid,
             token = LOCAL_BROWSE_TOKEN,
             title = title.ifBlank { humanizePathName(rel.substringAfterLast('/').ifEmpty { "Folder" }) },
-            thumbKey = coverPath,
+            thumbKey = resolveThumbKey(gid, coverPath),
             category = 0,
             uploader = encodeLocalBrowse(rootId, rel),
             rating = -1f,
@@ -115,11 +120,12 @@ object LocalHistory {
         pages: Int = 0,
     ) {
         val rel = normalizeRel(relativePath)
+        val gid = stableGalleryId(sourceId, "smb-browse:$rel")
         val info = BaseGalleryInfo(
-            gid = stableGalleryId(sourceId, "smb-browse:$rel"),
+            gid = gid,
             token = SMB_BROWSE_TOKEN,
             title = title.ifBlank { rel.substringAfterLast('/').ifEmpty { "Share" } },
-            thumbKey = coverPath,
+            thumbKey = resolveThumbKey(gid, coverPath),
             category = 2,
             uploader = encodeSmbBrowse(sourceId, rel),
             rating = -1f,
@@ -137,11 +143,12 @@ object LocalHistory {
         pages: Int = 0,
     ) {
         val rel = normalizeRel(relativePath)
+        val gid = stableGalleryId(sourceId, "webdav-browse:$rel")
         val info = BaseGalleryInfo(
-            gid = stableGalleryId(sourceId, "webdav-browse:$rel"),
+            gid = gid,
             token = WEBDAV_BROWSE_TOKEN,
             title = title.ifBlank { rel.substringAfterLast('/').ifEmpty { "WebDAV" } },
-            thumbKey = coverPath,
+            thumbKey = resolveThumbKey(gid, coverPath),
             category = 3,
             uploader = encodeWebDavBrowse(sourceId, rel),
             rating = -1f,
@@ -149,6 +156,13 @@ object LocalHistory {
             favoriteSlot = NOT_FAVORITED,
         )
         EhDB.putHistoryInfo(info)
+    }
+
+    /** Prefer a newly supplied key; otherwise keep the row's existing thumbKey. */
+    private suspend fun resolveThumbKey(gid: Long, coverPath: String?): String? {
+        val incoming = coverPath?.takeIf { it.isNotBlank() }
+        if (incoming != null) return incoming
+        return EhDB.loadGalleryInfo(gid)?.thumbKey
     }
 
     /**

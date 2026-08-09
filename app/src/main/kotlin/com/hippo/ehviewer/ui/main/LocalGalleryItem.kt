@@ -55,6 +55,7 @@ import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.CoverEnsureResult
+import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.ui.screen.collectListThumbSizeAsState
@@ -107,16 +108,17 @@ internal fun CoverImage(
     archiveContentPath: String? = null,
 ) {
     // Do not paint a DB/history path until IO verifies it still exists — stale
-    // archive_thumb keys cause CoverPathFetcher ENOENT spam.
+    // archive_thumb keys cause CoverPathFetcher ENOENT spam. Logical HistoryThumbKey
+    // values (smb-thumb: / dav-thumb:) resolve to smb/webdav_thumb_cache only on hit.
     var resolvedCover by remember(coverPath, archiveContentPath) {
         mutableStateOf<String?>(null)
     }
     LaunchedEffect(coverPath, archiveContentPath) {
         val stored = coverPath?.takeIf { it.isNotBlank() }
         if (stored != null) {
-            val readable = withIOContext { ArchiveCoverCache.isCoverPathReadable(stored) }
-            if (readable) {
-                resolvedCover = stored
+            val resolved = withIOContext { HistoryThumbKey.resolveReadablePath(stored) }
+            if (resolved != null) {
+                resolvedCover = resolved
                 return@LaunchedEffect
             }
             // Evicted / deleted thumb — drop optimistic paint; re-extract if archive.
