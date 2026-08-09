@@ -55,6 +55,18 @@ fun DirPresence.visibleIn(
     BrowseContentMode.Folder -> this != DirPresence.PromotedVideoLeaf
 }
 
+/**
+ * Single-video leaf promote uses a virtual display name (`@S` / `@S-leaf`) while
+ * [BrowseEntry.VideoFile.path] points at the real file. Folder mode hides these.
+ */
+fun BrowseEntry.VideoFile.isPromotedVirtual(): Boolean = name != path.name
+
+/**
+ * Same promote as local: [BrowseEntryRemote.VideoFile.name] is the `@…` label;
+ * [BrowseEntryRemote.VideoFile.fileName] is the real relative path (often multi-segment).
+ */
+fun BrowseEntryRemote.VideoFile.isPromotedVirtual(): Boolean = name != fileName
+
 fun List<BrowseEntry>.filterByContentMode(mode: BrowseContentMode): List<BrowseEntry> = filter { e ->
     when (mode) {
         BrowseContentMode.Galleries -> when (e) {
@@ -74,8 +86,10 @@ fun List<BrowseEntry>.filterByContentMode(mode: BrowseContentMode): List<BrowseE
         }
         BrowseContentMode.Folder -> when (e) {
             is BrowseEntry.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
-            is BrowseEntry.ArchiveGallery, is BrowseEntry.VideoFile, is BrowseEntry.RegularFile -> true
-            is BrowseEntry.FolderGallery -> false // raw files only
+            is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> true
+            // Real videos only — hide `@S` promoted rows (enter real dir instead).
+            is BrowseEntry.VideoFile -> !e.isPromotedVirtual()
+            is BrowseEntry.FolderGallery -> false // synthetic / dual galleries
         }
     }
 }
@@ -106,9 +120,9 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(mode: BrowseContentMode): 
         BrowseContentMode.Folder -> when (e) {
             is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             is BrowseEntryRemote.ArchiveGallery,
-            is BrowseEntryRemote.VideoFile,
             is BrowseEntryRemote.RegularFile,
             -> true
+            is BrowseEntryRemote.VideoFile -> !e.isPromotedVirtual()
             is BrowseEntryRemote.FolderGallery -> false
         }
     }

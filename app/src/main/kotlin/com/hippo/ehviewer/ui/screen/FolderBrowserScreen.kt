@@ -369,7 +369,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
-    fun openExternalFile(name: String, path: okio.Path) {
+    fun openExternalFile(path: okio.Path) {
+        // Always launch with the real path basename — promoted VideoFile rows use a
+        // virtual `@dir` display name without extension (wrong MIME / player title).
+        val actualName = path.name
         launchIO {
             // On tap: record containing browse folder (cannot know if external app succeeded).
             recordCurrentBrowseFolderHistory()
@@ -377,8 +380,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 OpenFileExternally.openLocal(
                     context,
                     path.toString(),
-                    displayName = name,
-                    mimeType = mimeTypeForFileName(name),
+                    displayName = actualName,
+                    mimeType = mimeTypeForFileName(actualName),
                 )
             } catch (e: Throwable) {
                 snackbar(
@@ -616,7 +619,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 items(videos, key = { "v-${it.path}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
-                                        onClick = { openExternalFile(video.name, video.path) },
+                                        onClick = { openExternalFile(video.path) },
                                     )
                                 }
                             }
@@ -630,7 +633,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 items(files, key = { "f-${it.path}" }) { file ->
                                     BrowseFileGridItem(
                                         name = file.name,
-                                        onClick = { openExternalFile(file.name, file.path) },
+                                        onClick = { openExternalFile(file.path) },
                                     )
                                 }
                             }
@@ -696,7 +699,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 items(videos, key = { "v-${it.path}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
-                                        onClick = { openExternalFile(video.name, video.path) },
+                                        onClick = { openExternalFile(video.path) },
                                     )
                                 }
                             }
@@ -707,7 +710,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 items(files, key = { "f-${it.path}" }) { file ->
                                     BrowseFileRow(
                                         name = file.name,
-                                        onClick = { openExternalFile(file.name, file.path) },
+                                        onClick = { openExternalFile(file.path) },
                                     )
                                 }
                             }
