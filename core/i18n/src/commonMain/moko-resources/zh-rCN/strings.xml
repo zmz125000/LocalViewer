@@ -223,6 +223,10 @@
     <string name="refresh">刷新</string>
     <string name="view_original">查看原图</string>
     <string name="open_in_other_app">在其他应用中打开</string>
+    <string name="stream_keepalive_channel">外部串流</string>
+    <string name="stream_keepalive_channel_desc">其他应用读取网络文件时保持连接</string>
+    <string name="stream_keepalive_title">正在向其他应用串流</string>
+    <string name="stream_keepalive_text">保持网络连接以便外部播放</string>
     <string name="clear_image_cache">清除图片缓存</string>
     <string name="clear_image_cache_confirm">清除该画廊的所有图片缓存？</string>
     <string name="image_cache_cleared">已清除图片缓存</string>

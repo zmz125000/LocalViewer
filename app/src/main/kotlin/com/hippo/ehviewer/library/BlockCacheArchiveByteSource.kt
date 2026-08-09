@@ -89,5 +89,25 @@ class BlockCacheArchiveByteSource(
 
         /** 16 MiB per open descriptor, enough to retain PDF metadata plus recent pages. */
         const val DEFAULT_MAX_BLOCKS = 32
+
+        /** Video: fewer larger SMB/WebDAV ranges (player sequential scans). */
+        const val VIDEO_BLOCK_SIZE = 4 * 1024 * 1024
+
+        /** 128 MiB working set per open video descriptor. */
+        const val VIDEO_MAX_BLOCKS = 32
+
+        fun forMimeType(
+            inner: ArchiveByteSource,
+            mimeType: String,
+            knownSize: Long = -1L,
+        ): BlockCacheArchiveByteSource {
+            val video = mimeType.startsWith("video/", ignoreCase = true)
+            return BlockCacheArchiveByteSource(
+                inner = inner,
+                knownSize = knownSize,
+                blockSize = if (video) VIDEO_BLOCK_SIZE else DEFAULT_BLOCK_SIZE,
+                maxBlocks = if (video) VIDEO_MAX_BLOCKS else DEFAULT_MAX_BLOCKS,
+            )
+        }
     }
 }

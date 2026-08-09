@@ -232,6 +232,10 @@
     <string name="refresh">Refresh</string>
     <string name="view_original">View original image</string>
     <string name="open_in_other_app">Open with other app</string>
+    <string name="stream_keepalive_channel">External streaming</string>
+    <string name="stream_keepalive_channel_desc">Keeps network files available while another app is reading them</string>
+    <string name="stream_keepalive_title">Streaming to another app</string>
+    <string name="stream_keepalive_text">Keeping the connection alive for external playback</string>
     <string name="open_pdf_no_app">No app found to open PDF</string>
     <string name="open_pdf_external_failed">Could not open PDF externally: %s</string>
     <string name="clear_image_cache">Clear image cache</string>

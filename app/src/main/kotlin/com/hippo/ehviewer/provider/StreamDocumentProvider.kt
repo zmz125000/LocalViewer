@@ -89,7 +89,11 @@ class StreamDocumentProvider : ContentProvider() {
             ?: throw FileNotFoundException("StorageManager unavailable")
 
         val source = try {
-            BlockCacheArchiveByteSource(openSource(), knownSize = entry.sizeBytes)
+            BlockCacheArchiveByteSource.forMimeType(
+                openSource(),
+                mimeType = entry.mimeType,
+                knownSize = entry.sizeBytes,
+            )
         } catch (e: Throwable) {
             logcat("StreamDoc", e)
             throw FileNotFoundException(e.message ?: "open failed")
@@ -258,9 +262,13 @@ private class SourceProxyCallback(
     }
 
     private companion object {
-        /** Cap total stall per onRead so Fuse does not hang forever on a dead share. */
-        const val MAX_WAIT_NS = 8_000_000_000L // 8s
+        /**
+         * Cap total stall per onRead so Fuse does not hang forever on a dead share.
+         * Long enough for sticky SMB/WebDAV reconnect after an idle disconnect mid-movie
+         * (auth + open + first range), without waiting for the full 120s SMB SO timeout.
+         */
+        const val MAX_WAIT_NS = 30_000_000_000L // 30s
         const val RETRY_BACKOFF_MS = 50L
-        const val RETRY_BACKOFF_MAX_MS = 400L
+        const val RETRY_BACKOFF_MAX_MS = 800L
     }
 }
