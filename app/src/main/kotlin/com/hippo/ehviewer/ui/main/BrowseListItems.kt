@@ -267,8 +267,9 @@ fun BrowseDirectoryGridItem(
     /** Top-end star badge when this dir path is favourited (O(1) set lookup — no dir scan). */
     showFavoriteStar: Boolean = false,
     /**
-     * Lazy-scan cover for folder thumbs. When [showFolderThumb] and non-null, cell uses
-     * library favourite-gallery style (full-bleed cover + bottom label scrim).
+     * Lazy-scan cover for folder thumbs. When [showFolderThumb] and [cover] is non-null,
+     * cell uses library favourite-gallery style (full-bleed cover + bottom label scrim).
+     * No cover always keeps the classic icon + caption layout.
      */
     cover: BrowseCover? = null,
     showFolderThumb: Boolean = false,
@@ -276,7 +277,8 @@ fun BrowseDirectoryGridItem(
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
-    val useThumbStyle = showFolderThumb
+    // Style is per-item: only folders with a real cover use the gallery-thumb layout.
+    val useThumbStyle = showFolderThumb && cover != null
     ElevatedCard(
         onClick = onClick,
         onLongClick = onLongClick ?: onClick,
@@ -285,30 +287,19 @@ fun BrowseDirectoryGridItem(
         if (useThumbStyle) {
             // Same as Library [FavoriteSourceGridCell] gallery: cover fills cell; label on scrim.
             Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
-                if (cover != null) {
-                    BrowseCoverThumb(
-                        cover = cover,
-                        modifier = Modifier.fillMaxSize(),
-                        placeholderSize = 40.dp,
-                        decodeSizePx = CoverThumb.gridDecodePx(
-                            screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                            columns = GalleryGridDefaults.columnCount(),
-                            margin = GalleryGridDefaults.margin(),
-                            gutter = GalleryGridDefaults.gutter(),
-                        ),
-                        retryKey = thumbRetryKey,
-                        placeholderIcon = Icons.Default.Folder,
-                    )
-                } else {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Default.Folder,
-                            contentDescription = null,
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                }
+                BrowseCoverThumb(
+                    cover = cover,
+                    modifier = Modifier.fillMaxSize(),
+                    placeholderSize = 40.dp,
+                    decodeSizePx = CoverThumb.gridDecodePx(
+                        screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                        columns = GalleryGridDefaults.columnCount(),
+                        margin = GalleryGridDefaults.margin(),
+                        gutter = GalleryGridDefaults.gutter(),
+                    ),
+                    retryKey = thumbRetryKey,
+                    placeholderIcon = Icons.Default.Folder,
+                )
                 if (showFavoriteStar) {
                     Icon(
                         Icons.Default.Star,
@@ -335,7 +326,7 @@ fun BrowseDirectoryGridItem(
                 )
             }
         } else {
-            // Icon + caption (default when folder thumbs off).
+            // Classic icon + caption (no cover, or folder thumbs off).
             Box(
                 modifier = Modifier
                     .weight(1f)

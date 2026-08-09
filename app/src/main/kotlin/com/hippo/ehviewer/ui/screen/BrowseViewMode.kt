@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.screen
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Check
@@ -17,8 +18,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
@@ -145,13 +148,7 @@ private fun ContentModeItem(
     DropdownMenuItem(
         text = { Text(label) },
         onClick = onClick,
-        trailingIcon = if (selected) {
-            {
-                Icon(Icons.Default.Check, contentDescription = null)
-            }
-        } else {
-            null
-        },
+        trailingIcon = { MenuCheckSlot(selected) },
     )
 }
 
@@ -165,12 +162,19 @@ private fun ToggleMenuItem(
     DropdownMenuItem(
         text = { Text(label) },
         onClick = onClick,
-        trailingIcon = if (checked) {
-            {
-                Icon(Icons.Default.Check, contentDescription = null)
-            }
-        } else {
-            null
-        },
+        trailingIcon = { MenuCheckSlot(checked) },
     )
+}
+
+/** Fixed-width trailing slot so menu width does not jump when the tick appears. */
+@Composable
+private fun MenuCheckSlot(checked: Boolean) {
+    Box(
+        modifier = Modifier.size(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (checked) {
+            Icon(Icons.Default.Check, contentDescription = null)
+        }
+    }
 }
