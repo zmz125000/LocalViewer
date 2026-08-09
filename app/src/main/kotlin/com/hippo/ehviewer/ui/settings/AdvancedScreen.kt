@@ -250,8 +250,7 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 state = Settings.webDavInsecureTls.asMutableState(),
             )
             SwitchPreference(
-                title = stringResource(id = R.string.settings_advanced_stream_keep_alive_unlimited),
-                summary = stringResource(id = R.string.settings_advanced_stream_keep_alive_unlimited_summary),
+                title = stringResource(id = R.string.settings_advanced_unlimit_foreground_service),
                 state = Settings.streamKeepAliveUnlimited.asMutableState(),
             )
             IntSliderPreference(

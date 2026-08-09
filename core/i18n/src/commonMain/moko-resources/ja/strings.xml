@@ -119,8 +119,8 @@
     <string name="webdav_anonymous">匿名（ログインなし）</string>
     <string name="settings_advanced_webdav_insecure_tls">WebDAV の安全でない TLS を許可</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">任意の証明書を信頼します（自己署名 HTTPS）。</string>
-    <string name="settings_advanced_stream_keep_alive_unlimited">外部ストリーム無制限キープアライブ</string>
-    <string name="settings_advanced_stream_keep_alive_unlimited_summary">既定: 画面オフでネットワーク切断、20 分アイドルで回収。ON: 粘着 SMB/WebDAV と長時間付与を維持（長尺向き、電池消費増）。</string>
+    <string name="settings_advanced_unlimit_foreground_service">フォアグラウンドサービスを無制限</string>
+    <string name="settings_advanced_unlimit_foreground_service_summary">既定: 画面オフでネットワーク切断、20 分アイドルで回収。ON: 粘着 SMB/WebDAV と長時間付与を維持（長尺向き、電池消費増）。</string>
     <string name="error_ip_banned">IP がバンされています</string>
     <string name="history_unavailable">この項目は利用できなくなりました</string>
     <string name="back_to_history">履歴に戻る</string>
