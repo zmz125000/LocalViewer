@@ -420,11 +420,22 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         navToWebDavFolderReader(src.id, remote, names, info)
     }
 
+    /** History path link for the folder currently listed (parent of the opened file). */
+    suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
+        LocalHistory.recordWebDavBrowseFolder(
+            sourceId = sourceId,
+            relativePath = relativeDir,
+            title = title,
+        )
+    }
+
     fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
         if (!isPdfFileName(entry.fileName)) return
         val src = source ?: return
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
+            // On tap: record containing browse folder (cannot know if external app succeeded).
+            recordCurrentBrowseFolderHistory(src.id)
             try {
                 OpenPdfExternally.openWebDav(
                     context = context,
@@ -447,6 +458,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val src = source ?: return
         val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
         launchIO {
+            // On tap: record containing browse folder (cannot know if external app succeeded).
+            recordCurrentBrowseFolderHistory(src.id)
             try {
                 OpenFileExternally.openWebDav(
                     context = context,

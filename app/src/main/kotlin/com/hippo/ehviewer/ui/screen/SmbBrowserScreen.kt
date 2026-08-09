@@ -419,11 +419,22 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         navToSmbFolderReader(src.id, remote, names, info)
     }
 
+    /** History path link for the folder currently listed (parent of the opened file). */
+    suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
+        LocalHistory.recordSmbBrowseFolder(
+            sourceId = sourceId,
+            relativePath = relativeDir,
+            title = title,
+        )
+    }
+
     fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
         if (!isPdfFileName(entry.fileName)) return
         val src = source ?: return
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
+            // On tap: record containing browse folder (cannot know if external app succeeded).
+            recordCurrentBrowseFolderHistory(src.id)
             try {
                 OpenPdfExternally.openSmb(
                     context = context,
@@ -446,6 +457,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val src = source ?: return
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
         launchIO {
+            // On tap: record containing browse folder (cannot know if external app succeeded).
+            recordCurrentBrowseFolderHistory(src.id)
             try {
                 OpenFileExternally.openSmb(
                     context = context,
