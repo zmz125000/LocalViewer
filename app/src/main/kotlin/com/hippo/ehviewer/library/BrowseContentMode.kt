@@ -7,7 +7,7 @@ package com.hippo.ehviewer.library
  * Pref int: 0=Galleries (default), 1=Media, 2=Video, 3=Folder.
  */
 enum class BrowseContentMode(val prefValue: Int) {
-    /** Current UX: navigable dirs + folder/archive galleries. */
+    /** Gallery-related navigation dirs + folder/archive galleries. */
     Galleries(0),
 
     /** Galleries + video files. */
@@ -28,14 +28,29 @@ enum class BrowseContentMode(val prefValue: Int) {
     }
 }
 
-/** Whether this directory row is visible under [mode]. */
-fun DirPresence.visibleIn(mode: BrowseContentMode): Boolean = when (mode) {
-    BrowseContentMode.Galleries -> this == DirPresence.Navigable
-    // Media/Video: real enter-able dirs + pure-video dirs + virtual `@` video leaf promotes.
-    BrowseContentMode.Media, BrowseContentMode.Video ->
-        this == DirPresence.Navigable ||
-            this == DirPresence.VideoOnly ||
-            this == DirPresence.PromotedVideoLeaf
+/**
+ * Directory visibility is based on independent content tags, not merely on whether
+ * the directory is structurally enterable. This keeps video-only navigation out of
+ * Galleries and unrelated navigation out of Video.
+ */
+fun DirPresence.visibleIn(
+    mode: BrowseContentMode,
+    hasGallery: Boolean,
+    hasVideo: Boolean,
+): Boolean = when (mode) {
+    // Leaf image folders already have a FolderGallery row; only retain real navigation
+    // branches that may lead to gallery content.
+    BrowseContentMode.Galleries -> this == DirPresence.Navigable && hasGallery
+    BrowseContentMode.Media -> when (this) {
+        DirPresence.Navigable -> hasGallery || hasVideo
+        DirPresence.LeafImages -> hasVideo // gallery row covers images; dir reaches videos
+        DirPresence.VideoOnly, DirPresence.PromotedVideoLeaf -> true
+        DirPresence.Empty, DirPresence.PromotedShell -> false
+    }
+    BrowseContentMode.Video ->
+        hasVideo &&
+            this != DirPresence.Empty &&
+            this != DirPresence.PromotedShell
     // Folder = real FS: hide virtual promoted video dirs (PromotedShell parent stays).
     BrowseContentMode.Folder -> this != DirPresence.PromotedVideoLeaf
 }
@@ -43,22 +58,22 @@ fun DirPresence.visibleIn(mode: BrowseContentMode): Boolean = when (mode) {
 fun List<BrowseEntry>.filterByContentMode(mode: BrowseContentMode): List<BrowseEntry> = filter { e ->
     when (mode) {
         BrowseContentMode.Galleries -> when (e) {
-            is BrowseEntry.Directory -> e.presence.visibleIn(mode)
+            is BrowseEntry.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery -> true
             is BrowseEntry.VideoFile, is BrowseEntry.RegularFile -> false
         }
         BrowseContentMode.Media -> when (e) {
-            is BrowseEntry.Directory -> e.presence.visibleIn(mode)
+            is BrowseEntry.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery, is BrowseEntry.VideoFile -> true
             is BrowseEntry.RegularFile -> false
         }
         BrowseContentMode.Video -> when (e) {
-            is BrowseEntry.Directory -> e.presence.visibleIn(mode)
+            is BrowseEntry.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             is BrowseEntry.VideoFile -> true
             is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> false
         }
         BrowseContentMode.Folder -> when (e) {
-            is BrowseEntry.Directory -> e.presence.visibleIn(mode)
+            is BrowseEntry.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             is BrowseEntry.ArchiveGallery, is BrowseEntry.VideoFile, is BrowseEntry.RegularFile -> true
             is BrowseEntry.FolderGallery -> false // raw files only
         }
@@ -68,12 +83,12 @@ fun List<BrowseEntry>.filterByContentMode(mode: BrowseContentMode): List<BrowseE
 fun List<BrowseEntryRemote>.filterRemoteByContentMode(mode: BrowseContentMode): List<BrowseEntryRemote> = filter { e ->
     when (mode) {
         BrowseContentMode.Galleries -> when (e) {
-            is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode)
+            is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery -> true
             is BrowseEntryRemote.VideoFile, is BrowseEntryRemote.RegularFile -> false
         }
         BrowseContentMode.Media -> when (e) {
-            is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode)
+            is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             is BrowseEntryRemote.FolderGallery,
             is BrowseEntryRemote.ArchiveGallery,
             is BrowseEntryRemote.VideoFile,
@@ -81,7 +96,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(mode: BrowseContentMode): 
             is BrowseEntryRemote.RegularFile -> false
         }
         BrowseContentMode.Video -> when (e) {
-            is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode)
+            is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             is BrowseEntryRemote.VideoFile -> true
             is BrowseEntryRemote.FolderGallery,
             is BrowseEntryRemote.ArchiveGallery,
@@ -89,7 +104,7 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(mode: BrowseContentMode): 
             -> false
         }
         BrowseContentMode.Folder -> when (e) {
-            is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode)
+            is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             is BrowseEntryRemote.ArchiveGallery,
             is BrowseEntryRemote.VideoFile,
             is BrowseEntryRemote.RegularFile,
