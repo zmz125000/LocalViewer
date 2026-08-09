@@ -177,11 +177,20 @@ fun listLocalDirectoryUncached(
                 }
             }
             is ChildDirKind.LeafGallery -> {
-                // Dir row for Folder mode; synthetic gallery for Galleries/Media.
+                // Exactly one browse video (+ images / nfo / other non-video files) → promote
+                // the file to parent Videos; gallery row still covers images.
+                val singleVideo = kind.videoPaths.singleOrNull()
+                    ?.takeUnless { isSampleDirName(sub.name) }
+                if (singleVideo != null) {
+                    videos += BrowseEntry.VideoFile(
+                        name = promotedSubGalleryName(sub.name),
+                        path = singleVideo,
+                    )
+                }
                 dirs += BrowseEntry.Directory(
                     name = sub.name,
                     path = sub.path,
-                    hasVideo = kind.hasVideo,
+                    hasVideo = kind.hasVideo && singleVideo == null,
                     hasGallery = true,
                     presence = DirPresence.LeafImages,
                 )
@@ -205,7 +214,7 @@ fun listLocalDirectoryUncached(
                             presence = DirPresence.Empty,
                         )
                     single != null -> {
-                        // Single non-sample video: promote file to parent Videos with @ name.
+                        // Single video (+ any non-video junk files): promote to parent Videos.
                         videos += BrowseEntry.VideoFile(
                             name = promotedSubGalleryName(sub.name),
                             path = single,
@@ -286,6 +295,8 @@ private sealed interface ChildDirKind {
         val pageCount: Int,
         val pageCountCapped: Boolean,
         val coverPath: Path?,
+        /** Browse video paths (excludes sample-*); single entry → promote to parent Videos. */
+        val videoPaths: List<Path> = emptyList(),
         override val hasVideo: Boolean = false,
     ) : ChildDirKind {
         override val hasGallery: Boolean = true
@@ -442,6 +453,7 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
             pageCount = imageCount,
             pageCountCapped = imagesCapped,
             coverPath = coverPath,
+            videoPaths = videoPaths.toList(),
             hasVideo = sawVideo,
         )
     } else {
@@ -655,8 +667,18 @@ fun classifyRemoteListingWithPeeks(
                             is RemoteChildKind.LeafGallery -> {
                                 galleryLeaves += PromotedGalleryLeaf(leaf.name, key, leafKind)
                                 // Sample folder: gallery promote only, never video tag/dir.
+                                // One browse video (+ images/nfo/other non-video) → file promote,
+                                // not a virtual video dir.
                                 if (!sampleLeaf && leafKind.hasVideo) {
-                                    videoLeaves += PromotedVideoLeaf(leaf.name, key)
+                                    val single = leafKind.videoFileNames.singleOrNull()
+                                    if (single != null) {
+                                        videoFiles += PromotedVideoFile(
+                                            leafName = leaf.name,
+                                            relativeFile = "$key/$single",
+                                        )
+                                    } else {
+                                        videoLeaves += PromotedVideoLeaf(leaf.name, key)
+                                    }
                                     leafHasVideo = true
                                 }
                             }
@@ -669,6 +691,7 @@ fun classifyRemoteListingWithPeeks(
                                 if (sampleLeaf) {
                                     // Skip video promote/tag for Sample leaves.
                                 } else {
+                                    // One video (+ any non-video junk) → file promote; else video dir.
                                     val single = leafKind.videoFileNames.singleOrNull()
                                     if (single != null) {
                                         videoFiles += PromotedVideoFile(
@@ -861,9 +884,18 @@ fun classifyRemoteListingWithPeeks(
                         }
                     }
                     is RemoteChildKind.LeafGallery -> {
+                        // One browse video + images/other non-video files → promote video file.
+                        val singleVideo = kind.videoFileNames.singleOrNull()
+                            ?.takeUnless { isSampleDirName(e.name) }
+                        if (singleVideo != null) {
+                            videos += BrowseEntryRemote.VideoFile(
+                                name = promotedSubGalleryName(e.name),
+                                fileName = "${e.name}/$singleVideo",
+                            )
+                        }
                         dirs += BrowseEntryRemote.Directory(
                             name = e.name,
-                            hasVideo = kind.hasVideo,
+                            hasVideo = kind.hasVideo && singleVideo == null,
                             hasGallery = true,
                             presence = DirPresence.LeafImages,
                         )
@@ -887,7 +919,7 @@ fun classifyRemoteListingWithPeeks(
                                     presence = DirPresence.Empty,
                                 )
                             single != null -> {
-                                // Single video file → parent Videos with @name; Folder keeps shell.
+                                // One video (+ nfo/srt/other non-video junk) → parent Videos.
                                 videos += BrowseEntryRemote.VideoFile(
                                     name = promotedSubGalleryName(e.name),
                                     fileName = "${e.name}/$single",
@@ -1007,6 +1039,8 @@ private sealed interface RemoteChildKind {
         val pageCount: Int,
         val coverFileName: String?,
         val imageFileNames: List<String>,
+        /** Browse video basenames (excludes sample-*); single entry → file promote. */
+        val videoFileNames: List<String> = emptyList(),
         override val hasVideo: Boolean = false,
     ) : RemoteChildKind {
         override val hasGallery: Boolean = true
@@ -1049,6 +1083,8 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
 
     // Sample leaf folders never contribute video tags (preview packs stay out of Video mode).
     val sawVideo = videoFileNames.isNotEmpty() && !isSampleDirName(dirName)
+    if (sawVideo) videoFileNames.sortWith { a, b -> naturalCompare(a, b) }
+    val videos = if (sawVideo) videoFileNames.toList() else emptyList()
 
     val gallery = if (imageNames.isNotEmpty()) {
         imageNames.sortWith { a, b -> naturalCompare(a, b) }
@@ -1056,6 +1092,7 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
             pageCount = imageNames.size,
             coverFileName = coverFileName,
             imageFileNames = imageNames,
+            videoFileNames = videos,
             hasVideo = sawVideo,
         )
     } else {
@@ -1065,6 +1102,7 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
     // Never promote archives. Folder with archives → navigable (open to see them).
     // Video-bearing leaves (with or without images) promote at parent as @ virtual dirs
     // or single-file @ video rows; navigable leaves only tag hasVideo on the parent path.
+    // Other non-video files (nfo/srt/txt/…) never block single-video file promote.
     if (sawSubdir || sawArchive) {
         return RemoteChildKind.Navigable(
             gallery = gallery,
@@ -1075,10 +1113,7 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
         )
     }
     if (gallery != null) return gallery
-    if (sawVideo) {
-        videoFileNames.sortWith { a, b -> naturalCompare(a, b) }
-        return RemoteChildKind.VideoOnly(videoFileNames = videoFileNames.toList())
-    }
+    if (sawVideo) return RemoteChildKind.VideoOnly(videoFileNames = videos)
     return RemoteChildKind.Empty()
 }
 
