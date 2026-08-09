@@ -18,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Random-access SMB archive source for stream open.
@@ -142,14 +143,15 @@ private class KeepOpenSmbFileSource(
                                 }
                                 if (!sizeReady.isCompleted) sizeReady.complete(fileSize)
                                 // Blocking drain: open-file callback is not a suspend lambda.
+                                // Sticky sessions idle-ping so NAS/NAT idle timeouts do not kill the
+                                // handle during player buffer periods (external video can pause I/O
+                                // for minutes while still holding the Fuse FD).
                                 runBlocking {
-                                    for (op in ops) {
-                                        // Consume the coalesced signal corresponding to this op.
-                                        // If the handle dies, only a later/pending request wakes reopen.
+                                    suspend fun handle(op: Op) {
                                         demand.tryReceive()
                                         if (closed.get()) {
                                             op.result.complete(-1)
-                                            continue
+                                            return
                                         }
                                         try {
                                             op.result.complete(
@@ -162,6 +164,28 @@ private class KeepOpenSmbFileSource(
                                                 throw e
                                             }
                                             op.result.completeExceptionally(e)
+                                        }
+                                    }
+                                    if (stickySession) {
+                                        while (isActive && !closed.get()) {
+                                            val op = withTimeoutOrNull(STICKY_IDLE_PING_MS) {
+                                                ops.receiveCatching().getOrNull()
+                                            }
+                                            if (op == null) {
+                                                if (ops.isClosedForReceive || closed.get()) break
+                                                try {
+                                                    file.fileInformation.standardInformation.endOfFile
+                                                } catch (e: Throwable) {
+                                                    logcat("SmbArchive", e)
+                                                    throw e
+                                                }
+                                                continue
+                                            }
+                                            handle(op)
+                                        }
+                                    } else {
+                                        for (op in ops) {
+                                            handle(op)
                                         }
                                     }
                                 }
@@ -261,6 +285,8 @@ private class KeepOpenSmbFileSource(
         const val OPEN_RETRY_BACKOFF_MS = 100L
         const val READ_ATTEMPTS = 3
         const val READ_RETRY_BACKOFF_MS = 30L
+        /** Sticky external stream: ping before typical NAS idle drop (~2–5 min). */
+        const val STICKY_IDLE_PING_MS = 45_000L
 
         /**
          * Per-op size for smbj. Use a large chunk so an 8 MiB readahead window is only a

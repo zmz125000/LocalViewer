@@ -264,14 +264,19 @@ private class SourceProxyCallback(
         released = true
         runCatching { source.close() }
         thread.quitSafely()
-        // Drop token when the last proxy FD for this grant is closed (refcount).
+        // Release this FD. The token stays reusable for player seek/rebuffer reopen;
+        // the registry ages it out later and stops the keep-alive after a grace period.
         StreamDocumentRegistry.release(token)
     }
 
     private companion object {
-        /** Cap total stall per onRead so Fuse does not hang forever on a dead share. */
-        const val MAX_WAIT_NS = 8_000_000_000L // 8s
+        /**
+         * Cap total stall per onRead so Fuse does not hang forever on a dead share.
+         * Long enough for sticky SMB/WebDAV reconnect after an idle disconnect mid-movie
+         * (auth + open + first range), without waiting for the full 120s SMB SO timeout.
+         */
+        const val MAX_WAIT_NS = 30_000_000_000L // 30s
         const val RETRY_BACKOFF_MS = 50L
-        const val RETRY_BACKOFF_MAX_MS = 400L
+        const val RETRY_BACKOFF_MAX_MS = 800L
     }
 }

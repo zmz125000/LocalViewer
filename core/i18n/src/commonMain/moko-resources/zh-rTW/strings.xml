@@ -239,6 +239,10 @@
     <string name="refresh">重新整理</string>
     <string name="view_original">查看原圖</string>
     <string name="open_in_other_app">在其他應用程式中開啟</string>
+    <string name="stream_keepalive_channel">外部串流</string>
+    <string name="stream_keepalive_channel_desc">其他應用讀取網路檔案時保持連線</string>
+    <string name="stream_keepalive_title">正在向其他應用串流</string>
+    <string name="stream_keepalive_text">保持網路連線以便外部播放</string>
     <string name="clear_image_cache">清除圖片快取</string>
     <string name="clear_image_cache_confirm">為該圖庫清除所有快取圖片？</string>
     <string name="image_cache_cleared">已清除圖片快取</string>
