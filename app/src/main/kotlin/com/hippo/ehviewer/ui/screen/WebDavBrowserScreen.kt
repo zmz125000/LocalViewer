@@ -20,9 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
-import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularWavyProgressIndicator
@@ -69,6 +67,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
 import com.hippo.ehviewer.library.ArchiveTooLargeException
+import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
@@ -77,14 +76,18 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
+import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.joinRemoteArchivePath
+import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.stableGalleryId
+import com.hippo.ehviewer.library.toRemoteBrowseSections
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
+import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.OpenPdfExternally
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
@@ -97,9 +100,13 @@ import com.hippo.ehviewer.ui.main.BrowseCover
 import com.hippo.ehviewer.ui.main.BrowseDirectoryGridItem
 import com.hippo.ehviewer.ui.main.BrowseDirectoryRow
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
+import com.hippo.ehviewer.ui.main.BrowseFileGridItem
+import com.hippo.ehviewer.ui.main.BrowseFileRow
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
+import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToWebDavFolderReader
@@ -139,9 +146,17 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
         mutableStateOf(initial)
     }
+    /**
+     * How many path segments each [enterDir] appended. Promoted video leaves append
+     * `S/leaf` (2); goUp pops that many so one back action returns to the listing
+     * that showed the `@` row. Deep-links leave this empty → goUp drops 1.
+     */
+    var enterHopStack by remember { mutableStateOf(emptyList<Int>()) }
+
     fun updateSegments(new: List<String>) {
         segments = new
         BrowseSession.setWebDavSegments(sourceId, new)
+        if (new.isEmpty()) enterHopStack = emptyList()
     }
 
     var entries by remember { mutableStateOf<List<BrowseEntryRemote>>(emptyList()) }
@@ -153,6 +168,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
+    val contentModePref by Settings.browseContentMode.collectAsState()
+    val contentMode = BrowseContentMode.fromPref(contentModePref)
+    val scrollLayoutKey = listMode * 10 + contentMode.prefValue
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
@@ -182,8 +200,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
     val search = rememberBrowseFolderSearchState()
     val focusManager = LocalFocusManager.current
-    val filteredEntries = remember(displayEntries, search.keyword) {
-        displayEntries.filterByBrowseSearch(search.keyword) { it.name }
+    val filteredEntries = remember(displayEntries, search.keyword, contentMode) {
+        displayEntries
+            .filterRemoteByContentMode(contentMode)
+            .filterByBrowseSearch(search.keyword) { it.name }
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
@@ -246,8 +266,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         if (configChanged) {
             // Path/share changed: drop stack (session already cleared by disconnect).
             if (segments.isNotEmpty()) {
-                segments = emptyList()
-                BrowseSession.setWebDavSegments(sourceId, emptyList())
+                updateSegments(emptyList())
             }
             entries = emptyList()
             listedDir = null
@@ -323,9 +342,17 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    fun enterDir(name: String) {
-        val next = segments + name
+    /**
+     * Enter a directory by real relative path under the current listing.
+     * [relativeName] may be multi-segment for promoted video leaves (`S/leaf`) —
+     * never use display names like `@S-leaf` as path segments.
+     */
+    fun enterDir(relativeName: String) {
+        val parts = relativeName.split('/').filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return
+        val next = segments + parts
         val nextDir = next.joinToString("/")
+        enterHopStack = enterHopStack + parts.size
         updateSegments(next)
         if (!applyCachedListing(nextDir)) {
             // Show spinner for uncached child; effect will load.
@@ -337,7 +364,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun goUp() {
         if (segments.isNotEmpty()) {
-            val next = segments.dropLast(1)
+            val hop = (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
+            enterHopStack = if (enterHopStack.isNotEmpty()) enterHopStack.dropLast(1) else enterHopStack
+            val next = segments.dropLast(hop)
             val nextDir = next.joinToString("/")
             updateSegments(next)
             // History deep-link parents are often already in session cache — paint now so
@@ -408,6 +437,26 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         R.string.open_pdf_external_failed,
                         e.message ?: e.toString(),
                     ),
+                )
+            }
+        }
+    }
+
+    fun openExternalFile(fileName: String) {
+        val src = source ?: return
+        val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
+        launchIO {
+            try {
+                OpenFileExternally.openWebDav(
+                    context = context,
+                    sourceId = src.id,
+                    remoteRelativeFile = remote,
+                    displayName = fileName,
+                    mimeType = mimeTypeForFileName(fileName),
+                )
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
                 )
             }
         }
@@ -507,20 +556,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         state = search,
                         onBeforeClose = { focusManager.clearFocus() },
                     )
-                    IconButton(
-                        onClick = {
-                            Settings.listMode.value = if (listMode == 0) 1 else 0
-                        },
-                        shapes = IconButtonDefaults.shapes(),
-                    ) {
-                        val icon = if (listMode == 1) Icons.Default.GridView else Icons.AutoMirrored.Filled.ViewList
-                        val desc = if (listMode == 0) {
-                            stringResource(R.string.settings_eh_list_mode_thumb)
-                        } else {
-                            stringResource(R.string.settings_eh_list_mode_detail)
-                        }
-                        Icon(imageVector = icon, contentDescription = desc)
-                    }
+                    BrowseViewModeMenu()
                     IconButton(
                         onClick = {
                             refreshing = true
@@ -617,8 +653,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 }
                 else -> {
                     val dirKey = listedDir ?: relativeDir
-                    val dirs = filteredEntries.filterIsInstance<BrowseEntryRemote.Directory>()
-                    val galleries = filteredEntries.filter { it !is BrowseEntryRemote.Directory }
+                    val sections = filteredEntries.toRemoteBrowseSections()
+                    val dirs = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
+                    val galleries = sections.galleries
+                    val videos = sections.videos.filterIsInstance<BrowseEntryRemote.VideoFile>()
+                    val files = sections.files.filterIsInstance<BrowseEntryRemote.RegularFile>()
 
                     // Keys must stay unique when dual-list + "this folder as gallery" share a name
                     // (e.g. parent/ff has images and a child dir also named ff → g-self vs g-child-ff).
@@ -631,7 +670,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             }
                         is BrowseEntryRemote.ArchiveGallery ->
                             "a-${it.parentRelativeName}/${it.fileName}"
-                        is BrowseEntryRemote.Directory -> "d-${it.name}"
+                        else -> "x-${it.name}"
                     }
                     fun coverFor(entry: BrowseEntryRemote.FolderGallery): BrowseCover.WebDav? = entry.coverFileName?.let { fileName ->
                         val remote = if (entry.relativeName.isEmpty()) {
@@ -661,7 +700,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         return BrowseCover.WebDavArchive(sourceId, remote)
                     }
                     if (useGrid) {
-                        val gridState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey", listMode)
+                        val gridState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey", scrollLayoutKey)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
                             columns = GalleryGridDefaults.columns(),
@@ -680,12 +719,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 ) {
                                     BrowseSectionHeader(stringResource(R.string.browse_directories))
                                 }
-                                items(dirs, key = { "d-${it.name}" }) { dir ->
+                                items(dirs, key = { "d-${it.relativeName}" }) { dir ->
                                     BrowseDirectoryGridItem(
                                         name = dir.name,
-                                        onClick = { enterDir(dir.name) },
-                                        onLongClick = { toggleDirFavorite(dir.name) },
-                                        showFavoriteStar = isDirFavorite(dir.name),
+                                        onClick = { enterDir(dir.relativeName) },
+                                        onLongClick = { toggleDirFavorite(dir.relativeName) },
+                                        showFavoriteStar = isDirFavorite(dir.relativeName),
                                     )
                                 }
                             }
@@ -719,13 +758,41 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     null
                                                 },
                                             )
-                                        is BrowseEntryRemote.Directory -> Unit
+                                        else -> Unit
                                     }
+                                }
+                            }
+                            if (videos.isNotEmpty()) {
+                                item(
+                                    key = "hdr-vid",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
+                                    BrowseSectionHeader(stringResource(R.string.browse_videos))
+                                }
+                                items(videos, key = { "v-${it.fileName}" }) { video ->
+                                    BrowseVideoGridItem(
+                                        name = video.name,
+                                        onClick = { openExternalFile(video.fileName) },
+                                    )
+                                }
+                            }
+                            if (files.isNotEmpty()) {
+                                item(
+                                    key = "hdr-files",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
+                                    BrowseSectionHeader(stringResource(R.string.browse_files))
+                                }
+                                items(files, key = { "f-${it.fileName}" }) { file ->
+                                    BrowseFileGridItem(
+                                        name = file.name,
+                                        onClick = { openExternalFile(file.fileName) },
+                                    )
                                 }
                             }
                         }
                     } else {
-                        val listState = rememberSmbBrowseListState(sourceId, "dav|$dirKey", listMode)
+                        val listState = rememberSmbBrowseListState(sourceId, "dav|$dirKey", scrollLayoutKey)
                         FastScrollLazyColumn(
                             state = listState,
                             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
@@ -734,11 +801,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 item(key = "hdr-dirs") {
                                     BrowseSectionHeader(stringResource(R.string.browse_directories))
                                 }
-                                items(dirs, key = { "d-${it.name}" }) { dir ->
+                                items(dirs, key = { "d-${it.relativeName}" }) { dir ->
                                     BrowseDirectoryRow(
                                         name = dir.name,
-                                        onClick = { enterDir(dir.name) },
-                                        onLongClick = { toggleDirFavorite(dir.name) },
+                                        onClick = { enterDir(dir.relativeName) },
+                                        onLongClick = { toggleDirFavorite(dir.relativeName) },
                                     )
                                 }
                             }
@@ -769,8 +836,30 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     null
                                                 },
                                             )
-                                        is BrowseEntryRemote.Directory -> Unit
+                                        else -> Unit
                                     }
+                                }
+                            }
+                            if (videos.isNotEmpty()) {
+                                item(key = "hdr-vid") {
+                                    BrowseSectionHeader(stringResource(R.string.browse_videos))
+                                }
+                                items(videos, key = { "v-${it.fileName}" }) { video ->
+                                    BrowseVideoRow(
+                                        name = video.name,
+                                        onClick = { openExternalFile(video.fileName) },
+                                    )
+                                }
+                            }
+                            if (files.isNotEmpty()) {
+                                item(key = "hdr-files") {
+                                    BrowseSectionHeader(stringResource(R.string.browse_files))
+                                }
+                                items(files, key = { "f-${it.fileName}" }) { file ->
+                                    BrowseFileRow(
+                                        name = file.name,
+                                        onClick = { openExternalFile(file.fileName) },
+                                    )
                                 }
                             }
                         }

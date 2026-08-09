@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Badge
@@ -200,6 +201,46 @@ fun BrowseArchiveGalleryRow(
     )
 }
 
+@Composable
+fun BrowseVideoRow(
+    name: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ListItem(
+        headlineContent = { Text(name) },
+        supportingContent = { Text(stringResource(R.string.browse_video)) },
+        leadingContent = {
+            Icon(
+                Icons.Default.Movie,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        },
+        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+    )
+}
+
+@Composable
+fun BrowseFileRow(
+    name: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ListItem(
+        headlineContent = { Text(name) },
+        supportingContent = { Text(stringResource(R.string.browse_file)) },
+        leadingContent = {
+            Icon(
+                Icons.AutoMirrored.Filled.InsertDriveFile,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+    )
+}
+
 // --- Grid (3-column thumb mode) ---
 
 @Composable
@@ -341,6 +382,58 @@ fun BrowseArchiveGridItem(
                 retryKey = thumbRetryKey,
                 placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
             )
+        },
+    )
+}
+
+@Composable
+fun BrowseVideoGridItem(
+    name: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    BrowseGridCell(
+        name = name,
+        onClick = onClick,
+        modifier = modifier,
+        thumb = {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.Movie,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        },
+    )
+}
+
+@Composable
+fun BrowseFileGridItem(
+    name: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    BrowseGridCell(
+        name = name,
+        onClick = onClick,
+        modifier = modifier,
+        thumb = {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.InsertDriveFile,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         },
     )
 }

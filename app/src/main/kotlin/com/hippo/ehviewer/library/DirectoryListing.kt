@@ -7,14 +7,46 @@ import java.util.concurrent.atomic.AtomicInteger
 import okio.Path
 
 /**
- * One level of a hierarchical browser: directories first, then galleries.
+ * Why a child directory is present in the full tagged listing.
+ * Content-mode filters decide which kinds are visible (see [BrowseContentMode]).
+ */
+enum class DirPresence {
+    /** Has subdirs and/or archives — enter-able in gallery/media modes. */
+    Navigable,
+    /** Pure image leaf — gallery mode shows [BrowseEntry.FolderGallery] only, not this dir. */
+    LeafImages,
+    /** Only videos (no images/archives/subdirs). */
+    VideoOnly,
+    /** Empty or non-media files only. */
+    Empty,
+    /**
+     * Remote: all promotable leaves were lifted to parent (`@S` galleries and/or video dirs).
+     * Still enter-able in Folder mode; hidden in Galleries/Media/Video (promotions cover it).
+     */
+    PromotedShell,
+    /**
+     * Remote: pure-video child leaf promoted to parent as a virtual `@S` / `@S-leaf` directory.
+     * Visible in Video/Media; hidden in Folder (real FS) and Galleries.
+     * Navigation uses [BrowseEntryRemote.Directory.relativeName] (actual path), not display name.
+     */
+    PromotedVideoLeaf,
+}
+
+/**
+ * One level of a hierarchical browser: full tagged listing (dirs + galleries +
+ * videos + regular files). UI filters by [BrowseContentMode] without re-scan.
  * Peeks one level into each child directory using [forEachBrowseChild]
  * (single SAF query with MIME — no per-file metadata round-trips).
  */
 sealed interface BrowseEntry {
     val name: String
 
-    data class Directory(override val name: String, val path: Path) : BrowseEntry
+    data class Directory(
+        override val name: String,
+        val path: Path,
+        val hasVideo: Boolean = false,
+        val presence: DirPresence = DirPresence.Navigable,
+    ) : BrowseEntry
 
     data class FolderGallery(
         override val name: String,
@@ -25,6 +57,21 @@ sealed interface BrowseEntry {
     ) : BrowseEntry
 
     data class ArchiveGallery(
+        override val name: String,
+        val path: Path,
+    ) : BrowseEntry
+
+    /** Playable video file (tag: video). */
+    data class VideoFile(
+        override val name: String,
+        val path: Path,
+    ) : BrowseEntry
+
+    /**
+     * Non-archive, non-video file (tag: empty/regular), including loose images
+     * so Folder mode can show a true file list.
+     */
+    data class RegularFile(
         override val name: String,
         val path: Path,
     ) : BrowseEntry
@@ -55,10 +102,12 @@ fun listLocalDirectoryUncached(
     var imageCount = 0
     var imagesCapped = false
     val archives = ArrayList<BrowseEntry.ArchiveGallery>()
+    val videos = ArrayList<BrowseEntry.VideoFile>()
+    val regularFiles = ArrayList<BrowseEntry.RegularFile>()
     // MediaStore index is cheap — exact counts, no 20/128 image cap.
     val uncapped = dir.isMediaStorePath()
 
-    // Parent listing: need every subdirectory; SAF image count capped; cover = first image.
+    // Parent listing: full tagged file list + every subdirectory.
     dir.forEachBrowseChild { child ->
         when {
             child.isDirectory -> childDirs += child
@@ -71,6 +120,8 @@ fun listLocalDirectoryUncached(
                         imagesCapped = true
                     }
                 }
+                // Loose images for Folder mode (synthetic FolderGallery used in Galleries/Media).
+                regularFiles += BrowseEntry.RegularFile(child.name, child.path)
             }
             isArchiveFileName(child.name) -> {
                 if (!EmptyArchiveRegistry.isMarked(child.path.toString())) {
@@ -80,6 +131,10 @@ fun listLocalDirectoryUncached(
                     )
                 }
             }
+            isVideoFileName(child.name) ->
+                videos += BrowseEntry.VideoFile(child.name, child.path)
+            else ->
+                regularFiles += BrowseEntry.RegularFile(child.name, child.path)
         }
         true // always continue — need full dir set for parent
     }
@@ -91,7 +146,12 @@ fun listLocalDirectoryUncached(
     for ((sub, kind) in classifyChildrenParallel(childDirs, preferMediaStore)) {
         when (kind) {
             is ChildDirKind.Navigable -> {
-                dirs += BrowseEntry.Directory(sub.name, sub.path)
+                dirs += BrowseEntry.Directory(
+                    name = sub.name,
+                    path = sub.path,
+                    hasVideo = kind.hasVideo,
+                    presence = DirPresence.Navigable,
+                )
                 // Mixed folder: also list as a gallery so direct images are openable.
                 kind.gallery?.let { g ->
                     leafGalleries += BrowseEntry.FolderGallery(
@@ -103,7 +163,14 @@ fun listLocalDirectoryUncached(
                     )
                 }
             }
-            is ChildDirKind.LeafGallery ->
+            is ChildDirKind.LeafGallery -> {
+                // Dir row for Folder mode; synthetic gallery for Galleries/Media.
+                dirs += BrowseEntry.Directory(
+                    name = sub.name,
+                    path = sub.path,
+                    hasVideo = kind.hasVideo,
+                    presence = DirPresence.LeafImages,
+                )
                 leafGalleries += BrowseEntry.FolderGallery(
                     name = sub.name,
                     path = sub.path,
@@ -111,47 +178,72 @@ fun listLocalDirectoryUncached(
                     pageCountCapped = kind.pageCountCapped,
                     coverPath = kind.coverPath,
                 )
-            ChildDirKind.Hidden -> Unit
+            }
+            is ChildDirKind.VideoOnly ->
+                dirs += BrowseEntry.Directory(
+                    name = sub.name,
+                    path = sub.path,
+                    hasVideo = true,
+                    presence = DirPresence.VideoOnly,
+                )
+            is ChildDirKind.Empty ->
+                dirs += BrowseEntry.Directory(
+                    name = sub.name,
+                    path = sub.path,
+                    hasVideo = false,
+                    presence = DirPresence.Empty,
+                )
         }
     }
 
     dirs.sortWith { a, b -> naturalCompare(a.name, b.name) }
     leafGalleries.sortWith { a, b -> naturalCompare(a.name, b.name) }
     archives.sortWith { a, b -> naturalCompare(a.name, b.name) }
-
-    val galleries = ArrayList<BrowseEntry>(leafGalleries.size + archives.size + 1)
-    galleries += leafGalleries
-    if (coverPath != null || imagesCapped) {
-        galleries += BrowseEntry.FolderGallery(
-            // Tree-root Path.name is often a SAF document id (e.g. primary%3APictures).
-            name = humanizePathName(dir.name).ifEmpty { "Gallery" },
-            path = dir,
-            pageCount = imageCount,
-            pageCountCapped = imagesCapped,
-            coverPath = coverPath,
-        )
-    }
-    galleries += archives
+    videos.sortWith { a, b -> naturalCompare(a.name, b.name) }
+    regularFiles.sortWith { a, b -> naturalCompare(a.name, b.name) }
 
     return buildList {
         addAll(dirs)
-        addAll(galleries)
+        addAll(leafGalleries)
+        // Synthetic current-dir gallery for Galleries/Media (hidden in Folder mode).
+        if (coverPath != null || imagesCapped) {
+            add(
+                BrowseEntry.FolderGallery(
+                    // Tree-root Path.name is often a SAF document id (e.g. primary%3APictures).
+                    name = humanizePathName(dir.name).ifEmpty { "Gallery" },
+                    path = dir,
+                    pageCount = imageCount,
+                    pageCountCapped = imagesCapped,
+                    coverPath = coverPath,
+                ),
+            )
+        }
+        addAll(archives)
+        addAll(videos)
+        addAll(regularFiles)
     }
 }
 
 private sealed interface ChildDirKind {
+    val hasVideo: Boolean
+
     /**
      * Enter-able: has child directories and/or archives.
      * [gallery] is set when this folder also has direct image files — parent lists it
      * as both Directory and FolderGallery. Archives are never promoted; open the dir.
      */
-    data class Navigable(val gallery: LeafGallery? = null) : ChildDirKind
+    data class Navigable(
+        val gallery: LeafGallery? = null,
+        override val hasVideo: Boolean = false,
+    ) : ChildDirKind
     data class LeafGallery(
         val pageCount: Int,
         val pageCountCapped: Boolean,
         val coverPath: Path?,
+        override val hasVideo: Boolean = false,
     ) : ChildDirKind
-    data object Hidden : ChildDirKind
+    data class VideoOnly(override val hasVideo: Boolean = true) : ChildDirKind
+    data class Empty(override val hasVideo: Boolean = false) : ChildDirKind
 }
 
 /** Concurrent SAF/MediaStore child peeks (one query per subfolder). */
@@ -195,6 +287,7 @@ private const val PEEK_MAX_ENTRIES = BROWSE_IMAGE_SCAN_CAP
 /**
  * Peek one level with streaming visit (one SAF cursor / one File.listFiles):
  * - Track subdirs + direct images (capped at [BROWSE_IMAGE_SCAN_CAP] for SAF).
+ * - Track videos for [DirPresence] / hasVideo (best-effort under SAF early-exit).
  * - MediaStore paths: full exact counts (no cap / no early row budget).
  * - Early-exit once classification is known — never scan whole leaf galleries.
  */
@@ -205,6 +298,7 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
     var imageCount = 0
     var imagesCapped = false
     var sawSubdir = false
+    var sawVideo = false
     var entriesSeen = 0
     var afterImageCapBudget = 0
     var afterSubdirBudget = 0
@@ -226,8 +320,10 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
         }
 
         // Already navigable (SAF): only hunt briefly for a dual-list cover image.
+        // Also note videos if we happen to see them before budget ends.
         if (sawSubdir && !uncapped) {
             afterSubdirBudget++
+            if (isVideoFileName(child.name)) sawVideo = true
             if (coverPath == null && isImageFileName(child.name)) {
                 coverPath = child.path
                 imageCount = 1
@@ -241,6 +337,7 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
         // (PEEK_AFTER_IMAGE_CAP_BUDGET is 0; PEEK_MAX_ENTRIES already bounds the sample.)
         if (!uncapped && imagesCapped) {
             afterImageCapBudget++
+            if (isVideoFileName(child.name)) sawVideo = true
             return@forEachBrowseChild afterImageCapBudget < PEEK_AFTER_IMAGE_CAP_BUDGET
         }
 
@@ -261,6 +358,7 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
                     )
                 }
             }
+            isVideoFileName(child.name) -> sawVideo = true
         }
         true
     }
@@ -270,6 +368,7 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
             pageCount = imageCount,
             pageCountCapped = imagesCapped,
             coverPath = coverPath,
+            hasVideo = sawVideo,
         )
     } else {
         null
@@ -277,9 +376,12 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
 
     // Archives only show as files in the folder you open — never promote to parent.
     // Any subfolder that contains archives is navigable so the user can enter it.
-    if (sawSubdir || archives.isNotEmpty()) return ChildDirKind.Navigable(gallery = gallery)
+    if (sawSubdir || archives.isNotEmpty()) {
+        return ChildDirKind.Navigable(gallery = gallery, hasVideo = sawVideo)
+    }
     if (gallery != null) return gallery
-    return ChildDirKind.Hidden
+    if (sawVideo) return ChildDirKind.VideoOnly()
+    return ChildDirKind.Empty()
 }
 
 // ---------------------------------------------------------------------------
@@ -323,7 +425,16 @@ fun isProtectedSystemName(name: String): Boolean {
 sealed interface BrowseEntryRemote {
     val name: String
 
-    data class Directory(override val name: String) : BrowseEntryRemote
+    data class Directory(
+        override val name: String,
+        /**
+         * Actual path relative to the listed directory (may be multi-segment for
+         * [DirPresence.PromotedVideoLeaf], e.g. `S/leaf`). Defaults to [name].
+         */
+        val relativeName: String = name,
+        val hasVideo: Boolean = false,
+        val presence: DirPresence = DirPresence.Navigable,
+    ) : BrowseEntryRemote
 
     data class FolderGallery(
         override val name: String,
@@ -338,6 +449,16 @@ sealed interface BrowseEntryRemote {
         override val name: String,
         val fileName: String,
         val parentRelativeName: String = "",
+    ) : BrowseEntryRemote
+
+    data class VideoFile(
+        override val name: String,
+        val fileName: String = name,
+    ) : BrowseEntryRemote
+
+    data class RegularFile(
+        override val name: String,
+        val fileName: String = name,
     ) : BrowseEntryRemote
 }
 
@@ -374,27 +495,40 @@ fun classifyRemoteListingWithPeeks(
     var coverFileName: String? = null
     val imageNames = ArrayList<String>()
     val archives = ArrayList<BrowseEntryRemote.ArchiveGallery>()
+    val videos = ArrayList<BrowseEntryRemote.VideoFile>()
+    val regularFiles = ArrayList<BrowseEntryRemote.RegularFile>()
 
     for (e in entries) {
         if (e.name.startsWith('.') || isProtectedSystemName(e.name)) continue
         when {
             e.isDirectory -> {
                 val peek = childPeeks[e.name].orEmpty()
+                val sHasVideo = peek.any {
+                    !it.isDirectory && !it.name.startsWith('.') &&
+                        !isProtectedSystemName(it.name) && isVideoFileName(it.name)
+                }
                 val leaves = peek.filter {
                     it.isDirectory && !it.name.startsWith('.') && !isProtectedSystemName(it.name)
                 }
                 val canPromote = leaves.size in 1..SMB_PROMOTE_MAX_LEAVES && grandPeeks.isNotEmpty()
 
                 if (canPromote) {
-                    // Collect pure image gallery leaves only; never promote archives.
-                    data class PromotedLeaf(
+                    // Promote pure image leaves as @ galleries and pure video leaves as @ dirs.
+                    // Never promote archives or navigable (deeper) leaves.
+                    data class PromotedGalleryLeaf(
                         val leafName: String,
                         val relativeName: String,
                         val kind: RemoteChildKind.LeafGallery,
                     )
-                    val galleryLeaves = ArrayList<PromotedLeaf>()
+                    data class PromotedVideoLeaf(
+                        val leafName: String,
+                        val relativeName: String,
+                    )
+                    val galleryLeaves = ArrayList<PromotedGalleryLeaf>()
+                    val videoLeaves = ArrayList<PromotedVideoLeaf>()
                     // Navigable leaf = has subdirs and/or archives (must enter to open archives).
                     var hasNavigableLeaf = false
+                    var leafHasVideo = false
                     val sHasImages = peek.any {
                         !it.isDirectory && !it.name.startsWith('.') &&
                             !isProtectedSystemName(it.name) && isImageFileName(it.name)
@@ -408,20 +542,33 @@ fun classifyRemoteListingWithPeeks(
                         val key = "${e.name}/${leaf.name}"
                         val leafPeek = grandPeeks[key].orEmpty()
                         when (val leafKind = classifyRemoteChild(leaf.name, leafPeek)) {
-                            is RemoteChildKind.LeafGallery ->
-                                galleryLeaves += PromotedLeaf(leaf.name, key, leafKind)
-                            is RemoteChildKind.Navigable -> hasNavigableLeaf = true
-                            is RemoteChildKind.Hidden -> Unit
+                            is RemoteChildKind.LeafGallery -> {
+                                galleryLeaves += PromotedGalleryLeaf(leaf.name, key, leafKind)
+                                if (leafKind.hasVideo) leafHasVideo = true
+                            }
+                            is RemoteChildKind.Navigable -> {
+                                hasNavigableLeaf = true
+                                if (leafKind.hasVideo) leafHasVideo = true
+                            }
+                            is RemoteChildKind.VideoOnly -> {
+                                videoLeaves += PromotedVideoLeaf(leaf.name, key)
+                                leafHasVideo = true
+                            }
+                            is RemoteChildKind.Empty -> Unit
                         }
                     }
-                    val keepDirS = hasNavigableLeaf || sHasArchives
+                    val sHasVideoFlag = sHasVideo || leafHasVideo
+                    // After promoting video-only leaves, only keep S when something still needs enter
+                    // (navigable leaf, archives in S, or direct video files in S).
+                    val keepDirS = hasNavigableLeaf || sHasArchives || sHasVideo
+                    val promotedAnything = galleryLeaves.isNotEmpty() || videoLeaves.isNotEmpty()
 
-                    if (galleryLeaves.isNotEmpty()) {
+                    if (promotedAnything) {
                         // Prefer @S when a single real gallery leaf is promoted and S has no dual.
                         // Empty sibling leaves are ignored for this naming.
-                        val useBareAtS = galleryLeaves.size == 1 && !sHasImages
+                        val useBareAtSGallery = galleryLeaves.size == 1 && !sHasImages
                         for (g in galleryLeaves) {
-                            val display = if (useBareAtS) {
+                            val display = if (useBareAtSGallery) {
                                 promotedSubGalleryName(e.name)
                             } else {
                                 "@${e.name}-${g.leafName}"
@@ -437,21 +584,60 @@ fun classifyRemoteListingWithPeeks(
                         }
                         // Dual gallery for images directly in S (from first peek of S — not re-scanned).
                         // Named @S so it sorts to the top of the gallery list with promotions.
-                        if (sHasImages) {
+                        if (sHasImages && galleryLeaves.isNotEmpty()) {
                             imagesInPeekAsGallery(
                                 relativeName = e.name,
                                 peek = peek,
                                 displayName = promotedSubGalleryName(e.name),
                             )?.let { leafGalleries += it }
+                        } else if (sHasImages && galleryLeaves.isEmpty()) {
+                            // Video-only promote under S that also has direct images: list dual gallery
+                            // under real S name (no gallery leaf bare @S claim).
+                            imagesInPeekAsGallery(
+                                relativeName = e.name,
+                                peek = peek,
+                                displayName = e.name,
+                            )?.let { leafGalleries += it }
                         }
-                        if (keepDirS) {
-                            dirs += BrowseEntryRemote.Directory(e.name)
+
+                        // Virtual @ dirs for pure-video leaves (actual path = relativeName).
+                        // Bare @S only when single video leaf and no name clash with gallery dual / @S.
+                        val useBareAtSVideo = videoLeaves.size == 1 &&
+                            galleryLeaves.isEmpty() &&
+                            !sHasImages &&
+                            !sHasVideo
+                        for (v in videoLeaves) {
+                            val display = if (useBareAtSVideo) {
+                                promotedSubGalleryName(e.name)
+                            } else {
+                                "@${e.name}-${v.leafName}"
+                            }
+                            dirs += BrowseEntryRemote.Directory(
+                                name = display,
+                                relativeName = v.relativeName,
+                                hasVideo = true,
+                                presence = DirPresence.PromotedVideoLeaf,
+                            )
                         }
+
+                        // Always keep S in the full list: Navigable when still needed for enter;
+                        // PromotedShell when only promoted leaves remain (Folder mode shows real S).
+                        // If keepDirS and S has only images (no gallery leaves), dual already emitted.
+                        val presence = when {
+                            keepDirS -> DirPresence.Navigable
+                            else -> DirPresence.PromotedShell
+                        }
+                        dirs += BrowseEntryRemote.Directory(
+                            name = e.name,
+                            relativeName = e.name,
+                            hasVideo = sHasVideoFlag,
+                            presence = presence,
+                        )
                         continue
                     }
 
-                    // No leaf was a pure image gallery.
-                    // If nothing needs enter (no navigable leaf, no archives in S) → hide empty S.
+                    // No leaf was promotable (gallery or video-only).
+                    // If nothing needs enter → still emit for Folder mode; content filters hide rows.
                     if (!keepDirS) {
                         if (sHasImages) {
                             imagesInPeekAsGallery(
@@ -459,6 +645,26 @@ fun classifyRemoteListingWithPeeks(
                                 peek = peek,
                                 displayName = e.name,
                             )?.let { leafGalleries += it }
+                            dirs += BrowseEntryRemote.Directory(
+                                name = e.name,
+                                relativeName = e.name,
+                                hasVideo = sHasVideoFlag,
+                                presence = DirPresence.LeafImages,
+                            )
+                        } else if (sHasVideoFlag) {
+                            dirs += BrowseEntryRemote.Directory(
+                                name = e.name,
+                                relativeName = e.name,
+                                hasVideo = true,
+                                presence = DirPresence.VideoOnly,
+                            )
+                        } else {
+                            dirs += BrowseEntryRemote.Directory(
+                                name = e.name,
+                                relativeName = e.name,
+                                hasVideo = false,
+                                presence = DirPresence.Empty,
+                            )
                         }
                         continue
                     }
@@ -467,7 +673,11 @@ fun classifyRemoteListingWithPeeks(
 
                 when (val kind = classifyRemoteChild(e.name, peek)) {
                     is RemoteChildKind.Navigable -> {
-                        dirs += BrowseEntryRemote.Directory(e.name)
+                        dirs += BrowseEntryRemote.Directory(
+                            name = e.name,
+                            hasVideo = kind.hasVideo,
+                            presence = DirPresence.Navigable,
+                        )
                         // Mixed folder: also list as gallery for direct images.
                         kind.gallery?.let { g ->
                             leafGalleries += BrowseEntryRemote.FolderGallery(
@@ -480,7 +690,12 @@ fun classifyRemoteListingWithPeeks(
                             )
                         }
                     }
-                    is RemoteChildKind.LeafGallery ->
+                    is RemoteChildKind.LeafGallery -> {
+                        dirs += BrowseEntryRemote.Directory(
+                            name = e.name,
+                            hasVideo = kind.hasVideo,
+                            presence = DirPresence.LeafImages,
+                        )
                         leafGalleries += BrowseEntryRemote.FolderGallery(
                             name = e.name,
                             relativeName = e.name,
@@ -489,27 +704,49 @@ fun classifyRemoteListingWithPeeks(
                             coverFileName = kind.coverFileName,
                             imageFileNames = kind.imageFileNames,
                         )
-                    RemoteChildKind.Hidden -> Unit
+                    }
+                    is RemoteChildKind.VideoOnly ->
+                        dirs += BrowseEntryRemote.Directory(
+                            name = e.name,
+                            hasVideo = true,
+                            presence = DirPresence.VideoOnly,
+                        )
+                    is RemoteChildKind.Empty ->
+                        dirs += BrowseEntryRemote.Directory(
+                            name = e.name,
+                            hasVideo = false,
+                            presence = DirPresence.Empty,
+                        )
                 }
             }
             isImageFileName(e.name) -> {
                 if (coverFileName == null) coverFileName = e.name
                 imageNames += e.name
+                // Loose images for Folder mode.
+                regularFiles += BrowseEntryRemote.RegularFile(e.name)
             }
             isArchiveFileName(e.name) ->
                 archives += BrowseEntryRemote.ArchiveGallery(
                     name = e.name,
                     fileName = e.name,
                 )
+            isVideoFileName(e.name) ->
+                videos += BrowseEntryRemote.VideoFile(e.name)
+            else ->
+                regularFiles += BrowseEntryRemote.RegularFile(e.name)
         }
     }
 
     dirs.sortWith { a, b -> naturalCompare(a.name, b.name) }
     leafGalleries.sortWith { a, b -> naturalCompare(a.name, b.name) }
     archives.sortWith { a, b -> naturalCompare(a.name, b.name) }
+    videos.sortWith { a, b -> naturalCompare(a.name, b.name) }
+    regularFiles.sortWith { a, b -> naturalCompare(a.name, b.name) }
     imageNames.sortWith { a, b -> naturalCompare(a, b) }
 
-    val result = ArrayList<BrowseEntryRemote>(dirs.size + leafGalleries.size + archives.size + 1)
+    val result = ArrayList<BrowseEntryRemote>(
+        dirs.size + leafGalleries.size + archives.size + videos.size + regularFiles.size + 1,
+    )
     result += dirs
     result += leafGalleries
     if (imageNames.isNotEmpty()) {
@@ -523,6 +760,8 @@ fun classifyRemoteListingWithPeeks(
         )
     }
     result += archives
+    result += videos
+    result += regularFiles
     return result
 }
 
@@ -554,14 +793,21 @@ private fun imagesInPeekAsGallery(
 }
 
 private sealed interface RemoteChildKind {
+    val hasVideo: Boolean
+
     /** Enter-able: has subdirs and/or archives. Archives only appear after enter. */
-    data class Navigable(val gallery: LeafGallery? = null) : RemoteChildKind
+    data class Navigable(
+        val gallery: LeafGallery? = null,
+        override val hasVideo: Boolean = false,
+    ) : RemoteChildKind
     data class LeafGallery(
         val pageCount: Int,
         val coverFileName: String?,
         val imageFileNames: List<String>,
+        override val hasVideo: Boolean = false,
     ) : RemoteChildKind
-    data object Hidden : RemoteChildKind
+    data class VideoOnly(override val hasVideo: Boolean = true) : RemoteChildKind
+    data class Empty(override val hasVideo: Boolean = false) : RemoteChildKind
 }
 
 private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): RemoteChildKind {
@@ -569,6 +815,7 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
     val imageNames = ArrayList<String>()
     var sawSubdir = false
     var sawArchive = false
+    var sawVideo = false
 
     for (e in peek) {
         if (e.name.startsWith('.') || isProtectedSystemName(e.name)) continue
@@ -582,6 +829,7 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
                 imageNames += e.name
             }
             isArchiveFileName(e.name) -> sawArchive = true
+            isVideoFileName(e.name) -> sawVideo = true
         }
     }
 
@@ -591,15 +839,21 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
             pageCount = imageNames.size,
             coverFileName = coverFileName,
             imageFileNames = imageNames,
+            hasVideo = sawVideo,
         )
     } else {
         null
     }
 
     // Never promote archives. Folder with archives → navigable (open to see them).
-    if (sawSubdir || sawArchive) return RemoteChildKind.Navigable(gallery = gallery)
+    // Pure video leaves (no images/archives/subdirs) promote at parent as @ virtual dirs;
+    // mixed/navigable only tag hasVideo.
+    if (sawSubdir || sawArchive) {
+        return RemoteChildKind.Navigable(gallery = gallery, hasVideo = sawVideo)
+    }
     if (gallery != null) return gallery
-    return RemoteChildKind.Hidden
+    if (sawVideo) return RemoteChildKind.VideoOnly()
+    return RemoteChildKind.Empty()
 }
 
 fun classifyRemoteListing(
