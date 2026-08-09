@@ -253,6 +253,9 @@ object EhDB {
         db.historyDao().upsert(HistoryInfo(galleryInfo.gid))
     }
 
+    /** Existing GALLERIES row, if any (used to preserve thumbKey on re-record). */
+    suspend fun loadGalleryInfo(gid: Long): GalleryEntity? = db.galleryDao().load(gid)
+
     suspend fun updateFavoriteSlot(gid: Long, slot: Int) {
         val dao = db.galleryDao()
         dao.load(gid)?.let {

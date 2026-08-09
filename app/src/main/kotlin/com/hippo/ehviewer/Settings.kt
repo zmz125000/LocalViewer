@@ -85,8 +85,9 @@ object Settings : DataStorePreferences(null) {
     /**
      * When true, folder browser directory grid cells show a cover thumb from lazy-scan
      * metadata (direct image, else first image from ≤3 leaf peeks). Off = icon only.
+     * Default on; also exposed under Settings → General.
      */
-    val browseFolderThumbs = boolPref("browse_folder_thumbs", false)
+    val browseFolderThumbs = boolPref("browse_folder_thumbs", true)
 
     /**
      * When true, folder-view shows folder galleries below [browseSmallGalleryMinPages].
@@ -201,6 +202,17 @@ object Settings : DataStorePreferences(null) {
     val webDavInsecureTls = boolPref("webdav_insecure_tls", false).observed {
         runCatching { com.hippo.ehviewer.webdav.WebDavClient.resetClient() }
     }
+
+    /**
+     * External Fuse stream keep-alive (SMB/WebDAV proxy FD).
+     *
+     * **Default off (limited):** idle token/FGS wake budget **20 minutes**; **screen off**
+     * drops sticky network sockets (next player read reconnects — resumable with a short stall).
+     *
+     * **On (unlimited):** long idle grants (6 h), long wake lock, keep sticky sockets across
+     * screen-off (previous behaviour — better for long movies / phone in pocket, more battery).
+     */
+    val streamKeepAliveUnlimited = boolPref("stream_keep_alive_unlimited", false)
 
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)

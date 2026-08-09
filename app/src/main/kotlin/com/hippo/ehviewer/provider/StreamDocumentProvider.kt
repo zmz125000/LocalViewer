@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
+import android.os.Process
 import android.os.ProxyFileDescriptorCallback
 import android.os.storage.StorageManager
 import android.provider.OpenableColumns
@@ -17,6 +18,7 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
+import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import java.io.FileNotFoundException
 import java.io.IOException
 
@@ -24,11 +26,10 @@ import java.io.IOException
  * Exposes a document as a grantable `content://` URI for external viewers.
  *
  * Local/SAF documents return their real seekable descriptor. Network documents use
- * [StorageManager.openProxyFileDescriptor]; the peer seeks and [ArchiveByteSource.readAt]
- * fulfills reads through SMB/WebDAV ranges and a bounded block cache.
+ * [StorageManager.openProxyFileDescriptor] (AppFuse / MiX-style direct link).
  *
- * Not all viewers behave equally well with proxy FDs — some still buffer large
- * spans — but we never stage a complete file first.
+ * - **Video:** [VideoDirectLinkByteSource] — sliding window + dual-lane forward prefetch.
+ * - **PDF / other:** [BlockCacheArchiveByteSource] — sparse LRU for random probes.
  */
 class StreamDocumentProvider : ContentProvider() {
     override fun onCreate(): Boolean = true
@@ -88,19 +89,26 @@ class StreamDocumentProvider : ContentProvider() {
         val storage = context.getSystemService(StorageManager::class.java)
             ?: throw FileNotFoundException("StorageManager unavailable")
 
+        val isVideo = VideoDirectLinkByteSource.isVideo(entry.mimeType, entry.displayName)
         val source = try {
-            // PDF keeps small sparse blocks; video uses larger blocks / higher cap so
-            // sequential playback can sustain high bitrates without a separate readahead path.
-            val (blockSize, maxBlocks) = BlockCacheArchiveByteSource.forMimeType(
-                mimeType = entry.mimeType,
-                displayName = entry.displayName,
-            )
-            BlockCacheArchiveByteSource(
-                openSource(),
-                knownSize = entry.sizeBytes,
-                blockSize = blockSize,
-                maxBlocks = maxBlocks,
-            )
+            if (isVideo) {
+                VideoDirectLinkByteSource.open(
+                    openLane = openSource,
+                    knownSize = entry.sizeBytes,
+                    parallelPrefetch = entry.parallelPrefetch,
+                )
+            } else {
+                val (blockSize, maxBlocks) = BlockCacheArchiveByteSource.forMimeType(
+                    mimeType = entry.mimeType,
+                    displayName = entry.displayName,
+                )
+                BlockCacheArchiveByteSource(
+                    openSource(),
+                    knownSize = entry.sizeBytes,
+                    blockSize = blockSize,
+                    maxBlocks = maxBlocks,
+                )
+            }
         } catch (e: Throwable) {
             logcat("StreamDoc", e)
             throw FileNotFoundException(e.message ?: "open failed")
@@ -117,11 +125,21 @@ class StreamDocumentProvider : ContentProvider() {
             throw FileNotFoundException("empty document")
         }
 
-        val thread = HandlerThread("LocalViewer-streamdoc").apply { start() }
+        val threadName = if (isVideo) "LocalViewer-streamdoc-video" else "LocalViewer-streamdoc"
+        val videoPriority = isVideo
+        val thread = object : HandlerThread(threadName) {
+            override fun run() {
+                // Video: keep Fuse replies ahead of player buffer underruns when possible.
+                if (videoPriority) {
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
+                }
+                super.run()
+            }
+        }.apply { start() }
         return try {
             val pfd = storage.openProxyFileDescriptor(
                 ParcelFileDescriptor.MODE_READ_ONLY,
-                SourceProxyCallback(source, size, thread, token),
+                SourceProxyCallback(source, size, thread, token, exactMidFile = true),
                 Handler(thread.looper),
             )
             StreamDocumentRegistry.retain(token)
@@ -165,20 +183,21 @@ class StreamDocumentProvider : ContentProvider() {
 }
 
 /**
- * Bridges [ArchiveByteSource] to a seekable PFD for external PDF viewers.
+ * Bridges [ArchiveByteSource] to a seekable PFD for external viewers.
  *
  * **FuseAppLoop always Log.e's any thrown [ErrnoException]** (full stack). So we must not
  * throw on transient network blips: fill the exact byte count Android requires, retry with
  * backoff, and only fail after a long deadline. Soft EOF (return 0) for released / past-size.
  *
- * PDF jump-to-page hammers random offsets; SMB/WebDAV glitches are common and Drive retries
- * EIO — but that floods logcat. Prefer wait-and-succeed over throw.
+ * Mid-file short success confuses video players (treat as EOF → exit). Always return exact
+ * [want] or throw EIO after the deadline — never a soft partial mid-file.
  */
 private class SourceProxyCallback(
     private val source: ArchiveByteSource,
     private val size: Long,
     private val thread: HandlerThread,
     private val token: String,
+    private val exactMidFile: Boolean = true,
 ) : ProxyFileDescriptorCallback() {
     @Volatile
     private var released = false
@@ -214,7 +233,7 @@ private class SourceProxyCallback(
                     }
                     n == 0 -> {
                         // Mid-file 0 is often a transient empty range / reconnect race, not EOF.
-                        if (absOff >= this.size || filled > 0) return filled
+                        if (absOff >= this.size || filled > 0 && !exactMidFile) return filled
                         lastError = IOException("readAt returned 0 at offset=$absOff need=$need")
                     }
                     else -> {
@@ -241,21 +260,23 @@ private class SourceProxyCallback(
                 Thread.sleep(sleepMs)
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
+                if (exactMidFile && filled < want) {
+                    throw ErrnoException("readAt", OsConstants.EINTR)
+                }
                 return filled
             }
         }
 
         if (filled == want) return want
-        if (filled > 0) {
-            // Partial progress is better than EIO: client re-reads remainder without Fuse E spam.
-            return filled
-        }
         if (released) return 0
+        // True EOF only when the file ends inside this request.
+        if (offset + filled >= this.size && filled > 0) return filled
 
         // Last resort only — still logged once by FuseAppLoop (unavoidable if we throw).
+        // Never soft-return a mid-file partial: players treat short reads as EOF and exit.
         val msg = lastError?.message ?: "I/O error"
         logcat("StreamDoc") {
-            "proxy read gave up offset=$offset want=$want after ${MAX_WAIT_NS / 1_000_000}ms: $msg"
+            "proxy read gave up offset=$offset want=$want filled=$filled after ${MAX_WAIT_NS / 1_000_000}ms: $msg"
         }
         throw ErrnoException("readAt", OsConstants.EIO)
     }

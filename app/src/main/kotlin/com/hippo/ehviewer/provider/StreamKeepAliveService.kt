@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -24,12 +25,54 @@ import com.hippo.ehviewer.ui.MainActivity
  * service the process is cached after ON_STOP, frozen after a few minutes, and reads
  * stall — playback dies and resume fails because the in-memory token / sticky session
  * is gone. Start when the first network proxy is retained; stop when the last is released.
+ *
+ * Android 14/15 may time out `dataSync` FGS. If FDs are still open we re-promote and
+ * hold a partial wake lock so long movies are not killed mid-play.
  */
 class StreamKeepAliveService : Service() {
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureChannel()
+        promoteForeground()
+        acquireWakeLock()
+        // The registry and network source are process-local. Restarting only this service
+        // after process death cannot restore the URI token or an external player's FD.
+        return START_NOT_STICKY
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        // dataSync budget expired. If a player still holds a proxy FD, re-enter foreground
+        // immediately so the process is not frozen mid-movie.
+        val stillOpen = StreamDocumentRegistry.networkOpenCount()
+        logcat("StreamKeepAlive") {
+            "Foreground service timed out (type=$fgsType) openFds=$stillOpen"
+        }
+        if (stillOpen > 0) {
+            promoteForeground()
+            acquireWakeLock()
+            return
+        }
+        releaseWakeLock()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf(startId)
+    }
+
+    override fun onDestroy() {
+        if (instance === this) instance = null
+        releaseWakeLock()
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        super.onDestroy()
+    }
+
+    private fun promoteForeground() {
         val notification = buildNotification()
         try {
             ServiceCompat.startForeground(
@@ -42,24 +85,36 @@ class StreamKeepAliveService : Service() {
             logcat("StreamKeepAlive", e)
             // Do not leave a startForegroundService() instance waiting for promotion.
             // That becomes a foreground-service timeout/ANR a few seconds later.
-            stopSelf(startId)
+            // Keep the wake lock if FDs are still open so streaming can continue briefly.
+            if (StreamDocumentRegistry.networkOpenCount() <= 0) {
+                stopSelf()
+            }
         }
-        // The registry and network source are process-local. Restarting only this service
-        // after process death cannot restore the URI token or an external player's FD.
-        return START_NOT_STICKY
     }
 
-    override fun onTimeout(startId: Int, fgsType: Int) {
-        // Android 15+ limits dataSync foreground services. Stop promptly when the system
-        // budget expires instead of letting the app ANR.
-        logcat("StreamKeepAlive") { "Foreground service timed out (type=$fgsType)" }
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf(startId)
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        try {
+            val pm = getSystemService(PowerManager::class.java) ?: return
+            val lock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "LocalViewer:StreamKeepAlive",
+            ).apply {
+                setReferenceCounted(false)
+                acquire(StreamKeepAlivePolicy.wakeLockTimeoutMs())
+            }
+            wakeLock = lock
+        } catch (e: Throwable) {
+            logcat("StreamKeepAlive", e)
+        }
     }
 
-    override fun onDestroy() {
-        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
-        super.onDestroy()
+    private fun releaseWakeLock() {
+        val lock = wakeLock
+        wakeLock = null
+        if (lock?.isHeld == true) {
+            runCatching { lock.release() }
+        }
     }
 
     private fun ensureChannel() {
@@ -103,6 +158,10 @@ class StreamKeepAliveService : Service() {
         private const val CHANNEL_ID = "stream_keepalive"
         private const val NOTIFICATION_ID = 0x535444 // "STD"
 
+        /** Live instance while FGS is running (for screen-off wake-lock release). */
+        @Volatile
+        private var instance: StreamKeepAliveService? = null
+
         /** Start or refresh the keep-alive for a live network proxy FD. */
         fun start(context: Context) {
             val app = context.applicationContext
@@ -124,6 +183,15 @@ class StreamKeepAliveService : Service() {
             runCatching {
                 app.stopService(Intent(app, StreamKeepAliveService::class.java))
             }.onFailure { logcat("StreamKeepAlive", it) }
+        }
+
+        /**
+         * Limited mode + screen off: drop partial wake lock so the device can sleep.
+         * FGS notification stays if FDs are open so process rank stays elevated for Fuse.
+         * [start] re-acquires on screen on / next retain.
+         */
+        fun onScreenOffConservePower() {
+            instance?.releaseWakeLock()
         }
     }
 }

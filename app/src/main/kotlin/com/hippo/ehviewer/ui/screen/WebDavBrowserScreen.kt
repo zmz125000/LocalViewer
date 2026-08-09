@@ -73,6 +73,7 @@ import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
+import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
@@ -408,6 +409,18 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         } else {
             WebDavGateway.joinRelative(relativeDir, entry.relativeName)
         }
+        // Same remote cover path as browse [coverFor] → HistoryThumbKey → webdav_thumb_cache.
+        val coverKey = entry.coverFileName?.let { fileName ->
+            val coverRemote = if (entry.relativeName.isEmpty()) {
+                WebDavGateway.joinRelative(relativeDir, fileName)
+            } else {
+                WebDavGateway.joinRelative(
+                    WebDavGateway.joinRelative(relativeDir, entry.relativeName),
+                    fileName,
+                )
+            }
+            HistoryThumbKey.webdav(src.id, coverRemote)
+        }
         val gid = stableGalleryId(src.id, "webdav:$remote")
         val info = BaseGalleryInfo(
             gid = gid,
@@ -416,14 +429,16 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             pages = if (entry.pageCountCapped) 0 else entry.pageCount,
             favoriteSlot = NOT_FAVORITED,
             rating = -1f,
+            thumbKey = coverKey,
         )
         launchIO {
-            // Progress FK for reader; History stores the SMB folder path link.
+            // Progress FK for reader; History stores the browse folder path link.
             LocalHistory.ensureGalleryForProgress(info)
             LocalHistory.recordWebDavBrowseFolder(
                 sourceId = src.id,
                 relativePath = remote,
                 title = entry.name,
+                coverPath = coverKey,
                 pages = if (entry.pageCountCapped) 0 else entry.pageCount,
             )
         }

@@ -66,11 +66,13 @@
     <string name="browse_layout_grid">網格</string>
     <string name="browse_view_mode">檢視模式</string>
     <string name="browse_folder_thumbs">資料夾縮圖</string>
+    <string name="settings_browse_folder_thumbs_summary">在瀏覽中為資料夾顯示封面縮圖（共用圖庫封面的縮圖快取）。</string>
     <string name="browse_menu_page_count">頁數</string>
     <string name="browse_menu_reading_progress">閱讀進度</string>
     <string name="browse_menu_gallery_covers">圖庫封面</string>
     <string name="browse_menu_archive_covers">壓縮檔封面</string>
     <string name="browse_menu_small_galleries">小圖庫</string>
+    <string name="settings_browse_menu_small_galleries">顯示小圖庫</string>
     <string name="settings_browse_small_galleries_summary">顯示低於最少頁數的資料夾圖庫。關閉時僅在介面隱藏，不改掃描。</string>
     <string name="settings_browse_small_gallery_min_pages">最少圖庫頁數</string>
     <string name="settings_browse_small_gallery_min_pages_summary">關閉小圖庫時，隱藏頁數少於此值的資料夾圖庫。</string>
@@ -116,6 +118,8 @@
     <string name="webdav_anonymous">匿名（無需登入）</string>
     <string name="settings_advanced_webdav_insecure_tls">允許 WebDAV 不安全 TLS</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">信任任意憑證（自簽 HTTPS）。</string>
+    <string name="settings_advanced_unlimit_foreground_service">不限制前景服務</string>
+    <string name="settings_advanced_unlimit_foreground_service_summary">預設：熄屏斷開網路，閒置 20 分鐘後回收。開啟：保持 SMB/WebDAV 黏性連線與長時間授權（更適合長片，更耗電）。</string>
     <string name="error_ip_banned">IP 被封鎖</string>
     <string name="history_unavailable">此項目已不可用</string>
     <string name="back_to_history">返回歷史</string>

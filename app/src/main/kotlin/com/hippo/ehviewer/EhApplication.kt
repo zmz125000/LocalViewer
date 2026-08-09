@@ -17,11 +17,15 @@
 package com.hippo.ehviewer
 
 import android.app.Application
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.os.Build
 import android.os.StrictMode
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.compose.runtime.Composer
@@ -65,6 +69,7 @@ import com.hippo.ehviewer.ktor.configureClient
 import com.hippo.ehviewer.ktor.configureCommon
 import com.hippo.ehviewer.ktor.isCronetAvailable
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
 import com.hippo.ehviewer.ui.tools.dataStateFlow
@@ -119,6 +124,9 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                 }
             },
         )
+        // Limited stream keep-alive: drop sticky Fuse sockets + wake lock when screen offs;
+        // re-arm FGS on screen on if a network proxy FD is still live (resumable reconnect).
+        registerScreenPowerReceiver()
         // Path change (Wi‑Fi, cell, VPN/EasyTier) can leave dead keep-alives — reset pools/clients.
         registerNetworkPathCallbacks()
         launchIO {
@@ -164,6 +172,32 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
     private fun clearTempDir() {
         AppConfig.tempDir.deleteContent()
         AppConfig.externalTempDir?.deleteContent()
+    }
+
+    /**
+     * Screen power for external Fuse keep-alive (limited mode only — see [StreamKeepAlivePolicy]).
+     */
+    private fun registerScreenPowerReceiver() {
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> StreamKeepAlivePolicy.onScreenOff()
+                    Intent.ACTION_SCREEN_ON -> StreamKeepAlivePolicy.onScreenOn(context)
+                }
+            }
+        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                registerReceiver(receiver, filter)
+            }
+        }.onFailure { logcat(it) }
     }
 
     /**

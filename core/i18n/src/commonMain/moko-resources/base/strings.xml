@@ -66,11 +66,13 @@
     <string name="browse_layout_grid">Grid</string>
     <string name="browse_view_mode">View mode</string>
     <string name="browse_folder_thumbs">Folder thumbs</string>
+    <string name="settings_browse_folder_thumbs_summary">Show cover thumbs for folders.</string>
     <string name="browse_menu_page_count">Page count</string>
     <string name="browse_menu_reading_progress">Reading progress</string>
     <string name="browse_menu_gallery_covers">Gallery covers</string>
     <string name="browse_menu_archive_covers">Archive covers</string>
     <string name="browse_menu_small_galleries">Small galleries</string>
+    <string name="settings_browse_menu_small_galleries">Show small galleries</string>
     <string name="settings_browse_small_galleries_summary">Show folder galleries below the minimum page count. Off hides them in the UI only.</string>
     <string name="settings_browse_small_gallery_min_pages">Minimum gallery pages</string>
     <string name="settings_browse_small_gallery_min_pages_summary">Hide folder galleries with fewer pages when Small galleries is off.</string>
@@ -122,6 +124,8 @@
     <string name="webdav_http_hint">Using HTTP (cleartext). Prefer HTTPS when possible.</string>
     <string name="settings_advanced_webdav_insecure_tls">Allow insecure TLS for WebDAV</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">Trust any certificate (self-signed HTTPS).</string>
+    <string name="settings_advanced_unlimit_foreground_service">Unlimit foreground service</string>
+    <string name="settings_advanced_unlimit_foreground_service_summary">Default: drop network on screen off and idle after 20 minutes. On: keep sticky SMB/WebDAV sockets and long grants (better long movies, more battery).</string>
     <string name="site_e" translatable="false">e-hentai</string>
     <string name="site_ex" translatable="false">exhentai</string>
     <!-- Theme -->

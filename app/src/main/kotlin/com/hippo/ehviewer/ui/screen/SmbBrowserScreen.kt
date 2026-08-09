@@ -73,6 +73,7 @@ import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
+import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
@@ -407,6 +408,18 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         } else {
             SmbGateway.joinRelativePath(relativeDir, entry.relativeName)
         }
+        // Same remote cover path as browse [coverFor] → HistoryThumbKey → smb_thumb_cache.
+        val coverKey = entry.coverFileName?.let { fileName ->
+            val coverRemote = if (entry.relativeName.isEmpty()) {
+                SmbGateway.joinRelativePath(relativeDir, fileName)
+            } else {
+                SmbGateway.joinRelativePath(
+                    SmbGateway.joinRelativePath(relativeDir, entry.relativeName),
+                    fileName,
+                )
+            }
+            HistoryThumbKey.smb(src.id, coverRemote)
+        }
         val gid = stableGalleryId(src.id, "smb:$remote")
         val info = BaseGalleryInfo(
             gid = gid,
@@ -415,6 +428,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             pages = if (entry.pageCountCapped) 0 else entry.pageCount,
             favoriteSlot = NOT_FAVORITED,
             rating = -1f,
+            thumbKey = coverKey,
         )
         launchIO {
             // Progress FK for reader; History stores the SMB folder path link.
@@ -423,6 +437,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 sourceId = src.id,
                 relativePath = remote,
                 title = entry.name,
+                coverPath = coverKey,
                 pages = if (entry.pageCountCapped) 0 else entry.pageCount,
             )
         }

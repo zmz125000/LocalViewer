@@ -191,6 +191,12 @@ object SmbGateway {
     private var config: SmbConfig = buildSmbConfig()
 
     private val hostPools = ConcurrentHashMap<String, HostPool>()
+
+    /**
+     * Live Fuse sticky [Connection]s (outside [hostPools]). Closed by [dropStickySessions]
+     * on screen-off in limited keep-alive mode.
+     */
+    private val stickyConnections = ConcurrentHashMap.newKeySet<Connection>()
     private val poolCreateLock = Mutex()
     private val sourceIdToHostKey = ConcurrentHashMap<Long, String>()
     private val hostKeyToSourceIds = ConcurrentHashMap<String, MutableSet<Long>>()
@@ -1065,6 +1071,9 @@ object SmbGateway {
      * reading via [com.hippo.ehviewer.provider.StreamDocumentProvider] after LocalViewer
      * is stopped. Session lives only for [block]; closed in `finally` (not pooled).
      *
+     * [dropStickySessions] (screen-off limited mode) force-closes registered connections;
+     * [SmbArchiveByteSource] reconnects on the next read.
+     *
      * Still subject to real path loss (caller reconnects). Does not consume pool op slots.
      */
     suspend fun <T> withStickyOpenFile(
@@ -1080,6 +1089,7 @@ object SmbGateway {
         TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
         try {
             val connection = smbClient.connect(source.host, source.port)
+            stickyConnections.add(connection)
             try {
                 val session = connection.authenticate(auth(source, password))
                 try {
@@ -1104,6 +1114,7 @@ object SmbGateway {
                     runCatching { session.close() }
                 }
             } finally {
+                stickyConnections.remove(connection)
                 runCatching { connection.close() }
             }
         } finally {
@@ -1112,6 +1123,23 @@ object SmbGateway {
                 TrafficStats.clearThreadStatsTag()
             } else {
                 TrafficStats.setThreadStatsTag(prevTag)
+            }
+        }
+    }
+
+    /**
+     * Force-close dedicated Fuse sticky TCP sessions (async). Does not touch browse pools.
+     * Active [SmbArchiveByteSource] sticky workers fail their open handle and reconnect
+     * on the next demand read.
+     */
+    fun dropStickySessions(reason: String) {
+        val list = stickyConnections.toList()
+        if (list.isEmpty()) return
+        list.forEach { stickyConnections.remove(it) }
+        logcat { "SmbGateway: drop sticky sessions ($reason) count=${list.size}" }
+        gatewayScope.launch {
+            list.forEach { conn ->
+                runCatching { conn.close() }
             }
         }
     }

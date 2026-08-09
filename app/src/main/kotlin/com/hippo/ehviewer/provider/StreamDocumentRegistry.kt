@@ -36,6 +36,11 @@ object StreamDocumentRegistry {
         val sizeBytes: Long = -1L,
         /** Network / stream path: open random-access source for proxy FD. */
         val openSource: (() -> ArchiveByteSource)? = null,
+        /**
+         * When true, [openSource] may be invoked twice for independent sticky sessions
+         * (video dual-lane prefetch). SMB/WebDAV sticky opens each own a TCP session.
+         */
+        val parallelPrefetch: Boolean = false,
         /** Local/SAF path: hand through a real descriptor (preferred when available). */
         val openFileDescriptor: (() -> ParcelFileDescriptor)? = null,
         /** ElapsedRealtime ms when registered / last touched (for stale prune). */
@@ -53,25 +58,19 @@ object StreamDocumentRegistry {
     private var totalNetworkOpen = 0
     private var stopKeepAliveJob: Job? = null
 
+    /** Live network proxy FDs across all tokens (for keep-alive re-promote after FGS timeout). */
+    fun networkOpenCount(): Int = synchronized(keepAliveLock) { totalNetworkOpen }
+
     /** Soft cap so repeated long-press PDF does not retain unbounded lambdas. */
     private const val MAX_ENTRIES = 24
 
-    /**
-     * Age out idle tokens (no live proxy FD). Long enough for multi-hour movies that
-     * briefly close/reopen the content URI between seeks or after buffer drain.
-     */
-    private const val MAX_AGE_MS = 6L * 60L * 60L * 1000L
-
-    /**
-     * Keep FGS a bit after the last proxy FD closes so players that close/reopen the
-     * content URI (seek, rebuffer, resume) do not hit background-start restrictions.
-     */
-    private const val KEEP_ALIVE_STOP_DELAY_MS = 3L * 60L * 1000L
+    // Idle token age / FGS stop delay: see [StreamKeepAlivePolicy] (20 min limited / 6 h unlimited).
 
     fun register(
         displayName: String,
         mimeType: String = "application/pdf",
         sizeBytes: Long = -1L,
+        parallelPrefetch: Boolean = false,
         openSource: () -> ArchiveByteSource,
     ): String {
         pruneStale()
@@ -81,6 +80,7 @@ object StreamDocumentRegistry {
             mimeType = mimeType,
             sizeBytes = sizeBytes,
             openSource = openSource,
+            parallelPrefetch = parallelPrefetch,
         )
         return token
     }
@@ -146,7 +146,7 @@ object StreamDocumentRegistry {
             if (totalNetworkOpen != 0) return
             stopKeepAliveJob?.cancel()
             stopKeepAliveJob = scope.launch {
-                delay(KEEP_ALIVE_STOP_DELAY_MS)
+                delay(StreamKeepAlivePolicy.fgsStopDelayMs())
                 synchronized(keepAliveLock) {
                     if (totalNetworkOpen == 0) {
                         StreamKeepAliveService.stop(context)
@@ -163,7 +163,7 @@ object StreamDocumentRegistry {
      */
     fun pruneStale(
         nowMs: Long = SystemClock.elapsedRealtime(),
-        maxAgeMs: Long = MAX_AGE_MS,
+        maxAgeMs: Long = StreamKeepAlivePolicy.tokenMaxAgeMs(),
     ) {
         if (entries.isEmpty()) return
         for ((token, entry) in entries) {

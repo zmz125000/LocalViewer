@@ -67,11 +67,13 @@
     <string name="browse_layout_grid">グリッド</string>
     <string name="browse_view_mode">表示モード</string>
     <string name="browse_folder_thumbs">フォルダサムネイル</string>
+    <string name="settings_browse_folder_thumbs_summary">フォルダ一覧で表紙サムネイルを表示します（ギャラリー表紙と同じキャッシュを使用）。</string>
     <string name="browse_menu_page_count">ページ数</string>
     <string name="browse_menu_reading_progress">読書進捗</string>
     <string name="browse_menu_gallery_covers">ギャラリー表紙</string>
     <string name="browse_menu_archive_covers">アーカイブ表紙</string>
     <string name="browse_menu_small_galleries">小さいギャラリー</string>
+    <string name="settings_browse_menu_small_galleries">小さいギャラリーを表示</string>
     <string name="settings_browse_small_galleries_summary">最小ページ数未満のフォルダギャラリーを表示します。オフ時は UI のみ非表示（スキャンは変更しません）。</string>
     <string name="settings_browse_small_gallery_min_pages">最小ギャラリーページ数</string>
     <string name="settings_browse_small_gallery_min_pages_summary">小さいギャラリーがオフのとき、このページ数未満のフォルダギャラリーを隠します。</string>
@@ -117,6 +119,8 @@
     <string name="webdav_anonymous">匿名（ログインなし）</string>
     <string name="settings_advanced_webdav_insecure_tls">WebDAV の安全でない TLS を許可</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">任意の証明書を信頼します（自己署名 HTTPS）。</string>
+    <string name="settings_advanced_unlimit_foreground_service">フォアグラウンドサービスを無制限</string>
+    <string name="settings_advanced_unlimit_foreground_service_summary">既定: 画面オフでネットワーク切断、20 分アイドルで回収。ON: 粘着 SMB/WebDAV と長時間付与を維持（長尺向き、電池消費増）。</string>
     <string name="error_ip_banned">IP がバンされています</string>
     <string name="history_unavailable">この項目は利用できなくなりました</string>
     <string name="back_to_history">履歴に戻る</string>

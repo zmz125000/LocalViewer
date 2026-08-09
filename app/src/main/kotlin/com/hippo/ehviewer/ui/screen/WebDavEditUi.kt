@@ -83,8 +83,11 @@ fun WebDavEditDialog(
     var pathPrefix by remember(state.id) { mutableStateOf(state.pathPrefix) }
     var username by remember(state.id) { mutableStateOf(state.username) }
     var password by remember(state.id) { mutableStateOf(state.password) }
+    // Default off for new adds. For edit, only on if already blank credentials.
     var anonymous by remember(state.id) {
-        mutableStateOf(state.username.isBlank() && state.password.isBlank() && state.id == 0L)
+        mutableStateOf(
+            state.id != 0L && state.username.isBlank() && state.password.isBlank(),
+        )
     }
     val focusManager = LocalFocusManager.current
     val baseFocus = remember { FocusRequester() }
@@ -104,6 +107,13 @@ fun WebDavEditDialog(
     )
 
     val canSave = baseUrl.trim().isNotEmpty()
+
+    fun submit() {
+        if (!canSave) return
+        focusManager.clearFocus()
+        val cur = current()
+        onSave(cur, if (anonymous) "" else password)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -168,11 +178,12 @@ fun WebDavEditDialog(
                     label = { Text(stringResource(R.string.webdav_path_prefix)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().focusRequester(pathFocus),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardOptions = KeyboardOptions(
+                        imeAction = if (anonymous) ImeAction.Done else ImeAction.Next,
+                    ),
                     keyboardActions = KeyboardActions(
-                        onNext = {
-                            if (anonymous) focusManager.clearFocus() else userFocus.requestFocus()
-                        },
+                        onNext = { userFocus.requestFocus() },
+                        onDone = { submit() },
                     ),
                 )
                 Row(
@@ -208,17 +219,14 @@ fun WebDavEditDialog(
                             keyboardType = KeyboardType.Password,
                             imeAction = ImeAction.Done,
                         ),
-                        keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                        keyboardActions = KeyboardActions(onDone = { submit() }),
                     )
                 }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = {
-                    val cur = current()
-                    onSave(cur, if (anonymous) "" else password)
-                },
+                onClick = { submit() },
                 enabled = canSave,
             ) {
                 Text(stringResource(R.string.network_save))

@@ -34,7 +34,7 @@ object OriginDiskCache {
     const val THUMB_EDGE = 768
 
     /** Shared budget for all on-disk thumb stores (not Coil’s separate 256 MiB). */
-    const val THUMB_BUDGET_BYTES = 256L * 1024L * 1024L
+    const val THUMB_BUDGET_BYTES = 512L * 1024L * 1024L
 
     private val json = Json {
         ignoreUnknownKeys = true

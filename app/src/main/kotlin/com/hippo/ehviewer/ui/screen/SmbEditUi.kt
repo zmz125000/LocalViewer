@@ -151,6 +151,14 @@ fun SmbEditDialog(
 
     fun currentPassword(): String = if (anonymous) "" else password
 
+    val canSave = host.isNotBlank() && sharePath.isNotBlank()
+
+    fun submit() {
+        if (!canSave) return
+        clearFocus()
+        onSave(current(), currentPassword())
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -221,7 +229,7 @@ fun SmbEditDialog(
                     ),
                     keyboardActions = KeyboardActions(
                         onNext = { userFocus.requestFocus() },
-                        onDone = { clearFocus() },
+                        onDone = { submit() },
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -284,7 +292,7 @@ fun SmbEditDialog(
                         label = { Text(stringResource(R.string.network_domain)) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { clearFocus() }),
+                        keyboardActions = KeyboardActions(onDone = { submit() }),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp)
@@ -295,8 +303,8 @@ fun SmbEditDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onSave(current(), currentPassword()) },
-                enabled = host.isNotBlank() && sharePath.isNotBlank(),
+                onClick = { submit() },
+                enabled = canSave,
             ) {
                 Text(stringResource(R.string.network_save))
             }
@@ -310,7 +318,7 @@ fun SmbEditDialog(
                     clearFocus()
                     onTest(current(), currentPassword())
                 },
-                enabled = host.isNotBlank() && sharePath.isNotBlank(),
+                enabled = canSave,
             ) {
                 Text(stringResource(R.string.network_test))
             }

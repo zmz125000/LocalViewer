@@ -62,11 +62,13 @@
     <string name="browse_layout_grid">网格</string>
     <string name="browse_view_mode">视图模式</string>
     <string name="browse_folder_thumbs">文件夹缩略图</string>
+    <string name="settings_browse_folder_thumbs_summary">在浏览中为文件夹显示封面缩略图（复用画廊封面的缩略图缓存）。</string>
     <string name="browse_menu_page_count">页数</string>
     <string name="browse_menu_reading_progress">阅读进度</string>
     <string name="browse_menu_gallery_covers">画廊封面</string>
     <string name="browse_menu_archive_covers">压缩包封面</string>
     <string name="browse_menu_small_galleries">小图库</string>
+    <string name="settings_browse_menu_small_galleries">显示小图库</string>
     <string name="settings_browse_small_galleries_summary">显示低于最少页数的文件夹画廊。关闭时仅在界面隐藏，不改扫描。</string>
     <string name="settings_browse_small_gallery_min_pages">最少画廊页数</string>
     <string name="settings_browse_small_gallery_min_pages_summary">关闭小图库时，隐藏页数少于此值的文件夹画廊。</string>
@@ -112,6 +114,8 @@
     <string name="webdav_anonymous">匿名（无需登录）</string>
     <string name="settings_advanced_webdav_insecure_tls">允许 WebDAV 不安全 TLS</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">信任任意证书（自签名 HTTPS）。</string>
+    <string name="settings_advanced_unlimit_foreground_service">不限制前台服务</string>
+    <string name="settings_advanced_unlimit_foreground_service_summary">默认：熄屏断开网络，空闲 20 分钟后回收。开启：保持 SMB/WebDAV 粘性连接与长时间授权（更适合长片，更耗电）。</string>
     <string name="history_unavailable">此项目已不可用</string>
     <string name="settings_download_remote_thumbs">下载网络画廊封面</string>
     <string name="settings_download_remote_thumbs_summary">获取网络画廊缩略图。</string>
