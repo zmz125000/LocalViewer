@@ -122,6 +122,8 @@
     <string name="webdav_http_hint">Using HTTP (cleartext). Prefer HTTPS when possible.</string>
     <string name="settings_advanced_webdav_insecure_tls">Allow insecure TLS for WebDAV</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">Trust any certificate (self-signed HTTPS).</string>
+    <string name="settings_advanced_stream_keep_alive_unlimited">Unlimited external stream keep-alive</string>
+    <string name="settings_advanced_stream_keep_alive_unlimited_summary">Default: drop network on screen off and idle after 20 minutes. On: keep sticky SMB/WebDAV sockets and long grants (better long movies, more battery).</string>
     <string name="site_e" translatable="false">e-hentai</string>
     <string name="site_ex" translatable="false">exhentai</string>
     <!-- Theme -->

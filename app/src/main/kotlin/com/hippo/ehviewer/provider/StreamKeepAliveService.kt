@@ -34,6 +34,11 @@ class StreamKeepAliveService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureChannel()
         promoteForeground()
@@ -61,6 +66,7 @@ class StreamKeepAliveService : Service() {
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         releaseWakeLock()
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         super.onDestroy()
@@ -95,7 +101,7 @@ class StreamKeepAliveService : Service() {
                 "LocalViewer:StreamKeepAlive",
             ).apply {
                 setReferenceCounted(false)
-                acquire(WAKE_LOCK_TIMEOUT_MS)
+                acquire(StreamKeepAlivePolicy.wakeLockTimeoutMs())
             }
             wakeLock = lock
         } catch (e: Throwable) {
@@ -151,8 +157,10 @@ class StreamKeepAliveService : Service() {
     companion object {
         private const val CHANNEL_ID = "stream_keepalive"
         private const val NOTIFICATION_ID = 0x535444 // "STD"
-        /** Cap so a leaked FD cannot hold a wake lock forever; refresh via start(). */
-        private const val WAKE_LOCK_TIMEOUT_MS = 6L * 60L * 60L * 1000L
+
+        /** Live instance while FGS is running (for screen-off wake-lock release). */
+        @Volatile
+        private var instance: StreamKeepAliveService? = null
 
         /** Start or refresh the keep-alive for a live network proxy FD. */
         fun start(context: Context) {
@@ -175,6 +183,15 @@ class StreamKeepAliveService : Service() {
             runCatching {
                 app.stopService(Intent(app, StreamKeepAliveService::class.java))
             }.onFailure { logcat("StreamKeepAlive", it) }
+        }
+
+        /**
+         * Limited mode + screen off: drop partial wake lock so the device can sleep.
+         * FGS notification stays if FDs are open so process rank stays elevated for Fuse.
+         * [start] re-acquires on screen on / next retain.
+         */
+        fun onScreenOffConservePower() {
+            instance?.releaseWakeLock()
         }
     }
 }

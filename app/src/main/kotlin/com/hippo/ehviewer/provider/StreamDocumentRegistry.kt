@@ -64,17 +64,7 @@ object StreamDocumentRegistry {
     /** Soft cap so repeated long-press PDF does not retain unbounded lambdas. */
     private const val MAX_ENTRIES = 24
 
-    /**
-     * Age out idle tokens (no live proxy FD). Long enough for multi-hour movies that
-     * briefly close/reopen the content URI between seeks or after buffer drain.
-     */
-    private const val MAX_AGE_MS = 6L * 60L * 60L * 1000L
-
-    /**
-     * Keep FGS a bit after the last proxy FD closes so players that close/reopen the
-     * content URI (seek, rebuffer, resume) do not hit background-start restrictions.
-     */
-    private const val KEEP_ALIVE_STOP_DELAY_MS = 3L * 60L * 1000L
+    // Idle token age / FGS stop delay: see [StreamKeepAlivePolicy] (20 min limited / 6 h unlimited).
 
     fun register(
         displayName: String,
@@ -156,7 +146,7 @@ object StreamDocumentRegistry {
             if (totalNetworkOpen != 0) return
             stopKeepAliveJob?.cancel()
             stopKeepAliveJob = scope.launch {
-                delay(KEEP_ALIVE_STOP_DELAY_MS)
+                delay(StreamKeepAlivePolicy.fgsStopDelayMs())
                 synchronized(keepAliveLock) {
                     if (totalNetworkOpen == 0) {
                         StreamKeepAliveService.stop(context)
@@ -173,7 +163,7 @@ object StreamDocumentRegistry {
      */
     fun pruneStale(
         nowMs: Long = SystemClock.elapsedRealtime(),
-        maxAgeMs: Long = MAX_AGE_MS,
+        maxAgeMs: Long = StreamKeepAlivePolicy.tokenMaxAgeMs(),
     ) {
         if (entries.isEmpty()) return
         for ((token, entry) in entries) {

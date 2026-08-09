@@ -203,6 +203,17 @@ object Settings : DataStorePreferences(null) {
         runCatching { com.hippo.ehviewer.webdav.WebDavClient.resetClient() }
     }
 
+    /**
+     * External Fuse stream keep-alive (SMB/WebDAV proxy FD).
+     *
+     * **Default off (limited):** idle token/FGS wake budget **20 minutes**; **screen off**
+     * drops sticky network sockets (next player read reconnects — resumable with a short stall).
+     *
+     * **On (unlimited):** long idle grants (6 h), long wake lock, keep sticky sockets across
+     * screen-off (previous behaviour — better for long movies / phone in pocket, more battery).
+     */
+    val streamKeepAliveUnlimited = boolPref("stream_keep_alive_unlimited", false)
+
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)
     val animateItems = boolPref("animate_items", true)
