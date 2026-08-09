@@ -36,6 +36,11 @@ object StreamDocumentRegistry {
         val sizeBytes: Long = -1L,
         /** Network / stream path: open random-access source for proxy FD. */
         val openSource: (() -> ArchiveByteSource)? = null,
+        /**
+         * When true, [openSource] may be invoked twice for independent sticky sessions
+         * (video dual-lane prefetch). SMB/WebDAV sticky opens each own a TCP session.
+         */
+        val parallelPrefetch: Boolean = false,
         /** Local/SAF path: hand through a real descriptor (preferred when available). */
         val openFileDescriptor: (() -> ParcelFileDescriptor)? = null,
         /** ElapsedRealtime ms when registered / last touched (for stale prune). */
@@ -52,6 +57,9 @@ object StreamDocumentRegistry {
     private val keepAliveLock = Any()
     private var totalNetworkOpen = 0
     private var stopKeepAliveJob: Job? = null
+
+    /** Live network proxy FDs across all tokens (for keep-alive re-promote after FGS timeout). */
+    fun networkOpenCount(): Int = synchronized(keepAliveLock) { totalNetworkOpen }
 
     /** Soft cap so repeated long-press PDF does not retain unbounded lambdas. */
     private const val MAX_ENTRIES = 24
@@ -72,6 +80,7 @@ object StreamDocumentRegistry {
         displayName: String,
         mimeType: String = "application/pdf",
         sizeBytes: Long = -1L,
+        parallelPrefetch: Boolean = false,
         openSource: () -> ArchiveByteSource,
     ): String {
         pruneStale()
@@ -81,6 +90,7 @@ object StreamDocumentRegistry {
             mimeType = mimeType,
             sizeBytes = sizeBytes,
             openSource = openSource,
+            parallelPrefetch = parallelPrefetch,
         )
         return token
     }

@@ -80,6 +80,9 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
+            // Each SmbArchiveByteSource(stickySession=true) owns an independent TCP session,
+            // so video dual-lane prefetch may open a second demand-free lane safely.
+            parallelPrefetch = true,
             openSource = {
                 SmbArchiveByteSource(
                     source = source,
@@ -89,6 +92,7 @@ object OpenFileExternally {
                     pipeline = false,
                     stickySession = true,
                     knownSize = sizeBytes,
+                    // Windowing/prefetch owned by VideoDirectLinkByteSource for video.
                     readahead = false,
                 )
             },
@@ -119,6 +123,7 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
+            parallelPrefetch = true,
             openSource = {
                 WebDavArchiveByteSource(
                     source = source,
