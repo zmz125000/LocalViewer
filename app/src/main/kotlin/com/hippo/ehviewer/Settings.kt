@@ -89,6 +89,12 @@ object Settings : DataStorePreferences(null) {
     val browseFolderThumbs = boolPref("browse_folder_thumbs", false)
 
     /**
+     * When true, folder-view shows folder galleries with fewer than 3 images.
+     * Default false: UI hides those rows (scanner listing is unchanged).
+     */
+    val browseShowSmallGalleries = boolPref("browse_show_small_galleries", false)
+
+    /**
      * When true, keep the main NavigationBar/Rail visible on nested Browse/History folder
      * screens and Settings children so re-tapping the tab returns to that root.
      * When false (default on phones), hide the bar on those screens and use the

@@ -77,6 +77,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.filterRemoteByContentMode
+import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
@@ -203,9 +204,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
     val search = rememberBrowseFolderSearchState()
     val focusManager = LocalFocusManager.current
-    val filteredEntries = remember(displayEntries, search.keyword, contentMode) {
+    val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
+    val filteredEntries = remember(displayEntries, search.keyword, contentMode, showSmallGalleries) {
         displayEntries
             .filterRemoteByContentMode(contentMode)
+            .filterRemoteSmallGalleries(showSmallGalleries)
             .filterByBrowseSearch(search.keyword) { it.name }
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)

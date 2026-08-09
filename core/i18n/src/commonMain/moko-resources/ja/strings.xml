@@ -71,6 +71,7 @@
     <string name="browse_menu_reading_progress">読書進捗</string>
     <string name="browse_menu_gallery_covers">ギャラリー表紙</string>
     <string name="browse_menu_archive_covers">アーカイブ表紙</string>
+    <string name="browse_menu_small_galleries">小さいギャラリー</string>
     <string name="browse_open_failed">このファイルを開くアプリが見つかりません。</string>
     <string name="folder_empty">このフォルダは空です。</string>
     <string name="folder_no_roots">ライブラリフォルダがありません。設定 → ライブラリ で追加してください。</string>

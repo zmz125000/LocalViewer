@@ -66,6 +66,7 @@
     <string name="browse_menu_reading_progress">阅读进度</string>
     <string name="browse_menu_gallery_covers">画廊封面</string>
     <string name="browse_menu_archive_covers">压缩包封面</string>
+    <string name="browse_menu_small_galleries">小图库</string>
     <string name="browse_open_failed">没有可打开此文件的应用。</string>
     <string name="folder_empty">此文件夹为空。</string>
     <string name="folder_no_roots">暂无图库文件夹。请到设置 → 图库 添加。</string>

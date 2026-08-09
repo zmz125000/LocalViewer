@@ -70,6 +70,7 @@
     <string name="browse_menu_reading_progress">Reading progress</string>
     <string name="browse_menu_gallery_covers">Gallery covers</string>
     <string name="browse_menu_archive_covers">Archive covers</string>
+    <string name="browse_menu_small_galleries">Small galleries</string>
     <string name="browse_open_failed">No app found to open this file.</string>
     <string name="folder_empty">This folder is empty.</string>
     <string name="folder_no_roots">No library folders. Add one in Settings → Library.</string>

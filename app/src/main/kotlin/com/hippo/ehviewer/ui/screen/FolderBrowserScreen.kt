@@ -74,6 +74,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.filterByContentMode
+import com.hippo.ehviewer.library.filterSmallGalleries
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.listLocalDirectory
 import com.hippo.ehviewer.library.mimeTypeForFileName
@@ -141,9 +142,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val focusManager = LocalFocusManager.current
     val contentModePref by Settings.browseContentMode.collectAsState()
     val contentMode = BrowseContentMode.fromPref(contentModePref)
-    val filteredEntries = remember(displayEntries, search.keyword, contentMode) {
+    val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
+    val filteredEntries = remember(displayEntries, search.keyword, contentMode, showSmallGalleries) {
         displayEntries
             .filterByContentMode(contentMode)
+            .filterSmallGalleries(showSmallGalleries)
             .filterByBrowseSearch(search.keyword) { it.name }
     }
 

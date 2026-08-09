@@ -30,7 +30,7 @@ import com.hippo.ehviewer.library.BrowseContentMode
 
 /**
  * Top-bar menu for folder browsers: content filter, list/grid layout, and
- * general display toggles (page count, progress, covers, folder thumbs).
+ * general display toggles (page count, progress, covers, folder thumbs, small galleries).
  */
 @Composable
 fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
@@ -44,6 +44,7 @@ fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
     var downloadRemoteThumbs by Settings.downloadRemoteThumbs.asMutableState()
     var downloadNetworkArchiveThumbs by Settings.downloadNetworkArchiveThumbs.asMutableState()
     var browseFolderThumbs by Settings.browseFolderThumbs.asMutableState()
+    var showSmallGalleries by Settings.browseShowSmallGalleries.asMutableState()
 
     Box(modifier) {
         IconButton(
@@ -134,6 +135,11 @@ fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
                 label = stringResource(R.string.browse_folder_thumbs),
                 checked = browseFolderThumbs,
                 onClick = { browseFolderThumbs = !browseFolderThumbs },
+            )
+            ToggleMenuItem(
+                label = stringResource(R.string.browse_menu_small_galleries),
+                checked = showSmallGalleries,
+                onClick = { showSmallGalleries = !showSmallGalleries },
             )
         }
     }
