@@ -86,6 +86,9 @@ object WebDavGateway {
                 for (leaf in leaves) {
                     leavesToPeek += subName to leaf.name
                 }
+            } else if (leaves.isNotEmpty()) {
+                // Cover-only: first leaf when promote budget exceeded.
+                leavesToPeek += subName to leaves.first().name
             }
         }
         if (leavesToPeek.isNotEmpty()) {

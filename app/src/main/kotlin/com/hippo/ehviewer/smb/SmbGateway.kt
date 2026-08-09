@@ -907,6 +907,7 @@ object SmbGateway {
         }
 
         // Wave 2: if S has 1..3 immediate child dirs, peek those leaves for promotion.
+        // >3 leaves: still peek the first leaf only (folder-thumb cover fallback).
         // S itself is NOT re-listed — dual-gallery images come from wave-1 peek.
         val grandPeeks = ConcurrentHashMap<String, List<RemoteChild>>()
         val leavesToPeek = ArrayList<Pair<String, String>>() // (subName, leafName)
@@ -917,6 +918,9 @@ object SmbGateway {
                 for (leaf in leaves) {
                     leavesToPeek += subName to leaf.name
                 }
+            } else if (leaves.isNotEmpty()) {
+                // Cover-only: first leaf when promote budget exceeded.
+                leavesToPeek += subName to leaves.first().name
             }
         }
         if (leavesToPeek.isNotEmpty()) {

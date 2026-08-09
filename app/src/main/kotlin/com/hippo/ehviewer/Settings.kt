@@ -83,6 +83,24 @@ object Settings : DataStorePreferences(null) {
     val browseContentMode = intPref("browse_content_mode", 0)
 
     /**
+     * When true, folder browser directory grid cells show a cover thumb from lazy-scan
+     * metadata (direct image, else first image from ≤3 leaf peeks). Off = icon only.
+     */
+    val browseFolderThumbs = boolPref("browse_folder_thumbs", false)
+
+    /**
+     * When true, folder-view shows folder galleries below [browseSmallGalleryMinPages].
+     * Default false: UI hides those rows (scanner listing is unchanged).
+     */
+    val browseShowSmallGalleries = boolPref("browse_show_small_galleries", false)
+
+    /**
+     * Minimum image count for a folder gallery when [browseShowSmallGalleries] is off.
+     * Galleries with fewer pages are hidden in the UI only. Default 3.
+     */
+    val browseSmallGalleryMinPages = intPref("browse_small_gallery_min_pages", 3)
+
+    /**
      * When true, keep the main NavigationBar/Rail visible on nested Browse/History folder
      * screens and Settings children so re-tapping the tab returns to that root.
      * When false (default on phones), hide the bar on those screens and use the

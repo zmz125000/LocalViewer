@@ -74,6 +74,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.filterByContentMode
+import com.hippo.ehviewer.library.filterSmallGalleries
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.listLocalDirectory
 import com.hippo.ehviewer.library.mimeTypeForFileName
@@ -141,9 +142,18 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val focusManager = LocalFocusManager.current
     val contentModePref by Settings.browseContentMode.collectAsState()
     val contentMode = BrowseContentMode.fromPref(contentModePref)
-    val filteredEntries = remember(displayEntries, search.keyword, contentMode) {
+    val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
+    val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
+    val filteredEntries = remember(
+        displayEntries,
+        search.keyword,
+        contentMode,
+        showSmallGalleries,
+        smallGalleryMinPages,
+    ) {
         displayEntries
             .filterByContentMode(contentMode)
+            .filterSmallGalleries(showSmallGalleries, smallGalleryMinPages)
             .filterByBrowseSearch(search.keyword) { it.name }
     }
 
@@ -154,6 +164,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
+    val showGalleryPages by Settings.showGalleryPages.collectAsState()
+    val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
 
     /** Scroll restore key: layout (list/grid) + content mode. */
     val scrollLayoutKey = listMode * 10 + contentMode.prefValue
@@ -567,6 +579,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         onClick = { enterDir(dir) },
                                         onLongClick = { toggleDirFavorite(dir) },
                                         showFavoriteStar = isDirFavorite(dir),
+                                        cover = dir.coverPath?.let { BrowseCover.Local(it) },
+                                        showFolderThumb = browseFolderThumbs,
                                     )
                                 }
                             }
@@ -593,6 +607,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             pageCount = entry.pageCount,
                                             pageCountCapped = entry.pageCountCapped,
                                             cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                            showPages = showGalleryPages,
                                             onClick = { openFolderGallery(entry) },
                                         )
                                         is BrowseEntry.ArchiveGallery -> BrowseArchiveGridItem(
@@ -653,6 +668,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         name = dir.name,
                                         onClick = { enterDir(dir) },
                                         onLongClick = { toggleDirFavorite(dir) },
+                                        cover = dir.coverPath?.let { BrowseCover.Local(it) },
+                                        showFolderThumb = browseFolderThumbs,
                                     )
                                 }
                             }
@@ -676,6 +693,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             pageCount = entry.pageCount,
                                             pageCountCapped = entry.pageCountCapped,
                                             cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                            showPages = showGalleryPages,
                                             onClick = { openFolderGallery(entry) },
                                         )
                                         is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(

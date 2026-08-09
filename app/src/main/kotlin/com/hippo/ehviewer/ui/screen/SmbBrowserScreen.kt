@@ -77,6 +77,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.filterRemoteByContentMode
+import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
@@ -169,6 +170,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
+    val showGalleryPages by Settings.showGalleryPages.collectAsState()
+    val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val contentModePref by Settings.browseContentMode.collectAsState()
     val contentMode = BrowseContentMode.fromPref(contentModePref)
     val scrollLayoutKey = listMode * 10 + contentMode.prefValue
@@ -200,9 +203,18 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
     val search = rememberBrowseFolderSearchState()
     val focusManager = LocalFocusManager.current
-    val filteredEntries = remember(displayEntries, search.keyword, contentMode) {
+    val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
+    val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
+    val filteredEntries = remember(
+        displayEntries,
+        search.keyword,
+        contentMode,
+        showSmallGalleries,
+        smallGalleryMinPages,
+    ) {
         displayEntries
             .filterRemoteByContentMode(contentMode)
+            .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
             .filterByBrowseSearch(search.keyword) { it.name }
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
@@ -702,6 +714,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         }
                         BrowseCover.Smb(sourceId, remote)
                     }
+                    fun dirCoverFor(dir: BrowseEntryRemote.Directory): BrowseCover.Smb? = dir.coverFileName?.let { fileName ->
+                        // coverFileName is relative to the directory (basename or leaf/file.jpg).
+                        val remote = SmbGateway.joinRelativePath(
+                            SmbGateway.joinRelativePath(relativeDir, dir.relativeName),
+                            fileName,
+                        )
+                        BrowseCover.Smb(sourceId, remote)
+                    }
                     fun archiveCoverFor(entry: BrowseEntryRemote.ArchiveGallery): BrowseCover? {
                         // ZIP/TAR/EPUB stream + solid RAR/7z + documents (lazy first-page extract).
                         if (!isStreamableArchiveFileName(entry.fileName) &&
@@ -744,6 +764,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                         onClick = { enterDir(dir.relativeName) },
                                         onLongClick = { toggleDirFavorite(dir.relativeName) },
                                         showFavoriteStar = isDirFavorite(dir.relativeName),
+                                        cover = dirCoverFor(dir),
+                                        showFolderThumb = browseFolderThumbs,
+                                        thumbRetryKey = refreshToken,
                                     )
                                 }
                             }
@@ -763,6 +786,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 pageCountCapped = entry.pageCountCapped,
                                                 cover = coverFor(entry),
                                                 thumbRetryKey = refreshToken,
+                                                showPages = showGalleryPages,
                                                 onClick = { openFolderGallery(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
@@ -825,6 +849,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                         name = dir.name,
                                         onClick = { enterDir(dir.relativeName) },
                                         onLongClick = { toggleDirFavorite(dir.relativeName) },
+                                        cover = dirCoverFor(dir),
+                                        showFolderThumb = browseFolderThumbs,
+                                        thumbRetryKey = refreshToken,
                                     )
                                 }
                             }
@@ -841,6 +868,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 pageCountCapped = entry.pageCountCapped,
                                                 cover = coverFor(entry),
                                                 thumbRetryKey = refreshToken,
+                                                showPages = showGalleryPages,
                                                 onClick = { openFolderGallery(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->

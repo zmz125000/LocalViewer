@@ -65,6 +65,15 @@
     <string name="browse_layout_list">List</string>
     <string name="browse_layout_grid">Grid</string>
     <string name="browse_view_mode">View mode</string>
+    <string name="browse_folder_thumbs">Folder thumbs</string>
+    <string name="browse_menu_page_count">Page count</string>
+    <string name="browse_menu_reading_progress">Reading progress</string>
+    <string name="browse_menu_gallery_covers">Gallery covers</string>
+    <string name="browse_menu_archive_covers">Archive covers</string>
+    <string name="browse_menu_small_galleries">Small galleries</string>
+    <string name="settings_browse_small_galleries_summary">Show folder galleries below the minimum page count. Off hides them in the UI only.</string>
+    <string name="settings_browse_small_gallery_min_pages">Minimum gallery pages</string>
+    <string name="settings_browse_small_gallery_min_pages_summary">Hide folder galleries with fewer pages when Small galleries is off.</string>
     <string name="browse_open_failed">No app found to open this file.</string>
     <string name="folder_empty">This folder is empty.</string>
     <string name="folder_no_roots">No library folders. Add one in Settings → Library.</string>
@@ -407,8 +416,8 @@
     <string name="image_saved">Image saved to %s</string>
     <string name="settings_eh">EH</string>
     <string name="settings_general">General</string>
-    <string name="settings_download_remote_thumbs">Download network folder covers</string>
-    <string name="settings_download_remote_thumbs_summary">Fetch network folder thumbnails.</string>
+    <string name="settings_download_remote_thumbs">Download network gallery covers</string>
+    <string name="settings_download_remote_thumbs_summary">Fetch network gallery thumbnails.</string>
     <string name="settings_download_network_archive_thumbs">Download network archive covers</string>
     <string name="settings_download_network_archive_thumbs_summary">Extract first-page thumbs for network ZIP/TAR/RAR/7z.</string>
     <string name="settings_persist_main_nav">Keep main navigation on folder screens</string>
