@@ -46,10 +46,11 @@ object StreamDocumentRegistry {
 
     private val entries = ConcurrentHashMap<String, Entry>()
 
-    /** Sum of network proxy FDs across tokens — drives the keep-alive FGS. */
-    private val totalNetworkOpen = AtomicInteger(0)
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Serializes global FD accounting with delayed service stop/start transitions. */
+    private val keepAliveLock = Any()
+    private var totalNetworkOpen = 0
     private var stopKeepAliveJob: Job? = null
 
     /** Soft cap so repeated long-press PDF does not retain unbounded lambdas. */
@@ -116,10 +117,13 @@ object StreamDocumentRegistry {
         val entry = entries[token] ?: return
         entry.openCount.incrementAndGet()
         entry.lastAccessMs = SystemClock.elapsedRealtime()
-        stopKeepAliveJob?.cancel()
-        stopKeepAliveJob = null
-        if (totalNetworkOpen.incrementAndGet() == 1) {
-            StreamKeepAliveService.setActive(context, true)
+        synchronized(keepAliveLock) {
+            totalNetworkOpen++
+            stopKeepAliveJob?.cancel()
+            stopKeepAliveJob = null
+            // Refresh on every open. This recovers if the OS or user stopped the previous
+            // service, and startForegroundService() is idempotent while it is already alive.
+            StreamKeepAliveService.start(context)
         }
     }
 
@@ -137,13 +141,17 @@ object StreamDocumentRegistry {
             if (left <= 0) return
         } while (!entry.openCount.compareAndSet(left, left - 1))
         entry.lastAccessMs = SystemClock.elapsedRealtime()
-        val total = totalNetworkOpen.updateAndGet { (it - 1).coerceAtLeast(0) }
-        if (total == 0) {
+        synchronized(keepAliveLock) {
+            totalNetworkOpen = (totalNetworkOpen - 1).coerceAtLeast(0)
+            if (totalNetworkOpen != 0) return
             stopKeepAliveJob?.cancel()
             stopKeepAliveJob = scope.launch {
                 delay(KEEP_ALIVE_STOP_DELAY_MS)
-                if (totalNetworkOpen.get() == 0) {
-                    StreamKeepAliveService.setActive(context, false)
+                synchronized(keepAliveLock) {
+                    if (totalNetworkOpen == 0) {
+                        StreamKeepAliveService.stop(context)
+                        stopKeepAliveJob = null
+                    }
                 }
             }
         }

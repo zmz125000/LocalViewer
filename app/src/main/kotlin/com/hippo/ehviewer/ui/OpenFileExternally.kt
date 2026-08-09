@@ -14,6 +14,7 @@ import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
+import com.hippo.ehviewer.provider.requestStreamNotificationPermission
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
@@ -92,7 +93,7 @@ object OpenFileExternally {
                 )
             },
         )
-        launchRegistered(context, token, displayName, mimeType)
+        launchRegistered(context, token, displayName, mimeType, networkStream = true)
     }
 
     suspend fun openWebDav(
@@ -131,7 +132,7 @@ object OpenFileExternally {
                 )
             },
         )
-        launchRegistered(context, token, displayName, mimeType)
+        launchRegistered(context, token, displayName, mimeType, networkStream = true)
     }
 
     private suspend fun launchRegistered(
@@ -139,9 +140,11 @@ object OpenFileExternally {
         token: String,
         displayName: String,
         mimeType: String,
+        networkStream: Boolean = false,
     ) {
         val uri = StreamDocumentProvider.uriFor(token)
         try {
+            if (networkStream) requestStreamNotificationPermission(context)
             launchView(context, uri, displayName, mimeType)
         } catch (e: Throwable) {
             StreamDocumentRegistry.remove(token)

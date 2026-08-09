@@ -12,7 +12,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- Network streamdoc FUSE for external players (SMB/WebDAV movies/PDFs). -->
+    <!-- Network streamdoc proxy for external players (SMB/WebDAV movies/PDFs). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -138,7 +138,7 @@
             android:authorities="${applicationId}.streamdoc"
             android:exported="false"
             android:grantUriPermissions="true" />
-        <!-- Holds process out of freeze while a network streamdoc proxy FD is open. -->
+        <!-- Keeps network streamdoc proxy I/O alive while another app holds its FD. -->
         <service
             android:name="com.hippo.ehviewer.provider.StreamKeepAliveService"
             android:exported="false"

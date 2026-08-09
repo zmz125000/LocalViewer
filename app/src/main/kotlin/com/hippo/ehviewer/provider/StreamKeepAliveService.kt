@@ -16,7 +16,6 @@ import com.ehviewer.core.i18n.R as I18nR
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.R
 import com.hippo.ehviewer.ui.MainActivity
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Keeps LocalViewer unfrozen while a network [StreamDocumentProvider] proxy FD is open.
@@ -41,10 +40,21 @@ class StreamKeepAliveService : Service() {
             )
         } catch (e: Throwable) {
             logcat("StreamKeepAlive", e)
-            // Fallback without type for odd OEM / older shim paths.
-            runCatching { startForeground(NOTIFICATION_ID, notification) }
+            // Do not leave a startForegroundService() instance waiting for promotion.
+            // That becomes a foreground-service timeout/ANR a few seconds later.
+            stopSelf(startId)
         }
-        return START_STICKY
+        // The registry and network source are process-local. Restarting only this service
+        // after process death cannot restore the URI token or an external player's FD.
+        return START_NOT_STICKY
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        // Android 15+ limits dataSync foreground services. Stop promptly when the system
+        // budget expires instead of letting the app ANR.
+        logcat("StreamKeepAlive") { "Foreground service timed out (type=$fgsType)" }
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf(startId)
     }
 
     override fun onDestroy() {
@@ -81,6 +91,8 @@ class StreamKeepAliveService : Service() {
             .setContentIntent(openApp)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setLocalOnly(true)
+            .setShowWhen(false)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -91,28 +103,27 @@ class StreamKeepAliveService : Service() {
         private const val CHANNEL_ID = "stream_keepalive"
         private const val NOTIFICATION_ID = 0x535444 // "STD"
 
-        private val running = AtomicBoolean(false)
-
-        /** Idempotent start/stop driven by live network proxy FD count. */
-        fun setActive(context: Context, active: Boolean) {
+        /** Start or refresh the keep-alive for a live network proxy FD. */
+        fun start(context: Context) {
             val app = context.applicationContext
-            if (active) {
-                if (!running.compareAndSet(false, true)) return
-                try {
-                    ContextCompat.startForegroundService(
-                        app,
-                        Intent(app, StreamKeepAliveService::class.java),
-                    )
-                } catch (e: Throwable) {
-                    running.set(false)
-                    logcat("StreamKeepAlive", e)
-                }
-            } else {
-                if (!running.compareAndSet(true, false)) return
-                runCatching {
-                    app.stopService(Intent(app, StreamKeepAliveService::class.java))
-                }.onFailure { logcat("StreamKeepAlive", it) }
+            try {
+                ContextCompat.startForegroundService(
+                    app,
+                    Intent(app, StreamKeepAliveService::class.java),
+                )
+            } catch (e: Throwable) {
+                // A viewer can reopen the URI after LocalViewer has gone to the background,
+                // where Android may reject a new FGS start. Keep proxy I/O working and log it;
+                // a still-running grace-period service is unaffected.
+                logcat("StreamKeepAlive", e)
             }
+        }
+
+        fun stop(context: Context) {
+            val app = context.applicationContext
+            runCatching {
+                app.stopService(Intent(app, StreamKeepAliveService::class.java))
+            }.onFailure { logcat("StreamKeepAlive", it) }
         }
     }
 }

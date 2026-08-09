@@ -264,7 +264,8 @@ private class SourceProxyCallback(
         released = true
         runCatching { source.close() }
         thread.quitSafely()
-        // Drop token when the last proxy FD for this grant is closed (refcount).
+        // Release this FD. The token stays reusable for player seek/rebuffer reopen;
+        // the registry ages it out later and stops the keep-alive after a grace period.
         StreamDocumentRegistry.release(token)
     }
 

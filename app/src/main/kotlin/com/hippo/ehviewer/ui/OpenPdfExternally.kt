@@ -14,6 +14,7 @@ import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
+import com.hippo.ehviewer.provider.requestStreamNotificationPermission
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
@@ -76,9 +77,15 @@ object OpenPdfExternally {
         launchRegistered(context, token, displayName)
     }
 
-    private suspend fun launchRegistered(context: Context, token: String, displayName: String) {
+    private suspend fun launchRegistered(
+        context: Context,
+        token: String,
+        displayName: String,
+        networkStream: Boolean = false,
+    ) {
         val uri = StreamDocumentProvider.uriFor(token)
         try {
+            if (networkStream) requestStreamNotificationPermission(context)
             launchView(context, uri, displayName)
         } catch (e: Throwable) {
             StreamDocumentRegistry.remove(token)
@@ -124,7 +131,7 @@ object OpenPdfExternally {
                 )
             },
         )
-        launchRegistered(context, token, displayName)
+        launchRegistered(context, token, displayName, networkStream = true)
     }
 
     suspend fun openWebDav(
@@ -163,7 +170,7 @@ object OpenPdfExternally {
                 )
             },
         )
-        launchRegistered(context, token, displayName)
+        launchRegistered(context, token, displayName, networkStream = true)
     }
 
     private suspend fun launchView(context: Context, uri: Uri, displayName: String) {
