@@ -129,7 +129,10 @@ fun listLocalDirectoryUncached(
                 regularFiles += BrowseEntry.RegularFile(child.name, child.path)
             }
             isArchiveFileName(child.name) -> {
-                if (!EmptyArchiveRegistry.isMarked(child.path.toString())) {
+                // Empty (no playable images) archives keep the file row; only drop gallery tag.
+                if (EmptyArchiveRegistry.isMarked(child.path.toString())) {
+                    regularFiles += BrowseEntry.RegularFile(child.name, child.path)
+                } else {
                     archives += BrowseEntry.ArchiveGallery(
                         name = child.name,
                         path = child.path,
@@ -356,12 +359,11 @@ private fun classifyChildDirectory(sub: Path, preferMediaStore: Boolean): ChildD
                 }
             }
             isArchiveFileName(child.name) -> {
-                if (!EmptyArchiveRegistry.isMarked(child.path.toString())) {
-                    archives += BrowseEntry.ArchiveGallery(
-                        name = child.name,
-                        path = child.path,
-                    )
-                }
+                // Still counts as archive for navigable; empty-gallery demote is listing-only.
+                archives += BrowseEntry.ArchiveGallery(
+                    name = child.name,
+                    path = child.path,
+                )
             }
             isVideoFileName(child.name) -> sawVideo = true
         }

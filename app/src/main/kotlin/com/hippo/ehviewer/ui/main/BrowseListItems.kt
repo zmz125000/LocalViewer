@@ -564,7 +564,7 @@ fun BrowseCoverThumb(
                         fetchFailed = false
                     }
                     CoverEnsureResult.NoImages -> {
-                        // Native "Found 0 images" — hide from library + folder browse.
+                        // Native "Found 0 images" — library row removed; browse demotes to file.
                         withIOContext {
                             LocalLibrary.hideEmptyArchive(cover.archivePath.toString())
                         }

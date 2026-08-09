@@ -71,8 +71,8 @@ object LocalLibrary {
     ) = db.localGalleryDao().updatePageAndCoverByContentPath(contentPath, pageCount, coverPath)
 
     /**
-     * Lazy-hide a local archive confirmed to have no playable images.
-     * Marks [EmptyArchiveRegistry] (browse filter) and deletes the library row.
+     * Local archive confirmed to have no playable images:
+     * mark [EmptyArchiveRegistry] (browse demotes gallery → regular file) and delete the library row.
      */
     suspend fun hideEmptyArchive(contentPath: String) {
         if (contentPath.isEmpty()) return
