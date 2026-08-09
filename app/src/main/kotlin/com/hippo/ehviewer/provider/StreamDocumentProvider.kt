@@ -89,7 +89,18 @@ class StreamDocumentProvider : ContentProvider() {
             ?: throw FileNotFoundException("StorageManager unavailable")
 
         val source = try {
-            BlockCacheArchiveByteSource(openSource(), knownSize = entry.sizeBytes)
+            // PDF keeps small sparse blocks; video uses larger blocks / higher cap so
+            // sequential playback can sustain high bitrates without a separate readahead path.
+            val (blockSize, maxBlocks) = BlockCacheArchiveByteSource.forMimeType(
+                mimeType = entry.mimeType,
+                displayName = entry.displayName,
+            )
+            BlockCacheArchiveByteSource(
+                openSource(),
+                knownSize = entry.sizeBytes,
+                blockSize = blockSize,
+                maxBlocks = maxBlocks,
+            )
         } catch (e: Throwable) {
             logcat("StreamDoc", e)
             throw FileNotFoundException(e.message ?: "open failed")

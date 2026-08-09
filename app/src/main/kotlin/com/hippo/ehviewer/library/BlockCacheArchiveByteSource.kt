@@ -1,13 +1,16 @@
 package com.hippo.ehviewer.library
 
 /**
- * Bounded aligned-block cache for latency-heavy random access.
+ * Bounded aligned-block cache for latency-heavy random / sequential access.
  *
  * External PDF viewers repeatedly bounce between the xref/page tree and page object streams.
  * [ReadAheadArchiveByteSource] deliberately retains only one moving window, which is ideal for
  * archive parsing but causes the same SMB read / WebDAV Range GET to be paid again after every
  * jump. This cache keeps a small LRU working set and aligns misses so nearby backward/forward
  * probes share one fetch. It never downloads the whole document.
+ *
+ * Video external open uses [VIDEO_BLOCK_SIZE] / [VIDEO_MAX_BLOCKS] so sequential playback can
+ * sustain high bitrates with fewer network round-trips (still sparse — only touched blocks).
  */
 class BlockCacheArchiveByteSource(
     private val inner: ArchiveByteSource,
@@ -84,10 +87,29 @@ class BlockCacheArchiveByteSource(
     }
 
     companion object {
-        /** One LAN read is cheap; one WebDAV round trip is not. */
+        /** PDF / general sparse: small probes share one fetch. */
         const val DEFAULT_BLOCK_SIZE = 512 * 1024
 
         /** 16 MiB per open descriptor, enough to retain PDF metadata plus recent pages. */
         const val DEFAULT_MAX_BLOCKS = 32
+
+        /**
+         * External video: larger aligned fetches cut RTT so LAN can approach multi‑100 Mbps
+         * fill (content up to ~200 Mbps). Still sparse — only blocks actually read are kept.
+         */
+        const val VIDEO_BLOCK_SIZE = 4 * 1024 * 1024
+
+        /** 128 MiB LRU (~5 s at 200 Mbps) — enough headroom without unbounded download. */
+        const val VIDEO_MAX_BLOCKS = 32
+
+        fun forMimeType(mimeType: String, displayName: String = ""): Pair<Int, Int> {
+            val video = mimeType.startsWith("video/", ignoreCase = true) ||
+                isVideoFileName(displayName)
+            return if (video) {
+                VIDEO_BLOCK_SIZE to VIDEO_MAX_BLOCKS
+            } else {
+                DEFAULT_BLOCK_SIZE to DEFAULT_MAX_BLOCKS
+            }
+        }
     }
 }
