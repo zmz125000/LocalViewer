@@ -9,10 +9,13 @@ package com.hippo.ehviewer.library
 enum class BrowseContentMode(val prefValue: Int) {
     /** Current UX: navigable dirs + folder/archive galleries. */
     Galleries(0),
+
     /** Galleries + video files. */
     Media(1),
+
     /** Enterable/video dirs + video files. */
     Video(2),
+
     /**
      * Full folder browser: all dirs + archives + videos + regular files
      * (including loose images). Synthetic folder galleries are hidden.
@@ -21,8 +24,7 @@ enum class BrowseContentMode(val prefValue: Int) {
     ;
 
     companion object {
-        fun fromPref(value: Int): BrowseContentMode =
-            entries.firstOrNull { it.prefValue == value } ?: Galleries
+        fun fromPref(value: Int): BrowseContentMode = entries.firstOrNull { it.prefValue == value } ?: Galleries
     }
 }
 

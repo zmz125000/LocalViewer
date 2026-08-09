@@ -13,17 +13,22 @@ import okio.Path
 enum class DirPresence {
     /** Has subdirs and/or archives — enter-able in gallery/media modes. */
     Navigable,
+
     /** Pure image leaf — gallery mode shows [BrowseEntry.FolderGallery] only, not this dir. */
     LeafImages,
+
     /** Only videos (no images/archives/subdirs). */
     VideoOnly,
+
     /** Empty or non-media files only. */
     Empty,
+
     /**
      * Remote: all promotable leaves were lifted to parent (`@S` galleries and/or video dirs).
      * Still enter-able in Folder mode; hidden in Galleries/Media/Video (promotions cover it).
      */
     PromotedShell,
+
     /**
      * Remote: pure-video child leaf promoted to parent as a virtual `@S` / `@S-leaf` directory.
      * Visible in Video/Media; hidden in Folder (real FS) and Galleries.

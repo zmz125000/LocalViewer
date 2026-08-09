@@ -154,6 +154,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
     val useGrid = listMode == 1
+
     /** Scroll restore key: layout (list/grid) + content mode. */
     val scrollLayoutKey = listMode * 10 + contentMode.prefValue
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
