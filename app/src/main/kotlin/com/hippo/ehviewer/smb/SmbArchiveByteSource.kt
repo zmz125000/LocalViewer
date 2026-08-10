@@ -8,6 +8,7 @@ import com.hippo.ehviewer.library.ReadAheadArchiveByteSource
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -107,6 +108,8 @@ private class KeepOpenSmbFileSource(
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val closed = AtomicBoolean(false)
+    /** Active handle so close/deadline cancellation interrupts a blocking smbj read. */
+    private val activeFile = AtomicReference<File?>(null)
     private val sizeReady = CompletableDeferred<Long>().also { deferred ->
         if (knownSize > 0L) deferred.complete(knownSize)
     }
@@ -136,58 +139,60 @@ private class KeepOpenSmbFileSource(
                             // Sticky: dedicated TCP for FUSE/external viewers (not ON_STOP pool).
                             // Default: shared host pool for in-app reader/cover.
                             fun drain(file: com.hierynomus.smbj.share.File, fileSize: Long) {
+                                activeFile.set(file)
                                 opened = true
-                                if (closed.get()) {
-                                    runCatching { file.close() }
-                                    return
-                                }
-                                if (!sizeReady.isCompleted) sizeReady.complete(fileSize)
-                                // Blocking drain: open-file callback is not a suspend lambda.
-                                // Sticky sessions idle-ping so NAS/NAT idle timeouts do not kill the
-                                // handle during player buffer periods (external video can pause I/O
-                                // for minutes while still holding the Fuse FD).
-                                runBlocking {
-                                    suspend fun handle(op: Op) {
-                                        demand.tryReceive()
-                                        if (closed.get()) {
-                                            op.result.complete(-1)
-                                            return
-                                        }
-                                        try {
-                                            op.result.complete(
-                                                readFullyWithRetry(file, op.offset, op.buf, op.off, op.len),
-                                            )
-                                        } catch (e: Throwable) {
-                                            logcat("SmbArchive", e)
-                                            if (isShareClosedError(e) || closed.get()) {
+                                try {
+                                    if (closed.get()) {
+                                        runCatching { file.close() }
+                                        return
+                                    }
+                                    if (!sizeReady.isCompleted) sizeReady.complete(fileSize)
+                                    // Blocking drain: open-file callback is not a suspend lambda.
+                                    // Sticky sessions idle-ping so NAS/NAT idle timeouts do not kill the
+                                    // handle during player buffer periods (external video can pause I/O
+                                    // for minutes while still holding the Fuse FD).
+                                    runBlocking {
+                                        suspend fun handle(op: Op) {
+                                            demand.tryReceive()
+                                            if (closed.get()) {
+                                                op.result.complete(-1)
+                                                return
+                                            }
+                                            try {
+                                                op.result.complete(
+                                                    readFullyWithRetry(file, op.offset, op.buf, op.off, op.len),
+                                                )
+                                            } catch (e: Throwable) {
+                                                logcat("SmbArchive", e)
                                                 op.result.completeExceptionally(e)
-                                                throw e
+                                                if (isShareClosedError(e) || closed.get()) throw e
                                             }
-                                            op.result.completeExceptionally(e)
                                         }
-                                    }
-                                    if (stickySession) {
-                                        while (isActive && !closed.get()) {
-                                            val op = withTimeoutOrNull(STICKY_IDLE_PING_MS) {
-                                                ops.receiveCatching().getOrNull()
-                                            }
-                                            if (op == null) {
-                                                if (ops.isClosedForReceive || closed.get()) break
-                                                try {
-                                                    file.fileInformation.standardInformation.endOfFile
-                                                } catch (e: Throwable) {
-                                                    logcat("SmbArchive", e)
-                                                    throw e
+                                        if (stickySession) {
+                                            while (isActive && !closed.get()) {
+                                                val op = withTimeoutOrNull(STICKY_IDLE_PING_MS) {
+                                                    ops.receiveCatching().getOrNull()
                                                 }
-                                                continue
+                                                if (op == null) {
+                                                    if (ops.isClosedForReceive || closed.get()) break
+                                                    try {
+                                                        file.fileInformation.standardInformation.endOfFile
+                                                    } catch (e: Throwable) {
+                                                        logcat("SmbArchive", e)
+                                                        throw e
+                                                    }
+                                                    continue
+                                                }
+                                                handle(op)
                                             }
-                                            handle(op)
-                                        }
-                                    } else {
-                                        for (op in ops) {
-                                            handle(op)
+                                        } else {
+                                            for (op in ops) {
+                                                handle(op)
+                                            }
                                         }
                                     }
+                                } finally {
+                                    activeFile.compareAndSet(file, null)
                                 }
                             }
                             if (stickySession) {
@@ -270,6 +275,17 @@ private class KeepOpenSmbFileSource(
         ops.close()
         demand.close()
         failClosedSizeReady()
+        activeFile.getAndSet(null)?.let { file ->
+            // smbj close may itself touch a dead socket. Do it off-caller so a Fuse read
+            // timeout/onRelease remains bounded while the handle teardown interrupts I/O.
+            Thread(
+                { runCatching { file.close() } },
+                "smb-stream-close",
+            ).apply {
+                isDaemon = true
+                start()
+            }
+        }
         worker.cancel()
         scope.coroutineContext[Job]?.cancel()
     }

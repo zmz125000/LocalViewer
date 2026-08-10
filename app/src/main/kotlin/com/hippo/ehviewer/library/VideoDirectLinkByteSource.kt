@@ -35,13 +35,14 @@ class VideoDirectLinkByteSource(
     }
 
     private data class Block(val bytes: ByteArray, val length: Int)
+    private data class InFlight(val future: Future<Block?>, val speculative: Boolean)
 
     private val lock = Any()
     private val blocks = object : LinkedHashMap<Long, Block>(maxBlocks, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Block>?): Boolean =
             size > maxBlocks
     }
-    private val inFlight = HashMap<Long, Future<Block?>>()
+    private val inFlight = HashMap<Long, InFlight>()
     private val closed = AtomicBoolean(false)
     private val epoch = AtomicInteger(0)
     private val lastDemandBlock = AtomicLong(-1L)
@@ -71,12 +72,14 @@ class VideoDirectLinkByteSource(
 
         val want = minOf(len.toLong(), size - offset).toInt()
         var copied = 0
-        var firstBlock = -1L
+        val firstBlock = offset / blockSize
+        // Detect a seek before looking at in-flight work. This lets demand cancel an old
+        // speculative runway instead of waiting for its network request to finish.
+        noteDemand(firstBlock)
         while (copied < want) {
             if (closed.get()) return if (copied > 0) copied else -1
             val absolute = offset + copied
             val blockIndex = absolute / blockSize
-            if (firstBlock < 0L) firstBlock = blockIndex
             val blockStart = blockIndex * blockSize
             val inBlock = (absolute - blockStart).toInt()
             val block = getOrLoadBlock(blockIndex, forDemand = true) ?: return if (copied > 0) {
@@ -91,10 +94,7 @@ class VideoDirectLinkByteSource(
             System.arraycopy(block.bytes, inBlock, buf, off + copied, n)
             copied += n
         }
-        if (firstBlock >= 0L) {
-            noteDemand(firstBlock)
-            schedulePrefetch(firstBlock)
-        }
+        schedulePrefetch(firstBlock)
         return copied
     }
 
@@ -127,28 +127,37 @@ class VideoDirectLinkByteSource(
         while (!closed.get()) {
             var join: Future<Block?>? = null
             var runLocal: FutureTask<Block?>? = null
+            var superseded: Future<Block?>? = null
             synchronized(lock) {
                 if (closed.get()) return null
                 blocks[blockIndex]?.let { return it }
                 val existing = inFlight[blockIndex]
-                if (existing != null) {
-                    join = existing
+                if (existing != null && (!forDemand || !existing.speculative)) {
+                    join = existing.future
                 } else if (!forDemand) {
                     return null
                 } else {
-                    val task = FutureTask {
+                    if (existing != null) {
+                        // Demand owns the foreground lane. Never join a speculative future:
+                        // after a seek it may be blocked on a slow or stale prefetch request.
+                        inFlight.remove(blockIndex)
+                        superseded = existing.future
+                    }
+                    lateinit var task: FutureTask<Block?>
+                    task = FutureTask {
                         try {
                             loadBlockBytes(blockIndex, usePrefetchLane = false)
                         } finally {
                             synchronized(lock) {
-                                inFlight.remove(blockIndex)
+                                removeInFlight(blockIndex, task)
                             }
                         }
                     }
-                    inFlight[blockIndex] = task
+                    inFlight[blockIndex] = InFlight(task, speculative = false)
                     runLocal = task
                 }
             }
+            superseded?.cancel(true)
             if (runLocal != null) {
                 // Run on caller (Fuse HandlerThread) so demand is not queued behind speculative work.
                 runLocal.run()
@@ -211,7 +220,7 @@ class VideoDirectLinkByteSource(
                 if (closed.get() || myEpoch != epoch.get()) return
                 if (blocks.containsKey(blockIndex) || inFlight.containsKey(blockIndex)) continue
                 // Cap in-flight speculative work so seek cancels stay cheap.
-                if (inFlight.size >= prefetchAhead) return
+                if (inFlight.values.count { it.speculative } >= prefetchAhead) return
                 task = FutureTask {
                     try {
                         if (closed.get() || myEpoch != epoch.get()) return@FutureTask null
@@ -219,30 +228,37 @@ class VideoDirectLinkByteSource(
                         loadBlockBytes(blockIndex, usePrefetchLane = true)
                     } finally {
                         synchronized(lock) {
-                            inFlight.remove(blockIndex)
+                            removeInFlight(blockIndex, task)
                         }
                     }
                 }
-                inFlight[blockIndex] = task
+                inFlight[blockIndex] = InFlight(task, speculative = true)
             }
             try {
                 executor.execute(task)
             } catch (_: RuntimeException) {
                 synchronized(lock) {
-                    inFlight.remove(blockIndex)
+                    removeInFlight(blockIndex, task)
                 }
                 task.cancel(false)
             }
         }
     }
 
+    /** Old canceled work must not remove a newer future installed for the same block. */
+    private fun removeInFlight(blockIndex: Long, future: Future<Block?>) {
+        val current = inFlight[blockIndex]
+        if (current?.future === future) inFlight.remove(blockIndex)
+    }
+
     private fun cancelStalePrefetch(keep: Long) {
         val doomed = synchronized(lock) {
-            val drop = inFlight.filterKeys { idx ->
-                idx != keep && (idx < keep - 1L || idx > keep + prefetchAhead)
+            val drop = inFlight.filter { (idx, load) ->
+                load.speculative && idx != keep &&
+                    (idx < keep - 1L || idx > keep + prefetchAhead)
             }
             drop.keys.forEach { inFlight.remove(it) }
-            drop.values.toList()
+            drop.values.map { it.future }
         }
         for (f in doomed) f.cancel(true)
     }
@@ -251,7 +267,7 @@ class VideoDirectLinkByteSource(
         if (!closed.compareAndSet(false, true)) return
         epoch.incrementAndGet()
         val pending = synchronized(lock) {
-            val snapshot = inFlight.values.toList()
+            val snapshot = inFlight.values.map { it.future }
             inFlight.clear()
             blocks.clear()
             snapshot
