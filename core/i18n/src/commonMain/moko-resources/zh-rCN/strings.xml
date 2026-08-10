@@ -63,6 +63,11 @@
     <string name="browse_view_mode">视图模式</string>
     <string name="browse_folder_thumbs">文件夹缩略图</string>
     <string name="settings_browse_folder_thumbs_summary">在浏览中为文件夹显示封面缩略图（复用画廊封面的缩略图缓存）。</string>
+    <string name="settings_use_media3_player">使用 Media3 播放器</string>
+    <string name="settings_use_media3_player_summary">开启：单击应用内播放，长按外部应用。关闭：单击外部应用，长按应用内播放。</string>
+    <string name="settings_default_video_player">默认视频播放器</string>
+    <string name="settings_default_video_player_always_ask">每次询问</string>
+    <string name="settings_default_video_player_none">未找到视频应用</string>
     <string name="browse_menu_page_count">页数</string>
     <string name="browse_menu_reading_progress">阅读进度</string>
     <string name="browse_menu_small_galleries">小图库</string>
@@ -687,7 +692,7 @@
     <string name="pref_reader_lib_direct_bitmap_summary">将 JXL / JXR / PQ-AVIF 直接解码为 Bitmap，跳过 Ultra HDR JPEG 转换。</string>
     <string name="pref_reader_hdr_display">HDR 显示</string>
     <string name="pref_reader_hdr_display_summary">在 HDR 屏幕上为 Ultra HDR / 增益图页面启用窗口 HDR 色彩模式。HDR 文件的转换与解码始终进行；关闭后仅以 SDR 基底显示。</string>
-    <string name="pref_reader_oppo_proxdr">OPPO ProXDR HEIC</string>
+    <string name="pref_reader_oppo_proxdr">OPPO ProXDR (HEIC)</string>
     <string name="pref_reader_oppo_proxdr_summary">HEIC 解码后附加一加/OPPO/realme ProXDR 增益图（与 Ultra HDR 相同的平台 Gainmap 呈现，不重新编码）。需要 Android 14+。实验性。</string>
     <string name="pref_reader_advanced_color">高级色彩（广色域 / 高位深）</string>
     <string name="pref_reader_advanced_color_summary">在广色域屏幕上启用窗口广色域模式，并优先使用更高精度位图。会占用更多 GPU 与内存。HDR 页面仍优先使用 HDR 窗口模式。</string>

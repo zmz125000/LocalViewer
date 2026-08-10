@@ -520,7 +520,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
-    /** Tap video → in-app Media3 player. */
+    /** In-app Media3 player. */
     fun playVideo(fileName: String) {
         val src = source ?: return
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
@@ -541,6 +541,16 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 )
             }
         }
+    }
+
+    /** Primary action: Media3 when [Settings.useMedia3Player] is on, else external. */
+    fun openVideoPrimary(fileName: String) {
+        if (Settings.useMedia3Player.value) playVideo(fileName) else openExternalFile(fileName)
+    }
+
+    /** Long-press: opposite of [openVideoPrimary]. */
+    fun openVideoSecondary(fileName: String) {
+        if (Settings.useMedia3Player.value) openExternalFile(fileName) else playVideo(fileName)
     }
 
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery) {
@@ -871,8 +881,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
-                                        onClick = { playVideo(video.fileName) },
-                                        onLongClick = { openExternalFile(video.fileName) },
+                                        onClick = { openVideoPrimary(video.fileName) },
+                                        onLongClick = { openVideoSecondary(video.fileName) },
                                     )
                                 }
                             }
@@ -953,8 +963,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
-                                        onClick = { playVideo(video.fileName) },
-                                        onLongClick = { openExternalFile(video.fileName) },
+                                        onClick = { openVideoPrimary(video.fileName) },
+                                        onLongClick = { openVideoSecondary(video.fileName) },
                                     )
                                 }
                             }

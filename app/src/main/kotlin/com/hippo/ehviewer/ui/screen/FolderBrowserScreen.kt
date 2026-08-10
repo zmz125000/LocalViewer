@@ -410,7 +410,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
-    /** Tap video → in-app Media3 player. */
+    /** In-app Media3 player. */
     fun playVideo(path: okio.Path) {
         val actualName = path.name
         launchIO {
@@ -430,6 +430,16 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 )
             }
         }
+    }
+
+    /** Primary action: Media3 when [Settings.useMedia3Player] is on, else external. */
+    fun openVideoPrimary(path: okio.Path) {
+        if (Settings.useMedia3Player.value) playVideo(path) else openExternalFile(path)
+    }
+
+    /** Long-press: opposite of [openVideoPrimary]. */
+    fun openVideoSecondary(path: okio.Path) {
+        if (Settings.useMedia3Player.value) openExternalFile(path) else playVideo(path)
     }
 
     Scaffold(
@@ -661,8 +671,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 items(videos, key = { "v-${it.path}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
-                                        onClick = { playVideo(video.path) },
-                                        onLongClick = { openExternalFile(video.path) },
+                                        onClick = { openVideoPrimary(video.path) },
+                                        onLongClick = { openVideoSecondary(video.path) },
                                     )
                                 }
                             }
@@ -745,8 +755,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 items(videos, key = { "v-${it.path}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
-                                        onClick = { playVideo(video.path) },
-                                        onLongClick = { openExternalFile(video.path) },
+                                        onClick = { openVideoPrimary(video.path) },
+                                        onLongClick = { openVideoSecondary(video.path) },
                                     )
                                 }
                             }

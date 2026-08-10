@@ -29,6 +29,38 @@
         android:name="android.permission.ACCESS_MEDIA_LOCATION"
         tools:ignore="PhotoAndVideoPolicy" />
 
+    <!--
+      Package visibility (API 30+): without this, queryIntentActivities for video
+      players returns empty → Settings “Default video player” shows no apps.
+      Matching VIEW intents are still visible for createChooser; listing needs <queries>.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="video/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data
+                android:mimeType="video/*"
+                android:scheme="content" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data
+                android:mimeType="video/*"
+                android:scheme="file" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="video/mp4" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="video/x-matroska" />
+        </intent>
+    </queries>
+
     <application
         android:name=".EhApplication"
         android:allowBackup="true"
