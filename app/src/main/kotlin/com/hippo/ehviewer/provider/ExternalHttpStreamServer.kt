@@ -630,6 +630,7 @@ object ExternalHttpStreamServer {
     private const val MAX_REQUEST_LINE_LENGTH = 4096
     private const val MAX_HEADER_LINE_LENGTH = 8192
     private const val MAX_HEADER_COUNT = 64
+
     /** Idle timeout while reading request line + headers only. */
     private const val REQUEST_HEADER_TIMEOUT_MS = 15_000
 }
