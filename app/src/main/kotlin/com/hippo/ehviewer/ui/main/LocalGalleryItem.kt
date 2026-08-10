@@ -415,34 +415,41 @@ fun HistoryGridItem(
                     }
                 }
             }
-            // Type badge left of caption (same layout as Library favourite network folder cells).
+            // Fixed name band (same as before): caption sits on the bottom.
+            // Icon is CenterVertically with the text only — not the whole name box.
             val labelIconSize = with(LocalDensity.current) {
                 MaterialTheme.typography.labelMedium.fontSize.toDp()
             }
-            Row(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(nameHeight)
-                    .padding(horizontal = namePadH)
-                    .padding(bottom = namePadBottom),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(horizontal = namePadH),
+                contentAlignment = Alignment.BottomStart,
             ) {
-                Icon(
-                    imageVector = placeholderIcon,
-                    contentDescription = null,
+                Row(
                     modifier = Modifier
-                        .padding(end = 4.dp)
-                        .size(labelIconSize),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = info.title.orEmpty(),
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Start,
-                    modifier = Modifier.weight(1f),
-                )
+                        .fillMaxWidth()
+                        .padding(bottom = namePadBottom),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = placeholderIcon,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(end = 4.dp)
+                            .size(labelIconSize),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = info.title.orEmpty(),
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
     }
