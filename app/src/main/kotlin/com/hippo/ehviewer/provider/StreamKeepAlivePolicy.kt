@@ -7,13 +7,15 @@ import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.webdav.WebDavClient
 
 /**
- * Battery vs reliability knobs for external Fuse streaming.
+ * Battery vs reliability knobs for external Fuse **and** loopback HTTP streaming.
  *
- * Limited (default): 20 min idle budgets + drop sticky transports on screen off.
+ * Limited (default): ~20 min idle session/token budget (activity-based, not a hard clock)
+ * + drop sticky transports on screen off / HTTP idle; short FGS grace after last activity.
  * Unlimited (Advanced): long idle + keep sockets across screen off.
  *
- * Screen-off drop is **resumable**: proxy FD and token stay; next [onRead] reconnects
- * SMB sticky / WebDAV Range (may rebuffer a few seconds on 4K).
+ * Drop is **resumable**: streamdoc tokens / HTTP sessions stay; next proxy read or HTTP
+ * GET reconnects SMB sticky / WebDAV Range (may rebuffer a few seconds on 4K).
+ * FGS / wake lock track **live** FDs or HTTP body transfers only — not idle sessions.
  */
 object StreamKeepAlivePolicy {
     /** Idle token age when limited. */
@@ -57,8 +59,11 @@ object StreamKeepAlivePolicy {
     }
 
     fun onScreenOn(context: Context) {
-        // Re-arm FGS / wake lock if a player still holds a network proxy FD.
-        if (StreamDocumentRegistry.networkOpenCount() > 0) {
+        // Re-arm FGS / wake lock only if something is actively reading (FD or HTTP body).
+        // Idle sessions alone do not restart FGS — next player Range starts it again.
+        if (StreamDocumentRegistry.networkOpenCount() > 0 ||
+            ExternalHttpStreamServer.networkActivityCount() > 0
+        ) {
             StreamKeepAliveService.start(context)
         }
     }

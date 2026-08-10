@@ -53,6 +53,12 @@
         </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />
+            <data
+                android:mimeType="video/*"
+                android:scheme="http" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="video/mp4" />
         </intent>
         <intent>
@@ -186,7 +192,7 @@
                 <action android:name="android.net.VpnService" />
             </intent-filter>
         </service>
-        <!-- Range-backed stream for external viewers (PDF / video open-with). -->
+        <!-- Range-backed stream for external viewers (PDF / non-video open-with). -->
         <provider
             android:name="com.hippo.ehviewer.provider.StreamDocumentProvider"
             android:authorities="${applicationId}.streamdoc"

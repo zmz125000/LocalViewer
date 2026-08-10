@@ -47,10 +47,13 @@ class StreamKeepAliveService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        // startForegroundService() is asynchronous: a very short-lived external FD may
-        // already be released before this callback runs. Preserve the FGS reopen grace,
-        // but only keep the CPU awake while a proxy is actually open.
-        if (StreamDocumentRegistry.networkOpenCount() > 0) {
+        // startForegroundService() is asynchronous: a very short-lived external FD / HTTP
+        // transfer may already be done before this callback runs. Preserve the FGS reopen
+        // grace, but only keep the CPU awake while a proxy FD or HTTP body is live —
+        // idle HTTP sessions do not count (battery-friendly, still resumable).
+        if (StreamDocumentRegistry.networkOpenCount() > 0 ||
+            ExternalHttpStreamServer.networkActivityCount() > 0
+        ) {
             acquireWakeLock()
         } else {
             releaseWakeLock()
@@ -61,7 +64,8 @@ class StreamKeepAliveService : Service() {
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        val stillOpen = StreamDocumentRegistry.networkOpenCount()
+        val stillOpen = StreamDocumentRegistry.networkOpenCount() +
+            ExternalHttpStreamServer.networkActivityCount()
         logcat("StreamKeepAlive") {
             "Foreground service timed out (type=$fgsType) openFds=$stillOpen"
         }

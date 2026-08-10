@@ -103,6 +103,13 @@ object Settings : DataStorePreferences(null) {
     val defaultVideoPlayerComponent = stringPref("default_video_player_component", "")
 
     /**
+     * When true, external HTTP video open exposes **all** videos and subtitle files in the
+     * current directory (playlist / next-prev friendly). When false (default), only the
+     * opened video plus matching sidecar subs are published. Settings → General.
+     */
+    val externalVideoAccessDir = boolPref("external_video_access_dir", false)
+
+    /**
      * When true, folder-view shows folder galleries below [browseSmallGalleryMinPages].
      * Default false: UI hides those rows (scanner listing is unchanged).
      */

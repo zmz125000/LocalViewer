@@ -87,7 +87,10 @@ object DefaultVideoPlayer {
     fun videoViewIntent(uri: Uri, mimeType: String): Intent = Intent(Intent.ACTION_VIEW).apply {
         setDataAndType(uri, mimeType)
         addCategory(Intent.CATEGORY_DEFAULT)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        // content/file grants only — http(s) loopback streams need no URI permission.
+        when (uri.scheme?.lowercase()) {
+            "content", "file" -> addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
@@ -119,6 +122,10 @@ object DefaultVideoPlayer {
             out += query(
                 pm,
                 videoViewIntent(Uri.parse("file:///storage/emulated/0/DCIM/probe.mp4"), mime),
+            )
+            out += query(
+                pm,
+                videoViewIntent(Uri.parse("http://127.0.0.1:1/probe.mp4"), mime),
             )
         }
         return out
