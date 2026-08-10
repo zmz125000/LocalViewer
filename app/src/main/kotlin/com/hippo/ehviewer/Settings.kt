@@ -340,6 +340,14 @@ object Settings : DataStorePreferences(null) {
     val readerHdrDisplay = boolPref("pref_reader_hdr_display", true)
 
     /**
+     * OPPO / OnePlus / realme **ProXDR** HEIC: after platform HEIC decode, attach
+     * [android.graphics.Gainmap] from the proprietary trailer (same present path as
+     * Ultra HDR / gain-map AVIF — **no** UHDR JPEG convert). Off = SDR base only.
+     * Experimental — boost math is reverse-engineered from OEM samples.
+     */
+    val readerOppoProxdr = boolPref("pref_reader_oppo_proxdr", false)
+
+    /**
      * Platform high bit depth for **PNG/APNG** under [readerAdvancedColor].
      *
      * When on **and** advanced color is on: bypass Coil hardware-direct for high-depth

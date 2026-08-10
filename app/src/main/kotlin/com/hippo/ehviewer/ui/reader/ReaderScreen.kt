@@ -427,6 +427,8 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 readerAdvancedColor.changesFlow(),
                 // Platform HBD (nested under WCG): software F16 + AHB wrap path.
                 readerPlatformHighDepth.changesFlow(),
+                // ProXDR HEIC → UHDR convert path changes display file.
+                readerOppoProxdr.changesFlow(),
                 // readerHdrDisplay only toggles window COLOR_MODE_HDR — no page restart.
             ).collect {
                 pageLoader.restart()

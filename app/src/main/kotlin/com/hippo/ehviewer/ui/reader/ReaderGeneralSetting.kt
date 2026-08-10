@@ -28,6 +28,11 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         title = stringResource(id = R.string.pref_reader_hdr_display),
         field = Settings.readerHdrDisplay.asMutableState(),
     )
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_oppo_proxdr),
+        summary = stringResource(id = R.string.pref_reader_oppo_proxdr_summary),
+        field = Settings.readerOppoProxdr.asMutableState(),
+    )
     val advancedColor = Settings.readerAdvancedColor.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_advanced_color),

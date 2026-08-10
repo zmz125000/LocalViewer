@@ -23,7 +23,15 @@ object DisplaySource {
     }
 
     private suspend fun ensureReadyPath(src: PathSource): PathSource {
-        val hint = src.source.name
+        // Prefer real filename for HEIC/ProXDR sniff; SAF document ids sometimes lack an ext.
+        val hint = src.source.name.let { name ->
+            if (name.contains('.')) {
+                name
+            } else {
+                val t = src.type.trimStart('.')
+                if (t.isNotEmpty()) "$name.$t" else name
+            }
+        }
         val ready = HdrConvertCache.ensureCoilReady(src.source, hint)
         if (ready.toString() == src.source.toString()) return src
         val outer = src

@@ -58,7 +58,9 @@ import com.hippo.ehviewer.image.hdr.BitDepthClass
 import com.hippo.ehviewer.image.hdr.HdrGainmapConvert
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
 import com.hippo.ehviewer.image.hdr.LibDirectResult
+import com.hippo.ehviewer.image.hdr.OppoProxdr
 import com.hippo.ehviewer.image.hdr.PlatformBitDepth
+import com.hippo.ehviewer.image.hdr.isHeicImageExtension
 import com.hippo.ehviewer.image.hdr.shouldPlatformHighDepthDecode
 import com.hippo.ehviewer.jni.isGif
 import com.hippo.ehviewer.jni.mmap
@@ -200,6 +202,7 @@ class Image private constructor(
         /**
          * Cheap gain-map header scan (no StillRoute / lib probes). False negatives fall
          * through to post-decode [Bitmap.hasGainmap] re-ORIGIN.
+         * ProXDR HEIC: trailer is after mdat — use [OppoProxdr.looksLike] tail sniff.
          */
         private fun sourceLooksLikeHdrGainMap(src: Either<ByteBufferSource, PathSource>): Boolean {
             if (!isAtLeastU) return false
@@ -211,13 +214,28 @@ class Image private constructor(
                         if (n <= 0) return@runCatching false
                         val bytes = ByteArray(n)
                         dup.get(bytes)
-                        bytes.containsHdrGainMapMarker(n)
+                        if (bytes.containsHdrGainMapMarker(n)) return@runCatching true
+                        // Full buffer for ProXDR (archive pages keep whole file in RAM).
+                        if (Settings.readerOppoProxdr.value) {
+                            val full = src.value.source.asReadOnlyBuffer()
+                            val all = ByteArray(full.remaining())
+                            full.get(all)
+                            return@runCatching OppoProxdr.looksLike(all)
+                        }
+                        false
                     }
                     is Either.Right -> {
                         val path = src.value.source
                         val ext = FileUtils.getExtensionFromFilename(path.name)?.lowercase()
+                            ?: FileUtils.getExtensionFromFilename(src.value.type)?.lowercase()
                         // Converted UHDR and native Ultra HDR are JPEG/AVIF/HEIC family.
                         if (ext != null && ext !in GAINMAP_EXTS) return@runCatching false
+                        if (Settings.readerOppoProxdr.value &&
+                            (ext == null || isHeicImageExtension(ext)) &&
+                            OppoProxdr.looksLike(path)
+                        ) {
+                            return@runCatching true
+                        }
                         path.read {
                             val bytes = ByteArray(GAINMAP_SNIFF_BYTES)
                             val n = readAtMostTo(bytes)
@@ -226,6 +244,31 @@ class Image private constructor(
                     }
                 }
             }.getOrDefault(false)
+        }
+
+        /** OPPO ProXDR: attach trailer gain map after Coil HEIC base decode (no UHDR convert). */
+        private fun tryAttachOppoProxdr(
+            src: Either<ByteBufferSource, PathSource>,
+            image: CoilImage,
+        ): CoilImage {
+            if (!isAtLeastU || !Settings.readerOppoProxdr.value) return image
+            val bi = image.asBitmapImage() ?: return image
+            if (bi.detectGainmap()) return image // already native gain-map
+            val base = bi.bitmap
+            val withMap = when (src) {
+                is Either.Right -> OppoProxdr.attachOrCopy(base, src.value.source)
+                is Either.Left -> {
+                    val dup = src.value.source.asReadOnlyBuffer()
+                    if (dup.remaining() <= 0) null
+                    else {
+                        val bytes = ByteArray(dup.remaining())
+                        dup.get(bytes)
+                        OppoProxdr.attachOrCopy(base, bytes)
+                    }
+                }
+            } ?: return image
+            val wrapped = withMap.asImage()
+            return BitmapImageWithExtraInfo(image = wrapped, hasGainmap = true)
         }
 
         private fun CoilImage.asBitmapImage(): BitmapImage? = when (this) {
@@ -416,6 +459,9 @@ class Image private constructor(
                     image = runDecode(DecodeSizeType.ORIGIN, hdr = true, hbd = false)
                 }
             }
+
+            // ProXDR: Coil only sees the SDR HEIC base — attach OEM gain map (platform path).
+            image = tryAttachOppoProxdr(this, image)
 
             if (platformHbd && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 image = image.presentPlatformHbdLikeLibDirect()
