@@ -734,7 +734,7 @@
     <string name="pref_reader_lib_direct_bitmap_summary">Decode to Bitmap and skip Ultra HDR JPEG conversion for advanced formats.</string>
     <string name="pref_reader_hdr_display">HDR display</string>
     <string name="pref_reader_hdr_display_summary">On HDR screens, enable window HDR color mode for Ultra HDR / gain-map pages. Conversion and decoding of HDR files always run; turn off to present the SDR base only.</string>
-    <string name="pref_reader_oppo_proxdr">OPPO ProXDR HEIC</string>
+    <string name="pref_reader_oppo_proxdr">OPPO ProXDR (HEIC)</string>
     <string name="pref_reader_oppo_proxdr_summary">Attach OnePlus/OPPO/realme ProXDR gain maps after HEIC decode (same platform Gainmap path as Ultra HDR; no re-encode). Requires Android 14+. Experimental.</string>
     <string name="pref_reader_advanced_color">Advanced color (WCG / high bit depth)</string>
     <string name="pref_reader_advanced_color_summary">On wide-gamut displays, enable window wide color mode and prefer higher-precision bitmaps. Uses more GPU and memory. HDR mode still takes priority for HDR pages.</string>
