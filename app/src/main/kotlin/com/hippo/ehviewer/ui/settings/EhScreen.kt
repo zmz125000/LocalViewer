@@ -153,6 +153,11 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                     }
                 }
             }
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_external_video_access_dir),
+                summary = stringResource(id = R.string.settings_external_video_access_dir_summary),
+                state = Settings.externalVideoAccessDir.asMutableState(),
+            )
             val showSmallGalleries = Settings.browseShowSmallGalleries.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_browse_menu_small_galleries),

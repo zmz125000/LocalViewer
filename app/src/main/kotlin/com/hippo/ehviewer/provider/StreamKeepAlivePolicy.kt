@@ -57,8 +57,10 @@ object StreamKeepAlivePolicy {
     }
 
     fun onScreenOn(context: Context) {
-        // Re-arm FGS / wake lock if a player still holds a network proxy FD.
-        if (StreamDocumentRegistry.networkOpenCount() > 0) {
+        // Re-arm FGS / wake lock if a player still holds a network proxy FD or HTTP stream.
+        if (StreamDocumentRegistry.networkOpenCount() > 0 ||
+            ExternalHttpStreamServer.networkActivityCount() > 0
+        ) {
             StreamKeepAliveService.start(context)
         }
     }

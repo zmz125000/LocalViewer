@@ -174,18 +174,49 @@ class StreamDocumentProvider : ContentProvider() {
 
         fun authority(): String = "${BuildConfig.APPLICATION_ID}.streamdoc"
 
-        fun uriFor(token: String): Uri = Uri.Builder()
-            .scheme("content")
-            .authority(authority())
-            .appendPath(PATH_SEGMENT)
-            .appendPath(token)
-            .build()
+        /**
+         * Grantable streamdoc URI.
+         *
+         * Shape: `content://…/streamdoc/{token}` or `…/streamdoc/{token}/{displayName}`.
+         *
+         * [token] is the registry key. Optional [displayName] is the last path segment so
+         * external apps show the real file name (many use the URI tail, not
+         * [OpenableColumns.DISPLAY_NAME]). Lookup still uses [token] only — one document
+         * per token. External **video** uses [ExternalHttpStreamServer] for sidecar subs.
+         */
+        fun uriFor(token: String, displayName: String? = null): Uri {
+            val builder = Uri.Builder()
+                .scheme("content")
+                .authority(authority())
+                .appendPath(PATH_SEGMENT)
+                .appendPath(token)
+            val name = displayName?.let { sanitizeDisplayNameForPath(it) }
+            if (!name.isNullOrEmpty()) {
+                builder.appendPath(name)
+            }
+            return builder.build()
+        }
 
         fun tokenOf(uri: Uri): String? {
             val segs = uri.pathSegments
+            // streamdoc/{token} or streamdoc/{token}/{displayName}
             if (segs.size >= 2 && segs[0] == PATH_SEGMENT) return segs[1]
             if (segs.size == 1) return segs[0]
             return null
+        }
+
+        /** Single path segment; keep extension for type sniffing. */
+        fun sanitizeDisplayNameForPath(displayName: String): String {
+            val base = displayName
+                .replace('\\', '/')
+                .substringAfterLast('/')
+                .trim()
+                .ifEmpty { return "file" }
+            return base
+                .replace('/', '_')
+                .replace('\u0000', '_')
+                .take(180)
+                .ifEmpty { "file" }
         }
     }
 }

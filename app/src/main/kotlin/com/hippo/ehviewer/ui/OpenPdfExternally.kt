@@ -83,7 +83,7 @@ object OpenPdfExternally {
         displayName: String,
         networkStream: Boolean = false,
     ) {
-        val uri = StreamDocumentProvider.uriFor(token)
+        val uri = StreamDocumentProvider.uriFor(token, displayName)
         try {
             if (networkStream) requestStreamNotificationPermission(context)
             launchView(context, uri, displayName)
@@ -179,6 +179,7 @@ object OpenPdfExternally {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             // Chooser may run in a new task when not started from an Activity base.
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(Intent.EXTRA_TITLE, displayName)
             // Without ClipData, FLAG_GRANT_READ_URI_PERMISSION is often ignored for the
             // app the user picks in createChooser (streamdoc grant would not reach Drive).
             clipData = ClipData.newRawUri(displayName, uri)

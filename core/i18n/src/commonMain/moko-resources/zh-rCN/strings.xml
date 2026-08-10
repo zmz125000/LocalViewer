@@ -68,6 +68,8 @@
     <string name="settings_default_video_player">默认视频播放器</string>
     <string name="settings_default_video_player_always_ask">每次询问</string>
     <string name="settings_default_video_player_none">未找到视频应用</string>
+    <string name="settings_external_video_access_dir">用视频播放器打开文件夹</string>
+    <string name="settings_external_video_access_dir_summary">关闭：仅打开当前视频及匹配字幕。开启：向播放器暴露整个文件夹（全部视频与字幕，便于播放列表/上下集）。</string>
     <string name="browse_menu_page_count">页数</string>
     <string name="browse_menu_reading_progress">阅读进度</string>
     <string name="browse_menu_small_galleries">小图库</string>

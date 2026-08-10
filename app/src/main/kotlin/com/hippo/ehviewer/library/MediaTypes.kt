@@ -201,6 +201,11 @@ fun mimeTypeForFileName(name: String): String {
         }
         else -> when (ext) {
             "txt" -> "text/plain"
+            "srt" -> "application/x-subrip"
+            "ass", "ssa" -> "text/x-ssa"
+            "vtt" -> "text/vtt"
+            "smi", "sami" -> "application/smil+xml"
+            "sub" -> "text/x-microdvd"
             "json" -> "application/json"
             "xml" -> "application/xml"
             "html", "htm" -> "text/html"

@@ -265,7 +265,11 @@ private class KeepOpenSmbFileSource(
                 result.await()
             }
         } catch (e: Throwable) {
-            if (closed.get()) return -1
+            // Prefetch cancel / proxy onRelease interrupt in-flight runBlocking — not a fault.
+            if (closed.get() || e is InterruptedException || e.cause is InterruptedException) {
+                Thread.interrupted() // clear flag so pooled workers stay usable
+                return -1
+            }
             logcat("SmbArchive", e)
             -1
         }
