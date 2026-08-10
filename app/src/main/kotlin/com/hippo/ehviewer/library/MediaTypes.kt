@@ -138,7 +138,7 @@ fun isArchiveFileName(name: String): Boolean {
 
 /**
  * Common container formats treated as playable video in folder browse.
- * Opened externally via StreamDocumentProvider (no in-app player).
+ * Tap → in-app Media3 player; long-press → external app via StreamDocumentProvider.
  */
 val VIDEO_EXTENSIONS = setOf(
     "mp4", "m4v", "mkv", "webm", "avi", "mov", "wmv", "flv",

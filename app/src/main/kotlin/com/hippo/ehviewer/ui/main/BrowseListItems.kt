@@ -221,7 +221,10 @@ fun BrowseVideoRow(
     name: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Long-press → open in external app; null keeps click-only. */
+    onLongClick: (() -> Unit)? = null,
 ) {
+    val haptic = LocalHapticFeedback.current
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = { Text(stringResource(R.string.browse_video)) },
@@ -232,7 +235,21 @@ fun BrowseVideoRow(
                 tint = MaterialTheme.colorScheme.primary,
             )
         },
-        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = onClick,
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick()
+                        },
+                    )
+                } else {
+                    Modifier.clickable(onClick = onClick)
+                },
+            ),
     )
 }
 
@@ -454,10 +471,13 @@ fun BrowseVideoGridItem(
     name: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Long-press → open in external app; defaults to [onClick]. */
+    onLongClick: (() -> Unit)? = null,
 ) {
     BrowseGridCell(
         name = name,
         onClick = onClick,
+        onLongClick = onLongClick ?: onClick,
         modifier = modifier,
         thumb = {
             Box(
@@ -507,8 +527,9 @@ private fun BrowseGridCell(
     onClick: () -> Unit,
     thumb: @Composable () -> Unit,
     modifier: Modifier = Modifier,
-    onLongClick: () -> Unit = onClick,
+    onLongClick: (() -> Unit)? = null,
 ) {
+    val longClick = onLongClick ?: onClick
     // Same caption metrics as Library grid (GalleryGridDefaults).
     val nameHeight = GalleryGridDefaults.nameHeight()
     val namePadH = GalleryGridDefaults.namePaddingH()
@@ -516,7 +537,7 @@ private fun BrowseGridCell(
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
-        onLongClick = onLongClick,
+        onLongClick = longClick,
     ) {
         Column(Modifier.fillMaxWidth()) {
             Box(

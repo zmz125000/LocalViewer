@@ -113,6 +113,14 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".ui.VideoPlayerActivity"
+            android:colorMode="hdr"
+            android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize|keyboardHidden"
+            android:exported="false"
+            android:supportsPictureInPicture="false"
+            android:theme="@style/AppTheme.VideoPlayer" />
+
+        <activity
             android:name=".shortcuts.ShortcutsActivity"
             android:excludeFromRecents="true"
             android:launchMode="singleTask"

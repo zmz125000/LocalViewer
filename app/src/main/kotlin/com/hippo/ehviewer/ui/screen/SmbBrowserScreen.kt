@@ -519,6 +519,29 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    /** Tap video → in-app Media3 player. */
+    fun playVideo(fileName: String) {
+        val src = source ?: return
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        launchIO {
+            recordCurrentBrowseFolderHistory(src.id)
+            try {
+                OpenFileExternally.playSmb(
+                    context = context,
+                    sourceId = src.id,
+                    remoteRelativeFile = remote,
+                    displayName = actualName,
+                    mimeType = mimeTypeForFileName(actualName),
+                )
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery) {
         val src = source ?: return
         // fileName is only the basename from the current listing — join with the folder we are in.
@@ -851,7 +874,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
-                                        onClick = { openExternalFile(video.fileName) },
+                                        onClick = { playVideo(video.fileName) },
+                                        onLongClick = { openExternalFile(video.fileName) },
                                     )
                                 }
                             }
@@ -932,7 +956,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
-                                        onClick = { openExternalFile(video.fileName) },
+                                        onClick = { playVideo(video.fileName) },
+                                        onLongClick = { openExternalFile(video.fileName) },
                                     )
                                 }
                             }

@@ -28,8 +28,10 @@ import java.io.IOException
 import okio.Path.Companion.toPath
 
 /**
- * Open a non-gallery file (video, regular file, etc.) in an external app via
- * [StreamDocumentProvider] — same grantable URI path as [OpenPdfExternally].
+ * Open a non-gallery file (video, regular file, etc.) via [StreamDocumentProvider].
+ *
+ * - [openLocal]/[openSmb]/[openWebDav] — external app chooser (long-press video).
+ * - [playLocal]/[playSmb]/[playWebDav] — in-app Media3 player (tap video).
  */
 object OpenFileExternally {
     suspend fun openLocal(
@@ -38,6 +40,69 @@ object OpenFileExternally {
         displayName: String = File(pathStr).name,
         mimeType: String = mimeTypeForFileName(displayName),
     ) {
+        val token = registerLocal(pathStr, displayName, mimeType)
+        launchRegistered(context, token, displayName, mimeType, networkStream = false, internalPlayer = false)
+    }
+
+    suspend fun playLocal(
+        context: Context,
+        pathStr: String,
+        displayName: String = File(pathStr).name,
+        mimeType: String = mimeTypeForFileName(displayName),
+    ) {
+        val token = registerLocal(pathStr, displayName, mimeType)
+        launchRegistered(context, token, displayName, mimeType, networkStream = false, internalPlayer = true)
+    }
+
+    suspend fun openSmb(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        mimeType: String = mimeTypeForFileName(displayName),
+    ) {
+        val token = registerSmb(sourceId, remoteRelativeFile, displayName, mimeType)
+        launchRegistered(context, token, displayName, mimeType, networkStream = true, internalPlayer = false)
+    }
+
+    suspend fun playSmb(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        mimeType: String = mimeTypeForFileName(displayName),
+    ) {
+        val token = registerSmb(sourceId, remoteRelativeFile, displayName, mimeType)
+        launchRegistered(context, token, displayName, mimeType, networkStream = true, internalPlayer = true)
+    }
+
+    suspend fun openWebDav(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        mimeType: String = mimeTypeForFileName(displayName),
+    ) {
+        val token = registerWebDav(sourceId, remoteRelativeFile, displayName, mimeType)
+        launchRegistered(context, token, displayName, mimeType, networkStream = true, internalPlayer = false)
+    }
+
+    suspend fun playWebDav(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        mimeType: String = mimeTypeForFileName(displayName),
+    ) {
+        val token = registerWebDav(sourceId, remoteRelativeFile, displayName, mimeType)
+        launchRegistered(context, token, displayName, mimeType, networkStream = true, internalPlayer = true)
+    }
+
+    private suspend fun registerLocal(
+        pathStr: String,
+        displayName: String,
+        mimeType: String,
+    ): String {
         val openPfd: () -> ParcelFileDescriptor = {
             val file = File(pathStr)
             if (pathStr.startsWith('/') && file.isFile) {
@@ -46,7 +111,7 @@ object OpenFileExternally {
                 pathStr.toPath().openFileDescriptor("r")
             }
         }
-        val token = withIOContext {
+        return withIOContext {
             val sizeBytes = openPfd().use { pfd ->
                 pfd.statSize.takeIf { it > 0L } ?: error("empty file")
             }
@@ -57,16 +122,14 @@ object OpenFileExternally {
                 openFileDescriptor = openPfd,
             )
         }
-        launchRegistered(context, token, displayName, mimeType)
     }
 
-    suspend fun openSmb(
-        context: Context,
+    private suspend fun registerSmb(
         sourceId: Long,
         remoteRelativeFile: String,
-        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
-        mimeType: String = mimeTypeForFileName(displayName),
-    ) {
+        displayName: String,
+        mimeType: String,
+    ): String {
         val source = withIOContext {
             SmbRepository.load(sourceId) ?: throw IOException("SMB source missing")
         }
@@ -76,7 +139,7 @@ object OpenFileExternally {
                 ?.takeIf { it > 0L }
                 ?: error("empty or unreachable file")
         }
-        val token = StreamDocumentRegistry.register(
+        return StreamDocumentRegistry.register(
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
@@ -97,16 +160,14 @@ object OpenFileExternally {
                 )
             },
         )
-        launchRegistered(context, token, displayName, mimeType, networkStream = true)
     }
 
-    suspend fun openWebDav(
-        context: Context,
+    private suspend fun registerWebDav(
         sourceId: Long,
         remoteRelativeFile: String,
-        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
-        mimeType: String = mimeTypeForFileName(displayName),
-    ) {
+        displayName: String,
+        mimeType: String,
+    ): String {
         val source = withIOContext {
             WebDavRepository.load(sourceId) ?: throw IOException("WebDAV source missing")
         }
@@ -119,7 +180,7 @@ object OpenFileExternally {
                 sticky = true,
             )?.takeIf { it > 0L } ?: error("empty or unreachable file")
         }
-        val token = StreamDocumentRegistry.register(
+        return StreamDocumentRegistry.register(
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
@@ -137,7 +198,6 @@ object OpenFileExternally {
                 )
             },
         )
-        launchRegistered(context, token, displayName, mimeType, networkStream = true)
     }
 
     private suspend fun launchRegistered(
@@ -145,15 +205,41 @@ object OpenFileExternally {
         token: String,
         displayName: String,
         mimeType: String,
-        networkStream: Boolean = false,
+        networkStream: Boolean,
+        internalPlayer: Boolean,
     ) {
         val uri = StreamDocumentProvider.uriFor(token)
         try {
             if (networkStream) requestStreamNotificationPermission(context)
-            launchView(context, uri, displayName, mimeType)
+            if (internalPlayer) {
+                launchInternalPlayer(context, uri, displayName, mimeType, token)
+            } else {
+                launchView(context, uri, displayName, mimeType)
+            }
         } catch (e: Throwable) {
             StreamDocumentRegistry.remove(token)
             throw e
+        }
+    }
+
+    private suspend fun launchInternalPlayer(
+        context: Context,
+        uri: Uri,
+        displayName: String,
+        mimeType: String,
+        token: String,
+    ) {
+        val intent = VideoPlayerActivity.intent(
+            context = context,
+            uri = uri,
+            title = displayName,
+            mimeType = mimeType,
+            streamToken = token,
+        ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        withUIContext {
+            context.startActivity(intent)
         }
     }
 

@@ -248,6 +248,10 @@ dependencies {
 
     implementation(libs.telephoto.zoomable)
 
+    // Built-in video player (PlayerView controls); local/network via StreamDocumentProvider.
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.ui)
+
     // Cronet (app HTTP) + Android HUC fallback — no OkHttp.
     implementation(libs.ktor.client.android)
     // WebDAV PROPFIND needs a pure engine: Cronet and Android HUC both reject PROPFIND.

@@ -410,6 +410,28 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    /** Tap video → in-app Media3 player. */
+    fun playVideo(path: okio.Path) {
+        val actualName = path.name
+        launchIO {
+            recordCurrentBrowseFolderHistory()
+            try {
+                OpenFileExternally.playLocal(
+                    context,
+                    path.toString(),
+                    displayName = actualName,
+                    mimeType = mimeTypeForFileName(actualName),
+                )
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(
+                        R.string.browse_open_failed,
+                    ) + " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
@@ -639,7 +661,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 items(videos, key = { "v-${it.path}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
-                                        onClick = { openExternalFile(video.path) },
+                                        onClick = { playVideo(video.path) },
+                                        onLongClick = { openExternalFile(video.path) },
                                     )
                                 }
                             }
@@ -722,7 +745,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 items(videos, key = { "v-${it.path}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
-                                        onClick = { openExternalFile(video.path) },
+                                        onClick = { playVideo(video.path) },
+                                        onLongClick = { openExternalFile(video.path) },
                                     )
                                 }
                             }
