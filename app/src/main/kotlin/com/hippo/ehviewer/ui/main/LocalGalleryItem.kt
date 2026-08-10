@@ -294,11 +294,7 @@ fun HistoryListItem(
                 style = MaterialTheme.typography.titleSmall,
             )
             Spacer(modifier = Modifier.weight(1f))
-            val pageLabel = if (
-                showPages &&
-                info.pages > 0 &&
-                (kind == LocalHistory.KindLabel.Library || kind == LocalHistory.KindLabel.Archive)
-            ) {
+            val pageLabel = if (showPages && LocalHistory.showsPageProgress(info)) {
                 val readProgress = if (showProgress) {
                     remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
                 } else {
@@ -377,11 +373,7 @@ fun HistoryGridItem(
                     placeholder = placeholderIcon,
                     modifier = Modifier.fillMaxSize(),
                 )
-                if (
-                    showPages &&
-                    info.pages > 0 &&
-                    (kind == LocalHistory.KindLabel.Library || kind == LocalHistory.KindLabel.Archive)
-                ) {
+                if (showPages && LocalHistory.showsPageProgress(info)) {
                     Badge(
                         modifier = Modifier
                             .align(Alignment.TopEnd)

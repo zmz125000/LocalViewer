@@ -72,11 +72,11 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
-import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
-import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
+import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
@@ -531,22 +531,25 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     isSolidArchiveFileName(entry.fileName) ||
                     isDocumentFileName(entry.fileName)
                 ) {
+                    val remoteNorm = remote.trim('/')
                     val info = BaseGalleryInfo(
-                        gid = stableGalleryId(src.id, "smba:$remote"),
-                        token = LOCAL_GALLERY_TOKEN,
+                        gid = stableGalleryId(src.id, "smba:$remoteNorm"),
+                        token = SMB_ARCHIVE_TOKEN,
                         title = entry.name,
                         pages = 0,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
+                        uploader = "${src.id}\u0000$remoteNorm",
+                        category = 1,
                     )
                     LocalHistory.ensureGalleryForProgress(info)
-                    LocalHistory.recordSmbStreamArchive(src.id, remote, title = entry.name, info = info)
+                    LocalHistory.recordSmbStreamArchive(src.id, remoteNorm, title = entry.name, info = info)
                     withUIContext {
                         navigator.navigate(
                             ReaderScreenDestination(
                                 ReaderScreenArgs.SmbStreamArchive(
                                     sourceId = src.id,
-                                    remotePath = remote,
+                                    remotePath = remoteNorm,
                                     info = info,
                                 ),
                             ),

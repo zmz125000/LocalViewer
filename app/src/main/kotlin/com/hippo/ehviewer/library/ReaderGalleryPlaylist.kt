@@ -3,6 +3,7 @@ package com.hippo.ehviewer.library
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.model.BaseGalleryInfo
+import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 
 /**
@@ -87,14 +88,18 @@ object ReaderGalleryPlaylist {
                         e.path.toString() == parentPath -> parentRelative
                         else -> "$parentRelative/${e.name}"
                     }
+                    val normRel = rel.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
+                    // Same identity as FolderBrowser openFolderGallery / history record.
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(rootId, rel.ifEmpty { "." }),
-                        token = LOCAL_GALLERY_TOKEN,
+                        token = LOCAL_FOLDER_TOKEN,
                         title = e.name,
                         pages = if (e.pageCountCapped) 0 else e.pageCount,
-                        favoriteSlot = com.ehviewer.core.model.GalleryInfo.NOT_FAVORITED,
+                        favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
                         thumbKey = e.coverPath?.toString(),
+                        uploader = "$rootId\u0000$normRel",
+                        category = 0,
                     )
                     Item.LocalFolder(e.path.toString(), info)
                 }
@@ -121,7 +126,7 @@ object ReaderGalleryPlaylist {
                         e.relativeName
                     } else {
                         "$parentRelative/${e.relativeName}"
-                    }
+                    }.trim('/')
                     val coverKey = e.coverFileName?.let { fileName ->
                         HistoryThumbKey.smb(
                             sourceId,
@@ -130,12 +135,14 @@ object ReaderGalleryPlaylist {
                     }
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(sourceId, "smb:$remote"),
-                        token = LOCAL_GALLERY_TOKEN,
+                        token = SMB_FOLDER_TOKEN,
                         title = e.name,
                         pages = if (e.pageCountCapped) 0 else e.pageCount,
-                        favoriteSlot = com.ehviewer.core.model.GalleryInfo.NOT_FAVORITED,
+                        favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
                         thumbKey = coverKey,
+                        uploader = "$sourceId\u0000$remote",
+                        category = 2,
                     )
                     val names = if (e.pageCountCapped) emptyList() else e.imageFileNames
                     Item.SmbFolder(sourceId, remote, names, info)
@@ -152,14 +159,16 @@ object ReaderGalleryPlaylist {
                         parentRelative,
                         e.parentRelativeName,
                         e.fileName,
-                    )
+                    ).trim('/')
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(sourceId, "smba:$remote"),
-                        token = LOCAL_GALLERY_TOKEN,
+                        token = SMB_ARCHIVE_TOKEN,
                         title = e.name,
                         pages = 0,
-                        favoriteSlot = com.ehviewer.core.model.GalleryInfo.NOT_FAVORITED,
+                        favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
+                        uploader = "$sourceId\u0000$remote",
+                        category = 1,
                     )
                     Item.SmbStreamArchive(sourceId, remote, info)
                 }
@@ -185,7 +194,7 @@ object ReaderGalleryPlaylist {
                         e.relativeName
                     } else {
                         "$parentRelative/${e.relativeName}"
-                    }
+                    }.trim('/')
                     val coverKey = e.coverFileName?.let { fileName ->
                         HistoryThumbKey.webdav(
                             sourceId,
@@ -194,12 +203,14 @@ object ReaderGalleryPlaylist {
                     }
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(sourceId, "webdav:$remote"),
-                        token = LOCAL_GALLERY_TOKEN,
+                        token = WEBDAV_FOLDER_TOKEN,
                         title = e.name,
                         pages = if (e.pageCountCapped) 0 else e.pageCount,
-                        favoriteSlot = com.ehviewer.core.model.GalleryInfo.NOT_FAVORITED,
+                        favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
                         thumbKey = coverKey,
+                        uploader = "$sourceId\u0000$remote",
+                        category = 3,
                     )
                     val names = if (e.pageCountCapped) emptyList() else e.imageFileNames
                     Item.WebDavFolder(sourceId, remote, names, info)
@@ -215,14 +226,16 @@ object ReaderGalleryPlaylist {
                         parentRelative,
                         e.parentRelativeName,
                         e.fileName,
-                    )
+                    ).trim('/')
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(sourceId, "dava:$remote"),
-                        token = LOCAL_GALLERY_TOKEN,
+                        token = WEBDAV_ARCHIVE_TOKEN,
                         title = e.name,
                         pages = 0,
-                        favoriteSlot = com.ehviewer.core.model.GalleryInfo.NOT_FAVORITED,
+                        favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
+                        uploader = "$sourceId\u0000$remote",
+                        category = 1,
                     )
                     Item.WebDavStreamArchive(sourceId, remote, info)
                 }

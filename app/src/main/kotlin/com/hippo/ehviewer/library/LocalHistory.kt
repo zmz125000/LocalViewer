@@ -136,15 +136,31 @@ object LocalHistory {
     fun kindLabelKey(info: GalleryInfo): KindLabel = when (info.token) {
         LOCAL_GALLERY_TOKEN ->
             if (info.category == 1) KindLabel.Archive else KindLabel.Library
-        LOCAL_FOLDER_TOKEN -> KindLabel.Library
+        // Local folder gallery (image dir) — not a scanned library row.
+        LOCAL_FOLDER_TOKEN, LOCAL_BROWSE_TOKEN -> KindLabel.Folder
         LOCAL_ARCHIVE_TOKEN, SMB_ARCHIVE_TOKEN, WEBDAV_ARCHIVE_TOKEN -> KindLabel.Archive
-        LOCAL_BROWSE_TOKEN -> KindLabel.Folder
         SMB_BROWSE_TOKEN, SMB_FOLDER_TOKEN -> KindLabel.Smb
         WEBDAV_BROWSE_TOKEN, WEBDAV_FOLDER_TOKEN -> KindLabel.WebDav
         else -> KindLabel.Unknown
     }
 
     enum class KindLabel { Library, Archive, Folder, Smb, WebDav, Unknown }
+
+    /**
+     * History page / progress chip when the row is a readable gallery (not a dir-only pin).
+     * Browse-dir history keeps [pages] at 0 so it still hides the chip.
+     */
+    fun showsPageProgress(info: GalleryInfo): Boolean = when (info.token) {
+        LOCAL_GALLERY_TOKEN,
+        LOCAL_FOLDER_TOKEN,
+        LOCAL_ARCHIVE_TOKEN,
+        SMB_FOLDER_TOKEN,
+        SMB_ARCHIVE_TOKEN,
+        WEBDAV_FOLDER_TOKEN,
+        WEBDAV_ARCHIVE_TOKEN,
+        -> info.pages > 0
+        else -> false
+    }
 
     suspend fun recordLibraryGallery(gallery: LocalGalleryEntity) {
         EhDB.putHistoryInfo(gallery.toBaseGalleryInfo())
