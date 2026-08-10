@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -63,14 +62,6 @@ import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.ui.screen.collectListThumbSizeAsState
 import okio.Path.Companion.toPath
-
-/**
- * History grid label icon vertical bias as a **fraction of icon height**.
- * - `0f` — icon bottom flush with the text block bottom (last line)
- * - negative (e.g. `-0.15f`) — nudge icon up
- * - positive (e.g. `0.1f`) — nudge icon down
- */
-private const val HISTORY_LABEL_ICON_Y_BIAS = -0.18f
 
 /** Prefer stored [GalleryInfo.thumbKey]; for network archives derive the logical cover key. */
 private fun historyCoverKey(info: GalleryInfo): String? {
@@ -424,8 +415,8 @@ fun HistoryGridItem(
                     }
                 }
             }
-            // Fixed name band: caption on the bottom of the box.
-            // Icon bottom-aligns to the text block; tweak [HISTORY_LABEL_ICON_Y_BIAS] if needed.
+            // Fixed name band (same as before): caption sits on the bottom.
+            // Icon is CenterVertically with the text only — not the whole name box.
             val labelIconSize = with(LocalDensity.current) {
                 MaterialTheme.typography.labelMedium.fontSize.toDp()
             }
@@ -440,17 +431,14 @@ fun HistoryGridItem(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = namePadBottom),
-                    // Bottom of icon ↔ bottom of last text line (not center of the name box).
-                    verticalAlignment = Alignment.Bottom,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
                         imageVector = placeholderIcon,
                         contentDescription = null,
                         modifier = Modifier
                             .padding(end = 4.dp)
-                            .size(labelIconSize)
-                            // Fraction of icon height: negative = up, positive = down. 0f = flush.
-                            .offset(y = labelIconSize * HISTORY_LABEL_ICON_Y_BIAS),
+                            .size(labelIconSize),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
