@@ -76,22 +76,27 @@ object GallerySiblingNavigator {
         return when (target) {
             is BrowseEntry.ArchiveGallery -> ReaderScreenArgs.Archive(target.path.toString())
             is BrowseEntry.FolderGallery -> {
+                // [frame] is the listing parent (browse stack / History open), so its
+                // relativePath is already the gallery parent — do not peel another segment.
                 val rootId = frame?.rootId ?: 0L
-                val currentRel = frame?.relativePath.orEmpty()
-                val parentRel = currentRel.substringBeforeLast('/', missingDelimiterValue = "")
+                val parentRel = frame?.relativePath.orEmpty().trim('/')
                 val rel = when {
                     target.path.toString() == parent.toString() -> parentRel.ifEmpty { "." }
                     parentRel.isEmpty() -> target.name
                     else -> "$parentRel/${target.name}"
                 }
-                val gid = stableGalleryId(rootId, rel.ifEmpty { target.name })
+                val normRel = rel.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
+                val gid = stableGalleryId(rootId, rel.ifEmpty { "." })
                 val info = BaseGalleryInfo(
                     gid = gid,
-                    token = LOCAL_GALLERY_TOKEN,
+                    token = LOCAL_FOLDER_TOKEN,
                     title = target.name,
                     pages = if (target.pageCountCapped) 0 else target.pageCount,
                     favoriteSlot = NOT_FAVORITED,
                     rating = -1f,
+                    thumbKey = target.coverPath?.toString(),
+                    uploader = "$rootId\u0000$normRel",
+                    category = 0,
                 )
                 ReaderScreenArgs.LocalFolder(target.path.toString(), page = -1, info = info)
             }
@@ -146,26 +151,37 @@ object GallerySiblingNavigator {
         val target = openable.getOrNull(if (next) idx + 1 else idx - 1) ?: return null
         return when (target) {
             is BrowseEntryRemote.ArchiveGallery -> {
-                val remote = remoteOf(target)
+                val remote = remoteOf(target).trim('/')
                 val info = BaseGalleryInfo(
                     gid = stableGalleryId(source.id, "smba:$remote"),
-                    token = LOCAL_GALLERY_TOKEN,
+                    token = SMB_ARCHIVE_TOKEN,
                     title = target.name,
                     pages = 0,
                     favoriteSlot = NOT_FAVORITED,
                     rating = -1f,
+                    uploader = "${source.id}\u0000$remote",
+                    category = 1,
                 )
                 ReaderScreenArgs.SmbStreamArchive(source.id, remote, page = -1, info = info)
             }
             is BrowseEntryRemote.FolderGallery -> {
-                val remote = remoteOf(target)
+                val remote = remoteOf(target).trim('/')
+                val coverKey = target.coverFileName?.let { fileName ->
+                    HistoryThumbKey.smb(
+                        source.id,
+                        SmbGateway.joinRelativePath(remote, fileName),
+                    )
+                }
                 val info = BaseGalleryInfo(
                     gid = stableGalleryId(source.id, "smb:$remote"),
-                    token = LOCAL_GALLERY_TOKEN,
+                    token = SMB_FOLDER_TOKEN,
                     title = target.name,
                     pages = if (target.pageCountCapped) 0 else target.pageCount,
                     favoriteSlot = NOT_FAVORITED,
                     rating = -1f,
+                    thumbKey = coverKey,
+                    uploader = "${source.id}\u0000$remote",
+                    category = 2,
                 )
                 val names = if (target.pageCountCapped) emptyList() else target.imageFileNames
                 ReaderScreenArgs.SmbFolder(source.id, remote, names, page = -1, info = info)
@@ -218,26 +234,37 @@ object GallerySiblingNavigator {
         val target = openable.getOrNull(if (next) idx + 1 else idx - 1) ?: return null
         return when (target) {
             is BrowseEntryRemote.ArchiveGallery -> {
-                val remote = remoteOf(target)
+                val remote = remoteOf(target).trim('/')
                 val info = BaseGalleryInfo(
                     gid = stableGalleryId(source.id, "dava:$remote"),
-                    token = LOCAL_GALLERY_TOKEN,
+                    token = WEBDAV_ARCHIVE_TOKEN,
                     title = target.name,
                     pages = 0,
                     favoriteSlot = NOT_FAVORITED,
                     rating = -1f,
+                    uploader = "${source.id}\u0000$remote",
+                    category = 1,
                 )
                 ReaderScreenArgs.WebDavStreamArchive(source.id, remote, page = -1, info = info)
             }
             is BrowseEntryRemote.FolderGallery -> {
-                val remote = remoteOf(target)
+                val remote = remoteOf(target).trim('/')
+                val coverKey = target.coverFileName?.let { fileName ->
+                    HistoryThumbKey.webdav(
+                        source.id,
+                        WebDavGateway.joinRelative(remote, fileName),
+                    )
+                }
                 val info = BaseGalleryInfo(
                     gid = stableGalleryId(source.id, "webdav:$remote"),
-                    token = LOCAL_GALLERY_TOKEN,
+                    token = WEBDAV_FOLDER_TOKEN,
                     title = target.name,
                     pages = if (target.pageCountCapped) 0 else target.pageCount,
                     favoriteSlot = NOT_FAVORITED,
                     rating = -1f,
+                    thumbKey = coverKey,
+                    uploader = "${source.id}\u0000$remote",
+                    category = 3,
                 )
                 val names = if (target.pageCountCapped) emptyList() else target.imageFileNames
                 ReaderScreenArgs.WebDavFolder(source.id, remote, names, page = -1, info = info)

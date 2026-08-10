@@ -76,8 +76,15 @@ object EhDB {
         }
     }
 
+    /**
+     * Upsert progress. Inserts a GALLERIES stub only when missing so reader teardown
+     * does **not** overwrite History identity ([token] / [uploader] / [thumbKey]) with the
+     * ephemeral reader [BaseGalleryInfo] (`token=local`, empty path).
+     */
     suspend fun putReadProgress(galleryInfo: GalleryInfo, page: Int) {
-        putGalleryInfo(galleryInfo.asEntity())
+        if (db.galleryDao().load(galleryInfo.gid) == null) {
+            putGalleryInfo(galleryInfo.asEntity())
+        }
         db.progressDao().upsert(ProgressInfo(galleryInfo.gid, page))
     }
     suspend fun clearProgressInfo() = db.progressDao().deleteAll()

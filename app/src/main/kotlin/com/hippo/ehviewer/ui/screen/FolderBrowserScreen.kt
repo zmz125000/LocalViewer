@@ -69,6 +69,7 @@ import com.hippo.ehviewer.library.BrowseEntry
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
+import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
@@ -181,7 +182,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     fun toggleDirFavorite(dir: BrowseEntry.Directory) {
         val frame = stack.lastOrNull() ?: return
         val rel = if (frame.relativePath.isEmpty()) dir.name else "${frame.relativePath}/${dir.name}"
-        val nowFavorite = BrowseFavorites.toggleLocalFolder(frame.rootId, rel)
+        // Same cache-key idea as History: absolute cover path for Library fav cell.
+        BrowseFavorites.toggleLocalFolder(frame.rootId, rel, thumbKey = dir.coverPath?.toString())
     }
 
     fun isDirFavorite(dir: BrowseEntry.Directory): Boolean {
@@ -310,25 +312,28 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             entry.path.toString() == frame.path -> frame.relativePath
             else -> "${frame.relativePath}/${entry.name}"
         }
+        val coverKey = entry.coverPath?.toString()
         val gid = stableGalleryId(frame.rootId, rel.ifEmpty { "." })
         val info = BaseGalleryInfo(
             gid = gid,
-            token = LOCAL_GALLERY_TOKEN,
+            token = LOCAL_FOLDER_TOKEN,
             title = entry.name,
             pages = if (entry.pageCountCapped) 0 else entry.pageCount,
             favoriteSlot = NOT_FAVORITED,
             rating = -1f,
-            thumbKey = entry.coverPath?.toString(),
+            thumbKey = coverKey,
+            uploader = "${frame.rootId}\u0000${rel.trim('/')}",
+            category = 0,
         )
         launchIO {
-            // Progress FK for reader; History lists the browse folder path, not the leaf gallery.
-            LocalHistory.ensureGalleryForProgress(info)
-            LocalHistory.recordLocalBrowseFolder(
+            // History = folder gallery (open → reader). Same gid as progress.
+            LocalHistory.recordLocalFolderGallery(
                 rootId = frame.rootId,
                 relativePath = rel,
                 title = entry.name,
-                coverPath = entry.coverPath?.toString(),
+                thumbKey = coverKey,
                 pages = if (entry.pageCountCapped) 0 else entry.pageCount,
+                info = info,
             )
         }
         navToLocalFolderReader(entry.path.toString(), info)

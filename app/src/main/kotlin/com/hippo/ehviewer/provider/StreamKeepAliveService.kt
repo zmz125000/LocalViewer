@@ -26,8 +26,8 @@ import com.hippo.ehviewer.ui.MainActivity
  * stall — playback dies and resume fails because the in-memory token / sticky session
  * is gone. Start when the first network proxy is retained; stop when the last is released.
  *
- * Android 14/15 may time out `dataSync` FGS. If FDs are still open we re-promote and
- * hold a partial wake lock so long movies are not killed mid-play.
+ * Android may time out a `dataSync` FGS. A timed-out service must stop promptly; the
+ * existing proxy FD then fails/reopens normally instead of risking RemoteServiceException.
  */
 class StreamKeepAliveService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
@@ -41,28 +41,35 @@ class StreamKeepAliveService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureChannel()
-        promoteForeground()
-        acquireWakeLock()
+        if (!promoteForeground()) {
+            releaseWakeLock()
+            runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        // startForegroundService() is asynchronous: a very short-lived external FD may
+        // already be released before this callback runs. Preserve the FGS reopen grace,
+        // but only keep the CPU awake while a proxy is actually open.
+        if (StreamDocumentRegistry.networkOpenCount() > 0) {
+            acquireWakeLock()
+        } else {
+            releaseWakeLock()
+        }
         // The registry and network source are process-local. Restarting only this service
         // after process death cannot restore the URI token or an external player's FD.
         return START_NOT_STICKY
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        // dataSync budget expired. If a player still holds a proxy FD, re-enter foreground
-        // immediately so the process is not frozen mid-movie.
         val stillOpen = StreamDocumentRegistry.networkOpenCount()
         logcat("StreamKeepAlive") {
             "Foreground service timed out (type=$fgsType) openFds=$stillOpen"
         }
-        if (stillOpen > 0) {
-            promoteForeground()
-            acquireWakeLock()
-            return
-        }
+        // Android 15+ requires a timed-out dataSync service to stop within a few seconds.
+        // Re-promotion does not reset the quota and can crash the app.
         releaseWakeLock()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf(startId)
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        stopSelf()
     }
 
     override fun onDestroy() {
@@ -72,23 +79,21 @@ class StreamKeepAliveService : Service() {
         super.onDestroy()
     }
 
-    private fun promoteForeground() {
+    private fun promoteForeground(): Boolean {
         val notification = buildNotification()
-        try {
+        return try {
             ServiceCompat.startForeground(
                 this,
                 NOTIFICATION_ID,
                 notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
             )
+            true
         } catch (e: Throwable) {
             logcat("StreamKeepAlive", e)
             // Do not leave a startForegroundService() instance waiting for promotion.
             // That becomes a foreground-service timeout/ANR a few seconds later.
-            // Keep the wake lock if FDs are still open so streaming can continue briefly.
-            if (StreamDocumentRegistry.networkOpenCount() <= 0) {
-                stopSelf()
-            }
+            false
         }
     }
 
@@ -183,6 +188,11 @@ class StreamKeepAliveService : Service() {
             runCatching {
                 app.stopService(Intent(app, StreamKeepAliveService::class.java))
             }.onFailure { logcat("StreamKeepAlive", it) }
+        }
+
+        /** Keep the FGS grace period, but never hold the CPU awake with no live proxy FD. */
+        fun onNetworkIdle() {
+            instance?.releaseWakeLock()
         }
 
         /**

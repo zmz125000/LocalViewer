@@ -69,8 +69,6 @@
     <string name="settings_browse_folder_thumbs_summary">Show cover thumbs for folders.</string>
     <string name="browse_menu_page_count">Page count</string>
     <string name="browse_menu_reading_progress">Reading progress</string>
-    <string name="browse_menu_gallery_covers">Gallery covers</string>
-    <string name="browse_menu_archive_covers">Archive covers</string>
     <string name="browse_menu_small_galleries">Small galleries</string>
     <string name="settings_browse_menu_small_galleries">Show small galleries</string>
     <string name="settings_browse_small_galleries_summary">Show folder galleries below the minimum page count. Off hides them in the UI only.</string>

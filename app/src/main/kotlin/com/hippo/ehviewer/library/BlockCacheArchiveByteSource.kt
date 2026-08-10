@@ -28,11 +28,12 @@ class BlockCacheArchiveByteSource(
     private val blocks = object : LinkedHashMap<Long, Block>(maxBlocks, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Block>?): Boolean = size > maxBlocks
     }
+    private val cacheLock = Any()
+    @Volatile
     private var closed = false
 
     override val size: Long = knownSize.takeIf { it > 0L } ?: inner.size
 
-    @Synchronized
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
         if (len <= 0) return 0
         if (closed) return -1
@@ -47,7 +48,8 @@ class BlockCacheArchiveByteSource(
             val blockIndex = absolute / blockSize
             val blockStart = blockIndex * blockSize
             val inBlock = (absolute - blockStart).toInt()
-            val block = blocks[blockIndex] ?: loadBlock(blockStart)
+            val cached = synchronized(cacheLock) { blocks[blockIndex] }
+            val block = cached ?: loadBlock(blockStart)
 
             if (block == null || inBlock >= block.length) {
                 return if (copied > 0) copied else -1
@@ -65,15 +67,17 @@ class BlockCacheArchiveByteSource(
         if (expected <= 0) return null
         val bytes = ByteArray(expected)
         var filled = 0
-        while (filled < expected) {
+        while (filled < expected && !closed) {
             val n = inner.readAt(blockStart + filled, bytes, filled, expected - filled)
             if (n <= 0) break
             filled += n
         }
         if (filled <= 0) return null
         val block = Block(bytes, filled)
-        if (filled == expected) {
-            blocks[blockStart / blockSize] = block
+        if (filled == expected && !closed) {
+            synchronized(cacheLock) {
+                if (!closed) blocks[blockStart / blockSize] = block
+            }
         }
         return block
     }
@@ -82,7 +86,8 @@ class BlockCacheArchiveByteSource(
     override fun close() {
         if (closed) return
         closed = true
-        blocks.clear()
+        synchronized(cacheLock) { blocks.clear() }
+        // Do not wait for readAt's cache monitor: remote close must cancel a blocked range read.
         inner.close()
     }
 

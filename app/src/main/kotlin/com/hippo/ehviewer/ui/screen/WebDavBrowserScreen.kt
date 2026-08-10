@@ -72,10 +72,11 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
-import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
+import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
@@ -191,8 +192,17 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else WebDavGateway.joinRelative(relativeDir, name)
 
-    fun toggleDirFavorite(name: String) {
-        val nowFavorite = BrowseFavorites.toggleWebDavFolder(sourceId, dirRelative(name))
+    fun toggleDirFavorite(name: String, coverFileName: String? = null) {
+        val rel = dirRelative(name)
+        val coverKey = coverFileName?.let { fileName ->
+            val coverRemote = if (rel.isEmpty()) {
+                fileName
+            } else {
+                WebDavGateway.joinRelative(rel, fileName)
+            }
+            HistoryThumbKey.webdav(sourceId, coverRemote)
+        }
+        BrowseFavorites.toggleWebDavFolder(sourceId, rel, thumbKey = coverKey)
     }
 
     fun isDirFavorite(name: String): Boolean = BrowseFavorites.webDavFolderKey(sourceId, dirRelative(name)) in favoriteKeys
@@ -424,22 +434,26 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val gid = stableGalleryId(src.id, "webdav:$remote")
         val info = BaseGalleryInfo(
             gid = gid,
-            token = LOCAL_GALLERY_TOKEN,
+            // Keep History identity on the reader info so progress FK inserts cannot
+            // orphan network galleries (token=local + empty uploader).
+            token = WEBDAV_FOLDER_TOKEN,
             title = entry.name,
             pages = if (entry.pageCountCapped) 0 else entry.pageCount,
             favoriteSlot = NOT_FAVORITED,
             rating = -1f,
             thumbKey = coverKey,
+            uploader = "${src.id}\u0000${remote.trim('/')}",
+            category = 3,
         )
         launchIO {
-            // Progress FK for reader; History stores the browse folder path link.
-            LocalHistory.ensureGalleryForProgress(info)
-            LocalHistory.recordWebDavBrowseFolder(
+            // History = folder gallery (open → reader). Same gid as progress.
+            LocalHistory.recordWebDavFolderGallery(
                 sourceId = src.id,
-                relativePath = remote,
+                remoteDir = remote,
                 title = entry.name,
-                coverPath = coverKey,
+                thumbKey = coverKey,
                 pages = if (entry.pageCountCapped) 0 else entry.pageCount,
+                info = info,
             )
         }
         // When capped or partial, pass empty names so reader re-lists full set
@@ -517,22 +531,25 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     isSolidArchiveFileName(entry.fileName) ||
                     isDocumentFileName(entry.fileName)
                 ) {
+                    val remoteNorm = remote.trim('/')
                     val info = BaseGalleryInfo(
-                        gid = stableGalleryId(src.id, "dava:$remote"),
-                        token = LOCAL_GALLERY_TOKEN,
+                        gid = stableGalleryId(src.id, "dava:$remoteNorm"),
+                        token = WEBDAV_ARCHIVE_TOKEN,
                         title = entry.name,
                         pages = 0,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
+                        uploader = "${src.id}\u0000$remoteNorm",
+                        category = 1,
                     )
                     LocalHistory.ensureGalleryForProgress(info)
-                    LocalHistory.recordWebDavStreamArchive(src.id, remote, title = entry.name, info = info)
+                    LocalHistory.recordWebDavStreamArchive(src.id, remoteNorm, title = entry.name, info = info)
                     withUIContext {
                         navigator.navigate(
                             ReaderScreenDestination(
                                 ReaderScreenArgs.WebDavStreamArchive(
                                     sourceId = src.id,
-                                    remotePath = remote,
+                                    remotePath = remoteNorm,
                                     info = info,
                                 ),
                             ),
@@ -774,7 +791,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     BrowseDirectoryGridItem(
                                         name = dir.name,
                                         onClick = { enterDir(dir.relativeName) },
-                                        onLongClick = { toggleDirFavorite(dir.relativeName) },
+                                        onLongClick = {
+                                            toggleDirFavorite(dir.relativeName, dir.coverFileName)
+                                        },
                                         showFavoriteStar = isDirFavorite(dir.relativeName),
                                         cover = dirCoverFor(dir),
                                         showFolderThumb = browseFolderThumbs,
@@ -860,7 +879,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     BrowseDirectoryRow(
                                         name = dir.name,
                                         onClick = { enterDir(dir.relativeName) },
-                                        onLongClick = { toggleDirFavorite(dir.relativeName) },
+                                        onLongClick = {
+                                            toggleDirFavorite(dir.relativeName, dir.coverFileName)
+                                        },
                                         cover = dirCoverFor(dir),
                                         showFolderThumb = browseFolderThumbs,
                                         thumbRetryKey = refreshToken,

@@ -65,8 +65,6 @@
     <string name="settings_browse_folder_thumbs_summary">在浏览中为文件夹显示封面缩略图（复用画廊封面的缩略图缓存）。</string>
     <string name="browse_menu_page_count">页数</string>
     <string name="browse_menu_reading_progress">阅读进度</string>
-    <string name="browse_menu_gallery_covers">画廊封面</string>
-    <string name="browse_menu_archive_covers">压缩包封面</string>
     <string name="browse_menu_small_galleries">小图库</string>
     <string name="settings_browse_menu_small_galleries">显示小图库</string>
     <string name="settings_browse_small_galleries_summary">显示低于最少页数的文件夹画廊。关闭时仅在界面隐藏，不改扫描。</string>

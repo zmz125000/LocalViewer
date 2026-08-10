@@ -21,6 +21,10 @@ import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * Exposes a document as a grantable `content://` URI for external viewers.
@@ -126,20 +130,24 @@ class StreamDocumentProvider : ContentProvider() {
         }
 
         val threadName = if (isVideo) "LocalViewer-streamdoc-video" else "LocalViewer-streamdoc"
-        val videoPriority = isVideo
-        val thread = object : HandlerThread(threadName) {
-            override fun run() {
-                // Video: keep Fuse replies ahead of player buffer underruns when possible.
-                if (videoPriority) {
-                    Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
-                }
-                super.run()
-            }
-        }.apply { start() }
+        val callbackPriority = if (isVideo) {
+            Process.THREAD_PRIORITY_FOREGROUND
+        } else {
+            Process.THREAD_PRIORITY_DEFAULT
+        }
+        // HandlerThread.run() applies this constructor priority after the looper starts.
+        val thread = HandlerThread(threadName, callbackPriority).apply { start() }
         return try {
             val pfd = storage.openProxyFileDescriptor(
                 ParcelFileDescriptor.MODE_READ_ONLY,
-                SourceProxyCallback(source, size, thread, token, exactMidFile = true),
+                SourceProxyCallback(
+                    source,
+                    size,
+                    thread,
+                    token,
+                    exactMidFile = true,
+                    foregroundIo = isVideo,
+                ),
                 Handler(thread.looper),
             )
             StreamDocumentRegistry.retain(token)
@@ -198,15 +206,42 @@ private class SourceProxyCallback(
     private val thread: HandlerThread,
     private val token: String,
     private val exactMidFile: Boolean = true,
+    foregroundIo: Boolean = false,
 ) : ProxyFileDescriptorCallback() {
     @Volatile
     private var released = false
+
+    @Volatile
+    private var terminalFailure = false
+
+    /**
+     * Blocking SMB/WebDAV calls must not occupy the Fuse callback looper indefinitely.
+     * Source close cancels CIO and tears down active SMB handles when the deadline expires.
+     */
+    private val readExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(
+            {
+                runCatching {
+                    Process.setThreadPriority(
+                        if (foregroundIo) {
+                            Process.THREAD_PRIORITY_FOREGROUND
+                        } else {
+                            Process.THREAD_PRIORITY_DEFAULT
+                        },
+                    )
+                }
+                runnable.run()
+            },
+            "LocalViewer-streamdoc-io",
+        ).apply { isDaemon = true }
+    }
 
     override fun onGetSize(): Long = size
 
     @Throws(ErrnoException::class)
     override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
         if (size <= 0 || released) return 0
+        if (terminalFailure) throw ErrnoException("readAt", OsConstants.EIO)
         if (offset < 0L || offset >= this.size) return 0
         val want = minOf(size.toLong(), this.size - offset).toInt()
         if (want <= 0) return 0
@@ -219,14 +254,17 @@ private class SourceProxyCallback(
 
         while (filled < want) {
             if (released) return filled // soft EOF on close race (no Fuse E log)
+            if (terminalFailure) break
             val absOff = offset + filled
             if (absOff >= this.size) return filled
 
             val need = want - filled
             try {
-                val n = source.readAt(absOff, data, filled, need)
+                val result = readAtBeforeDeadline(absOff, need, deadline)
+                val n = result.count
                 when {
                     n > 0 -> {
+                        System.arraycopy(result.bytes, 0, data, filled, n)
                         filled += n
                         attempt = 0 // progress → reset backoff
                         continue
@@ -241,6 +279,10 @@ private class SourceProxyCallback(
                         lastError = IOException("readAt returned -1 at offset=$absOff need=$need")
                     }
                 }
+            } catch (e: TimeoutException) {
+                lastError = e
+                abortBlockedRead()
+                break
             } catch (e: ErrnoException) {
                 // Do not rethrow immediately — Fuse logs every throw as E.
                 if (released) return filled
@@ -283,11 +325,44 @@ private class SourceProxyCallback(
 
     override fun onRelease() {
         released = true
+        readExecutor.shutdownNow()
         runCatching { source.close() }
         thread.quitSafely()
         // Release this FD. The token stays reusable for player seek/rebuffer reopen;
         // the registry ages it out later and stops the keep-alive after a grace period.
         StreamDocumentRegistry.release(token)
+    }
+
+    private data class ReadResult(val count: Int, val bytes: ByteArray)
+
+    /** Run one blocking source call with the remaining callback budget. */
+    private fun readAtBeforeDeadline(offset: Long, length: Int, deadlineNs: Long): ReadResult {
+        val remainingNs = deadlineNs - System.nanoTime()
+        if (remainingNs <= 0L) throw TimeoutException("proxy read deadline exceeded")
+        // Do not let a timed-out worker keep writing into Fuse's callback buffer.
+        val bytes = ByteArray(length)
+        val future = readExecutor.submit<ReadResult> {
+            ReadResult(source.readAt(offset, bytes, 0, length), bytes)
+        }
+        return try {
+            future.get(remainingNs, TimeUnit.NANOSECONDS)
+        } catch (e: TimeoutException) {
+            future.cancel(true)
+            throw e
+        } catch (e: InterruptedException) {
+            future.cancel(true)
+            Thread.currentThread().interrupt()
+            throw e
+        } catch (e: ExecutionException) {
+            throw e.cause ?: e
+        }
+    }
+
+    private fun abortBlockedRead() {
+        terminalFailure = true
+        // close() is intentionally non-blocking for both remote source implementations.
+        runCatching { source.close() }
+        readExecutor.shutdownNow()
     }
 
     private companion object {

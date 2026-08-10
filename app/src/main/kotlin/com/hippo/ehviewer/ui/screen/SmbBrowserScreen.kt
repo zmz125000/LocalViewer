@@ -72,10 +72,11 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
-import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
+import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
@@ -191,8 +192,17 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else SmbGateway.joinRelativePath(relativeDir, name)
 
-    fun toggleDirFavorite(name: String) {
-        val nowFavorite = BrowseFavorites.toggleSmbFolder(sourceId, dirRelative(name))
+    fun toggleDirFavorite(name: String, coverFileName: String? = null) {
+        val rel = dirRelative(name)
+        val coverKey = coverFileName?.let { fileName ->
+            val coverRemote = if (rel.isEmpty()) {
+                fileName
+            } else {
+                SmbGateway.joinRelativePath(rel, fileName)
+            }
+            HistoryThumbKey.smb(sourceId, coverRemote)
+        }
+        BrowseFavorites.toggleSmbFolder(sourceId, rel, thumbKey = coverKey)
     }
 
     fun isDirFavorite(name: String): Boolean = BrowseFavorites.smbFolderKey(sourceId, dirRelative(name)) in favoriteKeys
@@ -423,22 +433,26 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val gid = stableGalleryId(src.id, "smb:$remote")
         val info = BaseGalleryInfo(
             gid = gid,
-            token = LOCAL_GALLERY_TOKEN,
+            // Keep History identity on the reader info so progress FK inserts cannot
+            // orphan network galleries (token=local + empty uploader).
+            token = SMB_FOLDER_TOKEN,
             title = entry.name,
             pages = if (entry.pageCountCapped) 0 else entry.pageCount,
             favoriteSlot = NOT_FAVORITED,
             rating = -1f,
             thumbKey = coverKey,
+            uploader = "${src.id}\u0000${remote.trim('/')}",
+            category = 2,
         )
         launchIO {
-            // Progress FK for reader; History stores the SMB folder path link.
-            LocalHistory.ensureGalleryForProgress(info)
-            LocalHistory.recordSmbBrowseFolder(
+            // History = folder gallery (open → reader). Same gid as progress.
+            LocalHistory.recordSmbFolderGallery(
                 sourceId = src.id,
-                relativePath = remote,
+                remoteDir = remote,
                 title = entry.name,
-                coverPath = coverKey,
+                thumbKey = coverKey,
                 pages = if (entry.pageCountCapped) 0 else entry.pageCount,
+                info = info,
             )
         }
         // When capped or partial, pass empty names so reader re-lists full set
@@ -517,22 +531,25 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     isSolidArchiveFileName(entry.fileName) ||
                     isDocumentFileName(entry.fileName)
                 ) {
+                    val remoteNorm = remote.trim('/')
                     val info = BaseGalleryInfo(
-                        gid = stableGalleryId(src.id, "smba:$remote"),
-                        token = LOCAL_GALLERY_TOKEN,
+                        gid = stableGalleryId(src.id, "smba:$remoteNorm"),
+                        token = SMB_ARCHIVE_TOKEN,
                         title = entry.name,
                         pages = 0,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
+                        uploader = "${src.id}\u0000$remoteNorm",
+                        category = 1,
                     )
                     LocalHistory.ensureGalleryForProgress(info)
-                    LocalHistory.recordSmbStreamArchive(src.id, remote, title = entry.name, info = info)
+                    LocalHistory.recordSmbStreamArchive(src.id, remoteNorm, title = entry.name, info = info)
                     withUIContext {
                         navigator.navigate(
                             ReaderScreenDestination(
                                 ReaderScreenArgs.SmbStreamArchive(
                                     sourceId = src.id,
-                                    remotePath = remote,
+                                    remotePath = remoteNorm,
                                     info = info,
                                 ),
                             ),
@@ -777,7 +794,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     BrowseDirectoryGridItem(
                                         name = dir.name,
                                         onClick = { enterDir(dir.relativeName) },
-                                        onLongClick = { toggleDirFavorite(dir.relativeName) },
+                                        onLongClick = {
+                                            toggleDirFavorite(dir.relativeName, dir.coverFileName)
+                                        },
                                         showFavoriteStar = isDirFavorite(dir.relativeName),
                                         cover = dirCoverFor(dir),
                                         showFolderThumb = browseFolderThumbs,
@@ -863,7 +882,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     BrowseDirectoryRow(
                                         name = dir.name,
                                         onClick = { enterDir(dir.relativeName) },
-                                        onLongClick = { toggleDirFavorite(dir.relativeName) },
+                                        onLongClick = {
+                                            toggleDirFavorite(dir.relativeName, dir.coverFileName)
+                                        },
                                         cover = dirCoverFor(dir),
                                         showFolderThumb = browseFolderThumbs,
                                         thumbRetryKey = refreshToken,

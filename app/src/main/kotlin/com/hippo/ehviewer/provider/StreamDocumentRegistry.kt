@@ -58,6 +58,10 @@ object StreamDocumentRegistry {
     private var totalNetworkOpen = 0
     private var stopKeepAliveJob: Job? = null
 
+    /** Keeps token expiry accurate even when no later registration calls [pruneStale]. */
+    private val pruneLock = Any()
+    private var pruneJob: Job? = null
+
     /** Live network proxy FDs across all tokens (for keep-alive re-promote after FGS timeout). */
     fun networkOpenCount(): Int = synchronized(keepAliveLock) { totalNetworkOpen }
 
@@ -82,6 +86,7 @@ object StreamDocumentRegistry {
             openSource = openSource,
             parallelPrefetch = parallelPrefetch,
         )
+        schedulePrune()
         return token
     }
 
@@ -99,17 +104,20 @@ object StreamDocumentRegistry {
             sizeBytes = sizeBytes,
             openFileDescriptor = openFileDescriptor,
         )
+        schedulePrune()
         return token
     }
 
     fun get(token: String): Entry? {
         val entry = entries[token] ?: return null
         entry.lastAccessMs = SystemClock.elapsedRealtime()
+        schedulePrune()
         return entry
     }
 
     fun remove(token: String) {
         entries.remove(token)
+        schedulePrune()
     }
 
     /** Call when a network proxy FD is successfully opened for [token]. */
@@ -117,6 +125,7 @@ object StreamDocumentRegistry {
         val entry = entries[token] ?: return
         entry.openCount.incrementAndGet()
         entry.lastAccessMs = SystemClock.elapsedRealtime()
+        schedulePrune()
         synchronized(keepAliveLock) {
             totalNetworkOpen++
             stopKeepAliveJob?.cancel()
@@ -143,18 +152,23 @@ object StreamDocumentRegistry {
         entry.lastAccessMs = SystemClock.elapsedRealtime()
         synchronized(keepAliveLock) {
             totalNetworkOpen = (totalNetworkOpen - 1).coerceAtLeast(0)
-            if (totalNetworkOpen != 0) return
-            stopKeepAliveJob?.cancel()
-            stopKeepAliveJob = scope.launch {
-                delay(StreamKeepAlivePolicy.fgsStopDelayMs())
-                synchronized(keepAliveLock) {
-                    if (totalNetworkOpen == 0) {
-                        StreamKeepAliveService.stop(context)
-                        stopKeepAliveJob = null
+            if (totalNetworkOpen == 0) {
+                // Keep the low-priority FGS briefly for URI reopen, but do not keep the CPU
+                // awake during that idle grace period.
+                StreamKeepAliveService.onNetworkIdle()
+                stopKeepAliveJob?.cancel()
+                stopKeepAliveJob = scope.launch {
+                    delay(StreamKeepAlivePolicy.fgsStopDelayMs())
+                    synchronized(keepAliveLock) {
+                        if (totalNetworkOpen == 0) {
+                            StreamKeepAliveService.stop(context)
+                            stopKeepAliveJob = null
+                        }
                     }
                 }
             }
         }
+        schedulePrune()
     }
 
     /**
@@ -168,7 +182,7 @@ object StreamDocumentRegistry {
         if (entries.isEmpty()) return
         for ((token, entry) in entries) {
             if (entry.openCount.get() > 0) continue
-            if (nowMs - entry.lastAccessMs > maxAgeMs) {
+            if (nowMs - entry.lastAccessMs >= maxAgeMs) {
                 entries.remove(token, entry)
             }
         }
@@ -179,5 +193,26 @@ object StreamDocumentRegistry {
             .sortedBy { it.value.lastAccessMs }
             .take(overflow)
             .forEach { entries.remove(it.key, it.value) }
+    }
+
+    /** Arm one timer for the earliest idle token; touches and reopen events rebase it. */
+    private fun schedulePrune(nowMs: Long = SystemClock.elapsedRealtime()) {
+        val maxAgeMs = StreamKeepAlivePolicy.tokenMaxAgeMs()
+        val nextDelayMs = entries.values
+            .asSequence()
+            .filter { it.openCount.get() == 0 }
+            .map { maxAgeMs - (nowMs - it.lastAccessMs) }
+            .minOrNull()
+            ?.coerceAtLeast(1L)
+        synchronized(pruneLock) {
+            pruneJob?.cancel()
+            pruneJob = nextDelayMs?.let { delayMs ->
+                scope.launch {
+                    delay(delayMs)
+                    pruneStale()
+                    schedulePrune()
+                }
+            }
+        }
     }
 }

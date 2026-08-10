@@ -59,10 +59,14 @@ import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseSession
-import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
+import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
+import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
+import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
+import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.buildLocalBrowseStack
 import com.hippo.ehviewer.library.parentRelativeOfFile
 import com.hippo.ehviewer.library.stableGalleryId
@@ -78,7 +82,9 @@ import com.hippo.ehviewer.ui.main.HistoryGridItem
 import com.hippo.ehviewer.ui.main.HistoryListItem
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
+import com.hippo.ehviewer.ui.navToSmbFolderReader
 import com.hippo.ehviewer.ui.navToSmbStreamArchiveReader
+import com.hippo.ehviewer.ui.navToWebDavFolderReader
 import com.hippo.ehviewer.ui.navToWebDavStreamArchiveReader
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.webdav.WebDavRepository
@@ -204,6 +210,110 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         ),
                     )
                 }
+                is LocalHistoryTarget.LocalFolderGallery -> {
+                    // Open reader; back → parent directory (same pattern as archives).
+                    val root = withIOContext { LocalLibrary.loadRoot(target.rootId) }
+                    val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                    if (root == null || rootPath == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                        return@launch
+                    }
+                    val fullStack = buildLocalBrowseStack(
+                        rootId = root.id,
+                        rootDisplayName = root.displayName,
+                        rootPath = rootPath,
+                        relativePath = target.relativePath,
+                        preferMediaStore = root.prefersMediaStore,
+                    )
+                    val galleryPath = fullStack.last().path
+                    val parentRel = parentRelativeOfFile(target.relativePath)
+                    BrowseSession.localStack = buildLocalBrowseStack(
+                        rootId = root.id,
+                        rootDisplayName = root.displayName,
+                        rootPath = rootPath,
+                        relativePath = parentRel,
+                        preferMediaStore = root.prefersMediaStore,
+                    )
+                    navigate(FolderBrowserScreenDestination(fromHistory = true))
+                    // Same identity as browse openFolderGallery so progress stubs keep path.
+                    val rel = target.relativePath.trim('/')
+                    val gi = BaseGalleryInfo(
+                        gid = info.gid,
+                        token = LOCAL_FOLDER_TOKEN,
+                        title = info.title ?: rel.substringAfterLast('/').ifEmpty { "Folder" },
+                        pages = info.pages,
+                        favoriteSlot = NOT_FAVORITED,
+                        rating = -1f,
+                        thumbKey = info.thumbKey,
+                        uploader = "${target.rootId}\u0000$rel",
+                        category = 0,
+                    )
+                    navToLocalFolderReader(galleryPath, gi)
+                }
+                is LocalHistoryTarget.SmbFolderGallery -> {
+                    val source = withIOContext { SmbRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                        return@launch
+                    }
+                    val remote = target.remoteDir.trim('/')
+                    val parentRel = parentRelativeOfFile(remote)
+                    val segments = parentRel.split('/').filter { it.isNotEmpty() }
+                    BrowseSession.setSmbSegments(source.id, segments)
+                    navigate(
+                        SmbBrowserScreenDestination(
+                            sourceId = source.id,
+                            initialRelativePath = parentRel,
+                            fromHistory = true,
+                        ),
+                    )
+                    val gi = BaseGalleryInfo(
+                        gid = info.gid,
+                        token = SMB_FOLDER_TOKEN,
+                        title = info.title ?: remote.substringAfterLast('/').ifEmpty { "Share" },
+                        pages = info.pages,
+                        favoriteSlot = NOT_FAVORITED,
+                        rating = -1f,
+                        thumbKey = info.thumbKey,
+                        uploader = "${source.id}\u0000$remote",
+                        category = 2,
+                    )
+                    // Empty names → reader re-lists full image set.
+                    navToSmbFolderReader(source.id, remote, emptyList(), gi)
+                }
+                is LocalHistoryTarget.WebDavFolderGallery -> {
+                    val source = withIOContext { WebDavRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                        return@launch
+                    }
+                    val remote = target.remoteDir.trim('/')
+                    val parentRel = parentRelativeOfFile(remote)
+                    val segments = parentRel.split('/').filter { it.isNotEmpty() }
+                    BrowseSession.setWebDavSegments(source.id, segments)
+                    navigate(
+                        WebDavBrowserScreenDestination(
+                            sourceId = source.id,
+                            initialRelativePath = parentRel,
+                            fromHistory = true,
+                        ),
+                    )
+                    val gi = BaseGalleryInfo(
+                        gid = info.gid,
+                        token = WEBDAV_FOLDER_TOKEN,
+                        title = info.title ?: remote.substringAfterLast('/').ifEmpty { "WebDAV" },
+                        pages = info.pages,
+                        favoriteSlot = NOT_FAVORITED,
+                        rating = -1f,
+                        thumbKey = info.thumbKey,
+                        uploader = "${source.id}\u0000$remote",
+                        category = 3,
+                    )
+                    navToWebDavFolderReader(source.id, remote, emptyList(), gi)
+                }
                 is LocalHistoryTarget.LocalArchive -> {
                     // Align with folder gallery: back from reader → parent browse path
                     // (fromHistory FAB still jumps straight to History).
@@ -241,13 +351,21 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             fromHistory = true,
                         ),
                     )
+                    // Always smba: (progress gid). Drop legacy smb-archive: history row if present.
+                    val progressGid = stableGalleryId(source.id, "smba:$remote")
+                    if (info.gid != progressGid) {
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                    }
                     val gi = BaseGalleryInfo(
-                        gid = stableGalleryId(source.id, "smba:$remote"),
-                        token = LOCAL_GALLERY_TOKEN,
+                        gid = progressGid,
+                        token = SMB_ARCHIVE_TOKEN,
                         title = info.title ?: remote.substringAfterLast('/'),
                         pages = info.pages,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
+                        thumbKey = info.thumbKey,
+                        uploader = "${source.id}\u0000$remote",
+                        category = 1,
                     )
                     navToSmbStreamArchiveReader(source.id, remote, gi)
                 }
@@ -269,13 +387,20 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             fromHistory = true,
                         ),
                     )
+                    val progressGid = stableGalleryId(source.id, "dava:$remote")
+                    if (info.gid != progressGid) {
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                    }
                     val gi = BaseGalleryInfo(
-                        gid = stableGalleryId(source.id, "dava:$remote"),
-                        token = LOCAL_GALLERY_TOKEN,
+                        gid = progressGid,
+                        token = WEBDAV_ARCHIVE_TOKEN,
                         title = info.title ?: remote.substringAfterLast('/'),
                         pages = info.pages,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
+                        thumbKey = info.thumbKey,
+                        uploader = "${source.id}\u0000$remote",
+                        category = 1,
                     )
                     navToWebDavStreamArchiveReader(source.id, remote, gi)
                 }

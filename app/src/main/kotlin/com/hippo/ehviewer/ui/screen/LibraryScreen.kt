@@ -38,6 +38,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -75,12 +76,14 @@ import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
+import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.FavoriteBrowseSource
+import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
@@ -508,17 +511,49 @@ private fun FavoriteSourceListRow(
     onLongClick: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
+    val folderThumbKey = folderFavoriteThumbKey(fav)
+    var resolvedThumb by remember(folderThumbKey) { mutableStateOf<String?>(null) }
+    LaunchedEffect(folderThumbKey) {
+        resolvedThumb = withIOContext { HistoryThumbKey.resolveReadablePath(folderThumbKey) }
+    }
+    val leadSize = 56.dp
+    val listDecodePx = CoverThumb.libraryListDecodePx(leadSize)
     ListItem(
         headlineContent = {
             Text(fav.displayName)
         },
         supportingContent = { Text(favoriteSubtitle(fav)) },
         leadingContent = {
-            Icon(
-                favoriteIcon(fav),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-            )
+            when {
+                fav is FavoriteBrowseSource.Gallery -> CoverImage(
+                    coverPath = fav.gallery.coverPath,
+                    sizePx = listDecodePx,
+                    archiveContentPath = fav.gallery.contentPath.takeIf {
+                        fav.gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
+                    },
+                    placeholder = if (fav.gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                        Icons.Default.Inventory2
+                    } else {
+                        Icons.Default.Folder
+                    },
+                    modifier = Modifier
+                        .size(leadSize)
+                        .clip(ShapeDefaults.Medium),
+                )
+                resolvedThumb != null -> CoverImage(
+                    coverPath = folderThumbKey,
+                    sizePx = listDecodePx,
+                    placeholder = Icons.Default.Folder,
+                    modifier = Modifier
+                        .size(leadSize)
+                        .clip(ShapeDefaults.Medium),
+                )
+                else -> Icon(
+                    favoriteIcon(fav),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
         },
         modifier = Modifier
             .fillMaxWidth()
@@ -534,9 +569,9 @@ private fun FavoriteSourceListRow(
 
 /**
  * Square favourite grid cell (column width from [GalleryGridDefaults]).
- * Sources / folders: 48.dp icon above caption (browse [labelMedium]).
- * Galleries: cover fills the whole cell; label overlays bottom with a highly
- * transparent scrim. No page-count badge.
+ * Sources: 48.dp icon above caption.
+ * Galleries + folder favourites with a **cache-hit** thumb: full-bleed cover + bottom
+ * label scrim (same as favourite gallery). Miss / no key keeps classic icon layout.
  */
 @Composable
 private fun FavoriteSourceGridCell(
@@ -546,34 +581,50 @@ private fun FavoriteSourceGridCell(
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val folderThumbKey = folderFavoriteThumbKey(fav)
+    var resolvedFolderThumb by remember(folderThumbKey) { mutableStateOf<String?>(null) }
+    LaunchedEffect(folderThumbKey) {
+        resolvedFolderThumb = withIOContext { HistoryThumbKey.resolveReadablePath(folderThumbKey) }
+    }
+    val useGalleryThumbStyle = fav is FavoriteBrowseSource.Gallery || resolvedFolderThumb != null
     ElevatedCard(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = Modifier.fillMaxWidth().aspectRatio(1f),
     ) {
-        if (fav is FavoriteBrowseSource.Gallery) {
+        if (useGalleryThumbStyle) {
             // Full-bleed thumb; name on a highly transparent bottom bar.
             Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
-                val gallery = fav.gallery
                 val gridDecodePx = CoverThumb.gridDecodePx(
                     screenWidthDp = LocalConfiguration.current.screenWidthDp,
                     columns = GalleryGridDefaults.columnCount(),
                     margin = GalleryGridDefaults.margin(),
                     gutter = GalleryGridDefaults.gutter(),
                 )
-                CoverImage(
-                    coverPath = gallery.coverPath,
-                    sizePx = gridDecodePx,
-                    archiveContentPath = gallery.contentPath.takeIf {
-                        gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
-                    },
-                    placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                        Icons.Default.Inventory2
-                    } else {
-                        Icons.Default.Folder
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
+                when (fav) {
+                    is FavoriteBrowseSource.Gallery -> {
+                        val gallery = fav.gallery
+                        CoverImage(
+                            coverPath = gallery.coverPath,
+                            sizePx = gridDecodePx,
+                            archiveContentPath = gallery.contentPath.takeIf {
+                                gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
+                            },
+                            placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                                Icons.Default.Inventory2
+                            } else {
+                                Icons.Default.Folder
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    else -> CoverImage(
+                        coverPath = folderThumbKey,
+                        sizePx = gridDecodePx,
+                        placeholder = Icons.Default.Folder,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
                 Text(
                     text = fav.displayName,
                     style = MaterialTheme.typography.labelMedium,
@@ -643,6 +694,14 @@ private fun FavoriteSourceGridCell(
             }
         }
     }
+}
+
+/** Stored cover key for folder favourites only (null for whole sources / galleries). */
+private fun folderFavoriteThumbKey(fav: FavoriteBrowseSource): String? = when (fav) {
+    is FavoriteBrowseSource.LocalFolder -> fav.thumbKey
+    is FavoriteBrowseSource.SmbFolder -> fav.thumbKey
+    is FavoriteBrowseSource.WebDavFolder -> fav.thumbKey
+    else -> null
 }
 
 @Composable

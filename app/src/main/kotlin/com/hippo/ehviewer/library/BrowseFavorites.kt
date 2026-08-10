@@ -15,8 +15,14 @@ import com.hippo.ehviewer.Settings
  * - `lf:{rootId}:{relativePath}` — local browse folder
  * - `sf:{sourceId}:{relativePath}` — SMB browse folder
  * - `wf:{sourceId}:{relativePath}` — WebDAV browse folder
+ *
+ * Optional cover keys in [Settings.favoriteBrowseThumbs] (same cache-key idea as History):
+ * local absolute cover path, or [HistoryThumbKey.smb] / [HistoryThumbKey.webdav].
+ * Library paints gallery-style cells only when [HistoryThumbKey.resolveReadablePath] hits.
  */
 object BrowseFavorites {
+    private const val THUMB_SEP = '\u0001'
+
     fun localKey(rootId: Long): String = "local:$rootId"
     fun smbKey(sourceId: Long): String = "smb:$sourceId"
     fun webDavKey(sourceId: Long): String = "webdav:$sourceId"
@@ -37,19 +43,51 @@ object BrowseFavorites {
     fun toggleSmb(sourceId: Long): Boolean = toggle(smbKey(sourceId))
     fun toggleWebDav(sourceId: Long): Boolean = toggle(webDavKey(sourceId))
     fun toggleGallery(galleryId: Long): Boolean = toggle(galleryKey(galleryId))
-    fun toggleLocalFolder(rootId: Long, relativePath: String): Boolean = toggle(localFolderKey(rootId, relativePath))
-    fun toggleSmbFolder(sourceId: Long, relativePath: String): Boolean = toggle(smbFolderKey(sourceId, relativePath))
-    fun toggleWebDavFolder(sourceId: Long, relativePath: String): Boolean = toggle(webDavFolderKey(sourceId, relativePath))
+    fun toggleLocalFolder(rootId: Long, relativePath: String, thumbKey: String? = null): Boolean =
+        toggle(localFolderKey(rootId, relativePath), thumbKey)
+    fun toggleSmbFolder(sourceId: Long, relativePath: String, thumbKey: String? = null): Boolean =
+        toggle(smbFolderKey(sourceId, relativePath), thumbKey)
+    fun toggleWebDavFolder(sourceId: Long, relativePath: String, thumbKey: String? = null): Boolean =
+        toggle(webDavFolderKey(sourceId, relativePath), thumbKey)
+
+    /** Cover key stored when the folder was favourited (may be stale / uncached). */
+    fun thumbKeyFor(favKey: String): String? {
+        val prefix = "$favKey$THUMB_SEP"
+        return Settings.favoriteBrowseThumbs.value
+            .firstOrNull { it.startsWith(prefix) }
+            ?.removePrefix(prefix)
+            ?.takeIf { it.isNotBlank() }
+    }
 
     /** @return true if now favourited, false if removed. */
-    private fun toggle(key: String): Boolean {
+    private fun toggle(key: String, thumbKey: String? = null): Boolean {
         val cur = Settings.favoriteBrowseSources.value
         return if (key in cur) {
             Settings.favoriteBrowseSources.value = cur - key
+            clearThumb(key)
             false
         } else {
             Settings.favoriteBrowseSources.value = cur + key
+            if (!thumbKey.isNullOrBlank()) {
+                putThumb(key, thumbKey)
+            } else {
+                clearThumb(key)
+            }
             true
+        }
+    }
+
+    private fun putThumb(favKey: String, thumbKey: String) {
+        val prefix = "$favKey$THUMB_SEP"
+        val without = Settings.favoriteBrowseThumbs.value.filterNot { it.startsWith(prefix) }.toSet()
+        Settings.favoriteBrowseThumbs.value = without + "$prefix$thumbKey"
+    }
+
+    private fun clearThumb(favKey: String) {
+        val prefix = "$favKey$THUMB_SEP"
+        val next = Settings.favoriteBrowseThumbs.value.filterNot { it.startsWith(prefix) }.toSet()
+        if (next.size != Settings.favoriteBrowseThumbs.value.size) {
+            Settings.favoriteBrowseThumbs.value = next
         }
     }
 
@@ -105,6 +143,8 @@ sealed class FavoriteBrowseSource {
     data class LocalFolder(
         val root: LibraryRootEntity,
         val relativePath: String,
+        /** Local path or null; Library shows gallery cell only on cache/path hit. */
+        val thumbKey: String? = null,
     ) : FavoriteBrowseSource() {
         override val key: String get() = BrowseFavorites.localFolderKey(root.id, relativePath)
         override val displayName: String
@@ -114,6 +154,8 @@ sealed class FavoriteBrowseSource {
     data class SmbFolder(
         val source: SmbSourceEntity,
         val relativePath: String,
+        /** [HistoryThumbKey.smb] or null. */
+        val thumbKey: String? = null,
     ) : FavoriteBrowseSource() {
         override val key: String get() = BrowseFavorites.smbFolderKey(source.id, relativePath)
         override val displayName: String
@@ -123,6 +165,8 @@ sealed class FavoriteBrowseSource {
     data class WebDavFolder(
         val source: WebDavSourceEntity,
         val relativePath: String,
+        /** [HistoryThumbKey.webdav] or null. */
+        val thumbKey: String? = null,
     ) : FavoriteBrowseSource() {
         override val key: String get() = BrowseFavorites.webDavFolderKey(source.id, relativePath)
         override val displayName: String
@@ -178,13 +222,19 @@ fun resolveFavoriteBrowseSources(
             galleryById[id]?.let { out += FavoriteBrowseSource.Gallery(it) }
         }
         BrowseFavorites.parseLocalFolder(key)?.let { (rootId, rel) ->
-            rootById[rootId]?.let { out += FavoriteBrowseSource.LocalFolder(it, rel) }
+            rootById[rootId]?.let {
+                out += FavoriteBrowseSource.LocalFolder(it, rel, BrowseFavorites.thumbKeyFor(key))
+            }
         }
         BrowseFavorites.parseSmbFolder(key)?.let { (sourceId, rel) ->
-            smbById[sourceId]?.let { out += FavoriteBrowseSource.SmbFolder(it, rel) }
+            smbById[sourceId]?.let {
+                out += FavoriteBrowseSource.SmbFolder(it, rel, BrowseFavorites.thumbKeyFor(key))
+            }
         }
         BrowseFavorites.parseWebDavFolder(key)?.let { (sourceId, rel) ->
-            webDavById[sourceId]?.let { out += FavoriteBrowseSource.WebDavFolder(it, rel) }
+            webDavById[sourceId]?.let {
+                out += FavoriteBrowseSource.WebDavFolder(it, rel, BrowseFavorites.thumbKeyFor(key))
+            }
         }
     }
     out.sortWith(
