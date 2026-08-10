@@ -155,12 +155,14 @@ object ExternalHttpStreamServer {
     private var stopKeepAliveJob: Job? = null
     private var pruneJob: Job? = null
 
-    /** Live network transfers + presence of network sessions (for FGS / screen-on). */
-    fun networkActivityCount(): Int {
-        val transfers = activeTransfers.get()
-        val networkSessions = sessions.values.count { it.network }
-        return transfers + networkSessions
-    }
+    /**
+     * Live **network HTTP body transfers** only (for FGS wake lock / screen-on).
+     *
+     * Idle sessions stay registered for resume ([StreamKeepAlivePolicy.tokenMaxAgeMs],
+     * ~20 min limited) but do **not** count as activity — same idea as streamdoc tokens
+     * that outlive their proxy FDs. No activity → no wake lock / short FGS grace only.
+     */
+    fun networkActivityCount(): Int = activeTransfers.get()
 
     fun ensureStarted(): Int = synchronized(lock) {
         serverSocket?.let { return port }
@@ -236,13 +238,20 @@ object ExternalHttpStreamServer {
     }
 
     // region keep-alive
+    //
+    // Match streamdoc FD semantics:
+    // - Session map stays for resume until idle max age (~20 min limited; activity-based).
+    // - FGS + wake lock only while a network transfer is in flight, plus short reopen grace.
+    // - Limited mode drops sticky SMB/WebDAV when idle; next GET reconnects.
 
     private fun onNetworkSessionRegistered(context: Context = appCtx) {
+        // Player is about to open the URI — brief FGS window until first Range or grace expires.
         synchronized(keepAliveLock) {
             stopKeepAliveJob?.cancel()
             stopKeepAliveJob = null
             StreamKeepAliveService.start(context)
         }
+        maybeStopKeepAliveLater()
     }
 
     private fun onTransferStarted(network: Boolean, context: Context = appCtx) {
@@ -259,21 +268,32 @@ object ExternalHttpStreamServer {
         if (!network) return
         activeTransfers.updateAndGet { (it - 1).coerceAtLeast(0) }
         if (activeTransfers.get() == 0) {
+            // Drop CPU wake immediately; FGS stops after short grace (sessions still valid).
             StreamKeepAliveService.onNetworkIdle()
             maybeStopKeepAliveLater()
         }
     }
 
+    /**
+     * After last network transfer (or session open with no traffic), stop FGS once the
+     * reopen grace elapses — **even if sessions remain** for later resume.
+     */
     private fun maybeStopKeepAliveLater(context: Context = appCtx) {
         synchronized(keepAliveLock) {
             stopKeepAliveJob?.cancel()
             stopKeepAliveJob = scope.launch {
                 delay(StreamKeepAlivePolicy.fgsStopDelayMs())
                 synchronized(keepAliveLock) {
-                    if (activeTransfers.get() == 0 && sessions.values.none { it.network }) {
-                        // Only stop if streamdoc also idle.
-                        if (StreamDocumentRegistry.networkOpenCount() == 0) {
-                            StreamKeepAliveService.stop(context)
+                    if (activeTransfers.get() == 0 &&
+                        StreamDocumentRegistry.networkOpenCount() == 0
+                    ) {
+                        StreamKeepAliveService.stop(context)
+                        // Limited mode: tear down sticky TCP while sessions stay in memory.
+                        // Next HTTP open rebuilds sticky SMB/WebDAV (reconnect-as-needed).
+                        if (StreamKeepAlivePolicy.dropNetworkOnScreenOff() &&
+                            sessions.values.any { it.network }
+                        ) {
+                            StreamKeepAlivePolicy.dropStickyNetwork("http_idle")
                         }
                         stopKeepAliveJob = null
                     }
@@ -298,6 +318,7 @@ object ExternalHttpStreamServer {
 
     fun pruneStale(nowMs: Long = SystemClock.elapsedRealtime()) {
         val maxAge = StreamKeepAlivePolicy.tokenMaxAgeMs()
+        // lastAccess is touched on every request/byte progress — idle budget is activity-based.
         for ((id, session) in sessions) {
             if (nowMs - session.lastAccessMs >= maxAge) {
                 sessions.remove(id, session)
@@ -311,20 +332,26 @@ object ExternalHttpStreamServer {
                 .take(overflow)
                 .forEach { sessions.remove(it.key, it.value) }
         }
-        maybeStopKeepAliveLater()
+        // Do not re-arm FGS from prune; only stop if already idle.
+        if (activeTransfers.get() == 0) {
+            maybeStopKeepAliveLater()
+        }
     }
 
     // endregion
 
     private fun handleClient(socket: Socket) {
         try {
-            socket.soTimeout = REQUEST_TIMEOUT_MS
+            // Bound header parse only; body streaming can idle between player Range chunks.
+            socket.soTimeout = REQUEST_HEADER_TIMEOUT_MS
             val input = BufferedInputStream(socket.getInputStream())
             val output = BufferedOutputStream(socket.getOutputStream())
             val request = readRequest(input) ?: run {
                 writeSimple(output, 400, "Bad Request")
                 return
             }
+            // Long movie Range replies must not die on SO_TIMEOUT mid-body.
+            socket.soTimeout = 0
             when (request.method) {
                 "GET", "HEAD" -> serve(request, output, headOnly = request.method == "HEAD")
                 else -> writeSimple(output, 405, "Method Not Allowed")
@@ -603,5 +630,6 @@ object ExternalHttpStreamServer {
     private const val MAX_REQUEST_LINE_LENGTH = 4096
     private const val MAX_HEADER_LINE_LENGTH = 8192
     private const val MAX_HEADER_COUNT = 64
-    private const val REQUEST_TIMEOUT_MS = 15_000
+    /** Idle timeout while reading request line + headers only. */
+    private const val REQUEST_HEADER_TIMEOUT_MS = 15_000
 }
