@@ -1084,11 +1084,15 @@ object SmbGateway {
     ): T = withIOContext {
         // Own client+connection so smbj host Connection cache cannot couple sticky to
         // the shared pool (and so dropAllSessions never closes this handle).
+        // Must use [endpointHost] (EasyTier virtual host when tunnel is up) — same as
+        // browse/pool. Video/PDF sticky opens used source.host and failed over EasyTier.
+        val host = endpointHost(source)
+        ensureHostNotCoolingDown(host, source.port)
         val smbClient = SMBClient(smbConfig())
         val prevTag = TrafficStats.getThreadStatsTag()
         TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
         try {
-            val connection = smbClient.connect(source.host, source.port)
+            val connection = smbClient.connect(host, source.port)
             stickyConnections.add(connection)
             try {
                 val session = connection.authenticate(auth(source, password))
