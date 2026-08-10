@@ -140,7 +140,7 @@ object OppoProxdr {
 
         Log.i(
             TAG,
-            "parsed ProXDR mask=${maskW}x${maskH} jpeg=${maskJpeg.size}b " +
+            "parsed ProXDR mask=${maskW}x$maskH jpeg=${maskJpeg.size}b " +
                 "maxBoost=$maxBoost displayRatio=$displayRatio",
         )
         return Payload(
@@ -301,7 +301,7 @@ object OppoProxdr {
         val cfg = base.config
         if (cfg != null && cfg != Bitmap.Config.HARDWARE && base.isMutable) return base
         // HARDWARE or immutable → software copy for Gainmap.
-        return base.copy(Bitmap.Config.ARGB_8888, /* mutable = */ true)
+        return base.copy(Bitmap.Config.ARGB_8888, true)
     }
 
     private fun jpegSofSize(jpeg: ByteArray): Pair<Int, Int>? {
@@ -329,11 +329,10 @@ object OppoProxdr {
         return null
     }
 
-    private fun u32be(b: ByteArray, off: Int): Int =
-        ((b[off].toInt() and 0xff) shl 24) or
-            ((b[off + 1].toInt() and 0xff) shl 16) or
-            ((b[off + 2].toInt() and 0xff) shl 8) or
-            (b[off + 3].toInt() and 0xff)
+    private fun u32be(b: ByteArray, off: Int): Int = ((b[off].toInt() and 0xff) shl 24) or
+        ((b[off + 1].toInt() and 0xff) shl 16) or
+        ((b[off + 2].toInt() and 0xff) shl 8) or
+        (b[off + 3].toInt() and 0xff)
 
     private fun indexOf(hay: ByteArray, start: Int, end: Int, needle: ByteArray): Int {
         if (needle.isEmpty() || end - start < needle.size) return -1

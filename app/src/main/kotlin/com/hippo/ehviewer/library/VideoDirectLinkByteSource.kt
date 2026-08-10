@@ -39,8 +39,7 @@ class VideoDirectLinkByteSource(
 
     private val lock = Any()
     private val blocks = object : LinkedHashMap<Long, Block>(maxBlocks, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Block>?): Boolean =
-            size > maxBlocks
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Block>?): Boolean = size > maxBlocks
     }
     private val inFlight = HashMap<Long, InFlight>()
     private val closed = AtomicBoolean(false)
@@ -291,8 +290,7 @@ class VideoDirectLinkByteSource(
         /** Blocks to keep filled ahead of the playhead on the prefetch lane. */
         const val VIDEO_PREFETCH_AHEAD = 6
 
-        fun isVideo(mimeType: String, displayName: String): Boolean =
-            mimeType.startsWith("video/", ignoreCase = true) || isVideoFileName(displayName)
+        fun isVideo(mimeType: String, displayName: String): Boolean = mimeType.startsWith("video/", ignoreCase = true) || isVideoFileName(displayName)
 
         /**
          * Open a dual-lane video source when [openLane] can produce independent sticky

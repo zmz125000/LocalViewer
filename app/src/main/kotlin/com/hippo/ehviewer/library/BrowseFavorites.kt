@@ -43,12 +43,9 @@ object BrowseFavorites {
     fun toggleSmb(sourceId: Long): Boolean = toggle(smbKey(sourceId))
     fun toggleWebDav(sourceId: Long): Boolean = toggle(webDavKey(sourceId))
     fun toggleGallery(galleryId: Long): Boolean = toggle(galleryKey(galleryId))
-    fun toggleLocalFolder(rootId: Long, relativePath: String, thumbKey: String? = null): Boolean =
-        toggle(localFolderKey(rootId, relativePath), thumbKey)
-    fun toggleSmbFolder(sourceId: Long, relativePath: String, thumbKey: String? = null): Boolean =
-        toggle(smbFolderKey(sourceId, relativePath), thumbKey)
-    fun toggleWebDavFolder(sourceId: Long, relativePath: String, thumbKey: String? = null): Boolean =
-        toggle(webDavFolderKey(sourceId, relativePath), thumbKey)
+    fun toggleLocalFolder(rootId: Long, relativePath: String, thumbKey: String? = null): Boolean = toggle(localFolderKey(rootId, relativePath), thumbKey)
+    fun toggleSmbFolder(sourceId: Long, relativePath: String, thumbKey: String? = null): Boolean = toggle(smbFolderKey(sourceId, relativePath), thumbKey)
+    fun toggleWebDavFolder(sourceId: Long, relativePath: String, thumbKey: String? = null): Boolean = toggle(webDavFolderKey(sourceId, relativePath), thumbKey)
 
     /** Cover key stored when the folder was favourited (may be stale / uncached). */
     fun thumbKeyFor(favKey: String): String? {

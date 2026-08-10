@@ -29,6 +29,7 @@ class BlockCacheArchiveByteSource(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Block>?): Boolean = size > maxBlocks
     }
     private val cacheLock = Any()
+
     @Volatile
     private var closed = false
 
