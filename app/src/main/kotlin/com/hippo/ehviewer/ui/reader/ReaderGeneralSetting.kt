@@ -24,10 +24,17 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         values = integerArrayResource(id = com.hippo.ehviewer.R.array.reader_themes_values).toList(),
         field = Settings.readerTheme.asMutableState(),
     )
+    val hdrDisplay = Settings.readerHdrDisplay.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_hdr_display),
-        field = Settings.readerHdrDisplay.asMutableState(),
+        field = hdrDisplay,
     )
+    AnimatedVisibility(visible = hdrDisplay.value) {
+        SwitchChoice(
+            title = stringResource(id = R.string.pref_reader_oppo_proxdr),
+            field = Settings.readerOppoProxdr.asMutableState(),
+        )
+    }
     val advancedColor = Settings.readerAdvancedColor.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_reader_advanced_color),

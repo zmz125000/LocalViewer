@@ -1,23 +1,28 @@
 package com.hippo.ehviewer.image.hdr
 
+import android.util.Log
 import com.ehviewer.core.files.read
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import okio.Path
+import okio.Path.Companion.toPath
 
 /**
  * Still-image display route (reader / thumbs / network cache).
  *
  * ```
- * Platform / PlatformGainMap  → Coil / ImageDecoder
- * Lib(codec)                  → ensureUhdr → Coil  (JXR / JXL / absolute PQ-AVIF)
+ * Platform / PlatformGainMap / OppoProxdr  → Coil / ImageDecoder (no UHDR convert)
+ * Lib(codec)                               → ensureUhdr → Coil  (JXR / JXL / PQ-AVIF)
  * ```
+ *
+ * OppoProxdr: same present path as PlatformGainMap (ORIGIN + [Bitmap.gainmap]); the
+ * gain map is attached after decode from the proprietary trailer (not ISO/Android UHDR).
  *
  * JXR/JXL always convert: the platform cannot open them, and Ultra HDR JPEG is the
  * unified Coil-ready form for both SDR and HDR content (SDR simply yields a base JPEG).
- * Content probes that split "SDR lib" vs "HDR lib" were unnecessary complexity.
  */
 sealed class StillRoute {
     /** Platform ImageDecoder path (JPEG/PNG/HEIC/SDR AVIF/…). */
@@ -28,6 +33,13 @@ sealed class StillRoute {
      * so gain maps are not stripped by subsample.
      */
     data object PlatformGainMap : StillRoute()
+
+    /**
+     * OPPO/OnePlus ProXDR HEIC. Platform HEIC decode + attach [android.graphics.Gainmap]
+     * from trailer when [com.hippo.ehviewer.Settings.readerOppoProxdr] is on (API 34+).
+     * **No** Ultra HDR JPEG convert.
+     */
+    data object OppoProxdr : StillRoute()
 
     /**
      * Non-platform codec → FP16 (or equivalent) + libultrahdr → Ultra HDR JPEG cache.
@@ -51,8 +63,9 @@ val StillRoute.needsUhdr: Boolean
 val StillRoute.needsLibDecode: Boolean
     get() = this is StillRoute.Lib
 
+/** Force ORIGIN + gain-map present knobs (native UHDR or ProXDR attach). */
 val StillRoute.isGainMap: Boolean
-    get() = this is StillRoute.PlatformGainMap
+    get() = this is StillRoute.PlatformGainMap || this is StillRoute.OppoProxdr
 
 /**
  * Extensions that are **not** platform ImageDecoder stills (need lib convert).
@@ -99,6 +112,14 @@ fun classify(
     fileNameHint: String? = null,
 ): StillRoute {
     if (!file.isFile || file.length() <= 0L) return StillRoute.Platform
+    val hint = fileNameHint ?: file.name
+    // ProXDR catalog lives after mdat — head sniff alone cannot see it.
+    if (Settings.readerOppoProxdr.value &&
+        isHeicImageExtension(FileUtils.getExtensionFromFilename(hint)) &&
+        OppoProxdr.looksLike(file.absolutePath.toPath())
+    ) {
+        return StillRoute.OppoProxdr
+    }
     val n = minOf(maxBytes.toLong(), file.length()).toInt().coerceAtLeast(0)
     if (n <= 0) return StillRoute.Platform
     val bytes = ByteArray(n)
@@ -106,7 +127,7 @@ fun classify(
         FileInputStream(file).use { it.read(bytes) }
     }.getOrDefault(-1)
     if (read <= 0) return StillRoute.Platform
-    return classify(bytes, read, fileNameHint ?: file.name)
+    return classify(bytes, read, hint)
 }
 
 /** Classify any Okio path. Lib stills can use extension; AVIF/gain-map need header bytes. */
@@ -114,6 +135,14 @@ fun classifyPath(path: Path, fileNameHint: String? = null, maxBytes: Int = HDR_S
     val hint = fileNameHint ?: path.name
     val byExt = classifyByExtension(hint)
     if (byExt.needsUhdr) return byExt
+    // HEIC: always consider ProXDR when enabled (trailer is after mdat; extension gate only).
+    val heicCandidate = isHeicImageExtension(FileUtils.getExtensionFromFilename(hint)) ||
+        isHeicImageExtension(FileUtils.getExtensionFromFilename(path.name))
+    if (Settings.readerOppoProxdr.value && heicCandidate) {
+        val match = OppoProxdr.looksLike(path)
+        Log.i("OppoProxdr", "classifyPath heic toggle=on match=$match path=$path hint=$hint")
+        if (match) return StillRoute.OppoProxdr
+    }
     return runCatching {
         path.read {
             val bytes = ByteArray(maxBytes)
@@ -137,6 +166,7 @@ fun classify(buffer: ByteBuffer, fileNameHint: String? = null): StillRoute {
  *
  * JXL / JXR: magic or extension → always Lib (convert).
  * AVIF: ftyp + nclx CICP (PQ/HLG → Lib AvifPq; gain-map markers → PlatformGainMap).
+ * HEIC + OPPO ProXDR trailer (when setting on) → OppoProxdr (platform + attach).
  */
 fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? = null): StillRoute {
     val n = length.coerceIn(0, bytes.size)
@@ -162,6 +192,15 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
         bytes.containsAscii("tmap", n)
     ) {
         return StillRoute.PlatformGainMap
+    }
+
+    // OPPO/OnePlus ProXDR HEIC trailer (opt-in). Sniff uses full buffer because the
+    // catalog/`jxrs` footer sits after mdat (often multi‑MB); [looksLike] only scans the tail.
+    if (Settings.readerOppoProxdr.value &&
+        OppoProxdr.looksLike(bytes, n) &&
+        (isHeicImageExtension(ext) || isHeifFamily(bytes, minOf(n, 64)))
+    ) {
+        return StillRoute.OppoProxdr
     }
 
     // Absolute PQ/HLG AVIF only → UHDR convert. HEIC stays platform.

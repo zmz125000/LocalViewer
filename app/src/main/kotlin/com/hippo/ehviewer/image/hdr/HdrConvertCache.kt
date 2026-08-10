@@ -46,7 +46,8 @@ import splitties.init.appCtx
  * Download to **RAM** → convert slot → commit only `.jpg` (drop original).
  * No discarded multi-30MB originals on disk after convert.
  *
- * Platform formats (HEIC, gain-map AVIF, JPEG…) never enter this convert path.
+ * Platform formats (gain-map AVIF, JPEG, HEIC including ProXDR…) stay on ImageDecoder.
+ * ProXDR attaches [android.graphics.Gainmap] after Coil decode (no UHDR convert).
  *
  * Public surface: [ensureCoilReady], [ensureUhdrFromBytes], [finalizeNetworkBytes],
  * [finalizeNetworkDownload], [writeThumbJpeg] / [writeThumbFromBytes].
@@ -141,11 +142,11 @@ object HdrConvertCache {
         return f.isFile && f.length() > 0L
     }
 
-    fun localDerivedPath(source: Path): Path {
+    fun localDerivedPath(source: Path, keyPrefix: String = "local"): Path {
         val meta = source.metadataOrNull()
         val mtime = meta?.lastModifiedAtMillis ?: 0L
         val size = meta?.size ?: 0L
-        val key = "local:$source:$mtime:$size"
+        val key = "$keyPrefix:$source:$mtime:$size"
         return localRoot / "${sha256Hex(key)}.jpg"
     }
 
@@ -156,8 +157,7 @@ object HdrConvertCache {
     suspend fun ensureDisplayFile(source: Path, fileNameHint: String = source.name): Path = withContext(Dispatchers.IO) {
         val route = classifyPath(source, fileNameHint)
         if (!route.needsUhdr) return@withContext source
-        val lib = route as StillRoute.Lib
-        ensureUhdrLocal(source, lib.codec)
+        ensureUhdrLocal(source, (route as StillRoute.Lib).codec)
     }
 
     /** Alias for [ensureDisplayFile]. */
@@ -168,7 +168,7 @@ object HdrConvertCache {
 
     /**
      * Reader/cache chokepoint: any path → **Coil / ImageDecoder-ready** file.
-     * - Platform / gain-map → [source]
+     * - Platform / gain-map / ProXDR HEIC → [source] (ProXDR attaches Gainmap after decode)
      * - Lib (JXR/JXL/PQ-AVIF) → Ultra HDR JPEG under [localRoot]
      */
     suspend fun ensureCoilReady(source: Path, fileNameHint: String = source.name): Path = withContext(Dispatchers.IO) {
@@ -182,14 +182,14 @@ object HdrConvertCache {
             return@withContext source
         }
         val route = classifyPath(source, fileNameHint)
+        // OppoProxdr / PlatformGainMap / Platform: leave original HEIC for Coil.
         if (!route.needsUhdr) return@withContext source
-        val lib = route as StillRoute.Lib
-        ensureUhdrLocal(source, lib.codec)
+        ensureUhdrLocal(source, (route as StillRoute.Lib).codec)
     }
 
     /**
      * In-memory archive pages → Coil-ready file on disk.
-     * Platform bytes written to a hashed temp for a stable PathSource; lib formats converted.
+     * Platform / ProXDR bytes written as-is; lib formats converted.
      */
     suspend fun ensureCoilReadyFromBytes(bytes: ByteArray, fileNameHint: String): Path = withContext(Dispatchers.IO) {
         if (bytes.isEmpty()) error("empty image buffer: $fileNameHint")
@@ -197,7 +197,7 @@ object HdrConvertCache {
         when {
             route.needsUhdr -> ensureUhdrFromBytes(bytes, fileNameHint)
             else -> {
-                // Platform / gain-map: materialize so PathSource open is uniform.
+                // Platform / gain-map / ProXDR: materialize so PathSource open is uniform.
                 ensureLocalRoot()
                 val ext = guessPlatformExt(bytes, fileNameHint)
                 val dest = localRoot / "${sha256HexBytes(bytes)}.$ext"
