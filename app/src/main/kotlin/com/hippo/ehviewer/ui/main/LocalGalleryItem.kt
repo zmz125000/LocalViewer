@@ -415,7 +415,7 @@ fun HistoryGridItem(
                     }
                 }
             }
-            // Type badge left of caption (same idea as Library favourite network folder cells).
+            // Type badge left of caption (same layout as Library favourite network folder cells).
             val labelIconSize = with(LocalDensity.current) {
                 MaterialTheme.typography.labelMedium.fontSize.toDp()
             }
@@ -425,13 +425,13 @@ fun HistoryGridItem(
                     .height(nameHeight)
                     .padding(horizontal = namePadH)
                     .padding(bottom = namePadBottom),
-                verticalAlignment = Alignment.Bottom,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
                     imageVector = placeholderIcon,
                     contentDescription = null,
                     modifier = Modifier
-                        .padding(end = 4.dp, bottom = 1.dp)
+                        .padding(end = 4.dp)
                         .size(labelIconSize),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
