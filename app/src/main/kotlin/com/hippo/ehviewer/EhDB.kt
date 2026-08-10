@@ -254,10 +254,30 @@ object EhDB {
 
     fun searchLocalFav(keyword: String) = db.localFavoritesDao().joinListLazy("*$keyword*")
 
+    /**
+     * Record / re-open history for [GalleryInfo.gid]:
+     * 1. Update GALLERIES metadata (preserve thumb/pages/title if new values are empty).
+     * 2. Fast match HISTORY by primary key GID → bump TIME; insert only if missing.
+     * Re-opening the same gallery never creates a second history row.
+     */
     suspend fun putHistoryInfo(galleryInfo: GalleryInfo) {
         if (!Settings.saveHistory.value) return
-        putGalleryInfo(galleryInfo.asEntity())
-        db.historyDao().upsert(HistoryInfo(galleryInfo.gid))
+        val entity = galleryInfo.asEntity()
+        // Keep sparse re-records from wiping cover / page count.
+        db.galleryDao().load(entity.gid)?.let { prev ->
+            if (entity.thumbKey.isNullOrBlank()) entity.thumbKey = prev.thumbKey
+            if (entity.pages <= 0 && prev.pages > 0) entity.pages = prev.pages
+            if (entity.title.isNullOrBlank()) entity.title = prev.title
+        }
+        putGalleryInfo(entity)
+        val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
+        val dao = db.historyDao()
+        // Fast path: PK update. Insert only when no HISTORY row exists for this gid.
+        if (dao.bumpTime(entity.gid, now) == 0) {
+            dao.insertOrIgnore(HistoryInfo(entity.gid, now))
+            // Concurrent insert won the race — still force TIME to now.
+            dao.bumpTime(entity.gid, now)
+        }
     }
 
     /** Existing GALLERIES row, if any (used to preserve thumbKey on re-record). */

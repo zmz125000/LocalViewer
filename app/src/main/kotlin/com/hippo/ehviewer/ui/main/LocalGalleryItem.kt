@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -37,6 +38,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,9 +59,30 @@ import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.ui.screen.collectListThumbSizeAsState
 import okio.Path.Companion.toPath
+
+/**
+ * History grid label icon vertical bias as a **fraction of icon height**.
+ * - `0f` — icon bottom flush with the text block bottom (last line)
+ * - negative (e.g. `-0.15f`) — nudge icon up
+ * - positive (e.g. `0.1f`) — nudge icon down
+ */
+private const val HistoryLabelIconYBias = -0.18f
+
+/** Prefer stored [GalleryInfo.thumbKey]; for network archives derive the logical cover key. */
+private fun historyCoverKey(info: GalleryInfo): String? {
+    info.thumbKey?.takeIf { it.isNotBlank() }?.let { return it }
+    return when (val target = LocalHistory.parse(info)) {
+        is LocalHistoryTarget.SmbStreamArchive ->
+            HistoryThumbKey.smbArchive(target.sourceId, target.remotePath)
+        is LocalHistoryTarget.WebDavStreamArchive ->
+            HistoryThumbKey.webdavArchive(target.sourceId, target.remotePath)
+        else -> null
+    }
+}
 
 /** Kind / page-count chip — text on secondaryContainer, used on list cards. */
 @Composable
@@ -277,9 +300,12 @@ fun HistoryListItem(
     }
     val cardHeight by collectListThumbSizeAsState()
     val listDecodePx = CoverThumb.libraryListDecodePx(cardHeight)
+    val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
+        historyCoverKey(info)
+    }
     Row {
         CoverImage(
-            coverPath = info.thumbKey,
+            coverPath = coverKey,
             sizePx = listDecodePx,
             placeholder = placeholderIcon,
             modifier = Modifier
@@ -355,6 +381,9 @@ fun HistoryGridItem(
         margin = GalleryGridDefaults.margin(),
         gutter = GalleryGridDefaults.gutter(),
     )
+    val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
+        historyCoverKey(info)
+    }
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
@@ -368,7 +397,7 @@ fun HistoryGridItem(
                     .clip(ShapeDefaults.Medium),
             ) {
                 CoverImage(
-                    coverPath = info.thumbKey,
+                    coverPath = coverKey,
                     sizePx = gridDecodePx,
                     placeholder = placeholderIcon,
                     modifier = Modifier.fillMaxSize(),
@@ -395,6 +424,11 @@ fun HistoryGridItem(
                     }
                 }
             }
+            // Fixed name band: caption on the bottom of the box.
+            // Icon bottom-aligns to the text block; tweak [HistoryLabelIconYBias] if needed.
+            val labelIconSize = with(LocalDensity.current) {
+                MaterialTheme.typography.labelMedium.fontSize.toDp()
+            }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -402,14 +436,32 @@ fun HistoryGridItem(
                     .padding(horizontal = namePadH),
                 contentAlignment = Alignment.BottomStart,
             ) {
-                Text(
-                    text = info.title.orEmpty(),
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Start,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = namePadBottom),
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = namePadBottom),
+                    // Bottom of icon ↔ bottom of last text line (not center of the name box).
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    Icon(
+                        imageVector = placeholderIcon,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(end = 4.dp)
+                            .size(labelIconSize)
+                            // Fraction of icon height: negative = up, positive = down. 0f = flush.
+                            .offset(y = labelIconSize * HistoryLabelIconYBias),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = info.title.orEmpty(),
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
     }

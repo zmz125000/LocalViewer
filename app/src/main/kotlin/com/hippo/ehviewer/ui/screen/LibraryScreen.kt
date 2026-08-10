@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
 import androidx.compose.foundation.layout.size
@@ -671,7 +672,8 @@ private fun FavoriteSourceGridCell(
                     .fillMaxWidth()
                     .padding(horizontal = namePadH)
                     .padding(bottom = namePadBottom),
-                verticalAlignment = Alignment.CenterVertically,
+                // Bottom of badge ↔ bottom of last text line (same as History grid).
+                verticalAlignment = Alignment.Bottom,
             ) {
                 if (networkBadge != null) {
                     Icon(
@@ -679,7 +681,9 @@ private fun FavoriteSourceGridCell(
                         contentDescription = null,
                         modifier = Modifier
                             .padding(end = 4.dp)
-                            .size(labelIconSize),
+                            .size(labelIconSize)
+                            // Fraction of icon height: negative = up, positive = down. 0f = flush.
+                            .offset(y = labelIconSize * FavoriteLabelIconYBias),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -695,6 +699,14 @@ private fun FavoriteSourceGridCell(
         }
     }
 }
+
+/**
+ * Favourite grid label icon vertical bias as a **fraction of icon height**.
+ * - `0f` — icon bottom flush with the text block bottom (last line)
+ * - negative (e.g. `-0.15f`) — nudge icon up
+ * - positive (e.g. `0.1f`) — nudge icon down
+ */
+private const val FavoriteLabelIconYBias = -0.18f
 
 /** Stored cover key for folder favourites only (null for whole sources / galleries). */
 private fun folderFavoriteThumbKey(fav: FavoriteBrowseSource): String? = when (fav) {

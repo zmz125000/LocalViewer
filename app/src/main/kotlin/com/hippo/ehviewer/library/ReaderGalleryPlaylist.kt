@@ -167,6 +167,7 @@ object ReaderGalleryPlaylist {
                         pages = 0,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
+                        thumbKey = HistoryThumbKey.smbArchive(sourceId, remote),
                         uploader = "$sourceId\u0000$remote",
                         category = 1,
                     )
@@ -234,6 +235,7 @@ object ReaderGalleryPlaylist {
                         pages = 0,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
+                        thumbKey = HistoryThumbKey.webdavArchive(sourceId, remote),
                         uploader = "$sourceId\u0000$remote",
                         category = 1,
                     )

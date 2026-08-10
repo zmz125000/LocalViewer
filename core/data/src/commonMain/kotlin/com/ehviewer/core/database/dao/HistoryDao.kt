@@ -31,6 +31,16 @@ interface HistoryDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertOrIgnore(historyInfoList: List<HistoryInfo>)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertOrIgnore(historyInfo: HistoryInfo)
+
+    /**
+     * Bump recency for an existing history row.
+     * @return number of rows updated (0 = no history row for [gid]).
+     */
+    @Query("UPDATE HISTORY SET TIME = :time WHERE GID = :gid")
+    suspend fun bumpTime(gid: Long, time: Long): Int
+
     @Upsert
     suspend fun upsert(historyInfo: HistoryInfo)
 

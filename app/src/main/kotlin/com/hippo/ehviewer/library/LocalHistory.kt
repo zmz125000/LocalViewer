@@ -367,6 +367,7 @@ object LocalHistory {
     /**
      * SMB streamable archive. Click → [ReaderScreenArgs.SmbStreamArchive].
      * History and progress share [stableGalleryId](`smba:$rel`) so History progress chips match.
+     * [thumbKey] defaults to [HistoryThumbKey.smbArchive] (cache-hit only in History UI).
      */
     suspend fun recordSmbStreamArchive(
         sourceId: Long,
@@ -374,14 +375,16 @@ object LocalHistory {
         title: String? = null,
         pages: Int = 0,
         info: BaseGalleryInfo? = null,
+        thumbKey: String? = null,
     ) {
         val rel = normalizeRel(remotePath)
         val gid = info?.gid ?: stableGalleryId(sourceId, "smba:$rel")
+        val coverKey = thumbKey ?: info?.thumbKey ?: HistoryThumbKey.smbArchive(sourceId, rel)
         val hist = BaseGalleryInfo(
             gid = gid,
             token = SMB_ARCHIVE_TOKEN,
             title = title ?: info?.title ?: rel.substringAfterLast('/').ifEmpty { "Archive" },
-            thumbKey = resolveThumbKey(gid, info?.thumbKey),
+            thumbKey = resolveThumbKey(gid, coverKey),
             category = 1,
             uploader = encodeSmbBrowse(sourceId, rel),
             rating = -1f,
@@ -396,6 +399,7 @@ object LocalHistory {
     /**
      * WebDAV streamable archive. Click → [ReaderScreenArgs.WebDavStreamArchive].
      * History and progress share [stableGalleryId](`dava:$rel`).
+     * [thumbKey] defaults to [HistoryThumbKey.webdavArchive] (cache-hit only in History UI).
      */
     suspend fun recordWebDavStreamArchive(
         sourceId: Long,
@@ -403,14 +407,16 @@ object LocalHistory {
         title: String? = null,
         pages: Int = 0,
         info: BaseGalleryInfo? = null,
+        thumbKey: String? = null,
     ) {
         val rel = normalizeRel(remotePath)
         val gid = info?.gid ?: stableGalleryId(sourceId, "dava:$rel")
+        val coverKey = thumbKey ?: info?.thumbKey ?: HistoryThumbKey.webdavArchive(sourceId, rel)
         val hist = BaseGalleryInfo(
             gid = gid,
             token = WEBDAV_ARCHIVE_TOKEN,
             title = title ?: info?.title ?: rel.substringAfterLast('/').ifEmpty { "Archive" },
-            thumbKey = resolveThumbKey(gid, info?.thumbKey),
+            thumbKey = resolveThumbKey(gid, coverKey),
             category = 1,
             uploader = encodeWebDavBrowse(sourceId, rel),
             rating = -1f,
