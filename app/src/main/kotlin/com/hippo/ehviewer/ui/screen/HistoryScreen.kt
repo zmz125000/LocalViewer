@@ -59,10 +59,14 @@ import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseSession
-import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
+import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
+import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
+import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
+import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.buildLocalBrowseStack
 import com.hippo.ehviewer.library.parentRelativeOfFile
 import com.hippo.ehviewer.library.stableGalleryId
@@ -232,14 +236,18 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         preferMediaStore = root.prefersMediaStore,
                     )
                     navigate(FolderBrowserScreenDestination(fromHistory = true))
+                    // Same identity as browse openFolderGallery so progress stubs keep path.
+                    val rel = target.relativePath.trim('/')
                     val gi = BaseGalleryInfo(
                         gid = info.gid,
-                        token = LOCAL_GALLERY_TOKEN,
-                        title = info.title ?: target.relativePath.substringAfterLast('/'),
+                        token = LOCAL_FOLDER_TOKEN,
+                        title = info.title ?: rel.substringAfterLast('/').ifEmpty { "Folder" },
                         pages = info.pages,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
                         thumbKey = info.thumbKey,
+                        uploader = "${target.rootId}\u0000$rel",
+                        category = 0,
                     )
                     navToLocalFolderReader(galleryPath, gi)
                 }
@@ -263,12 +271,14 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     )
                     val gi = BaseGalleryInfo(
                         gid = info.gid,
-                        token = LOCAL_GALLERY_TOKEN,
-                        title = info.title ?: remote.substringAfterLast('/'),
+                        token = SMB_FOLDER_TOKEN,
+                        title = info.title ?: remote.substringAfterLast('/').ifEmpty { "Share" },
                         pages = info.pages,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
                         thumbKey = info.thumbKey,
+                        uploader = "${source.id}\u0000$remote",
+                        category = 2,
                     )
                     // Empty names → reader re-lists full image set.
                     navToSmbFolderReader(source.id, remote, emptyList(), gi)
@@ -293,12 +303,14 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     )
                     val gi = BaseGalleryInfo(
                         gid = info.gid,
-                        token = LOCAL_GALLERY_TOKEN,
-                        title = info.title ?: remote.substringAfterLast('/'),
+                        token = WEBDAV_FOLDER_TOKEN,
+                        title = info.title ?: remote.substringAfterLast('/').ifEmpty { "WebDAV" },
                         pages = info.pages,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
                         thumbKey = info.thumbKey,
+                        uploader = "${source.id}\u0000$remote",
+                        category = 3,
                     )
                     navToWebDavFolderReader(source.id, remote, emptyList(), gi)
                 }
@@ -339,13 +351,21 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             fromHistory = true,
                         ),
                     )
+                    // Always smba: (progress gid). Drop legacy smb-archive: history row if present.
+                    val progressGid = stableGalleryId(source.id, "smba:$remote")
+                    if (info.gid != progressGid) {
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                    }
                     val gi = BaseGalleryInfo(
-                        gid = stableGalleryId(source.id, "smba:$remote"),
-                        token = LOCAL_GALLERY_TOKEN,
+                        gid = progressGid,
+                        token = SMB_ARCHIVE_TOKEN,
                         title = info.title ?: remote.substringAfterLast('/'),
                         pages = info.pages,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
+                        thumbKey = info.thumbKey,
+                        uploader = "${source.id}\u0000$remote",
+                        category = 1,
                     )
                     navToSmbStreamArchiveReader(source.id, remote, gi)
                 }
@@ -367,13 +387,20 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             fromHistory = true,
                         ),
                     )
+                    val progressGid = stableGalleryId(source.id, "dava:$remote")
+                    if (info.gid != progressGid) {
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                    }
                     val gi = BaseGalleryInfo(
-                        gid = stableGalleryId(source.id, "dava:$remote"),
-                        token = LOCAL_GALLERY_TOKEN,
+                        gid = progressGid,
+                        token = WEBDAV_ARCHIVE_TOKEN,
                         title = info.title ?: remote.substringAfterLast('/'),
                         pages = info.pages,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
+                        thumbKey = info.thumbKey,
+                        uploader = "${source.id}\u0000$remote",
+                        category = 1,
                     )
                     navToWebDavStreamArchiveReader(source.id, remote, gi)
                 }

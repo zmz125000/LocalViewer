@@ -348,7 +348,10 @@ object LocalHistory {
         EhDB.putHistoryInfo(info)
     }
 
-    /** SMB streamable archive. Click → [ReaderScreenArgs.SmbStreamArchive]. */
+    /**
+     * SMB streamable archive. Click → [ReaderScreenArgs.SmbStreamArchive].
+     * History and progress share [stableGalleryId](`smba:$rel`) so History progress chips match.
+     */
     suspend fun recordSmbStreamArchive(
         sourceId: Long,
         remotePath: String,
@@ -357,30 +360,27 @@ object LocalHistory {
         info: BaseGalleryInfo? = null,
     ) {
         val rel = normalizeRel(remotePath)
-        val base = info ?: BaseGalleryInfo(
-            gid = stableGalleryId(sourceId, "smba:$rel"),
-            token = LOCAL_GALLERY_TOKEN,
-            title = title ?: rel.substringAfterLast('/').ifEmpty { "Archive" },
-            pages = pages,
-            favoriteSlot = NOT_FAVORITED,
-            rating = -1f,
-        )
-        ensureGalleryForProgress(base)
+        val gid = info?.gid ?: stableGalleryId(sourceId, "smba:$rel")
         val hist = BaseGalleryInfo(
-            gid = stableGalleryId(sourceId, "smb-archive:$rel"),
+            gid = gid,
             token = SMB_ARCHIVE_TOKEN,
-            title = base.title ?: rel.substringAfterLast('/').ifEmpty { "Archive" },
-            thumbKey = base.thumbKey,
+            title = title ?: info?.title ?: rel.substringAfterLast('/').ifEmpty { "Archive" },
+            thumbKey = resolveThumbKey(gid, info?.thumbKey),
             category = 1,
             uploader = encodeSmbBrowse(sourceId, rel),
             rating = -1f,
-            pages = base.pages,
+            pages = pages.takeIf { it > 0 } ?: info?.pages ?: 0,
             favoriteSlot = NOT_FAVORITED,
         )
+        // Same gid as progress FK; full archive identity so stubs are not token=local.
+        ensureGalleryForProgress(hist)
         EhDB.putHistoryInfo(hist)
     }
 
-    /** WebDAV streamable archive. Click → [ReaderScreenArgs.WebDavStreamArchive]. */
+    /**
+     * WebDAV streamable archive. Click → [ReaderScreenArgs.WebDavStreamArchive].
+     * History and progress share [stableGalleryId](`dava:$rel`).
+     */
     suspend fun recordWebDavStreamArchive(
         sourceId: Long,
         remotePath: String,
@@ -389,26 +389,19 @@ object LocalHistory {
         info: BaseGalleryInfo? = null,
     ) {
         val rel = normalizeRel(remotePath)
-        val base = info ?: BaseGalleryInfo(
-            gid = stableGalleryId(sourceId, "dava:$rel"),
-            token = LOCAL_GALLERY_TOKEN,
-            title = title ?: rel.substringAfterLast('/').ifEmpty { "Archive" },
-            pages = pages,
-            favoriteSlot = NOT_FAVORITED,
-            rating = -1f,
-        )
-        ensureGalleryForProgress(base)
+        val gid = info?.gid ?: stableGalleryId(sourceId, "dava:$rel")
         val hist = BaseGalleryInfo(
-            gid = stableGalleryId(sourceId, "webdav-archive:$rel"),
+            gid = gid,
             token = WEBDAV_ARCHIVE_TOKEN,
-            title = base.title ?: rel.substringAfterLast('/').ifEmpty { "Archive" },
-            thumbKey = base.thumbKey,
+            title = title ?: info?.title ?: rel.substringAfterLast('/').ifEmpty { "Archive" },
+            thumbKey = resolveThumbKey(gid, info?.thumbKey),
             category = 1,
             uploader = encodeWebDavBrowse(sourceId, rel),
             rating = -1f,
-            pages = base.pages,
+            pages = pages.takeIf { it > 0 } ?: info?.pages ?: 0,
             favoriteSlot = NOT_FAVORITED,
         )
+        ensureGalleryForProgress(hist)
         EhDB.putHistoryInfo(hist)
     }
 
