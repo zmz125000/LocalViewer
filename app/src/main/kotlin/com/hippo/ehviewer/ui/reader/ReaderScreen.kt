@@ -353,7 +353,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
             .onCompletion { activity.requestedOrientation = orientation }
             .collect { activity.setOrientation(it) }
     }
-    // History for archive opens (browse/library may also record; upsert is fine).
+    // History for archive / folder-gallery opens (browse also records; upsert is fine).
     LaunchedEffect(args) {
         withIOContext {
             when (args) {
@@ -372,7 +372,47 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                     pages = args.info?.pages ?: 0,
                     info = args.info,
                 )
-                else -> Unit
+                is ReaderScreenArgs.LocalFolder -> {
+                    val libId = args.info?.gid
+                    val lib = libId?.let { LocalLibrary.loadGallery(it) }
+                    if (lib != null) {
+                        LocalHistory.recordLibraryGallery(lib)
+                    } else {
+                        val frame = BrowseSession.localStack.lastOrNull() ?: return@withIOContext
+                        val rel = if (args.path == frame.path) {
+                            frame.relativePath
+                        } else {
+                            val name = args.path.toPath().name
+                            if (frame.relativePath.isEmpty()) name else "${frame.relativePath}/$name"
+                        }
+                        LocalHistory.recordLocalFolderGallery(
+                            rootId = frame.rootId,
+                            relativePath = rel,
+                            title = args.info?.title ?: args.path.toPath().name,
+                            thumbKey = args.info?.thumbKey,
+                            pages = args.info?.pages ?: 0,
+                            info = args.info,
+                        )
+                    }
+                }
+                is ReaderScreenArgs.SmbFolder -> LocalHistory.recordSmbFolderGallery(
+                    sourceId = args.sourceId,
+                    remoteDir = args.remoteDir,
+                    title = args.info?.title
+                        ?: args.remoteDir.substringAfterLast('/').ifEmpty { "Share" },
+                    thumbKey = args.info?.thumbKey,
+                    pages = args.info?.pages ?: 0,
+                    info = args.info,
+                )
+                is ReaderScreenArgs.WebDavFolder -> LocalHistory.recordWebDavFolderGallery(
+                    sourceId = args.sourceId,
+                    remoteDir = args.remoteDir,
+                    title = args.info?.title
+                        ?: args.remoteDir.substringAfterLast('/').ifEmpty { "WebDAV" },
+                    thumbKey = args.info?.thumbKey,
+                    pages = args.info?.pages ?: 0,
+                    info = args.info,
+                )
             }
         }
     }
@@ -602,17 +642,12 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                         withIOContext {
                             when (s) {
                                 is ReaderScreenArgs.LocalFolder -> {
-                                    s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                                    // Library / History playlist: real LocalLibrary row → history as gallery.
-                                    // (Previously only browse-stack path was recorded, so Library next/prev
-                                    // never appeared in History.)
                                     val libId = s.info?.gid
                                     val lib = libId?.let { LocalLibrary.loadGallery(it) }
                                     if (lib != null) {
                                         LocalHistory.recordLibraryGallery(lib)
                                         return@withIOContext
                                     }
-                                    // Browse folder path link (lazy galleries are not permanent library rows).
                                     val frame = BrowseSession.localStack.lastOrNull()
                                         ?: return@withIOContext
                                     val rel = if (s.path == frame.path) {
@@ -621,31 +656,35 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                                         val name = s.path.toPath().name
                                         if (frame.relativePath.isEmpty()) name else "${frame.relativePath}/$name"
                                     }
-                                    LocalHistory.recordLocalBrowseFolder(
+                                    LocalHistory.recordLocalFolderGallery(
                                         rootId = frame.rootId,
                                         relativePath = rel,
                                         title = s.info?.title ?: s.path.toPath().name,
+                                        thumbKey = s.info?.thumbKey,
                                         pages = s.info?.pages ?: 0,
+                                        info = s.info,
                                     )
                                 }
                                 is ReaderScreenArgs.WebDavFolder -> {
-                                    s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                                    LocalHistory.recordWebDavBrowseFolder(
+                                    LocalHistory.recordWebDavFolderGallery(
                                         sourceId = s.sourceId,
-                                        relativePath = s.remoteDir,
+                                        remoteDir = s.remoteDir,
                                         title = s.info?.title
                                             ?: s.remoteDir.substringAfterLast('/').ifEmpty { "WebDAV" },
+                                        thumbKey = s.info?.thumbKey,
                                         pages = s.info?.pages ?: 0,
+                                        info = s.info,
                                     )
                                 }
                                 is ReaderScreenArgs.SmbFolder -> {
-                                    s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
-                                    LocalHistory.recordSmbBrowseFolder(
+                                    LocalHistory.recordSmbFolderGallery(
                                         sourceId = s.sourceId,
-                                        relativePath = s.remoteDir,
+                                        remoteDir = s.remoteDir,
                                         title = s.info?.title
                                             ?: s.remoteDir.substringAfterLast('/').ifEmpty { "Share" },
+                                        thumbKey = s.info?.thumbKey,
                                         pages = s.info?.pages ?: 0,
+                                        info = s.info,
                                     )
                                 }
                                 is ReaderScreenArgs.SmbStreamArchive -> {

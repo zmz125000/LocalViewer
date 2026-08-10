@@ -75,6 +75,7 @@ import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.filterRemoteByContentMode
@@ -424,22 +425,26 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val gid = stableGalleryId(src.id, "webdav:$remote")
         val info = BaseGalleryInfo(
             gid = gid,
-            token = LOCAL_GALLERY_TOKEN,
+            // Keep History identity on the reader info so progress FK inserts cannot
+            // orphan network galleries (token=local + empty uploader).
+            token = WEBDAV_FOLDER_TOKEN,
             title = entry.name,
             pages = if (entry.pageCountCapped) 0 else entry.pageCount,
             favoriteSlot = NOT_FAVORITED,
             rating = -1f,
             thumbKey = coverKey,
+            uploader = "${src.id}\u0000${remote.trim('/')}",
+            category = 3,
         )
         launchIO {
-            // Progress FK for reader; History stores the browse folder path link.
-            LocalHistory.ensureGalleryForProgress(info)
-            LocalHistory.recordWebDavBrowseFolder(
+            // History = folder gallery (open → reader). Same gid as progress.
+            LocalHistory.recordWebDavFolderGallery(
                 sourceId = src.id,
-                relativePath = remote,
+                remoteDir = remote,
                 title = entry.name,
-                coverPath = coverKey,
+                thumbKey = coverKey,
                 pages = if (entry.pageCountCapped) 0 else entry.pageCount,
+                info = info,
             )
         }
         // When capped or partial, pass empty names so reader re-lists full set

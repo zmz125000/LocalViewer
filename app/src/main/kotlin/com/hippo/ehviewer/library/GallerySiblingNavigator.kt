@@ -92,6 +92,7 @@ object GallerySiblingNavigator {
                     pages = if (target.pageCountCapped) 0 else target.pageCount,
                     favoriteSlot = NOT_FAVORITED,
                     rating = -1f,
+                    thumbKey = target.coverPath?.toString(),
                 )
                 ReaderScreenArgs.LocalFolder(target.path.toString(), page = -1, info = info)
             }
@@ -159,6 +160,12 @@ object GallerySiblingNavigator {
             }
             is BrowseEntryRemote.FolderGallery -> {
                 val remote = remoteOf(target)
+                val coverKey = target.coverFileName?.let { fileName ->
+                    HistoryThumbKey.smb(
+                        source.id,
+                        SmbGateway.joinRelativePath(remote, fileName),
+                    )
+                }
                 val info = BaseGalleryInfo(
                     gid = stableGalleryId(source.id, "smb:$remote"),
                     token = LOCAL_GALLERY_TOKEN,
@@ -166,6 +173,7 @@ object GallerySiblingNavigator {
                     pages = if (target.pageCountCapped) 0 else target.pageCount,
                     favoriteSlot = NOT_FAVORITED,
                     rating = -1f,
+                    thumbKey = coverKey,
                 )
                 val names = if (target.pageCountCapped) emptyList() else target.imageFileNames
                 ReaderScreenArgs.SmbFolder(source.id, remote, names, page = -1, info = info)
@@ -231,6 +239,12 @@ object GallerySiblingNavigator {
             }
             is BrowseEntryRemote.FolderGallery -> {
                 val remote = remoteOf(target)
+                val coverKey = target.coverFileName?.let { fileName ->
+                    HistoryThumbKey.webdav(
+                        source.id,
+                        WebDavGateway.joinRelative(remote, fileName),
+                    )
+                }
                 val info = BaseGalleryInfo(
                     gid = stableGalleryId(source.id, "webdav:$remote"),
                     token = LOCAL_GALLERY_TOKEN,
@@ -238,6 +252,7 @@ object GallerySiblingNavigator {
                     pages = if (target.pageCountCapped) 0 else target.pageCount,
                     favoriteSlot = NOT_FAVORITED,
                     rating = -1f,
+                    thumbKey = coverKey,
                 )
                 val names = if (target.pageCountCapped) emptyList() else target.imageFileNames
                 ReaderScreenArgs.WebDavFolder(source.id, remote, names, page = -1, info = info)

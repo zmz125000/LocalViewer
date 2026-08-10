@@ -5,13 +5,15 @@ import com.hippo.ehviewer.webdav.WebDavCache
 import okio.Path
 
 /**
- * Stable [GalleryInfo.thumbKey] encodings for browse-folder history rows so History can
- * paint the **same** JPEG as browse [BrowseCover] / [SmbCache]/[WebDavCache] thumbs.
+ * Stable [GalleryInfo.thumbKey] encodings for **folder-gallery** history rows so History
+ * paints the same JPEG as browse covers / [SmbCache] / [WebDavCache].
  *
- * - Local browse: absolute cover path (filesystem / content URI) — unchanged.
- * - SMB / WebDAV: logical key `smb-thumb:{sourceId}:{remoteRelativeFile}` (or `dav-thumb:…`).
- *   [resolveReadablePath] maps that to the hashed thumb cache file **only on disk hit**
+ * - Local folder gallery: absolute cover path (filesystem / content URI).
+ * - SMB / WebDAV folder gallery: `smb-thumb:{sourceId}:{remoteRelativeFile}` /
+ *   `dav-thumb:…`. [resolveReadablePath] maps to the thumb cache file **only on disk hit**
  *   (no network from History).
+ *
+ * Dir-only browse history (`*_browse` tokens) does not store thumbs.
  */
 object HistoryThumbKey {
     private const val SMB_PREFIX = "smb-thumb:"

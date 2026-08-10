@@ -122,6 +122,12 @@ object ReaderGalleryPlaylist {
                     } else {
                         "$parentRelative/${e.relativeName}"
                     }
+                    val coverKey = e.coverFileName?.let { fileName ->
+                        HistoryThumbKey.smb(
+                            sourceId,
+                            if (remote.isEmpty()) fileName else "$remote/$fileName",
+                        )
+                    }
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(sourceId, "smb:$remote"),
                         token = LOCAL_GALLERY_TOKEN,
@@ -129,6 +135,7 @@ object ReaderGalleryPlaylist {
                         pages = if (e.pageCountCapped) 0 else e.pageCount,
                         favoriteSlot = com.ehviewer.core.model.GalleryInfo.NOT_FAVORITED,
                         rating = -1f,
+                        thumbKey = coverKey,
                     )
                     val names = if (e.pageCountCapped) emptyList() else e.imageFileNames
                     Item.SmbFolder(sourceId, remote, names, info)
@@ -179,6 +186,12 @@ object ReaderGalleryPlaylist {
                     } else {
                         "$parentRelative/${e.relativeName}"
                     }
+                    val coverKey = e.coverFileName?.let { fileName ->
+                        HistoryThumbKey.webdav(
+                            sourceId,
+                            if (remote.isEmpty()) fileName else "$remote/$fileName",
+                        )
+                    }
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(sourceId, "webdav:$remote"),
                         token = LOCAL_GALLERY_TOKEN,
@@ -186,6 +199,7 @@ object ReaderGalleryPlaylist {
                         pages = if (e.pageCountCapped) 0 else e.pageCount,
                         favoriteSlot = com.ehviewer.core.model.GalleryInfo.NOT_FAVORITED,
                         rating = -1f,
+                        thumbKey = coverKey,
                     )
                     val names = if (e.pageCountCapped) emptyList() else e.imageFileNames
                     Item.WebDavFolder(sourceId, remote, names, info)

@@ -11,7 +11,7 @@ import com.hippo.ehviewer.EhDB
 /** Library gallery (scanned). Click → reader. */
 const val LOCAL_GALLERY_TOKEN = "local"
 
-/** Browse SAF folder path link. Click → FolderBrowser at path. */
+/** Browse SAF folder path link. Click → FolderBrowser at path (dir listing, not reader). */
 const val LOCAL_BROWSE_TOKEN = "local_browse"
 
 /** Browse SMB folder path link. Click → SmbBrowser at path. */
@@ -19,6 +19,18 @@ const val SMB_BROWSE_TOKEN = "smb_browse"
 
 /** Browse WebDAV folder path link. Click → WebDavBrowser at path. */
 const val WEBDAV_BROWSE_TOKEN = "webdav_browse"
+
+/**
+ * Browse **folder gallery** (image dir). Click → reader; back → parent dir.
+ * Same gid scheme as reader progress (`stableGalleryId(rootId, rel)`).
+ */
+const val LOCAL_FOLDER_TOKEN = "local_folder"
+
+/** SMB folder gallery. Click → reader; back → parent share path. */
+const val SMB_FOLDER_TOKEN = "smb_folder"
+
+/** WebDAV folder gallery. Click → reader; back → parent path. */
+const val WEBDAV_FOLDER_TOKEN = "webdav_folder"
 
 /** Local archive file path. Click → archive reader. */
 const val LOCAL_ARCHIVE_TOKEN = "local_archive"
@@ -36,6 +48,9 @@ sealed interface LocalHistoryTarget {
     data class LocalBrowseFolder(val rootId: Long, val relativePath: String) : LocalHistoryTarget
     data class SmbBrowseFolder(val sourceId: Long, val relativePath: String) : LocalHistoryTarget
     data class WebDavBrowseFolder(val sourceId: Long, val relativePath: String) : LocalHistoryTarget
+    data class LocalFolderGallery(val rootId: Long, val relativePath: String) : LocalHistoryTarget
+    data class SmbFolderGallery(val sourceId: Long, val remoteDir: String) : LocalHistoryTarget
+    data class WebDavFolderGallery(val sourceId: Long, val remoteDir: String) : LocalHistoryTarget
     data class LocalArchive(val path: String) : LocalHistoryTarget
     data class SmbStreamArchive(val sourceId: Long, val remotePath: String) : LocalHistoryTarget
     data class WebDavStreamArchive(val sourceId: Long, val remotePath: String) : LocalHistoryTarget
@@ -46,13 +61,25 @@ sealed interface LocalHistoryTarget {
 
 object LocalHistory {
     fun parse(info: GalleryInfo): LocalHistoryTarget = when (info.token) {
-        LOCAL_GALLERY_TOKEN -> LocalHistoryTarget.LibraryGallery(info.gid)
+        LOCAL_GALLERY_TOKEN ->
+            // Progress used to overwrite folder-gallery rows with token=local; recover path
+            // from uploader or HistoryThumbKey before treating as a scanned library row.
+            recoverFolderGallery(info) ?: LocalHistoryTarget.LibraryGallery(info.gid)
         LOCAL_BROWSE_TOKEN -> decodeLocalBrowse(info.uploader)
             ?: LocalHistoryTarget.Orphan(info.gid)
         SMB_BROWSE_TOKEN -> decodeSmbBrowse(info.uploader)
             ?: LocalHistoryTarget.Orphan(info.gid)
         WEBDAV_BROWSE_TOKEN -> decodeWebDavBrowse(info.uploader)
             ?: LocalHistoryTarget.Orphan(info.gid)
+        LOCAL_FOLDER_TOKEN -> decodeLocalBrowse(info.uploader)?.let {
+            LocalHistoryTarget.LocalFolderGallery(it.rootId, it.relativePath)
+        } ?: recoverFolderGallery(info) ?: LocalHistoryTarget.Orphan(info.gid)
+        SMB_FOLDER_TOKEN -> decodeSmbBrowse(info.uploader)?.let {
+            LocalHistoryTarget.SmbFolderGallery(it.sourceId, it.relativePath)
+        } ?: recoverFolderGallery(info) ?: LocalHistoryTarget.Orphan(info.gid)
+        WEBDAV_FOLDER_TOKEN -> decodeWebDavBrowse(info.uploader)?.let {
+            LocalHistoryTarget.WebDavFolderGallery(it.sourceId, it.relativePath)
+        } ?: recoverFolderGallery(info) ?: LocalHistoryTarget.Orphan(info.gid)
         LOCAL_ARCHIVE_TOKEN -> info.uploader?.takeIf { it.isNotEmpty() }
             ?.let { LocalHistoryTarget.LocalArchive(it) }
             ?: LocalHistoryTarget.Orphan(info.gid)
@@ -65,13 +92,55 @@ object LocalHistory {
         else -> LocalHistoryTarget.Orphan(info.gid)
     }
 
+    /**
+     * Rebuild folder-gallery target when [uploader] or [thumbKey] still carries path identity
+     * after a progress write wiped [token] / path fields.
+     *
+     * Thumb keys are `smb-thumb:{id}:{galleryDir/cover.jpg}` — gallery remote is the
+     * cover file's parent directory.
+     */
+    private fun recoverFolderGallery(info: GalleryInfo): LocalHistoryTarget? {
+        decodeLocalBrowse(info.uploader)?.let {
+            return LocalHistoryTarget.LocalFolderGallery(it.rootId, it.relativePath)
+        }
+        decodeSmbBrowse(info.uploader)?.let {
+            return LocalHistoryTarget.SmbFolderGallery(it.sourceId, it.relativePath)
+        }
+        decodeWebDavBrowse(info.uploader)?.let {
+            return LocalHistoryTarget.WebDavFolderGallery(it.sourceId, it.relativePath)
+        }
+        val key = info.thumbKey ?: return null
+        when {
+            key.startsWith("smb-thumb:") -> {
+                val rest = key.removePrefix("smb-thumb:")
+                val sep = rest.indexOf(':')
+                if (sep <= 0) return null
+                val sourceId = rest.substring(0, sep).toLongOrNull() ?: return null
+                val coverRemote = rest.substring(sep + 1).trimStart('/')
+                if (coverRemote.isEmpty()) return null
+                return LocalHistoryTarget.SmbFolderGallery(sourceId, parentRelativeOfFile(coverRemote))
+            }
+            key.startsWith("dav-thumb:") -> {
+                val rest = key.removePrefix("dav-thumb:")
+                val sep = rest.indexOf(':')
+                if (sep <= 0) return null
+                val sourceId = rest.substring(0, sep).toLongOrNull() ?: return null
+                val coverRemote = rest.substring(sep + 1).trimStart('/')
+                if (coverRemote.isEmpty()) return null
+                return LocalHistoryTarget.WebDavFolderGallery(sourceId, parentRelativeOfFile(coverRemote))
+            }
+            else -> return null
+        }
+    }
+
     fun kindLabelKey(info: GalleryInfo): KindLabel = when (info.token) {
         LOCAL_GALLERY_TOKEN ->
             if (info.category == 1) KindLabel.Archive else KindLabel.Library
+        LOCAL_FOLDER_TOKEN -> KindLabel.Library
         LOCAL_ARCHIVE_TOKEN, SMB_ARCHIVE_TOKEN, WEBDAV_ARCHIVE_TOKEN -> KindLabel.Archive
         LOCAL_BROWSE_TOKEN -> KindLabel.Folder
-        SMB_BROWSE_TOKEN -> KindLabel.Smb
-        WEBDAV_BROWSE_TOKEN -> KindLabel.WebDav
+        SMB_BROWSE_TOKEN, SMB_FOLDER_TOKEN -> KindLabel.Smb
+        WEBDAV_BROWSE_TOKEN, WEBDAV_FOLDER_TOKEN -> KindLabel.WebDav
         else -> KindLabel.Unknown
     }
 
@@ -82,27 +151,21 @@ object LocalHistory {
     }
 
     /**
-     * Record a browse folder location (not the ephemeral gallery).
-     * [relativePath] empty or "." means the library root / share root.
-     *
-     * [coverPath] / thumb key: local absolute cover path, or [HistoryThumbKey.smb] /
-     * [HistoryThumbKey.webdav] logical key. Null keeps any previously stored thumbKey
-     * so re-records from the reader / parent-folder path do not wipe covers.
+     * Browse **directory listing** only (PDF external / explicit folder path).
+     * Folder galleries use [recordLocalFolderGallery] instead — History opens the reader.
      */
     suspend fun recordLocalBrowseFolder(
         rootId: Long,
         relativePath: String,
         title: String,
-        coverPath: String? = null,
         pages: Int = 0,
     ) {
         val rel = normalizeRel(relativePath)
-        val gid = stableGalleryId(rootId, "browse:$rel")
         val info = BaseGalleryInfo(
-            gid = gid,
+            gid = stableGalleryId(rootId, "browse:$rel"),
             token = LOCAL_BROWSE_TOKEN,
             title = title.ifBlank { humanizePathName(rel.substringAfterLast('/').ifEmpty { "Folder" }) },
-            thumbKey = resolveThumbKey(gid, coverPath),
+            thumbKey = null,
             category = 0,
             uploader = encodeLocalBrowse(rootId, rel),
             rating = -1f,
@@ -116,16 +179,14 @@ object LocalHistory {
         sourceId: Long,
         relativePath: String,
         title: String,
-        coverPath: String? = null,
         pages: Int = 0,
     ) {
         val rel = normalizeRel(relativePath)
-        val gid = stableGalleryId(sourceId, "smb-browse:$rel")
         val info = BaseGalleryInfo(
-            gid = gid,
+            gid = stableGalleryId(sourceId, "smb-browse:$rel"),
             token = SMB_BROWSE_TOKEN,
             title = title.ifBlank { rel.substringAfterLast('/').ifEmpty { "Share" } },
-            thumbKey = resolveThumbKey(gid, coverPath),
+            thumbKey = null,
             category = 2,
             uploader = encodeSmbBrowse(sourceId, rel),
             rating = -1f,
@@ -139,16 +200,14 @@ object LocalHistory {
         sourceId: Long,
         relativePath: String,
         title: String,
-        coverPath: String? = null,
         pages: Int = 0,
     ) {
         val rel = normalizeRel(relativePath)
-        val gid = stableGalleryId(sourceId, "webdav-browse:$rel")
         val info = BaseGalleryInfo(
-            gid = gid,
+            gid = stableGalleryId(sourceId, "webdav-browse:$rel"),
             token = WEBDAV_BROWSE_TOKEN,
             title = title.ifBlank { rel.substringAfterLast('/').ifEmpty { "WebDAV" } },
-            thumbKey = resolveThumbKey(gid, coverPath),
+            thumbKey = null,
             category = 3,
             uploader = encodeWebDavBrowse(sourceId, rel),
             rating = -1f,
@@ -156,6 +215,87 @@ object LocalHistory {
             favoriteSlot = NOT_FAVORITED,
         )
         EhDB.putHistoryInfo(info)
+    }
+
+    /**
+     * Local browse folder gallery → History opens reader (not dir listing).
+     * [thumbKey]: absolute cover path. Null keeps prior key on re-record (sibling hop).
+     * Gid matches reader progress: [stableGalleryId](rootId, rel).
+     */
+    suspend fun recordLocalFolderGallery(
+        rootId: Long,
+        relativePath: String,
+        title: String,
+        thumbKey: String? = null,
+        pages: Int = 0,
+        info: BaseGalleryInfo? = null,
+    ) {
+        val rel = normalizeRel(relativePath)
+        val gid = info?.gid ?: stableGalleryId(rootId, rel.ifEmpty { "." })
+        val hist = BaseGalleryInfo(
+            gid = gid,
+            token = LOCAL_FOLDER_TOKEN,
+            title = title.ifBlank {
+                info?.title ?: humanizePathName(rel.substringAfterLast('/').ifEmpty { "Folder" })
+            },
+            thumbKey = resolveThumbKey(gid, thumbKey ?: info?.thumbKey),
+            category = 0,
+            uploader = encodeLocalBrowse(rootId, rel),
+            rating = -1f,
+            pages = pages.takeIf { it > 0 } ?: info?.pages ?: 0,
+            favoriteSlot = NOT_FAVORITED,
+        )
+        EhDB.putHistoryInfo(hist)
+    }
+
+    /** SMB folder gallery. [thumbKey] = [HistoryThumbKey.smb] (cache-hit only in History UI). */
+    suspend fun recordSmbFolderGallery(
+        sourceId: Long,
+        remoteDir: String,
+        title: String,
+        thumbKey: String? = null,
+        pages: Int = 0,
+        info: BaseGalleryInfo? = null,
+    ) {
+        val rel = normalizeRel(remoteDir)
+        val gid = info?.gid ?: stableGalleryId(sourceId, "smb:$rel")
+        val hist = BaseGalleryInfo(
+            gid = gid,
+            token = SMB_FOLDER_TOKEN,
+            title = title.ifBlank { info?.title ?: rel.substringAfterLast('/').ifEmpty { "Share" } },
+            thumbKey = resolveThumbKey(gid, thumbKey ?: info?.thumbKey),
+            category = 2,
+            uploader = encodeSmbBrowse(sourceId, rel),
+            rating = -1f,
+            pages = pages.takeIf { it > 0 } ?: info?.pages ?: 0,
+            favoriteSlot = NOT_FAVORITED,
+        )
+        EhDB.putHistoryInfo(hist)
+    }
+
+    /** WebDAV folder gallery. [thumbKey] = [HistoryThumbKey.webdav]. */
+    suspend fun recordWebDavFolderGallery(
+        sourceId: Long,
+        remoteDir: String,
+        title: String,
+        thumbKey: String? = null,
+        pages: Int = 0,
+        info: BaseGalleryInfo? = null,
+    ) {
+        val rel = normalizeRel(remoteDir)
+        val gid = info?.gid ?: stableGalleryId(sourceId, "webdav:$rel")
+        val hist = BaseGalleryInfo(
+            gid = gid,
+            token = WEBDAV_FOLDER_TOKEN,
+            title = title.ifBlank { info?.title ?: rel.substringAfterLast('/').ifEmpty { "WebDAV" } },
+            thumbKey = resolveThumbKey(gid, thumbKey ?: info?.thumbKey),
+            category = 3,
+            uploader = encodeWebDavBrowse(sourceId, rel),
+            rating = -1f,
+            pages = pages.takeIf { it > 0 } ?: info?.pages ?: 0,
+            favoriteSlot = NOT_FAVORITED,
+        )
+        EhDB.putHistoryInfo(hist)
     }
 
     /** Prefer a newly supplied key; otherwise keep the row's existing thumbKey. */
@@ -272,9 +412,14 @@ object LocalHistory {
         EhDB.putHistoryInfo(hist)
     }
 
-    /** Ensure GALLERIES row exists for progress FK without bumping History for this gid. */
+    /**
+     * Ensure GALLERIES row exists for progress FK without bumping History and without
+     * clobbering an existing history identity (folder/archive tokens + path uploader).
+     */
     suspend fun ensureGalleryForProgress(info: BaseGalleryInfo) {
-        EhDB.putGalleryInfo(info.asEntity())
+        if (EhDB.loadGalleryInfo(info.gid) == null) {
+            EhDB.putGalleryInfo(info.asEntity())
+        }
     }
 
     private fun normalizeRel(relativePath: String): String = relativePath.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
