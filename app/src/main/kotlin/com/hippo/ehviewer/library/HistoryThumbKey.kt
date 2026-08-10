@@ -57,11 +57,10 @@ object HistoryThumbKey {
         else -> null
     }
 
-    fun isLogicalKey(key: String): Boolean =
-        key.startsWith(SMB_PREFIX) ||
-            key.startsWith(DAV_PREFIX) ||
-            key.startsWith(SMB_ARCH_PREFIX) ||
-            key.startsWith(DAV_ARCH_PREFIX)
+    fun isLogicalKey(key: String): Boolean = key.startsWith(SMB_PREFIX) ||
+        key.startsWith(DAV_PREFIX) ||
+        key.startsWith(SMB_ARCH_PREFIX) ||
+        key.startsWith(DAV_ARCH_PREFIX)
 
     /**
      * Path Coil can open, or null if missing / not cached.
