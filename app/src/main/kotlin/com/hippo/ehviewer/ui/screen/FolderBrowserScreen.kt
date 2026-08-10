@@ -182,7 +182,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     fun toggleDirFavorite(dir: BrowseEntry.Directory) {
         val frame = stack.lastOrNull() ?: return
         val rel = if (frame.relativePath.isEmpty()) dir.name else "${frame.relativePath}/${dir.name}"
-        val nowFavorite = BrowseFavorites.toggleLocalFolder(frame.rootId, rel)
+        // Same cache-key idea as History: absolute cover path for Library fav cell.
+        BrowseFavorites.toggleLocalFolder(frame.rootId, rel, thumbKey = dir.coverPath?.toString())
     }
 
     fun isDirFavorite(dir: BrowseEntry.Directory): Boolean {

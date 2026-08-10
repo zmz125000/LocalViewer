@@ -145,6 +145,13 @@ object Settings : DataStorePreferences(null) {
      * `lf:{rootId}:{rel}`, `sf:{sourceId}:{rel}`, `wf:{sourceId}:{rel}`.
      */
     val favoriteBrowseSources = stringSetPref("favorite_browse_sources", emptySet())
+
+    /**
+     * Optional cover keys for folder favourites (`lf:` / `sf:` / `wf:`).
+     * Entries: `{favKey}\u0001{thumbKey}` where thumbKey is a local absolute path or
+     * [com.hippo.ehviewer.library.HistoryThumbKey] (`smb-thumb:` / `dav-thumb:`).
+     */
+    val favoriteBrowseThumbs = stringSetPref("favorite_browse_thumbs", emptySet())
     val showVoteStatus = boolPref("show_vote_status", false)
     val showComments = boolPref("show_gallery_comments", true)
     val commentThreshold = intPref("comment_threshold", -100)

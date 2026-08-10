@@ -192,8 +192,17 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else SmbGateway.joinRelativePath(relativeDir, name)
 
-    fun toggleDirFavorite(name: String) {
-        val nowFavorite = BrowseFavorites.toggleSmbFolder(sourceId, dirRelative(name))
+    fun toggleDirFavorite(name: String, coverFileName: String? = null) {
+        val rel = dirRelative(name)
+        val coverKey = coverFileName?.let { fileName ->
+            val coverRemote = if (rel.isEmpty()) {
+                fileName
+            } else {
+                SmbGateway.joinRelativePath(rel, fileName)
+            }
+            HistoryThumbKey.smb(sourceId, coverRemote)
+        }
+        BrowseFavorites.toggleSmbFolder(sourceId, rel, thumbKey = coverKey)
     }
 
     fun isDirFavorite(name: String): Boolean = BrowseFavorites.smbFolderKey(sourceId, dirRelative(name)) in favoriteKeys
@@ -782,7 +791,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     BrowseDirectoryGridItem(
                                         name = dir.name,
                                         onClick = { enterDir(dir.relativeName) },
-                                        onLongClick = { toggleDirFavorite(dir.relativeName) },
+                                        onLongClick = {
+                                            toggleDirFavorite(dir.relativeName, dir.coverFileName)
+                                        },
                                         showFavoriteStar = isDirFavorite(dir.relativeName),
                                         cover = dirCoverFor(dir),
                                         showFolderThumb = browseFolderThumbs,
@@ -868,7 +879,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     BrowseDirectoryRow(
                                         name = dir.name,
                                         onClick = { enterDir(dir.relativeName) },
-                                        onLongClick = { toggleDirFavorite(dir.relativeName) },
+                                        onLongClick = {
+                                            toggleDirFavorite(dir.relativeName, dir.coverFileName)
+                                        },
                                         cover = dirCoverFor(dir),
                                         showFolderThumb = browseFolderThumbs,
                                         thumbRetryKey = refreshToken,
