@@ -210,7 +210,9 @@ object OpenFileExternally {
     ) {
         val uri = StreamDocumentProvider.uriFor(token)
         try {
-            if (networkStream) requestStreamNotificationPermission(context)
+            // External open still needs the streamdoc FGS/proxy path for SMB/WebDAV.
+            // In-app Media3 uses StreamDocDataSource (no FUSE) — skip notification prompt.
+            if (networkStream && !internalPlayer) requestStreamNotificationPermission(context)
             if (internalPlayer) {
                 launchInternalPlayer(context, uri, displayName, mimeType, token)
             } else {
