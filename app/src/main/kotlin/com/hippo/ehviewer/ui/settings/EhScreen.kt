@@ -100,6 +100,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.browse_folder_thumbs),
                 state = Settings.browseFolderThumbs.asMutableState(),
             )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_use_media3_player),
+                state = Settings.useMedia3Player.asMutableState(),
+            )
             val showSmallGalleries = Settings.browseShowSmallGalleries.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_browse_menu_small_galleries),
