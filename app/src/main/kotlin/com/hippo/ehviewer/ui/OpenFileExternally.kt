@@ -251,11 +251,26 @@ object OpenFileExternally {
         displayName: String,
         mimeType: String,
     ) {
-        val view = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, mimeType)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val view = DefaultVideoPlayer.videoViewIntent(uri, mimeType).apply {
             clipData = ClipData.newRawUri(displayName, uri)
+        }
+        // Preferred external player only for video MIME; other files keep the chooser.
+        if (DefaultVideoPlayer.isVideoMime(mimeType)) {
+            val preferred = DefaultVideoPlayer.preferredComponentOrNull(context)
+            if (preferred != null) {
+                view.component = preferred
+                val launched = withUIContext {
+                    try {
+                        context.startActivity(view)
+                        true
+                    } catch (e: ActivityNotFoundException) {
+                        logcat("OpenFileExternally", e)
+                        view.component = null
+                        false
+                    }
+                }
+                if (launched) return
+            }
         }
         val title = context.getString(R.string.open_in_other_app)
         val chooser = Intent.createChooser(view, title).apply {

@@ -69,6 +69,9 @@
     <string name="settings_browse_folder_thumbs_summary">在瀏覽中為資料夾顯示封面縮圖（共用圖庫封面的縮圖快取）。</string>
     <string name="settings_use_media3_player">使用 Media3 播放器</string>
     <string name="settings_use_media3_player_summary">開啟：單擊應用內播放，長按外部應用。關閉：單擊外部應用，長按應用內播放。</string>
+    <string name="settings_default_video_player">預設影片播放器</string>
+    <string name="settings_default_video_player_always_ask">每次詢問</string>
+    <string name="settings_default_video_player_none">找不到影片應用</string>
     <string name="browse_menu_page_count">頁數</string>
     <string name="browse_menu_reading_progress">閱讀進度</string>
     <string name="browse_menu_small_galleries">小圖庫</string>

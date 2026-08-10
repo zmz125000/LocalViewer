@@ -69,6 +69,9 @@
     <string name="settings_browse_folder_thumbs_summary">Show cover thumbs for folders.</string>
     <string name="settings_use_media3_player">Use Media3 player</string>
     <string name="settings_use_media3_player_summary">On: tap opens in-app player, long-press opens external app. Off: tap external, long-press in-app.</string>
+    <string name="settings_default_video_player">Default video player</string>
+    <string name="settings_default_video_player_always_ask">Always ask</string>
+    <string name="settings_default_video_player_none">No video apps found</string>
     <string name="browse_menu_page_count">Page count</string>
     <string name="browse_menu_reading_progress">Reading progress</string>
     <string name="browse_menu_small_galleries">Small galleries</string>

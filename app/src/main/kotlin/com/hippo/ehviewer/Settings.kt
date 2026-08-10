@@ -97,6 +97,12 @@ object Settings : DataStorePreferences(null) {
     val useMedia3Player = boolPref("use_media3_player", true)
 
     /**
+     * Preferred external video player as flattened [android.content.ComponentName]
+     * (`package/class`). Empty = system chooser. Settings → General.
+     */
+    val defaultVideoPlayerComponent = stringPref("default_video_player_component", "")
+
+    /**
      * When true, folder-view shows folder galleries below [browseSmallGalleryMinPages].
      * Default false: UI hides those rows (scanner listing is unchanged).
      */

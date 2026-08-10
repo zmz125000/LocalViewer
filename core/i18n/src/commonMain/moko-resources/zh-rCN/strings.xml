@@ -65,6 +65,9 @@
     <string name="settings_browse_folder_thumbs_summary">在浏览中为文件夹显示封面缩略图（复用画廊封面的缩略图缓存）。</string>
     <string name="settings_use_media3_player">使用 Media3 播放器</string>
     <string name="settings_use_media3_player_summary">开启：单击应用内播放，长按外部应用。关闭：单击外部应用，长按应用内播放。</string>
+    <string name="settings_default_video_player">默认视频播放器</string>
+    <string name="settings_default_video_player_always_ask">每次询问</string>
+    <string name="settings_default_video_player_none">未找到视频应用</string>
     <string name="browse_menu_page_count">页数</string>
     <string name="browse_menu_reading_progress">阅读进度</string>
     <string name="browse_menu_small_galleries">小图库</string>

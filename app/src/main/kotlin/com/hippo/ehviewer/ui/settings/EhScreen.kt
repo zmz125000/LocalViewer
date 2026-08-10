@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.settings
 
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.Column
@@ -16,18 +17,26 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.util.launch
+import com.ehviewer.core.util.launchIO
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.ui.DefaultVideoPlayer
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.NavigationIcon
 import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
+import com.hippo.ehviewer.ui.tools.awaitSelectItem
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import moe.tarsin.snackbar
 
 /**
  * General app appearance / library list settings.
@@ -37,6 +46,7 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 @Composable
 fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(navigator) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    fun launchSnackbar(message: String) = launch { snackbar(message) }
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -104,6 +114,45 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.settings_use_media3_player),
                 state = Settings.useMedia3Player.asMutableState(),
             )
+            var defaultVideoPlayer by Settings.defaultVideoPlayerComponent.asMutableState()
+            val alwaysAsk = stringResource(id = R.string.settings_default_video_player_always_ask)
+            val noVideoApps = stringResource(id = R.string.settings_default_video_player_none)
+            val context = LocalContext.current
+            Preference(
+                title = stringResource(id = R.string.settings_default_video_player),
+                summary = DefaultVideoPlayer.summary(context, defaultVideoPlayer, alwaysAsk),
+            ) {
+                launchIO {
+                    val candidates = DefaultVideoPlayer.listCandidates(context)
+                    if (candidates.isEmpty() && defaultVideoPlayer.isBlank()) {
+                        launchSnackbar(noVideoApps)
+                        return@launchIO
+                    }
+                    val labels = buildList {
+                        add(alwaysAsk)
+                        candidates.forEach { c ->
+                            add("${c.label}\n${c.flattened}")
+                        }
+                    }
+                    val selected = when {
+                        defaultVideoPlayer.isBlank() -> 0
+                        else -> {
+                            val i = candidates.indexOfFirst { it.flattened == defaultVideoPlayer }
+                            if (i >= 0) i + 1 else 0
+                        }
+                    }
+                    val index = awaitSelectItem(
+                        items = labels,
+                        title = R.string.settings_default_video_player,
+                        selected = selected,
+                    )
+                    defaultVideoPlayer = if (index <= 0) {
+                        ""
+                    } else {
+                        candidates[index - 1].flattened
+                    }
+                }
+            }
             val showSmallGalleries = Settings.browseShowSmallGalleries.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_browse_menu_small_galleries),
