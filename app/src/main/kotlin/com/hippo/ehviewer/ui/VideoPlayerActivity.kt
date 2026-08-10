@@ -85,7 +85,8 @@ class VideoPlayerActivity : AppCompatActivity() {
                     .setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                     .build(),
-                /* handleAudioFocus = */ true,
+                /* handleAudioFocus = */
+                true,
             )
             .setHandleAudioBecomingNoisy(true)
 

@@ -683,7 +683,7 @@ private fun FavoriteSourceGridCell(
                             .padding(end = 4.dp)
                             .size(labelIconSize)
                             // Fraction of icon height: negative = up, positive = down. 0f = flush.
-                            .offset(y = labelIconSize * FavoriteLabelIconYBias),
+                            .offset(y = labelIconSize * FAVORITE_LABEL_ICON_Y_BIAS),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -706,7 +706,7 @@ private fun FavoriteSourceGridCell(
  * - negative (e.g. `-0.15f`) — nudge icon up
  * - positive (e.g. `0.1f`) — nudge icon down
  */
-private const val FavoriteLabelIconYBias = -0.18f
+private const val FAVORITE_LABEL_ICON_Y_BIAS = -0.18f
 
 /** Stored cover key for folder favourites only (null for whole sources / galleries). */
 private fun folderFavoriteThumbKey(fav: FavoriteBrowseSource): String? = when (fav) {
