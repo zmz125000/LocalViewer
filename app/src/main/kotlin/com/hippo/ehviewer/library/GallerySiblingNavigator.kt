@@ -159,6 +159,7 @@ object GallerySiblingNavigator {
                     pages = 0,
                     favoriteSlot = NOT_FAVORITED,
                     rating = -1f,
+                    thumbKey = HistoryThumbKey.smbArchive(source.id, remote),
                     uploader = "${source.id}\u0000$remote",
                     category = 1,
                 )
@@ -242,6 +243,7 @@ object GallerySiblingNavigator {
                     pages = 0,
                     favoriteSlot = NOT_FAVORITED,
                     rating = -1f,
+                    thumbKey = HistoryThumbKey.webdavArchive(source.id, remote),
                     uploader = "${source.id}\u0000$remote",
                     category = 1,
                 )

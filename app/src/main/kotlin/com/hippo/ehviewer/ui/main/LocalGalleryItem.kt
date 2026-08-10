@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,9 +58,22 @@ import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.ui.screen.collectListThumbSizeAsState
 import okio.Path.Companion.toPath
+
+/** Prefer stored [GalleryInfo.thumbKey]; for network archives derive the logical cover key. */
+private fun historyCoverKey(info: GalleryInfo): String? {
+    info.thumbKey?.takeIf { it.isNotBlank() }?.let { return it }
+    return when (val target = LocalHistory.parse(info)) {
+        is LocalHistoryTarget.SmbStreamArchive ->
+            HistoryThumbKey.smbArchive(target.sourceId, target.remotePath)
+        is LocalHistoryTarget.WebDavStreamArchive ->
+            HistoryThumbKey.webdavArchive(target.sourceId, target.remotePath)
+        else -> null
+    }
+}
 
 /** Kind / page-count chip — text on secondaryContainer, used on list cards. */
 @Composable
@@ -277,9 +291,12 @@ fun HistoryListItem(
     }
     val cardHeight by collectListThumbSizeAsState()
     val listDecodePx = CoverThumb.libraryListDecodePx(cardHeight)
+    val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
+        historyCoverKey(info)
+    }
     Row {
         CoverImage(
-            coverPath = info.thumbKey,
+            coverPath = coverKey,
             sizePx = listDecodePx,
             placeholder = placeholderIcon,
             modifier = Modifier
@@ -355,6 +372,9 @@ fun HistoryGridItem(
         margin = GalleryGridDefaults.margin(),
         gutter = GalleryGridDefaults.gutter(),
     )
+    val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
+        historyCoverKey(info)
+    }
     ElevatedCard(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
@@ -368,7 +388,7 @@ fun HistoryGridItem(
                     .clip(ShapeDefaults.Medium),
             ) {
                 CoverImage(
-                    coverPath = info.thumbKey,
+                    coverPath = coverKey,
                     sizePx = gridDecodePx,
                     placeholder = placeholderIcon,
                     modifier = Modifier.fillMaxSize(),
@@ -395,20 +415,33 @@ fun HistoryGridItem(
                     }
                 }
             }
-            Box(
+            // Type badge left of caption (same idea as Library favourite network folder cells).
+            val labelIconSize = with(LocalDensity.current) {
+                MaterialTheme.typography.labelMedium.fontSize.toDp()
+            }
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(nameHeight)
-                    .padding(horizontal = namePadH),
-                contentAlignment = Alignment.BottomStart,
+                    .padding(horizontal = namePadH)
+                    .padding(bottom = namePadBottom),
+                verticalAlignment = Alignment.Bottom,
             ) {
+                Icon(
+                    imageVector = placeholderIcon,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .padding(end = 4.dp, bottom = 1.dp)
+                        .size(labelIconSize),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
                     text = info.title.orEmpty(),
                     style = MaterialTheme.typography.labelMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Start,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = namePadBottom),
+                    modifier = Modifier.weight(1f),
                 )
             }
         }

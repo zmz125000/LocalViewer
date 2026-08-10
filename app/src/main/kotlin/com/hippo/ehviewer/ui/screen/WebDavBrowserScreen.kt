@@ -532,6 +532,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     isDocumentFileName(entry.fileName)
                 ) {
                     val remoteNorm = remote.trim('/')
+                    val coverKey = HistoryThumbKey.webdavArchive(src.id, remoteNorm)
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(src.id, "dava:$remoteNorm"),
                         token = WEBDAV_ARCHIVE_TOKEN,
@@ -539,6 +540,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         pages = 0,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
+                        thumbKey = coverKey,
                         uploader = "${src.id}\u0000$remoteNorm",
                         category = 1,
                     )

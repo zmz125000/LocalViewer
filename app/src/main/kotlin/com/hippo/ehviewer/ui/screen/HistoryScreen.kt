@@ -59,6 +59,7 @@ import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
@@ -363,7 +364,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         pages = info.pages,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
-                        thumbKey = info.thumbKey,
+                        thumbKey = info.thumbKey ?: HistoryThumbKey.smbArchive(source.id, remote),
                         uploader = "${source.id}\u0000$remote",
                         category = 1,
                     )
@@ -398,7 +399,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         pages = info.pages,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
-                        thumbKey = info.thumbKey,
+                        thumbKey = info.thumbKey ?: HistoryThumbKey.webdavArchive(source.id, remote),
                         uploader = "${source.id}\u0000$remote",
                         category = 1,
                     )
