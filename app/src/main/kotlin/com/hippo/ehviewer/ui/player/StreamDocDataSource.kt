@@ -22,7 +22,7 @@ import java.io.IOException
 @UnstableApi
 class StreamDocDataSource(
     private val token: String,
-) : BaseDataSource(/* isNetwork = */ true) {
+) : BaseDataSource(true) { // isNetwork
     private var source: ArchiveByteSource? = null
     private var uri: Uri? = null
     private var readPosition = 0L

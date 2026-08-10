@@ -70,7 +70,7 @@ import okio.Path.Companion.toPath
  * - negative (e.g. `-0.15f`) — nudge icon up
  * - positive (e.g. `0.1f`) — nudge icon down
  */
-private const val HistoryLabelIconYBias = -0.18f
+private const val HISTORY_LABEL_ICON_Y_BIAS = -0.18f
 
 /** Prefer stored [GalleryInfo.thumbKey]; for network archives derive the logical cover key. */
 private fun historyCoverKey(info: GalleryInfo): String? {
@@ -425,7 +425,7 @@ fun HistoryGridItem(
                 }
             }
             // Fixed name band: caption on the bottom of the box.
-            // Icon bottom-aligns to the text block; tweak [HistoryLabelIconYBias] if needed.
+            // Icon bottom-aligns to the text block; tweak [HISTORY_LABEL_ICON_Y_BIAS] if needed.
             val labelIconSize = with(LocalDensity.current) {
                 MaterialTheme.typography.labelMedium.fontSize.toDp()
             }
@@ -450,7 +450,7 @@ fun HistoryGridItem(
                             .padding(end = 4.dp)
                             .size(labelIconSize)
                             // Fraction of icon height: negative = up, positive = down. 0f = flush.
-                            .offset(y = labelIconSize * HistoryLabelIconYBias),
+                            .offset(y = labelIconSize * HISTORY_LABEL_ICON_Y_BIAS),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
