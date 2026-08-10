@@ -70,8 +70,6 @@
     <string name="settings_browse_folder_thumbs_summary">フォルダ一覧で表紙サムネイルを表示します（ギャラリー表紙と同じキャッシュを使用）。</string>
     <string name="browse_menu_page_count">ページ数</string>
     <string name="browse_menu_reading_progress">読書進捗</string>
-    <string name="browse_menu_gallery_covers">ギャラリー表紙</string>
-    <string name="browse_menu_archive_covers">アーカイブ表紙</string>
     <string name="browse_menu_small_galleries">小さいギャラリー</string>
     <string name="settings_browse_menu_small_galleries">小さいギャラリーを表示</string>
     <string name="settings_browse_small_galleries_summary">最小ページ数未満のフォルダギャラリーを表示します。オフ時は UI のみ非表示（スキャンは変更しません）。</string>

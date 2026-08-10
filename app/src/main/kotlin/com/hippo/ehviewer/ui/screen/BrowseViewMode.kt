@@ -30,7 +30,7 @@ import com.hippo.ehviewer.library.BrowseContentMode
 
 /**
  * Top-bar menu for folder browsers: content filter, list/grid layout, and
- * general display toggles (page count, progress, covers, folder thumbs, small galleries).
+ * general display toggles (page count, progress, folder thumbs, small galleries).
  */
 @Composable
 fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
@@ -41,8 +41,6 @@ fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
     val useGrid = listMode == 1
     var showGalleryPages by Settings.showGalleryPages.asMutableState()
     var showReadingProgress by Settings.showReadingProgress.asMutableState()
-    var downloadRemoteThumbs by Settings.downloadRemoteThumbs.asMutableState()
-    var downloadNetworkArchiveThumbs by Settings.downloadNetworkArchiveThumbs.asMutableState()
     var browseFolderThumbs by Settings.browseFolderThumbs.asMutableState()
     var showSmallGalleries by Settings.browseShowSmallGalleries.asMutableState()
 
@@ -120,16 +118,6 @@ fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
                 label = stringResource(R.string.browse_menu_reading_progress),
                 checked = showReadingProgress,
                 onClick = { showReadingProgress = !showReadingProgress },
-            )
-            ToggleMenuItem(
-                label = stringResource(R.string.browse_menu_gallery_covers),
-                checked = downloadRemoteThumbs,
-                onClick = { downloadRemoteThumbs = !downloadRemoteThumbs },
-            )
-            ToggleMenuItem(
-                label = stringResource(R.string.browse_menu_archive_covers),
-                checked = downloadNetworkArchiveThumbs,
-                onClick = { downloadNetworkArchiveThumbs = !downloadNetworkArchiveThumbs },
             )
             ToggleMenuItem(
                 label = stringResource(R.string.browse_folder_thumbs),

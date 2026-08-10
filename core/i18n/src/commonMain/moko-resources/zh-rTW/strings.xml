@@ -69,8 +69,6 @@
     <string name="settings_browse_folder_thumbs_summary">在瀏覽中為資料夾顯示封面縮圖（共用圖庫封面的縮圖快取）。</string>
     <string name="browse_menu_page_count">頁數</string>
     <string name="browse_menu_reading_progress">閱讀進度</string>
-    <string name="browse_menu_gallery_covers">圖庫封面</string>
-    <string name="browse_menu_archive_covers">壓縮檔封面</string>
     <string name="browse_menu_small_galleries">小圖庫</string>
     <string name="settings_browse_menu_small_galleries">顯示小圖庫</string>
     <string name="settings_browse_small_galleries_summary">顯示低於最少頁數的資料夾圖庫。關閉時僅在介面隱藏，不改掃描。</string>
