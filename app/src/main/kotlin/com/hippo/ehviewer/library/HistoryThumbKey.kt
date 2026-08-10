@@ -29,8 +29,7 @@ object HistoryThumbKey {
         return "$DAV_PREFIX$sourceId:$remote"
     }
 
-    fun isLogicalKey(key: String): Boolean =
-        key.startsWith(SMB_PREFIX) || key.startsWith(DAV_PREFIX)
+    fun isLogicalKey(key: String): Boolean = key.startsWith(SMB_PREFIX) || key.startsWith(DAV_PREFIX)
 
     /**
      * Path Coil can open, or null if missing / not cached.

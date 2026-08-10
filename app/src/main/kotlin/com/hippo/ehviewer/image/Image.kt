@@ -259,8 +259,9 @@ class Image private constructor(
                 is Either.Right -> OppoProxdr.attachOrCopy(base, src.value.source)
                 is Either.Left -> {
                     val dup = src.value.source.asReadOnlyBuffer()
-                    if (dup.remaining() <= 0) null
-                    else {
+                    if (dup.remaining() <= 0) {
+                        null
+                    } else {
                         val bytes = ByteArray(dup.remaining())
                         dup.get(bytes)
                         OppoProxdr.attachOrCopy(base, bytes)

@@ -108,6 +108,7 @@ private class KeepOpenSmbFileSource(
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val closed = AtomicBoolean(false)
+
     /** Active handle so close/deadline cancellation interrupts a blocking smbj read. */
     private val activeFile = AtomicReference<File?>(null)
     private val sizeReady = CompletableDeferred<Long>().also { deferred ->

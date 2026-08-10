@@ -33,11 +33,9 @@ object StreamKeepAlivePolicy {
 
     fun unlimited(): Boolean = Settings.streamKeepAliveUnlimited.value
 
-    fun tokenMaxAgeMs(): Long =
-        if (unlimited()) UNLIMITED_TOKEN_MAX_AGE_MS else LIMITED_TOKEN_MAX_AGE_MS
+    fun tokenMaxAgeMs(): Long = if (unlimited()) UNLIMITED_TOKEN_MAX_AGE_MS else LIMITED_TOKEN_MAX_AGE_MS
 
-    fun wakeLockTimeoutMs(): Long =
-        if (unlimited()) UNLIMITED_WAKE_LOCK_MS else LIMITED_WAKE_LOCK_MS
+    fun wakeLockTimeoutMs(): Long = if (unlimited()) UNLIMITED_WAKE_LOCK_MS else LIMITED_WAKE_LOCK_MS
 
     fun fgsStopDelayMs(): Long = FGS_STOP_DELAY_MS
 

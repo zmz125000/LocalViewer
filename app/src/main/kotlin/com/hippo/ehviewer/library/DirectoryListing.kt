@@ -291,6 +291,7 @@ fun listLocalDirectoryUncached(
 private sealed interface ChildDirKind {
     val hasVideo: Boolean
     val hasGallery: Boolean
+
     /** Folder-thumb cover: direct image or first-leaf peek (metadata only). */
     val coverPath: Path? get() = null
 
