@@ -209,19 +209,18 @@ object VideoThumbnail {
      * Close an in-flight random-access source as soon as its browse row is cancelled.
      * Both implementations use close to interrupt blocked SMB/WebDAV reads.
      */
-    private suspend fun extractNetworkFrame(source: ArchiveByteSource): Bitmap? =
-        suspendCancellableCoroutine { continuation ->
-            // Registration happens before the blocking retriever call, so scrolling away
-            // closes the active handle/range source from the cancelling thread.
-            continuation.invokeOnCancellation { source.close() }
-            val result = runCatching { extractFrame(source) }
-            source.close()
-            if (continuation.isActive) {
-                continuation.resumeWith(result)
-            } else {
-                result.getOrNull()?.recycle()
-            }
+    private suspend fun extractNetworkFrame(source: ArchiveByteSource): Bitmap? = suspendCancellableCoroutine { continuation ->
+        // Registration happens before the blocking retriever call, so scrolling away
+        // closes the active handle/range source from the cancelling thread.
+        continuation.invokeOnCancellation { source.close() }
+        val result = runCatching { extractFrame(source) }
+        source.close()
+        if (continuation.isActive) {
+            continuation.resumeWith(result)
+        } else {
+            result.getOrNull()?.recycle()
         }
+    }
 
     private fun extractFrame(source: ArchiveByteSource): Bitmap? {
         val dataSource = ArchiveMediaDataSource(source)
