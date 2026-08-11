@@ -39,8 +39,7 @@ object WebDavCache {
     private val thumbFetchSlots = Semaphore(3)
 
     /** Share folder/gallery thumbnail network capacity with video prefix fetches. */
-    suspend fun <T> withBrowseThumbFetchSlot(block: suspend () -> T): T =
-        thumbFetchSlots.withPermit { block() }
+    suspend fun <T> withBrowseThumbFetchSlot(block: suspend () -> T): T = thumbFetchSlots.withPermit { block() }
 
     /**
      * Pure path from dataDir string — no [Context.getCacheDir]/[mkdirs] on path resolve

@@ -228,8 +228,7 @@ object VideoThumbnail {
         }
     }
 
-    private fun extractFrame(file: File): Bitmap? =
-        decodeThumbnailFrame { it.setDataSource(file.absolutePath) }
+    private fun extractFrame(file: File): Bitmap? = decodeThumbnailFrame { it.setDataSource(file.absolutePath) }
 
     private inline fun decodeThumbnailFrame(
         setDataSource: (MediaMetadataRetriever) -> Unit,
