@@ -7,6 +7,7 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.ArchiveByteSource
+import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.smb.SmbGateway
 import java.io.BufferedInputStream
@@ -87,11 +88,16 @@ object ExternalHttpStreamServer {
     sealed interface StreamBody : AutoCloseable {
         val size: Long
         fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int
+
+        /** True when [offset] can be served from this body's in-memory window. */
+        fun isBuffered(offset: Long): Boolean = false
     }
 
     class ArchiveBody(private val source: ArchiveByteSource) : StreamBody {
         override val size: Long get() = source.size
         override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = source.readAt(offset, buf, off, len)
+        override fun isBuffered(offset: Long): Boolean =
+            (source as? VideoDirectLinkByteSource)?.isBuffered(offset) == true
         override fun close() = source.close()
     }
 
@@ -242,24 +248,40 @@ object ExternalHttpStreamServer {
                     key = key,
                     refs = cached.refs.get(),
                     lastAccessMs = cached.lastAccessMs,
+                    evictOnSmbPoolPressure = cached.evictOnSmbPoolPressure,
                 )
             }
         }
 
-        /** Close one idle warm body by key (caller holds no other session locks ideally). */
-        fun evictWarmBody(key: String, reason: String): Boolean = synchronized(bodyLock) {
+        /** Close one warm body by key; active eviction is reserved for exhausted SMB demand. */
+        fun evictWarmBody(
+            key: String,
+            reason: String,
+            allowActive: Boolean = false,
+        ): Boolean = synchronized(bodyLock) {
             val cached = bodyCache[key] ?: return false
-            if (cached.refs.get() > 0) return false
+            val active = cached.refs.get() > 0
+            if (active && !allowActive) return false
             cancelBodyIdleJob(key)
             bodyCache.remove(key)
             runCatching { cached.body.close() }
-            logcat("ExtHttp") { "evict warm body ($reason) session=$id file=$key" }
+            logcat("ExtHttp") {
+                "evict ${if (active) "active" else "idle"} warm body ($reason) session=$id file=$key"
+            }
             true
         }
 
-        private fun releaseBody(key: String, cached: CachedBody) {
+        /** Make a seek outside the RAM window supersede older Ranges for this same video. */
+        fun prepareRange(body: StreamBody, socket: Socket, start: Long) {
+            (body as? RefBody)?.prepareRange(socket, start)
+        }
+
+        private fun releaseBody(key: String, cached: CachedBody, socket: Socket?) {
             synchronized(bodyLock) {
+                socket?.let { cached.activeSockets.remove(it) }
                 if (cached.refs.decrementAndGet() > 0) return
+                // A pressure eviction already removed/closed this body.
+                if (bodyCache[key] !== cached) return
                 // Keep warm for seeks / next Range; close only after idle timeout.
                 scheduleBodyIdleClose(key, cached)
             }
@@ -328,6 +350,9 @@ object ExternalHttpStreamServer {
         ) {
             val refs = AtomicInteger(0)
 
+            /** HTTP Range sockets currently consuming this shared body; guarded by bodyLock. */
+            val activeSockets = HashSet<Socket>()
+
             @Volatile var lastAccessMs: Long = SystemClock.elapsedRealtime()
 
             fun touch() {
@@ -343,6 +368,7 @@ object ExternalHttpStreamServer {
             val key: String,
             val refs: Int,
             val lastAccessMs: Long,
+            val evictOnSmbPoolPressure: Boolean,
         ) {
             val idle: Boolean get() = refs == 0
         }
@@ -357,13 +383,37 @@ object ExternalHttpStreamServer {
         ) : StreamBody {
             private val closed = AtomicBoolean(false)
 
+            @Volatile
+            private var rangeSocket: Socket? = null
+
             override val size: Long get() = cached.body.size
             override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = synchronized(cached.readLock) {
+                cached.touch()
                 cached.body.readAt(offset, buf, off, len)
             }
+
+            fun prepareRange(socket: Socket, start: Long) {
+                val staleSockets = synchronized(bodyLock) {
+                    rangeSocket = socket
+                    val stale = if (cached.evictOnSmbPoolPressure && !cached.body.isBuffered(start)) {
+                        cached.activeSockets.filter { it !== socket }
+                    } else {
+                        emptyList()
+                    }
+                    cached.activeSockets.add(socket)
+                    stale
+                }
+                for (stale in staleSockets) {
+                    logcat("ExtHttp") {
+                        "supersede stale SMB Range on seek session=$id file=$key start=$start"
+                    }
+                    runCatching { stale.close() }
+                }
+            }
+
             override fun close() {
                 if (closed.compareAndSet(false, true)) {
-                    releaseBody(key, cached)
+                    releaseBody(key, cached, rangeSocket)
                 }
             }
         }
@@ -455,17 +505,34 @@ object ExternalHttpStreamServer {
     }
 
     /**
-     * Close idle warm video bodies across sessions so HTTP sticky SMB slots free for new GETs.
-     * Registered as [SmbGateway.onHttpStickyPoolPressure].
+     * Free sticky SMB slots for a new demand read.
+     *
+     * Idle bodies go first. If two dual-lane videos still occupy the four-slot pool,
+     * preempt the least-recently-used active SMB body so a third video replaces the first.
      */
-    fun evictAllIdleSmbBackends(): Int {
+    fun relieveSmbPoolPressure(): Int {
         var n = 0
         for (session in sessions.values) {
             n += session.evictIdleSmbBodies()
         }
+        if (n == 0 && SmbGateway.httpStickyPoolAvailable() == 0) {
+            val victim = sessions.values
+                .flatMap { it.snapshotWarmBodies() }
+                .filter { it.evictOnSmbPoolPressure }
+                .minByOrNull { it.lastAccessMs }
+            if (victim != null &&
+                victim.session.evictWarmBody(
+                    victim.key,
+                    reason = "SMB-pool-pressure-lru",
+                    allowActive = true,
+                )
+            ) {
+                n++
+            }
+        }
         if (n > 0) {
             logcat("ExtHttp") {
-                "evicted $n idle warm bodies for SMB pool " +
+                "relieved SMB pool pressure with $n body eviction(s) " +
                     "(available=${SmbGateway.httpStickyPoolAvailable()}/${SmbGateway.httpStickyPoolSize()})"
             }
         }
@@ -498,7 +565,7 @@ object ExternalHttpStreamServer {
         serverSocket?.let { return port }
         // New HTTP sticky acquires may free warm bodies via this pressure hook.
         SmbGateway.onHttpStickyPoolPressure = {
-            evictAllIdleSmbBackends()
+            relieveSmbPoolPressure()
         }
         // Tag on this thread before ServerSocket() — accept-thread tag is too late for bind.
         TrafficStats.setThreadStatsTag(LOOPBACK_HTTP_TRAFFIC_TAG)
@@ -955,6 +1022,7 @@ object ExternalHttpStreamServer {
             )
             return preferKeepAlive
         }
+        session.prepareRange(body, socket, start)
         val contentLength = end - start + 1L
         val status = if (range != null) 206 else 200
         val statusText = if (range != null) "Partial Content" else "OK"

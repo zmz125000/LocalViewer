@@ -203,6 +203,9 @@ object SmbGateway {
      * Fair so new GETs queue fairly after idle-warm eviction.
      */
     private const val HTTP_STICKY_POOL_SIZE = 4
+
+    /** Safety bound if an evicted SMB transport does not release its permit promptly. */
+    private const val HTTP_STICKY_WAIT_TIMEOUT_MS = 10_000L
     private val httpStickyPermits = Semaphore(HTTP_STICKY_POOL_SIZE)
 
     /**
@@ -1141,8 +1144,10 @@ object SmbGateway {
         logcat {
             "SmbGateway: HTTP sticky wait inUse=${HTTP_STICKY_POOL_SIZE - httpStickyPermits.availablePermits}/$HTTP_STICKY_POOL_SIZE"
         }
-        httpStickyPermits.acquire()
-        return true
+        return withTimeoutOrNull(HTTP_STICKY_WAIT_TIMEOUT_MS) {
+            httpStickyPermits.acquire()
+            true
+        } ?: false
     }
 
     private fun <T> openStickyConnection(

@@ -97,6 +97,14 @@ class VideoDirectLinkByteSource(
         return copied
     }
 
+    /** True when the byte at [offset] is already in the in-memory video window. */
+    fun isBuffered(offset: Long): Boolean {
+        if (offset < 0L || offset >= size || closed.get()) return false
+        return synchronized(lock) {
+            blocks.containsKey(offset / blockSize)
+        }
+    }
+
     override fun warm(offset: Long, length: Int) {
         if (closed.get() || offset < 0L || length <= 0 || size <= 0L) return
         if (offset >= size) return
