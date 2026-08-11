@@ -75,8 +75,7 @@ object VideoThumbnail {
     private val extractMutex = Mutex()
 
     /** Shared with [OriginDiskCache.trimThumbs] (`cache/video_thumb_cache`). */
-    fun cacheDirectory(): File =
-        File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache").apply { mkdirs() }
+    fun cacheDirectory(): File = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache").apply { mkdirs() }
 
     @Suppress("UNUSED_PARAMETER")
     suspend fun getOrCreate(context: Context, source: VideoThumbnailSource): File? = withIOContext {
