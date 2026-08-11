@@ -215,7 +215,7 @@ object SmbGateway {
      * acquire the slot without waiting for slow smbj transport teardown. The worker's
      * normal `finally` release is idempotent and cannot over-release the semaphore.
      */
-    internal class HttpStickyLease internal constructor() {
+    class HttpStickyLease internal constructor() {
         private val state = AtomicInteger(LEASE_IDLE)
 
         internal fun attach(): Boolean = state.compareAndSet(LEASE_IDLE, LEASE_ACQUIRED)
