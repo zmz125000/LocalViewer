@@ -46,10 +46,16 @@ object StreamKeepAlivePolicy {
     fun dropNetworkOnScreenOff(): Boolean = !unlimited()
 
     /**
-     * Close sticky SMB/WebDAV transports. Live proxy FDs stay open; next read reconnects.
+     * Close sticky SMB/WebDAV transports. Live proxy FDs / in-flight HTTP Ranges stay open
+     * at the app layer; next read reconnects.
+     *
+     * Idle HTTP warm video bodies are dropped first so dual-sticky pool permits free
+     * immediately — otherwise KeepOpen can sit up to ~45s in idle-ping on a dead
+     * DiskShare after [SmbGateway.dropStickySessions] and log "already been closed".
      */
     fun dropStickyNetwork(reason: String) {
         logcat("StreamKeepAlive") { "drop sticky network ($reason)" }
+        runCatching { ExternalHttpStreamServer.evictAllIdleSmbBackends() }
         runCatching { SmbGateway.dropStickySessions(reason) }
         runCatching { WebDavClient.resetStickyClient() }
     }

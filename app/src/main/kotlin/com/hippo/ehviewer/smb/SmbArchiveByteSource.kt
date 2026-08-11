@@ -178,7 +178,7 @@ private class KeepOpenSmbFileSource(
                                                     readFullyWithRetry(file, op.offset, op.buf, op.off, op.len),
                                                 )
                                             } catch (e: Throwable) {
-                                                logcat("SmbArchive", e)
+                                                if (!isShareClosedError(e)) logcat("SmbArchive", e)
                                                 op.result.completeExceptionally(e)
                                                 if (isShareClosedError(e) || closed.get()) throw e
                                             }
@@ -190,9 +190,23 @@ private class KeepOpenSmbFileSource(
                                                 }
                                                 if (op == null) {
                                                     if (ops.isClosedForReceive || closed.get()) break
+                                                    // Keepalive against NAS/NAT idle drop. Share may
+                                                    // already be dead after dropStickySessions (screen
+                                                    // off) — exit drain cleanly so the HTTP sticky
+                                                    // permit is released; next demand reconnects.
                                                     try {
                                                         file.fileInformation.standardInformation.endOfFile
                                                     } catch (e: Throwable) {
+                                                        if (closed.get() || !isActive) break
+                                                        if (isShareClosedError(e)) {
+                                                            logcat("SmbArchive") {
+                                                                "sticky idle: transport gone, reconnect on demand"
+                                                            }
+                                                            // Queued reads must re-arm open (demand
+                                                            // may already have been consumed).
+                                                            if (!ops.isEmpty) demand.trySend(Unit)
+                                                            break
+                                                        }
                                                         logcat("SmbArchive", e)
                                                         throw e
                                                     }
@@ -230,10 +244,20 @@ private class KeepOpenSmbFileSource(
                             break
                         } catch (e: Throwable) {
                             if (closed.get() || !isActive) throw e
-                            logcat("SmbArchive", e)
+                            // Share/transport death mid-session is expected after screen-off
+                            // dropSticky / NAS idle; reconnect on next demand without Error spam.
+                            if (isShareClosedError(e)) {
+                                logcat("SmbArchive") {
+                                    "sticky share closed (${if (opened) "reconnect on demand" else "retry open"}): ${e.message}"
+                                }
+                            } else {
+                                logcat("SmbArchive", e)
+                            }
                             if (opened) {
                                 // The active request already received its failure. Do not spin
                                 // reconnecting with no consumer; wait for fresh read demand.
+                                // Re-arm if reads are already queued (demand may be empty).
+                                if (!ops.isEmpty) demand.trySend(Unit)
                                 break
                             }
                             openAttempts++
