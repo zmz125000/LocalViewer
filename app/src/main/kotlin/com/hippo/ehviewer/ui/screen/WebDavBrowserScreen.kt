@@ -76,6 +76,7 @@ import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
+import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.filterRemoteByContentMode
@@ -411,6 +412,21 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    /** History path link for the folder currently listed (parent of the opened file). */
+    suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
+        val folderThumb = LocalHistory.webDavBrowseFolderThumbKey(
+            sourceId = sourceId,
+            relativeDir = relativeDir,
+            entries = entries,
+        )
+        LocalHistory.recordWebDavBrowseFolder(
+            sourceId = sourceId,
+            relativePath = relativeDir,
+            title = title,
+            thumbKey = folderThumb,
+        )
+    }
+
     fun openFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
         val src = source ?: return
         ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
@@ -446,6 +462,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             category = 3,
         )
         launchIO {
+            // Parent browse dir (not gated by file/gallery prefs) + gallery row.
+            recordCurrentBrowseFolderHistory(src.id)
             // History = folder gallery (open → reader). Same gid as progress.
             LocalHistory.recordWebDavFolderGallery(
                 sourceId = src.id,
@@ -461,28 +479,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         navToWebDavFolderReader(src.id, remote, names, info)
     }
 
-    /** History path link for the folder currently listed (parent of the opened file). */
-    suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
-        val folderThumb = LocalHistory.webDavBrowseFolderThumbKey(
-            sourceId = sourceId,
-            relativeDir = relativeDir,
-            entries = entries,
-        )
-        LocalHistory.recordWebDavBrowseFolder(
-            sourceId = sourceId,
-            relativePath = relativeDir,
-            title = title,
-            thumbKey = folderThumb,
-        )
-    }
-
     fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
         if (!isPdfFileName(entry.fileName)) return
         val src = source ?: return
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
-            // On tap: record containing browse folder (cannot know if external app succeeded).
+            // Parent dir + file row (non-dir open).
             recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordWebDavFile(src.id, remote, title = entry.name)
             try {
                 OpenPdfExternally.openWebDav(
                     context = context,
@@ -508,8 +512,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
         launchIO {
-            // On tap: record containing browse folder (cannot know if external app succeeded).
+            // Parent dir + file/video row (non-dir open).
             recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordWebDavFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.openWebDav(
                     context = context,
@@ -533,6 +538,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
         launchIO {
             recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordWebDavFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.playWebDav(
                     context = context,
@@ -565,6 +571,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
             try {
+                // Parent browse dir (not gated by file/gallery prefs) + file row.
+                recordCurrentBrowseFolderHistory(src.id)
                 ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
                 if (isStreamableArchiveFileName(entry.fileName) ||
                     isSolidArchiveFileName(entry.fileName) ||
@@ -887,6 +895,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
+                                        thumbnailSource = VideoThumbnailSource.WebDav(
+                                            sourceId,
+                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                        ),
                                         onClick = { openVideoPrimary(video.fileName) },
                                         onLongClick = { openVideoSecondary(video.fileName) },
                                     )
@@ -969,6 +981,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
+                                        thumbnailSource = VideoThumbnailSource.WebDav(
+                                            sourceId,
+                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                        ),
                                         onClick = { openVideoPrimary(video.fileName) },
                                         onLongClick = { openVideoSecondary(video.fileName) },
                                     )

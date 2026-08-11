@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lan
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -60,10 +61,11 @@ import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.ui.screen.collectListThumbSizeAsState
 import okio.Path.Companion.toPath
 
-/** Prefer stored [GalleryInfo.thumbKey]; for network archives derive the logical cover key. */
+/** Prefer stored [GalleryInfo.thumbKey]; for network archives / videos derive the logical cover key. */
 private fun historyCoverKey(info: GalleryInfo): String? {
     info.thumbKey?.takeIf { it.isNotBlank() }?.let { return it }
     return when (val target = LocalHistory.parse(info)) {
@@ -71,6 +73,14 @@ private fun historyCoverKey(info: GalleryInfo): String? {
             HistoryThumbKey.smbArchive(target.sourceId, target.remotePath)
         is LocalHistoryTarget.WebDavStreamArchive ->
             HistoryThumbKey.webdavArchive(target.sourceId, target.remotePath)
+        is LocalHistoryTarget.LocalFile ->
+            target.path.takeIf { isVideoFileName(it) }?.let { HistoryThumbKey.videoLocal(it) }
+        is LocalHistoryTarget.SmbFile ->
+            target.remotePath.takeIf { isVideoFileName(it) }
+                ?.let { HistoryThumbKey.videoSmb(target.sourceId, it) }
+        is LocalHistoryTarget.WebDavFile ->
+            target.remotePath.takeIf { isVideoFileName(it) }
+                ?.let { HistoryThumbKey.videoWebdav(target.sourceId, it) }
         else -> null
     }
 }
@@ -280,13 +290,17 @@ fun HistoryListItem(
         LocalHistory.KindLabel.Folder -> stringResource(R.string.folder)
         LocalHistory.KindLabel.Smb -> stringResource(R.string.network)
         LocalHistory.KindLabel.WebDav -> stringResource(R.string.webdav)
+        LocalHistory.KindLabel.Video -> stringResource(R.string.browse_videos)
+        LocalHistory.KindLabel.File -> stringResource(R.string.browse_files)
         LocalHistory.KindLabel.Unknown -> stringResource(R.string.history)
     }
     val placeholderIcon: ImageVector = when (kind) {
         LocalHistory.KindLabel.Archive -> Icons.Default.Inventory2
         LocalHistory.KindLabel.Smb -> Icons.Default.Lan
         LocalHistory.KindLabel.WebDav -> Icons.Default.Cloud
-        LocalHistory.KindLabel.Library -> Icons.AutoMirrored.Filled.InsertDriveFile
+        LocalHistory.KindLabel.Library, LocalHistory.KindLabel.File ->
+            Icons.AutoMirrored.Filled.InsertDriveFile
+        LocalHistory.KindLabel.Video -> Icons.Default.Movie
         else -> Icons.Default.Folder
     }
     val cardHeight by collectListThumbSizeAsState()
@@ -360,7 +374,9 @@ fun HistoryGridItem(
         LocalHistory.KindLabel.Archive -> Icons.Default.Inventory2
         LocalHistory.KindLabel.Smb -> Icons.Default.Lan
         LocalHistory.KindLabel.WebDav -> Icons.Default.Cloud
-        LocalHistory.KindLabel.Library -> Icons.AutoMirrored.Filled.InsertDriveFile
+        LocalHistory.KindLabel.Library, LocalHistory.KindLabel.File ->
+            Icons.AutoMirrored.Filled.InsertDriveFile
+        LocalHistory.KindLabel.Video -> Icons.Default.Movie
         else -> Icons.Default.Folder
     }
     val nameHeight = GalleryGridDefaults.nameHeight()

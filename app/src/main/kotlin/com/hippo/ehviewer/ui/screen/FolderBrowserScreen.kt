@@ -74,6 +74,7 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
 import com.hippo.ehviewer.library.isPdfFileName
@@ -296,6 +297,25 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    /** History path link for the folder currently listed (parent of the opened file). */
+    suspend fun recordCurrentBrowseFolderHistory() {
+        val frame = stack.lastOrNull() ?: return
+        val parentPath = stack.getOrNull(stack.lastIndex - 1)?.path
+        val folderThumb = LocalHistory.localBrowseFolderThumbKey(
+            rootId = frame.rootId,
+            relativePath = frame.relativePath,
+            currentPath = frame.path,
+            entries = entries,
+            parentPath = parentPath,
+        )
+        LocalHistory.recordLocalBrowseFolder(
+            rootId = frame.rootId,
+            relativePath = frame.relativePath,
+            title = frame.title,
+            thumbKey = folderThumb,
+        )
+    }
+
     fun openFolderGallery(entry: BrowseEntry.FolderGallery) {
         val frame = stack.lastOrNull() ?: return
         // Playlist = gallery/archive rows in this browse list (lazy galleries), not only
@@ -326,6 +346,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             category = 0,
         )
         launchIO {
+            // Parent browse dir (not gated by file/gallery prefs) + gallery row.
+            recordCurrentBrowseFolderHistory()
             // History = folder gallery (open → reader). Same gid as progress.
             LocalHistory.recordLocalFolderGallery(
                 rootId = frame.rootId,
@@ -351,28 +373,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
         val path = entry.path.toString()
         launchIO {
+            // Parent browse dir (not gated by file/gallery prefs) + file row.
+            recordCurrentBrowseFolderHistory()
             LocalHistory.recordLocalArchive(path, title = entry.name)
         }
         navToReader(path)
-    }
-
-    /** History path link for the folder currently listed (parent of the opened file). */
-    suspend fun recordCurrentBrowseFolderHistory() {
-        val frame = stack.lastOrNull() ?: return
-        val parentPath = stack.getOrNull(stack.lastIndex - 1)?.path
-        val folderThumb = LocalHistory.localBrowseFolderThumbKey(
-            rootId = frame.rootId,
-            relativePath = frame.relativePath,
-            currentPath = frame.path,
-            entries = entries,
-            parentPath = parentPath,
-        )
-        LocalHistory.recordLocalBrowseFolder(
-            rootId = frame.rootId,
-            relativePath = frame.relativePath,
-            title = frame.title,
-            thumbKey = folderThumb,
-        )
     }
 
     /** Long-press PDF → system / third-party reader (tap still uses in-app image PDF engine). */
@@ -380,8 +385,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         if (!isPdfFileName(entry.name)) return
         val path = entry.path.toString()
         launchIO {
-            // On tap: record containing browse folder (cannot know if external app succeeded).
+            // Parent dir + file row (non-dir open).
             recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFile(path, title = entry.name)
             try {
                 OpenPdfExternally.openLocal(context, path, displayName = entry.name)
             } catch (e: Throwable) {
@@ -399,13 +405,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         // Always launch with the real path basename — promoted VideoFile rows use a
         // virtual `@dir` display name without extension (wrong MIME / player title).
         val actualName = path.name
+        val pathStr = path.toString()
         launchIO {
-            // On tap: record containing browse folder (cannot know if external app succeeded).
+            // Parent dir + file/video row (non-dir open).
             recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFile(pathStr, title = actualName)
             try {
                 OpenFileExternally.openLocal(
                     context,
-                    path.toString(),
+                    pathStr,
                     displayName = actualName,
                     mimeType = mimeTypeForFileName(actualName),
                 )
@@ -422,12 +430,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     /** In-app Media3 player. */
     fun playVideo(path: okio.Path) {
         val actualName = path.name
+        val pathStr = path.toString()
         launchIO {
             recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFile(pathStr, title = actualName)
             try {
                 OpenFileExternally.playLocal(
                     context,
-                    path.toString(),
+                    pathStr,
                     displayName = actualName,
                     mimeType = mimeTypeForFileName(actualName),
                 )
@@ -680,6 +690,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 items(videos, key = { "v-${it.path}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
+                                        thumbnailSource = VideoThumbnailSource.Local(video.path.toString()),
                                         onClick = { openVideoPrimary(video.path) },
                                         onLongClick = { openVideoSecondary(video.path) },
                                     )
@@ -764,6 +775,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 items(videos, key = { "v-${it.path}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
+                                        thumbnailSource = VideoThumbnailSource.Local(video.path.toString()),
                                         onClick = { openVideoPrimary(video.path) },
                                         onLongClick = { openVideoSecondary(video.path) },
                                     )

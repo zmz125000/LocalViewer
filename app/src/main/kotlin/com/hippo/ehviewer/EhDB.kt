@@ -38,6 +38,7 @@ import com.ehviewer.core.files.delete
 import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.library.LocalHistory
 import kotlinx.coroutines.flow.Flow
 import okio.Path
 
@@ -261,7 +262,8 @@ object EhDB {
      * Re-opening the same gallery never creates a second history row.
      */
     suspend fun putHistoryInfo(galleryInfo: GalleryInfo) {
-        if (!Settings.saveHistory.value) return
+        // Master + nested file/gallery gates (browse-dir always allowed when master on).
+        if (!LocalHistory.isHistoryWriteAllowed(galleryInfo)) return
         val entity = galleryInfo.asEntity()
         // Keep sparse re-records from wiping cover / page count.
         db.galleryDao().load(entity.gid)?.let { prev ->

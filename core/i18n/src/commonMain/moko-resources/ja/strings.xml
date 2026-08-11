@@ -130,6 +130,8 @@
     <string name="settings_download_remote_thumbs_summary">ネットワークギャラリーのサムネイルを取得します。</string>
     <string name="settings_download_network_archive_thumbs">ネットワークアーカイブの表紙を取得</string>
     <string name="settings_download_network_archive_thumbs_summary">ネットワーク上の ZIP/TAR/RAR/7z の先頭ページをサムネイルにします。</string>
+    <string name="settings_download_network_video_thumbs">ネットワーク動画の表紙を取得</string>
+    <string name="settings_download_network_video_thumbs_summary">SMB/WebDAV 動画からフレームサムネイルを抽出します。オフでもキャッシュ済みの表紙は表示されます。</string>
     <string name="settings_persist_main_nav">フォルダ画面でメインナビを維持</string>
     <string name="settings_persist_main_nav_summary">フォルダ閲覧中も下部バーを表示し、「ブラウズ/履歴」の再タップで戻れます。オフ時はショートカット FAB（スマホ）。</string>
     <string name="settings_eh_show_reading_progress">読書進捗を表示</string>
@@ -145,7 +147,11 @@
     <string name="settings_advanced_read_cache_size_summary">SMB ページキャッシュ（および旧オンライン画像キャッシュ）の最大サイズ</string>
     <string name="insufficient_gp">オリジナル画像をダウンロードする GP が不足しています</string>
     <string name="settings_privacy_save_history">履歴を保存</string>
-    <string name="settings_privacy_save_history_summary">最近開いたライブラリとブラウズフォルダを記録します。オフにすると既存の履歴も消去されます。</string>
+    <string name="settings_privacy_save_history_summary">ブラウズフォルダ・ファイル・ギャラリー履歴のマスタースイッチです。オフにすると既存の履歴も消去されます。</string>
+    <string name="settings_privacy_save_file_history">ファイル履歴を保存</string>
+    <string name="settings_privacy_save_file_history_summary">開いたアーカイブ・動画・その他のファイルを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
+    <string name="settings_privacy_save_gallery_history">ギャラリー履歴を保存</string>
+    <string name="settings_privacy_save_gallery_history_summary">開いたライブラリ／フォルダギャラリーを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
     <string name="history_disabled">プライバシー設定で履歴がオフになっています</string>
     <string name="pref_reader_hardware_bitmap">ハードウェアビットマップデコード</string>
     <string name="pref_reader_hardware_bitmap_summary">より高速な Coil 経路（GPU ビットマップ）。余白切り取りと QR 広告検出を無効化し、ソフトウェアコピーを避けます。</string>

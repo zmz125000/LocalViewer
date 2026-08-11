@@ -62,6 +62,8 @@ import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.VideoThumbnail
+import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
@@ -221,6 +223,7 @@ fun BrowseVideoRow(
     name: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    thumbnailSource: VideoThumbnailSource? = null,
     /** Long-press → open in external app; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -229,10 +232,10 @@ fun BrowseVideoRow(
         headlineContent = { Text(name) },
         supportingContent = { Text(stringResource(R.string.browse_video)) },
         leadingContent = {
-            Icon(
-                Icons.Default.Movie,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+            BrowseVideoThumbnail(
+                source = thumbnailSource,
+                modifier = Modifier.size(56.dp).clip(ShapeDefaults.Medium),
+                iconSize = 32.dp,
             )
         },
         modifier = modifier
@@ -471,6 +474,7 @@ fun BrowseVideoGridItem(
     name: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    thumbnailSource: VideoThumbnailSource? = null,
     /** Long-press → open in external app; defaults to [onClick]. */
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -480,19 +484,41 @@ fun BrowseVideoGridItem(
         onLongClick = onLongClick ?: onClick,
         modifier = modifier,
         thumb = {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Default.Movie,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
+            BrowseVideoThumbnail(thumbnailSource, Modifier.fillMaxSize(), 48.dp)
         },
     )
+}
+
+@Composable
+private fun BrowseVideoThumbnail(
+    source: VideoThumbnailSource?,
+    modifier: Modifier,
+    iconSize: Dp,
+) {
+    val context = LocalContext.current
+    val downloadNetworkVideoThumbs by Settings.downloadNetworkVideoThumbs.collectAsState()
+    var thumbnail by remember(source) { mutableStateOf<java.io.File?>(null) }
+    // Re-run when the network toggle changes so enabling mid-browse starts extraction;
+    // disabling only stops new network work (cached files still load inside getOrCreate).
+    LaunchedEffect(source, downloadNetworkVideoThumbs) {
+        thumbnail = source?.let { VideoThumbnail.getOrCreate(context, it) }
+    }
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Icon(
+            Icons.Default.Movie,
+            contentDescription = null,
+            modifier = Modifier.size(iconSize),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        thumbnail?.let {
+            AsyncImage(
+                model = it,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        }
+    }
 }
 
 @Composable

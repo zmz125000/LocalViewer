@@ -157,6 +157,13 @@ object Settings : DataStorePreferences(null) {
      */
     val downloadNetworkArchiveThumbs = boolPref("download_network_archive_thumbs", true)
 
+    /**
+     * When false, SMB/WebDAV **video** browse thumbs are not extracted over the network
+     * (already-cached JPEG in [com.hippo.ehviewer.library.VideoThumbnail] still shows).
+     * Local video always uses disk cache extraction. Default true.
+     */
+    val downloadNetworkVideoThumbs = boolPref("download_network_video_thumbs", true)
+
     val showGalleryPages = boolPref("show_gallery_pages", true)
     val showReadingProgress = boolPref("show_reading_progress", false)
 
@@ -219,8 +226,24 @@ object Settings : DataStorePreferences(null) {
     val securityDelay = intPref("require_unlock_delay", 0)
     val enabledSecurity = boolPref("enable_secure", false)
 
-    /** When false, history is not written and Privacy toggle clears existing rows. */
+    /**
+     * Master history switch. When false, nothing is written and Privacy toggle clears
+     * existing rows + device search history. Nested file/gallery prefs only apply when on.
+     */
     val saveHistory = boolPref("save_history", true)
+
+    /**
+     * When [saveHistory] is on: record opened **files** (archives, stream archives,
+     * videos, and other non-dir files, including library archive galleries). Default on.
+     * Does not gate browse-dir history.
+     */
+    val saveFileHistory = boolPref("save_file_history", true)
+
+    /**
+     * When [saveHistory] is on: record opened **galleries** (library folder galleries and
+     * browse folder-galleries). Default on. Does not gate browse-dir history.
+     */
+    val saveGalleryHistory = boolPref("save_gallery_history", true)
 
     // Advanced
     val saveParseErrorBody = boolPref("save_parse_error_body", true)

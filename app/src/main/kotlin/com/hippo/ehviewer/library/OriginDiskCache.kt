@@ -20,13 +20,14 @@ import splitties.init.appCtx
  * Unified disk-cache policy for local-viewer origin images and browse thumbs.
  *
  * **Folder layout is unchanged** (smb_cache, webdav_cache, archive_pages, solid_extract,
- * document_extract, *_thumb_cache, archive_thumb). Only budgets and eviction change:
+ * document_extract, *_thumb_cache, archive_thumb, video_thumb_cache). Only budgets and
+ * eviction change:
  *
  * 1. **Origin pics** (reader pages + remote folder/archive files): one shared cap =
  *    [Settings.readCacheSize] (Advanced “image disk cache”). No per-store pool.
  *    Oldest files first. Never protects “complete” archive caches. **Never deletes
  *    `index.json`** under extract dirs.
- * 2. **Thumbs** (SMB/WebDAV/archive covers): long edge [THUMB_EDGE], fixed
+ * 2. **Thumbs** (SMB/WebDAV/archive/video covers): long edge [THUMB_EDGE], fixed
  *    [THUMB_BUDGET_BYTES] — separate from origin budget and settings.
  */
 object OriginDiskCache {
@@ -240,6 +241,8 @@ object OriginDiskCache {
         collectThumbFiles(cacheDir("smb_thumb_cache"), candidates)
         collectThumbFiles(cacheDir("webdav_thumb_cache"), candidates)
         collectThumbFiles(cacheDir("archive_thumb"), candidates)
+        // Video frames (local + network) — same shared byte budget as other covers.
+        collectThumbFiles(cacheDir("video_thumb_cache"), candidates)
 
         var total = candidates.sumOf { it.size }
         if (total <= THUMB_BUDGET_BYTES) return
@@ -260,7 +263,12 @@ object OriginDiskCache {
         for (f in files) {
             if (!f.isFile) continue
             val name = f.name
-            if (name.contains(".tmp.") || name.contains(".jpg.")) continue
+            // Skip temps and video-thumb failure markers (*.failed).
+            if (name.contains(".tmp.") || name.contains(".jpg.") || name.endsWith(".tmp") ||
+                name.endsWith(".failed")
+            ) {
+                continue
+            }
             val size = f.length()
             if (size <= 0L) continue
             out += ThumbEntry(f, f.lastModified(), size)
@@ -274,6 +282,7 @@ object OriginDiskCache {
             path.contains("/cache/smb_thumb_cache/") -> SmbCache.markAbsent(okio)
             path.contains("/cache/webdav_thumb_cache/") -> WebDavCache.markAbsent(okio)
             path.contains("/cache/archive_thumb/") -> ArchiveCoverCache.markAbsent(okio)
+            // video_thumb_cache: no in-memory hit map to clear
         }
     }
 }

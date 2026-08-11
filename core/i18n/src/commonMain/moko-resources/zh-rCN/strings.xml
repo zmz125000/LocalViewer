@@ -128,6 +128,8 @@
     <string name="settings_download_remote_thumbs_summary">获取网络画廊缩略图。</string>
     <string name="settings_download_network_archive_thumbs">下载网络压缩包封面</string>
     <string name="settings_download_network_archive_thumbs_summary">提取网络 ZIP/TAR/RAR/7z 的首页缩略图。</string>
+    <string name="settings_download_network_video_thumbs">下载网络视频封面</string>
+    <string name="settings_download_network_video_thumbs_summary">为 SMB/WebDAV 视频提取帧缩略图。关闭后仍显示已缓存的封面。</string>
     <string name="settings_smb_concurrency">SMB 并发连接数</string>
     <string name="settings_smb_concurrency_summary">每个主机最多 %s 个会话（该服务器上所有共享共用；用于定位与预取）</string>
     <string name="settings_smb3_only">仅 SMB 3</string>
@@ -388,7 +390,11 @@
     <string name="go_to_first_page">回到第一页</string>
     <string name="go_to_next_gallery">下一本</string>
     <string name="settings_privacy_save_history">保存历史</string>
-    <string name="settings_privacy_save_history_summary">记录最近打开的图库与浏览文件夹。关闭后会清除已有历史。</string>
+    <string name="settings_privacy_save_history_summary">浏览文件夹、文件与图库历史的总开关。关闭后会清除已有历史。</string>
+    <string name="settings_privacy_save_file_history">保存文件历史</string>
+    <string name="settings_privacy_save_file_history_summary">记录打开的压缩包、视频与其他非文件夹文件。父文件夹仍会在开启“保存历史”时记录。</string>
+    <string name="settings_privacy_save_gallery_history">保存图库历史</string>
+    <string name="settings_privacy_save_gallery_history_summary">记录打开的库图库与文件夹图库。父文件夹仍会在开启“保存历史”时记录。</string>
     <string name="history_disabled">历史记录已在隐私设置中关闭</string>
     <string name="library_add_library_source">添加图库源</string>
     <string name="library_add_folder_source">添加浏览文件夹</string>

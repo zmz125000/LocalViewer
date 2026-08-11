@@ -6,6 +6,7 @@ import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.hippo.ehviewer.EhDB
+import com.hippo.ehviewer.Settings
 // LocalLibrary used for archive path → library row history
 
 /** Library gallery (scanned). Click → reader. */
@@ -41,7 +42,23 @@ const val SMB_ARCHIVE_TOKEN = "smb_archive"
 /** WebDAV streamable archive. Click → stream reader. */
 const val WEBDAV_ARCHIVE_TOKEN = "webdav_archive"
 
+/**
+ * Local non-dir external file (video, document, loose image, …). Click → open/play;
+ * returns to History (no reader back-stack). Path in [GalleryInfo.uploader].
+ */
+const val LOCAL_FILE_TOKEN = "local_file"
+
+/** SMB non-dir external file. Click → open/play. */
+const val SMB_FILE_TOKEN = "smb_file"
+
+/** WebDAV non-dir external file. Click → open/play. */
+const val WEBDAV_FILE_TOKEN = "webdav_file"
+
 private const val PATH_SEP = '\u0000'
+
+/** category for [LOCAL_FILE_TOKEN] / network file tokens: video vs other. */
+const val HISTORY_FILE_CATEGORY_VIDEO = 4
+const val HISTORY_FILE_CATEGORY_OTHER = 5
 
 sealed interface LocalHistoryTarget {
     data class LibraryGallery(val galleryId: Long) : LocalHistoryTarget
@@ -54,6 +71,11 @@ sealed interface LocalHistoryTarget {
     data class LocalArchive(val path: String) : LocalHistoryTarget
     data class SmbStreamArchive(val sourceId: Long, val remotePath: String) : LocalHistoryTarget
     data class WebDavStreamArchive(val sourceId: Long, val remotePath: String) : LocalHistoryTarget
+
+    /** Video / regular / external non-archive file. */
+    data class LocalFile(val path: String) : LocalHistoryTarget
+    data class SmbFile(val sourceId: Long, val remotePath: String) : LocalHistoryTarget
+    data class WebDavFile(val sourceId: Long, val remotePath: String) : LocalHistoryTarget
 
     /** Old/unknown row — try library id or drop. */
     data class Orphan(val gid: Long) : LocalHistoryTarget
@@ -88,6 +110,15 @@ object LocalHistory {
         } ?: LocalHistoryTarget.Orphan(info.gid)
         WEBDAV_ARCHIVE_TOKEN -> decodeWebDavBrowse(info.uploader)?.let {
             LocalHistoryTarget.WebDavStreamArchive(it.sourceId, it.relativePath)
+        } ?: LocalHistoryTarget.Orphan(info.gid)
+        LOCAL_FILE_TOKEN -> info.uploader?.takeIf { it.isNotEmpty() }
+            ?.let { LocalHistoryTarget.LocalFile(it) }
+            ?: LocalHistoryTarget.Orphan(info.gid)
+        SMB_FILE_TOKEN -> decodeSmbBrowse(info.uploader)?.let {
+            LocalHistoryTarget.SmbFile(it.sourceId, it.relativePath)
+        } ?: LocalHistoryTarget.Orphan(info.gid)
+        WEBDAV_FILE_TOKEN -> decodeWebDavBrowse(info.uploader)?.let {
+            LocalHistoryTarget.WebDavFile(it.sourceId, it.relativePath)
         } ?: LocalHistoryTarget.Orphan(info.gid)
         else -> LocalHistoryTarget.Orphan(info.gid)
     }
@@ -139,12 +170,28 @@ object LocalHistory {
         // Local folder gallery (image dir) — not a scanned library row.
         LOCAL_FOLDER_TOKEN, LOCAL_BROWSE_TOKEN -> KindLabel.Folder
         LOCAL_ARCHIVE_TOKEN, SMB_ARCHIVE_TOKEN, WEBDAV_ARCHIVE_TOKEN -> KindLabel.Archive
+        LOCAL_FILE_TOKEN, SMB_FILE_TOKEN, WEBDAV_FILE_TOKEN ->
+            if (info.category == HISTORY_FILE_CATEGORY_VIDEO ||
+                isVideoFileName(info.title.orEmpty()) ||
+                isVideoFileName(fileNameOfHistory(info))
+            ) {
+                KindLabel.Video
+            } else {
+                KindLabel.File
+            }
         SMB_BROWSE_TOKEN, SMB_FOLDER_TOKEN -> KindLabel.Smb
         WEBDAV_BROWSE_TOKEN, WEBDAV_FOLDER_TOKEN -> KindLabel.WebDav
         else -> KindLabel.Unknown
     }
 
-    enum class KindLabel { Library, Archive, Folder, Smb, WebDav, Unknown }
+    enum class KindLabel { Library, Archive, Folder, Smb, WebDav, Video, File, Unknown }
+
+    private fun fileNameOfHistory(info: GalleryInfo): String {
+        val path = info.uploader.orEmpty()
+        return path.substringAfterLast('/').substringAfterLast('\\').ifEmpty {
+            info.title.orEmpty()
+        }
+    }
 
     /**
      * History page / progress chip when the row is a readable gallery (not a dir-only pin).
@@ -160,6 +207,35 @@ object LocalHistory {
         WEBDAV_ARCHIVE_TOKEN,
         -> info.pages > 0
         else -> false
+    }
+
+    /**
+     * Privacy gates for HISTORY writes. Master [Settings.saveHistory] must be on.
+     * Browse-dir rows always pass when master is on; file vs gallery use nested prefs.
+     * (Cover keys / parent-dir side records use the same [EhDB.putHistoryInfo] path.)
+     */
+    fun isHistoryWriteAllowed(info: GalleryInfo): Boolean {
+        if (!Settings.saveHistory.value) return false
+        return when (info.token) {
+            // Dir pins: parent of opened file/gallery — not gated by file/gallery toggles.
+            LOCAL_BROWSE_TOKEN, SMB_BROWSE_TOKEN, WEBDAV_BROWSE_TOKEN -> true
+            // Files (archives, videos, regular/external files).
+            LOCAL_ARCHIVE_TOKEN, SMB_ARCHIVE_TOKEN, WEBDAV_ARCHIVE_TOKEN,
+            LOCAL_FILE_TOKEN, SMB_FILE_TOKEN, WEBDAV_FILE_TOKEN,
+            -> Settings.saveFileHistory.value
+            // Folder galleries (image dirs).
+            LOCAL_FOLDER_TOKEN, SMB_FOLDER_TOKEN, WEBDAV_FOLDER_TOKEN ->
+                Settings.saveGalleryHistory.value
+            // Scanned library: category 1 = archive file, else folder gallery.
+            LOCAL_GALLERY_TOKEN ->
+                if (info.category == 1) {
+                    Settings.saveFileHistory.value
+                } else {
+                    Settings.saveGalleryHistory.value
+                }
+            // Legacy / unknown: treat as gallery.
+            else -> Settings.saveGalleryHistory.value
+        }
     }
 
     suspend fun recordLibraryGallery(gallery: LocalGalleryEntity) {
@@ -542,6 +618,91 @@ object LocalHistory {
             favoriteSlot = NOT_FAVORITED,
         )
         ensureGalleryForProgress(hist)
+        EhDB.putHistoryInfo(hist)
+    }
+
+    /**
+     * Local video / regular / external file (not archive, not gallery).
+     * [thumbKey]: video frame key ([HistoryThumbKey.videoLocal]) or null.
+     */
+    suspend fun recordLocalFile(
+        path: String,
+        title: String? = null,
+        thumbKey: String? = null,
+    ) {
+        val name = title?.ifBlank { null }
+            ?: path.trimEnd('/').substringAfterLast('/').ifEmpty { "File" }
+        val isVideo = isVideoFileName(name) || isVideoFileName(path)
+        val cover = thumbKey
+            ?: if (isVideo) HistoryThumbKey.videoLocal(path) else null
+        val gid = stableGalleryId(0L, "local-file:$path")
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = LOCAL_FILE_TOKEN,
+            title = name,
+            thumbKey = resolveThumbKey(gid, cover),
+            category = if (isVideo) HISTORY_FILE_CATEGORY_VIDEO else HISTORY_FILE_CATEGORY_OTHER,
+            uploader = path,
+            rating = -1f,
+            pages = 0,
+            favoriteSlot = NOT_FAVORITED,
+        )
+        EhDB.putHistoryInfo(info)
+    }
+
+    /** SMB video / regular / external file. */
+    suspend fun recordSmbFile(
+        sourceId: Long,
+        remotePath: String,
+        title: String? = null,
+        thumbKey: String? = null,
+    ) {
+        val rel = normalizeRel(remotePath)
+        val name = title?.ifBlank { null }
+            ?: rel.substringAfterLast('/').ifEmpty { "File" }
+        val isVideo = isVideoFileName(name) || isVideoFileName(rel)
+        val cover = thumbKey
+            ?: if (isVideo) HistoryThumbKey.videoSmb(sourceId, rel) else null
+        val gid = stableGalleryId(sourceId, "smbf:$rel")
+        val hist = BaseGalleryInfo(
+            gid = gid,
+            token = SMB_FILE_TOKEN,
+            title = name,
+            thumbKey = resolveThumbKey(gid, cover),
+            category = if (isVideo) HISTORY_FILE_CATEGORY_VIDEO else HISTORY_FILE_CATEGORY_OTHER,
+            uploader = encodeSmbBrowse(sourceId, rel),
+            rating = -1f,
+            pages = 0,
+            favoriteSlot = NOT_FAVORITED,
+        )
+        EhDB.putHistoryInfo(hist)
+    }
+
+    /** WebDAV video / regular / external file. */
+    suspend fun recordWebDavFile(
+        sourceId: Long,
+        remotePath: String,
+        title: String? = null,
+        thumbKey: String? = null,
+    ) {
+        val rel = normalizeRel(remotePath)
+        val name = title?.ifBlank { null }
+            ?: rel.substringAfterLast('/').ifEmpty { "File" }
+        val isVideo = isVideoFileName(name) || isVideoFileName(rel)
+        val cover = thumbKey
+            ?: if (isVideo) HistoryThumbKey.videoWebdav(sourceId, rel) else null
+        val gid = stableGalleryId(sourceId, "davf:$rel")
+        val hist = BaseGalleryInfo(
+            gid = gid,
+            token = WEBDAV_FILE_TOKEN,
+            title = name,
+            thumbKey = resolveThumbKey(gid, cover),
+            category = if (isVideo) HISTORY_FILE_CATEGORY_VIDEO else HISTORY_FILE_CATEGORY_OTHER,
+            uploader = encodeWebDavBrowse(sourceId, rel),
+            rating = -1f,
+            pages = 0,
+            favoriteSlot = NOT_FAVORITED,
+        )
         EhDB.putHistoryInfo(hist)
     }
 

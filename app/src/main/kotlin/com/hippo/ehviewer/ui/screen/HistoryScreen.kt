@@ -37,6 +37,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
@@ -69,11 +70,14 @@ import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.buildLocalBrowseStack
+import com.hippo.ehviewer.library.isVideoFileName
+import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.parentRelativeOfFile
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
+import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
@@ -101,6 +105,7 @@ import moe.tarsin.string
 @Destination<RootGraph>
 @Composable
 fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Screen(navigator) {
+    val context = LocalContext.current
     val title = stringResource(id = R.string.history)
     val hint = stringResource(R.string.search_bar_hint, title)
     val animateItems by Settings.animateItems.collectAsState()
@@ -404,6 +409,120 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         category = 1,
                     )
                     navToWebDavStreamArchiveReader(source.id, remote, gi)
+                }
+                // Videos / regular files: open or play in place; stay on History so
+                // leaving the external app returns here (no helper browse stack).
+                is LocalHistoryTarget.LocalFile -> {
+                    val path = target.path
+                    val name = info.title
+                        ?: path.substringAfterLast('/').substringAfterLast('\\')
+                    val mime = mimeTypeForFileName(name)
+                    val isVideo = isVideoFileName(name) || isVideoFileName(path)
+                    withIOContext {
+                        LocalHistory.recordLocalFile(path, title = name, thumbKey = info.thumbKey)
+                        try {
+                            if (isVideo && Settings.useMedia3Player.value) {
+                                OpenFileExternally.playLocal(context, path, displayName = name, mimeType = mime)
+                            } else {
+                                OpenFileExternally.openLocal(context, path, displayName = name, mimeType = mime)
+                            }
+                        } catch (e: Throwable) {
+                            snackbar(
+                                context.getString(R.string.browse_open_failed) +
+                                    " " + (e.message ?: e.toString()),
+                            )
+                        }
+                    }
+                }
+                is LocalHistoryTarget.SmbFile -> {
+                    val source = withIOContext { SmbRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                        return@launch
+                    }
+                    val remote = target.remotePath.trim('/')
+                    val name = info.title
+                        ?: remote.substringAfterLast('/').substringAfterLast('\\')
+                    val mime = mimeTypeForFileName(name)
+                    val isVideo = isVideoFileName(name) || isVideoFileName(remote)
+                    withIOContext {
+                        LocalHistory.recordSmbFile(
+                            source.id,
+                            remote,
+                            title = name,
+                            thumbKey = info.thumbKey,
+                        )
+                        try {
+                            if (isVideo && Settings.useMedia3Player.value) {
+                                OpenFileExternally.playSmb(
+                                    context,
+                                    source.id,
+                                    remote,
+                                    displayName = name,
+                                    mimeType = mime,
+                                )
+                            } else {
+                                OpenFileExternally.openSmb(
+                                    context,
+                                    source.id,
+                                    remote,
+                                    displayName = name,
+                                    mimeType = mime,
+                                )
+                            }
+                        } catch (e: Throwable) {
+                            snackbar(
+                                context.getString(R.string.browse_open_failed) +
+                                    " " + (e.message ?: e.toString()),
+                            )
+                        }
+                    }
+                }
+                is LocalHistoryTarget.WebDavFile -> {
+                    val source = withIOContext { WebDavRepository.load(target.sourceId) }
+                    if (source == null) {
+                        snackbar(string(R.string.history_unavailable))
+                        withIOContext { EhDB.deleteHistoryInfo(info) }
+                        return@launch
+                    }
+                    val remote = target.remotePath.trim('/')
+                    val name = info.title
+                        ?: remote.substringAfterLast('/').substringAfterLast('\\')
+                    val mime = mimeTypeForFileName(name)
+                    val isVideo = isVideoFileName(name) || isVideoFileName(remote)
+                    withIOContext {
+                        LocalHistory.recordWebDavFile(
+                            source.id,
+                            remote,
+                            title = name,
+                            thumbKey = info.thumbKey,
+                        )
+                        try {
+                            if (isVideo && Settings.useMedia3Player.value) {
+                                OpenFileExternally.playWebDav(
+                                    context,
+                                    source.id,
+                                    remote,
+                                    displayName = name,
+                                    mimeType = mime,
+                                )
+                            } else {
+                                OpenFileExternally.openWebDav(
+                                    context,
+                                    source.id,
+                                    remote,
+                                    displayName = name,
+                                    mimeType = mime,
+                                )
+                            }
+                        } catch (e: Throwable) {
+                            snackbar(
+                                context.getString(R.string.browse_open_failed) +
+                                    " " + (e.message ?: e.toString()),
+                            )
+                        }
+                    }
                 }
                 is LocalHistoryTarget.Orphan -> {
                     // Legacy "local" browse rows without path metadata, or foreign EH history.

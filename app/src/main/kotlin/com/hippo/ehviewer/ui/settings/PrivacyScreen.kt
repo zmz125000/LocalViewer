@@ -97,7 +97,20 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 title = stringResource(id = R.string.settings_privacy_save_history),
                 state = saveHistory,
             )
-            // Turning history off also wipes browse history and device search history.
+            // Nested file / gallery toggles; browse-dir history follows the master only.
+            AnimatedVisibility(visible = saveHistory.value) {
+                Column {
+                    SwitchPreference(
+                        title = stringResource(id = R.string.settings_privacy_save_file_history),
+                        state = Settings.saveFileHistory.asMutableState(),
+                    )
+                    SwitchPreference(
+                        title = stringResource(id = R.string.settings_privacy_save_gallery_history),
+                        state = Settings.saveGalleryHistory.asMutableState(),
+                    )
+                }
+            }
+            // Turning master history off also wipes browse history and device search history.
             LaunchedEffect(saveHistory.value) {
                 if (previousSaveHistory && !saveHistory.value) {
                     withIOContext {

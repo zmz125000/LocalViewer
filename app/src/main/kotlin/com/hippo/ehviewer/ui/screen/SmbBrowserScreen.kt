@@ -78,6 +78,7 @@ import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
+import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
@@ -410,6 +411,21 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    /** History path link for the folder currently listed (parent of the opened file). */
+    suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
+        val folderThumb = LocalHistory.smbBrowseFolderThumbKey(
+            sourceId = sourceId,
+            relativeDir = relativeDir,
+            entries = entries,
+        )
+        LocalHistory.recordSmbBrowseFolder(
+            sourceId = sourceId,
+            relativePath = relativeDir,
+            title = title,
+            thumbKey = folderThumb,
+        )
+    }
+
     fun openFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
         val src = source ?: return
         ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
@@ -445,6 +461,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             category = 2,
         )
         launchIO {
+            // Parent browse dir (not gated by file/gallery prefs) + gallery row.
+            recordCurrentBrowseFolderHistory(src.id)
             // History = folder gallery (open → reader). Same gid as progress.
             LocalHistory.recordSmbFolderGallery(
                 sourceId = src.id,
@@ -460,28 +478,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         navToSmbFolderReader(src.id, remote, names, info)
     }
 
-    /** History path link for the folder currently listed (parent of the opened file). */
-    suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
-        val folderThumb = LocalHistory.smbBrowseFolderThumbKey(
-            sourceId = sourceId,
-            relativeDir = relativeDir,
-            entries = entries,
-        )
-        LocalHistory.recordSmbBrowseFolder(
-            sourceId = sourceId,
-            relativePath = relativeDir,
-            title = title,
-            thumbKey = folderThumb,
-        )
-    }
-
     fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
         if (!isPdfFileName(entry.fileName)) return
         val src = source ?: return
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
-            // On tap: record containing browse folder (cannot know if external app succeeded).
+            // Parent dir + file row (non-dir open).
             recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordSmbFile(src.id, remote, title = entry.name)
             try {
                 OpenPdfExternally.openSmb(
                     context = context,
@@ -507,8 +511,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
         launchIO {
-            // On tap: record containing browse folder (cannot know if external app succeeded).
+            // Parent dir + file/video row (non-dir open).
             recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordSmbFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.openSmb(
                     context = context,
@@ -532,6 +537,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
         launchIO {
             recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordSmbFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.playSmb(
                     context = context,
@@ -564,6 +570,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
             try {
+                // Parent browse dir (not gated by file/gallery prefs) + file row.
+                recordCurrentBrowseFolderHistory(src.id)
                 ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
                 // Stream ZIP/CBZ/TAR/CBT/EPUB, solid RAR/CBR/7z, or document extract.
                 if (isStreamableArchiveFileName(entry.fileName) ||
@@ -890,6 +898,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
+                                        thumbnailSource = VideoThumbnailSource.Smb(
+                                            sourceId,
+                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                        ),
                                         onClick = { openVideoPrimary(video.fileName) },
                                         onLongClick = { openVideoSecondary(video.fileName) },
                                     )
@@ -972,6 +984,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
+                                        thumbnailSource = VideoThumbnailSource.Smb(
+                                            sourceId,
+                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                        ),
                                         onClick = { openVideoPrimary(video.fileName) },
                                         onLongClick = { openVideoSecondary(video.fileName) },
                                     )

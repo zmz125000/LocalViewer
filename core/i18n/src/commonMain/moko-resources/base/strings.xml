@@ -431,6 +431,8 @@
     <string name="settings_download_remote_thumbs_summary">Fetch network gallery thumbnails.</string>
     <string name="settings_download_network_archive_thumbs">Download network archive covers</string>
     <string name="settings_download_network_archive_thumbs_summary">Extract first-page thumbs for network ZIP/TAR/RAR/7z.</string>
+    <string name="settings_download_network_video_thumbs">Download network video covers</string>
+    <string name="settings_download_network_video_thumbs_summary">Extract frame thumbs for network (SMB/WebDAV) videos. Cached covers still show when off.</string>
     <string name="settings_persist_main_nav">Keep main navigation on folder screens</string>
     <string name="settings_persist_main_nav_summary">Show the bottom bar while browsing folders; re-tap Browse/History to jump back. Off uses a shortcut FAB instead (phones).</string>
     <string name="settings_eh_sign_out">Sign out</string>
@@ -599,7 +601,11 @@
     <string name="settings_privacy_secure">Prevent screenshots</string>
     <string name="settings_privacy_secure_summary">Prevent the content of the app from being taken screenshots of or shown in the \"Recent Apps\" list.</string>
     <string name="settings_privacy_save_history">Save history</string>
-    <string name="settings_privacy_save_history_summary">Record recently opened library galleries and browse folders. Turning this off clears existing history.</string>
+    <string name="settings_privacy_save_history_summary">Master switch for browse folders, files, and galleries. Turning this off clears existing history.</string>
+    <string name="settings_privacy_save_file_history">Save file history</string>
+    <string name="settings_privacy_save_file_history_summary">Record opened archives, videos, and other non-folder files. Parent folders are still recorded when Save history is on.</string>
+    <string name="settings_privacy_save_gallery_history">Save gallery history</string>
+    <string name="settings_privacy_save_gallery_history_summary">Record opened library and folder galleries. Parent folders are still recorded when Save history is on.</string>
     <string name="history_disabled">History is turned off in Privacy settings</string>
     <string name="clear_search_history">Clear device search history</string>
     <string name="clear_search_history_summary">Remove searches you have performed from this device</string>
