@@ -62,6 +62,10 @@ object SmbCache {
     /** Cap concurrent full-file SMB fetches for thumb generation (first paint). */
     private val thumbFetchSlots = Semaphore(3)
 
+    /** Share folder/gallery thumbnail network capacity with video prefix fetches. */
+    suspend fun <T> withBrowseThumbFetchSlot(block: suspend () -> T): T =
+        thumbFetchSlots.withPermit { block() }
+
     /**
      * Cache roots as pure path math from [ApplicationInfo.dataDir] (string field — no disk).
      * Avoid [Context.getCacheDir] + [mkdirs] on every path resolve (main-thread StrictMode

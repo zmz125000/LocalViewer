@@ -38,6 +38,10 @@ object WebDavCache {
     private const val THUMB_FORMAT_VERSION = 2
     private val thumbFetchSlots = Semaphore(3)
 
+    /** Share folder/gallery thumbnail network capacity with video prefix fetches. */
+    suspend fun <T> withBrowseThumbFetchSlot(block: suspend () -> T): T =
+        thumbFetchSlots.withPermit { block() }
+
     /**
      * Pure path from dataDir string — no [Context.getCacheDir]/[mkdirs] on path resolve
      * (browse thumbs call this on main during composition).
