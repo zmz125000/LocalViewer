@@ -558,7 +558,10 @@ object OpenFileExternally {
         // Full folder video list when access-dir is on.
         val videoNames = if (accessDir) {
             session.files.values
-                .filter { DefaultVideoPlayer.isVideoMime(it.mimeType) }
+                .filter {
+                    DefaultVideoPlayer.isVideoMime(it.mimeType) &&
+                        !it.displayName.equals(PLAYLIST_FILE_NAME, ignoreCase = true)
+                }
                 .map { it.displayName }
                 .distinct()
                 .sortedWith(String.CASE_INSENSITIVE_ORDER)
@@ -913,5 +916,5 @@ object OpenFileExternally {
 
     /** Virtual playlist basename served from the HTTP session (not a real on-disk file). */
     private const val PLAYLIST_FILE_NAME = "playlist.m3u8"
-    private const val PLAYLIST_MIME = "application/vnd.apple.mpegurl"
+    private const val PLAYLIST_MIME = "video/x-mpegurl"
 }
