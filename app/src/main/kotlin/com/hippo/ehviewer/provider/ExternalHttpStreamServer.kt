@@ -8,6 +8,7 @@ import android.os.SystemClock
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.mimeTypeForFileName
+import com.hippo.ehviewer.smb.SmbGateway
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -208,8 +209,19 @@ object ExternalHttpStreamServer {
                     entry.publishSize(cached.body.size)
                     return RefBody(key, cached)
                 }
-                val body = entry.open()
-                entry.publishSize(body.size)
+            }
+            // New body: free idle warm backends so HTTP sticky pool can serve this GET first.
+            evictAllIdleWarmBackends()
+            val body = entry.open()
+            entry.publishSize(body.size)
+            synchronized(bodyLock) {
+                // Another thread may have populated the same key; prefer existing warm.
+                bodyCache[key]?.let { cached ->
+                    runCatching { body.close() }
+                    cached.refs.incrementAndGet()
+                    entry.publishSize(cached.body.size)
+                    return RefBody(key, cached)
+                }
                 val cached = CachedBody(body)
                 cached.refs.set(1)
                 bodyCache[key] = cached
@@ -254,6 +266,23 @@ object ExternalHttpStreamServer {
                         "warm backend idle timeout ${BACKEND_IDLE_MS}ms session=$id file=$key"
                     }
                 }
+            }
+        }
+
+        /**
+         * Close warm backends with no active HTTP readers (free HTTP sticky SMB slots).
+         * @return number of bodies closed
+         */
+        fun evictIdleWarmBodies(): Int {
+            synchronized(bodyLock) {
+                val doomed = bodyCache.entries.filter { (_, c) -> c.refs.get() == 0 }
+                for ((k, c) in doomed) {
+                    cancelBodyIdleJob(k)
+                    bodyCache.remove(k)
+                    runCatching { c.body.close() }
+                    logcat("ExtHttp") { "evict idle warm body (SMB pool pressure) session=$id file=$k" }
+                }
+                return doomed.size
             }
         }
 
@@ -351,8 +380,30 @@ object ExternalHttpStreamServer {
      */
     fun networkActivityCount(): Int = activeTransfers.get()
 
+    /**
+     * Close idle warm video bodies across sessions so HTTP sticky SMB slots free for new GETs.
+     * Registered as [SmbGateway.onHttpStickyPoolPressure].
+     */
+    fun evictAllIdleWarmBackends(): Int {
+        var n = 0
+        for (session in sessions.values) {
+            n += session.evictIdleWarmBodies()
+        }
+        if (n > 0) {
+            logcat("ExtHttp") {
+                "evicted $n idle warm bodies for SMB pool " +
+                    "(available=${SmbGateway.httpStickyPoolAvailable()}/${SmbGateway.httpStickyPoolSize()})"
+            }
+        }
+        return n
+    }
+
     fun ensureStarted(): Int = synchronized(lock) {
         serverSocket?.let { return port }
+        // New HTTP sticky acquires may free warm bodies via this pressure hook.
+        SmbGateway.onHttpStickyPoolPressure = {
+            evictAllIdleWarmBackends()
+        }
         val ss = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
         port = ss.localPort
         serverSocket = ss

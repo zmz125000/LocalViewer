@@ -30,7 +30,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * - Default: [SmbGateway.withOpenFile] on the **shared host pool** (browse/reader).
  *   Pool is dropped on app [Lifecycle.Event.ON_STOP].
  * - [stickySession] = true: [SmbGateway.withStickyOpenFile] — dedicated TCP outside the
- *   pool so external FUSE PDF viewers keep working after LocalViewer backgrounds.
+ *   browse pool so external FUSE viewers keep working after LocalViewer backgrounds.
+ * - [httpStickyPool] = true: same sticky TCP but limited by [SmbGateway] HTTP sticky pool
+ *   (cap 4); used for loopback HTTP external video.
  *
  * Reconnects when the share dies under us so a later resume does not stick on
  * "DiskShare has already been closed".
@@ -54,6 +56,14 @@ class SmbArchiveByteSource(
      */
     stickySession: Boolean = false,
     /**
+     * When true with [stickySession], use the capped HTTP sticky pool ([SmbGateway.withHttpStickyOpenFile]).
+     */
+    httpStickyPool: Boolean = false,
+    /**
+     * If [httpStickyPool]: wait for a free slot (demand lane) or fail fast (prefetch lane).
+     */
+    httpStickyWait: Boolean = true,
+    /**
      * When known (e.g. external PDF registration), skip a separate size open before
      * the first [readAt]. Must match the remote file.
      */
@@ -69,6 +79,8 @@ class SmbArchiveByteSource(
         password,
         remoteRelativeFile,
         stickySession,
+        httpStickyPool,
+        httpStickyWait,
         knownSize,
     )
     private val inner: ArchiveByteSource = if (readahead) {
@@ -103,6 +115,8 @@ private class KeepOpenSmbFileSource(
     private val password: String,
     remoteRelativeFile: String,
     private val stickySession: Boolean = false,
+    private val httpStickyPool: Boolean = false,
+    private val httpStickyWait: Boolean = true,
     knownSize: Long = -1L,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
@@ -196,10 +210,22 @@ private class KeepOpenSmbFileSource(
                                     activeFile.compareAndSet(file, null)
                                 }
                             }
-                            if (stickySession) {
-                                SmbGateway.withStickyOpenFile(source, password, remote, ::drain)
-                            } else {
-                                SmbGateway.withOpenFile(source, password, remote, ::drain)
+                            when {
+                                stickySession && httpStickyPool -> {
+                                    SmbGateway.withHttpStickyOpenFile(
+                                        source,
+                                        password,
+                                        remote,
+                                        waitForSlot = httpStickyWait,
+                                        block = ::drain,
+                                    )
+                                }
+                                stickySession -> {
+                                    SmbGateway.withStickyOpenFile(source, password, remote, ::drain)
+                                }
+                                else -> {
+                                    SmbGateway.withOpenFile(source, password, remote, ::drain)
+                                }
                             }
                             break
                         } catch (e: Throwable) {

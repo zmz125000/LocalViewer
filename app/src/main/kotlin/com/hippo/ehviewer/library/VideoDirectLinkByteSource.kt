@@ -293,18 +293,21 @@ class VideoDirectLinkByteSource(
         fun isVideo(mimeType: String, displayName: String): Boolean = mimeType.startsWith("video/", ignoreCase = true) || isVideoFileName(displayName)
 
         /**
-         * Open a dual-lane video source when [openLane] can produce independent sticky
-         * sessions. Falls back to single-lane windowed source if the second open fails.
+         * Open a dual-lane video source when [openDemand] / [openPrefetch] can produce
+         * independent sticky sessions. Falls back to single-lane if prefetch open fails
+         * (e.g. HTTP SMB sticky pool full — pass a non-waiting prefetch factory).
          */
         fun open(
             openLane: () -> ArchiveByteSource,
             knownSize: Long,
             parallelPrefetch: Boolean,
+            /** Optional separate factory for prefetch (e.g. pool try-acquire). Defaults to [openLane]. */
+            openPrefetch: (() -> ArchiveByteSource)? = null,
         ): VideoDirectLinkByteSource {
             val demand = openLane()
             val prefetchLane = if (parallelPrefetch) {
                 try {
-                    openLane()
+                    (openPrefetch ?: openLane)()
                 } catch (_: Throwable) {
                     null
                 }

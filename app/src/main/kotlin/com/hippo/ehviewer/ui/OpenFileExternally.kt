@@ -400,30 +400,31 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
-            // Warm dual sticky across Ranges with idle timeout (not forever; not per-GET open).
+            // Warm dual sticky across Ranges with idle timeout; capped HTTP sticky pool (4).
             cacheBody = video,
             open = {
-                val openLane = {
-                    SmbArchiveByteSource(
-                        source = source,
-                        password = password,
-                        remoteRelativeFile = remoteRelativeFile,
-                        preferSequential = false,
-                        pipeline = false,
-                        stickySession = true,
-                        knownSize = sizeBytes.takeIf { it > 0L } ?: -1L,
-                        readahead = false,
-                    )
-                }
+                fun openLane(waitForSlot: Boolean) = SmbArchiveByteSource(
+                    source = source,
+                    password = password,
+                    remoteRelativeFile = remoteRelativeFile,
+                    preferSequential = false,
+                    pipeline = false,
+                    stickySession = true,
+                    httpStickyPool = true,
+                    httpStickyWait = waitForSlot,
+                    knownSize = sizeBytes.takeIf { it > 0L } ?: -1L,
+                    readahead = false,
+                )
                 ExternalHttpStreamServer.ArchiveBody(
                     if (video) {
                         VideoDirectLinkByteSource.open(
-                            openLane = openLane,
+                            openLane = { openLane(waitForSlot = true) },
+                            openPrefetch = { openLane(waitForSlot = false) },
                             knownSize = sizeBytes,
                             parallelPrefetch = true,
                         )
                     } else {
-                        openLane()
+                        openLane(waitForSlot = true)
                     },
                 )
             },
