@@ -193,7 +193,6 @@
         <service
             android:name="com.hippo.ehviewer.provider.StreamKeepAliveService"
             android:exported="false"
-            android:stopWithTask="true"
             android:foregroundServiceType="dataSync" />
     </application>
 
