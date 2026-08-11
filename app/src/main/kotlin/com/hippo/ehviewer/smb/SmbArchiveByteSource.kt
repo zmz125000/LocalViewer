@@ -122,6 +122,11 @@ private class KeepOpenSmbFileSource(
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val closed = AtomicBoolean(false)
+    private val httpStickyLease = if (stickySession && httpStickyPool) {
+        SmbGateway.newHttpStickyLease()
+    } else {
+        null
+    }
 
     /** Active handle so close/deadline cancellation interrupts a blocking smbj read. */
     private val activeFile = AtomicReference<File?>(null)
@@ -231,6 +236,7 @@ private class KeepOpenSmbFileSource(
                                         password,
                                         remote,
                                         waitForSlot = httpStickyWait,
+                                        lease = checkNotNull(httpStickyLease),
                                         block = ::drain,
                                     )
                                 }
@@ -327,6 +333,8 @@ private class KeepOpenSmbFileSource(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        // Pool ownership ends now; smbj/file teardown below is intentionally asynchronous.
+        httpStickyLease?.let { SmbGateway.cancelHttpStickyLease(it) }
         ops.close()
         demand.close()
         failClosedSizeReady()
