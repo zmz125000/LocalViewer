@@ -1307,6 +1307,44 @@ object SmbGateway {
         }
     }
 
+    /**
+     * Stream a bounded file prefix through the normal browse/reader host pool.
+     * This never opens a sticky StreamDocumentProvider or loopback-HTTP session.
+     */
+    suspend fun downloadFilePrefix(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        destination: java.io.File,
+        maxBytes: Long,
+    ): Long = withIOContext {
+        require(maxBytes > 0L)
+        withShare(source, password) { share ->
+            val path = remotePath(source, relativeFilePath)
+            share.openFile(
+                path,
+                EnumSet.of(AccessMask.GENERIC_READ),
+                null,
+                SMB2ShareAccess.ALL,
+                SMB2CreateDisposition.FILE_OPEN,
+                null,
+            ).use { file ->
+                destination.outputStream().buffered().use { out ->
+                    val buffer = ByteArray(256 * 1024)
+                    var copied = 0L
+                    while (copied < maxBytes) {
+                        val request = minOf(buffer.size.toLong(), maxBytes - copied).toInt()
+                        val read = file.read(buffer, copied, 0, request)
+                        if (read <= 0) break
+                        out.write(buffer, 0, read)
+                        copied += read
+                    }
+                    copied
+                }
+            }
+        }
+    }
+
     fun joinRelativePath(parent: String, child: String) = joinRelative(parent, child)
 
     private suspend fun <T> withShare(

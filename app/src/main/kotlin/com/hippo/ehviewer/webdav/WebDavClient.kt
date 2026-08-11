@@ -485,6 +485,55 @@ object WebDavClient {
     }
 
     /**
+     * Stream a bounded file prefix through the normal browse/reader client and
+     * [downloadSlots]. Closing the response after [maxBytes] stops the remaining body.
+     * This never touches the sticky external-player client or loopback HTTP.
+     */
+    suspend fun downloadFilePrefix(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        destination: java.io.File,
+        maxBytes: Long,
+    ): Long = withIOContext {
+        require(maxBytes > 0L)
+        downloadSlots.withPermit {
+            withTransportRetry {
+                val url = absoluteUrl(source, relativeFilePath)
+                val auth = basicAuthHeader(source.username, password)
+                val end = maxBytes - 1L
+                http().prepareGet(url) {
+                    timeout {
+                        connectTimeoutMillis = DL_CONNECT_MS
+                        requestTimeoutMillis = DL_REQUEST_MS
+                        socketTimeoutMillis = DL_SOCKET_MS
+                    }
+                    auth?.let { header(HttpHeaders.Authorization, it) }
+                    header(HttpHeaders.Range, "bytes=0-$end")
+                }.execute { response ->
+                    if (response.status.value !in 200..299) {
+                        error("WebDAV prefix GET ${response.status.value} for $relativeFilePath")
+                    }
+                    destination.outputStream().buffered().use { out ->
+                        response.bodyAsChannel().toInputStream().use { input ->
+                            val buffer = ByteArray(256 * 1024)
+                            var copied = 0L
+                            while (copied < maxBytes) {
+                                val request = minOf(buffer.size.toLong(), maxBytes - copied).toInt()
+                                val read = input.read(buffer, 0, request)
+                                if (read <= 0) break
+                                out.write(buffer, 0, read)
+                                copied += read
+                            }
+                            copied
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Remote file size for stream archives.
      *
      * 1. HEAD Content-Length
