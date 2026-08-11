@@ -71,6 +71,7 @@ sealed interface LocalHistoryTarget {
     data class LocalArchive(val path: String) : LocalHistoryTarget
     data class SmbStreamArchive(val sourceId: Long, val remotePath: String) : LocalHistoryTarget
     data class WebDavStreamArchive(val sourceId: Long, val remotePath: String) : LocalHistoryTarget
+
     /** Video / regular / external non-archive file. */
     data class LocalFile(val path: String) : LocalHistoryTarget
     data class SmbFile(val sourceId: Long, val remotePath: String) : LocalHistoryTarget
