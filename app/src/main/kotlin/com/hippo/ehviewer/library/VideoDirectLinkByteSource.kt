@@ -293,7 +293,7 @@ class VideoDirectLinkByteSource(
         fun isVideo(mimeType: String, displayName: String): Boolean = mimeType.startsWith("video/", ignoreCase = true) || isVideoFileName(displayName)
 
         /**
-         * Open a dual-lane video source when [openDemand] / [openPrefetch] can produce
+         * Open a dual-lane video source when [openLane] / [openPrefetch] can produce
          * independent sticky sessions. Falls back to single-lane if prefetch open fails
          * (e.g. HTTP SMB sticky pool full — pass a non-waiting prefetch factory).
          */

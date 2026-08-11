@@ -402,6 +402,7 @@ object OpenFileExternally {
             sizeBytes = sizeBytes,
             // Warm dual sticky across Ranges with idle timeout; capped HTTP sticky pool (4).
             cacheBody = video,
+            evictOnSmbPoolPressure = video,
             open = {
                 fun openLane(waitForSlot: Boolean) = SmbArchiveByteSource(
                     source = source,

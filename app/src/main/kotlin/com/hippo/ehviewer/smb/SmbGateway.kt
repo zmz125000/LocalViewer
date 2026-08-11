@@ -1098,9 +1098,9 @@ object SmbGateway {
     /**
      * Sticky open limited by [HTTP_STICKY_POOL_SIZE] for **loopback HTTP** video.
      *
-     * Before blocking for a slot, invokes [onHttpStickyPoolPressure] so idle warm HTTP
-     * bodies can release their stickies (new GET first). Prefer [waitForSlot]=false for
-     * optional prefetch lane so dual-open falls back to single-lane instead of deadlocking.
+     * Before a demand lane blocks for a slot, invokes [onHttpStickyPoolPressure] so idle
+     * warm HTTP bodies can release their stickies (new GET first). A non-waiting optional
+     * prefetch lane fails immediately without evicting another stream's warm backend.
      */
     suspend fun <T> withHttpStickyOpenFile(
         source: SmbSourceEntity,
@@ -1128,10 +1128,10 @@ object SmbGateway {
 
     private suspend fun acquireHttpStickyPermit(waitForSlot: Boolean): Boolean {
         if (httpStickyPermits.tryAcquire()) return true
+        if (!waitForSlot) return false
         // Free idle warm HTTP backends, then retry.
         runCatching { onHttpStickyPoolPressure?.invoke() }
         if (httpStickyPermits.tryAcquire()) return true
-        if (!waitForSlot) return false
         logcat {
             "SmbGateway: HTTP sticky wait inUse=${HTTP_STICKY_POOL_SIZE - httpStickyPermits.availablePermits}/$HTTP_STICKY_POOL_SIZE"
         }

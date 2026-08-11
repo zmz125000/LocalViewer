@@ -65,6 +65,8 @@ object ExternalHttpStreamServer {
         val mimeType: String,
         sizeBytes: Long,
         val cacheBody: Boolean = false,
+        /** Whether an idle cached body may be closed to free an HTTP SMB pool slot. */
+        val evictOnSmbPoolPressure: Boolean = false,
         /** Open a random-access source (cached with idle timeout when [cacheBody]). */
         val open: () -> StreamBody,
     ) {
@@ -210,8 +212,6 @@ object ExternalHttpStreamServer {
                     return RefBody(key, cached)
                 }
             }
-            // New body: free idle warm backends so HTTP sticky pool can serve this GET first.
-            evictAllIdleWarmBackends()
             val body = entry.open()
             entry.publishSize(body.size)
             synchronized(bodyLock) {
@@ -222,7 +222,7 @@ object ExternalHttpStreamServer {
                     entry.publishSize(cached.body.size)
                     return RefBody(key, cached)
                 }
-                val cached = CachedBody(body)
+                val cached = CachedBody(body, entry.evictOnSmbPoolPressure)
                 cached.refs.set(1)
                 bodyCache[key] = cached
                 return RefBody(key, cached)
@@ -273,9 +273,11 @@ object ExternalHttpStreamServer {
          * Close warm backends with no active HTTP readers (free HTTP sticky SMB slots).
          * @return number of bodies closed
          */
-        fun evictIdleWarmBodies(): Int {
+        fun evictIdleSmbBodies(): Int {
             synchronized(bodyLock) {
-                val doomed = bodyCache.entries.filter { (_, c) -> c.refs.get() == 0 }
+                val doomed = bodyCache.entries.filter { (_, c) ->
+                    c.evictOnSmbPoolPressure && c.refs.get() == 0
+                }
                 for ((k, c) in doomed) {
                     cancelBodyIdleJob(k)
                     bodyCache.remove(k)
@@ -304,7 +306,10 @@ object ExternalHttpStreamServer {
             }
         }
 
-        private class CachedBody(val body: StreamBody) {
+        private class CachedBody(
+            val body: StreamBody,
+            val evictOnSmbPoolPressure: Boolean,
+        ) {
             val refs = AtomicInteger(0)
 
             /** Shared so concurrent Range holders serialize sticky seek/read. */
@@ -384,10 +389,10 @@ object ExternalHttpStreamServer {
      * Close idle warm video bodies across sessions so HTTP sticky SMB slots free for new GETs.
      * Registered as [SmbGateway.onHttpStickyPoolPressure].
      */
-    fun evictAllIdleWarmBackends(): Int {
+    fun evictAllIdleSmbBackends(): Int {
         var n = 0
         for (session in sessions.values) {
-            n += session.evictIdleWarmBodies()
+            n += session.evictIdleSmbBodies()
         }
         if (n > 0) {
             logcat("ExtHttp") {
@@ -402,7 +407,7 @@ object ExternalHttpStreamServer {
         serverSocket?.let { return port }
         // New HTTP sticky acquires may free warm bodies via this pressure hook.
         SmbGateway.onHttpStickyPoolPressure = {
-            evictAllIdleWarmBackends()
+            evictAllIdleSmbBackends()
         }
         val ss = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
         port = ss.localPort
