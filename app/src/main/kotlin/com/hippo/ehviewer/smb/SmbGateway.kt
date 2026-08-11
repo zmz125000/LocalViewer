@@ -29,6 +29,7 @@ import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.naturalCompare
 import java.io.IOException
 import java.io.OutputStream
+import java.io.RandomAccessFile
 import java.net.InetAddress
 import java.net.Socket
 import java.util.EnumSet
@@ -1328,6 +1329,58 @@ object SmbGateway {
                         copied += read
                     }
                     copied
+                }
+            }
+        }
+    }
+
+    /**
+     * Add a bounded file tail to an existing prefix as a sparse local file.
+     * The remote file stays on the normal browse/reader host pool.
+     */
+    suspend fun downloadFileTail(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        destination: java.io.File,
+        maxBytes: Long,
+    ): Long = withIOContext {
+        require(maxBytes > 0L)
+        val downloadContext = coroutineContext
+        withShare(source, password) { share ->
+            val path = remotePath(source, relativeFilePath)
+            share.openFile(
+                path,
+                EnumSet.of(AccessMask.GENERIC_READ),
+                null,
+                SMB2ShareAccess.ALL,
+                SMB2CreateDisposition.FILE_OPEN,
+                null,
+            ).use { file ->
+                val size = file.fileInformation.standardInformation.endOfFile
+                val prefixLength = destination.length().coerceAtMost(size)
+                val tailStart = maxOf(prefixLength, size - maxBytes)
+                if (tailStart >= size) {
+                    0L
+                } else {
+                    RandomAccessFile(destination, "rw").use { out ->
+                        out.setLength(size)
+                        out.seek(tailStart)
+                        val buffer = ByteArray(256 * 1024)
+                        var copied = 0L
+                        while (tailStart + copied < size) {
+                            downloadContext.ensureActive()
+                            val request = minOf(
+                                buffer.size.toLong(),
+                                size - tailStart - copied,
+                            ).toInt()
+                            val read = file.read(buffer, tailStart + copied, 0, request)
+                            if (read <= 0) break
+                            out.write(buffer, 0, read)
+                            copied += read
+                        }
+                        copied
+                    }
                 }
             }
         }

@@ -33,6 +33,7 @@ import io.ktor.http.takeFrom
 import io.ktor.utils.io.jvm.javaio.toInputStream
 import java.io.IOException
 import java.io.OutputStream
+import java.io.RandomAccessFile
 import java.net.ConnectException
 import java.net.SocketException
 import java.net.SocketTimeoutException
@@ -478,6 +479,43 @@ object WebDavClient {
                 }
             }
         }
+    }
+
+    /**
+     * Add a bounded file tail to an existing prefix as a sparse local file.
+     * Uses the normal browse/reader client and range path, never the sticky player client.
+     */
+    suspend fun downloadFileTail(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        destination: java.io.File,
+        maxBytes: Long,
+    ): Long = withIOContext {
+        require(maxBytes > 0L)
+        val size = fileSizeOrNull(source, password, relativeFilePath) ?: return@withIOContext 0L
+        val prefixLength = destination.length().coerceAtMost(size)
+        val tailStart = maxOf(prefixLength, size - maxBytes)
+        if (tailStart >= size) return@withIOContext 0L
+
+        val buffer = ByteArray((size - tailStart).toInt())
+        val read = readRange(
+            source = source,
+            password = password,
+            relativeFilePath = relativeFilePath,
+            fileOffset = tailStart,
+            buf = buffer,
+            off = 0,
+            len = buffer.size,
+        )
+        if (read > 0) {
+            RandomAccessFile(destination, "rw").use { out ->
+                out.setLength(size)
+                out.seek(tailStart)
+                out.write(buffer, 0, read)
+            }
+        }
+        read.toLong()
     }
 
     /**

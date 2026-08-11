@@ -59,9 +59,9 @@ sealed interface VideoThumbnailSource {
  * Local videos always extract into this cache. Network (SMB/WebDAV) extraction is
  * gated by [Settings.downloadNetworkVideoThumbs]; cached JPEGs still show when off.
  *
- * Network thumbnails stream only a bounded prefix through the same browse-thumbnail
- * pools as folder/gallery covers. They never use StreamDocumentProvider, loopback HTTP,
- * sticky player sessions, or random network seeks.
+ * Network thumbnails stream a bounded prefix through the same browse-thumbnail pools
+ * as folder/gallery covers. Prefix decode failures may add a bounded sparse tail for EOF
+ * metadata. They never use StreamDocumentProvider, loopback HTTP, or sticky player sessions.
  */
 object VideoThumbnail {
     /** Long edge — matches [OriginDiskCache.THUMB_EDGE] (other browse covers). */
@@ -69,8 +69,9 @@ object VideoThumbnail {
 
     /** Keep four decoders, but cap each network stream so playback keeps bandwidth. */
     private const val MAX_NETWORK_PREFIX_BYTES = 4L * 1024L * 1024L
+    private const val MAX_NETWORK_TAIL_BYTES = 2L * 1024L * 1024L
     private const val FAILURE_RETRY_MS = 24L * 60 * 60 * 1_000
-    private const val FAILURE_MARKER_DECODE = "decode"
+    private const val FAILURE_MARKER_DECODE = "decode-head-tail"
     private const val REMOTE_CACHE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1_000
     private const val MAX_CONCURRENT_EXTRACTIONS = 4
     private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
@@ -177,31 +178,63 @@ object VideoThumbnail {
         }
         is VideoThumbnailSource.Smb -> {
             val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
-            extractNetworkThumbnailFrame(directory, cacheKey, source.remoteRelativeFile) { temporary ->
-                SmbCache.withBrowseThumbFetchSlot {
-                    SmbGateway.downloadFilePrefix(
-                        source = smb,
-                        password = SmbPasswordStore.get(source.sourceId),
-                        relativeFilePath = source.remoteRelativeFile,
-                        destination = temporary,
-                        maxBytes = MAX_NETWORK_PREFIX_BYTES,
-                    )
-                }
-            }
+            extractNetworkThumbnailFrame(
+                directory = directory,
+                cacheKey = cacheKey,
+                remoteFileName = source.remoteRelativeFile,
+                downloadPrefix = { temporary ->
+                    SmbCache.withBrowseThumbFetchSlot {
+                        SmbGateway.downloadFilePrefix(
+                            source = smb,
+                            password = SmbPasswordStore.get(source.sourceId),
+                            relativeFilePath = source.remoteRelativeFile,
+                            destination = temporary,
+                            maxBytes = MAX_NETWORK_PREFIX_BYTES,
+                        )
+                    }
+                },
+                downloadTail = { temporary ->
+                    SmbCache.withBrowseThumbFetchSlot {
+                        SmbGateway.downloadFileTail(
+                            source = smb,
+                            password = SmbPasswordStore.get(source.sourceId),
+                            relativeFilePath = source.remoteRelativeFile,
+                            destination = temporary,
+                            maxBytes = MAX_NETWORK_TAIL_BYTES,
+                        )
+                    }
+                },
+            )
         }
         is VideoThumbnailSource.WebDav -> {
             val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
-            extractNetworkThumbnailFrame(directory, cacheKey, source.remoteRelativeFile) { temporary ->
-                WebDavCache.withBrowseThumbFetchSlot {
-                    WebDavClient.downloadFilePrefix(
-                        source = webDav,
-                        password = WebDavPasswordStore.get(source.sourceId),
-                        relativeFilePath = source.remoteRelativeFile,
-                        destination = temporary,
-                        maxBytes = MAX_NETWORK_PREFIX_BYTES,
-                    )
-                }
-            }
+            extractNetworkThumbnailFrame(
+                directory = directory,
+                cacheKey = cacheKey,
+                remoteFileName = source.remoteRelativeFile,
+                downloadPrefix = { temporary ->
+                    WebDavCache.withBrowseThumbFetchSlot {
+                        WebDavClient.downloadFilePrefix(
+                            source = webDav,
+                            password = WebDavPasswordStore.get(source.sourceId),
+                            relativeFilePath = source.remoteRelativeFile,
+                            destination = temporary,
+                            maxBytes = MAX_NETWORK_PREFIX_BYTES,
+                        )
+                    }
+                },
+                downloadTail = { temporary ->
+                    WebDavCache.withBrowseThumbFetchSlot {
+                        WebDavClient.downloadFileTail(
+                            source = webDav,
+                            password = WebDavPasswordStore.get(source.sourceId),
+                            relativeFilePath = source.remoteRelativeFile,
+                            destination = temporary,
+                            maxBytes = MAX_NETWORK_TAIL_BYTES,
+                        )
+                    }
+                },
+            )
         }
     }
 
@@ -209,7 +242,8 @@ object VideoThumbnail {
         directory: File,
         cacheKey: String,
         remoteFileName: String,
-        download: suspend (File) -> Long,
+        downloadPrefix: suspend (File) -> Long,
+        downloadTail: suspend (File) -> Long,
     ): Bitmap? {
         val extension = remoteFileName
             .substringAfterLast('.', "video")
@@ -222,11 +256,17 @@ object VideoThumbnail {
             "$cacheKey.tmp.${System.nanoTime()}.$extension",
         )
         return try {
-            val downloaded = download(temporary)
+            val downloaded = downloadPrefix(temporary)
             if (downloaded <= 0L || temporary.length() <= 0L) {
                 null
             } else {
-                extractFrame(temporary)
+                extractFrame(temporary) ?: run {
+                    // MP4 commonly stores its moov metadata at EOF. Add a sparse tail
+                    // only after prefix-only decoding fails, then retry with the same
+                    // bounded browse-thumbnail connection path.
+                    val tailDownloaded = downloadTail(temporary)
+                    if (tailDownloaded > 0L) extractFrame(temporary) else null
+                }
             }
         } finally {
             temporary.delete()
@@ -246,15 +286,20 @@ object VideoThumbnail {
 
     private inline fun decodeThumbnailFrame(
         setDataSource: (MediaMetadataRetriever) -> Unit,
+    ): Bitmap? =
+        decodeFrame(setDataSource) { getFrameAtTime() }
+            ?: decodeFrame(setDataSource) {
+                getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            }
+
+    private inline fun decodeFrame(
+        setDataSource: (MediaMetadataRetriever) -> Unit,
+        getFrame: MediaMetadataRetriever.() -> Bitmap?,
     ): Bitmap? {
         val retriever = MediaMetadataRetriever()
         return try {
             setDataSource(retriever)
-            // Let Android choose the representative thumbnail frame. A time-zero sync
-            // frame remains the fallback for truncated prefixes whose container metadata
-            // cannot expose a representative frame.
-            retriever.getFrameAtTime()
-                ?: retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            getFrame(retriever)
         } catch (_: Throwable) {
             null
         } finally {
