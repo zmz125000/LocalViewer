@@ -9,15 +9,15 @@ import com.hippo.ehviewer.webdav.WebDavClient
 /**
  * Battery vs reliability knobs for external Fuse **and** loopback HTTP streaming.
  *
- * Limited (default): ~20 min idle session/token budget (activity-based, not a hard clock)
- * + drop sticky transports on screen off / HTTP idle; short FGS grace after last activity.
- * Unlimited (Advanced): long idle token age; streamdoc may keep sticky across screen off.
- * HTTP still releases warm bodies when FGS stops (no long-lived FD).
+ * **Streamdoc (Fuse):** live proxy FDs need sticky + FGS while open; tokens age out separately.
  *
- * Drop is **resumable**: streamdoc tokens / HTTP sessions stay; next proxy read or HTTP
- * GET reconnects SMB sticky / WebDAV Range (may rebuffer a few seconds on 4K).
- * FGS / wake lock track **live** FDs or **in-flight HTTP body transfers** only — not idle
- * sessions or warm body caches. Stalled HTTP Ranges are aborted so FGS can stop.
+ * **HTTP loopback:** session map is a **stateless token** (resume via Range anytime before prune).
+ * Warm SMB is optional with **idle timeout** (open/close every Range is costly) — not required
+ * for correctness. FGS wake lock only while a body transfer is in flight; idle FGS (grace) is
+ * only process rank so the token stays in RAM + self-shutdown — no other CPU work.
+ *
+ * Limited (default): shorter token age + drop sticky on screen off / FGS stop.
+ * Unlimited (Advanced): longer token age; streamdoc may keep sticky across screen off.
  */
 object StreamKeepAlivePolicy {
     /** Idle token age when limited. */

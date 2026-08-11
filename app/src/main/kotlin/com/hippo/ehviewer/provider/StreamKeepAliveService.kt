@@ -47,10 +47,9 @@ class StreamKeepAliveService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        // startForegroundService() is asynchronous: a very short-lived external FD / HTTP
-        // transfer may already be done before this callback runs. Preserve the FGS reopen
-        // grace, but only keep the CPU awake while a proxy FD or HTTP body is live —
-        // idle HTTP sessions do not count (battery-friendly, still resumable).
+        // startForegroundService() is asynchronous: a short-lived FD / HTTP transfer may
+        // already be done. Wake lock only while a proxy FD or HTTP body is live.
+        // Idle FGS (HTTP token grace / self-stop): no wake lock, no CPU work.
         if (StreamDocumentRegistry.networkOpenCount() > 0 ||
             ExternalHttpStreamServer.networkActivityCount() > 0
         ) {

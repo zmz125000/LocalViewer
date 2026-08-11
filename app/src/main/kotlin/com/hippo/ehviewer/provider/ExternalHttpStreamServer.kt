@@ -41,27 +41,28 @@ import splitties.init.appCtx
  * Same idea as SMB file explorers:
  * `http://127.0.0.1:{port}/s/{sessionId}/{fileName}`
  *
- * Players auto-load sidecars by requesting a sibling URL (swap extension). That does not
- * work with `content://` streamdoc grants; HTTP does.
+ * **Stateless HTTP + timed backend:**
+ * - Session map is a **token** (file registry / sizes / resolveSibling) until idle max age.
+ * - Player may re-Range anytime while the session exists (no need for a live pipe).
+ * - Network video may keep a **warm** dual-sticky body across Ranges to avoid open/close
+ *   cost, but it is released after [BACKEND_IDLE_MS] with no active readers (timeout).
+ * - At most one warm backend per session (Android ≈1 file at a time; cap 2 transfers).
  *
- * - Binds **127.0.0.1 only** (device-local; other apps on the phone can still connect).
- * - Supports **Range** for seek.
- * - HTTP/1.1 keep-alive + optional per-session body cache for network video.
- * - Optional [Session.resolveSibling] serves invented names from the same parent directory.
- * - [FileEntry.sizeBytes] may be −1 (unknown); first GET/HEAD resolves size from the body.
+ * FGS: wake lock only while a body transfer is in flight. Idle FGS (if still running) is
+ * only for process rank so the token stays in RAM + self-stop timer — no CPU work.
  */
 object ExternalHttpStreamServer {
     /**
      * @param sizeBytes known length, or **−1** if unknown (resolved on first open).
-     * @param cacheBody when true, reuse one [StreamBody] across Ranges for this file in the session
-     *   (network video with dual sticky + sliding window). Local/Pfd bodies are not shared.
+     * @param cacheBody when true, reuse one [StreamBody] across Ranges with idle **timeout**
+     *   (network video). Local/Pfd bodies are not cached.
      */
     class FileEntry(
         val displayName: String,
         val mimeType: String,
         sizeBytes: Long,
         val cacheBody: Boolean = false,
-        /** Open a random-access source (may be called once and cached when [cacheBody]). */
+        /** Open a random-access source (cached with idle timeout when [cacheBody]). */
         val open: () -> StreamBody,
     ) {
         private val sizeRef = AtomicLong(sizeBytes)
@@ -120,7 +121,7 @@ object ExternalHttpStreamServer {
         }
     }
 
-    /** In-memory body (e.g. generated m3u8 playlist). */
+    /** In-memory body (e.g. generated m3u playlist). */
     class BytesBody(private val bytes: ByteArray) : StreamBody {
         override val size: Long get() = bytes.size.toLong()
         override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
@@ -147,8 +148,7 @@ object ExternalHttpStreamServer {
     ) {
         private val bodyLock = Any()
         private val bodyCache = HashMap<String, CachedBody>()
-        /** Basename of the single warm dual-sticky video body (at most one per session). */
-        @Volatile private var activeBodyKey: String? = null
+        private val bodyIdleJobs = HashMap<String, Job>()
         /** Live client sockets serving this session (abort on teardown / switch). */
         private val liveSockets = ConcurrentHashMap.newKeySet<Socket>()
 
@@ -184,11 +184,11 @@ object ExternalHttpStreamServer {
         }
 
         /**
-         * Open or reuse a body for [entry]. Caller must [StreamBody.close] when the response ends.
+         * Open a body for this response. Caller must [StreamBody.close] when the response ends.
          *
-         * Network video ([FileEntry.cacheBody]): keep **one** warm dual-sticky source for the
-         * current file (Range reuse). Switching files / sessions closes the previous sticky pair
-         * so 6 opens do not leave 12 SMB connections.
+         * [FileEntry.cacheBody]: reuse one warm backend across Ranges (open/close is costly on
+         * SMB). Released after [BACKEND_IDLE_MS] with no active readers — not held forever.
+         * At most one warm cached file per session (playlist hop closes the previous idle body).
          */
         fun acquireBody(entry: FileEntry): StreamBody {
             touch()
@@ -199,8 +199,8 @@ object ExternalHttpStreamServer {
             }
             val key = pathKey(entry.displayName)
             synchronized(bodyLock) {
-                activeBodyKey = key
-                // Drop idle sticky bodies for other files in this session (playlist hop).
+                cancelBodyIdleJob(key)
+                // Only one warm backend: drop other files that are idle (refs==0).
                 evictIdleBodiesExcept(key)
                 bodyCache[key]?.let { cached ->
                     cached.refs.incrementAndGet()
@@ -221,36 +221,56 @@ object ExternalHttpStreamServer {
                 k != keepKey && c.refs.get() == 0
             }
             for ((k, c) in doomed) {
+                cancelBodyIdleJob(k)
                 bodyCache.remove(k)
                 runCatching { c.body.close() }
+                logcat("ExtHttp") { "evict warm body session=$id file=$k" }
             }
         }
 
         private fun releaseBody(key: String, cached: CachedBody) {
             synchronized(bodyLock) {
                 if (cached.refs.decrementAndGet() > 0) return
-                // No longer the active play file → close sticky immediately (playlist switched).
-                if (activeBodyKey != key) {
-                    if (bodyCache[key] === cached) bodyCache.remove(key)
-                    runCatching { cached.body.close() }
-                    return
-                }
-                // Active file: keep warm for Range reuse until session ends or another file opens.
+                // Keep warm for seeks / next Range; close only after idle timeout.
+                scheduleBodyIdleClose(key, cached)
             }
         }
 
+        private fun cancelBodyIdleJob(key: String) {
+            bodyIdleJobs.remove(key)?.cancel()
+        }
+
+        private fun scheduleBodyIdleClose(key: String, cached: CachedBody) {
+            cancelBodyIdleJob(key)
+            bodyIdleJobs[key] = scope.launch {
+                delay(BACKEND_IDLE_MS)
+                synchronized(bodyLock) {
+                    if (bodyCache[key] !== cached || cached.refs.get() > 0) return@synchronized
+                    bodyCache.remove(key)
+                    bodyIdleJobs.remove(key)
+                    runCatching { cached.body.close() }
+                    logcat("ExtHttp") {
+                        "warm backend idle timeout ${BACKEND_IDLE_MS}ms session=$id file=$key"
+                    }
+                }
+            }
+        }
+
+        /**
+         * Abort client sockets and close any warm backends (session replace / prune / FGS stop).
+         */
         fun closeBodies() {
-            // Unblock stalled body writes so activeTransfers can drop and FGS can stop.
             for (socket in liveSockets.toList()) {
                 runCatching { socket.close() }
             }
             liveSockets.clear()
             synchronized(bodyLock) {
+                for (job in bodyIdleJobs.values) job.cancel()
+                bodyIdleJobs.clear()
                 for ((_, cached) in bodyCache) {
                     runCatching { cached.body.close() }
                 }
                 bodyCache.clear()
-                activeBodyKey = null
             }
         }
 
@@ -261,7 +281,7 @@ object ExternalHttpStreamServer {
         }
 
         /**
-         * Shared session body: [close] only releases the ref; real close on session teardown.
+         * Shared session body: [close] releases a ref and arms idle timeout (not immediate SMB drop).
          * Serializes [readAt] so concurrent Ranges do not race sticky seek state.
          */
         private inner class RefBody(
@@ -301,15 +321,13 @@ object ExternalHttpStreamServer {
     private val activeTransfers = AtomicInteger(0)
     private val keepAliveLock = Any()
     private var stopKeepAliveJob: Job? = null
-    private var warmBodyJob: Job? = null
     private var pruneJob: Job? = null
 
     /**
-     * Live **network HTTP body transfers** only (for FGS wake lock / screen-on).
+     * In-flight network HTTP **body** transfers (wake lock / screen-on).
      *
-     * Counts in-flight GET body streams (not warm sticky bodies, not idle sessions).
-     * Player pause/stop that leaves a half-open Range is aborted by [BODY_STALL_MS] so this
-     * counter cannot stick forever.
+     * Warm backends and idle sessions do **not** count. Stall abort ([BODY_STALL_MS]) prevents
+     * half-open Ranges from pinning this counter forever.
      */
     fun networkActivityCount(): Int = activeTransfers.get()
 
@@ -406,18 +424,16 @@ object ExternalHttpStreamServer {
 
     // region keep-alive
     //
-    // Match streamdoc FD semantics:
-    // - Session map stays for resume until idle max age (~20 min limited; activity-based).
-    // - FGS + wake lock only while a network transfer is in flight, plus short reopen grace.
-    // - Limited mode drops sticky SMB/WebDAV when idle; next GET reconnects.
+    // HTTP session token stays in the map until prune (resume without warm SMB).
+    // Warm backend: per-body idle timeout ([BACKEND_IDLE_MS]), not open/close every Range.
+    // FGS: wake lock only during activeTransfers. Idle FGS = token RAM + self-stop only.
 
     private fun onNetworkSessionRegistered(context: Context = appCtx) {
-        // Player is about to open the URI — brief FGS window until first Range or grace expires.
+        // Brief FGS so the process is not frozen before the first Range (token in RAM).
+        // No wake lock needed until a transfer starts (onStartCommand checks activity).
         synchronized(keepAliveLock) {
             stopKeepAliveJob?.cancel()
             stopKeepAliveJob = null
-            warmBodyJob?.cancel()
-            warmBodyJob = null
             StreamKeepAliveService.start(context)
         }
         maybeStopKeepAliveLater()
@@ -430,8 +446,6 @@ object ExternalHttpStreamServer {
         synchronized(keepAliveLock) {
             stopKeepAliveJob?.cancel()
             stopKeepAliveJob = null
-            warmBodyJob?.cancel()
-            warmBodyJob = null
             StreamKeepAliveService.start(context)
         }
     }
@@ -441,19 +455,17 @@ object ExternalHttpStreamServer {
         val n = activeTransfers.updateAndGet { (it - 1).coerceAtLeast(0) }
         logcat("ExtHttp") { "transfer end active=$n" }
         if (n == 0) {
-            // Drop CPU wake immediately; FGS stops after short grace (sessions still valid).
+            // No active HTTP → drop wake lock immediately. FGS may remain briefly for token
+            // + self-shutdown only (no CPU work). Warm SMB times out separately on the body.
             StreamKeepAliveService.onNetworkIdle()
             maybeStopKeepAliveLater()
-            maybeReleaseWarmBodiesLater()
         }
     }
 
     /**
-     * After last network transfer (or session open with no traffic), stop FGS once the
-     * reopen grace elapses — **even if sessions remain** for later resume.
-     *
-     * Always releases warm HTTP sticky bodies when FGS stops (HTTP has no long-lived FD;
-     * next Range reopens dual sticky). Matches player stop / long pause / app switch.
+     * After last network transfer (or session open with no traffic), stop FGS once grace
+     * elapses. Session map can still exist until prune if process survives; next open
+     * re-registers. On stop: tear down any leftover warm backends (token remains until prune).
      */
     private fun maybeStopKeepAliveLater(context: Context = appCtx) {
         synchronized(keepAliveLock) {
@@ -465,48 +477,17 @@ object ExternalHttpStreamServer {
                         StreamDocumentRegistry.networkOpenCount() == 0
                     ) {
                         StreamKeepAliveService.stop(context)
-                        releaseNetworkHttpBodies("fgs_idle")
+                        // FGS ended: drop leftover warm backends (idle timeout may already have).
+                        for (session in sessions.values) {
+                            if (session.network) session.closeBodies()
+                        }
+                        if (StreamKeepAlivePolicy.dropNetworkOnScreenOff()) {
+                            StreamKeepAlivePolicy.dropStickyNetwork("http_fgs_stop")
+                        }
                         stopKeepAliveJob = null
-                        warmBodyJob = null
                     }
                 }
             }
-        }
-    }
-
-    /**
-     * Drop dual-sticky video bodies sooner than full FGS grace when the player is not
-     * pulling data (switch file / stop / long buffer). FGS may still run until grace ends.
-     */
-    private fun maybeReleaseWarmBodiesLater() {
-        synchronized(keepAliveLock) {
-            warmBodyJob?.cancel()
-            warmBodyJob = scope.launch {
-                delay(WARM_BODY_IDLE_MS)
-                synchronized(keepAliveLock) {
-                    if (activeTransfers.get() == 0) {
-                        releaseNetworkHttpBodies("transfer_idle")
-                    }
-                    warmBodyJob = null
-                }
-            }
-        }
-    }
-
-    private fun releaseNetworkHttpBodies(reason: String) {
-        var closed = 0
-        for (session in sessions.values) {
-            if (session.network) {
-                session.closeBodies()
-                closed++
-            }
-        }
-        if (closed > 0) {
-            logcat("ExtHttp") { "released warm network bodies ($reason) sessions=$closed" }
-        }
-        // Limited mode also force-drops any leftover sticky sockets (Fuse + HTTP).
-        if (StreamKeepAlivePolicy.dropNetworkOnScreenOff()) {
-            StreamKeepAlivePolicy.dropStickyNetwork(reason)
         }
     }
 
@@ -965,15 +946,14 @@ object ExternalHttpStreamServer {
 
     /**
      * No successful body write for this long → treat player as stopped/paused-with-full-buffer
-     * and abort the socket so [activeTransfers] drops and FGS can shut down.
+     * and abort the socket so [activeTransfers] drops (wake lock / FGS activity ends).
      */
     private const val BODY_STALL_MS = 45_000L
     private const val BODY_STALL_CHECK_MS = 5_000L
 
     /**
-     * After last network transfer ends, release warm dual-sticky bodies if no new traffic.
-     * Shorter than [StreamKeepAlivePolicy.FGS_STOP_DELAY_MS] so SMB sockets follow player stop
-     * without waiting the full FGS grace.
+     * After last reader releases a warm network body, keep dual sticky this long for seeks /
+     * next Range (open/close is costly). Then close backend. Session token still valid for resume.
      */
-    private const val WARM_BODY_IDLE_MS = 60_000L
+    private const val BACKEND_IDLE_MS = 90_000L
 }

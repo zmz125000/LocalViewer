@@ -403,7 +403,7 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
-            // Dual sticky + sliding window; body reused across Ranges in the HTTP session.
+            // Warm dual sticky across Ranges with idle timeout (not forever; not per-GET open).
             cacheBody = video,
             open = {
                 val openLane = {
@@ -446,6 +446,7 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
+            // Warm dual sticky + idle timeout (see ExternalHttpStreamServer.BACKEND_IDLE_MS).
             cacheBody = video,
             open = {
                 val openLane = {
