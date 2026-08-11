@@ -45,7 +45,9 @@ import java.util.concurrent.ThreadFactory
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.X509TrustManager
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.xmlpull.v1.XmlPullParser
@@ -440,6 +442,7 @@ object WebDavClient {
         maxBytes: Long,
     ): Long = withIOContext {
         require(maxBytes > 0L)
+        val downloadContext = coroutineContext
         downloadSlots.withPermit {
             withTransportRetry {
                 val url = absoluteUrl(source, relativeFilePath)
@@ -462,6 +465,7 @@ object WebDavClient {
                             val buffer = ByteArray(256 * 1024)
                             var copied = 0L
                             while (copied < maxBytes) {
+                                downloadContext.ensureActive()
                                 val request = minOf(buffer.size.toLong(), maxBytes - copied).toInt()
                                 val read = input.read(buffer, 0, request)
                                 if (read <= 0) break

@@ -1305,6 +1305,7 @@ object SmbGateway {
         maxBytes: Long,
     ): Long = withIOContext {
         require(maxBytes > 0L)
+        val downloadContext = coroutineContext
         withShare(source, password) { share ->
             val path = remotePath(source, relativeFilePath)
             share.openFile(
@@ -1319,6 +1320,7 @@ object SmbGateway {
                     val buffer = ByteArray(256 * 1024)
                     var copied = 0L
                     while (copied < maxBytes) {
+                        downloadContext.ensureActive()
                         val request = minOf(buffer.size.toLong(), maxBytes - copied).toInt()
                         val read = file.read(buffer, copied, 0, request)
                         if (read <= 0) break

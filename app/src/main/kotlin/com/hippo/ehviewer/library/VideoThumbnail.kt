@@ -19,6 +19,7 @@ import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import okio.Path.Companion.toPath
@@ -69,6 +70,7 @@ object VideoThumbnail {
     /** Keep four decoders, but cap each network stream so playback keeps bandwidth. */
     private const val MAX_NETWORK_PREFIX_BYTES = 4L * 1024L * 1024L
     private const val FAILURE_RETRY_MS = 24L * 60 * 60 * 1_000
+    private const val FAILURE_MARKER_DECODE = "decode"
     private const val REMOTE_CACHE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1_000
     private const val MAX_CONCURRENT_EXTRACTIONS = 4
     private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
@@ -94,8 +96,17 @@ object VideoThumbnail {
         val cacheKey = sha256(source.cacheIdentity)
         val target = File(directory, "$cacheKey.jpg")
         val failure = File(directory, "$cacheKey.failed")
-        if (failure.isFile && System.currentTimeMillis() - failure.lastModified() < FAILURE_RETRY_MS) {
-            return@withIOContext null
+        if (failure.isFile) {
+            val isCurrentDecodeFailure =
+                runCatching { failure.readText() == FAILURE_MARKER_DECODE }.getOrDefault(false)
+            if (
+                isCurrentDecodeFailure &&
+                System.currentTimeMillis() - failure.lastModified() < FAILURE_RETRY_MS
+            ) {
+                return@withIOContext null
+            }
+            // Blank legacy markers could have been written by a cancelled network fetch.
+            failure.delete()
         }
         if (isFresh(target, source)) return@withIOContext target
 
@@ -111,12 +122,15 @@ object VideoThumbnail {
             }
             val frame = try {
                 extractThumbnailFrame(source, directory, cacheKey)
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Throwable) {
-                failure.writeText("")
+                // Transport and source errors are transient; retry when the row is visible again.
                 return@withPermit null
             }
             if (frame == null) {
-                failure.writeText("")
+                // Avoid repeatedly downloading formats/prefixes Android cannot decode.
+                failure.writeText(FAILURE_MARKER_DECODE)
                 return@withPermit null
             }
             val scaled = scale(frame)
