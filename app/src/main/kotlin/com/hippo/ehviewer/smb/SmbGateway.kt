@@ -193,10 +193,36 @@ object SmbGateway {
     private val hostPools = ConcurrentHashMap<String, HostPool>()
 
     /**
-     * Live Fuse sticky [Connection]s (outside [hostPools]). Closed by [dropStickySessions]
+     * Live Fuse / HTTP sticky [Connection]s (outside [hostPools]). Closed by [dropStickySessions]
      * on screen-off in limited keep-alive mode.
      */
     private val stickyConnections = ConcurrentHashMap.newKeySet<Connection>()
+
+    /**
+     * Cap concurrent **HTTP loopback** sticky TCP sessions (external player path).
+     * Demand + prefetch = up to 2 per active video; 4 allows two dual-lane streams.
+     * Fair so new GETs queue fairly after idle-warm eviction.
+     */
+    private const val HTTP_STICKY_POOL_SIZE = 4
+    private val httpStickyPermits = Semaphore(HTTP_STICKY_POOL_SIZE)
+
+    /**
+     * Called when the HTTP sticky pool is under pressure (before blocking for a slot).
+     * [ExternalHttpStreamServer] registers this to close idle warm video bodies and free TCPs.
+     */
+    @Volatile
+    var onHttpStickyPoolPressure: (() -> Unit)? = null
+
+    /** Free slots in the HTTP sticky pool (0…[HTTP_STICKY_POOL_SIZE]). */
+    fun httpStickyPoolAvailable(): Int = httpStickyPermits.availablePermits
+
+    fun httpStickyPoolSize(): Int = HTTP_STICKY_POOL_SIZE
+
+    /** Live Fuse/HTTP sticky TCP connections (outside the browse pool). */
+    fun stickyConnectionCount(): Int = stickyConnections.size
+
+    /** Browse-pool host keys still held (usually 0 after ON_STOP). */
+    fun browsePoolHostCount(): Int = hostPools.size
     private val poolCreateLock = Mutex()
     private val sourceIdToHostKey = ConcurrentHashMap<Long, String>()
     private val hostKeyToSourceIds = ConcurrentHashMap<String, MutableSet<Long>>()
@@ -1082,6 +1108,59 @@ object SmbGateway {
         relativeFilePath: String,
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
     ): T = withIOContext {
+        openStickyConnection(source, password, relativeFilePath, block)
+    }
+
+    /**
+     * Sticky open limited by [HTTP_STICKY_POOL_SIZE] for **loopback HTTP** video.
+     *
+     * Before a demand lane blocks for a slot, invokes [onHttpStickyPoolPressure] so idle
+     * warm HTTP bodies can release their stickies (new GET first). A non-waiting optional
+     * prefetch lane fails immediately without evicting another stream's warm backend.
+     */
+    suspend fun <T> withHttpStickyOpenFile(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        waitForSlot: Boolean = true,
+        block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
+    ): T = withIOContext {
+        val got = acquireHttpStickyPermit(waitForSlot)
+        if (!got) {
+            throw IOException(
+                "HTTP SMB sticky pool full (cap=$HTTP_STICKY_POOL_SIZE, " +
+                    "available=${httpStickyPermits.availablePermits})",
+            )
+        }
+        try {
+            openStickyConnection(source, password, relativeFilePath, block)
+        } finally {
+            httpStickyPermits.release()
+            logcat {
+                "SmbGateway: HTTP sticky release inUse=${HTTP_STICKY_POOL_SIZE - httpStickyPermits.availablePermits}/$HTTP_STICKY_POOL_SIZE"
+            }
+        }
+    }
+
+    private suspend fun acquireHttpStickyPermit(waitForSlot: Boolean): Boolean {
+        if (httpStickyPermits.tryAcquire()) return true
+        if (!waitForSlot) return false
+        // Free idle warm HTTP backends, then retry.
+        runCatching { onHttpStickyPoolPressure?.invoke() }
+        if (httpStickyPermits.tryAcquire()) return true
+        logcat {
+            "SmbGateway: HTTP sticky wait inUse=${HTTP_STICKY_POOL_SIZE - httpStickyPermits.availablePermits}/$HTTP_STICKY_POOL_SIZE"
+        }
+        httpStickyPermits.acquire()
+        return true
+    }
+
+    private fun <T> openStickyConnection(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
+    ): T {
         // Own client+connection so smbj host Connection cache cannot couple sticky to
         // the shared pool (and so dropAllSessions never closes this handle).
         // Must use [endpointHost] (EasyTier virtual host when tunnel is up) — same as
@@ -1100,7 +1179,7 @@ object SmbGateway {
                     val share = session.connectShare(shareName(source)) as DiskShare
                     try {
                         val path = remotePath(source, relativeFilePath)
-                        share.openFile(
+                        return share.openFile(
                             path,
                             EnumSet.of(AccessMask.GENERIC_READ),
                             null,

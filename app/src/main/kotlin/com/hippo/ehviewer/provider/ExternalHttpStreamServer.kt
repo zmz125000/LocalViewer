@@ -8,6 +8,7 @@ import android.os.SystemClock
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.mimeTypeForFileName
+import com.hippo.ehviewer.smb.SmbGateway
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -48,7 +49,7 @@ import splitties.init.appCtx
  * - Player may re-Range anytime while the session exists (no need for a live pipe).
  * - Network video may keep a **warm** dual-sticky body across Ranges to avoid open/close
  *   cost, but it is released after [BACKEND_IDLE_MS] with no active readers (timeout).
- * - At most one warm backend per session (Android ≈1 file at a time; cap 2 transfers).
+ * - At most [MAX_WARM_CACHE_FILES] warm video bodies process-wide (each holds a RAM window).
  *
  * FGS: wake lock only while a body transfer is in flight. Idle FGS (if still running) is
  * only for process rank so the token stays in RAM + self-stop timer — no CPU work.
@@ -64,6 +65,8 @@ object ExternalHttpStreamServer {
         val mimeType: String,
         sizeBytes: Long,
         val cacheBody: Boolean = false,
+        /** Whether an idle cached body may be closed to free an HTTP SMB pool slot. */
+        val evictOnSmbPoolPressure: Boolean = false,
         /** Open a random-access source (cached with idle timeout when [cacheBody]). */
         val open: () -> StreamBody,
     ) {
@@ -167,6 +170,8 @@ object ExternalHttpStreamServer {
 
         fun hasLiveSockets(): Boolean = liveSockets.isNotEmpty()
 
+        fun liveSocketCount(): Int = liveSockets.size
+
         fun put(entry: FileEntry) {
             files[pathKey(entry.displayName)] = entry
             touch()
@@ -189,7 +194,7 @@ object ExternalHttpStreamServer {
          *
          * [FileEntry.cacheBody]: reuse one warm backend across Ranges (open/close is costly on
          * SMB). Released after [BACKEND_IDLE_MS] with no active readers — not held forever.
-         * At most one warm cached file per session (playlist hop closes the previous idle body).
+         * Process-wide cap: [MAX_WARM_CACHE_FILES] warm video windows.
          */
         fun acquireBody(entry: FileEntry): StreamBody {
             touch()
@@ -201,32 +206,55 @@ object ExternalHttpStreamServer {
             val key = pathKey(entry.displayName)
             synchronized(bodyLock) {
                 cancelBodyIdleJob(key)
-                // Only one warm backend: drop other files that are idle (refs==0).
-                evictIdleBodiesExcept(key)
                 bodyCache[key]?.let { cached ->
                     cached.refs.incrementAndGet()
+                    cached.touch()
                     entry.publishSize(cached.body.size)
                     return RefBody(key, cached)
                 }
-                val body = entry.open()
-                entry.publishSize(body.size)
-                val cached = CachedBody(body)
+            }
+            // Make room under the global warm-file cap before opening a new window.
+            trimWarmCacheTo(MAX_WARM_CACHE_FILES - 1, protectSessionId = id, protectKey = key)
+            val body = entry.open()
+            entry.publishSize(body.size)
+            synchronized(bodyLock) {
+                // Another thread may have populated the same key; prefer existing warm.
+                bodyCache[key]?.let { cached ->
+                    runCatching { body.close() }
+                    cached.refs.incrementAndGet()
+                    cached.touch()
+                    entry.publishSize(cached.body.size)
+                    return RefBody(key, cached)
+                }
+                val cached = CachedBody(body, entry.evictOnSmbPoolPressure)
                 cached.refs.set(1)
                 bodyCache[key] = cached
                 return RefBody(key, cached)
             }
         }
 
-        private fun evictIdleBodiesExcept(keepKey: String) {
-            val doomed = bodyCache.entries.filter { (k, c) ->
-                k != keepKey && c.refs.get() == 0
+        fun warmBodyCount(): Int = synchronized(bodyLock) { bodyCache.size }
+
+        fun snapshotWarmBodies(): List<WarmBodyRef> = synchronized(bodyLock) {
+            bodyCache.map { (key, cached) ->
+                WarmBodyRef(
+                    session = this,
+                    key = key,
+                    refs = cached.refs.get(),
+                    lastAccessMs = cached.lastAccessMs,
+                )
             }
-            for ((k, c) in doomed) {
-                cancelBodyIdleJob(k)
-                bodyCache.remove(k)
-                runCatching { c.body.close() }
-                logcat("ExtHttp") { "evict warm body session=$id file=$k" }
-            }
+        }
+
+        /** Close one idle warm body by key (caller holds no other session locks ideally). */
+        fun evictWarmBody(key: String, reason: String): Boolean = synchronized(bodyLock) {
+            val cached = bodyCache[key] ?: return false
+            if (cached.refs.get() > 0) return false
+            cancelBodyIdleJob(key)
+            bodyCache.remove(key)
+            runCatching { cached.body.close() }
+            logcat("ExtHttp") { "evict warm body ($reason) session=$id file=$key" }
+            true
         }
 
         private fun releaseBody(key: String, cached: CachedBody) {
@@ -258,6 +286,25 @@ object ExternalHttpStreamServer {
         }
 
         /**
+         * Close warm backends with no active HTTP readers (free HTTP sticky SMB slots).
+         * @return number of bodies closed
+         */
+        fun evictIdleSmbBodies(): Int {
+            synchronized(bodyLock) {
+                val doomed = bodyCache.entries.filter { (_, c) ->
+                    c.evictOnSmbPoolPressure && c.refs.get() == 0
+                }
+                for ((k, c) in doomed) {
+                    cancelBodyIdleJob(k)
+                    bodyCache.remove(k)
+                    runCatching { c.body.close() }
+                    logcat("ExtHttp") { "evict idle warm body (SMB pool pressure) session=$id file=$k" }
+                }
+                return doomed.size
+            }
+        }
+
+        /**
          * Abort client sockets and close any warm backends (session replace / prune / FGS stop).
          */
         fun closeBodies() {
@@ -275,11 +322,28 @@ object ExternalHttpStreamServer {
             }
         }
 
-        private class CachedBody(val body: StreamBody) {
+        private class CachedBody(
+            val body: StreamBody,
+            val evictOnSmbPoolPressure: Boolean,
+        ) {
             val refs = AtomicInteger(0)
+            @Volatile var lastAccessMs: Long = SystemClock.elapsedRealtime()
+
+            fun touch() {
+                lastAccessMs = SystemClock.elapsedRealtime()
+            }
 
             /** Shared so concurrent Range holders serialize sticky seek/read. */
             val readLock = Any()
+        }
+
+        class WarmBodyRef(
+            val session: Session,
+            val key: String,
+            val refs: Int,
+            val lastAccessMs: Long,
+        ) {
+            val idle: Boolean get() = refs == 0
         }
 
         /**
@@ -351,14 +415,102 @@ object ExternalHttpStreamServer {
      */
     fun networkActivityCount(): Int = activeTransfers.get()
 
+    /** Registered HTTP session tokens (warm body optional). */
+    fun sessionCount(): Int = sessions.size
+
+    /** Process-wide warm video/network bodies still held. */
+    fun warmBodyCount(): Int = sessions.values.sumOf { it.warmBodyCount() }
+
+    /** Live client sockets currently serving a Range. */
+    fun liveSocketCount(): Int = sessions.values.sumOf { it.liveSocketCount() }
+
+    /**
+     * Tear down loopback listener, all sessions, warm bodies, and keep-alive timers.
+     * Used when the user swipes the app from Recents ([StreamKeepAliveService.onTaskRemoved]).
+     */
+    fun shutdown(reason: String = "shutdown") {
+        logcat("ExtHttp") { "shutdown ($reason) sessions=${sessionCount()} warm=${warmBodyCount()} transfers=${activeTransfers.get()}" }
+        synchronized(keepAliveLock) {
+            stopKeepAliveJob?.cancel()
+            stopKeepAliveJob = null
+        }
+        synchronized(pruneLock) {
+            pruneJob?.cancel()
+            pruneJob = null
+        }
+        val doomed = sessions.keys.toList()
+        for (id in doomed) {
+            sessions.remove(id)?.closeBodies()
+        }
+        activeTransfers.set(0)
+        synchronized(lock) {
+            val ss = serverSocket
+            serverSocket = null
+            port = -1
+            runCatching { ss?.close() }
+            acceptThread = null
+        }
+        runCatching { connectionPool.shutdownNow() }
+    }
+
+    /**
+     * Close idle warm video bodies across sessions so HTTP sticky SMB slots free for new GETs.
+     * Registered as [SmbGateway.onHttpStickyPoolPressure].
+     */
+    fun evictAllIdleSmbBackends(): Int {
+        var n = 0
+        for (session in sessions.values) {
+            n += session.evictIdleSmbBodies()
+        }
+        if (n > 0) {
+            logcat("ExtHttp") {
+                "evicted $n idle warm bodies for SMB pool " +
+                    "(available=${SmbGateway.httpStickyPoolAvailable()}/${SmbGateway.httpStickyPoolSize()})"
+            }
+        }
+        return n
+    }
+
+    /**
+     * Keep at most [max] warm video bodies process-wide. Evicts **idle** bodies oldest-first.
+     * Never closes a body with active HTTP readers.
+     */
+    private fun trimWarmCacheTo(
+        max: Int,
+        protectSessionId: String? = null,
+        protectKey: String? = null,
+    ) {
+        if (max < 0) return
+        while (true) {
+            val all = sessions.values.flatMap { it.snapshotWarmBodies() }
+            if (all.size <= max) return
+            val victim = all
+                .filter { it.idle }
+                .filterNot { it.session.id == protectSessionId && it.key == protectKey }
+                .minByOrNull { it.lastAccessMs }
+                ?: return // all remaining are in-use
+            if (!victim.session.evictWarmBody(victim.key, "warm-cap-$max")) return
+        }
+    }
+
     fun ensureStarted(): Int = synchronized(lock) {
         serverSocket?.let { return port }
-        val ss = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        // New HTTP sticky acquires may free warm bodies via this pressure hook.
+        SmbGateway.onHttpStickyPoolPressure = {
+            evictAllIdleSmbBackends()
+        }
+        // Tag on this thread before ServerSocket() — accept-thread tag is too late for bind.
+        TrafficStats.setThreadStatsTag(LOOPBACK_HTTP_TRAFFIC_TAG)
+        val ss = try {
+            ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        } finally {
+            TrafficStats.clearThreadStatsTag()
+        }
         port = ss.localPort
         serverSocket = ss
         acceptThread = Thread(
             {
-                // Accept() creates sockets under this thread's tag (StrictMode).
+                // Accept() creates client sockets under this thread's tag (StrictMode).
                 TrafficStats.setThreadStatsTag(LOOPBACK_HTTP_TRAFFIC_TAG)
                 try {
                     while (!ss.isClosed) {
@@ -1036,5 +1188,8 @@ object ExternalHttpStreamServer {
      * After last reader releases a warm network body, keep dual sticky this long for seeks /
      * next Range (open/close is costly). Then close backend. Session token still valid for resume.
      */
-    private const val BACKEND_IDLE_MS = 90_000L
+    private const val BACKEND_IDLE_MS = 4L * 60L * 1000L
+
+    /** Max warm video bodies (each ≈ one VideoDirectLink RAM window) process-wide. */
+    private const val MAX_WARM_CACHE_FILES = 3
 }
