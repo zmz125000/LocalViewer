@@ -96,8 +96,7 @@ object ExternalHttpStreamServer {
     class ArchiveBody(private val source: ArchiveByteSource) : StreamBody {
         override val size: Long get() = source.size
         override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = source.readAt(offset, buf, off, len)
-        override fun isBuffered(offset: Long): Boolean =
-            (source as? VideoDirectLinkByteSource)?.isBuffered(offset) == true
+        override fun isBuffered(offset: Long): Boolean = (source as? VideoDirectLinkByteSource)?.isBuffered(offset) == true
         override fun close() = source.close()
     }
 
