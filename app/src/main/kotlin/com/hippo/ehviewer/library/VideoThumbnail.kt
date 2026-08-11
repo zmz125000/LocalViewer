@@ -110,7 +110,7 @@ object VideoThumbnail {
                 return@withPermit null
             }
             val frame = try {
-                extractFirstFrame(source, directory, cacheKey)
+                extractThumbnailFrame(source, directory, cacheKey)
             } catch (_: Throwable) {
                 failure.writeText("")
                 return@withPermit null
@@ -147,7 +147,7 @@ object VideoThumbnail {
         return System.currentTimeMillis() - target.lastModified() < REMOTE_CACHE_MAX_AGE_MS
     }
 
-    private suspend fun extractFirstFrame(
+    private suspend fun extractThumbnailFrame(
         source: VideoThumbnailSource,
         directory: File,
         cacheKey: String,
@@ -163,7 +163,7 @@ object VideoThumbnail {
         }
         is VideoThumbnailSource.Smb -> {
             val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
-            extractNetworkFirstFrame(directory, cacheKey, source.remoteRelativeFile) { temporary ->
+            extractNetworkThumbnailFrame(directory, cacheKey, source.remoteRelativeFile) { temporary ->
                 SmbCache.withBrowseThumbFetchSlot {
                     SmbGateway.downloadFilePrefix(
                         source = smb,
@@ -177,7 +177,7 @@ object VideoThumbnail {
         }
         is VideoThumbnailSource.WebDav -> {
             val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
-            extractNetworkFirstFrame(directory, cacheKey, source.remoteRelativeFile) { temporary ->
+            extractNetworkThumbnailFrame(directory, cacheKey, source.remoteRelativeFile) { temporary ->
                 WebDavCache.withBrowseThumbFetchSlot {
                     WebDavClient.downloadFilePrefix(
                         source = webDav,
@@ -191,7 +191,7 @@ object VideoThumbnail {
         }
     }
 
-    private suspend fun extractNetworkFirstFrame(
+    private suspend fun extractNetworkThumbnailFrame(
         directory: File,
         cacheKey: String,
         remoteFileName: String,
@@ -222,22 +222,26 @@ object VideoThumbnail {
     private fun extractFrame(source: ArchiveByteSource): Bitmap? {
         val dataSource = ArchiveMediaDataSource(source)
         return try {
-            decodeFirstFrame { it.setDataSource(dataSource) }
+            decodeThumbnailFrame { it.setDataSource(dataSource) }
         } finally {
             dataSource.close()
         }
     }
 
     private fun extractFrame(file: File): Bitmap? =
-        decodeFirstFrame { it.setDataSource(file.absolutePath) }
+        decodeThumbnailFrame { it.setDataSource(file.absolutePath) }
 
-    private inline fun decodeFirstFrame(
+    private inline fun decodeThumbnailFrame(
         setDataSource: (MediaMetadataRetriever) -> Unit,
     ): Bitmap? {
         val retriever = MediaMetadataRetriever()
         return try {
             setDataSource(retriever)
-            retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            // Let Android choose the representative thumbnail frame. A time-zero sync
+            // frame remains the fallback for truncated prefixes whose container metadata
+            // cannot expose a representative frame.
+            retriever.getFrameAtTime()
+                ?: retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
         } catch (_: Throwable) {
             null
         } finally {
