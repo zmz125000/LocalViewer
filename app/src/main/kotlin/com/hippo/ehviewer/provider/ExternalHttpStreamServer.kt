@@ -17,6 +17,7 @@ import java.io.RandomAccessFile
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.net.URLDecoder
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -24,6 +25,7 @@ import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -43,17 +45,37 @@ import splitties.init.appCtx
  *
  * - Binds **127.0.0.1 only** (device-local; other apps on the phone can still connect).
  * - Supports **Range** for seek.
- * - Optional [Session.resolveSibling] serves invented names (e.g. `.srt` when only `.ass`
- *   was pre-registered) from the same remote/local parent directory.
+ * - HTTP/1.1 keep-alive + optional per-session body cache for network video.
+ * - Optional [Session.resolveSibling] serves invented names from the same parent directory.
+ * - [FileEntry.sizeBytes] may be −1 (unknown); first GET/HEAD resolves size from the body.
  */
 object ExternalHttpStreamServer {
-    data class FileEntry(
+    /**
+     * @param sizeBytes known length, or **−1** if unknown (resolved on first open).
+     * @param cacheBody when true, reuse one [StreamBody] across Ranges for this file in the session
+     *   (network video with dual sticky + sliding window). Local/Pfd bodies are not shared.
+     */
+    class FileEntry(
         val displayName: String,
         val mimeType: String,
-        val sizeBytes: Long,
-        /** Open a fresh random-access source for this response (may be called per Range). */
+        sizeBytes: Long,
+        val cacheBody: Boolean = false,
+        /** Open a random-access source (may be called once and cached when [cacheBody]). */
         val open: () -> StreamBody,
-    )
+    ) {
+        private val sizeRef = AtomicLong(sizeBytes)
+
+        /** Known length, or −1 until first successful open. */
+        var sizeBytes: Long
+            get() = sizeRef.get()
+            set(value) {
+                sizeRef.set(value)
+            }
+
+        fun publishSize(size: Long) {
+            if (size >= 1L) sizeRef.updateAndGet { cur -> if (cur >= 1L) cur else size }
+        }
+    }
 
     sealed interface StreamBody : AutoCloseable {
         val size: Long
@@ -62,7 +84,8 @@ object ExternalHttpStreamServer {
 
     class ArchiveBody(private val source: ArchiveByteSource) : StreamBody {
         override val size: Long get() = source.size
-        override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = source.readAt(offset, buf, off, len)
+        override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int =
+            source.readAt(offset, buf, off, len)
         override fun close() = source.close()
     }
 
@@ -121,6 +144,11 @@ object ExternalHttpStreamServer {
         @Volatile var resolveSibling: ((String) -> FileEntry?)? = null,
         @Volatile var lastAccessMs: Long = SystemClock.elapsedRealtime(),
     ) {
+        private val bodyLock = Any()
+        private val bodyCache = HashMap<String, CachedBody>()
+        /** Basename of the single warm dual-sticky video body (at most one per session). */
+        @Volatile private var activeBodyKey: String? = null
+
         fun touch() {
             lastAccessMs = SystemClock.elapsedRealtime()
         }
@@ -142,6 +170,96 @@ object ExternalHttpStreamServer {
             val resolved = resolveSibling?.invoke(fileName) ?: return null
             files[pathKey(resolved.displayName)] = resolved
             return resolved
+        }
+
+        /**
+         * Open or reuse a body for [entry]. Caller must [StreamBody.close] when the response ends.
+         *
+         * Network video ([FileEntry.cacheBody]): keep **one** warm dual-sticky source for the
+         * current file (Range reuse). Switching files / sessions closes the previous sticky pair
+         * so 6 opens do not leave 12 SMB connections.
+         */
+        fun acquireBody(entry: FileEntry): StreamBody {
+            touch()
+            if (!entry.cacheBody) {
+                return entry.open().also { body ->
+                    entry.publishSize(body.size)
+                }
+            }
+            val key = pathKey(entry.displayName)
+            synchronized(bodyLock) {
+                activeBodyKey = key
+                // Drop idle sticky bodies for other files in this session (playlist hop).
+                evictIdleBodiesExcept(key)
+                bodyCache[key]?.let { cached ->
+                    cached.refs.incrementAndGet()
+                    entry.publishSize(cached.body.size)
+                    return RefBody(key, cached)
+                }
+                val body = entry.open()
+                entry.publishSize(body.size)
+                val cached = CachedBody(body)
+                cached.refs.set(1)
+                bodyCache[key] = cached
+                return RefBody(key, cached)
+            }
+        }
+
+        private fun evictIdleBodiesExcept(keepKey: String) {
+            val doomed = bodyCache.entries.filter { (k, c) ->
+                k != keepKey && c.refs.get() == 0
+            }
+            for ((k, c) in doomed) {
+                bodyCache.remove(k)
+                runCatching { c.body.close() }
+            }
+        }
+
+        private fun releaseBody(key: String, cached: CachedBody) {
+            synchronized(bodyLock) {
+                if (cached.refs.decrementAndGet() > 0) return
+                // No longer the active play file → close sticky immediately (playlist switched).
+                if (activeBodyKey != key) {
+                    if (bodyCache[key] === cached) bodyCache.remove(key)
+                    runCatching { cached.body.close() }
+                    return
+                }
+                // Active file: keep warm for Range reuse until session ends or another file opens.
+            }
+        }
+
+        fun closeBodies() {
+            synchronized(bodyLock) {
+                for ((_, cached) in bodyCache) {
+                    runCatching { cached.body.close() }
+                }
+                bodyCache.clear()
+                activeBodyKey = null
+            }
+        }
+
+        private class CachedBody(val body: StreamBody) {
+            val refs = AtomicInteger(0)
+            /** Shared so concurrent Range holders serialize sticky seek/read. */
+            val readLock = Any()
+        }
+
+        /**
+         * Shared session body: [close] only releases the ref; real close on session teardown.
+         * Serializes [readAt] so concurrent Ranges do not race sticky seek state.
+         */
+        private inner class RefBody(
+            private val key: String,
+            private val cached: CachedBody,
+        ) : StreamBody {
+            override val size: Long get() = cached.body.size
+            override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int =
+                synchronized(cached.readLock) {
+                    cached.body.readAt(offset, buf, off, len)
+                }
+            override fun close() {
+                releaseBody(key, cached)
+            }
         }
     }
 
@@ -214,6 +332,11 @@ object ExternalHttpStreamServer {
 
     fun newSession(network: Boolean): Session {
         ensureStarted()
+        // One network stream at a time: each video uses dual sticky SMB/WebDAV (demand+prefetch).
+        // Leaving prior sessions warm → N opens × 2 connections (e.g. 6 videos = 12 TCP).
+        if (network) {
+            closeOtherNetworkSessions(exceptId = null)
+        }
         val id = UUID.randomUUID().toString().replace("-", "")
         val session = Session(id = id, network = network)
         sessions[id] = session
@@ -224,8 +347,21 @@ object ExternalHttpStreamServer {
         return session
     }
 
+    /** Drop network HTTP sessions (and their sticky bodies). [exceptId] may be kept. */
+    private fun closeOtherNetworkSessions(exceptId: String?) {
+        for ((id, session) in sessions) {
+            if (!session.network) continue
+            if (exceptId != null && id == exceptId) continue
+            if (sessions.remove(id, session)) {
+                session.closeBodies()
+                logcat("ExtHttp") { "closed prior network session $id (sticky release)" }
+            }
+        }
+    }
+
     fun removeSession(id: String) {
-        sessions.remove(id)
+        val removed = sessions.remove(id)
+        removed?.closeBodies()
         schedulePrune()
         maybeStopKeepAliveLater()
     }
@@ -307,6 +443,10 @@ object ExternalHttpStreamServer {
                         if (StreamKeepAlivePolicy.dropNetworkOnScreenOff() &&
                             sessions.values.any { it.network }
                         ) {
+                            // Close warm HTTP bodies so sticky handles drop with the pool.
+                            for (session in sessions.values) {
+                                if (session.network) session.closeBodies()
+                            }
                             StreamKeepAlivePolicy.dropStickyNetwork("http_idle")
                         }
                         stopKeepAliveJob = null
@@ -335,7 +475,9 @@ object ExternalHttpStreamServer {
         // lastAccess is touched on every request/byte progress — idle budget is activity-based.
         for ((id, session) in sessions) {
             if (nowMs - session.lastAccessMs >= maxAge) {
-                sessions.remove(id, session)
+                if (sessions.remove(id, session)) {
+                    session.closeBodies()
+                }
             }
         }
         // Soft cap
@@ -344,7 +486,11 @@ object ExternalHttpStreamServer {
             sessions.entries
                 .sortedBy { it.value.lastAccessMs }
                 .take(overflow)
-                .forEach { sessions.remove(it.key, it.value) }
+                .forEach { (id, session) ->
+                    if (sessions.remove(id, session)) {
+                        session.closeBodies()
+                    }
+                }
         }
         // Do not re-arm FGS from prune; only stop if already idle.
         if (activeTransfers.get() == 0) {
@@ -356,21 +502,38 @@ object ExternalHttpStreamServer {
 
     private fun handleClient(socket: Socket) {
         try {
-            // Bound header parse only; body streaming can idle between player Range chunks.
-            socket.soTimeout = REQUEST_HEADER_TIMEOUT_MS
             val input = BufferedInputStream(socket.getInputStream())
             val output = BufferedOutputStream(socket.getOutputStream())
-            val request = readRequest(input) ?: run {
-                writeSimple(output, 400, "Bad Request")
-                return
+            var requests = 0
+            while (requests < MAX_REQUESTS_PER_CONNECTION) {
+                socket.soTimeout = REQUEST_HEADER_TIMEOUT_MS
+                val request = try {
+                    readRequest(input)
+                } catch (_: SocketTimeoutException) {
+                    break
+                } catch (_: IOException) {
+                    break
+                } ?: break
+                requests++
+                // Long movie Range replies must not die on SO_TIMEOUT mid-body.
+                socket.soTimeout = 0
+                val moreAllowed = requests < MAX_REQUESTS_PER_CONNECTION
+                val clientWantsKeepAlive = wantsKeepAlive(request) && moreAllowed
+                val keepAlive = when (request.method) {
+                    "GET", "HEAD" -> serve(
+                        request,
+                        output,
+                        headOnly = request.method == "HEAD",
+                        preferKeepAlive = clientWantsKeepAlive,
+                    )
+                    else -> {
+                        writeSimple(output, 405, "Method Not Allowed", keepAlive = false)
+                        false
+                    }
+                }
+                output.flush()
+                if (!keepAlive) break
             }
-            // Long movie Range replies must not die on SO_TIMEOUT mid-body.
-            socket.soTimeout = 0
-            when (request.method) {
-                "GET", "HEAD" -> serve(request, output, headOnly = request.method == "HEAD")
-                else -> writeSimple(output, 405, "Method Not Allowed")
-            }
-            output.flush()
         } catch (e: Throwable) {
             if (e !is IOException) logcat("ExtHttp", e)
         } finally {
@@ -381,8 +544,17 @@ object ExternalHttpStreamServer {
     private data class HttpRequest(
         val method: String,
         val path: String,
+        val httpVersion: String,
         val headers: Map<String, String>,
     )
+
+    private fun wantsKeepAlive(request: HttpRequest): Boolean {
+        val conn = request.headers["connection"]?.lowercase().orEmpty()
+        if (conn.contains("close")) return false
+        if (conn.contains("keep-alive")) return true
+        // HTTP/1.1 default is keep-alive.
+        return request.httpVersion.startsWith("HTTP/1.1")
+    }
 
     private fun readRequest(input: InputStream): HttpRequest? {
         val line = readLine(input, MAX_REQUEST_LINE_LENGTH) ?: return null
@@ -390,6 +562,7 @@ object ExternalHttpStreamServer {
         if (parts.size != 3 || !parts[2].startsWith("HTTP/")) return null
         val method = parts[0].uppercase()
         val path = parts[1]
+        val httpVersion = parts[2].trim()
         val headers = LinkedHashMap<String, String>()
         var headerCount = 0
         while (true) {
@@ -403,7 +576,7 @@ object ExternalHttpStreamServer {
                 headers[name] = value
             }
         }
-        return HttpRequest(method, path, headers)
+        return HttpRequest(method, path, httpVersion, headers)
     }
 
     private fun readLine(input: InputStream, maxLength: Int): String? {
@@ -420,82 +593,103 @@ object ExternalHttpStreamServer {
         return sb.toString()
     }
 
-    private fun serve(request: HttpRequest, output: OutputStream, headOnly: Boolean) {
+    /**
+     * @return whether the connection should stay open for another request.
+     */
+    private fun serve(
+        request: HttpRequest,
+        output: OutputStream,
+        headOnly: Boolean,
+        preferKeepAlive: Boolean,
+    ): Boolean {
         // /s/{sessionId}[/] → directory index of registered media
         // /s/{sessionId}/{fileName} → file body (Range)
         val rawPath = request.path.substringBefore('?')
         val segs = runCatching {
             rawPath.trim('/').split('/').map { URLDecoder.decode(it, Charsets.UTF_8) }
         }.getOrElse {
-            writeSimple(output, 400, "Bad Request")
-            return
+            writeSimple(output, 400, "Bad Request", keepAlive = false)
+            return false
         }
         if (segs.isEmpty() || segs[0] != "s") {
-            writeSimple(output, 404, "Not Found")
-            return
+            writeSimple(output, 404, "Not Found", keepAlive = preferKeepAlive)
+            return preferKeepAlive
         }
         if (segs.size == 1) {
-            writeSimple(output, 404, "Not Found")
-            return
+            writeSimple(output, 404, "Not Found", keepAlive = preferKeepAlive)
+            return preferKeepAlive
         }
         val sessionId = segs[1]
         val session = sessions[sessionId]
         if (session == null) {
-            writeSimple(output, 404, "Session expired")
-            return
+            writeSimple(output, 404, "Session expired", keepAlive = preferKeepAlive)
+            return preferKeepAlive
         }
         session.touch()
         // Directory listing (players / next-prev that probe the parent URL).
         if (segs.size == 2 || (segs.size == 3 && segs[2].isEmpty())) {
-            writeDirectoryListing(output, session, headOnly)
-            return
+            writeDirectoryListing(output, session, headOnly, preferKeepAlive)
+            return preferKeepAlive
         }
         if (segs.size != 3 || !isSafeFileName(segs[2])) {
-            writeSimple(output, 404, "Not Found")
-            return
+            writeSimple(output, 404, "Not Found", keepAlive = preferKeepAlive)
+            return preferKeepAlive
         }
         val fileName = segs[2]
         val entry = session.get(fileName)
         if (entry == null) {
             logcat("ExtHttp") { "404 missing file session=$sessionId name=$fileName" }
-            writeSimple(output, 404, "Not Found")
-            return
+            writeSimple(output, 404, "Not Found", keepAlive = preferKeepAlive)
+            return preferKeepAlive
         }
+
+        val body = try {
+            session.acquireBody(entry)
+        } catch (e: Throwable) {
+            if (e !is IOException) logcat("ExtHttp", e)
+            writeSimple(output, 404, "Not Found", keepAlive = preferKeepAlive)
+            return preferKeepAlive
+        }
+
+        val total = entry.sizeBytes.takeIf { it >= 1L } ?: body.size
+        if (total < 1L) {
+            runCatching { body.close() }
+            writeSimple(output, 404, "Empty", keepAlive = preferKeepAlive)
+            return preferKeepAlive
+        }
+        entry.publishSize(total)
 
         val rangeHeader = request.headers["range"]
-        val total = entry.sizeBytes
-        if (total < 1L) {
-            writeSimple(output, 404, "Empty")
-            return
-        }
-
         val range = parseRange(rangeHeader, total)
         if (!rangeHeader.isNullOrBlank() && range == null) {
+            runCatching { body.close() }
             writeSimple(
                 output,
                 416,
                 "Range Not Satisfiable",
                 extraHeaders = listOf("Content-Range: bytes */$total"),
+                keepAlive = preferKeepAlive,
             )
-            return
+            return preferKeepAlive
         }
         val start = range?.first ?: 0L
         val end = range?.second ?: (total - 1L)
         if (start < 0L || end < start || start >= total) {
+            runCatching { body.close() }
             writeSimple(
                 output,
                 416,
                 "Range Not Satisfiable",
-                extraHeaders = listOf(
-                    "Content-Range: bytes */$total",
-                ),
+                extraHeaders = listOf("Content-Range: bytes */$total"),
+                keepAlive = preferKeepAlive,
             )
-            return
+            return preferKeepAlive
         }
         val contentLength = end - start + 1L
         val status = if (range != null) 206 else 200
         val statusText = if (range != null) "Partial Content" else "OK"
         val mime = entry.mimeType.ifBlank { mimeTypeForFileName(entry.displayName) }
+        val connHeader = if (preferKeepAlive) "keep-alive" else "close"
 
         val headers = buildString {
             append("HTTP/1.1 $status $statusText\r\n")
@@ -507,16 +701,22 @@ object ExternalHttpStreamServer {
             }
             // Real file name for players that read Content-Disposition.
             append("Content-Disposition: inline; filename=\"${escapeHeader(entry.displayName)}\"\r\n")
-            append("Connection: close\r\n")
+            append("Connection: $connHeader\r\n")
+            if (preferKeepAlive) {
+                append("Keep-Alive: timeout=${KEEP_ALIVE_TIMEOUT_SEC}\r\n")
+            }
             append("Cache-Control: no-store\r\n")
             append("\r\n")
         }
-        output.write(headers.toByteArray(Charsets.US_ASCII))
-        if (headOnly) return
-
-        onTransferStarted(session.network)
         try {
-            entry.open().use { body ->
+            output.write(headers.toByteArray(Charsets.US_ASCII))
+            if (headOnly) {
+                runCatching { body.close() }
+                return preferKeepAlive
+            }
+
+            onTransferStarted(session.network)
+            try {
                 val buf = ByteArray(64 * 1024)
                 var remaining = contentLength
                 var offset = start
@@ -529,11 +729,24 @@ object ExternalHttpStreamServer {
                     remaining -= n
                     session.touch()
                 }
+                // Incomplete body → client must not reuse the connection.
+                if (remaining > 0L) {
+                    runCatching { body.close() }
+                    return false
+                }
+            } catch (e: Throwable) {
+                if (e !is IOException) logcat("ExtHttp", e)
+                runCatching { body.close() }
+                return false
+            } finally {
+                onTransferEnded(session.network)
             }
+            runCatching { body.close() }
+            return preferKeepAlive
         } catch (e: Throwable) {
             if (e !is IOException) logcat("ExtHttp", e)
-        } finally {
-            onTransferEnded(session.network)
+            runCatching { body.close() }
+            return false
         }
     }
 
@@ -544,7 +757,7 @@ object ExternalHttpStreamServer {
         if (!header.startsWith("bytes=", ignoreCase = true)) return null
         val spec = header.substring(6).trim()
         if (spec.contains(',')) {
-            // Multi-range not supported — serve full body as 200 by ignoring.
+            // Multi-range not supported — treat as unsatisfiable at call site.
             return null
         }
         val dash = spec.indexOf('-')
@@ -578,6 +791,7 @@ object ExternalHttpStreamServer {
         code: Int,
         message: String,
         extraHeaders: List<String> = emptyList(),
+        keepAlive: Boolean = false,
     ) {
         val body = message.toByteArray(Charsets.UTF_8)
         val sb = StringBuilder()
@@ -585,7 +799,7 @@ object ExternalHttpStreamServer {
         sb.append("Content-Type: text/plain; charset=utf-8\r\n")
         sb.append("Content-Length: ${body.size}\r\n")
         for (h in extraHeaders) sb.append(h).append("\r\n")
-        sb.append("Connection: close\r\n\r\n")
+        sb.append("Connection: ").append(if (keepAlive) "keep-alive" else "close").append("\r\n\r\n")
         output.write(sb.toString().toByteArray(Charsets.US_ASCII))
         output.write(body)
     }
@@ -595,6 +809,7 @@ object ExternalHttpStreamServer {
         output: OutputStream,
         session: Session,
         headOnly: Boolean,
+        keepAlive: Boolean,
     ) {
         val names = session.files.values.map { it.displayName }.distinct().sorted()
         val html = buildString {
@@ -613,7 +828,7 @@ object ExternalHttpStreamServer {
             append("HTTP/1.1 200 OK\r\n")
             append("Content-Type: text/html; charset=utf-8\r\n")
             append("Content-Length: ${body.size}\r\n")
-            append("Connection: close\r\n")
+            append("Connection: ").append(if (keepAlive) "keep-alive" else "close").append("\r\n")
             append("Cache-Control: no-store\r\n")
             append("\r\n")
         }
@@ -639,11 +854,13 @@ object ExternalHttpStreamServer {
     }
 
     private const val MAX_SESSIONS = 16
-    private const val MAX_CONCURRENT_CONNECTIONS = 8
+    private const val MAX_CONCURRENT_CONNECTIONS = 16
     private const val MAX_FILE_NAME_LENGTH = 1024
     private const val MAX_REQUEST_LINE_LENGTH = 4096
     private const val MAX_HEADER_LINE_LENGTH = 8192
     private const val MAX_HEADER_COUNT = 64
+    private const val MAX_REQUESTS_PER_CONNECTION = 100
+    private const val KEEP_ALIVE_TIMEOUT_SEC = 60
 
     /** Idle timeout while reading request line + headers only. */
     private const val REQUEST_HEADER_TIMEOUT_MS = 15_000
