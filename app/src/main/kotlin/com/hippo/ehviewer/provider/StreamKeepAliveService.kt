@@ -19,12 +19,12 @@ import com.hippo.ehviewer.R
 import com.hippo.ehviewer.ui.MainActivity
 
 /**
- * Keeps LocalViewer unfrozen while a network [StreamDocumentProvider] proxy FD is open.
+ * Keeps LocalViewer unfrozen while a network stream is active in another app.
  *
- * External players stream SMB/WebDAV over Fuse in **this** process. Without a foreground
- * service the process is cached after ON_STOP, frozen after a few minutes, and reads
- * stall — playback dies and resume fails because the in-memory token / sticky session
- * is gone. Start when the first network proxy is retained; stop when the last is released.
+ * External players stream SMB/WebDAV through either a [StreamDocumentProvider] proxy FD or
+ * [ExternalHttpStreamServer] in **this** process. Without a foreground service the process is
+ * cached after ON_STOP, frozen after a few minutes, and reads stall. Start on network activity;
+ * stop after both transports are idle.
  *
  * Android may time out a `dataSync` FGS. A timed-out service must stop promptly; the
  * existing proxy FD then fails/reopens normally instead of risking RemoteServiceException.
@@ -50,23 +50,17 @@ class StreamKeepAliveService : Service() {
         // startForegroundService() is asynchronous: a short-lived FD / HTTP transfer may
         // already be done. Wake lock only while a proxy FD or HTTP body is live.
         // Idle FGS (HTTP token grace / self-stop): no wake lock, no CPU work.
-        if (StreamDocumentRegistry.networkOpenCount() > 0 ||
-            ExternalHttpStreamServer.networkActivityCount() > 0
-        ) {
-            acquireWakeLock()
-        } else {
-            releaseWakeLock()
-        }
+        updateWakeLockForActivity()
         // The registry and network source are process-local. Restarting only this service
         // after process death cannot restore the URI token or an external player's FD.
         return START_NOT_STICKY
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        val stillOpen = StreamDocumentRegistry.networkOpenCount() +
-            ExternalHttpStreamServer.networkActivityCount()
+        val openFds = StreamDocumentRegistry.networkOpenCount()
+        val httpTransfers = ExternalHttpStreamServer.networkActivityCount()
         logcat("StreamKeepAlive") {
-            "Foreground service timed out (type=$fgsType) openFds=$stillOpen"
+            "Foreground service timed out (type=$fgsType) openFds=$openFds httpTransfers=$httpTransfers"
         }
         // Android 15+ requires a timed-out dataSync service to stop within a few seconds.
         // Re-promotion does not reset the quota and can crash the app.
@@ -125,6 +119,14 @@ class StreamKeepAliveService : Service() {
         }
     }
 
+    private fun updateWakeLockForActivity() {
+        if (hasActiveNetworkStreams()) {
+            acquireWakeLock()
+        } else {
+            releaseWakeLock()
+        }
+    }
+
     private fun ensureChannel() {
         val nm = getSystemService(NotificationManager::class.java) ?: return
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
@@ -170,7 +172,11 @@ class StreamKeepAliveService : Service() {
         @Volatile
         private var instance: StreamKeepAliveService? = null
 
-        /** Start or refresh the keep-alive for a live network proxy FD. */
+        private fun hasActiveNetworkStreams(): Boolean =
+            StreamDocumentRegistry.networkOpenCount() > 0 ||
+                ExternalHttpStreamServer.networkActivityCount() > 0
+
+        /** Start or refresh the keep-alive for live network activity. */
         fun start(context: Context) {
             val app = context.applicationContext
             try {
@@ -193,14 +199,14 @@ class StreamKeepAliveService : Service() {
             }.onFailure { logcat("StreamKeepAlive", it) }
         }
 
-        /** Keep the FGS grace period, but never hold the CPU awake with no live proxy FD. */
-        fun onNetworkIdle() {
-            instance?.releaseWakeLock()
+        /** Reconcile the shared wake lock after either stream transport changes activity. */
+        fun onNetworkActivityChanged() {
+            instance?.updateWakeLockForActivity()
         }
 
         /**
          * Limited mode + screen off: drop partial wake lock so the device can sleep.
-         * FGS notification stays if FDs are open so process rank stays elevated for Fuse.
+         * FGS notification stays if a stream is active so process rank remains elevated.
          * [start] re-acquires on screen on / next retain.
          */
         fun onScreenOffConservePower() {

@@ -134,6 +134,7 @@ object StreamDocumentRegistry {
             // service, and startForegroundService() is idempotent while it is already alive.
             StreamKeepAliveService.start(context)
         }
+        StreamKeepAliveService.onNetworkActivityChanged()
     }
 
     /**
@@ -152,15 +153,17 @@ object StreamDocumentRegistry {
         entry.lastAccessMs = SystemClock.elapsedRealtime()
         synchronized(keepAliveLock) {
             totalNetworkOpen = (totalNetworkOpen - 1).coerceAtLeast(0)
+            StreamKeepAliveService.onNetworkActivityChanged()
             if (totalNetworkOpen == 0) {
                 // Keep the low-priority FGS briefly for URI reopen, but do not keep the CPU
                 // awake during that idle grace period.
-                StreamKeepAliveService.onNetworkIdle()
                 stopKeepAliveJob?.cancel()
                 stopKeepAliveJob = scope.launch {
                     delay(StreamKeepAlivePolicy.fgsStopDelayMs())
                     synchronized(keepAliveLock) {
-                        if (totalNetworkOpen == 0) {
+                        if (totalNetworkOpen == 0 &&
+                            ExternalHttpStreamServer.networkActivityCount() == 0
+                        ) {
                             StreamKeepAliveService.stop(context)
                             stopKeepAliveJob = null
                         }

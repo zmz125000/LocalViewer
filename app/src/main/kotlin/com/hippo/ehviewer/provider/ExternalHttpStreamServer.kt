@@ -25,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
@@ -43,7 +44,7 @@ import splitties.init.appCtx
  * `http://127.0.0.1:{port}/s/{sessionId}/{fileName}`
  *
  * **Stateless HTTP + timed backend:**
- * - Session map is a **token** (file registry / sizes / resolveSibling) until idle max age.
+ * - Session map is a **token** (pre-registered files and sizes) until idle max age.
  * - Player may re-Range anytime while the session exists (no need for a live pipe).
  * - Network video may keep a **warm** dual-sticky body across Ranges to avoid open/close
  *   cost, but it is released after [BACKEND_IDLE_MS] with no active readers (timeout).
@@ -140,22 +141,16 @@ object ExternalHttpStreamServer {
         val id: String,
         val network: Boolean,
         /**
-         * Directory identity for reuse across video opens in the same folder
-         * (e.g. `smb:3:path/to/dir`, `local:/sdcard/Movies`).
+         * Scoped identity for reuse across compatible opens (folder-wide or one-video access).
          */
         val dirKey: String,
         val files: ConcurrentHashMap<String, FileEntry> = ConcurrentHashMap(),
-        /**
-         * On-demand open for a sibling basename not yet in [files]
-         * (player invents `movie.srt` under the same virtual dir).
-         */
-        @Volatile var resolveSibling: ((String) -> FileEntry?)? = null,
         @Volatile var lastAccessMs: Long = SystemClock.elapsedRealtime(),
     ) {
         private val bodyLock = Any()
         private val bodyCache = HashMap<String, CachedBody>()
         private val bodyIdleJobs = HashMap<String, Job>()
-        /** Live client sockets serving this session (abort on teardown / switch). */
+        /** Live client sockets serving this session (abort on teardown). */
         private val liveSockets = ConcurrentHashMap.newKeySet<Socket>()
 
         fun touch() {
@@ -169,6 +164,8 @@ object ExternalHttpStreamServer {
         fun detachSocket(socket: Socket) {
             liveSockets.remove(socket)
         }
+
+        fun hasLiveSockets(): Boolean = liveSockets.isNotEmpty()
 
         fun put(entry: FileEntry) {
             files[pathKey(entry.displayName)] = entry
@@ -184,9 +181,7 @@ object ExternalHttpStreamServer {
             files.entries.firstOrNull { it.key.equals(key, ignoreCase = true) }?.value?.let {
                 return it
             }
-            val resolved = resolveSibling?.invoke(fileName) ?: return null
-            files[pathKey(resolved.displayName)] = resolved
-            return resolved
+            return null
         }
 
         /**
@@ -294,13 +289,17 @@ object ExternalHttpStreamServer {
             private val key: String,
             private val cached: CachedBody,
         ) : StreamBody {
+            private val closed = AtomicBoolean(false)
+
             override val size: Long get() = cached.body.size
             override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int =
                 synchronized(cached.readLock) {
                     cached.body.readAt(offset, buf, off, len)
                 }
             override fun close() {
-                releaseBody(key, cached)
+                if (closed.compareAndSet(false, true)) {
+                    releaseBody(key, cached)
+                }
             }
         }
     }
@@ -338,7 +337,9 @@ object ExternalHttpStreamServer {
     private var port: Int = -1
 
     private val activeTransfers = AtomicInteger(0)
+    private val sessionLock = Any()
     private val keepAliveLock = Any()
+    private val pruneLock = Any()
     private var stopKeepAliveJob: Job? = null
     private var pruneJob: Job? = null
 
@@ -411,25 +412,29 @@ object ExternalHttpStreamServer {
     fun obtainSession(network: Boolean, dirKey: String): Pair<Session, Boolean> {
         ensureStarted()
         val key = dirKey.trim().ifEmpty { "dir:${UUID.randomUUID()}" }
-        findSessionByDirKey(key)?.let { existing ->
-            if (network) {
-                onNetworkSessionRegistered()
+        val result = synchronized(sessionLock) {
+            findSessionByDirKey(key)?.let { existing ->
+                return@synchronized existing to true
             }
-            schedulePrune()
-            logcat("ExtHttp") { "reuse dir session ${existing.id} dirKey=$key files=${existing.files.size}" }
-            return existing to true
+            val id = UUID.randomUUID().toString().replace("-", "")
+            val session = Session(id = id, network = network, dirKey = key)
+            sessions[id] = session
+            session to false
         }
-        val id = UUID.randomUUID().toString().replace("-", "")
-        val session = Session(id = id, network = network, dirKey = key)
-        sessions[id] = session
         if (network) {
             onNetworkSessionRegistered()
         }
-        // Soft cap: drop oldest idle sessions (no live sockets) when over limit.
-        pruneStale()
+        if (result.second) {
+            logcat("ExtHttp") {
+                "reuse dir session ${result.first.id} dirKey=$key files=${result.first.files.size}"
+            }
+        } else {
+            // Soft cap: drop oldest idle sessions (no live sockets) when over limit.
+            pruneStale(protectedSessionId = result.first.id)
+            logcat("ExtHttp") { "new dir session ${result.first.id} dirKey=$key" }
+        }
         schedulePrune()
-        logcat("ExtHttp") { "new dir session $id dirKey=$key" }
-        return session to false
+        return result
     }
 
     fun removeSession(id: String) {
@@ -477,6 +482,7 @@ object ExternalHttpStreamServer {
             stopKeepAliveJob = null
             StreamKeepAliveService.start(context)
         }
+        StreamKeepAliveService.onNetworkActivityChanged()
         maybeStopKeepAliveLater()
     }
 
@@ -489,16 +495,15 @@ object ExternalHttpStreamServer {
             stopKeepAliveJob = null
             StreamKeepAliveService.start(context)
         }
+        StreamKeepAliveService.onNetworkActivityChanged()
     }
 
     private fun onTransferEnded(network: Boolean) {
         if (!network) return
         val n = activeTransfers.updateAndGet { (it - 1).coerceAtLeast(0) }
         logcat("ExtHttp") { "transfer end active=$n" }
+        StreamKeepAliveService.onNetworkActivityChanged()
         if (n == 0) {
-            // No active HTTP → drop wake lock immediately. FGS may remain briefly for token
-            // + self-shutdown only (no CPU work). Warm SMB times out separately on the body.
-            StreamKeepAliveService.onNetworkIdle()
             maybeStopKeepAliveLater()
         }
     }
@@ -536,17 +541,22 @@ object ExternalHttpStreamServer {
         val maxAge = StreamKeepAlivePolicy.tokenMaxAgeMs()
         val next = sessions.values.minOfOrNull { maxAge - (nowMs - it.lastAccessMs) }
             ?.coerceAtLeast(1L)
-        pruneJob?.cancel()
-        pruneJob = next?.let { delayMs ->
-            scope.launch {
-                delay(delayMs)
-                pruneStale()
-                schedulePrune()
+        synchronized(pruneLock) {
+            pruneJob?.cancel()
+            pruneJob = next?.let { delayMs ->
+                scope.launch {
+                    delay(delayMs)
+                    pruneStale()
+                    schedulePrune()
+                }
             }
         }
     }
 
-    fun pruneStale(nowMs: Long = SystemClock.elapsedRealtime()) {
+    fun pruneStale(
+        nowMs: Long = SystemClock.elapsedRealtime(),
+        protectedSessionId: String? = null,
+    ) {
         val maxAge = StreamKeepAlivePolicy.tokenMaxAgeMs()
         // lastAccess is touched on every request/byte progress — idle budget is activity-based.
         for ((id, session) in sessions) {
@@ -560,6 +570,7 @@ object ExternalHttpStreamServer {
         if (sessions.size > MAX_SESSIONS) {
             val overflow = sessions.size - MAX_SESSIONS
             sessions.entries
+                .filterNot { (id, session) -> id == protectedSessionId || session.hasLiveSockets() }
                 .sortedBy { it.value.lastAccessMs }
                 .take(overflow)
                 .forEach { (id, session) ->

@@ -199,6 +199,10 @@ object OpenFileExternally {
     private fun webDavDirKey(sourceId: Long, parentDir: String): String =
         "dav:$sourceId:${parentDir.trim().trimEnd('/')}"
 
+    /** Folder access shares one token; restricted access keeps one token per opened video. */
+    private fun httpSessionKey(dirKey: String, accessDir: Boolean, displayName: String): String =
+        if (accessDir) "$dirKey|folder" else "$dirKey|file:${displayName.length}:$displayName"
+
     private suspend fun openLocalVideoHttp(
         context: Context,
         pathStr: String,
@@ -206,7 +210,7 @@ object OpenFileExternally {
         mimeType: String,
     ) {
         val accessDir = accessDirEnabled()
-        val dirKey = localDirKey(pathStr)
+        val dirKey = httpSessionKey(localDirKey(pathStr), accessDir, displayName)
         val (session, reused) = withIOContext {
             withDirHttpSession(network = false, dirKey = dirKey) { session, _ ->
                 session.put(localFileEntry(pathStr, displayName, mimeType))
@@ -253,7 +257,7 @@ object OpenFileExternally {
                 ?.takeIf { it > 0L }
                 ?: error("empty or unreachable file")
             val parentDir = parentRelative(remoteRelativeFile)
-            val dirKey = smbDirKey(sourceId, parentDir)
+            val dirKey = httpSessionKey(smbDirKey(sourceId, parentDir), accessDir, displayName)
             withDirHttpSession(network = true, dirKey = dirKey) { session, wasReused ->
                 // Always refresh the opened video entry (known size).
                 session.put(
@@ -316,7 +320,7 @@ object OpenFileExternally {
                 ?.takeIf { it > 0L }
                 ?: error("empty or unreachable file")
             val parentDir = parentRelative(remoteRelativeFile)
-            val dirKey = webDavDirKey(sourceId, parentDir)
+            val dirKey = httpSessionKey(webDavDirKey(sourceId, parentDir), accessDir, displayName)
             withDirHttpSession(network = true, dirKey = dirKey) { session, wasReused ->
                 session.put(
                     webDavFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes),
@@ -599,11 +603,12 @@ object OpenFileExternally {
             .map { ExternalHttpStreamServer.uriFor(session.id, it.displayName) }
         val subNames = subUris.mapNotNull { it.lastPathSegment?.let { s -> Uri.decode(s) } }.toTypedArray()
         // Full folder video list when access-dir is on.
+        val playlistName = playlistNameFor(session.id)
         val videoNames = if (accessDir) {
             session.files.values
                 .filter {
                     DefaultVideoPlayer.isVideoMime(it.mimeType) &&
-                        !it.displayName.equals(PLAYLIST_FILE_NAME, ignoreCase = true)
+                        !it.displayName.equals(playlistName, ignoreCase = true)
                 }
                 .map { it.displayName }
                 .distinct()
@@ -622,13 +627,13 @@ object OpenFileExternally {
             val body = buildM3u8Playlist(session.id, videoNames, displayName)
             session.put(
                 ExternalHttpStreamServer.FileEntry(
-                    displayName = PLAYLIST_FILE_NAME,
+                    displayName = playlistName,
                     mimeType = PLAYLIST_MIME,
                     sizeBytes = body.size.toLong(),
                     open = { ExternalHttpStreamServer.BytesBody(body) },
                 ),
             )
-            openUri = ExternalHttpStreamServer.uriFor(session.id, PLAYLIST_FILE_NAME)
+            openUri = ExternalHttpStreamServer.uriFor(session.id, playlistName)
             openMime = PLAYLIST_MIME
             openTitle = displayName
             logcat("OpenFileExternally") {
@@ -684,7 +689,6 @@ object OpenFileExternally {
                 context.startActivity(chooser)
             } catch (e: ActivityNotFoundException) {
                 logcat("OpenFileExternally", e)
-                ExternalHttpStreamServer.removeSession(session.id)
                 error(context.getString(R.string.browse_open_failed))
             }
         }
@@ -958,6 +962,7 @@ object OpenFileExternally {
     private const val MAX_DIR_MEDIA_FILES = 80
 
     /** Virtual playlist basename served from the HTTP session (not a real on-disk file). */
-    private const val PLAYLIST_FILE_NAME = "playlist.m3u8"
+    private fun playlistNameFor(sessionId: String): String = ".localviewer-$sessionId.m3u8"
+
     private const val PLAYLIST_MIME = "video/x-mpegurl"
 }
