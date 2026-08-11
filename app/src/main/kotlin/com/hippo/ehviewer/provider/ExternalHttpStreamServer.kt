@@ -88,8 +88,7 @@ object ExternalHttpStreamServer {
 
     class ArchiveBody(private val source: ArchiveByteSource) : StreamBody {
         override val size: Long get() = source.size
-        override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int =
-            source.readAt(offset, buf, off, len)
+        override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = source.readAt(offset, buf, off, len)
         override fun close() = source.close()
     }
 
@@ -150,6 +149,7 @@ object ExternalHttpStreamServer {
         private val bodyLock = Any()
         private val bodyCache = HashMap<String, CachedBody>()
         private val bodyIdleJobs = HashMap<String, Job>()
+
         /** Live client sockets serving this session (abort on teardown). */
         private val liveSockets = ConcurrentHashMap.newKeySet<Socket>()
 
@@ -277,6 +277,7 @@ object ExternalHttpStreamServer {
 
         private class CachedBody(val body: StreamBody) {
             val refs = AtomicInteger(0)
+
             /** Shared so concurrent Range holders serialize sticky seek/read. */
             val readLock = Any()
         }
@@ -292,10 +293,9 @@ object ExternalHttpStreamServer {
             private val closed = AtomicBoolean(false)
 
             override val size: Long get() = cached.body.size
-            override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int =
-                synchronized(cached.readLock) {
-                    cached.body.readAt(offset, buf, off, len)
-                }
+            override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = synchronized(cached.readLock) {
+                cached.body.readAt(offset, buf, off, len)
+            }
             override fun close() {
                 if (closed.compareAndSet(false, true)) {
                     releaseBody(key, cached)

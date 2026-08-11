@@ -155,8 +155,7 @@ object OpenFileExternally {
      * When [accessDirEnabled] and this are on: intent data is a generated m3u8 of folder
      * videos (current first) instead of the single file URI + multi-file extras.
      */
-    private fun passFolderPlaylistEnabled(): Boolean =
-        accessDirEnabled() && Settings.externalVideoPassFolderPlaylist.value
+    private fun passFolderPlaylistEnabled(): Boolean = accessDirEnabled() && Settings.externalVideoPassFolderPlaylist.value
 
     private fun isHttpExposedMediaName(name: String): Boolean = isBrowseVideoFileName(name) || SidecarSubtitles.isSubtitleFileName(name)
 
@@ -193,15 +192,12 @@ object OpenFileExternally {
         return "local:${parent.trimEnd('/')}"
     }
 
-    private fun smbDirKey(sourceId: Long, parentDir: String): String =
-        "smb:$sourceId:${parentDir.trim().trimEnd('/')}"
+    private fun smbDirKey(sourceId: Long, parentDir: String): String = "smb:$sourceId:${parentDir.trim().trimEnd('/')}"
 
-    private fun webDavDirKey(sourceId: Long, parentDir: String): String =
-        "dav:$sourceId:${parentDir.trim().trimEnd('/')}"
+    private fun webDavDirKey(sourceId: Long, parentDir: String): String = "dav:$sourceId:${parentDir.trim().trimEnd('/')}"
 
     /** Folder access shares one token; restricted access keeps one token per opened video. */
-    private fun httpSessionKey(dirKey: String, accessDir: Boolean, displayName: String): String =
-        if (accessDir) "$dirKey|folder" else "$dirKey|file:${displayName.length}:$displayName"
+    private fun httpSessionKey(dirKey: String, accessDir: Boolean, displayName: String): String = if (accessDir) "$dirKey|folder" else "$dirKey|file:${displayName.length}:$displayName"
 
     private suspend fun openLocalVideoHttp(
         context: Context,

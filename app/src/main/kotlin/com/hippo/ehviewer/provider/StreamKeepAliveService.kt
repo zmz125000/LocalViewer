@@ -172,9 +172,8 @@ class StreamKeepAliveService : Service() {
         @Volatile
         private var instance: StreamKeepAliveService? = null
 
-        private fun hasActiveNetworkStreams(): Boolean =
-            StreamDocumentRegistry.networkOpenCount() > 0 ||
-                ExternalHttpStreamServer.networkActivityCount() > 0
+        private fun hasActiveNetworkStreams(): Boolean = StreamDocumentRegistry.networkOpenCount() > 0 ||
+            ExternalHttpStreamServer.networkActivityCount() > 0
 
         /** Start or refresh the keep-alive for live network activity. */
         fun start(context: Context) {
