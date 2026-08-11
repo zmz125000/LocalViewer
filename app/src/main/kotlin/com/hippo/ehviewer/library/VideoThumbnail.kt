@@ -2,24 +2,26 @@ package com.hippo.ehviewer.library
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaDataSource
 import android.media.MediaMetadataRetriever
 import android.os.ParcelFileDescriptor
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbCache
-import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
 import com.hippo.ehviewer.webdav.WebDavCache
-import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import okio.Path.Companion.toPath
@@ -59,21 +61,22 @@ sealed interface VideoThumbnailSource {
  * Local videos always extract into this cache. Network (SMB/WebDAV) extraction is
  * gated by [Settings.downloadNetworkVideoThumbs]; cached JPEGs still show when off.
  *
- * Network thumbnails stream a bounded prefix through the same browse-thumbnail pools
- * as folder/gallery covers. Prefix decode failures may add a bounded sparse tail for EOF
- * metadata. They never use StreamDocumentProvider, loopback HTTP, or sticky player sessions.
+ * Network thumbnails expose the complete remote file as a seekable byte source through the
+ * same browse-thumbnail pools as folder/gallery covers. Decoder reads use pooled SMB handles
+ * or WebDAV ranges; they never use StreamDocumentProvider, loopback HTTP, or sticky sessions.
  */
 object VideoThumbnail {
     /** Long edge — matches [OriginDiskCache.THUMB_EDGE] (other browse covers). */
     private val EDGE_PX: Int get() = OriginDiskCache.THUMB_EDGE
 
-    /** Keep four decoders, but cap each network stream so playback keeps bandwidth. */
-    private const val MAX_NETWORK_PREFIX_BYTES = 4L * 1024L * 1024L
-    private const val MAX_NETWORK_TAIL_BYTES = 2L * 1024L * 1024L
+    /** Keep four decoders; network work is additionally capped by each browse-thumb pool. */
     private const val FAILURE_RETRY_MS = 24L * 60 * 60 * 1_000
     private const val FAILURE_MARKER_DECODE = "decode-head-tail"
     private const val REMOTE_CACHE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1_000
     private const val MAX_CONCURRENT_EXTRACTIONS = 4
+    private const val SAMPLE_GRID = 12
+    private const val BLACK_LUMA = 24
+    private const val MIN_VISIBLE_SAMPLES = SAMPLE_GRID * SAMPLE_GRID * 15 / 100
     private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
 
     /** Shared with [OriginDiskCache.trimThumbs] (`cache/video_thumb_cache`). */
@@ -122,7 +125,7 @@ object VideoThumbnail {
                 return@withPermit null
             }
             val frame = try {
-                extractThumbnailFrame(source, directory, cacheKey)
+                extractThumbnailFrame(source)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
@@ -162,11 +165,7 @@ object VideoThumbnail {
         return System.currentTimeMillis() - target.lastModified() < REMOTE_CACHE_MAX_AGE_MS
     }
 
-    private suspend fun extractThumbnailFrame(
-        source: VideoThumbnailSource,
-        directory: File,
-        cacheKey: String,
-    ): Bitmap? = when (source) {
+    private suspend fun extractThumbnailFrame(source: VideoThumbnailSource): Bitmap? = when (source) {
         is VideoThumbnailSource.Local -> {
             val file = File(source.path)
             val pfd = if (source.path.startsWith('/') && file.isFile) {
@@ -178,100 +177,51 @@ object VideoThumbnail {
         }
         is VideoThumbnailSource.Smb -> {
             val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
-            extractNetworkThumbnailFrame(
-                directory = directory,
-                cacheKey = cacheKey,
-                remoteFileName = source.remoteRelativeFile,
-                downloadPrefix = { temporary ->
-                    SmbCache.withBrowseThumbFetchSlot {
-                        SmbGateway.downloadFilePrefix(
-                            source = smb,
-                            password = SmbPasswordStore.get(source.sourceId),
-                            relativeFilePath = source.remoteRelativeFile,
-                            destination = temporary,
-                            maxBytes = MAX_NETWORK_PREFIX_BYTES,
-                        )
-                    }
-                },
-                downloadTail = { temporary ->
-                    SmbCache.withBrowseThumbFetchSlot {
-                        SmbGateway.downloadFileTail(
-                            source = smb,
-                            password = SmbPasswordStore.get(source.sourceId),
-                            relativeFilePath = source.remoteRelativeFile,
-                            destination = temporary,
-                            maxBytes = MAX_NETWORK_TAIL_BYTES,
-                        )
-                    }
-                },
-            )
+            SmbCache.withBrowseThumbFetchSlot {
+                extractNetworkFrame(
+                    SmbArchiveByteSource(
+                        source = smb,
+                        password = SmbPasswordStore.get(source.sourceId),
+                        remoteRelativeFile = source.remoteRelativeFile,
+                        pipeline = false,
+                        readahead = false,
+                    ),
+                )
+            }
         }
         is VideoThumbnailSource.WebDav -> {
             val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
-            extractNetworkThumbnailFrame(
-                directory = directory,
-                cacheKey = cacheKey,
-                remoteFileName = source.remoteRelativeFile,
-                downloadPrefix = { temporary ->
-                    WebDavCache.withBrowseThumbFetchSlot {
-                        WebDavClient.downloadFilePrefix(
-                            source = webDav,
-                            password = WebDavPasswordStore.get(source.sourceId),
-                            relativeFilePath = source.remoteRelativeFile,
-                            destination = temporary,
-                            maxBytes = MAX_NETWORK_PREFIX_BYTES,
-                        )
-                    }
-                },
-                downloadTail = { temporary ->
-                    WebDavCache.withBrowseThumbFetchSlot {
-                        WebDavClient.downloadFileTail(
-                            source = webDav,
-                            password = WebDavPasswordStore.get(source.sourceId),
-                            relativeFilePath = source.remoteRelativeFile,
-                            destination = temporary,
-                            maxBytes = MAX_NETWORK_TAIL_BYTES,
-                        )
-                    }
-                },
-            )
+            WebDavCache.withBrowseThumbFetchSlot {
+                extractNetworkFrame(
+                    WebDavArchiveByteSource(
+                        source = webDav,
+                        password = WebDavPasswordStore.get(source.sourceId),
+                        remoteRelativeFile = source.remoteRelativeFile,
+                        pipeline = false,
+                        readahead = false,
+                    ),
+                )
+            }
         }
     }
 
-    private suspend fun extractNetworkThumbnailFrame(
-        directory: File,
-        cacheKey: String,
-        remoteFileName: String,
-        downloadPrefix: suspend (File) -> Long,
-        downloadTail: suspend (File) -> Long,
-    ): Bitmap? {
-        val extension = remoteFileName
-            .substringAfterLast('.', "video")
-            .lowercase()
-            .filter { it.isLetterOrDigit() }
-            .take(8)
-            .ifEmpty { "video" }
-        val temporary = File(
-            directory,
-            "$cacheKey.tmp.${System.nanoTime()}.$extension",
-        )
-        return try {
-            val downloaded = downloadPrefix(temporary)
-            if (downloaded <= 0L || temporary.length() <= 0L) {
-                null
+    /**
+     * Close an in-flight random-access source as soon as its browse row is cancelled.
+     * Both implementations use close to interrupt blocked SMB/WebDAV reads.
+     */
+    private suspend fun extractNetworkFrame(source: ArchiveByteSource): Bitmap? =
+        suspendCancellableCoroutine { continuation ->
+            // Registration happens before the blocking retriever call, so scrolling away
+            // closes the active handle/range source from the cancelling thread.
+            continuation.invokeOnCancellation { source.close() }
+            val result = runCatching { extractFrame(source) }
+            source.close()
+            if (continuation.isActive) {
+                continuation.resumeWith(result)
             } else {
-                extractFrame(temporary) ?: run {
-                    // MP4 commonly stores its moov metadata at EOF. Add a sparse tail
-                    // only after prefix-only decoding fails, then retry with the same
-                    // bounded browse-thumbnail connection path.
-                    val tailDownloaded = downloadTail(temporary)
-                    if (tailDownloaded > 0L) extractFrame(temporary) else null
-                }
+                result.getOrNull()?.recycle()
             }
-        } finally {
-            temporary.delete()
         }
-    }
 
     private fun extractFrame(source: ArchiveByteSource): Bitmap? {
         val dataSource = ArchiveMediaDataSource(source)
@@ -286,11 +236,82 @@ object VideoThumbnail {
 
     private inline fun decodeThumbnailFrame(
         setDataSource: (MediaMetadataRetriever) -> Unit,
-    ): Bitmap? =
-        decodeFrame(setDataSource) { getFrameAtTime() }
-            ?: decodeFrame(setDataSource) {
-                getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+    ): Bitmap? = decodeFrame(setDataSource) { selectThumbnailFrame() }
+
+    /**
+     * Android's representative frame is normally fast and useful. Only a null/mostly-black
+     * result causes extra seeks, first near one-third and then two-thirds of the duration.
+     */
+    private fun MediaMetadataRetriever.selectThumbnailFrame(): Bitmap? {
+        var best = runCatching {
+            embeddedPicture?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+        }.getOrNull()
+        var bestScore = best?.let(::visibleSampleCount) ?: -1
+        if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+
+        runCatching { getFrameAtTime() }.getOrNull()?.let { representative ->
+            val score = visibleSampleCount(representative)
+            if (score > bestScore) {
+                best?.recycle()
+                best = representative
+                bestScore = score
+            } else {
+                representative.recycle()
             }
+        }
+        if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+
+        val durationUs = runCatching {
+            extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+                ?.takeIf { it > 0L }
+                ?.times(1_000L)
+        }.getOrNull()
+        val lastUs = durationUs?.minus(1L)?.coerceAtLeast(0L)
+        val candidateTimes = buildList {
+            if (durationUs != null) {
+                add(durationUs / 3L)
+                add(durationUs * 2L / 3L)
+            }
+            add(if (lastUs == null) 5_000_000L else minOf(5_000_000L, lastUs))
+            add(0L)
+        }.distinct()
+
+        for (timeUs in candidateTimes) {
+            val candidate = runCatching {
+                getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            }.getOrNull() ?: continue
+            val score = visibleSampleCount(candidate)
+            if (score > bestScore) {
+                best?.recycle()
+                best = candidate
+                bestScore = score
+            } else {
+                candidate.recycle()
+            }
+            if (bestScore >= MIN_VISIBLE_SAMPLES) break
+        }
+        return best
+    }
+
+    /** Count sampled pixels that are visibly above black without allocating another bitmap. */
+    private fun visibleSampleCount(bitmap: Bitmap): Int = runCatching {
+        var visible = 0
+        for (sampleY in 0 until SAMPLE_GRID) {
+            val y = (sampleY * bitmap.height / SAMPLE_GRID).coerceAtMost(bitmap.height - 1)
+            for (sampleX in 0 until SAMPLE_GRID) {
+                val x = (sampleX * bitmap.width / SAMPLE_GRID).coerceAtMost(bitmap.width - 1)
+                val color = bitmap.getPixel(x, y)
+                val luma = (
+                    77 * android.graphics.Color.red(color) +
+                        150 * android.graphics.Color.green(color) +
+                        29 * android.graphics.Color.blue(color)
+                    ) shr 8
+                if (luma >= BLACK_LUMA) visible++
+            }
+        }
+        visible
+    }.getOrDefault(MIN_VISIBLE_SAMPLES)
 
     private inline fun decodeFrame(
         setDataSource: (MediaMetadataRetriever) -> Unit,
