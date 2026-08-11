@@ -83,7 +83,7 @@ object StreamKeepAlivePolicy {
      */
     fun dropStickyNetwork(reason: String) {
         logcat("StreamKeepAlive") { "drop sticky network ($reason)" }
-        runCatching { ExternalHttpStreamServer.evictAllIdleSmbBackends() }
+        runCatching { ExternalHttpStreamServer.relieveSmbPoolPressure() }
         runCatching { SmbGateway.dropStickySessions(reason) }
         runCatching { WebDavClient.resetStickyClient() }
     }
