@@ -149,7 +149,7 @@
     <string name="settings_privacy_save_history">履歴を保存</string>
     <string name="settings_privacy_save_history_summary">ブラウズフォルダ・ファイル・ギャラリー履歴のマスタースイッチです。オフにすると既存の履歴も消去されます。</string>
     <string name="settings_privacy_save_file_history">ファイル履歴を保存</string>
-    <string name="settings_privacy_save_file_history_summary">開いたアーカイブやドキュメントを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
+    <string name="settings_privacy_save_file_history_summary">開いたアーカイブ・動画・その他のファイルを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
     <string name="settings_privacy_save_gallery_history">ギャラリー履歴を保存</string>
     <string name="settings_privacy_save_gallery_history_summary">開いたライブラリ／フォルダギャラリーを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
     <string name="history_disabled">プライバシー設定で履歴がオフになっています</string>

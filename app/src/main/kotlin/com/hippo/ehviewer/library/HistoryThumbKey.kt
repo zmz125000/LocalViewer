@@ -3,6 +3,7 @@ package com.hippo.ehviewer.library
 import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.webdav.WebDavCache
 import okio.Path
+import okio.Path.Companion.toPath
 
 /**
  * Stable [GalleryInfo.thumbKey] encodings for history / favourite rows so UI paints the
@@ -14,6 +15,7 @@ import okio.Path
  * - SMB / WebDAV network archive: `smb-arch:{sourceId}:{remote}` /
  *   `dav-arch:…` → [ArchiveCoverCache] first-page JPEG (`archive_thumb/`, same key as
  *   browse `smb:` / `webdav:` stream covers).
+ * - Videos: `vid-local:{path}` / `vid-smb:…` / `vid-dav:…` → [VideoThumbnail] cache hit only.
  *
  * Dir-only browse history (`*_browse` tokens) uses the **folder** thumb key
  * (local path / `smb-thumb:` / `dav-thumb:`), same as folder favourites — not archive keys.
@@ -23,6 +25,9 @@ object HistoryThumbKey {
     private const val DAV_PREFIX = "dav-thumb:"
     private const val SMB_ARCH_PREFIX = "smb-arch:"
     private const val DAV_ARCH_PREFIX = "dav-arch:"
+    private const val VID_LOCAL_PREFIX = "vid-local:"
+    private const val VID_SMB_PREFIX = "vid-smb:"
+    private const val VID_DAV_PREFIX = "vid-dav:"
 
     fun smb(sourceId: Long, remoteRelativeFile: String): String {
         val remote = remoteRelativeFile.replace('\\', '/').trimStart('/')
@@ -45,6 +50,19 @@ object HistoryThumbKey {
         return "$DAV_ARCH_PREFIX$sourceId:$remote"
     }
 
+    /** Local video frame in [VideoThumbnail] cache (path may be absolute or content URI). */
+    fun videoLocal(path: String): String = "$VID_LOCAL_PREFIX$path"
+
+    fun videoSmb(sourceId: Long, remoteRelativeFile: String): String {
+        val remote = remoteRelativeFile.replace('\\', '/').trimStart('/')
+        return "$VID_SMB_PREFIX$sourceId:$remote"
+    }
+
+    fun videoWebdav(sourceId: Long, remoteRelativeFile: String): String {
+        val remote = remoteRelativeFile.replace('\\', '/').trimStart('/')
+        return "$VID_DAV_PREFIX$sourceId:$remote"
+    }
+
     /** Browse/reader [ArchiveCoverCache] key for a network archive logical thumb key. */
     fun archiveCacheKey(key: String): String? = when {
         key.startsWith(SMB_ARCH_PREFIX) -> {
@@ -61,7 +79,10 @@ object HistoryThumbKey {
     fun isLogicalKey(key: String): Boolean = key.startsWith(SMB_PREFIX) ||
         key.startsWith(DAV_PREFIX) ||
         key.startsWith(SMB_ARCH_PREFIX) ||
-        key.startsWith(DAV_ARCH_PREFIX)
+        key.startsWith(DAV_ARCH_PREFIX) ||
+        key.startsWith(VID_LOCAL_PREFIX) ||
+        key.startsWith(VID_SMB_PREFIX) ||
+        key.startsWith(VID_DAV_PREFIX)
 
     /**
      * Path Coil can open, or null if missing / not cached.
@@ -90,6 +111,23 @@ object HistoryThumbKey {
                 if (!ArchiveCoverCache.isCachedOnDisk(dest)) return null
                 return dest.toString()
             }
+            key.startsWith(VID_LOCAL_PREFIX) -> {
+                val path = key.removePrefix(VID_LOCAL_PREFIX)
+                if (path.isEmpty()) return null
+                return VideoThumbnail.cachedJpegIfPresent(VideoThumbnailSource.Local(path))?.absolutePath
+            }
+            key.startsWith(VID_SMB_PREFIX) -> {
+                val (sourceId, remote) = parseSourceRemote(key, VID_SMB_PREFIX) ?: return null
+                return VideoThumbnail.cachedJpegIfPresent(
+                    VideoThumbnailSource.Smb(sourceId, remote),
+                )?.absolutePath
+            }
+            key.startsWith(VID_DAV_PREFIX) -> {
+                val (sourceId, remote) = parseSourceRemote(key, VID_DAV_PREFIX) ?: return null
+                return VideoThumbnail.cachedJpegIfPresent(
+                    VideoThumbnailSource.WebDav(sourceId, remote),
+                )?.absolutePath
+            }
             else -> {
                 // Local path / content URI / archive_thumb absolute path.
                 return if (ArchiveCoverCache.isCoverPathReadable(key)) key else null
@@ -112,6 +150,22 @@ object HistoryThumbKey {
             key.startsWith(SMB_ARCH_PREFIX) || key.startsWith(DAV_ARCH_PREFIX) -> {
                 val cacheKey = archiveCacheKey(key) ?: return null
                 return ArchiveCoverCache.resolveCoverDest(cacheKey)
+            }
+            key.startsWith(VID_LOCAL_PREFIX) -> {
+                val path = key.removePrefix(VID_LOCAL_PREFIX)
+                if (path.isEmpty()) return null
+                return VideoThumbnail.cachedJpegIfPresent(VideoThumbnailSource.Local(path))
+                    ?.absolutePath?.toPath()
+            }
+            key.startsWith(VID_SMB_PREFIX) -> {
+                val (sourceId, remote) = parseSourceRemote(key, VID_SMB_PREFIX) ?: return null
+                return VideoThumbnail.cachedJpegIfPresent(VideoThumbnailSource.Smb(sourceId, remote))
+                    ?.absolutePath?.toPath()
+            }
+            key.startsWith(VID_DAV_PREFIX) -> {
+                val (sourceId, remote) = parseSourceRemote(key, VID_DAV_PREFIX) ?: return null
+                return VideoThumbnail.cachedJpegIfPresent(VideoThumbnailSource.WebDav(sourceId, remote))
+                    ?.absolutePath?.toPath()
             }
             else -> return null
         }

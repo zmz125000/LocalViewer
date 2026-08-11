@@ -601,7 +601,7 @@
     <string name="settings_privacy_save_history">Save history</string>
     <string name="settings_privacy_save_history_summary">Master switch for browse folders, files, and galleries. Turning this off clears existing history.</string>
     <string name="settings_privacy_save_file_history">Save file history</string>
-    <string name="settings_privacy_save_file_history_summary">Record opened archives and document files. Parent folders are still recorded when Save history is on.</string>
+    <string name="settings_privacy_save_file_history_summary">Record opened archives, videos, and other non-folder files. Parent folders are still recorded when Save history is on.</string>
     <string name="settings_privacy_save_gallery_history">Save gallery history</string>
     <string name="settings_privacy_save_gallery_history_summary">Record opened library and folder galleries. Parent folders are still recorded when Save history is on.</string>
     <string name="history_disabled">History is turned off in Privacy settings</string>

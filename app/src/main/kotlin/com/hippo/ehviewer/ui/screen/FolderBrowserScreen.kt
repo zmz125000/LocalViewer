@@ -385,8 +385,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         if (!isPdfFileName(entry.name)) return
         val path = entry.path.toString()
         launchIO {
-            // On tap: record containing browse folder (cannot know if external app succeeded).
+            // Parent dir + file row (non-dir open).
             recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFile(path, title = entry.name)
             try {
                 OpenPdfExternally.openLocal(context, path, displayName = entry.name)
             } catch (e: Throwable) {
@@ -404,13 +405,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         // Always launch with the real path basename — promoted VideoFile rows use a
         // virtual `@dir` display name without extension (wrong MIME / player title).
         val actualName = path.name
+        val pathStr = path.toString()
         launchIO {
-            // On tap: record containing browse folder (cannot know if external app succeeded).
+            // Parent dir + file/video row (non-dir open).
             recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFile(pathStr, title = actualName)
             try {
                 OpenFileExternally.openLocal(
                     context,
-                    path.toString(),
+                    pathStr,
                     displayName = actualName,
                     mimeType = mimeTypeForFileName(actualName),
                 )
@@ -427,12 +430,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     /** In-app Media3 player. */
     fun playVideo(path: okio.Path) {
         val actualName = path.name
+        val pathStr = path.toString()
         launchIO {
             recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFile(pathStr, title = actualName)
             try {
                 OpenFileExternally.playLocal(
                     context,
-                    path.toString(),
+                    pathStr,
                     displayName = actualName,
                     mimeType = mimeTypeForFileName(actualName),
                 )

@@ -392,7 +392,7 @@
     <string name="settings_privacy_save_history">保存历史</string>
     <string name="settings_privacy_save_history_summary">浏览文件夹、文件与图库历史的总开关。关闭后会清除已有历史。</string>
     <string name="settings_privacy_save_file_history">保存文件历史</string>
-    <string name="settings_privacy_save_file_history_summary">记录打开的压缩包与文档文件。父文件夹仍会在开启“保存历史”时记录。</string>
+    <string name="settings_privacy_save_file_history_summary">记录打开的压缩包、视频与其他非文件夹文件。父文件夹仍会在开启“保存历史”时记录。</string>
     <string name="settings_privacy_save_gallery_history">保存图库历史</string>
     <string name="settings_privacy_save_gallery_history_summary">记录打开的库图库与文件夹图库。父文件夹仍会在开启“保存历史”时记录。</string>
     <string name="history_disabled">历史记录已在隐私设置中关闭</string>

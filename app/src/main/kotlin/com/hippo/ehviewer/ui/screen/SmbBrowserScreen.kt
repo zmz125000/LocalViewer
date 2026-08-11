@@ -483,8 +483,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val src = source ?: return
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
-            // On tap: record containing browse folder (cannot know if external app succeeded).
+            // Parent dir + file row (non-dir open).
             recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordSmbFile(src.id, remote, title = entry.name)
             try {
                 OpenPdfExternally.openSmb(
                     context = context,
@@ -510,8 +511,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
         launchIO {
-            // On tap: record containing browse folder (cannot know if external app succeeded).
+            // Parent dir + file/video row (non-dir open).
             recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordSmbFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.openSmb(
                     context = context,
@@ -535,6 +537,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
         launchIO {
             recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordSmbFile(src.id, remote, title = actualName)
             try {
                 OpenFileExternally.playSmb(
                     context = context,

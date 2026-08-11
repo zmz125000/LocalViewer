@@ -77,6 +77,17 @@ object VideoThumbnail {
     /** Shared with [OriginDiskCache.trimThumbs] (`cache/video_thumb_cache`). */
     fun cacheDirectory(): File = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache").apply { mkdirs() }
 
+    /**
+     * Disk-hit only (no extract). Used by [HistoryThumbKey] so history covers paint
+     * when browse already extracted a frame.
+     */
+    fun cachedJpegIfPresent(source: VideoThumbnailSource): File? {
+        val directory = cacheDirectory()
+        val cacheKey = sha256(source.cacheIdentity)
+        val target = File(directory, "$cacheKey.jpg")
+        return if (isFresh(target, source)) target else null
+    }
+
     @Suppress("UNUSED_PARAMETER")
     suspend fun getOrCreate(context: Context, source: VideoThumbnailSource): File? = withIOContext {
         // [context] kept for call-site API stability; files live under app dataDir.

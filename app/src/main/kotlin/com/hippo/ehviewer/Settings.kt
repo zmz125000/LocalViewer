@@ -233,8 +233,9 @@ object Settings : DataStorePreferences(null) {
     val saveHistory = boolPref("save_history", true)
 
     /**
-     * When [saveHistory] is on: record opened **files** (archives / stream archives,
-     * including library archive galleries). Default on. Does not gate browse-dir history.
+     * When [saveHistory] is on: record opened **files** (archives, stream archives,
+     * videos, and other non-dir files, including library archive galleries). Default on.
+     * Does not gate browse-dir history.
      */
     val saveFileHistory = boolPref("save_file_history", true)
 
