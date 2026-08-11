@@ -138,6 +138,8 @@
     <string name="settings_download_remote_thumbs_summary">取得網路圖庫縮圖。</string>
     <string name="settings_download_network_archive_thumbs">下載網路壓縮檔封面</string>
     <string name="settings_download_network_archive_thumbs_summary">擷取網路 ZIP/TAR/RAR/7z 的首頁縮圖。</string>
+    <string name="settings_download_network_video_thumbs">下載網路影片封面</string>
+    <string name="settings_download_network_video_thumbs_summary">為 SMB/WebDAV 影片擷取影格縮圖。關閉後仍顯示已快取的封面。</string>
     <string name="settings_persist_main_nav">資料夾頁面保留主導覽</string>
     <string name="settings_persist_main_nav_summary">瀏覽資料夾時顯示底部導覽，再次點按「瀏覽/歷史」可返回。關閉則使用快捷懸浮按鈕（手機）。</string>
     <string name="settings_eh_show_reading_progress">顯示閱讀進度</string>

@@ -193,6 +193,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 state = Settings.downloadNetworkArchiveThumbs.asMutableState(),
             )
             SwitchPreference(
+                title = stringResource(id = R.string.settings_download_network_video_thumbs),
+                state = Settings.downloadNetworkVideoThumbs.asMutableState(),
+            )
+            SwitchPreference(
                 title = stringResource(id = R.string.settings_persist_main_nav),
                 state = Settings.persistMainNav.asMutableState(),
             )

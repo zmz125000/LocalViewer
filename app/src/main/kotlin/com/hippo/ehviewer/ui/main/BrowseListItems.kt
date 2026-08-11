@@ -496,8 +496,11 @@ private fun BrowseVideoThumbnail(
     iconSize: Dp,
 ) {
     val context = LocalContext.current
+    val downloadNetworkVideoThumbs by Settings.downloadNetworkVideoThumbs.collectAsState()
     var thumbnail by remember(source) { mutableStateOf<java.io.File?>(null) }
-    LaunchedEffect(source) {
+    // Re-run when the network toggle changes so enabling mid-browse starts extraction;
+    // disabling only stops new network work (cached files still load inside getOrCreate).
+    LaunchedEffect(source, downloadNetworkVideoThumbs) {
         thumbnail = source?.let { VideoThumbnail.getOrCreate(context, it) }
     }
     Box(modifier = modifier, contentAlignment = Alignment.Center) {

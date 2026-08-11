@@ -157,6 +157,13 @@ object Settings : DataStorePreferences(null) {
      */
     val downloadNetworkArchiveThumbs = boolPref("download_network_archive_thumbs", true)
 
+    /**
+     * When false, SMB/WebDAV **video** browse thumbs are not extracted over the network
+     * (already-cached JPEG in [com.hippo.ehviewer.library.VideoThumbnail] still shows).
+     * Local video always uses disk cache extraction. Default true.
+     */
+    val downloadNetworkVideoThumbs = boolPref("download_network_video_thumbs", true)
+
     val showGalleryPages = boolPref("show_gallery_pages", true)
     val showReadingProgress = boolPref("show_reading_progress", false)
 
