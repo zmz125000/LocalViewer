@@ -138,6 +138,11 @@ object ExternalHttpStreamServer {
     class Session(
         val id: String,
         val network: Boolean,
+        /**
+         * Directory identity for reuse across video opens in the same folder
+         * (e.g. `smb:3:path/to/dir`, `local:/sdcard/Movies`).
+         */
+        val dirKey: String,
         val files: ConcurrentHashMap<String, FileEntry> = ConcurrentHashMap(),
         /**
          * On-demand open for a sibling basename not yet in [files]
@@ -365,21 +370,53 @@ object ExternalHttpStreamServer {
         port
     }
 
-    fun newSession(network: Boolean): Session {
+    /**
+     * Find a live session for [dirKey], or null if pruned / never opened.
+     */
+    fun findSessionByDirKey(dirKey: String): Session? {
+        val key = dirKey.trim()
+        if (key.isEmpty()) return null
+        return sessions.values.firstOrNull { it.dirKey == key }?.also { it.touch() }
+    }
+
+    /**
+     * Reuse the session for [dirKey] if present; otherwise create one.
+     *
+     * Same folder → same session id (player playlist / next video keep working).
+     * New folder → new session; other network sessions are closed to bound sticky SMB.
+     *
+     * @return session and whether it was reused (caller should not destroy a reused session on launch failure).
+     */
+    fun obtainSession(network: Boolean, dirKey: String): Pair<Session, Boolean> {
         ensureStarted()
-        // One network stream at a time: each video uses dual sticky SMB/WebDAV (demand+prefetch).
-        // Leaving prior sessions warm → N opens × 2 connections (e.g. 6 videos = 12 TCP).
+        val key = dirKey.trim().ifEmpty { "dir:${UUID.randomUUID()}" }
+        findSessionByDirKey(key)?.let { existing ->
+            if (network) {
+                onNetworkSessionRegistered()
+            }
+            schedulePrune()
+            logcat("ExtHttp") { "reuse dir session ${existing.id} dirKey=$key files=${existing.files.size}" }
+            return existing to true
+        }
+        // New directory: drop other network sessions so sticky backends do not accumulate.
         if (network) {
             closeOtherNetworkSessions(exceptId = null)
         }
+        // Also replace a prior session with the same dirKey (should not exist after find).
+        for ((id, s) in sessions) {
+            if (s.dirKey == key && sessions.remove(id, s)) {
+                s.closeBodies()
+            }
+        }
         val id = UUID.randomUUID().toString().replace("-", "")
-        val session = Session(id = id, network = network)
+        val session = Session(id = id, network = network, dirKey = key)
         sessions[id] = session
         if (network) {
             onNetworkSessionRegistered()
         }
         schedulePrune()
-        return session
+        logcat("ExtHttp") { "new dir session $id dirKey=$key" }
+        return session to false
     }
 
     /** Drop network HTTP sessions (and their sticky bodies). [exceptId] may be kept. */
@@ -400,6 +437,9 @@ object ExternalHttpStreamServer {
         schedulePrune()
         maybeStopKeepAliveLater()
     }
+
+    /** True if [id] is still registered. */
+    fun hasSession(id: String): Boolean = sessions.containsKey(id)
 
     fun uriFor(sessionId: String, fileName: String): Uri {
         val p = ensureStarted()
