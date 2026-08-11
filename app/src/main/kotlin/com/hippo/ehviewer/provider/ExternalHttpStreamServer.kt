@@ -327,6 +327,7 @@ object ExternalHttpStreamServer {
             val evictOnSmbPoolPressure: Boolean,
         ) {
             val refs = AtomicInteger(0)
+
             @Volatile var lastAccessMs: Long = SystemClock.elapsedRealtime()
 
             fun touch() {
