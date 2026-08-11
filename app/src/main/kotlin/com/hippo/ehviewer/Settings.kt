@@ -110,6 +110,14 @@ object Settings : DataStorePreferences(null) {
     val externalVideoAccessDir = boolPref("external_video_access_dir", false)
 
     /**
+     * When true (and [externalVideoAccessDir] is on), external open hands the folder to the
+     * player as a loopback **m3u8** playlist of every video in the directory (current file
+     * first). When false, the opened video URI is the intent data and multi-file extras are
+     * attached best-effort. Settings → General (nested under folder access).
+     */
+    val externalVideoPassFolderPlaylist = boolPref("external_video_pass_folder_playlist", false)
+
+    /**
      * When true, folder-view shows folder galleries below [browseSmallGalleryMinPages].
      * Default false: UI hides those rows (scanner listing is unchanged).
      */

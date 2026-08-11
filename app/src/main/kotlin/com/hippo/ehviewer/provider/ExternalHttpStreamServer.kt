@@ -96,6 +96,20 @@ object ExternalHttpStreamServer {
         }
     }
 
+    /** In-memory body (e.g. generated m3u8 playlist). */
+    class BytesBody(private val bytes: ByteArray) : StreamBody {
+        override val size: Long get() = bytes.size.toLong()
+        override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+            if (len <= 0) return 0
+            if (offset >= size) return 0
+            val start = offset.toInt()
+            val n = minOf(len, bytes.size - start)
+            System.arraycopy(bytes, start, buf, off, n)
+            return n
+        }
+        override fun close() = Unit
+    }
+
     class Session(
         val id: String,
         val network: Boolean,

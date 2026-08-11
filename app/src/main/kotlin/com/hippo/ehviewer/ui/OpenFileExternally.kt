@@ -151,6 +151,13 @@ object OpenFileExternally {
      */
     private fun accessDirEnabled(): Boolean = Settings.externalVideoAccessDir.value
 
+    /**
+     * When [accessDirEnabled] and this are on: intent data is a generated m3u8 of folder
+     * videos (current first) instead of the single file URI + multi-file extras.
+     */
+    private fun passFolderPlaylistEnabled(): Boolean =
+        accessDirEnabled() && Settings.externalVideoPassFolderPlaylist.value
+
     private fun isHttpExposedMediaName(name: String): Boolean = isBrowseVideoFileName(name) || SidecarSubtitles.isSubtitleFileName(name)
 
     private fun mediaMimeForName(name: String): String = when {
@@ -548,32 +555,62 @@ object OpenFileExternally {
             .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayName })
             .map { ExternalHttpStreamServer.uriFor(session.id, it.displayName) }
         val subNames = subUris.mapNotNull { it.lastPathSegment?.let { s -> Uri.decode(s) } }.toTypedArray()
-        // Full folder playlist when access-dir is on.
-        val videoUris = if (accessDir) {
+        // Full folder video list when access-dir is on.
+        val videoNames = if (accessDir) {
             session.files.values
                 .filter { DefaultVideoPlayer.isVideoMime(it.mimeType) }
                 .map { it.displayName }
-                .sorted()
-                .map { ExternalHttpStreamServer.uriFor(session.id, it) }
+                .distinct()
+                .sortedWith(String.CASE_INSENSITIVE_ORDER)
         } else {
             emptyList()
         }
-        val view = DefaultVideoPlayer.videoViewIntent(videoUri, mimeType).apply {
-            putExtra(Intent.EXTRA_TITLE, displayName)
-            val clip = ClipData.newRawUri(displayName, videoUri)
+        val videoUris = videoNames.map { ExternalHttpStreamServer.uriFor(session.id, it) }
+
+        // Optional: hand the whole folder as one m3u8 (VLC / mpv / etc.).
+        val passPlaylist = accessDir && passFolderPlaylistEnabled() && videoNames.isNotEmpty()
+        val openUri: Uri
+        val openMime: String
+        val openTitle: String
+        if (passPlaylist) {
+            val body = buildM3u8Playlist(session.id, videoNames, displayName)
+            session.put(
+                ExternalHttpStreamServer.FileEntry(
+                    displayName = PLAYLIST_FILE_NAME,
+                    mimeType = PLAYLIST_MIME,
+                    sizeBytes = body.size.toLong(),
+                    open = { ExternalHttpStreamServer.BytesBody(body) },
+                ),
+            )
+            openUri = ExternalHttpStreamServer.uriFor(session.id, PLAYLIST_FILE_NAME)
+            openMime = PLAYLIST_MIME
+            openTitle = displayName
+            logcat("OpenFileExternally") {
+                "HTTP folder m3u8 $openUri videos=${videoNames.size} start=$displayName"
+            }
+        } else {
+            openUri = videoUri
+            openMime = mimeType
+            openTitle = displayName
+        }
+
+        val view = DefaultVideoPlayer.videoViewIntent(openUri, openMime).apply {
+            putExtra(Intent.EXTRA_TITLE, openTitle)
+            val clip = ClipData.newRawUri(openTitle, openUri)
             for (i in subUris.indices) {
                 clip.addItem(ClipData.Item(subNames.getOrNull(i), null, subUris[i]))
             }
-            if (accessDir) {
+            // Multi-URI clip only when not using m3u8 (playlist file is the handoff).
+            if (accessDir && !passPlaylist) {
                 for (u in videoUris) {
-                    if (u != videoUri) clip.addItem(ClipData.Item(u))
+                    if (u != openUri) clip.addItem(ClipData.Item(u))
                 }
             }
             if (clip.itemCount > 1) clipData = clip
             if (subUris.isNotEmpty()) {
                 attachSubtitleExtras(subUris, subNames)
             }
-            if (videoUris.size > 1) {
+            if (!passPlaylist && videoUris.size > 1) {
                 attachPlaylistExtras(videoUris, displayName)
             }
         }
@@ -605,6 +642,37 @@ object OpenFileExternally {
                 error(context.getString(R.string.browse_open_failed))
             }
         }
+    }
+
+    /**
+     * Simple progressive m3u8 (not HLS segments): absolute HTTP URLs per video.
+     * Current file is listed first so players start there; remaining stay A–Z.
+     */
+    private fun buildM3u8Playlist(
+        sessionId: String,
+        videoNames: List<String>,
+        startName: String,
+    ): ByteArray {
+        val ordered = buildList {
+            val start = videoNames.firstOrNull { it.equals(startName, ignoreCase = true) }
+            if (start != null) {
+                add(start)
+                for (n in videoNames) {
+                    if (!n.equals(start, ignoreCase = true)) add(n)
+                }
+            } else {
+                addAll(videoNames)
+            }
+        }
+        val text = buildString(ordered.size * 96) {
+            append("#EXTM3U\n")
+            for (name in ordered) {
+                val title = name.replace('\r', ' ').replace('\n', ' ')
+                append("#EXTINF:-1,").append(title).append('\n')
+                append(ExternalHttpStreamServer.uriFor(sessionId, name)).append('\n')
+            }
+        }
+        return text.toByteArray(Charsets.UTF_8)
     }
 
     // endregion
@@ -842,4 +910,8 @@ object OpenFileExternally {
 
     /** Cap directory publish so open-with stays snappy on huge shares. */
     private const val MAX_DIR_MEDIA_FILES = 80
+
+    /** Virtual playlist basename served from the HTTP session (not a real on-disk file). */
+    private const val PLAYLIST_FILE_NAME = "playlist.m3u8"
+    private const val PLAYLIST_MIME = "application/vnd.apple.mpegurl"
 }
