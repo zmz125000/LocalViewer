@@ -459,12 +459,18 @@ object ExternalHttpStreamServer {
         SmbGateway.onHttpStickyPoolPressure = {
             evictAllIdleSmbBackends()
         }
-        val ss = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        // Tag on this thread before ServerSocket() — accept-thread tag is too late for bind.
+        TrafficStats.setThreadStatsTag(LOOPBACK_HTTP_TRAFFIC_TAG)
+        val ss = try {
+            ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        } finally {
+            TrafficStats.clearThreadStatsTag()
+        }
         port = ss.localPort
         serverSocket = ss
         acceptThread = Thread(
             {
-                // Accept() creates sockets under this thread's tag (StrictMode).
+                // Accept() creates client sockets under this thread's tag (StrictMode).
                 TrafficStats.setThreadStatsTag(LOOPBACK_HTTP_TRAFFIC_TAG)
                 try {
                     while (!ss.isClosed) {
