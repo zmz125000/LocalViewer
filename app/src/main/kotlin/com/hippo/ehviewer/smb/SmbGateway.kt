@@ -216,6 +216,12 @@ object SmbGateway {
     fun httpStickyPoolAvailable(): Int = httpStickyPermits.availablePermits
 
     fun httpStickyPoolSize(): Int = HTTP_STICKY_POOL_SIZE
+
+    /** Live Fuse/HTTP sticky TCP connections (outside the browse pool). */
+    fun stickyConnectionCount(): Int = stickyConnections.size
+
+    /** Browse-pool host keys still held (usually 0 after ON_STOP). */
+    fun browsePoolHostCount(): Int = hostPools.size
     private val poolCreateLock = Mutex()
     private val sourceIdToHostKey = ConcurrentHashMap<Long, String>()
     private val hostKeyToSourceIds = ConcurrentHashMap<String, MutableSet<Long>>()

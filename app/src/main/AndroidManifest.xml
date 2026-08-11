@@ -188,10 +188,12 @@
             android:authorities="${applicationId}.streamdoc"
             android:exported="false"
             android:grantUriPermissions="true" />
-        <!-- Keeps network streamdoc and loopback HTTP I/O alive for external apps. -->
+        <!-- Keeps network streamdoc and loopback HTTP I/O alive for external apps.
+             stopWithTask: swipe from Recents stops this FGS; onTaskRemoved then kills process. -->
         <service
             android:name="com.hippo.ehviewer.provider.StreamKeepAliveService"
             android:exported="false"
+            android:stopWithTask="true"
             android:foregroundServiceType="dataSync" />
     </application>
 

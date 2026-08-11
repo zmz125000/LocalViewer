@@ -65,6 +65,26 @@ object StreamDocumentRegistry {
     /** Live network proxy FDs across all tokens (for keep-alive re-promote after FGS timeout). */
     fun networkOpenCount(): Int = synchronized(keepAliveLock) { totalNetworkOpen }
 
+    /** Streamdoc tokens still registered (may be idle grants). */
+    fun tokenCount(): Int = entries.size
+
+    /**
+     * Drop all tokens and FGS stop timers. Process exit / Recents swipe only —
+     * external viewers will get grant failures on the next open.
+     */
+    fun clearAll(reason: String = "clear") {
+        synchronized(keepAliveLock) {
+            stopKeepAliveJob?.cancel()
+            stopKeepAliveJob = null
+            totalNetworkOpen = 0
+        }
+        synchronized(pruneLock) {
+            pruneJob?.cancel()
+            pruneJob = null
+        }
+        entries.clear()
+    }
+
     /** Soft cap so repeated long-press PDF does not retain unbounded lambdas. */
     private const val MAX_ENTRIES = 24
 

@@ -170,6 +170,8 @@ object ExternalHttpStreamServer {
 
         fun hasLiveSockets(): Boolean = liveSockets.isNotEmpty()
 
+        fun liveSocketCount(): Int = liveSockets.size
+
         fun put(entry: FileEntry) {
             files[pathKey(entry.displayName)] = entry
             touch()
@@ -412,6 +414,44 @@ object ExternalHttpStreamServer {
      * half-open Ranges from pinning this counter forever.
      */
     fun networkActivityCount(): Int = activeTransfers.get()
+
+    /** Registered HTTP session tokens (warm body optional). */
+    fun sessionCount(): Int = sessions.size
+
+    /** Process-wide warm video/network bodies still held. */
+    fun warmBodyCount(): Int = sessions.values.sumOf { it.warmBodyCount() }
+
+    /** Live client sockets currently serving a Range. */
+    fun liveSocketCount(): Int = sessions.values.sumOf { it.liveSocketCount() }
+
+    /**
+     * Tear down loopback listener, all sessions, warm bodies, and keep-alive timers.
+     * Used when the user swipes the app from Recents ([StreamKeepAliveService.onTaskRemoved]).
+     */
+    fun shutdown(reason: String = "shutdown") {
+        logcat("ExtHttp") { "shutdown ($reason) sessions=${sessionCount()} warm=${warmBodyCount()} transfers=${activeTransfers.get()}" }
+        synchronized(keepAliveLock) {
+            stopKeepAliveJob?.cancel()
+            stopKeepAliveJob = null
+        }
+        synchronized(pruneLock) {
+            pruneJob?.cancel()
+            pruneJob = null
+        }
+        val doomed = sessions.keys.toList()
+        for (id in doomed) {
+            sessions.remove(id)?.closeBodies()
+        }
+        activeTransfers.set(0)
+        synchronized(lock) {
+            val ss = serverSocket
+            serverSocket = null
+            port = -1
+            runCatching { ss?.close() }
+            acceptThread = null
+        }
+        runCatching { connectionPool.shutdownNow() }
+    }
 
     /**
      * Close idle warm video bodies across sessions so HTTP sticky SMB slots free for new GETs.

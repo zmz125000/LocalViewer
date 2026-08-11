@@ -76,6 +76,18 @@ class StreamKeepAliveService : Service() {
         super.onDestroy()
     }
 
+    /**
+     * User dismissed the app from Recents while this FGS was running.
+     * Without a hard kill, the process (and stream tokens / sticky TCP) can survive.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        logcat("StreamKeepAlive") { "onTaskRemoved — user killed app from Recents" }
+        releaseWakeLock()
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        // Does not return: Process.killProcess.
+        StreamKeepAlivePolicy.shutdownAndKillProcess("task_removed")
+    }
+
     private fun promoteForeground(): Boolean {
         val notification = buildNotification()
         return try {
@@ -171,6 +183,10 @@ class StreamKeepAliveService : Service() {
         /** Live instance while FGS is running (for screen-off wake-lock release). */
         @Volatile
         private var instance: StreamKeepAliveService? = null
+
+        fun isRunning(): Boolean = instance != null
+
+        fun hasWakeLock(): Boolean = instance?.wakeLock?.isHeld == true
 
         private fun hasActiveNetworkStreams(): Boolean = StreamDocumentRegistry.networkOpenCount() > 0 ||
             ExternalHttpStreamServer.networkActivityCount() > 0
