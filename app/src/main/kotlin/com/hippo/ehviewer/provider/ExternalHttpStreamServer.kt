@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.provider
 
 import android.content.Context
+import android.net.TrafficStats
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -312,7 +313,20 @@ object ExternalHttpStreamServer {
         60L,
         TimeUnit.SECONDS,
         SynchronousQueue(),
-        { runnable -> Thread(runnable, "ext-http-stream").apply { isDaemon = true } },
+        { runnable ->
+            Thread(
+                {
+                    // Tag before any socket I/O on this worker (StrictMode UntaggedSocketViolation).
+                    TrafficStats.setThreadStatsTag(LOOPBACK_HTTP_TRAFFIC_TAG)
+                    try {
+                        runnable.run()
+                    } finally {
+                        TrafficStats.clearThreadStatsTag()
+                    }
+                },
+                "ext-http-stream",
+            ).apply { isDaemon = true }
+        },
         ThreadPoolExecutor.AbortPolicy(),
     )
 
@@ -343,6 +357,8 @@ object ExternalHttpStreamServer {
         serverSocket = ss
         acceptThread = Thread(
             {
+                // Accept() creates sockets under this thread's tag (StrictMode).
+                TrafficStats.setThreadStatsTag(LOOPBACK_HTTP_TRAFFIC_TAG)
                 try {
                     while (!ss.isClosed) {
                         val socket = try {
@@ -350,6 +366,7 @@ object ExternalHttpStreamServer {
                         } catch (_: Throwable) {
                             break
                         }
+                        runCatching { TrafficStats.tagSocket(socket) }
                         runCatching {
                             connectionPool.execute { handleClient(socket) }
                         }.onFailure {
@@ -359,6 +376,8 @@ object ExternalHttpStreamServer {
                     }
                 } catch (e: Throwable) {
                     logcat("ExtHttp", e)
+                } finally {
+                    TrafficStats.clearThreadStatsTag()
                 }
             },
             "ext-http-accept",
@@ -1009,6 +1028,9 @@ object ExternalHttpStreamServer {
 
     /** Idle timeout while reading request line + headers only. */
     private const val REQUEST_HEADER_TIMEOUT_MS = 15_000
+
+    /** TrafficStats tag for loopback HTTP ("LHTTP" truncated). Must be set before accept/create. */
+    private const val LOOPBACK_HTTP_TRAFFIC_TAG = 0x4C485454
 
     /**
      * No successful body write for this long → treat player as stopped/paused-with-full-buffer
