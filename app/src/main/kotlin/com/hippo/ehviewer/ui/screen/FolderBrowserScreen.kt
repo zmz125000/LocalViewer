@@ -359,10 +359,19 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     /** History path link for the folder currently listed (parent of the opened file). */
     suspend fun recordCurrentBrowseFolderHistory() {
         val frame = stack.lastOrNull() ?: return
+        val parentPath = stack.getOrNull(stack.lastIndex - 1)?.path
+        val folderThumb = LocalHistory.localBrowseFolderThumbKey(
+            rootId = frame.rootId,
+            relativePath = frame.relativePath,
+            currentPath = frame.path,
+            entries = entries,
+            parentPath = parentPath,
+        )
         LocalHistory.recordLocalBrowseFolder(
             rootId = frame.rootId,
             relativePath = frame.relativePath,
             title = frame.title,
+            thumbKey = folderThumb,
         )
     }
 
