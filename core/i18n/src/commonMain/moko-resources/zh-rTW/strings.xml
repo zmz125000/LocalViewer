@@ -72,8 +72,6 @@
     <string name="settings_default_video_player">預設影片播放器</string>
     <string name="settings_default_video_player_always_ask">每次詢問</string>
     <string name="settings_default_video_player_none">找不到影片應用</string>
-    <string name="settings_external_video_access_dir">用影片播放器開啟資料夾</string>
-    <string name="settings_external_video_access_dir_summary">關閉：僅開啟目前影片及匹配字幕。開啟：向播放器暴露整個資料夾（全部影片與字幕，便於播放清單／上下集）。</string>
     <string name="browse_menu_page_count">頁數</string>
     <string name="browse_menu_reading_progress">閱讀進度</string>
     <string name="browse_menu_small_galleries">小圖庫</string>
