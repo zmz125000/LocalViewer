@@ -165,15 +165,6 @@ object OpenFileExternally {
         else -> mimeTypeForFileName(name)
     }
 
-    private fun canResolveSibling(videoName: String, candidateName: String, accessDir: Boolean): Boolean {
-        if (!ExternalHttpStreamServer.isSafeFileName(candidateName)) return false
-        return if (accessDir) {
-            isHttpExposedMediaName(candidateName)
-        } else {
-            SidecarSubtitles.isSidecarFor(videoName, candidateName)
-        }
-    }
-
     private suspend fun buildHttpSession(
         network: Boolean,
         configure: suspend (ExternalHttpStreamServer.Session) -> Unit,
@@ -198,13 +189,7 @@ object OpenFileExternally {
         val session = withIOContext {
             buildHttpSession(network = false) { session ->
                 session.put(localFileEntry(pathStr, displayName, mimeType))
-                session.resolveSibling = resolve@{ name ->
-                    if (!canResolveSibling(displayName, name, accessDir)) return@resolve null
-                    val subPath = siblingPath(pathStr, name) ?: return@resolve null
-                    runCatching {
-                        localFileEntry(subPath, name, mediaMimeForName(name))
-                    }.getOrNull()
-                }
+                // Only pre-listed files — no invent-on-GET for player subtitle probes.
                 val extras = if (accessDir) {
                     listLocalDirMediaNames(pathStr).filterNot { it.equals(displayName, ignoreCase = true) }
                 } else {
@@ -250,21 +235,9 @@ object OpenFileExternally {
                 session.put(
                     smbFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes),
                 )
-                session.resolveSibling = resolve@{ name ->
-                    // HTTP worker thread — register name only; size resolved on first GET.
-                    if (!canResolveSibling(displayName, name, accessDir)) return@resolve null
-                    val remote = SmbGateway.joinRelativePath(parentDir, name)
-                    smbFileEntry(
-                        source,
-                        password,
-                        remote,
-                        name,
-                        mediaMimeForName(name),
-                        sizeBytes = -1L,
-                    )
-                }
+                // Pre-register only names that exist in the listing. Players invent .srt/.ass/.sami
+                // probes per video — resolveSibling must not open SMB for those (STATUS_OBJECT_NAME_NOT_FOUND spam).
                 val extras = if (accessDir) {
-                    // Names only — no per-file size probe (was O(n) RTTs before player start).
                     listSmbDirMediaNames(sourceId, source, password, parentDir)
                         .filterNot { it.equals(displayName, ignoreCase = true) }
                 } else {
@@ -272,18 +245,16 @@ object OpenFileExternally {
                 }
                 for (name in extras) {
                     val remote = SmbGateway.joinRelativePath(parentDir, name)
-                    runCatching {
-                        session.put(
-                            smbFileEntry(
-                                source,
-                                password,
-                                remote,
-                                name,
-                                mediaMimeForName(name),
-                                sizeBytes = -1L,
-                            ),
-                        )
-                    }.onFailure { logcat("OpenFileExternally", it) }
+                    session.put(
+                        smbFileEntry(
+                            source,
+                            password,
+                            remote,
+                            name,
+                            mediaMimeForName(name),
+                            sizeBytes = -1L,
+                        ),
+                    )
                 }
                 logcat("OpenFileExternally") {
                     "HTTP SMB session ${session.id} files=${session.files.size} accessDir=$accessDir"
@@ -319,18 +290,7 @@ object OpenFileExternally {
                 session.put(
                     webDavFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes),
                 )
-                session.resolveSibling = resolve@{ name ->
-                    if (!canResolveSibling(displayName, name, accessDir)) return@resolve null
-                    val remote = WebDavGateway.joinRelative(parentDir, name)
-                    webDavFileEntry(
-                        source,
-                        password,
-                        remote,
-                        name,
-                        mediaMimeForName(name),
-                        sizeBytes = -1L,
-                    )
-                }
+                // Same as SMB: listing-only registration — no invent-on-GET for subtitle probes.
                 val extras = if (accessDir) {
                     listWebDavDirMediaNames(sourceId, source, password, parentDir)
                         .filterNot { it.equals(displayName, ignoreCase = true) }
@@ -339,18 +299,16 @@ object OpenFileExternally {
                 }
                 for (name in extras) {
                     val remote = WebDavGateway.joinRelative(parentDir, name)
-                    runCatching {
-                        session.put(
-                            webDavFileEntry(
-                                source,
-                                password,
-                                remote,
-                                name,
-                                mediaMimeForName(name),
-                                sizeBytes = -1L,
-                            ),
-                        )
-                    }.onFailure { logcat("OpenFileExternally", it) }
+                    session.put(
+                        webDavFileEntry(
+                            source,
+                            password,
+                            remote,
+                            name,
+                            mediaMimeForName(name),
+                            sizeBytes = -1L,
+                        ),
+                    )
                 }
             }
         }
@@ -505,13 +463,8 @@ object OpenFileExternally {
         videoName: String,
     ): List<String> {
         val parentDir = parentRelative(remoteRelativeFile)
-        val names = siblingNamesFromCache(sourceId, parentDir, smb = true)
-            .ifEmpty {
-                SidecarSubtitles.probeCandidateNames(videoName).filter { name ->
-                    val remote = SmbGateway.joinRelativePath(parentDir, name)
-                    SmbGateway.fileSizeOrNull(source, password, remote)?.let { it > 0L } == true
-                }
-            }
+        // One directory list — never probeCandidateNames × fileSize (hundreds of NOT_FOUND opens).
+        val names = listSmbDirChildNames(sourceId, source, password, parentDir)
         return SidecarSubtitles.matchSiblings(videoName, names)
     }
 
@@ -520,25 +473,30 @@ object OpenFileExternally {
         source: SmbSourceEntity,
         password: String,
         parentDir: String,
+    ): List<String> = listSmbDirChildNames(sourceId, source, password, parentDir)
+        .filter { isHttpExposedMediaName(it) }
+        .distinct()
+        .sorted()
+        .take(MAX_DIR_MEDIA_FILES)
+
+    private suspend fun listSmbDirChildNames(
+        sourceId: Long,
+        source: SmbSourceEntity,
+        password: String,
+        parentDir: String,
     ): List<String> {
-        val names = siblingNamesFromCache(sourceId, parentDir, smb = true)
-            .ifEmpty {
-                runCatching {
-                    SmbGateway.listDirectory(source, password, parentDir, useCache = true)
-                        .mapNotNull { e ->
-                            when (e) {
-                                is BrowseEntryRemote.RegularFile -> directChildName(e.fileName)
-                                is BrowseEntryRemote.VideoFile -> directChildName(e.fileName)
-                                else -> null
-                            }
-                        }
-                }.getOrDefault(emptyList())
-            }
-        return names
-            .filter { isHttpExposedMediaName(it) }
-            .distinct()
-            .sorted()
-            .take(MAX_DIR_MEDIA_FILES)
+        val cached = siblingNamesFromCache(sourceId, parentDir, smb = true)
+        if (cached.isNotEmpty()) return cached
+        return runCatching {
+            SmbGateway.listDirectory(source, password, parentDir, useCache = true)
+                .mapNotNull { e ->
+                    when (e) {
+                        is BrowseEntryRemote.RegularFile -> directChildName(e.fileName)
+                        is BrowseEntryRemote.VideoFile -> directChildName(e.fileName)
+                        else -> null
+                    }
+                }
+        }.getOrDefault(emptyList())
     }
 
     private suspend fun findWebDavSidecarNames(
@@ -549,15 +507,28 @@ object OpenFileExternally {
         videoName: String,
     ): List<String> {
         val parentDir = parentRelative(remoteRelativeFile)
-        val names = siblingNamesFromCache(sourceId, parentDir, smb = false)
-            .ifEmpty {
-                SidecarSubtitles.probeCandidateNames(videoName).filter { name ->
-                    val remote = WebDavGateway.joinRelative(parentDir, name)
-                    WebDavClient.fileSizeOrNull(source, password, remote, sticky = true)
-                        ?.let { it > 0L } == true
-                }
-            }
+        val names = listWebDavDirChildNames(sourceId, source, password, parentDir)
         return SidecarSubtitles.matchSiblings(videoName, names)
+    }
+
+    private suspend fun listWebDavDirChildNames(
+        sourceId: Long,
+        source: WebDavSourceEntity,
+        password: String,
+        parentDir: String,
+    ): List<String> {
+        val cached = siblingNamesFromCache(sourceId, parentDir, smb = false)
+        if (cached.isNotEmpty()) return cached
+        return runCatching {
+            WebDavGateway.listDirectory(source, password, parentDir)
+                .mapNotNull { e ->
+                    when (e) {
+                        is BrowseEntryRemote.RegularFile -> directChildName(e.fileName)
+                        is BrowseEntryRemote.VideoFile -> directChildName(e.fileName)
+                        else -> null
+                    }
+                }
+        }.getOrDefault(emptyList())
     }
 
     private suspend fun listWebDavDirMediaNames(
@@ -566,19 +537,7 @@ object OpenFileExternally {
         password: String,
         parentDir: String,
     ): List<String> {
-        val names = siblingNamesFromCache(sourceId, parentDir, smb = false)
-            .ifEmpty {
-                runCatching {
-                    WebDavGateway.listDirectory(source, password, parentDir)
-                        .mapNotNull { e ->
-                            when (e) {
-                                is BrowseEntryRemote.RegularFile -> directChildName(e.fileName)
-                                is BrowseEntryRemote.VideoFile -> directChildName(e.fileName)
-                                else -> null
-                            }
-                        }
-                }.getOrDefault(emptyList())
-            }
+        val names = listWebDavDirChildNames(sourceId, source, password, parentDir)
         return names
             .filter { isHttpExposedMediaName(it) }
             .distinct()

@@ -695,7 +695,7 @@ object ExternalHttpStreamServer {
         val fileName = segs[2]
         val entry = session.get(fileName)
         if (entry == null) {
-            logcat("ExtHttp") { "404 missing file session=$sessionId name=$fileName" }
+            // Players invent many sidecar URLs (.srt/.ass/.sami/…); only pre-listed names exist.
             writeSimple(output, 404, "Not Found", keepAlive = preferKeepAlive)
             return preferKeepAlive
         }
@@ -703,12 +703,20 @@ object ExternalHttpStreamServer {
         val body = try {
             session.acquireBody(entry)
         } catch (e: Throwable) {
-            if (e !is IOException) logcat("ExtHttp", e)
+            // Missing remote file / player subtitle probes: 404 only, no ERROR stack spam.
+            if (e !is IOException && !isBenignNotFound(e)) logcat("ExtHttp", e)
             writeSimple(output, 404, "Not Found", keepAlive = preferKeepAlive)
             return preferKeepAlive
         }
 
-        val total = entry.sizeBytes.takeIf { it >= 1L } ?: body.size
+        val total = try {
+            entry.sizeBytes.takeIf { it >= 1L } ?: body.size
+        } catch (e: Throwable) {
+            runCatching { body.close() }
+            if (e !is IOException && !isBenignNotFound(e)) logcat("ExtHttp", e)
+            writeSimple(output, 404, "Not Found", keepAlive = preferKeepAlive)
+            return preferKeepAlive
+        }
         if (total < 1L) {
             runCatching { body.close() }
             writeSimple(output, 404, "Empty", keepAlive = preferKeepAlive)
@@ -913,6 +921,24 @@ object ExternalHttpStreamServer {
         }
         output.write(headers.toByteArray(Charsets.US_ASCII))
         if (!headOnly) output.write(body)
+    }
+
+    /** SMB/WebDAV “file does not exist” — expected for players inventing subtitle URLs. */
+    private fun isBenignNotFound(t: Throwable): Boolean {
+        var c: Throwable? = t
+        while (c != null) {
+            val msg = c.message.orEmpty()
+            if (msg.contains("STATUS_OBJECT_NAME_NOT_FOUND", ignoreCase = true) ||
+                msg.contains("STATUS_OBJECT_PATH_NOT_FOUND", ignoreCase = true) ||
+                msg.contains("STATUS_NO_SUCH_FILE", ignoreCase = true) ||
+                msg.contains("404", ignoreCase = true) ||
+                msg.contains("Not Found", ignoreCase = true)
+            ) {
+                return true
+            }
+            c = c.cause
+        }
+        return false
     }
 
     private fun escapeHeader(name: String): String = pathKey(name)
