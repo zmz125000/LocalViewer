@@ -210,6 +210,48 @@ object SmbGateway {
     private val httpStickyPermits = Semaphore(HTTP_STICKY_POOL_SIZE)
 
     /**
+     * One logical claim on an HTTP sticky slot.
+     *
+     * A pressure eviction cancels the lease synchronously so the replacement video can
+     * acquire the slot without waiting for slow smbj transport teardown. The worker's
+     * normal `finally` release is idempotent and cannot over-release the semaphore.
+     */
+    class HttpStickyLease internal constructor() {
+        private val state = AtomicInteger(LEASE_IDLE)
+
+        internal fun attach(): Boolean = state.compareAndSet(LEASE_IDLE, LEASE_ACQUIRED)
+
+        internal fun release(): Boolean = state.compareAndSet(LEASE_ACQUIRED, LEASE_IDLE)
+
+        /** @return true when cancellation must release an acquired semaphore permit. */
+        internal fun cancel(): Boolean {
+            while (true) {
+                when (state.get()) {
+                    LEASE_CANCELLED -> return false
+                    LEASE_IDLE -> {
+                        if (state.compareAndSet(LEASE_IDLE, LEASE_CANCELLED)) return false
+                    }
+                    LEASE_ACQUIRED -> {
+                        if (state.compareAndSet(LEASE_ACQUIRED, LEASE_CANCELLED)) return true
+                    }
+                }
+            }
+        }
+
+        private companion object {
+            const val LEASE_IDLE = 0
+            const val LEASE_ACQUIRED = 1
+            const val LEASE_CANCELLED = 2
+        }
+    }
+
+    internal fun newHttpStickyLease(): HttpStickyLease = HttpStickyLease()
+
+    internal fun cancelHttpStickyLease(lease: HttpStickyLease) {
+        if (lease.cancel()) releaseHttpStickyPermit("preempt")
+    }
+
+    /**
      * Called when the HTTP sticky pool is under pressure (before blocking for a slot).
      * [ExternalHttpStreamServer] registers this to close idle warm video bodies and free TCPs.
      */
@@ -1126,22 +1168,34 @@ object SmbGateway {
         password: String,
         relativeFilePath: String,
         waitForSlot: Boolean = true,
+        lease: HttpStickyLease? = null,
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
     ): T = withIOContext {
+        val permitLease = lease ?: HttpStickyLease()
         val got = acquireHttpStickyPermit(waitForSlot)
-        if (!got) {
+        if (!got || !permitLease.attach()) {
+            if (got) releaseHttpStickyPermit("cancelled-before-open")
             throw IOException(
-                "HTTP SMB sticky pool full (cap=$HTTP_STICKY_POOL_SIZE, " +
+                "HTTP SMB sticky pool full or cancelled (cap=$HTTP_STICKY_POOL_SIZE, " +
                     "available=${httpStickyPermits.availablePermits})",
             )
         }
         try {
             openStickyConnection(source, password, relativeFilePath, block)
         } finally {
-            httpStickyPermits.release()
-            logcat {
-                "SmbGateway: HTTP sticky release inUse=${HTTP_STICKY_POOL_SIZE - httpStickyPermits.availablePermits}/$HTTP_STICKY_POOL_SIZE"
-            }
+            releaseHttpStickyPermit(permitLease, "close")
+        }
+    }
+
+    private fun releaseHttpStickyPermit(lease: HttpStickyLease, reason: String) {
+        if (lease.release()) releaseHttpStickyPermit(reason)
+    }
+
+    private fun releaseHttpStickyPermit(reason: String) {
+        httpStickyPermits.release()
+        logcat {
+            "SmbGateway: HTTP sticky release reason=$reason " +
+                "inUse=${HTTP_STICKY_POOL_SIZE - httpStickyPermits.availablePermits}/$HTTP_STICKY_POOL_SIZE"
         }
     }
 
