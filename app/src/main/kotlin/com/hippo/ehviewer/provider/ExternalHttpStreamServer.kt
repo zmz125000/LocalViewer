@@ -402,7 +402,9 @@ object ExternalHttpStreamServer {
      * Reuse the session for [dirKey] if present; otherwise create one.
      *
      * Same folder → same session id (player playlist / next video keep working).
-     * New folder → new session; other network sessions are closed to bound sticky SMB.
+     * New folder → **new session**; other dir sessions stay until **idle prune** / soft cap
+     * (not closed just because the user opened another folder). Warm SMB backends still
+     * drop per-body after [BACKEND_IDLE_MS] with no readers.
      *
      * @return session and whether it was reused (caller should not destroy a reused session on launch failure).
      */
@@ -417,37 +419,17 @@ object ExternalHttpStreamServer {
             logcat("ExtHttp") { "reuse dir session ${existing.id} dirKey=$key files=${existing.files.size}" }
             return existing to true
         }
-        // New directory: drop other network sessions so sticky backends do not accumulate.
-        if (network) {
-            closeOtherNetworkSessions(exceptId = null)
-        }
-        // Also replace a prior session with the same dirKey (should not exist after find).
-        for ((id, s) in sessions) {
-            if (s.dirKey == key && sessions.remove(id, s)) {
-                s.closeBodies()
-            }
-        }
         val id = UUID.randomUUID().toString().replace("-", "")
         val session = Session(id = id, network = network, dirKey = key)
         sessions[id] = session
         if (network) {
             onNetworkSessionRegistered()
         }
+        // Soft cap: drop oldest idle sessions (no live sockets) when over limit.
+        pruneStale()
         schedulePrune()
         logcat("ExtHttp") { "new dir session $id dirKey=$key" }
         return session to false
-    }
-
-    /** Drop network HTTP sessions (and their sticky bodies). [exceptId] may be kept. */
-    private fun closeOtherNetworkSessions(exceptId: String?) {
-        for ((id, session) in sessions) {
-            if (!session.network) continue
-            if (exceptId != null && id == exceptId) continue
-            if (sessions.remove(id, session)) {
-                session.closeBodies()
-                logcat("ExtHttp") { "closed prior network session $id (sticky release)" }
-            }
-        }
     }
 
     fun removeSession(id: String) {
