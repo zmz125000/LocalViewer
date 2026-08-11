@@ -49,7 +49,7 @@ import splitties.init.appCtx
  * - Player may re-Range anytime while the session exists (no need for a live pipe).
  * - Network video may keep a **warm** dual-sticky body across Ranges to avoid open/close
  *   cost, but it is released after [BACKEND_IDLE_MS] with no active readers (timeout).
- * - At most one warm backend per session (Android ≈1 file at a time; cap 2 transfers).
+ * - At most [MAX_WARM_CACHE_FILES] warm video bodies process-wide (each holds a RAM window).
  *
  * FGS: wake lock only while a body transfer is in flight. Idle FGS (if still running) is
  * only for process rank so the token stays in RAM + self-stop timer — no CPU work.
@@ -192,7 +192,7 @@ object ExternalHttpStreamServer {
          *
          * [FileEntry.cacheBody]: reuse one warm backend across Ranges (open/close is costly on
          * SMB). Released after [BACKEND_IDLE_MS] with no active readers — not held forever.
-         * At most one warm cached file per session (playlist hop closes the previous idle body).
+         * Process-wide cap: [MAX_WARM_CACHE_FILES] warm video windows.
          */
         fun acquireBody(entry: FileEntry): StreamBody {
             touch()
@@ -204,14 +204,15 @@ object ExternalHttpStreamServer {
             val key = pathKey(entry.displayName)
             synchronized(bodyLock) {
                 cancelBodyIdleJob(key)
-                // Only one warm backend: drop other files that are idle (refs==0).
-                evictIdleBodiesExcept(key)
                 bodyCache[key]?.let { cached ->
                     cached.refs.incrementAndGet()
+                    cached.touch()
                     entry.publishSize(cached.body.size)
                     return RefBody(key, cached)
                 }
             }
+            // Make room under the global warm-file cap before opening a new window.
+            trimWarmCacheTo(MAX_WARM_CACHE_FILES - 1, protectSessionId = id, protectKey = key)
             val body = entry.open()
             entry.publishSize(body.size)
             synchronized(bodyLock) {
@@ -219,6 +220,7 @@ object ExternalHttpStreamServer {
                 bodyCache[key]?.let { cached ->
                     runCatching { body.close() }
                     cached.refs.incrementAndGet()
+                    cached.touch()
                     entry.publishSize(cached.body.size)
                     return RefBody(key, cached)
                 }
@@ -229,16 +231,28 @@ object ExternalHttpStreamServer {
             }
         }
 
-        private fun evictIdleBodiesExcept(keepKey: String) {
-            val doomed = bodyCache.entries.filter { (k, c) ->
-                k != keepKey && c.refs.get() == 0
+        fun warmBodyCount(): Int = synchronized(bodyLock) { bodyCache.size }
+
+        fun snapshotWarmBodies(): List<WarmBodyRef> = synchronized(bodyLock) {
+            bodyCache.map { (key, cached) ->
+                WarmBodyRef(
+                    session = this,
+                    key = key,
+                    refs = cached.refs.get(),
+                    lastAccessMs = cached.lastAccessMs,
+                )
             }
-            for ((k, c) in doomed) {
-                cancelBodyIdleJob(k)
-                bodyCache.remove(k)
-                runCatching { c.body.close() }
-                logcat("ExtHttp") { "evict warm body session=$id file=$k" }
-            }
+        }
+
+        /** Close one idle warm body by key (caller holds no other session locks ideally). */
+        fun evictWarmBody(key: String, reason: String): Boolean = synchronized(bodyLock) {
+            val cached = bodyCache[key] ?: return false
+            if (cached.refs.get() > 0) return false
+            cancelBodyIdleJob(key)
+            bodyCache.remove(key)
+            runCatching { cached.body.close() }
+            logcat("ExtHttp") { "evict warm body ($reason) session=$id file=$key" }
+            true
         }
 
         private fun releaseBody(key: String, cached: CachedBody) {
@@ -311,9 +325,23 @@ object ExternalHttpStreamServer {
             val evictOnSmbPoolPressure: Boolean,
         ) {
             val refs = AtomicInteger(0)
+            @Volatile var lastAccessMs: Long = SystemClock.elapsedRealtime()
+
+            fun touch() {
+                lastAccessMs = SystemClock.elapsedRealtime()
+            }
 
             /** Shared so concurrent Range holders serialize sticky seek/read. */
             val readLock = Any()
+        }
+
+        class WarmBodyRef(
+            val session: Session,
+            val key: String,
+            val refs: Int,
+            val lastAccessMs: Long,
+        ) {
+            val idle: Boolean get() = refs == 0
         }
 
         /**
@@ -401,6 +429,28 @@ object ExternalHttpStreamServer {
             }
         }
         return n
+    }
+
+    /**
+     * Keep at most [max] warm video bodies process-wide. Evicts **idle** bodies oldest-first.
+     * Never closes a body with active HTTP readers.
+     */
+    private fun trimWarmCacheTo(
+        max: Int,
+        protectSessionId: String? = null,
+        protectKey: String? = null,
+    ) {
+        if (max < 0) return
+        while (true) {
+            val all = sessions.values.flatMap { it.snapshotWarmBodies() }
+            if (all.size <= max) return
+            val victim = all
+                .filter { it.idle }
+                .filterNot { it.session.id == protectSessionId && it.key == protectKey }
+                .minByOrNull { it.lastAccessMs }
+                ?: return // all remaining are in-use
+            if (!victim.session.evictWarmBody(victim.key, "warm-cap-$max")) return
+        }
     }
 
     fun ensureStarted(): Int = synchronized(lock) {
@@ -1092,5 +1142,8 @@ object ExternalHttpStreamServer {
      * After last reader releases a warm network body, keep dual sticky this long for seeks /
      * next Range (open/close is costly). Then close backend. Session token still valid for resume.
      */
-    private const val BACKEND_IDLE_MS = 90_000L
+    private const val BACKEND_IDLE_MS = 4L * 60L * 1000L
+
+    /** Max warm video bodies (each ≈ one VideoDirectLink RAM window) process-wide. */
+    private const val MAX_WARM_CACHE_FILES = 3
 }
