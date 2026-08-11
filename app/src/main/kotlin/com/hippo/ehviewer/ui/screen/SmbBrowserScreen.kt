@@ -462,10 +462,16 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     /** History path link for the folder currently listed (parent of the opened file). */
     suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
+        val folderThumb = LocalHistory.smbBrowseFolderThumbKey(
+            sourceId = sourceId,
+            relativeDir = relativeDir,
+            entries = entries,
+        )
         LocalHistory.recordSmbBrowseFolder(
             sourceId = sourceId,
             relativePath = relativeDir,
             title = title,
+            thumbKey = folderThumb,
         )
     }
 

@@ -167,21 +167,26 @@ object LocalHistory {
     }
 
     /**
-     * Browse **directory listing** only (PDF external / explicit folder path).
+     * Browse **directory listing** only (PDF / video / external document open).
      * Folder galleries use [recordLocalFolderGallery] instead — History opens the reader.
+     *
+     * [thumbKey]: folder-thumb cache key (local absolute cover path). Null keeps any
+     * previously stored key so re-records do not wipe covers.
      */
     suspend fun recordLocalBrowseFolder(
         rootId: Long,
         relativePath: String,
         title: String,
+        thumbKey: String? = null,
         pages: Int = 0,
     ) {
         val rel = normalizeRel(relativePath)
+        val gid = stableGalleryId(rootId, "browse:$rel")
         val info = BaseGalleryInfo(
-            gid = stableGalleryId(rootId, "browse:$rel"),
+            gid = gid,
             token = LOCAL_BROWSE_TOKEN,
             title = title.ifBlank { humanizePathName(rel.substringAfterLast('/').ifEmpty { "Folder" }) },
-            thumbKey = null,
+            thumbKey = resolveThumbKey(gid, thumbKey),
             category = 0,
             uploader = encodeLocalBrowse(rootId, rel),
             rating = -1f,
@@ -191,18 +196,24 @@ object LocalHistory {
         EhDB.putHistoryInfo(info)
     }
 
+    /**
+     * SMB browse directory. [thumbKey] = [HistoryThumbKey.smb] for the folder cover
+     * (same encoding as folder-gallery / favourite thumbs).
+     */
     suspend fun recordSmbBrowseFolder(
         sourceId: Long,
         relativePath: String,
         title: String,
+        thumbKey: String? = null,
         pages: Int = 0,
     ) {
         val rel = normalizeRel(relativePath)
+        val gid = stableGalleryId(sourceId, "smb-browse:$rel")
         val info = BaseGalleryInfo(
-            gid = stableGalleryId(sourceId, "smb-browse:$rel"),
+            gid = gid,
             token = SMB_BROWSE_TOKEN,
             title = title.ifBlank { rel.substringAfterLast('/').ifEmpty { "Share" } },
-            thumbKey = null,
+            thumbKey = resolveThumbKey(gid, thumbKey),
             category = 2,
             uploader = encodeSmbBrowse(sourceId, rel),
             rating = -1f,
@@ -212,18 +223,23 @@ object LocalHistory {
         EhDB.putHistoryInfo(info)
     }
 
+    /**
+     * WebDAV browse directory. [thumbKey] = [HistoryThumbKey.webdav] for the folder cover.
+     */
     suspend fun recordWebDavBrowseFolder(
         sourceId: Long,
         relativePath: String,
         title: String,
+        thumbKey: String? = null,
         pages: Int = 0,
     ) {
         val rel = normalizeRel(relativePath)
+        val gid = stableGalleryId(sourceId, "webdav-browse:$rel")
         val info = BaseGalleryInfo(
-            gid = stableGalleryId(sourceId, "webdav-browse:$rel"),
+            gid = gid,
             token = WEBDAV_BROWSE_TOKEN,
             title = title.ifBlank { rel.substringAfterLast('/').ifEmpty { "WebDAV" } },
-            thumbKey = null,
+            thumbKey = resolveThumbKey(gid, thumbKey),
             category = 3,
             uploader = encodeWebDavBrowse(sourceId, rel),
             rating = -1f,
@@ -231,6 +247,99 @@ object LocalHistory {
             favoriteSlot = NOT_FAVORITED,
         )
         EhDB.putHistoryInfo(info)
+    }
+
+    /**
+     * Best-effort folder-thumb key for a **browse-dir** history row (no network).
+     * Order: dual-gallery cover of the listed dir → parent listing [BrowseEntry.Directory]
+     * cover → favourite thumb for this path.
+     */
+    fun localBrowseFolderThumbKey(
+        rootId: Long,
+        relativePath: String,
+        currentPath: String,
+        entries: List<BrowseEntry>,
+        parentPath: String? = null,
+    ): String? {
+        entries.asSequence()
+            .filterIsInstance<BrowseEntry.FolderGallery>()
+            .firstOrNull { it.path.toString() == currentPath }
+            ?.coverPath?.toString()?.takeIf { it.isNotBlank() }
+            ?.let { return it }
+
+        val rel = normalizeRel(relativePath)
+        if (rel.isNotEmpty() && !parentPath.isNullOrEmpty()) {
+            val dirName = rel.substringAfterLast('/')
+            BrowseSession.getLocalListing(parentPath)
+                ?.asSequence()
+                ?.filterIsInstance<BrowseEntry.Directory>()
+                ?.firstOrNull { it.path.toString() == currentPath || it.name == dirName }
+                ?.coverPath?.toString()?.takeIf { it.isNotBlank() }
+                ?.let { return it }
+        }
+
+        return BrowseFavorites.thumbKeyFor(BrowseFavorites.localFolderKey(rootId, rel))
+    }
+
+    /**
+     * SMB folder-thumb key for browse-dir history. Dual-gallery cover of [relativeDir],
+     * else Directory cover from parent listing, else favourite.
+     */
+    fun smbBrowseFolderThumbKey(
+        sourceId: Long,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+    ): String? {
+        val rel = normalizeRel(relativeDir)
+        entries.asSequence()
+            .filterIsInstance<BrowseEntryRemote.FolderGallery>()
+            .firstOrNull { it.relativeName.isEmpty() }
+            ?.coverFileName?.takeIf { it.isNotBlank() }
+            ?.let { fileName -> return HistoryThumbKey.smb(sourceId, joinRemote(rel, fileName)) }
+
+        if (rel.isNotEmpty()) {
+            val parentRel = parentRelativeOfFile(rel)
+            BrowseSession.getSmbListing(sourceId, parentRel)
+                ?.asSequence()
+                ?.filterIsInstance<BrowseEntryRemote.Directory>()
+                ?.firstOrNull { joinRemote(parentRel, it.relativeName) == rel }
+                ?.coverFileName?.takeIf { it.isNotBlank() }
+                ?.let { fileName -> return HistoryThumbKey.smb(sourceId, joinRemote(rel, fileName)) }
+        }
+
+        return BrowseFavorites.thumbKeyFor(BrowseFavorites.smbFolderKey(sourceId, rel))
+    }
+
+    /** WebDAV folder-thumb key for browse-dir history (mirrors [smbBrowseFolderThumbKey]). */
+    fun webDavBrowseFolderThumbKey(
+        sourceId: Long,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+    ): String? {
+        val rel = normalizeRel(relativeDir)
+        entries.asSequence()
+            .filterIsInstance<BrowseEntryRemote.FolderGallery>()
+            .firstOrNull { it.relativeName.isEmpty() }
+            ?.coverFileName?.takeIf { it.isNotBlank() }
+            ?.let { fileName -> return HistoryThumbKey.webdav(sourceId, joinRemote(rel, fileName)) }
+
+        if (rel.isNotEmpty()) {
+            val parentRel = parentRelativeOfFile(rel)
+            BrowseSession.getWebDavListing(sourceId, parentRel)
+                ?.asSequence()
+                ?.filterIsInstance<BrowseEntryRemote.Directory>()
+                ?.firstOrNull { joinRemote(parentRel, it.relativeName) == rel }
+                ?.coverFileName?.takeIf { it.isNotBlank() }
+                ?.let { fileName -> return HistoryThumbKey.webdav(sourceId, joinRemote(rel, fileName)) }
+        }
+
+        return BrowseFavorites.thumbKeyFor(BrowseFavorites.webDavFolderKey(sourceId, rel))
+    }
+
+    private fun joinRemote(dir: String, file: String): String {
+        val d = dir.trim('/')
+        val f = file.replace('\\', '/').trimStart('/')
+        return if (d.isEmpty()) f else "$d/$f"
     }
 
     /**
@@ -335,11 +444,12 @@ object LocalHistory {
         LocalLibrary.loadGalleryByContentPath(path)?.let { return it.toBaseGalleryInfo() }
         val name = title?.ifBlank { null }
             ?: path.trimEnd('/').substringAfterLast('/').ifEmpty { "Archive" }
+        val cover = coverPath?.takeIf { it.isNotBlank() } ?: cachedLocalArchiveCover(path)
         return BaseGalleryInfo(
             gid = stableGalleryId(0L, "local-archive:$path"),
             token = LOCAL_ARCHIVE_TOKEN,
             title = name,
-            thumbKey = coverPath,
+            thumbKey = cover,
             category = 1,
             uploader = path,
             rating = -1f,
@@ -361,7 +471,15 @@ object LocalHistory {
             return
         }
         val info = galleryInfoForLocalArchive(path, title, coverPath, pages)
+        // Prefer supplied / cached cover; keep prior thumbKey when still blank.
+        info.thumbKey = resolveThumbKey(info.gid, info.thumbKey)
         EhDB.putHistoryInfo(info)
+    }
+
+    /** Disk-hit only: [ArchiveCoverCache] first-page JPEG for a local archive path. */
+    private fun cachedLocalArchiveCover(path: String): String? {
+        val dest = ArchiveCoverCache.resolveCoverDest(path)
+        return if (ArchiveCoverCache.isCachedOnDisk(dest)) dest.toString() else null
     }
 
     /**

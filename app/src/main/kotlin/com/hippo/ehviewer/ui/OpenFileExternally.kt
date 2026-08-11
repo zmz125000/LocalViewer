@@ -17,6 +17,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.SidecarSubtitles
+import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.library.isBrowseVideoFileName
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.provider.ExternalHttpStreamServer
@@ -34,7 +35,6 @@ import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
 import java.io.IOException
-import kotlinx.coroutines.runBlocking
 import okio.Path.Companion.toPath
 
 /**
@@ -151,6 +151,12 @@ object OpenFileExternally {
      */
     private fun accessDirEnabled(): Boolean = Settings.externalVideoAccessDir.value
 
+    /**
+     * When [accessDirEnabled] and this are on: intent data is a generated m3u8 of folder
+     * videos (current first) instead of the single file URI + multi-file extras.
+     */
+    private fun passFolderPlaylistEnabled(): Boolean = accessDirEnabled() && Settings.externalVideoPassFolderPlaylist.value
+
     private fun isHttpExposedMediaName(name: String): Boolean = isBrowseVideoFileName(name) || SidecarSubtitles.isSubtitleFileName(name)
 
     private fun mediaMimeForName(name: String): String = when {
@@ -158,28 +164,40 @@ object OpenFileExternally {
         else -> mimeTypeForFileName(name)
     }
 
-    private fun canResolveSibling(videoName: String, candidateName: String, accessDir: Boolean): Boolean {
-        if (!ExternalHttpStreamServer.isSafeFileName(candidateName)) return false
-        return if (accessDir) {
-            isHttpExposedMediaName(candidateName)
-        } else {
-            SidecarSubtitles.isSidecarFor(videoName, candidateName)
-        }
-    }
-
-    private suspend fun buildHttpSession(
+    /**
+     * Obtain or reuse the HTTP session for [dirKey], then register media.
+     * Reused sessions keep the same id so folder playlist / next-file opens stay on one token.
+     */
+    private suspend fun withDirHttpSession(
         network: Boolean,
-        configure: suspend (ExternalHttpStreamServer.Session) -> Unit,
-    ): ExternalHttpStreamServer.Session {
-        val session = ExternalHttpStreamServer.newSession(network)
+        dirKey: String,
+        configure: suspend (ExternalHttpStreamServer.Session, reused: Boolean) -> Unit,
+    ): Pair<ExternalHttpStreamServer.Session, Boolean> {
+        val (session, reused) = ExternalHttpStreamServer.obtainSession(network, dirKey)
         return try {
-            configure(session)
-            session
+            configure(session, reused)
+            session to reused
         } catch (e: Throwable) {
-            ExternalHttpStreamServer.removeSession(session.id)
+            if (!reused) ExternalHttpStreamServer.removeSession(session.id)
             throw e
         }
     }
+
+    private fun localDirKey(videoPathStr: String): String {
+        val parent = if (videoPathStr.startsWith('/')) {
+            File(videoPathStr).parent ?: videoPathStr
+        } else {
+            runCatching { videoPathStr.toPath().parent?.toString() }.getOrNull() ?: videoPathStr
+        }
+        return "local:${parent.trimEnd('/')}"
+    }
+
+    private fun smbDirKey(sourceId: Long, parentDir: String): String = "smb:$sourceId:${parentDir.trim().trimEnd('/')}"
+
+    private fun webDavDirKey(sourceId: Long, parentDir: String): String = "dav:$sourceId:${parentDir.trim().trimEnd('/')}"
+
+    /** Folder access shares one token; restricted access keeps one token per opened video. */
+    private fun httpSessionKey(dirKey: String, accessDir: Boolean, displayName: String): String = if (accessDir) "$dirKey|folder" else "$dirKey|file:${displayName.length}:$displayName"
 
     private suspend fun openLocalVideoHttp(
         context: Context,
@@ -188,22 +206,18 @@ object OpenFileExternally {
         mimeType: String,
     ) {
         val accessDir = accessDirEnabled()
-        val session = withIOContext {
-            buildHttpSession(network = false) { session ->
+        val dirKey = httpSessionKey(localDirKey(pathStr), accessDir, displayName)
+        val (session, reused) = withIOContext {
+            withDirHttpSession(network = false, dirKey = dirKey) { session, _ ->
                 session.put(localFileEntry(pathStr, displayName, mimeType))
-                session.resolveSibling = resolve@{ name ->
-                    if (!canResolveSibling(displayName, name, accessDir)) return@resolve null
-                    val subPath = siblingPath(pathStr, name) ?: return@resolve null
-                    runCatching {
-                        localFileEntry(subPath, name, mediaMimeForName(name))
-                    }.getOrNull()
-                }
+                // Only pre-listed files — no invent-on-GET for player subtitle probes.
                 val extras = if (accessDir) {
                     listLocalDirMediaNames(pathStr).filterNot { it.equals(displayName, ignoreCase = true) }
                 } else {
                     findLocalSidecarNames(pathStr, displayName)
                 }
                 for (name in extras) {
+                    if (session.files.containsKey(ExternalHttpStreamServer.pathKey(name))) continue
                     val subPath = siblingPath(pathStr, name) ?: continue
                     runCatching {
                         session.put(localFileEntry(subPath, name, mediaMimeForName(name)))
@@ -213,12 +227,12 @@ object OpenFileExternally {
         }
         val videoUri = ExternalHttpStreamServer.uriFor(session.id, displayName)
         logcat("OpenFileExternally") {
-            "HTTP local video $videoUri files=${session.files.size} accessDir=$accessDir"
+            "HTTP local video $videoUri files=${session.files.size} accessDir=$accessDir reused=$reused"
         }
         try {
             launchHttpView(context, videoUri, displayName, mimeType, session, accessDir)
         } catch (e: Throwable) {
-            ExternalHttpStreamServer.removeSession(session.id)
+            if (!reused) ExternalHttpStreamServer.removeSession(session.id)
             throw e
         }
     }
@@ -232,47 +246,48 @@ object OpenFileExternally {
     ) {
         requestStreamNotificationPermission(context)
         val accessDir = accessDirEnabled()
-        val session = withIOContext {
+        val (session, reused) = withIOContext {
             val source = SmbRepository.load(sourceId) ?: throw IOException("SMB source missing")
             val password = SmbPasswordStore.get(sourceId)
             val sizeBytes = SmbGateway.fileSizeOrNull(source, password, remoteRelativeFile)
                 ?.takeIf { it > 0L }
                 ?: error("empty or unreachable file")
             val parentDir = parentRelative(remoteRelativeFile)
-            buildHttpSession(network = true) { session ->
+            val dirKey = httpSessionKey(smbDirKey(sourceId, parentDir), accessDir, displayName)
+            withDirHttpSession(network = true, dirKey = dirKey) { session, wasReused ->
+                // Always refresh the opened video entry (known size).
                 session.put(
                     smbFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes),
                 )
-                session.resolveSibling = { name ->
-                    // HTTP worker thread — blocking size probe is intentional.
-                    runBlocking {
-                        if (!canResolveSibling(displayName, name, accessDir)) return@runBlocking null
-                        val remote = SmbGateway.joinRelativePath(parentDir, name)
-                        val size = SmbGateway.fileSizeOrNull(source, password, remote)
-                            ?.takeIf { it > 0L }
-                            ?: return@runBlocking null
-                        smbFileEntry(source, password, remote, name, mediaMimeForName(name), size)
-                    }
-                }
+                // Pre-register only names that exist in the listing (no invent-on-GET for .srt probes).
                 val extras = if (accessDir) {
-                    listSmbDirMediaNames(sourceId, source, password, parentDir)
-                        .filterNot { it.equals(displayName, ignoreCase = true) }
+                    // Reuse: skip re-list when folder media already populated.
+                    if (wasReused && session.files.size > 1) {
+                        emptyList()
+                    } else {
+                        listSmbDirMediaNames(sourceId, source, password, parentDir)
+                            .filterNot { it.equals(displayName, ignoreCase = true) }
+                    }
                 } else {
                     findSmbSidecarNames(sourceId, source, password, remoteRelativeFile, displayName)
                 }
                 for (name in extras) {
+                    if (session.files.containsKey(ExternalHttpStreamServer.pathKey(name))) continue
                     val remote = SmbGateway.joinRelativePath(parentDir, name)
-                    runCatching {
-                        val size = SmbGateway.fileSizeOrNull(source, password, remote)
-                            ?.takeIf { it > 0L }
-                            ?: return@runCatching
-                        session.put(
-                            smbFileEntry(source, password, remote, name, mediaMimeForName(name), size),
-                        )
-                    }.onFailure { logcat("OpenFileExternally", it) }
+                    session.put(
+                        smbFileEntry(
+                            source,
+                            password,
+                            remote,
+                            name,
+                            mediaMimeForName(name),
+                            sizeBytes = -1L,
+                        ),
+                    )
                 }
                 logcat("OpenFileExternally") {
-                    "HTTP SMB session ${session.id} files=${session.files.size} accessDir=$accessDir"
+                    "HTTP SMB session ${session.id} files=${session.files.size} " +
+                        "accessDir=$accessDir reused=$wasReused dirKey=$dirKey"
                 }
             }
         }
@@ -280,7 +295,7 @@ object OpenFileExternally {
         try {
             launchHttpView(context, videoUri, displayName, mimeType, session, accessDir)
         } catch (e: Throwable) {
-            ExternalHttpStreamServer.removeSession(session.id)
+            if (!reused) ExternalHttpStreamServer.removeSession(session.id)
             throw e
         }
     }
@@ -294,43 +309,45 @@ object OpenFileExternally {
     ) {
         requestStreamNotificationPermission(context)
         val accessDir = accessDirEnabled()
-        val session = withIOContext {
+        val (session, reused) = withIOContext {
             val source = WebDavRepository.load(sourceId) ?: throw IOException("WebDAV source missing")
             val password = WebDavPasswordStore.get(sourceId)
             val sizeBytes = WebDavClient.fileSizeOrNull(source, password, remoteRelativeFile, sticky = true)
                 ?.takeIf { it > 0L }
                 ?: error("empty or unreachable file")
             val parentDir = parentRelative(remoteRelativeFile)
-            buildHttpSession(network = true) { session ->
+            val dirKey = httpSessionKey(webDavDirKey(sourceId, parentDir), accessDir, displayName)
+            withDirHttpSession(network = true, dirKey = dirKey) { session, wasReused ->
                 session.put(
                     webDavFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes),
                 )
-                session.resolveSibling = { name ->
-                    runBlocking {
-                        if (!canResolveSibling(displayName, name, accessDir)) return@runBlocking null
-                        val remote = WebDavGateway.joinRelative(parentDir, name)
-                        val size = WebDavClient.fileSizeOrNull(source, password, remote, sticky = true)
-                            ?.takeIf { it > 0L }
-                            ?: return@runBlocking null
-                        webDavFileEntry(source, password, remote, name, mediaMimeForName(name), size)
-                    }
-                }
                 val extras = if (accessDir) {
-                    listWebDavDirMediaNames(sourceId, source, password, parentDir)
-                        .filterNot { it.equals(displayName, ignoreCase = true) }
+                    if (wasReused && session.files.size > 1) {
+                        emptyList()
+                    } else {
+                        listWebDavDirMediaNames(sourceId, source, password, parentDir)
+                            .filterNot { it.equals(displayName, ignoreCase = true) }
+                    }
                 } else {
                     findWebDavSidecarNames(sourceId, source, password, remoteRelativeFile, displayName)
                 }
                 for (name in extras) {
+                    if (session.files.containsKey(ExternalHttpStreamServer.pathKey(name))) continue
                     val remote = WebDavGateway.joinRelative(parentDir, name)
-                    runCatching {
-                        val size = WebDavClient.fileSizeOrNull(source, password, remote, sticky = true)
-                            ?.takeIf { it > 0L }
-                            ?: return@runCatching
-                        session.put(
-                            webDavFileEntry(source, password, remote, name, mediaMimeForName(name), size),
-                        )
-                    }.onFailure { logcat("OpenFileExternally", it) }
+                    session.put(
+                        webDavFileEntry(
+                            source,
+                            password,
+                            remote,
+                            name,
+                            mediaMimeForName(name),
+                            sizeBytes = -1L,
+                        ),
+                    )
+                }
+                logcat("OpenFileExternally") {
+                    "HTTP WebDAV session ${session.id} files=${session.files.size} " +
+                        "accessDir=$accessDir reused=$wasReused dirKey=$dirKey"
                 }
             }
         }
@@ -338,7 +355,7 @@ object OpenFileExternally {
         try {
             launchHttpView(context, videoUri, displayName, mimeType, session, accessDir)
         } catch (e: Throwable) {
-            ExternalHttpStreamServer.removeSession(session.id)
+            if (!reused) ExternalHttpStreamServer.removeSession(session.id)
             throw e
         }
     }
@@ -377,25 +394,41 @@ object OpenFileExternally {
         displayName: String,
         mimeType: String,
         sizeBytes: Long,
-    ) = ExternalHttpStreamServer.FileEntry(
-        displayName = displayName,
-        mimeType = mimeType,
-        sizeBytes = sizeBytes,
-        open = {
-            ExternalHttpStreamServer.ArchiveBody(
-                SmbArchiveByteSource(
-                    source = source,
-                    password = password,
-                    remoteRelativeFile = remoteRelativeFile,
-                    preferSequential = false,
-                    pipeline = false,
-                    stickySession = true,
-                    knownSize = sizeBytes,
-                    readahead = false,
-                ),
-            )
-        },
-    )
+    ): ExternalHttpStreamServer.FileEntry {
+        val video = DefaultVideoPlayer.isVideoMime(mimeType) || isBrowseVideoFileName(displayName)
+        return ExternalHttpStreamServer.FileEntry(
+            displayName = displayName,
+            mimeType = mimeType,
+            sizeBytes = sizeBytes,
+            // Warm dual sticky across Ranges with idle timeout (not forever; not per-GET open).
+            cacheBody = video,
+            open = {
+                val openLane = {
+                    SmbArchiveByteSource(
+                        source = source,
+                        password = password,
+                        remoteRelativeFile = remoteRelativeFile,
+                        preferSequential = false,
+                        pipeline = false,
+                        stickySession = true,
+                        knownSize = sizeBytes.takeIf { it > 0L } ?: -1L,
+                        readahead = false,
+                    )
+                }
+                ExternalHttpStreamServer.ArchiveBody(
+                    if (video) {
+                        VideoDirectLinkByteSource.open(
+                            openLane = openLane,
+                            knownSize = sizeBytes,
+                            parallelPrefetch = true,
+                        )
+                    } else {
+                        openLane()
+                    },
+                )
+            },
+        )
+    }
 
     private fun webDavFileEntry(
         source: WebDavSourceEntity,
@@ -404,25 +437,41 @@ object OpenFileExternally {
         displayName: String,
         mimeType: String,
         sizeBytes: Long,
-    ) = ExternalHttpStreamServer.FileEntry(
-        displayName = displayName,
-        mimeType = mimeType,
-        sizeBytes = sizeBytes,
-        open = {
-            ExternalHttpStreamServer.ArchiveBody(
-                WebDavArchiveByteSource(
-                    source = source,
-                    password = password,
-                    remoteRelativeFile = remoteRelativeFile,
-                    preferSequential = false,
-                    pipeline = false,
-                    stickySession = true,
-                    knownSize = sizeBytes,
-                    readahead = false,
-                ),
-            )
-        },
-    )
+    ): ExternalHttpStreamServer.FileEntry {
+        val video = DefaultVideoPlayer.isVideoMime(mimeType) || isBrowseVideoFileName(displayName)
+        return ExternalHttpStreamServer.FileEntry(
+            displayName = displayName,
+            mimeType = mimeType,
+            sizeBytes = sizeBytes,
+            // Warm dual sticky + idle timeout (see ExternalHttpStreamServer.BACKEND_IDLE_MS).
+            cacheBody = video,
+            open = {
+                val openLane = {
+                    WebDavArchiveByteSource(
+                        source = source,
+                        password = password,
+                        remoteRelativeFile = remoteRelativeFile,
+                        preferSequential = false,
+                        pipeline = false,
+                        stickySession = true,
+                        knownSize = sizeBytes.takeIf { it > 0L } ?: -1L,
+                        readahead = false,
+                    )
+                }
+                ExternalHttpStreamServer.ArchiveBody(
+                    if (video) {
+                        VideoDirectLinkByteSource.open(
+                            openLane = openLane,
+                            knownSize = sizeBytes,
+                            parallelPrefetch = true,
+                        )
+                    } else {
+                        openLane()
+                    },
+                )
+            },
+        )
+    }
 
     private fun findLocalSidecarNames(videoPathStr: String, videoName: String): List<String> {
         val siblings = findLocalSiblingNames(videoPathStr).ifEmpty {
@@ -453,13 +502,8 @@ object OpenFileExternally {
         videoName: String,
     ): List<String> {
         val parentDir = parentRelative(remoteRelativeFile)
-        val names = siblingNamesFromCache(sourceId, parentDir, smb = true)
-            .ifEmpty {
-                SidecarSubtitles.probeCandidateNames(videoName).filter { name ->
-                    val remote = SmbGateway.joinRelativePath(parentDir, name)
-                    SmbGateway.fileSizeOrNull(source, password, remote)?.let { it > 0L } == true
-                }
-            }
+        // One directory list — never probeCandidateNames × fileSize (hundreds of NOT_FOUND opens).
+        val names = listSmbDirChildNames(sourceId, source, password, parentDir)
         return SidecarSubtitles.matchSiblings(videoName, names)
     }
 
@@ -468,25 +512,30 @@ object OpenFileExternally {
         source: SmbSourceEntity,
         password: String,
         parentDir: String,
+    ): List<String> = listSmbDirChildNames(sourceId, source, password, parentDir)
+        .filter { isHttpExposedMediaName(it) }
+        .distinct()
+        .sorted()
+        .take(MAX_DIR_MEDIA_FILES)
+
+    private suspend fun listSmbDirChildNames(
+        sourceId: Long,
+        source: SmbSourceEntity,
+        password: String,
+        parentDir: String,
     ): List<String> {
-        val names = siblingNamesFromCache(sourceId, parentDir, smb = true)
-            .ifEmpty {
-                runCatching {
-                    SmbGateway.listDirectory(source, password, parentDir, useCache = true)
-                        .mapNotNull { e ->
-                            when (e) {
-                                is BrowseEntryRemote.RegularFile -> directChildName(e.fileName)
-                                is BrowseEntryRemote.VideoFile -> directChildName(e.fileName)
-                                else -> null
-                            }
-                        }
-                }.getOrDefault(emptyList())
-            }
-        return names
-            .filter { isHttpExposedMediaName(it) }
-            .distinct()
-            .sorted()
-            .take(MAX_DIR_MEDIA_FILES)
+        val cached = siblingNamesFromCache(sourceId, parentDir, smb = true)
+        if (cached.isNotEmpty()) return cached
+        return runCatching {
+            SmbGateway.listDirectory(source, password, parentDir, useCache = true)
+                .mapNotNull { e ->
+                    when (e) {
+                        is BrowseEntryRemote.RegularFile -> directChildName(e.fileName)
+                        is BrowseEntryRemote.VideoFile -> directChildName(e.fileName)
+                        else -> null
+                    }
+                }
+        }.getOrDefault(emptyList())
     }
 
     private suspend fun findWebDavSidecarNames(
@@ -497,15 +546,28 @@ object OpenFileExternally {
         videoName: String,
     ): List<String> {
         val parentDir = parentRelative(remoteRelativeFile)
-        val names = siblingNamesFromCache(sourceId, parentDir, smb = false)
-            .ifEmpty {
-                SidecarSubtitles.probeCandidateNames(videoName).filter { name ->
-                    val remote = WebDavGateway.joinRelative(parentDir, name)
-                    WebDavClient.fileSizeOrNull(source, password, remote, sticky = true)
-                        ?.let { it > 0L } == true
-                }
-            }
+        val names = listWebDavDirChildNames(sourceId, source, password, parentDir)
         return SidecarSubtitles.matchSiblings(videoName, names)
+    }
+
+    private suspend fun listWebDavDirChildNames(
+        sourceId: Long,
+        source: WebDavSourceEntity,
+        password: String,
+        parentDir: String,
+    ): List<String> {
+        val cached = siblingNamesFromCache(sourceId, parentDir, smb = false)
+        if (cached.isNotEmpty()) return cached
+        return runCatching {
+            WebDavGateway.listDirectory(source, password, parentDir)
+                .mapNotNull { e ->
+                    when (e) {
+                        is BrowseEntryRemote.RegularFile -> directChildName(e.fileName)
+                        is BrowseEntryRemote.VideoFile -> directChildName(e.fileName)
+                        else -> null
+                    }
+                }
+        }.getOrDefault(emptyList())
     }
 
     private suspend fun listWebDavDirMediaNames(
@@ -514,19 +576,7 @@ object OpenFileExternally {
         password: String,
         parentDir: String,
     ): List<String> {
-        val names = siblingNamesFromCache(sourceId, parentDir, smb = false)
-            .ifEmpty {
-                runCatching {
-                    WebDavGateway.listDirectory(source, password, parentDir)
-                        .mapNotNull { e ->
-                            when (e) {
-                                is BrowseEntryRemote.RegularFile -> directChildName(e.fileName)
-                                is BrowseEntryRemote.VideoFile -> directChildName(e.fileName)
-                                else -> null
-                            }
-                        }
-                }.getOrDefault(emptyList())
-            }
+        val names = listWebDavDirChildNames(sourceId, source, password, parentDir)
         return names
             .filter { isHttpExposedMediaName(it) }
             .distinct()
@@ -548,38 +598,73 @@ object OpenFileExternally {
             .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayName })
             .map { ExternalHttpStreamServer.uriFor(session.id, it.displayName) }
         val subNames = subUris.mapNotNull { it.lastPathSegment?.let { s -> Uri.decode(s) } }.toTypedArray()
-        // Full folder playlist when access-dir is on.
-        val videoUris = if (accessDir) {
+        // Full folder video list when access-dir is on.
+        val playlistName = playlistNameFor(session.id)
+        val videoNames = if (accessDir) {
             session.files.values
-                .filter { DefaultVideoPlayer.isVideoMime(it.mimeType) }
+                .filter {
+                    DefaultVideoPlayer.isVideoMime(it.mimeType) &&
+                        !it.displayName.equals(playlistName, ignoreCase = true)
+                }
                 .map { it.displayName }
-                .sorted()
-                .map { ExternalHttpStreamServer.uriFor(session.id, it) }
+                .distinct()
+                .sortedWith(String.CASE_INSENSITIVE_ORDER)
         } else {
             emptyList()
         }
-        val view = DefaultVideoPlayer.videoViewIntent(videoUri, mimeType).apply {
-            putExtra(Intent.EXTRA_TITLE, displayName)
-            val clip = ClipData.newRawUri(displayName, videoUri)
+        val videoUris = videoNames.map { ExternalHttpStreamServer.uriFor(session.id, it) }
+
+        // Optional: hand the whole folder as one m3u8 (VLC / mpv / etc.).
+        val passPlaylist = accessDir && passFolderPlaylistEnabled() && videoNames.isNotEmpty()
+        val openUri: Uri
+        val openMime: String
+        val openTitle: String
+        if (passPlaylist) {
+            val body = buildM3u8Playlist(session.id, videoNames, displayName)
+            session.put(
+                ExternalHttpStreamServer.FileEntry(
+                    displayName = playlistName,
+                    mimeType = PLAYLIST_MIME,
+                    sizeBytes = body.size.toLong(),
+                    open = { ExternalHttpStreamServer.BytesBody(body) },
+                ),
+            )
+            openUri = ExternalHttpStreamServer.uriFor(session.id, playlistName)
+            openMime = PLAYLIST_MIME
+            openTitle = displayName
+            logcat("OpenFileExternally") {
+                "HTTP folder m3u8 $openUri videos=${videoNames.size} start=$displayName"
+            }
+        } else {
+            openUri = videoUri
+            openMime = mimeType
+            openTitle = displayName
+        }
+
+        val view = DefaultVideoPlayer.videoViewIntent(openUri, openMime).apply {
+            putExtra(Intent.EXTRA_TITLE, openTitle)
+            val clip = ClipData.newRawUri(openTitle, openUri)
             for (i in subUris.indices) {
                 clip.addItem(ClipData.Item(subNames.getOrNull(i), null, subUris[i]))
             }
-            if (accessDir) {
+            // Multi-URI clip only when not using m3u8 (playlist file is the handoff).
+            if (accessDir && !passPlaylist) {
                 for (u in videoUris) {
-                    if (u != videoUri) clip.addItem(ClipData.Item(u))
+                    if (u != openUri) clip.addItem(ClipData.Item(u))
                 }
             }
             if (clip.itemCount > 1) clipData = clip
             if (subUris.isNotEmpty()) {
                 attachSubtitleExtras(subUris, subNames)
             }
-            if (videoUris.size > 1) {
+            if (!passPlaylist && videoUris.size > 1) {
                 attachPlaylistExtras(videoUris, displayName)
             }
         }
         val preferred = DefaultVideoPlayer.preferredComponentOrNull(context)
         if (preferred != null) {
-            view.component = preferred
+            // Avoid UnsafeIntentLaunchViolation: only set full component when filters match.
+            DefaultVideoPlayer.bindPreferredPlayer(context, view, preferred)
             val launched = withUIContext {
                 try {
                     context.startActivity(view)
@@ -587,6 +672,7 @@ object OpenFileExternally {
                 } catch (e: ActivityNotFoundException) {
                     logcat("OpenFileExternally", e)
                     view.component = null
+                    view.setPackage(null)
                     false
                 }
             }
@@ -601,10 +687,40 @@ object OpenFileExternally {
                 context.startActivity(chooser)
             } catch (e: ActivityNotFoundException) {
                 logcat("OpenFileExternally", e)
-                ExternalHttpStreamServer.removeSession(session.id)
                 error(context.getString(R.string.browse_open_failed))
             }
         }
+    }
+
+    /**
+     * Simple progressive m3u8 (not HLS segments): absolute HTTP URLs per video.
+     * Current file is listed first so players start there; remaining stay A–Z.
+     */
+    private fun buildM3u8Playlist(
+        sessionId: String,
+        videoNames: List<String>,
+        startName: String,
+    ): ByteArray {
+        val ordered = buildList {
+            val start = videoNames.firstOrNull { it.equals(startName, ignoreCase = true) }
+            if (start != null) {
+                add(start)
+                for (n in videoNames) {
+                    if (!n.equals(start, ignoreCase = true)) add(n)
+                }
+            } else {
+                addAll(videoNames)
+            }
+        }
+        val text = buildString(ordered.size * 96) {
+            append("#EXTM3U\n")
+            for (name in ordered) {
+                val title = name.replace('\r', ' ').replace('\n', ' ')
+                append("#EXTINF:-1,").append(title).append('\n')
+                append(ExternalHttpStreamServer.uriFor(sessionId, name)).append('\n')
+            }
+        }
+        return text.toByteArray(Charsets.UTF_8)
     }
 
     // endregion
@@ -842,4 +958,9 @@ object OpenFileExternally {
 
     /** Cap directory publish so open-with stays snappy on huge shares. */
     private const val MAX_DIR_MEDIA_FILES = 80
+
+    /** Virtual playlist basename served from the HTTP session (not a real on-disk file). */
+    private fun playlistNameFor(sessionId: String): String = ".localviewer-$sessionId.m3u8"
+
+    private const val PLAYLIST_MIME = "video/x-mpegurl"
 }

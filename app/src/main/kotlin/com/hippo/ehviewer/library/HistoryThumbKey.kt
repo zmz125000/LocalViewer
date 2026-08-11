@@ -15,7 +15,8 @@ import okio.Path
  *   `dav-arch:…` → [ArchiveCoverCache] first-page JPEG (`archive_thumb/`, same key as
  *   browse `smb:` / `webdav:` stream covers).
  *
- * Dir-only browse history (`*_browse` tokens) does not store thumbs.
+ * Dir-only browse history (`*_browse` tokens) uses the **folder** thumb key
+ * (local path / `smb-thumb:` / `dav-thumb:`), same as folder favourites — not archive keys.
  */
 object HistoryThumbKey {
     private const val SMB_PREFIX = "smb-thumb:"

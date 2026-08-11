@@ -68,8 +68,10 @@
     <string name="settings_default_video_player">默认视频播放器</string>
     <string name="settings_default_video_player_always_ask">每次询问</string>
     <string name="settings_default_video_player_none">未找到视频应用</string>
-    <string name="settings_external_video_access_dir">用视频播放器打开文件夹</string>
-    <string name="settings_external_video_access_dir_summary">关闭：仅打开当前视频及匹配字幕。开启：向播放器暴露整个文件夹（全部视频与字幕，便于播放列表/上下集）。</string>
+    <string name="settings_external_video_access_dir">允许 localhost 访问当前文件夹</string>
+    <string name="settings_external_video_access_dir_summary">允许其他应用通过 HTTP 访问当前目录中的视频文件（用于视频播放列表支持）。</string>
+    <string name="settings_external_video_pass_folder_playlist">将文件夹作为播放列表传递</string>
+    <string name="settings_external_video_pass_folder_playlist_summary">在外部播放器中以 m3u8 播放列表打开当前文件夹中的视频</string>
     <string name="browse_menu_page_count">页数</string>
     <string name="browse_menu_reading_progress">阅读进度</string>
     <string name="browse_menu_small_galleries">小图库</string>

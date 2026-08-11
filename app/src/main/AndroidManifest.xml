@@ -198,7 +198,7 @@
             android:authorities="${applicationId}.streamdoc"
             android:exported="false"
             android:grantUriPermissions="true" />
-        <!-- Keeps network streamdoc proxy I/O alive while another app holds its FD. -->
+        <!-- Keeps network streamdoc and loopback HTTP I/O alive for external apps. -->
         <service
             android:name="com.hippo.ehviewer.provider.StreamKeepAliveService"
             android:exported="false"

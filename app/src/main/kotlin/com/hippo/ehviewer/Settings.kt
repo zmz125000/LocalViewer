@@ -107,7 +107,15 @@ object Settings : DataStorePreferences(null) {
      * current directory (playlist / next-prev friendly). When false (default), only the
      * opened video plus matching sidecar subs are published. Settings → General.
      */
-    val externalVideoAccessDir = boolPref("external_video_access_dir", false)
+    val externalVideoAccessDir = boolPref("external_video_access_dir", true)
+
+    /**
+     * When true (and [externalVideoAccessDir] is on), external open hands the folder to the
+     * player as a loopback **m3u8** playlist of every video in the directory (current file
+     * first). When false, the opened video URI is the intent data and multi-file extras are
+     * attached best-effort. Settings → General (nested under folder access).
+     */
+    val externalVideoPassFolderPlaylist = boolPref("external_video_pass_folder_playlist", false)
 
     /**
      * When true, folder-view shows folder galleries below [browseSmallGalleryMinPages].

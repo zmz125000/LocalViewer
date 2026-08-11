@@ -84,6 +84,32 @@ object DefaultVideoPlayer {
         return activityInfo(context.packageManager, component) != null
     }
 
+    /**
+     * Attach the user's preferred player without [android.os.strictmode.UnsafeIntentLaunchViolation].
+     *
+     * Explicit [Intent.setComponent] requires the Intent (scheme/type) to match that activity's
+     * intent-filter. Many players (e.g. MX) only declare content/file VIEW filters; loopback
+     * `http://127.0.0.1/…` then mismatches and StrictMode fires. In that case use package-only
+     * targeting so the system picks a filter-matching activity inside the preferred app.
+     */
+    fun bindPreferredPlayer(context: Context, intent: Intent, preferred: ComponentName) {
+        val probe = Intent(intent).apply {
+            component = null
+            setPackage(null)
+        }
+        val matchesComponent = query(context.packageManager, probe).any { info ->
+            val ai = info.activityInfo ?: return@any false
+            ai.packageName == preferred.packageName && ai.name == preferred.className
+        }
+        if (matchesComponent) {
+            intent.component = preferred
+            intent.setPackage(null)
+            return
+        }
+        intent.component = null
+        intent.setPackage(preferred.packageName)
+    }
+
     fun videoViewIntent(uri: Uri, mimeType: String): Intent = Intent(Intent.ACTION_VIEW).apply {
         setDataAndType(uri, mimeType)
         addCategory(Intent.CATEGORY_DEFAULT)
