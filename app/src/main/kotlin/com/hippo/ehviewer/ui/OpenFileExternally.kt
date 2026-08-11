@@ -663,7 +663,8 @@ object OpenFileExternally {
         }
         val preferred = DefaultVideoPlayer.preferredComponentOrNull(context)
         if (preferred != null) {
-            view.component = preferred
+            // Avoid UnsafeIntentLaunchViolation: only set full component when filters match.
+            DefaultVideoPlayer.bindPreferredPlayer(context, view, preferred)
             val launched = withUIContext {
                 try {
                     context.startActivity(view)
@@ -671,6 +672,7 @@ object OpenFileExternally {
                 } catch (e: ActivityNotFoundException) {
                     logcat("OpenFileExternally", e)
                     view.component = null
+                    view.setPackage(null)
                     false
                 }
             }

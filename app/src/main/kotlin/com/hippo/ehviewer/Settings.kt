@@ -107,7 +107,7 @@ object Settings : DataStorePreferences(null) {
      * current directory (playlist / next-prev friendly). When false (default), only the
      * opened video plus matching sidecar subs are published. Settings → General.
      */
-    val externalVideoAccessDir = boolPref("external_video_access_dir", false)
+    val externalVideoAccessDir = boolPref("external_video_access_dir", true)
 
     /**
      * When true (and [externalVideoAccessDir] is on), external open hands the folder to the
