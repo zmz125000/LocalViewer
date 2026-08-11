@@ -17,8 +17,8 @@ import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import okio.Path.Companion.toPath
 import splitties.init.appCtx
 
@@ -47,7 +47,7 @@ sealed interface VideoThumbnailSource {
 }
 
 /**
- * Lazy, single-lane video frame extraction for visible browse rows.
+ * Lazy video frame extraction for visible browse rows, limited to four concurrent decodes.
  *
  * Disk layout: `cache/video_thumb_cache/` under the app data dir — same parent as
  * `smb_thumb_cache` / `archive_thumb`. Byte budget + LRU trim is shared via
@@ -72,7 +72,8 @@ object VideoThumbnail {
     private const val FRAME_TIME_US = 5_000_000L
     private const val FAILURE_RETRY_MS = 24L * 60 * 60 * 1_000
     private const val REMOTE_CACHE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1_000
-    private val extractMutex = Mutex()
+    private const val MAX_CONCURRENT_EXTRACTIONS = 4
+    private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
 
     /** Shared with [OriginDiskCache.trimThumbs] (`cache/video_thumb_cache`). */
     fun cacheDirectory(): File = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache").apply { mkdirs() }
@@ -105,21 +106,21 @@ object VideoThumbnail {
             return@withIOContext null
         }
 
-        extractMutex.withLock {
-            if (isFresh(target, source)) return@withLock target
+        extractSemaphore.withPermit {
+            if (isFresh(target, source)) return@withPermit target
             if (source.isNetwork && !Settings.downloadNetworkVideoThumbs.value) {
-                return@withLock null
+                return@withPermit null
             }
             val byteSource = try {
                 openSource(source)
             } catch (_: Throwable) {
                 failure.writeText("")
-                return@withLock null
+                return@withPermit null
             }
             byteSource.use {
                 val frame = extractFrame(it) ?: run {
                     failure.writeText("")
-                    return@withLock null
+                    return@withPermit null
                 }
                 val scaled = scale(frame)
                 try {
@@ -129,7 +130,7 @@ object VideoThumbnail {
                     }
                     if (!written || !temporary.renameTo(target)) {
                         temporary.delete()
-                        return@withLock null
+                        return@withPermit null
                     }
                     failure.delete()
                     // Byte-budget trim (shared with other thumb folders).
