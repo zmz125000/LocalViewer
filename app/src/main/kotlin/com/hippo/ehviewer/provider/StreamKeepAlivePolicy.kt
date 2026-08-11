@@ -11,11 +11,13 @@ import com.hippo.ehviewer.webdav.WebDavClient
  *
  * Limited (default): ~20 min idle session/token budget (activity-based, not a hard clock)
  * + drop sticky transports on screen off / HTTP idle; short FGS grace after last activity.
- * Unlimited (Advanced): long idle + keep sockets across screen off.
+ * Unlimited (Advanced): long idle token age; streamdoc may keep sticky across screen off.
+ * HTTP still releases warm bodies when FGS stops (no long-lived FD).
  *
  * Drop is **resumable**: streamdoc tokens / HTTP sessions stay; next proxy read or HTTP
  * GET reconnects SMB sticky / WebDAV Range (may rebuffer a few seconds on 4K).
- * FGS / wake lock track **live** FDs or HTTP body transfers only — not idle sessions.
+ * FGS / wake lock track **live** FDs or **in-flight HTTP body transfers** only — not idle
+ * sessions or warm body caches. Stalled HTTP Ranges are aborted so FGS can stop.
  */
 object StreamKeepAlivePolicy {
     /** Idle token age when limited. */

@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import splitties.init.appCtx
 
@@ -148,9 +149,19 @@ object ExternalHttpStreamServer {
         private val bodyCache = HashMap<String, CachedBody>()
         /** Basename of the single warm dual-sticky video body (at most one per session). */
         @Volatile private var activeBodyKey: String? = null
+        /** Live client sockets serving this session (abort on teardown / switch). */
+        private val liveSockets = ConcurrentHashMap.newKeySet<Socket>()
 
         fun touch() {
             lastAccessMs = SystemClock.elapsedRealtime()
+        }
+
+        fun attachSocket(socket: Socket) {
+            liveSockets.add(socket)
+        }
+
+        fun detachSocket(socket: Socket) {
+            liveSockets.remove(socket)
         }
 
         fun put(entry: FileEntry) {
@@ -229,6 +240,11 @@ object ExternalHttpStreamServer {
         }
 
         fun closeBodies() {
+            // Unblock stalled body writes so activeTransfers can drop and FGS can stop.
+            for (socket in liveSockets.toList()) {
+                runCatching { socket.close() }
+            }
+            liveSockets.clear()
             synchronized(bodyLock) {
                 for ((_, cached) in bodyCache) {
                     runCatching { cached.body.close() }
@@ -285,14 +301,15 @@ object ExternalHttpStreamServer {
     private val activeTransfers = AtomicInteger(0)
     private val keepAliveLock = Any()
     private var stopKeepAliveJob: Job? = null
+    private var warmBodyJob: Job? = null
     private var pruneJob: Job? = null
 
     /**
      * Live **network HTTP body transfers** only (for FGS wake lock / screen-on).
      *
-     * Idle sessions stay registered for resume ([StreamKeepAlivePolicy.tokenMaxAgeMs],
-     * ~20 min limited) but do **not** count as activity — same idea as streamdoc tokens
-     * that outlive their proxy FDs. No activity → no wake lock / short FGS grace only.
+     * Counts in-flight GET body streams (not warm sticky bodies, not idle sessions).
+     * Player pause/stop that leaves a half-open Range is aborted by [BODY_STALL_MS] so this
+     * counter cannot stick forever.
      */
     fun networkActivityCount(): Int = activeTransfers.get()
 
@@ -399,6 +416,8 @@ object ExternalHttpStreamServer {
         synchronized(keepAliveLock) {
             stopKeepAliveJob?.cancel()
             stopKeepAliveJob = null
+            warmBodyJob?.cancel()
+            warmBodyJob = null
             StreamKeepAliveService.start(context)
         }
         maybeStopKeepAliveLater()
@@ -406,27 +425,35 @@ object ExternalHttpStreamServer {
 
     private fun onTransferStarted(network: Boolean, context: Context = appCtx) {
         if (!network) return
-        activeTransfers.incrementAndGet()
+        val n = activeTransfers.incrementAndGet()
+        logcat("ExtHttp") { "transfer start active=$n" }
         synchronized(keepAliveLock) {
             stopKeepAliveJob?.cancel()
             stopKeepAliveJob = null
+            warmBodyJob?.cancel()
+            warmBodyJob = null
             StreamKeepAliveService.start(context)
         }
     }
 
     private fun onTransferEnded(network: Boolean) {
         if (!network) return
-        activeTransfers.updateAndGet { (it - 1).coerceAtLeast(0) }
-        if (activeTransfers.get() == 0) {
+        val n = activeTransfers.updateAndGet { (it - 1).coerceAtLeast(0) }
+        logcat("ExtHttp") { "transfer end active=$n" }
+        if (n == 0) {
             // Drop CPU wake immediately; FGS stops after short grace (sessions still valid).
             StreamKeepAliveService.onNetworkIdle()
             maybeStopKeepAliveLater()
+            maybeReleaseWarmBodiesLater()
         }
     }
 
     /**
      * After last network transfer (or session open with no traffic), stop FGS once the
      * reopen grace elapses — **even if sessions remain** for later resume.
+     *
+     * Always releases warm HTTP sticky bodies when FGS stops (HTTP has no long-lived FD;
+     * next Range reopens dual sticky). Matches player stop / long pause / app switch.
      */
     private fun maybeStopKeepAliveLater(context: Context = appCtx) {
         synchronized(keepAliveLock) {
@@ -438,21 +465,48 @@ object ExternalHttpStreamServer {
                         StreamDocumentRegistry.networkOpenCount() == 0
                     ) {
                         StreamKeepAliveService.stop(context)
-                        // Limited mode: tear down sticky TCP while sessions stay in memory.
-                        // Next HTTP open rebuilds sticky SMB/WebDAV (reconnect-as-needed).
-                        if (StreamKeepAlivePolicy.dropNetworkOnScreenOff() &&
-                            sessions.values.any { it.network }
-                        ) {
-                            // Close warm HTTP bodies so sticky handles drop with the pool.
-                            for (session in sessions.values) {
-                                if (session.network) session.closeBodies()
-                            }
-                            StreamKeepAlivePolicy.dropStickyNetwork("http_idle")
-                        }
+                        releaseNetworkHttpBodies("fgs_idle")
                         stopKeepAliveJob = null
+                        warmBodyJob = null
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Drop dual-sticky video bodies sooner than full FGS grace when the player is not
+     * pulling data (switch file / stop / long buffer). FGS may still run until grace ends.
+     */
+    private fun maybeReleaseWarmBodiesLater() {
+        synchronized(keepAliveLock) {
+            warmBodyJob?.cancel()
+            warmBodyJob = scope.launch {
+                delay(WARM_BODY_IDLE_MS)
+                synchronized(keepAliveLock) {
+                    if (activeTransfers.get() == 0) {
+                        releaseNetworkHttpBodies("transfer_idle")
+                    }
+                    warmBodyJob = null
+                }
+            }
+        }
+    }
+
+    private fun releaseNetworkHttpBodies(reason: String) {
+        var closed = 0
+        for (session in sessions.values) {
+            if (session.network) {
+                session.closeBodies()
+                closed++
+            }
+        }
+        if (closed > 0) {
+            logcat("ExtHttp") { "released warm network bodies ($reason) sessions=$closed" }
+        }
+        // Limited mode also force-drops any leftover sticky sockets (Fuse + HTTP).
+        if (StreamKeepAlivePolicy.dropNetworkOnScreenOff()) {
+            StreamKeepAlivePolicy.dropStickyNetwork(reason)
         }
     }
 
@@ -501,6 +555,7 @@ object ExternalHttpStreamServer {
     // endregion
 
     private fun handleClient(socket: Socket) {
+        var boundSession: Session? = null
         try {
             val input = BufferedInputStream(socket.getInputStream())
             val output = BufferedOutputStream(socket.getOutputStream())
@@ -515,17 +570,27 @@ object ExternalHttpStreamServer {
                     break
                 } ?: break
                 requests++
-                // Long movie Range replies must not die on SO_TIMEOUT mid-body.
+                // Header idle uses SO_TIMEOUT; body uses a progress watchdog (writes block
+                // without SO_TIMEOUT when the player pauses with a full TCP window).
                 socket.soTimeout = 0
                 val moreAllowed = requests < MAX_REQUESTS_PER_CONNECTION
                 val clientWantsKeepAlive = wantsKeepAlive(request) && moreAllowed
                 val keepAlive = when (request.method) {
-                    "GET", "HEAD" -> serve(
-                        request,
-                        output,
-                        headOnly = request.method == "HEAD",
-                        preferKeepAlive = clientWantsKeepAlive,
-                    )
+                    "GET", "HEAD" -> {
+                        val session = sessionForPath(request.path)
+                        if (session != null && session !== boundSession) {
+                            boundSession?.detachSocket(socket)
+                            session.attachSocket(socket)
+                            boundSession = session
+                        }
+                        serve(
+                            request,
+                            output,
+                            socket,
+                            headOnly = request.method == "HEAD",
+                            preferKeepAlive = clientWantsKeepAlive,
+                        )
+                    }
                     else -> {
                         writeSimple(output, 405, "Method Not Allowed", keepAlive = false)
                         false
@@ -537,8 +602,18 @@ object ExternalHttpStreamServer {
         } catch (e: Throwable) {
             if (e !is IOException) logcat("ExtHttp", e)
         } finally {
+            boundSession?.detachSocket(socket)
             runCatching { socket.close() }
         }
+    }
+
+    private fun sessionForPath(path: String): Session? {
+        val rawPath = path.substringBefore('?')
+        val segs = runCatching {
+            rawPath.trim('/').split('/').map { URLDecoder.decode(it, Charsets.UTF_8) }
+        }.getOrNull() ?: return null
+        if (segs.size < 2 || segs[0] != "s") return null
+        return sessions[segs[1]]
     }
 
     private data class HttpRequest(
@@ -599,6 +674,7 @@ object ExternalHttpStreamServer {
     private fun serve(
         request: HttpRequest,
         output: OutputStream,
+        socket: Socket,
         headOnly: Boolean,
         preferKeepAlive: Boolean,
     ): Boolean {
@@ -716,6 +792,26 @@ object ExternalHttpStreamServer {
             }
 
             onTransferStarted(session.network)
+            // Player pause / stop often leaves the Range open without closing TCP; write
+            // then blocks forever and used to pin activeTransfers + FGS. Abort on no progress.
+            val lastProgressMs = AtomicLong(SystemClock.elapsedRealtime())
+            val stallWatch = if (session.network) {
+                scope.launch {
+                    while (isActive) {
+                        delay(BODY_STALL_CHECK_MS)
+                        val idle = SystemClock.elapsedRealtime() - lastProgressMs.get()
+                        if (idle >= BODY_STALL_MS) {
+                            logcat("ExtHttp") {
+                                "body stall ${idle}ms session=${session.id} name=${entry.displayName} — close socket"
+                            }
+                            runCatching { socket.close() }
+                            break
+                        }
+                    }
+                }
+            } else {
+                null
+            }
             try {
                 val buf = ByteArray(64 * 1024)
                 var remaining = contentLength
@@ -725,6 +821,7 @@ object ExternalHttpStreamServer {
                     val n = body.readAt(offset, buf, 0, want)
                     if (n <= 0) break
                     output.write(buf, 0, n)
+                    lastProgressMs.set(SystemClock.elapsedRealtime())
                     offset += n
                     remaining -= n
                     session.touch()
@@ -739,6 +836,7 @@ object ExternalHttpStreamServer {
                 runCatching { body.close() }
                 return false
             } finally {
+                stallWatch?.cancel()
                 onTransferEnded(session.network)
             }
             runCatching { body.close() }
@@ -864,4 +962,18 @@ object ExternalHttpStreamServer {
 
     /** Idle timeout while reading request line + headers only. */
     private const val REQUEST_HEADER_TIMEOUT_MS = 15_000
+
+    /**
+     * No successful body write for this long → treat player as stopped/paused-with-full-buffer
+     * and abort the socket so [activeTransfers] drops and FGS can shut down.
+     */
+    private const val BODY_STALL_MS = 45_000L
+    private const val BODY_STALL_CHECK_MS = 5_000L
+
+    /**
+     * After last network transfer ends, release warm dual-sticky bodies if no new traffic.
+     * Shorter than [StreamKeepAlivePolicy.FGS_STOP_DELAY_MS] so SMB sockets follow player stop
+     * without waiting the full FGS grace.
+     */
+    private const val WARM_BODY_IDLE_MS = 60_000L
 }
