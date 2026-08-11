@@ -411,6 +411,21 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    /** History path link for the folder currently listed (parent of the opened file). */
+    suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
+        val folderThumb = LocalHistory.smbBrowseFolderThumbKey(
+            sourceId = sourceId,
+            relativeDir = relativeDir,
+            entries = entries,
+        )
+        LocalHistory.recordSmbBrowseFolder(
+            sourceId = sourceId,
+            relativePath = relativeDir,
+            title = title,
+            thumbKey = folderThumb,
+        )
+    }
+
     fun openFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
         val src = source ?: return
         ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
@@ -446,6 +461,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             category = 2,
         )
         launchIO {
+            // Parent browse dir (not gated by file/gallery prefs) + gallery row.
+            recordCurrentBrowseFolderHistory(src.id)
             // History = folder gallery (open → reader). Same gid as progress.
             LocalHistory.recordSmbFolderGallery(
                 sourceId = src.id,
@@ -459,21 +476,6 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         // When capped or partial, pass empty names so reader re-lists full set
         val names = if (entry.pageCountCapped) emptyList() else entry.imageFileNames
         navToSmbFolderReader(src.id, remote, names, info)
-    }
-
-    /** History path link for the folder currently listed (parent of the opened file). */
-    suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
-        val folderThumb = LocalHistory.smbBrowseFolderThumbKey(
-            sourceId = sourceId,
-            relativeDir = relativeDir,
-            entries = entries,
-        )
-        LocalHistory.recordSmbBrowseFolder(
-            sourceId = sourceId,
-            relativePath = relativeDir,
-            title = title,
-            thumbKey = folderThumb,
-        )
     }
 
     fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
@@ -565,6 +567,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
             try {
+                // Parent browse dir (not gated by file/gallery prefs) + file row.
+                recordCurrentBrowseFolderHistory(src.id)
                 ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
                 // Stream ZIP/CBZ/TAR/CBT/EPUB, solid RAR/CBR/7z, or document extract.
                 if (isStreamableArchiveFileName(entry.fileName) ||

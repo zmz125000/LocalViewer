@@ -6,6 +6,7 @@ import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.hippo.ehviewer.EhDB
+import com.hippo.ehviewer.Settings
 // LocalLibrary used for archive path → library row history
 
 /** Library gallery (scanned). Click → reader. */
@@ -160,6 +161,34 @@ object LocalHistory {
         WEBDAV_ARCHIVE_TOKEN,
         -> info.pages > 0
         else -> false
+    }
+
+    /**
+     * Privacy gates for HISTORY writes. Master [Settings.saveHistory] must be on.
+     * Browse-dir rows always pass when master is on; file vs gallery use nested prefs.
+     * (Cover keys / parent-dir side records use the same [EhDB.putHistoryInfo] path.)
+     */
+    fun isHistoryWriteAllowed(info: GalleryInfo): Boolean {
+        if (!Settings.saveHistory.value) return false
+        return when (info.token) {
+            // Dir pins: parent of opened file/gallery — not gated by file/gallery toggles.
+            LOCAL_BROWSE_TOKEN, SMB_BROWSE_TOKEN, WEBDAV_BROWSE_TOKEN -> true
+            // Files (archives).
+            LOCAL_ARCHIVE_TOKEN, SMB_ARCHIVE_TOKEN, WEBDAV_ARCHIVE_TOKEN ->
+                Settings.saveFileHistory.value
+            // Folder galleries (image dirs).
+            LOCAL_FOLDER_TOKEN, SMB_FOLDER_TOKEN, WEBDAV_FOLDER_TOKEN ->
+                Settings.saveGalleryHistory.value
+            // Scanned library: category 1 = archive file, else folder gallery.
+            LOCAL_GALLERY_TOKEN ->
+                if (info.category == 1) {
+                    Settings.saveFileHistory.value
+                } else {
+                    Settings.saveGalleryHistory.value
+                }
+            // Legacy / unknown: treat as gallery.
+            else -> Settings.saveGalleryHistory.value
+        }
     }
 
     suspend fun recordLibraryGallery(gallery: LocalGalleryEntity) {

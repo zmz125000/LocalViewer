@@ -412,6 +412,21 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    /** History path link for the folder currently listed (parent of the opened file). */
+    suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
+        val folderThumb = LocalHistory.webDavBrowseFolderThumbKey(
+            sourceId = sourceId,
+            relativeDir = relativeDir,
+            entries = entries,
+        )
+        LocalHistory.recordWebDavBrowseFolder(
+            sourceId = sourceId,
+            relativePath = relativeDir,
+            title = title,
+            thumbKey = folderThumb,
+        )
+    }
+
     fun openFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
         val src = source ?: return
         ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
@@ -447,6 +462,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             category = 3,
         )
         launchIO {
+            // Parent browse dir (not gated by file/gallery prefs) + gallery row.
+            recordCurrentBrowseFolderHistory(src.id)
             // History = folder gallery (open → reader). Same gid as progress.
             LocalHistory.recordWebDavFolderGallery(
                 sourceId = src.id,
@@ -460,21 +477,6 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         // When capped or partial, pass empty names so reader re-lists full set
         val names = if (entry.pageCountCapped) emptyList() else entry.imageFileNames
         navToWebDavFolderReader(src.id, remote, names, info)
-    }
-
-    /** History path link for the folder currently listed (parent of the opened file). */
-    suspend fun recordCurrentBrowseFolderHistory(sourceId: Long) {
-        val folderThumb = LocalHistory.webDavBrowseFolderThumbKey(
-            sourceId = sourceId,
-            relativeDir = relativeDir,
-            entries = entries,
-        )
-        LocalHistory.recordWebDavBrowseFolder(
-            sourceId = sourceId,
-            relativePath = relativeDir,
-            title = title,
-            thumbKey = folderThumb,
-        )
     }
 
     fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
@@ -566,6 +568,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
             try {
+                // Parent browse dir (not gated by file/gallery prefs) + file row.
+                recordCurrentBrowseFolderHistory(src.id)
                 ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
                 if (isStreamableArchiveFileName(entry.fileName) ||
                     isSolidArchiveFileName(entry.fileName) ||

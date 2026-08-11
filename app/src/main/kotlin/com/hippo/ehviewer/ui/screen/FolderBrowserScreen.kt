@@ -297,6 +297,25 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    /** History path link for the folder currently listed (parent of the opened file). */
+    suspend fun recordCurrentBrowseFolderHistory() {
+        val frame = stack.lastOrNull() ?: return
+        val parentPath = stack.getOrNull(stack.lastIndex - 1)?.path
+        val folderThumb = LocalHistory.localBrowseFolderThumbKey(
+            rootId = frame.rootId,
+            relativePath = frame.relativePath,
+            currentPath = frame.path,
+            entries = entries,
+            parentPath = parentPath,
+        )
+        LocalHistory.recordLocalBrowseFolder(
+            rootId = frame.rootId,
+            relativePath = frame.relativePath,
+            title = frame.title,
+            thumbKey = folderThumb,
+        )
+    }
+
     fun openFolderGallery(entry: BrowseEntry.FolderGallery) {
         val frame = stack.lastOrNull() ?: return
         // Playlist = gallery/archive rows in this browse list (lazy galleries), not only
@@ -327,6 +346,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             category = 0,
         )
         launchIO {
+            // Parent browse dir (not gated by file/gallery prefs) + gallery row.
+            recordCurrentBrowseFolderHistory()
             // History = folder gallery (open → reader). Same gid as progress.
             LocalHistory.recordLocalFolderGallery(
                 rootId = frame.rootId,
@@ -352,28 +373,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
         val path = entry.path.toString()
         launchIO {
+            // Parent browse dir (not gated by file/gallery prefs) + file row.
+            recordCurrentBrowseFolderHistory()
             LocalHistory.recordLocalArchive(path, title = entry.name)
         }
         navToReader(path)
-    }
-
-    /** History path link for the folder currently listed (parent of the opened file). */
-    suspend fun recordCurrentBrowseFolderHistory() {
-        val frame = stack.lastOrNull() ?: return
-        val parentPath = stack.getOrNull(stack.lastIndex - 1)?.path
-        val folderThumb = LocalHistory.localBrowseFolderThumbKey(
-            rootId = frame.rootId,
-            relativePath = frame.relativePath,
-            currentPath = frame.path,
-            entries = entries,
-            parentPath = parentPath,
-        )
-        LocalHistory.recordLocalBrowseFolder(
-            rootId = frame.rootId,
-            relativePath = frame.relativePath,
-            title = frame.title,
-            thumbKey = folderThumb,
-        )
     }
 
     /** Long-press PDF → system / third-party reader (tap still uses in-app image PDF engine). */

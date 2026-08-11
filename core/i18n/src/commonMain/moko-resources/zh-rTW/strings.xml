@@ -155,7 +155,11 @@
     <string name="settings_advanced_read_cache_size_summary">SMB 頁面快取（及舊版線上圖片快取）的最大容量</string>
     <string name="insufficient_gp">GP 不足，無法下載原圖</string>
     <string name="settings_privacy_save_history">儲存歷史</string>
-    <string name="settings_privacy_save_history_summary">記錄最近開啟的圖庫與瀏覽資料夾。關閉後會清除既有歷史。</string>
+    <string name="settings_privacy_save_history_summary">瀏覽資料夾、檔案與圖庫歷史的總開關。關閉後會清除既有歷史。</string>
+    <string name="settings_privacy_save_file_history">儲存檔案歷史</string>
+    <string name="settings_privacy_save_file_history_summary">記錄開啟的壓縮檔與文件檔案。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
+    <string name="settings_privacy_save_gallery_history">儲存圖庫歷史</string>
+    <string name="settings_privacy_save_gallery_history_summary">記錄開啟的庫圖庫與資料夾圖庫。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
     <string name="history_disabled">歷史記錄已在隱私設定中關閉</string>
     <!-- Theme -->
     <string name="homepage">首頁</string>

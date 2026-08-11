@@ -226,8 +226,23 @@ object Settings : DataStorePreferences(null) {
     val securityDelay = intPref("require_unlock_delay", 0)
     val enabledSecurity = boolPref("enable_secure", false)
 
-    /** When false, history is not written and Privacy toggle clears existing rows. */
+    /**
+     * Master history switch. When false, nothing is written and Privacy toggle clears
+     * existing rows + device search history. Nested file/gallery prefs only apply when on.
+     */
     val saveHistory = boolPref("save_history", true)
+
+    /**
+     * When [saveHistory] is on: record opened **files** (archives / stream archives,
+     * including library archive galleries). Default on. Does not gate browse-dir history.
+     */
+    val saveFileHistory = boolPref("save_file_history", true)
+
+    /**
+     * When [saveHistory] is on: record opened **galleries** (library folder galleries and
+     * browse folder-galleries). Default on. Does not gate browse-dir history.
+     */
+    val saveGalleryHistory = boolPref("save_gallery_history", true)
 
     // Advanced
     val saveParseErrorBody = boolPref("save_parse_error_body", true)
