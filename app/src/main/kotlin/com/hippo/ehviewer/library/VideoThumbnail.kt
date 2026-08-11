@@ -66,9 +66,6 @@ object VideoThumbnail {
     /** Long edge — matches [OriginDiskCache.THUMB_EDGE] (other browse covers). */
     private val EDGE_PX: Int get() = OriginDiskCache.THUMB_EDGE
 
-    /** Cache-key bump: first-frame extraction replaces the old five-second frame. */
-    private const val CACHE_FORMAT_VERSION = 2
-
     /** Keep four decoders, but cap each network stream so playback keeps bandwidth. */
     private const val MAX_NETWORK_PREFIX_BYTES = 4L * 1024L * 1024L
     private const val FAILURE_RETRY_MS = 24L * 60 * 60 * 1_000
@@ -85,7 +82,7 @@ object VideoThumbnail {
      */
     fun cachedJpegIfPresent(source: VideoThumbnailSource): File? {
         val directory = cacheDirectory()
-        val cacheKey = sha256("$CACHE_FORMAT_VERSION:${source.cacheIdentity}")
+        val cacheKey = sha256(source.cacheIdentity)
         val target = File(directory, "$cacheKey.jpg")
         return if (isFresh(target, source)) target else null
     }
@@ -94,7 +91,7 @@ object VideoThumbnail {
     suspend fun getOrCreate(context: Context, source: VideoThumbnailSource): File? = withIOContext {
         // [context] kept for call-site API stability; files live under app dataDir.
         val directory = cacheDirectory()
-        val cacheKey = sha256("$CACHE_FORMAT_VERSION:${source.cacheIdentity}")
+        val cacheKey = sha256(source.cacheIdentity)
         val target = File(directory, "$cacheKey.jpg")
         val failure = File(directory, "$cacheKey.failed")
         if (failure.isFile && System.currentTimeMillis() - failure.lastModified() < FAILURE_RETRY_MS) {
