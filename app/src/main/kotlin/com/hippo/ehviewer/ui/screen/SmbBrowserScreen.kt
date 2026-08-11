@@ -78,6 +78,7 @@ import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
+import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
@@ -890,6 +891,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
+                                        thumbnailSource = VideoThumbnailSource.Smb(
+                                            sourceId,
+                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                        ),
                                         onClick = { openVideoPrimary(video.fileName) },
                                         onLongClick = { openVideoSecondary(video.fileName) },
                                     )
@@ -972,6 +977,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
+                                        thumbnailSource = VideoThumbnailSource.Smb(
+                                            sourceId,
+                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                        ),
                                         onClick = { openVideoPrimary(video.fileName) },
                                         onLongClick = { openVideoSecondary(video.fileName) },
                                     )

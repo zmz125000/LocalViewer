@@ -74,6 +74,7 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
 import com.hippo.ehviewer.library.isPdfFileName
@@ -680,6 +681,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 items(videos, key = { "v-${it.path}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
+                                        thumbnailSource = VideoThumbnailSource.Local(video.path.toString()),
                                         onClick = { openVideoPrimary(video.path) },
                                         onLongClick = { openVideoSecondary(video.path) },
                                     )
@@ -764,6 +766,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 items(videos, key = { "v-${it.path}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
+                                        thumbnailSource = VideoThumbnailSource.Local(video.path.toString()),
                                         onClick = { openVideoPrimary(video.path) },
                                         onLongClick = { openVideoSecondary(video.path) },
                                     )
