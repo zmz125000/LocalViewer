@@ -127,7 +127,7 @@ import kotlinx.coroutines.delay
 import moe.tarsin.snackbar
 import moe.tarsin.string
 
-private const val SMB_RECONNECT_RETRY_DELAY_MS = 5_000L
+private const val SMB_RECONNECT_RETRY_DELAY_MS = 3_000L
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
