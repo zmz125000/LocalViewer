@@ -642,8 +642,8 @@ object ExternalHttpStreamServer {
                     try {
                         ServerSocket(preferredPort, 50, address)
                     } catch (e: BindException) {
-                        logcat("ExtHttp", e) {
-                            "stable port $preferredPort unavailable; selecting a replacement"
+                        logcat("ExtHttp") {
+                            "stable port $preferredPort unavailable (${e.message}); selecting a replacement"
                         }
                         ServerSocket(0, 50, address)
                     }
