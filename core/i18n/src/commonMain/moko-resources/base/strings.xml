@@ -430,7 +430,9 @@
     <string name="settings_eh">EH</string>
     <string name="settings_general">General</string>
     <string name="settings_network_folder_index_cache">Network folder index cache</string>
-    <string name="settings_network_folder_index_cache_summary">Keep completed SMB/WebDAV folder scans on disk for faster browsing.</string>
+    <string name="settings_network_folder_index_cache_summary">Off keeps folder indexes in RAM only; on also saves them to disk.</string>
+    <string name="settings_network_folder_index_quick_scan">Folder cache quick scan</string>
+    <string name="settings_network_folder_index_quick_scan_summary">On a RAM or disk cache hit, quickly check the current folder for added or deleted subfolders.</string>
     <string name="settings_download_remote_thumbs">Download network gallery covers</string>
     <string name="settings_download_remote_thumbs_summary">Fetch network gallery thumbnails.</string>
     <string name="settings_download_network_archive_thumbs">Download network archive covers</string>

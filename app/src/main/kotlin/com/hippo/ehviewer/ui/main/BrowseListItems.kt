@@ -101,6 +101,7 @@ fun BrowseDirectoryRow(
     cover: BrowseCover? = null,
     showFolderThumb: Boolean = false,
     thumbRetryKey: Any? = null,
+    allowRemoteFetch: Boolean = true,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
@@ -112,6 +113,7 @@ fun BrowseDirectoryRow(
                     cover = cover,
                     decodeSizePx = CoverThumb.listDecodePx(),
                     retryKey = thumbRetryKey,
+                    allowRemoteFetch = allowRemoteFetch,
                     placeholderIcon = Icons.Default.Folder,
                 )
             } else {
@@ -148,6 +150,7 @@ fun BrowseFolderGalleryRow(
     pageCountCapped: Boolean = false,
     /** See [BrowseCoverThumb.retryKey] (SMB pull-to-refresh / parent bump). */
     thumbRetryKey: Any? = null,
+    allowRemoteFetch: Boolean = true,
     showPages: Boolean = true,
 ) {
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
@@ -168,6 +171,7 @@ fun BrowseFolderGalleryRow(
                 cover = resolvedCover,
                 decodeSizePx = CoverThumb.listDecodePx(),
                 retryKey = thumbRetryKey,
+                allowRemoteFetch = allowRemoteFetch,
             )
         },
         modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -181,6 +185,7 @@ fun BrowseArchiveGalleryRow(
     modifier: Modifier = Modifier,
     cover: BrowseCover? = null,
     thumbRetryKey: Any? = null,
+    allowRemoteFetch: Boolean = true,
     /** e.g. PDF long-press → open in external app; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -197,6 +202,7 @@ fun BrowseArchiveGalleryRow(
                 placeholderSize = 32.dp,
                 decodeSizePx = CoverThumb.listDecodePx(),
                 retryKey = thumbRetryKey,
+                allowRemoteFetch = allowRemoteFetch,
                 placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
             )
         },
@@ -294,6 +300,7 @@ fun BrowseDirectoryGridItem(
     cover: BrowseCover? = null,
     showFolderThumb: Boolean = false,
     thumbRetryKey: Any? = null,
+    allowRemoteFetch: Boolean = true,
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
@@ -318,6 +325,7 @@ fun BrowseDirectoryGridItem(
                         gutter = GalleryGridDefaults.gutter(),
                     ),
                     retryKey = thumbRetryKey,
+                    allowRemoteFetch = allowRemoteFetch,
                     placeholderIcon = Icons.Default.Folder,
                 )
                 if (showFavoriteStar) {
@@ -396,6 +404,7 @@ fun BrowseFolderGalleryGridItem(
     cover: BrowseCover? = null,
     pageCountCapped: Boolean = false,
     thumbRetryKey: Any? = null,
+    allowRemoteFetch: Boolean = true,
     showPages: Boolean = true,
 ) {
     BrowseGridCell(
@@ -415,6 +424,7 @@ fun BrowseFolderGalleryGridItem(
                         gutter = GalleryGridDefaults.gutter(),
                     ),
                     retryKey = thumbRetryKey,
+                    allowRemoteFetch = allowRemoteFetch,
                 )
                 if (showPages && (pageCount > 0 || pageCountCapped)) {
                     Badge(
@@ -443,6 +453,7 @@ fun BrowseArchiveGridItem(
     modifier: Modifier = Modifier,
     cover: BrowseCover? = null,
     thumbRetryKey: Any? = null,
+    allowRemoteFetch: Boolean = true,
     /** e.g. PDF long-press → open in external app. */
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -463,6 +474,7 @@ fun BrowseArchiveGridItem(
                     gutter = GalleryGridDefaults.gutter(),
                 ),
                 retryKey = thumbRetryKey,
+                allowRemoteFetch = allowRemoteFetch,
                 placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
             )
         },
@@ -607,6 +619,11 @@ fun BrowseCoverThumb(
      * **only when disk cache is missing**. Cache hits never re-download.
      */
     retryKey: Any? = null,
+    /**
+     * When false, only probe local disk for network/archive covers (old index-cache listing).
+     * Skips remote download / stream extract so offline cached rows stay quiet.
+     */
+    allowRemoteFetch: Boolean = true,
     placeholderIcon: ImageVector = Icons.Default.PhotoLibrary,
 ) {
     val resolvedDecodePx = decodeSizePx ?: CoverThumb.listDecodePx()
@@ -664,7 +681,14 @@ fun BrowseCoverThumb(
     // Lazy: only runs when this row is composed (in LazyColumn viewport).
     // Always probe disk on IO first so cached thumbs show even when download is off.
     // Folder image covers use [downloadRemoteThumbs]; archive first-page uses [downloadNetworkArchiveThumbs].
-    LaunchedEffect(remoteKey, retryKey, resumeEpoch, downloadRemoteThumbs, downloadNetworkArchiveThumbs) {
+    LaunchedEffect(
+        remoteKey,
+        retryKey,
+        resumeEpoch,
+        downloadRemoteThumbs,
+        downloadNetworkArchiveThumbs,
+        allowRemoteFetch,
+    ) {
         when (cover) {
             is BrowseCover.LocalArchive -> {
                 // ZIP/TAR mmap page 0; RAR/CBR/7z first-page (same open as local reader).
@@ -697,7 +721,7 @@ fun BrowseCoverThumb(
                     fetchFailed = false
                     return@LaunchedEffect
                 }
-                if (!downloadNetworkArchiveThumbs) return@LaunchedEffect
+                if (!allowRemoteFetch || !downloadNetworkArchiveThumbs) return@LaunchedEffect
                 val result = withIOContext {
                     if (solid) {
                         ArchiveCoverCache.ensureSolidStreamCover(key) {
@@ -748,7 +772,7 @@ fun BrowseCoverThumb(
                     fetchFailed = false
                     return@LaunchedEffect
                 }
-                if (!downloadNetworkArchiveThumbs) return@LaunchedEffect
+                if (!allowRemoteFetch || !downloadNetworkArchiveThumbs) return@LaunchedEffect
                 val result = withIOContext {
                     if (solid) {
                         ArchiveCoverCache.ensureSolidStreamCover(key) {
@@ -797,7 +821,7 @@ fun BrowseCoverThumb(
                     fetchFailed = false
                     return@LaunchedEffect
                 }
-                if (!downloadRemoteThumbs) {
+                if (!allowRemoteFetch || !downloadRemoteThumbs) {
                     // No network; placeholder only when nothing cached.
                     fetchFailed = false
                     return@LaunchedEffect
@@ -832,7 +856,7 @@ fun BrowseCoverThumb(
                     fetchFailed = false
                     return@LaunchedEffect
                 }
-                if (!downloadRemoteThumbs) {
+                if (!allowRemoteFetch || !downloadRemoteThumbs) {
                     fetchFailed = false
                     return@LaunchedEffect
                 }

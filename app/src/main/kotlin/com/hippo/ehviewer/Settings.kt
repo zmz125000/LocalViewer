@@ -91,9 +91,15 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * Persist completed SMB/WebDAV lazy-scan listings, one JSON index per network source.
-     * Default off. A cached folder opens without a new scan; manual refresh still rescans.
+     * Off keeps listings in RAM only; on also restores them from disk across app restarts.
      */
     val networkFolderIndexCache = boolPref("network_folder_index_cache", true)
+
+    /**
+     * On any RAM or disk listing-cache hit, run the fast current-directory scan that detects
+     * added and deleted child folders. Off returns the cached listing without network work.
+     */
+    val networkFolderIndexQuickScan = boolPref("network_folder_index_quick_scan", true)
 
     /**
      * When true (default): tap video → in-app Media3 player; long-press → external app.

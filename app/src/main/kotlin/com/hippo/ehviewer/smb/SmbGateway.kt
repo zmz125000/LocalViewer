@@ -28,7 +28,9 @@ import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
+import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.naturalCompare
+import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import java.io.IOException
 import java.io.OutputStream
 import java.io.RandomAccessFile
@@ -969,14 +971,74 @@ object SmbGateway {
         password: String,
         relativeDir: String,
         useCache: Boolean = true,
+        onCached: ((List<BrowseEntryRemote>) -> Unit)? = null,
     ): List<BrowseEntryRemote> {
         val cacheKey = BrowseSession.smbListingKey(source.id, relativeDir)
         val configKey = sourceConfigKey(source)
         if (useCache) {
-            BrowseSession.getSmbListing(source.id, relativeDir)?.let { return it }
-            NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)?.let {
-                BrowseSession.putSmbListing(source.id, relativeDir, it)
-                return it
+            // RAM hit keeps its generation; disk hydrate is always "old" for this process.
+            val cached = BrowseSession.getSmbCachedListing(source.id, relativeDir)
+                ?: NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)?.let { entries ->
+                    BrowseSession.putSmbListing(
+                        source.id,
+                        relativeDir,
+                        entries,
+                        sessionCurrent = false,
+                    )
+                    BrowseSession.CachedRemoteListing(entries = entries, sessionCurrent = false)
+                }
+            if (cached != null) {
+                onCached?.invoke(cached.entries)
+                // Quick scan only for old (non-current) listings — every directory independently,
+                // including subfolders hydrated from disk later in the same process.
+                val shouldQuickScan = Settings.networkFolderIndexQuickScan.value && !cached.sessionCurrent
+                if (!shouldQuickScan) return cached.entries
+                return try {
+                    awaitListJob(cacheKey) {
+                        try {
+                            val refresh = listDirectorySlim(
+                                source,
+                                password,
+                                relativeDir,
+                                cached.entries,
+                            )
+                            // Successful slim marks this exact directory current (even if unchanged).
+                            BrowseSession.putSmbListing(
+                                source.id,
+                                relativeDir,
+                                refresh.entries,
+                                sessionCurrent = true,
+                            )
+                            if (refresh.entries != cached.entries ||
+                                refresh.removedDirectoryNames.isNotEmpty()
+                            ) {
+                                NetworkFolderIndexCache.saveSmb(
+                                    source.id,
+                                    configKey,
+                                    relativeDir,
+                                    refresh.entries,
+                                    refresh.removedDirectoryNames,
+                                )
+                            }
+                            refresh.entries
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Throwable) {
+                            // Leave sessionCurrent false so a later visit can retry quick scan.
+                            logcat("FolderIndex") {
+                                "SMB slim refresh failed for source=${source.id} dir=$relativeDir " +
+                                    "(${e.message}); keeping cache"
+                            }
+                            cached.entries
+                        }
+                    }
+                } catch (e: IOException) {
+                    logcat("FolderIndex") {
+                        "SMB slim refresh cancelled for source=${source.id} dir=$relativeDir " +
+                            "(${e.message}); keeping cache"
+                    }
+                    cached.entries
+                }
             }
         } else {
             BrowseSession.invalidateSmbListing(source.id, relativeDir)
@@ -985,22 +1047,32 @@ object SmbGateway {
 
         BrowseSession.getSmbListing(source.id, relativeDir)?.let { return it }
         ensureHostNotCoolingDown(endpointHost(source), source.port)
+        return awaitListJob(cacheKey) {
+            val result = listDirectoryUncached(source, password, relativeDir)
+            BrowseSession.putSmbListing(
+                source.id,
+                relativeDir,
+                result,
+                sessionCurrent = true,
+            )
+            NetworkFolderIndexCache.saveSmb(source.id, configKey, relativeDir, result)
+            result
+        }
+    }
 
+    private suspend fun awaitListJob(
+        cacheKey: String,
+        loader: suspend () -> List<BrowseEntryRemote>,
+    ): List<BrowseEntryRemote> {
         val deferred = listJobs.compute(cacheKey) { _, existing ->
             if (existing != null && existing.isActive) {
                 existing
             } else {
-                gatewayScope.async {
-                    val result = listDirectoryUncached(source, password, relativeDir)
-                    BrowseSession.putSmbListing(source.id, relativeDir, result)
-                    NetworkFolderIndexCache.saveSmb(source.id, configKey, relativeDir, result)
-                    result
-                }.also { job ->
+                gatewayScope.async { loader() }.also { job ->
                     job.invokeOnCompletion { listJobs.remove(cacheKey, job) }
                 }
             }
         }!!
-
         return try {
             deferred.await()
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -1008,6 +1080,11 @@ object SmbGateway {
             throw IOException("SMB list cancelled (network lost or refresh)", e)
         }
     }
+
+    private data class SlimDirectoryRefresh(
+        val entries: List<BrowseEntryRemote>,
+        val removedDirectoryNames: Set<String>,
+    )
 
     private suspend fun listDirectoryUncached(
         source: SmbSourceEntity,
@@ -1018,7 +1095,43 @@ object SmbGateway {
         val children = withShare(source, password) { share ->
             listChildren(share, path).filterNot { isProtectedSystemName(it.name) }
         }
+        return classifyDirectoryChildren(source, password, relativeDir, children)
+    }
 
+    /**
+     * Cache-hit refresh: list only the current directory. Existing child folders keep
+     * their cached classification; only newly discovered folders run the normal peeks.
+     */
+    private suspend fun listDirectorySlim(
+        source: SmbSourceEntity,
+        password: String,
+        relativeDir: String,
+        cached: List<BrowseEntryRemote>,
+    ): SlimDirectoryRefresh {
+        val path = remotePath(source, relativeDir)
+        val children = withShare(source, password) { share ->
+            listChildren(share, path).filterNot { isProtectedSystemName(it.name) }
+        }
+        val plan = planRemoteDirectorySlimRefresh(cached, children)
+        if (plan.isUnchanged) return SlimDirectoryRefresh(cached, emptySet())
+        val addedEntries = if (plan.addedDirectories.isEmpty()) {
+            emptyList()
+        } else {
+            classifyDirectoryChildren(source, password, relativeDir, plan.addedDirectories)
+        }
+        return SlimDirectoryRefresh(
+            entries = mergeRemoteDirectorySlimRefresh(cached, plan, addedEntries),
+            removedDirectoryNames = plan.removedDirectoryNames,
+        )
+    }
+
+    private suspend fun classifyDirectoryChildren(
+        source: SmbSourceEntity,
+        password: String,
+        relativeDir: String,
+        children: List<RemoteChild>,
+    ): List<BrowseEntryRemote> {
+        val path = remotePath(source, relativeDir)
         val dirsToPeek = children.filter { it.isDirectory && !it.name.startsWith('.') }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
         val parallelism = maxConcurrentOpsPerHost().coerceAtLeast(1)
