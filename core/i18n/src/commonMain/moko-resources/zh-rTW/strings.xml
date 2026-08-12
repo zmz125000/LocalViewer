@@ -76,6 +76,8 @@
     <string name="settings_external_video_access_dir_summary">允許其他應用透過本機 HTTP 存取目前目錄中的影片檔（用於播放清單支援）。</string>
     <string name="settings_external_video_pass_folder_playlist">將資料夾作為播放清單傳遞</string>
     <string name="settings_external_video_pass_folder_playlist_summary">在外部播放器中以 m3u8 播放清單開啟目前資料夾中的影片</string>
+    <string name="settings_external_video_randomize_token">隨機化影片播放器權杖</string>
+    <string name="settings_external_video_randomize_token_summary">外部影片播放使用隨機的本機 HTTP 工作階段權杖和連接埠，而非固定值</string>
     <string name="browse_menu_page_count">頁數</string>
     <string name="browse_menu_reading_progress">閱讀進度</string>
     <string name="browse_menu_small_galleries">小圖庫</string>
