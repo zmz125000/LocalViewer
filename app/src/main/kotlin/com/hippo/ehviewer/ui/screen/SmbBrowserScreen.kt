@@ -175,6 +175,21 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val useGrid = listMode == 1
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
+    val networkFolderIndexCacheEnabled by Settings.networkFolderIndexCache.collectAsState()
+    val smbConnectionRevision by SmbGateway.connectionRevision.collectAsState()
+    val refreshEnabled = remember(source, networkFolderIndexCacheEnabled, smbConnectionRevision) {
+        !networkFolderIndexCacheEnabled || source?.let {
+            SmbGateway.isHostConnected(it.host, it.port)
+        } == true
+    }
+    var connectionProbeToken by remember { mutableStateOf(0) }
+    val sourceConnectionKey = source?.let { SmbGateway.sourceConfigKey(it) }
+    LaunchedEffect(networkFolderIndexCacheEnabled, sourceConnectionKey, connectionProbeToken) {
+        if (!networkFolderIndexCacheEnabled) return@LaunchedEffect
+        val src = source ?: return@LaunchedEffect
+        val password = withIOContext { SmbPasswordStore.get(src.id) }
+        SmbGateway.refreshConnectionSignal(src, password)
+    }
     val contentModePref by Settings.browseContentMode.collectAsState()
     val contentMode = BrowseContentMode.fromPref(contentModePref)
     val scrollLayoutKey = listMode * 10 + contentMode.prefValue
@@ -360,6 +375,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 // Soft: keep rows if listed; token bump re-runs effect for current relativeDir.
                 refreshToken++
+                connectionProbeToken++
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -670,6 +686,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     )
                     BrowseViewModeMenu()
                     IconButton(
+                        enabled = refreshEnabled,
                         onClick = {
                             refreshing = true
                             requestForceReload()

@@ -19,9 +19,10 @@ import splitties.init.appCtx
 /**
  * Unified disk-cache policy for local-viewer origin images and browse thumbs.
  *
- * **Folder layout is unchanged** (smb_cache, webdav_cache, archive_pages, solid_extract,
- * document_extract, *_thumb_cache, archive_thumb, video_thumb_cache). Only budgets and
- * eviction change:
+ * Network folder index metadata is preserved across this image LRU, like archive
+ * `index.json` files. Other folder layouts are unchanged (smb_cache, webdav_cache,
+ * archive_pages, solid_extract, document_extract, *_thumb_cache, archive_thumb,
+ * video_thumb_cache).
  *
  * 1. **Origin pics** (reader pages + remote folder/archive files): one shared cap =
  *    [Settings.readCacheSize] (Advanced “image disk cache”). No per-store pool.

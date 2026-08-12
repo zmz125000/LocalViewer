@@ -90,6 +90,12 @@ object Settings : DataStorePreferences(null) {
     val browseFolderThumbs = boolPref("browse_folder_thumbs", true)
 
     /**
+     * Persist completed SMB/WebDAV lazy-scan listings, one JSON index per network source.
+     * Default off. A cached folder opens without a new scan; manual refresh still rescans.
+     */
+    val networkFolderIndexCache = boolPref("network_folder_index_cache", false)
+
+    /**
      * When true (default): tap video → in-app Media3 player; long-press → external app.
      * When false: tap → external; long-press → Media3.
      * Settings → General.
