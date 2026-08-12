@@ -51,7 +51,21 @@ object BrowseSession {
 
     // --- Listing cache (session) ---
     private val localListings = ConcurrentHashMap<String, List<BrowseEntry>>()
-    private val smbListings = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
+    private val smbListings = ConcurrentHashMap<String, CachedRemoteListing>()
+
+    /**
+     * Process-scoped remote folder listing with a generation flag.
+     *
+     * - [sessionCurrent] false: hydrated from disk (previous process) or not yet successfully
+     *   scanned this process — quick scan may run; UI withholds network thumb sources.
+     * - [sessionCurrent] true: full or slim list for **this exact directory** succeeded in
+     *   the current process — skip quick scan; remote thumbs allowed.
+     * Failed/offline slim refresh leaves the entry non-current.
+     */
+    data class CachedRemoteListing(
+        val entries: List<BrowseEntryRemote>,
+        val sessionCurrent: Boolean,
+    )
 
     fun getLocalListing(pathKey: String): List<BrowseEntry>? = localListings[pathKey]
 
@@ -91,11 +105,11 @@ object BrowseSession {
             else -> null
         }
         if (remoteRel.isNullOrEmpty()) return
-        fun demoteRemote(map: ConcurrentHashMap<String, List<BrowseEntryRemote>>) {
-            for ((k, list) in map) {
+        fun demoteRemote(map: ConcurrentHashMap<String, CachedRemoteListing>) {
+            for ((k, cached) in map) {
                 val dir = k.substringAfterLast('|')
                 var changed = false
-                val next = list.map { e ->
+                val next = cached.entries.map { e ->
                     if (e is BrowseEntryRemote.ArchiveGallery &&
                         joinRemoteArchivePath(dir, e.parentRelativeName, e.fileName) == remoteRel
                     ) {
@@ -105,7 +119,7 @@ object BrowseSession {
                         e
                     }
                 }
-                if (changed) map[k] = next
+                if (changed) map[k] = cached.copy(entries = next)
             }
         }
         demoteRemote(smbListings)
@@ -114,10 +128,27 @@ object BrowseSession {
 
     fun smbListingKey(sourceId: Long, relativeDir: String) = "$sourceId|$relativeDir"
 
-    fun getSmbListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? = smbListings[smbListingKey(sourceId, relativeDir)]
+    fun getSmbListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? =
+        smbListings[smbListingKey(sourceId, relativeDir)]?.entries
 
-    fun putSmbListing(sourceId: Long, relativeDir: String, entries: List<BrowseEntryRemote>) {
-        smbListings[smbListingKey(sourceId, relativeDir)] = entries
+    fun getSmbCachedListing(sourceId: Long, relativeDir: String): CachedRemoteListing? =
+        smbListings[smbListingKey(sourceId, relativeDir)]
+
+    fun isSmbListingSessionCurrent(sourceId: Long, relativeDir: String): Boolean =
+        smbListings[smbListingKey(sourceId, relativeDir)]?.sessionCurrent == true
+
+    /**
+     * @param sessionCurrent true after a successful full/slim list in this process for [relativeDir].
+     *   Disk-hydrated listings must use false.
+     */
+    fun putSmbListing(
+        sourceId: Long,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+        sessionCurrent: Boolean,
+    ) {
+        smbListings[smbListingKey(sourceId, relativeDir)] =
+            CachedRemoteListing(entries = entries, sessionCurrent = sessionCurrent)
     }
 
     fun invalidateSmbListing(sourceId: Long, relativeDir: String? = null) {
@@ -131,7 +162,7 @@ object BrowseSession {
 
     // --- WebDAV path segments / listings (mirror SMB session keys) ---
     private val webDavSegments = ConcurrentHashMap<Long, List<String>>()
-    private val webDavListings = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
+    private val webDavListings = ConcurrentHashMap<String, CachedRemoteListing>()
 
     fun webDavSegmentsOrNull(sourceId: Long): List<String>? = webDavSegments[sourceId]
 
@@ -145,10 +176,23 @@ object BrowseSession {
 
     fun webDavListingKey(sourceId: Long, relativeDir: String) = "dav:$sourceId|$relativeDir"
 
-    fun getWebDavListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? = webDavListings[webDavListingKey(sourceId, relativeDir)]
+    fun getWebDavListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? =
+        webDavListings[webDavListingKey(sourceId, relativeDir)]?.entries
 
-    fun putWebDavListing(sourceId: Long, relativeDir: String, entries: List<BrowseEntryRemote>) {
-        webDavListings[webDavListingKey(sourceId, relativeDir)] = entries
+    fun getWebDavCachedListing(sourceId: Long, relativeDir: String): CachedRemoteListing? =
+        webDavListings[webDavListingKey(sourceId, relativeDir)]
+
+    fun isWebDavListingSessionCurrent(sourceId: Long, relativeDir: String): Boolean =
+        webDavListings[webDavListingKey(sourceId, relativeDir)]?.sessionCurrent == true
+
+    fun putWebDavListing(
+        sourceId: Long,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+        sessionCurrent: Boolean,
+    ) {
+        webDavListings[webDavListingKey(sourceId, relativeDir)] =
+            CachedRemoteListing(entries = entries, sessionCurrent = sessionCurrent)
     }
 
     fun invalidateWebDavListing(sourceId: Long, relativeDir: String? = null) {

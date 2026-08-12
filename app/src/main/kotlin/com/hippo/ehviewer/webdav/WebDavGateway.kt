@@ -47,19 +47,35 @@ object WebDavGateway {
     ): List<BrowseEntryRemote> {
         val configKey = sourceConfigKey(source)
         if (useCache) {
-            val cached = BrowseSession.getWebDavListing(source.id, relativeDir)
-                ?: NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir)?.also {
-                    BrowseSession.putWebDavListing(source.id, relativeDir, it)
+            val cached = BrowseSession.getWebDavCachedListing(source.id, relativeDir)
+                ?: NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir)?.let { entries ->
+                    BrowseSession.putWebDavListing(
+                        source.id,
+                        relativeDir,
+                        entries,
+                        sessionCurrent = false,
+                    )
+                    BrowseSession.CachedRemoteListing(entries = entries, sessionCurrent = false)
                 }
             if (cached != null) {
-                onCached?.invoke(cached)
-                if (!com.hippo.ehviewer.Settings.networkFolderIndexQuickScan.value) return cached
+                onCached?.invoke(cached.entries)
+                val shouldQuickScan =
+                    com.hippo.ehviewer.Settings.networkFolderIndexQuickScan.value &&
+                        !cached.sessionCurrent
+                if (!shouldQuickScan) return cached.entries
                 return try {
                     val refresh = withIOContext {
-                        listDirectorySlim(source, password, relativeDir, cached)
+                        listDirectorySlim(source, password, relativeDir, cached.entries)
                     }
-                    if (refresh.entries != cached) {
-                        BrowseSession.putWebDavListing(source.id, relativeDir, refresh.entries)
+                    BrowseSession.putWebDavListing(
+                        source.id,
+                        relativeDir,
+                        refresh.entries,
+                        sessionCurrent = true,
+                    )
+                    if (refresh.entries != cached.entries ||
+                        refresh.removedDirectoryNames.isNotEmpty()
+                    ) {
                         NetworkFolderIndexCache.saveWebDav(
                             source.id,
                             configKey,
@@ -72,7 +88,8 @@ object WebDavGateway {
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (_: Throwable) {
-                    cached
+                    // Leave non-current so a later visit can retry quick scan.
+                    cached.entries
                 }
             }
         } else {
@@ -81,7 +98,12 @@ object WebDavGateway {
         val result = withIOContext {
             listDirectoryUncached(source, password, relativeDir)
         }
-        BrowseSession.putWebDavListing(source.id, relativeDir, result)
+        BrowseSession.putWebDavListing(
+            source.id,
+            relativeDir,
+            result,
+            sessionCurrent = true,
+        )
         NetworkFolderIndexCache.saveWebDav(source.id, configKey, relativeDir, result)
         return result
     }

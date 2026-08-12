@@ -976,19 +976,42 @@ object SmbGateway {
         val cacheKey = BrowseSession.smbListingKey(source.id, relativeDir)
         val configKey = sourceConfigKey(source)
         if (useCache) {
-            val cached = BrowseSession.getSmbListing(source.id, relativeDir)
-                ?: NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)?.also {
-                    BrowseSession.putSmbListing(source.id, relativeDir, it)
+            // RAM hit keeps its generation; disk hydrate is always "old" for this process.
+            val cached = BrowseSession.getSmbCachedListing(source.id, relativeDir)
+                ?: NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)?.let { entries ->
+                    BrowseSession.putSmbListing(
+                        source.id,
+                        relativeDir,
+                        entries,
+                        sessionCurrent = false,
+                    )
+                    BrowseSession.CachedRemoteListing(entries = entries, sessionCurrent = false)
                 }
             if (cached != null) {
-                onCached?.invoke(cached)
-                if (!Settings.networkFolderIndexQuickScan.value) return cached
+                onCached?.invoke(cached.entries)
+                // Quick scan only for old (non-current) listings — every directory independently,
+                // including subfolders hydrated from disk later in the same process.
+                val shouldQuickScan = Settings.networkFolderIndexQuickScan.value && !cached.sessionCurrent
+                if (!shouldQuickScan) return cached.entries
                 return try {
                     awaitListJob(cacheKey) {
                         try {
-                            val refresh = listDirectorySlim(source, password, relativeDir, cached)
-                            if (refresh.entries != cached) {
-                                BrowseSession.putSmbListing(source.id, relativeDir, refresh.entries)
+                            val refresh = listDirectorySlim(
+                                source,
+                                password,
+                                relativeDir,
+                                cached.entries,
+                            )
+                            // Successful slim marks this exact directory current (even if unchanged).
+                            BrowseSession.putSmbListing(
+                                source.id,
+                                relativeDir,
+                                refresh.entries,
+                                sessionCurrent = true,
+                            )
+                            if (refresh.entries != cached.entries ||
+                                refresh.removedDirectoryNames.isNotEmpty()
+                            ) {
                                 NetworkFolderIndexCache.saveSmb(
                                     source.id,
                                     configKey,
@@ -1001,11 +1024,12 @@ object SmbGateway {
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
                         } catch (e: Throwable) {
+                            // Leave sessionCurrent false so a later visit can retry quick scan.
                             logcat("FolderIndex") {
                                 "SMB slim refresh failed for source=${source.id} dir=$relativeDir " +
                                     "(${e.message}); keeping cache"
                             }
-                            cached
+                            cached.entries
                         }
                     }
                 } catch (e: IOException) {
@@ -1013,7 +1037,7 @@ object SmbGateway {
                         "SMB slim refresh cancelled for source=${source.id} dir=$relativeDir " +
                             "(${e.message}); keeping cache"
                     }
-                    cached
+                    cached.entries
                 }
             }
         } else {
@@ -1025,7 +1049,12 @@ object SmbGateway {
         ensureHostNotCoolingDown(endpointHost(source), source.port)
         return awaitListJob(cacheKey) {
             val result = listDirectoryUncached(source, password, relativeDir)
-            BrowseSession.putSmbListing(source.id, relativeDir, result)
+            BrowseSession.putSmbListing(
+                source.id,
+                relativeDir,
+                result,
+                sessionCurrent = true,
+            )
             NetworkFolderIndexCache.saveSmb(source.id, configKey, relativeDir, result)
             result
         }

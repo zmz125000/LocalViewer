@@ -266,13 +266,20 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     var forceNextLoad by remember { mutableStateOf(false) }
 
     /**
+     * True after a successful full/slim list of the **currently shown** directory in this
+     * process. Disk-hydrated (old) listings stay false so UI withholds network thumbs.
+     */
+    var listingSessionCurrent by remember { mutableStateOf(false) }
+
+    /**
      * Paint session-cache listing immediately when changing path (go up / enter).
      * History → deep folder often has parent listings cached from the original browse;
      * applying them here avoids empty+spinner while the path-keyed effect starts.
      */
     fun applyCachedListing(dir: String): Boolean {
-        val cached = BrowseSession.getSmbListing(sourceId, dir) ?: return false
-        entries = cached
+        val cached = BrowseSession.getSmbCachedListing(sourceId, dir) ?: return false
+        entries = cached.entries
+        listingSessionCurrent = cached.sessionCurrent
         listedDir = dir
         loading = false
         error = null
@@ -350,6 +357,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 onCached = { cached ->
                     entries = cached
                     listedDir = loadDir
+                    listingSessionCurrent =
+                        BrowseSession.isSmbListingSessionCurrent(sourceId, loadDir)
                     error = null
                     loading = false
                     refreshing = false
@@ -358,6 +367,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             // Still the active effect for this path (not cancelled) → safe to commit.
             entries = result
             listedDir = loadDir
+            listingSessionCurrent =
+                BrowseSession.isSmbListingSessionCurrent(sourceId, loadDir)
             SmbRepository.markOk(src.id)
             error = null
             loading = false
@@ -366,10 +377,17 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             // Path changed or refreshToken bumped — new effect owns loading state.
             throw e
         } catch (e: Throwable) {
-            error = e.message
-            entries = emptyList()
-            listedDir = loadDir
-            SmbRepository.markError(src.id, e.message ?: "error")
+            // Keep painted cache on failure; only show error when there is nothing to list.
+            if (entries.isEmpty()) {
+                error = e.message
+                listedDir = loadDir
+                listingSessionCurrent = false
+                SmbRepository.markError(src.id, e.message ?: "error")
+            } else {
+                error = null
+                listingSessionCurrent =
+                    BrowseSession.isSmbListingSessionCurrent(sourceId, loadDir)
+            }
             loading = false
             refreshing = false
         }
@@ -790,6 +808,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 }
                 else -> {
                     val dirKey = listedDir ?: relativeDir
+                    // Old (disk-hydrated / unrefreshed) listings: disk thumbs OK, no network jobs.
+                    val allowRemoteThumbs = listingSessionCurrent
                     val sections = filteredEntries.toRemoteBrowseSections()
                     val dirs = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
                     val galleries = sections.galleries
@@ -875,6 +895,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                         cover = dirCoverFor(dir),
                                         showFolderThumb = browseFolderThumbs,
                                         thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
                                     )
                                 }
                             }
@@ -894,6 +915,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 pageCountCapped = entry.pageCountCapped,
                                                 cover = coverFor(entry),
                                                 thumbRetryKey = refreshToken,
+                                                allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
                                                 onClick = { openFolderGallery(entry) },
                                             )
@@ -902,6 +924,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 name = entry.name,
                                                 cover = archiveCoverFor(entry),
                                                 thumbRetryKey = refreshToken,
+                                                allowRemoteFetch = allowRemoteThumbs,
                                                 onClick = { openArchive(entry) },
                                                 onLongClick = if (isPdfFileName(entry.fileName)) {
                                                     { openPdfInOtherApp(entry) }
@@ -923,10 +946,15 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
-                                        thumbnailSource = VideoThumbnailSource.Smb(
-                                            sourceId,
-                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
-                                        ),
+                                        // Withhold network video thumb source on old cache listings.
+                                        thumbnailSource = if (allowRemoteThumbs) {
+                                            VideoThumbnailSource.Smb(
+                                                sourceId,
+                                                joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                            )
+                                        } else {
+                                            null
+                                        },
                                         onClick = { openVideoPrimary(video.fileName) },
                                         onLongClick = { openVideoSecondary(video.fileName) },
                                     )
@@ -967,6 +995,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                         cover = dirCoverFor(dir),
                                         showFolderThumb = browseFolderThumbs,
                                         thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
                                     )
                                 }
                             }
@@ -983,6 +1012,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 pageCountCapped = entry.pageCountCapped,
                                                 cover = coverFor(entry),
                                                 thumbRetryKey = refreshToken,
+                                                allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
                                                 onClick = { openFolderGallery(entry) },
                                             )
@@ -991,6 +1021,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 name = entry.name,
                                                 cover = archiveCoverFor(entry),
                                                 thumbRetryKey = refreshToken,
+                                                allowRemoteFetch = allowRemoteThumbs,
                                                 onClick = { openArchive(entry) },
                                                 onLongClick = if (isPdfFileName(entry.fileName)) {
                                                     { openPdfInOtherApp(entry) }
@@ -1009,10 +1040,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
-                                        thumbnailSource = VideoThumbnailSource.Smb(
-                                            sourceId,
-                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
-                                        ),
+                                        thumbnailSource = if (allowRemoteThumbs) {
+                                            VideoThumbnailSource.Smb(
+                                                sourceId,
+                                                joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                            )
+                                        } else {
+                                            null
+                                        },
                                         onClick = { openVideoPrimary(video.fileName) },
                                         onLongClick = { openVideoSecondary(video.fileName) },
                                     )

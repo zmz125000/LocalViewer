@@ -17,6 +17,10 @@ import splitties.init.appCtx
  * Each configured network source owns one JSON file containing every folder that has
  * completed the existing lazy scanner. A cache hit returns the scanner's final
  * [BrowseEntryRemote] values; it never runs or changes classification itself.
+ *
+ * Disk loads are hydrated into [BrowseSession] as **non-current** (old for this process).
+ * Only a successful full/slim list for that exact directory marks the RAM entry current;
+ * quick scan then skips current dirs and re-runs for every old dir (including subfolders).
  */
 object NetworkFolderIndexCache {
     private const val VERSION = 1

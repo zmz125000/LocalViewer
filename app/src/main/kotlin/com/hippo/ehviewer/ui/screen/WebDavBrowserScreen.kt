@@ -251,13 +251,20 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     var forceNextLoad by remember { mutableStateOf(false) }
 
     /**
+     * True after a successful full/slim list of the currently shown directory in this process.
+     * Disk-hydrated (old) listings stay false so UI withholds network thumbs.
+     */
+    var listingSessionCurrent by remember { mutableStateOf(false) }
+
+    /**
      * Paint session-cache listing immediately when changing path (go up / enter).
      * History → deep folder often has parent listings cached from the original browse;
      * applying them here avoids empty+spinner while the path-keyed effect starts.
      */
     fun applyCachedListing(dir: String): Boolean {
-        val cached = BrowseSession.getWebDavListing(sourceId, dir) ?: return false
-        entries = cached
+        val cached = BrowseSession.getWebDavCachedListing(sourceId, dir) ?: return false
+        entries = cached.entries
+        listingSessionCurrent = cached.sessionCurrent
         listedDir = dir
         loading = false
         error = null
@@ -335,6 +342,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 onCached = { cached ->
                     entries = cached
                     listedDir = loadDir
+                    listingSessionCurrent =
+                        BrowseSession.isWebDavListingSessionCurrent(sourceId, loadDir)
                     error = null
                     loading = false
                     refreshing = false
@@ -343,6 +352,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             // Still the active effect for this path (not cancelled) → safe to commit.
             entries = result
             listedDir = loadDir
+            listingSessionCurrent =
+                BrowseSession.isWebDavListingSessionCurrent(sourceId, loadDir)
             WebDavRepository.markOk(src.id)
             error = null
             loading = false
@@ -351,10 +362,16 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             // Path changed or refreshToken bumped — new effect owns loading state.
             throw e
         } catch (e: Throwable) {
-            error = e.message
-            entries = emptyList()
-            listedDir = loadDir
-            WebDavRepository.markError(src.id, e.message ?: "error")
+            if (entries.isEmpty()) {
+                error = e.message
+                listedDir = loadDir
+                listingSessionCurrent = false
+                WebDavRepository.markError(src.id, e.message ?: "error")
+            } else {
+                error = null
+                listingSessionCurrent =
+                    BrowseSession.isWebDavListingSessionCurrent(sourceId, loadDir)
+            }
             loading = false
             refreshing = false
         }
@@ -770,6 +787,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 }
                 else -> {
                     val dirKey = listedDir ?: relativeDir
+                    val allowRemoteThumbs = listingSessionCurrent
                     val sections = filteredEntries.toRemoteBrowseSections()
                     val dirs = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
                     val galleries = sections.galleries
@@ -854,6 +872,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         cover = dirCoverFor(dir),
                                         showFolderThumb = browseFolderThumbs,
                                         thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
                                     )
                                 }
                             }
@@ -873,6 +892,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 pageCountCapped = entry.pageCountCapped,
                                                 cover = coverFor(entry),
                                                 thumbRetryKey = refreshToken,
+                                                allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
                                                 onClick = { openFolderGallery(entry) },
                                             )
@@ -881,6 +901,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 name = entry.name,
                                                 cover = archiveCoverFor(entry),
                                                 thumbRetryKey = refreshToken,
+                                                allowRemoteFetch = allowRemoteThumbs,
                                                 onClick = { openArchive(entry) },
                                                 onLongClick = if (isPdfFileName(entry.fileName)) {
                                                     { openPdfInOtherApp(entry) }
@@ -902,10 +923,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
-                                        thumbnailSource = VideoThumbnailSource.WebDav(
-                                            sourceId,
-                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
-                                        ),
+                                        thumbnailSource = if (allowRemoteThumbs) {
+                                            VideoThumbnailSource.WebDav(
+                                                sourceId,
+                                                joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                            )
+                                        } else {
+                                            null
+                                        },
                                         onClick = { openVideoPrimary(video.fileName) },
                                         onLongClick = { openVideoSecondary(video.fileName) },
                                     )
@@ -946,6 +971,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         cover = dirCoverFor(dir),
                                         showFolderThumb = browseFolderThumbs,
                                         thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
                                     )
                                 }
                             }
@@ -962,6 +988,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 pageCountCapped = entry.pageCountCapped,
                                                 cover = coverFor(entry),
                                                 thumbRetryKey = refreshToken,
+                                                allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
                                                 onClick = { openFolderGallery(entry) },
                                             )
@@ -970,6 +997,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 name = entry.name,
                                                 cover = archiveCoverFor(entry),
                                                 thumbRetryKey = refreshToken,
+                                                allowRemoteFetch = allowRemoteThumbs,
                                                 onClick = { openArchive(entry) },
                                                 onLongClick = if (isPdfFileName(entry.fileName)) {
                                                     { openPdfInOtherApp(entry) }
@@ -988,10 +1016,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
-                                        thumbnailSource = VideoThumbnailSource.WebDav(
-                                            sourceId,
-                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
-                                        ),
+                                        thumbnailSource = if (allowRemoteThumbs) {
+                                            VideoThumbnailSource.WebDav(
+                                                sourceId,
+                                                joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                            )
+                                        } else {
+                                            null
+                                        },
                                         onClick = { openVideoPrimary(video.fileName) },
                                         onLongClick = { openVideoSecondary(video.fileName) },
                                     )
