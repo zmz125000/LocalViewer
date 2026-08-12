@@ -205,8 +205,7 @@ object SmbGateway {
     fun isHostConnected(host: String, port: Int): Boolean = hostKey(host, port) in connectedHosts
 
     /** Connected-pool signal for this source's live TCP endpoint (see [endpointHost]). */
-    fun isSourceConnected(source: SmbSourceEntity): Boolean =
-        isHostConnected(endpointHost(source), source.port)
+    fun isSourceConnected(source: SmbSourceEntity): Boolean = isHostConnected(endpointHost(source), source.port)
 
     private fun setHostConnected(key: String, connected: Boolean) {
         val changed = if (connected) connectedHosts.add(key) else connectedHosts.remove(key)
