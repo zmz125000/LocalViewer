@@ -123,8 +123,7 @@ object NetworkFolderIndexCache {
             .getOrNull()
     }
 
-    private fun matches(root: JSONObject, configKey: String): Boolean =
-        root.optInt("version", -1) == VERSION && root.optString("configKey") == configKey
+    private fun matches(root: JSONObject, configKey: String): Boolean = root.optInt("version", -1) == VERSION && root.optString("configKey") == configKey
 
     private fun encodeEntries(entries: List<BrowseEntryRemote>) = JSONArray().apply {
         entries.forEach { entry ->
@@ -208,8 +207,7 @@ object NetworkFolderIndexCache {
         }
     }
 
-    private fun JSONObject.optNullableString(name: String): String? =
-        if (has(name) && !isNull(name)) getString(name) else null
+    private fun JSONObject.optNullableString(name: String): String? = if (has(name) && !isNull(name)) getString(name) else null
 
     private fun JSONArray?.toStringList(): List<String> {
         if (this == null) return emptyList()
