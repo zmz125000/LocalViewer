@@ -41,7 +41,8 @@ object NetworkFolderIndexCache {
         configKey: String,
         relativeDir: String,
         entries: List<BrowseEntryRemote>,
-    ) = save("smb", sourceId, configKey, relativeDir, entries)
+        removedChildDirs: Set<String> = emptySet(),
+    ) = save("smb", sourceId, configKey, relativeDir, entries, removedChildDirs)
 
     suspend fun loadWebDav(
         sourceId: Long,
@@ -54,7 +55,8 @@ object NetworkFolderIndexCache {
         configKey: String,
         relativeDir: String,
         entries: List<BrowseEntryRemote>,
-    ) = save("webdav", sourceId, configKey, relativeDir, entries)
+        removedChildDirs: Set<String> = emptySet(),
+    ) = save("webdav", sourceId, configKey, relativeDir, entries, removedChildDirs)
 
     private suspend fun load(
         protocol: String,
@@ -85,6 +87,7 @@ object NetworkFolderIndexCache {
         configKey: String,
         relativeDir: String,
         entries: List<BrowseEntryRemote>,
+        removedChildDirs: Set<String>,
     ) = withContext(Dispatchers.IO) {
         if (!Settings.networkFolderIndexCache.value) return@withContext
         lock.withLock {
@@ -95,7 +98,24 @@ object NetworkFolderIndexCache {
                 put("configKey", configKey)
                 put("folders", JSONObject())
             }
-            root.getJSONObject("folders").put(normalizeDir(relativeDir), encodeEntries(entries))
+            val folders = root.getJSONObject("folders")
+            if (removedChildDirs.isNotEmpty()) {
+                val parent = normalizeDir(relativeDir)
+                val removedPrefixes = removedChildDirs.map { child ->
+                    listOf(parent, normalizeDir(child)).filter { it.isNotEmpty() }.joinToString("/")
+                }
+                val staleKeys = buildList {
+                    val keys = folders.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        if (removedPrefixes.any { prefix -> key == prefix || key.startsWith("$prefix/") }) {
+                            add(key)
+                        }
+                    }
+                }
+                staleKeys.forEach { folders.remove(it) }
+            }
+            folders.put(normalizeDir(relativeDir), encodeEntries(entries))
             cacheDir.mkdirs()
             val tmp = File(cacheDir, "${file.name}.tmp.${System.nanoTime()}")
             try {

@@ -623,6 +623,97 @@ sealed interface BrowseEntryRemote {
 }
 
 /**
+ * Difference between the cached folder roots and one live listing of the current
+ * directory. Only [addedDirectories] need the normal child/leaf classification scan.
+ */
+data class RemoteDirectorySlimPlan(
+    val addedDirectories: List<RemoteChild>,
+    val removedDirectoryNames: Set<String>,
+) {
+    val isUnchanged: Boolean
+        get() = addedDirectories.isEmpty() && removedDirectoryNames.isEmpty()
+}
+
+/**
+ * Compare direct child folders without peeking any of them. Every direct folder has
+ * one real [BrowseEntryRemote.Directory] whose [BrowseEntryRemote.Directory.relativeName]
+ * is a single segment; promoted virtual rows use multi-segment paths.
+ */
+fun planRemoteDirectorySlimRefresh(
+    cachedEntries: List<BrowseEntryRemote>,
+    liveChildren: List<RemoteChild>,
+): RemoteDirectorySlimPlan {
+    val cachedDirectoryNames = cachedEntries.asSequence()
+        .filterIsInstance<BrowseEntryRemote.Directory>()
+        .map { it.relativeName.replace('\\', '/').trim('/') }
+        .filter { it.isNotEmpty() && '/' !in it }
+        .toSet()
+    val liveDirectories = liveChildren.asSequence()
+        .filter { it.isDirectory && !it.name.startsWith('.') && !isProtectedSystemName(it.name) }
+        .associateBy { it.name }
+    return RemoteDirectorySlimPlan(
+        addedDirectories = liveDirectories
+            .filterKeys { it !in cachedDirectoryNames }
+            .values
+            .toList(),
+        removedDirectoryNames = cachedDirectoryNames - liveDirectories.keys,
+    )
+}
+
+/**
+ * Drop every cached row derived from a deleted direct folder, then add fully classified
+ * rows for new folders. Existing folders and direct files keep their cached metadata.
+ */
+fun mergeRemoteDirectorySlimRefresh(
+    cachedEntries: List<BrowseEntryRemote>,
+    plan: RemoteDirectorySlimPlan,
+    addedEntries: List<BrowseEntryRemote>,
+): List<BrowseEntryRemote> {
+    val addedDirectoryNames = plan.addedDirectories.mapTo(HashSet()) { it.name }
+    fun normalizedPath(path: String): String = path.replace('\\', '/').trim('/')
+
+    fun folderRoot(entry: BrowseEntryRemote): String? {
+        val path = when (entry) {
+            is BrowseEntryRemote.Directory -> entry.relativeName
+            is BrowseEntryRemote.FolderGallery -> entry.relativeName
+            is BrowseEntryRemote.ArchiveGallery -> entry.parentRelativeName
+            is BrowseEntryRemote.VideoFile -> entry.fileName.takeIf { '/' in normalizedPath(it) }
+            is BrowseEntryRemote.RegularFile -> entry.fileName.takeIf { '/' in normalizedPath(it) }
+        } ?: return null
+        return normalizedPath(path).takeIf { it.isNotEmpty() }?.substringBefore('/')
+    }
+
+    // A same-name direct file may have been replaced by the newly added folder.
+    fun directFileName(entry: BrowseEntryRemote): String? {
+        val path = when (entry) {
+            is BrowseEntryRemote.ArchiveGallery ->
+                entry.fileName.takeIf { entry.parentRelativeName.isEmpty() }
+            is BrowseEntryRemote.VideoFile -> entry.fileName
+            is BrowseEntryRemote.RegularFile -> entry.fileName
+            else -> null
+        } ?: return null
+        return normalizedPath(path).takeIf { it.isNotEmpty() && '/' !in it }
+    }
+
+    val merged = buildList(cachedEntries.size + addedEntries.size) {
+        cachedEntries.filterTo(this) { entry ->
+            val root = folderRoot(entry)
+            val directFile = directFileName(entry)
+            (root == null || root !in plan.removedDirectoryNames) &&
+                (directFile == null || directFile !in addedDirectoryNames)
+        }
+        addAll(addedEntries)
+    }
+    return buildList(merged.size) {
+        addAll(merged.filterIsInstance<BrowseEntryRemote.Directory>().sortedWith { a, b -> naturalCompare(a.name, b.name) })
+        addAll(merged.filterIsInstance<BrowseEntryRemote.FolderGallery>().sortedWith { a, b -> naturalCompare(a.name, b.name) })
+        addAll(merged.filterIsInstance<BrowseEntryRemote.ArchiveGallery>().sortedWith { a, b -> naturalCompare(a.name, b.name) })
+        addAll(merged.filterIsInstance<BrowseEntryRemote.VideoFile>().sortedWith { a, b -> naturalCompare(a.name, b.name) })
+        addAll(merged.filterIsInstance<BrowseEntryRemote.RegularFile>().sortedWith { a, b -> naturalCompare(a.name, b.name) })
+    }
+}
+
+/**
  * Max immediate child directories of a subfolder for which we also peek leaves and
  * may promote leaf galleries onto the parent listing.
  */

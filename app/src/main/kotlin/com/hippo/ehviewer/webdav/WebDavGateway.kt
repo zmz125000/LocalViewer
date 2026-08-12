@@ -10,6 +10,8 @@ import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
+import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
+import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -41,22 +43,53 @@ object WebDavGateway {
         password: String,
         relativeDir: String,
         useCache: Boolean = true,
-    ): List<BrowseEntryRemote> = withIOContext {
+        onCached: ((List<BrowseEntryRemote>) -> Unit)? = null,
+    ): List<BrowseEntryRemote> {
         val configKey = sourceConfigKey(source)
         if (useCache) {
-            BrowseSession.getWebDavListing(source.id, relativeDir)?.let { return@withIOContext it }
-            NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir)?.let {
-                BrowseSession.putWebDavListing(source.id, relativeDir, it)
-                return@withIOContext it
+            val cached = BrowseSession.getWebDavListing(source.id, relativeDir)
+                ?: NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir)?.also {
+                    BrowseSession.putWebDavListing(source.id, relativeDir, it)
+                }
+            if (cached != null) {
+                onCached?.invoke(cached)
+                if (!com.hippo.ehviewer.Settings.networkFolderIndexCache.value) return cached
+                return try {
+                    val refresh = withIOContext {
+                        listDirectorySlim(source, password, relativeDir, cached)
+                    }
+                    if (refresh.entries != cached) {
+                        BrowseSession.putWebDavListing(source.id, relativeDir, refresh.entries)
+                        NetworkFolderIndexCache.saveWebDav(
+                            source.id,
+                            configKey,
+                            relativeDir,
+                            refresh.entries,
+                            refresh.removedDirectoryNames,
+                        )
+                    }
+                    refresh.entries
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    cached
+                }
             }
         } else {
             BrowseSession.invalidateWebDavListing(source.id, relativeDir)
         }
-        val result = listDirectoryUncached(source, password, relativeDir)
+        val result = withIOContext {
+            listDirectoryUncached(source, password, relativeDir)
+        }
         BrowseSession.putWebDavListing(source.id, relativeDir, result)
         NetworkFolderIndexCache.saveWebDav(source.id, configKey, relativeDir, result)
-        result
+        return result
     }
+
+    private data class SlimDirectoryRefresh(
+        val entries: List<BrowseEntryRemote>,
+        val removedDirectoryNames: Set<String>,
+    )
 
     private suspend fun listDirectoryUncached(
         source: WebDavSourceEntity,
@@ -65,7 +98,40 @@ object WebDavGateway {
     ): List<BrowseEntryRemote> {
         val children = WebDavClient.listChildren(source, password, relativeDir)
             .filterNot { it.name.startsWith('.') || isProtectedSystemName(it.name) }
+        return classifyDirectoryChildren(source, password, relativeDir, children)
+    }
 
+    /**
+     * Cache-hit refresh: one PROPFIND for the current directory. Only new child folders
+     * run the existing child/leaf peek classifier.
+     */
+    private suspend fun listDirectorySlim(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeDir: String,
+        cached: List<BrowseEntryRemote>,
+    ): SlimDirectoryRefresh {
+        val children = WebDavClient.listChildren(source, password, relativeDir)
+            .filterNot { it.name.startsWith('.') || isProtectedSystemName(it.name) }
+        val plan = planRemoteDirectorySlimRefresh(cached, children)
+        if (plan.isUnchanged) return SlimDirectoryRefresh(cached, emptySet())
+        val addedEntries = if (plan.addedDirectories.isEmpty()) {
+            emptyList()
+        } else {
+            classifyDirectoryChildren(source, password, relativeDir, plan.addedDirectories)
+        }
+        return SlimDirectoryRefresh(
+            entries = mergeRemoteDirectorySlimRefresh(cached, plan, addedEntries),
+            removedDirectoryNames = plan.removedDirectoryNames,
+        )
+    }
+
+    private suspend fun classifyDirectoryChildren(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeDir: String,
+        children: List<RemoteChild>,
+    ): List<BrowseEntryRemote> {
         val dirsToPeek = children.filter { it.isDirectory }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
         if (dirsToPeek.isNotEmpty()) {

@@ -347,6 +347,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 password,
                 loadDir,
                 useCache = !force && !configChanged,
+                onCached = { cached ->
+                    entries = cached
+                    listedDir = loadDir
+                    error = null
+                    loading = false
+                    refreshing = false
+                },
             )
             // Still the active effect for this path (not cancelled) → safe to commit.
             entries = result
