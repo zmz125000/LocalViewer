@@ -128,14 +128,11 @@ object BrowseSession {
 
     fun smbListingKey(sourceId: Long, relativeDir: String) = "$sourceId|$relativeDir"
 
-    fun getSmbListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? =
-        smbListings[smbListingKey(sourceId, relativeDir)]?.entries
+    fun getSmbListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? = smbListings[smbListingKey(sourceId, relativeDir)]?.entries
 
-    fun getSmbCachedListing(sourceId: Long, relativeDir: String): CachedRemoteListing? =
-        smbListings[smbListingKey(sourceId, relativeDir)]
+    fun getSmbCachedListing(sourceId: Long, relativeDir: String): CachedRemoteListing? = smbListings[smbListingKey(sourceId, relativeDir)]
 
-    fun isSmbListingSessionCurrent(sourceId: Long, relativeDir: String): Boolean =
-        smbListings[smbListingKey(sourceId, relativeDir)]?.sessionCurrent == true
+    fun isSmbListingSessionCurrent(sourceId: Long, relativeDir: String): Boolean = smbListings[smbListingKey(sourceId, relativeDir)]?.sessionCurrent == true
 
     /**
      * @param sessionCurrent true after a successful full/slim list in this process for [relativeDir].
@@ -176,14 +173,11 @@ object BrowseSession {
 
     fun webDavListingKey(sourceId: Long, relativeDir: String) = "dav:$sourceId|$relativeDir"
 
-    fun getWebDavListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? =
-        webDavListings[webDavListingKey(sourceId, relativeDir)]?.entries
+    fun getWebDavListing(sourceId: Long, relativeDir: String): List<BrowseEntryRemote>? = webDavListings[webDavListingKey(sourceId, relativeDir)]?.entries
 
-    fun getWebDavCachedListing(sourceId: Long, relativeDir: String): CachedRemoteListing? =
-        webDavListings[webDavListingKey(sourceId, relativeDir)]
+    fun getWebDavCachedListing(sourceId: Long, relativeDir: String): CachedRemoteListing? = webDavListings[webDavListingKey(sourceId, relativeDir)]
 
-    fun isWebDavListingSessionCurrent(sourceId: Long, relativeDir: String): Boolean =
-        webDavListings[webDavListingKey(sourceId, relativeDir)]?.sessionCurrent == true
+    fun isWebDavListingSessionCurrent(sourceId: Long, relativeDir: String): Boolean = webDavListings[webDavListingKey(sourceId, relativeDir)]?.sessionCurrent == true
 
     fun putWebDavListing(
         sourceId: Long,
