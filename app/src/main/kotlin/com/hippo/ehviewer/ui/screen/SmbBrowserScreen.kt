@@ -179,7 +179,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val smbConnectionRevision by SmbGateway.connectionRevision.collectAsState()
     val refreshEnabled = remember(source, networkFolderIndexCacheEnabled, smbConnectionRevision) {
         !networkFolderIndexCacheEnabled || source?.let {
-            SmbGateway.isHostConnected(it.host, it.port)
+            // Live connect host (EasyTier virtual host when tunnel is up), not identity host.
+            SmbGateway.isSourceConnected(it)
         } == true
     }
     var connectionProbeToken by remember { mutableStateOf(0) }

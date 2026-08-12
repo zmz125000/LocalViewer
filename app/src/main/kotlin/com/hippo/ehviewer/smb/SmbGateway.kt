@@ -204,6 +204,10 @@ object SmbGateway {
 
     fun isHostConnected(host: String, port: Int): Boolean = hostKey(host, port) in connectedHosts
 
+    /** Connected-pool signal for this source's live TCP endpoint (see [endpointHost]). */
+    fun isSourceConnected(source: SmbSourceEntity): Boolean =
+        isHostConnected(endpointHost(source), source.port)
+
     private fun setHostConnected(key: String, connected: Boolean) {
         val changed = if (connected) connectedHosts.add(key) else connectedHosts.remove(key)
         if (changed) _connectionRevision.update { it + 1L }
@@ -705,7 +709,13 @@ object SmbGateway {
         return AuthenticationContext(user, password.toCharArray(), source.domain)
     }
 
-    /** TCP host for this source (EasyTier virtual host when tunnel is up). */
+    /**
+     * TCP host used for connect / pool / circuit keys.
+     *
+     * EasyTier virtual host when the tunnel is up and [SmbSourceEntity.easytierHost]
+     * is set; otherwise regular [SmbSourceEntity.host].
+     * Disk cache / [sourceConfigKey] identity stay on the regular host.
+     */
     private fun endpointHost(source: SmbSourceEntity): String = EasyTierPath.smbConnectHost(source)
 
     private fun credKey(source: SmbSourceEntity, password: String): String = buildString {
@@ -950,7 +960,7 @@ object SmbGateway {
             }
         }.onFailure { error ->
             if (isTransportError(error) || isNetworkUnreachable(error)) {
-                setHostConnected(hostKey(host, source.port), false)
+                setHostConnected(hostKey(endpointHost(source), source.port), false)
             }
         }
     }
