@@ -53,7 +53,7 @@ object WebDavGateway {
                 }
             if (cached != null) {
                 onCached?.invoke(cached)
-                if (!com.hippo.ehviewer.Settings.networkFolderIndexCache.value) return cached
+                if (!com.hippo.ehviewer.Settings.networkFolderIndexQuickScan.value) return cached
                 return try {
                     val refresh = withIOContext {
                         listDirectorySlim(source, password, relativeDir, cached)

@@ -116,6 +116,11 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 state = Settings.networkFolderIndexCache.asMutableState(),
             )
             SwitchPreference(
+                title = stringResource(id = R.string.settings_network_folder_index_quick_scan),
+                summary = stringResource(id = R.string.settings_network_folder_index_quick_scan_summary),
+                state = Settings.networkFolderIndexQuickScan.asMutableState(),
+            )
+            SwitchPreference(
                 title = stringResource(id = R.string.settings_use_media3_player),
                 state = Settings.useMedia3Player.asMutableState(),
             )

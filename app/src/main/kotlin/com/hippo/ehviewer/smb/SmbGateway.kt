@@ -982,7 +982,7 @@ object SmbGateway {
                 }
             if (cached != null) {
                 onCached?.invoke(cached)
-                if (!Settings.networkFolderIndexCache.value) return cached
+                if (!Settings.networkFolderIndexQuickScan.value) return cached
                 return awaitListJob(cacheKey) {
                     try {
                         val refresh = listDirectorySlim(source, password, relativeDir, cached)
