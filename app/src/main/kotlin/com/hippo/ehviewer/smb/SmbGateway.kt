@@ -983,29 +983,37 @@ object SmbGateway {
             if (cached != null) {
                 onCached?.invoke(cached)
                 if (!Settings.networkFolderIndexQuickScan.value) return cached
-                return awaitListJob(cacheKey) {
-                    try {
-                        val refresh = listDirectorySlim(source, password, relativeDir, cached)
-                        if (refresh.entries != cached) {
-                            BrowseSession.putSmbListing(source.id, relativeDir, refresh.entries)
-                            NetworkFolderIndexCache.saveSmb(
-                                source.id,
-                                configKey,
-                                relativeDir,
-                                refresh.entries,
-                                refresh.removedDirectoryNames,
-                            )
+                return try {
+                    awaitListJob(cacheKey) {
+                        try {
+                            val refresh = listDirectorySlim(source, password, relativeDir, cached)
+                            if (refresh.entries != cached) {
+                                BrowseSession.putSmbListing(source.id, relativeDir, refresh.entries)
+                                NetworkFolderIndexCache.saveSmb(
+                                    source.id,
+                                    configKey,
+                                    relativeDir,
+                                    refresh.entries,
+                                    refresh.removedDirectoryNames,
+                                )
+                            }
+                            refresh.entries
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Throwable) {
+                            logcat("FolderIndex") {
+                                "SMB slim refresh failed for source=${source.id} dir=$relativeDir " +
+                                    "(${e.message}); keeping cache"
+                            }
+                            cached
                         }
-                        refresh.entries
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Throwable) {
-                        logcat("FolderIndex") {
-                            "SMB slim refresh failed for source=${source.id} dir=$relativeDir " +
-                                "(${e.message}); keeping cache"
-                        }
-                        cached
                     }
+                } catch (e: IOException) {
+                    logcat("FolderIndex") {
+                        "SMB slim refresh cancelled for source=${source.id} dir=$relativeDir " +
+                            "(${e.message}); keeping cache"
+                    }
+                    cached
                 }
             }
         } else {
