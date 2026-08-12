@@ -4,6 +4,7 @@ import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
@@ -41,13 +42,19 @@ object WebDavGateway {
         relativeDir: String,
         useCache: Boolean = true,
     ): List<BrowseEntryRemote> = withIOContext {
+        val configKey = sourceConfigKey(source)
         if (useCache) {
             BrowseSession.getWebDavListing(source.id, relativeDir)?.let { return@withIOContext it }
+            NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir)?.let {
+                BrowseSession.putWebDavListing(source.id, relativeDir, it)
+                return@withIOContext it
+            }
         } else {
             BrowseSession.invalidateWebDavListing(source.id, relativeDir)
         }
         val result = listDirectoryUncached(source, password, relativeDir)
         BrowseSession.putWebDavListing(source.id, relativeDir, result)
+        NetworkFolderIndexCache.saveWebDav(source.id, configKey, relativeDir, result)
         result
     }
 

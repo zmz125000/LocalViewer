@@ -427,6 +427,8 @@
     <string name="image_saved">Image saved to %s</string>
     <string name="settings_eh">EH</string>
     <string name="settings_general">General</string>
+    <string name="settings_network_folder_index_cache">Network folder index cache</string>
+    <string name="settings_network_folder_index_cache_summary">Keep completed SMB/WebDAV folder scans on disk for faster browsing.</string>
     <string name="settings_download_remote_thumbs">Download network gallery covers</string>
     <string name="settings_download_remote_thumbs_summary">Fetch network gallery thumbnails.</string>
     <string name="settings_download_network_archive_thumbs">Download network archive covers</string>

@@ -21,6 +21,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.easytier.EasyTierPath
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
@@ -54,6 +55,9 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -192,6 +196,18 @@ object SmbGateway {
     private var config: SmbConfig = buildSmbConfig()
 
     private val hostPools = ConcurrentHashMap<String, HostPool>()
+    private val connectedHosts = ConcurrentHashMap.newKeySet<String>()
+    private val _connectionRevision = MutableStateFlow(0L)
+
+    /** Passive SMB-pool signal for UI only; this never probes or gates network work. */
+    val connectionRevision = _connectionRevision.asStateFlow()
+
+    fun isHostConnected(host: String, port: Int): Boolean = hostKey(host, port) in connectedHosts
+
+    private fun setHostConnected(key: String, connected: Boolean) {
+        val changed = if (connected) connectedHosts.add(key) else connectedHosts.remove(key)
+        if (changed) _connectionRevision.update { it + 1L }
+    }
 
     /**
      * Live Fuse / HTTP sticky [Connection]s (outside [hostPools]). Closed by [dropStickySessions]
@@ -458,6 +474,7 @@ object SmbGateway {
                 }
             }
             if (dropped > 0) signalFree()
+            if (dropped > 0 && size.get() == 0) setHostConnected(hostPortKey, false)
             if (dropped > 0 || kept > 0) {
                 logcat {
                     "SmbGateway: keep-alive $hostPortKey idle-ok≈$kept dropped=$dropped sessions=${size.get()}"
@@ -621,6 +638,7 @@ object SmbGateway {
 
         fun closeAll() {
             closed.set(true)
+            setHostConnected(hostPortKey, false)
             stopKeepAlive()
             val snapshot = synchronized(sessionsLock) {
                 val copy = sessions.toList()
@@ -753,6 +771,7 @@ object SmbGateway {
     }
 
     private fun tripHostCircuit(key: String, networkUnreachable: Boolean) {
+        setHostConnected(key, false)
         val circuit = hostCircuits.getOrPut(key) { HostCircuit() }
         val n = circuit.failures.incrementAndGet().coerceAtMost(8)
         val base = if (networkUnreachable) COOLDOWN_BASE_MS * 2 else COOLDOWN_BASE_MS
@@ -779,6 +798,7 @@ object SmbGateway {
             val remaining = hostKeyToSourceIds[key]
             if (remaining.isNullOrEmpty()) {
                 hostKeyToSourceIds.remove(key)
+                setHostConnected(key, false)
                 val pool = hostPools.remove(key)
                 if (pool != null) {
                     gatewayScope.launch { runCatching { pool.closeAll() } }
@@ -796,6 +816,7 @@ object SmbGateway {
             BrowseSession.invalidateSmbListing(id)
             BrowseSession.clearSmbSegments(id)
         }
+        sourceIdToHostKey.values.toSet().forEach { setHostConnected(it, false) }
         sourceIdToHostKey.clear()
         hostKeyToSourceIds.clear()
         val pools = hostPools.keys.toList().mapNotNull { k -> hostPools.remove(k) }
@@ -808,6 +829,7 @@ object SmbGateway {
 
     fun disconnectHost(host: String, port: Int) {
         val key = hostKey(host, port)
+        setHostConnected(key, false)
         val pool = hostPools.remove(key)
         hostKeyToSourceIds.remove(key)?.forEach { sid ->
             sourceIdToHostKey.remove(sid)
@@ -858,7 +880,9 @@ object SmbGateway {
         if (cancelLists) {
             listJobs.keys.toList().forEach { key -> listJobs.remove(key)?.cancel() }
         }
-        val pools = hostPools.keys.toList().mapNotNull { k -> hostPools.remove(k) }
+        val poolKeys = hostPools.keys.toList()
+        poolKeys.forEach { setHostConnected(it, false) }
+        val pools = poolKeys.mapNotNull { k -> hostPools.remove(k) }
         hostKeyToSourceIds.clear()
         sourceIdToHostKey.clear()
         if (clearCircuits) hostCircuits.clear()
@@ -915,6 +939,22 @@ object SmbGateway {
         }
     }
 
+    /**
+     * Cheap pool-backed signal refresh used only by the cached-folder toolbar state.
+     * It does not list/classify a folder and its result never gates another operation.
+     */
+    suspend fun refreshConnectionSignal(source: SmbSourceEntity, password: String) {
+        runCatching {
+            withShare(source, password) { share ->
+                share.folderExists(remotePath(source, "").ifEmpty { "" })
+            }
+        }.onFailure { error ->
+            if (isTransportError(error) || isNetworkUnreachable(error)) {
+                setHostConnected(hostKey(host, source.port), false)
+            }
+        }
+    }
+
     suspend fun listDirectory(
         source: SmbSourceEntity,
         password: String,
@@ -922,8 +962,13 @@ object SmbGateway {
         useCache: Boolean = true,
     ): List<BrowseEntryRemote> {
         val cacheKey = BrowseSession.smbListingKey(source.id, relativeDir)
+        val configKey = sourceConfigKey(source)
         if (useCache) {
             BrowseSession.getSmbListing(source.id, relativeDir)?.let { return it }
+            NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)?.let {
+                BrowseSession.putSmbListing(source.id, relativeDir, it)
+                return it
+            }
         } else {
             BrowseSession.invalidateSmbListing(source.id, relativeDir)
             listJobs.remove(cacheKey)?.cancel()
@@ -939,6 +984,7 @@ object SmbGateway {
                 gatewayScope.async {
                     val result = listDirectoryUncached(source, password, relativeDir)
                     BrowseSession.putSmbListing(source.id, relativeDir, result)
+                    NetworkFolderIndexCache.saveSmb(source.id, configKey, relativeDir, result)
                     result
                 }.also { job ->
                     job.invokeOnCompletion { listJobs.remove(cacheKey, job) }
@@ -1422,6 +1468,7 @@ object SmbGateway {
                 block = block,
             )
             clearHostCircuit(host, source.port)
+            setHostConnected(hostKey(host, source.port), true)
             result
         } catch (first: Throwable) {
             if (first is SMBApiException && isIgnorableListError(first)) throw first
@@ -1457,6 +1504,7 @@ object SmbGateway {
                     block = block,
                 )
                 clearHostCircuit(host, source.port)
+                setHostConnected(hostKey(host, source.port), true)
                 result
             } catch (second: Throwable) {
                 if (second is kotlinx.coroutines.CancellationException) throw second
@@ -1499,7 +1547,9 @@ object SmbGateway {
                 val connection = smbClient.connect(host, source.port)
                 try {
                     val session = connection.authenticate(auth(source, password))
-                    PooledSession(ck, smbClient, connection, session)
+                    PooledSession(ck, smbClient, connection, session).also {
+                        setHostConnected(key, true)
+                    }
                 } catch (e: Throwable) {
                     runCatching { connection.close() }
                     throw e
