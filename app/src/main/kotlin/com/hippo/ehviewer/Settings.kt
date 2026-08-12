@@ -137,6 +137,12 @@ object Settings : DataStorePreferences(null) {
     val externalVideoTokenSalt = stringPref("external_video_token_salt", "")
 
     /**
+     * Loopback port reused while stable external video URLs are enabled.
+     * Zero until the first successful bind chooses and persists a port.
+     */
+    val externalVideoStablePort = intPref("external_video_stable_port", 0)
+
+    /**
      * When true, folder-view shows folder galleries below [browseSmallGalleryMinPages].
      * Default false: UI hides those rows (scanner listing is unchanged).
      */

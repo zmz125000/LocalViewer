@@ -18,6 +18,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.RandomAccessFile
+import java.net.BindException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -455,6 +456,7 @@ object ExternalHttpStreamServer {
     private val lock = Any()
     private var serverSocket: ServerSocket? = null
     private var acceptThread: Thread? = null
+    private var listenerRandomizedPort: Boolean? = null
 
     @Volatile
     private var port: Int = -1
@@ -506,6 +508,7 @@ object ExternalHttpStreamServer {
             val ss = serverSocket
             serverSocket = null
             port = -1
+            listenerRandomizedPort = null
             runCatching { ss?.close() }
             acceptThread = null
         }
@@ -569,21 +572,25 @@ object ExternalHttpStreamServer {
         }
     }
 
-    fun ensureStarted(): Int = synchronized(lock) {
-        serverSocket?.let { return port }
+    fun ensureStarted(
+        randomizePort: Boolean = Settings.externalVideoRandomizeToken.value,
+    ): Int = synchronized(lock) {
+        serverSocket?.let { current ->
+            if (listenerRandomizedPort == randomizePort) return port
+            serverSocket = null
+            port = -1
+            listenerRandomizedPort = null
+            runCatching { current.close() }
+            acceptThread = null
+        }
         // New HTTP sticky acquires may free warm bodies via this pressure hook.
         SmbGateway.onHttpStickyPoolPressure = {
             relieveSmbPoolPressure()
         }
-        // Tag on this thread before ServerSocket() — accept-thread tag is too late for bind.
-        TrafficStats.setThreadStatsTag(LOOPBACK_HTTP_TRAFFIC_TAG)
-        val ss = try {
-            ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
-        } finally {
-            TrafficStats.clearThreadStatsTag()
-        }
+        val ss = createServerSocket(randomizePort)
         port = ss.localPort
         serverSocket = ss
+        listenerRandomizedPort = randomizePort
         acceptThread = Thread(
             {
                 // Accept() creates client sockets under this thread's tag (StrictMode).
@@ -614,8 +621,43 @@ object ExternalHttpStreamServer {
             isDaemon = true
             start()
         }
-        logcat("ExtHttp") { "loopback HTTP listening on 127.0.0.1:$port" }
+        logcat("ExtHttp") {
+            val mode = if (randomizePort) "random" else "stable"
+            "loopback HTTP listening on 127.0.0.1:$port ($mode port)"
+        }
         port
+    }
+
+    private fun createServerSocket(randomizePort: Boolean): ServerSocket {
+        val address = InetAddress.getByName("127.0.0.1")
+        // Tag on this thread before ServerSocket() — accept-thread tag is too late for bind.
+        TrafficStats.setThreadStatsTag(LOOPBACK_HTTP_TRAFFIC_TAG)
+        return try {
+            if (randomizePort) {
+                ServerSocket(0, 50, address)
+            } else {
+                val preferredPort = Settings.externalVideoStablePort.value
+                    .takeIf { it in MIN_STABLE_PORT..MAX_PORT }
+                val socket = if (preferredPort != null) {
+                    try {
+                        ServerSocket(preferredPort, 50, address)
+                    } catch (e: BindException) {
+                        logcat("ExtHttp", e) {
+                            "stable port $preferredPort unavailable; selecting a replacement"
+                        }
+                        ServerSocket(0, 50, address)
+                    }
+                } else {
+                    ServerSocket(0, 50, address)
+                }
+                if (Settings.externalVideoStablePort.value != socket.localPort) {
+                    Settings.externalVideoStablePort.value = socket.localPort
+                }
+                socket
+            }
+        } finally {
+            TrafficStats.clearThreadStatsTag()
+        }
     }
 
     /**
@@ -643,9 +685,9 @@ object ExternalHttpStreamServer {
      * @return session and whether it was reused (caller should not destroy a reused session on launch failure).
      */
     fun obtainSession(network: Boolean, dirKey: String): Pair<Session, Boolean> {
-        ensureStarted()
-        val key = dirKey.trim().ifEmpty { "dir:${UUID.randomUUID()}" }
         val randomizedToken = Settings.externalVideoRandomizeToken.value
+        ensureStarted(randomizePort = randomizedToken)
+        val key = dirKey.trim().ifEmpty { "dir:${UUID.randomUUID()}" }
         val result = synchronized(sessionLock) {
             findSessionByDirKey(key, randomizedToken)?.let { existing ->
                 return@synchronized existing to true
@@ -719,7 +761,9 @@ object ExternalHttpStreamServer {
     fun hasSession(id: String): Boolean = sessions.containsKey(id)
 
     fun uriFor(sessionId: String, fileName: String): Uri {
-        val p = ensureStarted()
+        val randomizePort = sessions[sessionId]?.randomizedToken
+            ?: Settings.externalVideoRandomizeToken.value
+        val p = ensureStarted(randomizePort)
         val encoded = Uri.encode(pathKey(fileName))
         return Uri.parse("http://127.0.0.1:$p/s/$sessionId/$encoded")
     }
@@ -1283,6 +1327,8 @@ object ExternalHttpStreamServer {
     }
 
     private const val MAX_SESSIONS = 16
+    private const val MIN_STABLE_PORT = 1024
+    private const val MAX_PORT = 65535
     private const val STABLE_TOKEN_DOMAIN = "LocalViewer external HTTP session v1"
     private const val TOKEN_SALT_BYTES = 32
     private const val HEX_DIGITS = "0123456789abcdef"
