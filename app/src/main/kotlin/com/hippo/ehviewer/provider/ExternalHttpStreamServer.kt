@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.library.mimeTypeForFileName
@@ -22,6 +23,8 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
 import java.net.URLDecoder
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.SynchronousQueue
@@ -147,6 +150,7 @@ object ExternalHttpStreamServer {
     class Session(
         val id: String,
         val network: Boolean,
+        val randomizedToken: Boolean,
         /**
          * Scoped identity for reuse across compatible opens (folder-wide or one-video access).
          */
@@ -419,6 +423,11 @@ object ExternalHttpStreamServer {
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
+    private val tokenSaltLock = Any()
+
+    @Volatile
+    private var processTokenSalt: String? = null
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val connectionPool = ThreadPoolExecutor(
         0,
@@ -612,10 +621,15 @@ object ExternalHttpStreamServer {
     /**
      * Find a live session for [dirKey], or null if pruned / never opened.
      */
-    fun findSessionByDirKey(dirKey: String): Session? {
+    fun findSessionByDirKey(
+        dirKey: String,
+        randomizedToken: Boolean? = null,
+    ): Session? {
         val key = dirKey.trim()
         if (key.isEmpty()) return null
-        return sessions.values.firstOrNull { it.dirKey == key }?.also { it.touch() }
+        return sessions.values.firstOrNull {
+            it.dirKey == key && (randomizedToken == null || it.randomizedToken == randomizedToken)
+        }?.also { it.touch() }
     }
 
     /**
@@ -631,12 +645,22 @@ object ExternalHttpStreamServer {
     fun obtainSession(network: Boolean, dirKey: String): Pair<Session, Boolean> {
         ensureStarted()
         val key = dirKey.trim().ifEmpty { "dir:${UUID.randomUUID()}" }
+        val randomizedToken = Settings.externalVideoRandomizeToken.value
         val result = synchronized(sessionLock) {
-            findSessionByDirKey(key)?.let { existing ->
+            findSessionByDirKey(key, randomizedToken)?.let { existing ->
                 return@synchronized existing to true
             }
-            val id = UUID.randomUUID().toString().replace("-", "")
-            val session = Session(id = id, network = network, dirKey = key)
+            val id = if (randomizedToken) {
+                UUID.randomUUID().toString().replace("-", "")
+            } else {
+                stableSessionId(key)
+            }
+            val session = Session(
+                id = id,
+                network = network,
+                randomizedToken = randomizedToken,
+                dirKey = key,
+            )
             sessions[id] = session
             session to false
         }
@@ -654,6 +678,34 @@ object ExternalHttpStreamServer {
         }
         schedulePrune()
         return result
+    }
+
+    private fun stableSessionId(dirKey: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(STABLE_TOKEN_DOMAIN.toByteArray(Charsets.UTF_8))
+        digest.update(0.toByte())
+        digest.update(stableTokenSalt().toByteArray(Charsets.UTF_8))
+        digest.update(0.toByte())
+        return digest.digest(dirKey.toByteArray(Charsets.UTF_8)).toLowerHex()
+    }
+
+    private fun stableTokenSalt(): String {
+        processTokenSalt?.let { return it }
+        return synchronized(tokenSaltLock) {
+            processTokenSalt ?: Settings.externalVideoTokenSalt.value.ifBlank {
+                val bytes = ByteArray(TOKEN_SALT_BYTES)
+                SecureRandom().nextBytes(bytes)
+                bytes.toLowerHex().also { Settings.externalVideoTokenSalt.value = it }
+            }.also { processTokenSalt = it }
+        }
+    }
+
+    private fun ByteArray.toLowerHex(): String = buildString(size * 2) {
+        for (byte in this@toLowerHex) {
+            val value = byte.toInt() and 0xff
+            append(HEX_DIGITS[value ushr 4])
+            append(HEX_DIGITS[value and 0x0f])
+        }
     }
 
     fun removeSession(id: String) {
@@ -1231,6 +1283,9 @@ object ExternalHttpStreamServer {
     }
 
     private const val MAX_SESSIONS = 16
+    private const val STABLE_TOKEN_DOMAIN = "LocalViewer external HTTP session v1"
+    private const val TOKEN_SALT_BYTES = 32
+    private const val HEX_DIGITS = "0123456789abcdef"
     private const val MAX_CONCURRENT_CONNECTIONS = 16
     private const val MAX_FILE_NAME_LENGTH = 1024
     private const val MAX_REQUEST_LINE_LENGTH = 4096

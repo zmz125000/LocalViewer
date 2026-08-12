@@ -124,6 +124,19 @@ object Settings : DataStorePreferences(null) {
     val externalVideoPassFolderPlaylist = boolPref("external_video_pass_folder_playlist", false)
 
     /**
+     * When true, external HTTP video sessions use the previous random UUID token.
+     * Default false: derive a stable opaque SHA-256 token so external players can match
+     * the same playback URL for resume.
+     */
+    val externalVideoRandomizeToken = boolPref("external_video_randomize_token", false)
+
+    /**
+     * Private per-install salt for stable external HTTP session tokens. Generated lazily;
+     * never shown in URLs or settings.
+     */
+    val externalVideoTokenSalt = stringPref("external_video_token_salt", "")
+
+    /**
      * When true, folder-view shows folder galleries below [browseSmallGalleryMinPages].
      * Default false: UI hides those rows (scanner listing is unchanged).
      */
