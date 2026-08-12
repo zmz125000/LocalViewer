@@ -203,6 +203,10 @@ object SmbGateway {
 
     fun isHostConnected(host: String, port: Int): Boolean = hostKey(host, port) in connectedHosts
 
+    /** Connected-pool signal for this source's live TCP endpoint (see [endpointHost]). */
+    fun isSourceConnected(source: SmbSourceEntity): Boolean =
+        isHostConnected(endpointHost(source), source.port)
+
     private fun setHostConnected(key: String, connected: Boolean) {
         val changed = if (connected) connectedHosts.add(key) else connectedHosts.remove(key)
         if (changed) _connectionRevision.update { it + 1L }
@@ -704,8 +708,19 @@ object SmbGateway {
         return AuthenticationContext(user, password.toCharArray(), source.domain)
     }
 
+    /**
+     * TCP host used for connect / pool / circuit keys.
+     *
+     * Main (default channel): always [SmbSourceEntity.host].
+     * EasyTier channel overrides this to prefer [SmbSourceEntity.easytierHost] while the
+     * tunnel is up — keep all connect sites on [endpointHost] so merges stay one-line.
+     * Disk cache / [sourceConfigKey] identity stay on the regular host.
+     */
+    private fun endpointHost(source: SmbSourceEntity): String = source.host
+
     private fun credKey(source: SmbSourceEntity, password: String): String = buildString {
-        append(source.host.trim().lowercase(Locale.US))
+        // Pool/session identity follows the live endpoint, not the cache identity host.
+        append(endpointHost(source).trim().lowercase(Locale.US))
         append('|')
         append(source.port)
         append('|')
@@ -736,7 +751,7 @@ object SmbGateway {
     private fun hostKey(host: String, port: Int) = "${host.trim().lowercase(Locale.US)}:$port"
 
     private fun trackSource(source: SmbSourceEntity) {
-        val key = hostKey(source.host, source.port)
+        val key = hostKey(endpointHost(source), source.port)
         sourceIdToHostKey[source.id] = key
         hostKeyToSourceIds.getOrPut(key) {
             java.util.concurrent.ConcurrentHashMap.newKeySet()
@@ -889,6 +904,10 @@ object SmbGateway {
         }
     }
 
+    /**
+     * Stable identity for browse config / content (regular host only).
+     * Alternate connect hosts must not fork cache keys.
+     */
     fun sourceConfigKey(source: SmbSourceEntity): String = buildString {
         append(source.host)
         append('|')
@@ -905,10 +924,11 @@ object SmbGateway {
 
     suspend fun testConnection(source: SmbSourceEntity, password: String): Result<Unit> = withIOContext {
         runCatching {
-            ensureHostNotCoolingDown(source.host, source.port)
+            val host = endpointHost(source)
+            ensureHostNotCoolingDown(host, source.port)
             val smbClient = SMBClient(smbConfig())
             try {
-                smbClient.connect(source.host, source.port).use { connection ->
+                smbClient.connect(host, source.port).use { connection ->
                     val session = connection.authenticate(auth(source, password))
                     try {
                         if (source.share.isNotBlank()) {
@@ -924,7 +944,7 @@ object SmbGateway {
             } finally {
                 runCatching { smbClient.close() }
             }
-            clearHostCircuit(source.host, source.port)
+            clearHostCircuit(host, source.port)
             Unit
         }
     }
@@ -940,7 +960,7 @@ object SmbGateway {
             }
         }.onFailure { error ->
             if (isTransportError(error) || isNetworkUnreachable(error)) {
-                setHostConnected(hostKey(source.host, source.port), false)
+                setHostConnected(hostKey(endpointHost(source), source.port), false)
             }
         }
     }
@@ -965,7 +985,7 @@ object SmbGateway {
         }
 
         BrowseSession.getSmbListing(source.id, relativeDir)?.let { return it }
-        ensureHostNotCoolingDown(source.host, source.port)
+        ensureHostNotCoolingDown(endpointHost(source), source.port)
 
         val deferred = listJobs.compute(cacheKey) { _, existing ->
             if (existing != null && existing.isActive) {
@@ -1259,11 +1279,14 @@ object SmbGateway {
     ): T {
         // Own client+connection so smbj host Connection cache cannot couple sticky to
         // the shared pool (and so dropAllSessions never closes this handle).
+        // Must use [endpointHost] — same as browse/pool (EasyTier channel may override).
+        val host = endpointHost(source)
+        ensureHostNotCoolingDown(host, source.port)
         val smbClient = SMBClient(smbConfig())
         val prevTag = TrafficStats.getThreadStatsTag()
         TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
         try {
-            val connection = smbClient.connect(source.host, source.port)
+            val connection = smbClient.connect(host, source.port)
             stickyConnections.add(connection)
             try {
                 val session = connection.authenticate(auth(source, password))
@@ -1439,11 +1462,12 @@ object SmbGateway {
         password: String,
         block: (DiskShare) -> T,
     ): T = withContext(Dispatchers.IO) {
+        val host = endpointHost(source)
         val ck = credKey(source, password)
         val share = shareName(source)
         trackSource(source)
-        ensureHostNotCoolingDown(source.host, source.port)
-        val pool = hostPoolFor(source.host, source.port)
+        ensureHostNotCoolingDown(host, source.port)
+        val pool = hostPoolFor(host, source.port)
 
         try {
             val result = pool.borrowForShare(
@@ -1452,8 +1476,8 @@ object SmbGateway {
                 openSession = { openSession(source, password, ck) },
                 block = block,
             )
-            clearHostCircuit(source.host, source.port)
-            setHostConnected(hostKey(source.host, source.port), true)
+            clearHostCircuit(host, source.port)
+            setHostConnected(hostKey(host, source.port), true)
             result
         } catch (first: Throwable) {
             if (first is SMBApiException && isIgnorableListError(first)) throw first
@@ -1474,30 +1498,30 @@ object SmbGateway {
 
             // Only wipe the host pool for true path/network loss — not every transport blip.
             if (isNetworkUnreachable(first)) {
-                disconnectHost(source.host, source.port)
-                tripHostCircuit(source.host, source.port, first)
+                disconnectHost(host, source.port)
+                tripHostCircuit(host, source.port, first)
                 throw first
             }
 
             // Transport error: failed op already retired its session; retry once on a new slot.
             try {
                 trackSource(source)
-                val result = hostPoolFor(source.host, source.port).borrowForShare(
+                val result = hostPoolFor(host, source.port).borrowForShare(
                     credKey = ck,
                     shareName = share,
                     openSession = { openSession(source, password, ck) },
                     block = block,
                 )
-                clearHostCircuit(source.host, source.port)
-                setHostConnected(hostKey(source.host, source.port), true)
+                clearHostCircuit(host, source.port)
+                setHostConnected(hostKey(host, source.port), true)
                 result
             } catch (second: Throwable) {
                 if (second is kotlinx.coroutines.CancellationException) throw second
                 logcat(second)
                 if (isHostCapacityError(second)) throw second
                 if (isNetworkUnreachable(second)) {
-                    disconnectHost(source.host, source.port)
-                    tripHostCircuit(source.host, source.port, second)
+                    disconnectHost(host, source.port)
+                    tripHostCircuit(host, source.port, second)
                 }
                 throw second
             }
@@ -1517,18 +1541,19 @@ object SmbGateway {
         password: String,
         ck: String,
     ): PooledSession {
-        ensureHostNotCoolingDown(source.host, source.port)
-        val key = hostKey(source.host, source.port)
+        val host = endpointHost(source)
+        ensureHostNotCoolingDown(host, source.port)
+        val key = hostKey(host, source.port)
         val lock = hostConnectLocks.getOrPut(key) { Mutex() }
         return lock.withLock {
-            ensureHostNotCoolingDown(source.host, source.port)
+            ensureHostNotCoolingDown(host, source.port)
             // Dedicated SMBClient per session so smbj's host Connection cache
             // cannot poison other pool slots / shares on half-open TCP.
             val smbClient = SMBClient(smbConfig())
             val prevTag = TrafficStats.getThreadStatsTag()
             TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
             try {
-                val connection = smbClient.connect(source.host, source.port)
+                val connection = smbClient.connect(host, source.port)
                 try {
                     val session = connection.authenticate(auth(source, password))
                     PooledSession(ck, smbClient, connection, session).also {

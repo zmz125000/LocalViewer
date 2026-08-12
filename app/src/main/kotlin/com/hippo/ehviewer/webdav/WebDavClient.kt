@@ -328,8 +328,18 @@ object WebDavClient {
         return s
     }
 
+    /**
+     * Base URL used for HTTP connect.
+     *
+     * Main (default channel): always [WebDavSourceEntity.baseUrl].
+     * EasyTier channel overrides this to swap in [WebDavSourceEntity.easytierHost] while
+     * the tunnel is up. Keep call sites on [connectBaseUrl] so merges stay one-line.
+     * Cache / config identity stays on [WebDavSourceEntity.baseUrl].
+     */
+    fun connectBaseUrl(source: WebDavSourceEntity): String = source.baseUrl
+
     fun rootUrl(source: WebDavSourceEntity): Url {
-        val base = normalizeBaseUrl(source.baseUrl)
+        val base = normalizeBaseUrl(connectBaseUrl(source))
         val prefix = source.pathPrefix.trim().trim('/')
         return if (prefix.isEmpty()) {
             Url(base)
