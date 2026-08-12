@@ -123,8 +123,11 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import moe.tarsin.snackbar
 import moe.tarsin.string
+
+private const val SMB_RECONNECT_RETRY_DELAY_MS = 5_000L
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
@@ -138,6 +141,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 ) = Screen(navigator) {
     DrawerHandle(false)
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var screenResumed by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
     var source by remember { mutableStateOf<SmbSourceEntity?>(null) }
 
     // Session-scoped path. Empty list = share root and is *not* "unset":
@@ -176,6 +183,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val networkFolderIndexCacheEnabled by Settings.networkFolderIndexCache.collectAsState()
+    val networkFolderIndexQuickScanEnabled by Settings.networkFolderIndexQuickScan.collectAsState()
     val smbConnectionRevision by SmbGateway.connectionRevision.collectAsState()
     val refreshEnabled = remember(source, networkFolderIndexCacheEnabled, smbConnectionRevision) {
         !networkFolderIndexCacheEnabled || source?.let {
@@ -185,12 +193,6 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
     var connectionProbeToken by remember { mutableStateOf(0) }
     val sourceConnectionKey = source?.let { SmbGateway.sourceConfigKey(it) }
-    LaunchedEffect(networkFolderIndexCacheEnabled, sourceConnectionKey, connectionProbeToken) {
-        if (!networkFolderIndexCacheEnabled) return@LaunchedEffect
-        val src = source ?: return@LaunchedEffect
-        val password = withIOContext { SmbPasswordStore.get(src.id) }
-        SmbGateway.refreshConnectionSignal(src, password)
-    }
     val contentModePref by Settings.browseContentMode.collectAsState()
     val contentMode = BrowseContentMode.fromPref(contentModePref)
     val scrollLayoutKey = listMode * 10 + contentMode.prefValue
@@ -289,6 +291,64 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     fun requestForceReload() {
         forceNextLoad = true
         refreshToken++
+    }
+
+    /*
+     * A failed foreground SMB connection used to get only one passive probe. The circuit
+     * cooldown was at most 3s, but nothing scheduled the next attempt, so cached folders
+     * could remain disconnected until the screen resumed. Retry sequentially (never overlap)
+     * with a 5s gap between attempts. Leaving or pausing the screen cancels the loop.
+     */
+    LaunchedEffect(
+        screenResumed,
+        sourceConnectionKey,
+        smbConnectionRevision,
+        connectionProbeToken,
+        loading,
+    ) {
+        if (!screenResumed || loading) return@LaunchedEffect
+        val src = source ?: return@LaunchedEffect
+        if (SmbGateway.isSourceConnected(src)) return@LaunchedEffect
+        val password = withIOContext { SmbPasswordStore.get(src.id) }
+        while (!SmbGateway.isSourceConnected(src)) {
+            delay(SMB_RECONNECT_RETRY_DELAY_MS)
+            SmbGateway.refreshConnectionSignal(src, password)
+            if (SmbGateway.isSourceConnected(src)) return@LaunchedEffect
+        }
+    }
+
+    /*
+     * Consume each disconnected -> connected edge once. If this exact folder is still an
+     * old disk-hydrated listing, re-enter the normal cache-hit loader so it performs its
+     * quick scan and marks the folder session-current. Other connectionRevision changes
+     * cannot retrigger it because sourceWasConnected stays true.
+     */
+    var sourceWasConnected by remember(sourceConnectionKey) {
+        mutableStateOf(source?.let { SmbGateway.isSourceConnected(it) } == true)
+    }
+    LaunchedEffect(
+        screenResumed,
+        sourceConnectionKey,
+        relativeDir,
+        smbConnectionRevision,
+        networkFolderIndexQuickScanEnabled,
+        loading,
+    ) {
+        val src = source ?: return@LaunchedEffect
+        val connected = SmbGateway.isSourceConnected(src)
+        val reconnected = connected && !sourceWasConnected
+        sourceWasConnected = connected
+        if (!screenResumed || loading || !reconnected) return@LaunchedEffect
+
+        val cached = BrowseSession.getSmbCachedListing(sourceId, relativeDir)
+        if (networkFolderIndexQuickScanEnabled &&
+            cached != null &&
+            !cached.sessionCurrent
+        ) {
+            refreshToken++
+        } else if (cached == null && entries.isEmpty() && error != null) {
+            requestForceReload()
+        }
     }
 
     // Single loader for the current path. When [relativeDir] changes, Compose cancels this
@@ -395,13 +455,20 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     // Resume after Manage-sources edit or app background: soft refresh current path only.
     // Must not call a free-floating reload that races path changes (see LaunchedEffect above).
-    val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, sourceId) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                // Soft: keep rows if listed; token bump re-runs effect for current relativeDir.
-                refreshToken++
-                connectionProbeToken++
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    screenResumed = true
+                    // Soft: keep rows if listed; token bump re-runs effect for current relativeDir.
+                    refreshToken++
+                    connectionProbeToken++
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    screenResumed = false
+                    connectionProbeToken++
+                }
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
