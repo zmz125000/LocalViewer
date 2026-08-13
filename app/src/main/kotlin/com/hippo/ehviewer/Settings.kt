@@ -218,6 +218,12 @@ object Settings : DataStorePreferences(null) {
      * [com.hippo.ehviewer.library.HistoryThumbKey] (`smb-thumb:` / `dav-thumb:`).
      */
     val favoriteBrowseThumbs = stringSetPref("favorite_browse_thumbs", emptySet())
+
+    /**
+     * Per-folder browse-mode persist. Entries: `{lf|sf|wf}:{id}:{rel}={prefInt}`.
+     * See [com.hippo.ehviewer.library.BrowseModePersist].
+     */
+    val persistBrowseModes = stringSetPref("persist_browse_modes", emptySet())
     val showVoteStatus = boolPref("show_vote_status", false)
     val showComments = boolPref("show_gallery_comments", true)
     val commentThreshold = intPref("comment_threshold", -100)

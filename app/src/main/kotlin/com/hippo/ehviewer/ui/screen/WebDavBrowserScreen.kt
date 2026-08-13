@@ -67,9 +67,9 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
 import com.hippo.ehviewer.library.ArchiveTooLargeException
-import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
+import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.HistoryThumbKey
@@ -175,8 +175,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val useGrid = listMode == 1
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
-    val contentModePref by Settings.browseContentMode.collectAsState()
-    val contentMode = BrowseContentMode.fromPref(contentModePref)
+    val folderId = BrowseFolderId.webDav(sourceId, segments.joinToString("/"))
+    val contentMode = rememberEffectiveBrowseContentMode(folderId)
     val scrollLayoutKey = listMode * 10 + contentMode.prefValue
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
@@ -690,7 +690,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         state = search,
                         onBeforeClose = { focusManager.clearFocus() },
                     )
-                    BrowseViewModeMenu()
+                    BrowseViewModeMenu(folder = folderId)
                     IconButton(
                         onClick = {
                             refreshing = true

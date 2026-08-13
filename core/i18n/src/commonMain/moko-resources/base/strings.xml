@@ -621,6 +621,10 @@
     <string name="clear_search_history_summary">Remove searches you have performed from this device</string>
     <string name="clear_search_history_confirm">Clear search history?</string>
     <string name="search_history_cleared">Search history cleared</string>
+    <string name="settings_privacy_clear_folder_browse_mode">Clear folder browse modes</string>
+    <string name="settings_privacy_clear_folder_browse_mode_summary">Remove locked Media / Photo / Video / Folder modes saved on folders</string>
+    <string name="settings_privacy_clear_folder_browse_mode_confirm">Clear saved folder browse modes?</string>
+    <string name="folder_browse_mode_cleared">Folder browse modes cleared</string>
     <string name="download_service">Download Service</string>
     <string name="favorite_name">Favorites</string>
     <string name="dark_theme">Dark theme</string>

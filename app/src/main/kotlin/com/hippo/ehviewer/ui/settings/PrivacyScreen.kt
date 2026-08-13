@@ -31,6 +31,7 @@ import com.hippo.ehviewer.EhApplication.Companion.searchDatabase
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.library.BrowseModePersist
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.isAuthenticationSupported
 import com.hippo.ehviewer.ui.main.NavigationIcon
@@ -136,6 +137,20 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                     )
                     searchDatabase.searchDao().clear()
                     launchSnackbar(searchHistoryCleared)
+                }
+            }
+            val folderBrowseModeCleared = stringResource(id = R.string.folder_browse_mode_cleared)
+            Preference(
+                title = stringResource(id = R.string.settings_privacy_clear_folder_browse_mode),
+                summary = stringResource(id = R.string.settings_privacy_clear_folder_browse_mode_summary),
+            ) {
+                launch {
+                    awaitConfirmationOrCancel(
+                        confirmText = R.string.clear_all,
+                        title = R.string.settings_privacy_clear_folder_browse_mode_confirm,
+                    )
+                    withIOContext { BrowseModePersist.clearAll() }
+                    launchSnackbar(folderBrowseModeCleared)
                 }
             }
         }
