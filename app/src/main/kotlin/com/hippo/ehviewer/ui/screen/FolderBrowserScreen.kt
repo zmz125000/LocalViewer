@@ -64,9 +64,9 @@ import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
-import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseEntry
 import com.hippo.ehviewer.library.BrowseFavorites
+import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
@@ -142,8 +142,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
     val search = rememberBrowseFolderSearchState()
     val focusManager = LocalFocusManager.current
-    val contentModePref by Settings.browseContentMode.collectAsState()
-    val contentMode = BrowseContentMode.fromPref(contentModePref)
+    val folderId = stack.lastOrNull()?.let { BrowseFolderId.local(it.rootId, it.relativePath) }
+    val contentMode = rememberEffectiveBrowseContentMode(folderId)
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
     val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
     val filteredEntries = remember(
@@ -484,7 +484,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         state = search,
                         onBeforeClose = { focusManager.clearFocus() },
                     )
-                    BrowseViewModeMenu()
+                    BrowseViewModeMenu(folder = folderId)
                     IconButton(
                         onClick = {
                             launch {

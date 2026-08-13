@@ -1,25 +1,36 @@
 package com.hippo.ehviewer.ui.screen
 
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
@@ -27,17 +38,43 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseContentMode
+import com.hippo.ehviewer.library.BrowseFolderId
+import com.hippo.ehviewer.library.BrowseModePersist
+
+/**
+ * Effective content filter for [folder]: own persist, inherited persist, RAM override,
+ * or the global pref.
+ */
+@Composable
+fun rememberEffectiveBrowseContentMode(folder: BrowseFolderId?): BrowseContentMode {
+    val persistRev by BrowseModePersist.revision.collectAsState()
+    val persistModes by Settings.persistBrowseModes.collectAsState()
+    val globalPref by Settings.browseContentMode.collectAsState()
+    return remember(folder, persistRev, persistModes, globalPref) {
+        BrowseModePersist.effective(folder) ?: BrowseContentMode.fromPref(globalPref)
+    }
+}
 
 /**
  * Top-bar menu for folder browsers: content filter, list/grid layout, and
  * general display toggles (page count, progress, folder thumbs, small galleries).
+ *
+ * [folder] is the current directory identity. Null (root picker) disables persist.
  */
 @Composable
-fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
+fun BrowseViewModeMenu(
+    modifier: Modifier = Modifier,
+    folder: BrowseFolderId? = null,
+) {
     var expanded by remember { mutableStateOf(false) }
     val listMode by Settings.listMode.collectAsState()
+    val persistRev by BrowseModePersist.revision.collectAsState()
+    val persistModes by Settings.persistBrowseModes.collectAsState()
     var contentModePref by Settings.browseContentMode.asMutableState()
-    val contentMode = BrowseContentMode.fromPref(contentModePref)
+    val match = remember(folder, persistRev, persistModes) {
+        folder?.let { BrowseModePersist.resolve(it) }
+    }
+    val contentMode = match?.effective ?: BrowseContentMode.fromPref(contentModePref)
     val useGrid = listMode == 1
     var showGalleryPages by Settings.showGalleryPages.asMutableState()
     var showReadingProgress by Settings.showReadingProgress.asMutableState()
@@ -61,40 +98,32 @@ fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
         ) {
             ContentModeItem(
                 label = stringResource(R.string.browse_mode_media),
-                selected = contentMode == BrowseContentMode.Media,
-                onClick = {
-                    contentModePref = BrowseContentMode.Media.prefValue
-                    expanded = false
-                },
+                mark = markFor(BrowseContentMode.Media, contentMode, match?.showLock == true),
+                onClick = { BrowseModePersist.tap(folder, BrowseContentMode.Media) },
+                onLongClick = { BrowseModePersist.longPress(folder, BrowseContentMode.Media) },
             )
             ContentModeItem(
                 label = stringResource(R.string.browse_mode_galleries),
-                selected = contentMode == BrowseContentMode.Galleries,
-                onClick = {
-                    contentModePref = BrowseContentMode.Galleries.prefValue
-                    expanded = false
-                },
+                mark = markFor(BrowseContentMode.Galleries, contentMode, match?.showLock == true),
+                onClick = { BrowseModePersist.tap(folder, BrowseContentMode.Galleries) },
+                onLongClick = { BrowseModePersist.longPress(folder, BrowseContentMode.Galleries) },
             )
             ContentModeItem(
                 label = stringResource(R.string.browse_mode_video),
-                selected = contentMode == BrowseContentMode.Video,
-                onClick = {
-                    contentModePref = BrowseContentMode.Video.prefValue
-                    expanded = false
-                },
+                mark = markFor(BrowseContentMode.Video, contentMode, match?.showLock == true),
+                onClick = { BrowseModePersist.tap(folder, BrowseContentMode.Video) },
+                onLongClick = { BrowseModePersist.longPress(folder, BrowseContentMode.Video) },
             )
             ContentModeItem(
                 label = stringResource(R.string.browse_mode_folder),
-                selected = contentMode == BrowseContentMode.Folder,
-                onClick = {
-                    contentModePref = BrowseContentMode.Folder.prefValue
-                    expanded = false
-                },
+                mark = markFor(BrowseContentMode.Folder, contentMode, match?.showLock == true),
+                onClick = { BrowseModePersist.tap(folder, BrowseContentMode.Folder) },
+                onLongClick = { BrowseModePersist.longPress(folder, BrowseContentMode.Folder) },
             )
             HorizontalDivider()
             ContentModeItem(
                 label = stringResource(R.string.browse_layout_list),
-                selected = !useGrid,
+                mark = if (!useGrid) ModeMark.Tick else ModeMark.None,
                 onClick = {
                     Settings.listMode.value = 0
                     expanded = false
@@ -102,7 +131,7 @@ fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
             )
             ContentModeItem(
                 label = stringResource(R.string.browse_layout_grid),
-                selected = useGrid,
+                mark = if (useGrid) ModeMark.Tick else ModeMark.None,
                 onClick = {
                     Settings.listMode.value = 1
                     expanded = false
@@ -133,17 +162,51 @@ fun BrowseViewModeMenu(modifier: Modifier = Modifier) {
     }
 }
 
+private enum class ModeMark { None, Tick, Lock }
+
+private fun markFor(
+    mode: BrowseContentMode,
+    effective: BrowseContentMode,
+    lockOnEffective: Boolean,
+): ModeMark = when {
+    mode != effective -> ModeMark.None
+    lockOnEffective -> ModeMark.Lock
+    else -> ModeMark.Tick
+}
+
 @Composable
 private fun ContentModeItem(
     label: String,
-    selected: Boolean,
+    mark: ModeMark,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
-    DropdownMenuItem(
-        text = { Text(label) },
-        onClick = onClick,
-        trailingIcon = { MenuCheckSlot(selected) },
-    )
+    val haptic = LocalHapticFeedback.current
+    // Do not use DropdownMenuItem — its clickable consumes the press and
+    // long-press on a modifier never fires.
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .sizeIn(minWidth = 112.dp, minHeight = 48.dp)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick?.let { longClick ->
+                    {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        longClick()
+                    }
+                },
+            )
+            .padding(MenuDefaults.DropdownMenuItemContentPadding),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        MenuMarkSlot(mark)
+    }
 }
 
 /** Toggle that stays open so several settings can be flipped without reopening. */
@@ -156,19 +219,21 @@ private fun ToggleMenuItem(
     DropdownMenuItem(
         text = { Text(label) },
         onClick = onClick,
-        trailingIcon = { MenuCheckSlot(checked) },
+        trailingIcon = { MenuMarkSlot(if (checked) ModeMark.Tick else ModeMark.None) },
     )
 }
 
-/** Fixed-width trailing slot so menu width does not jump when the tick appears. */
+/** Fixed-width trailing slot so menu width does not jump when the tick/lock appears. */
 @Composable
-private fun MenuCheckSlot(checked: Boolean) {
+private fun MenuMarkSlot(mark: ModeMark) {
     Box(
         modifier = Modifier.size(24.dp),
         contentAlignment = Alignment.Center,
     ) {
-        if (checked) {
-            Icon(Icons.Default.Check, contentDescription = null)
+        when (mark) {
+            ModeMark.None -> Unit
+            ModeMark.Tick -> Icon(Icons.Default.Check, contentDescription = null)
+            ModeMark.Lock -> Icon(Icons.Default.Lock, contentDescription = null)
         }
     }
 }

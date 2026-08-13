@@ -598,6 +598,10 @@
     <string name="clear_search_history_summary">このデバイスから検索履歴を消去します</string>
     <string name="clear_search_history_confirm">検索履歴を消去しますか？</string>
     <string name="search_history_cleared">検索履歴を消去しました</string>
+    <string name="settings_privacy_clear_folder_browse_mode">フォルダ閲覧モードを消去</string>
+    <string name="settings_privacy_clear_folder_browse_mode_summary">フォルダにロックしたメディア／画像／動画／フォルダモードを削除します</string>
+    <string name="settings_privacy_clear_folder_browse_mode_confirm">保存したフォルダ閲覧モードを消去しますか？</string>
+    <string name="folder_browse_mode_cleared">フォルダ閲覧モードを消去しました</string>
     <string name="download_service">ダウンロードサービス</string>
     <string name="favorite_name">お気に入り</string>
     <string name="dark_theme">ダークテーマ</string>

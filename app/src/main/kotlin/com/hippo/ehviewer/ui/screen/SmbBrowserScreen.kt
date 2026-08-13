@@ -67,9 +67,9 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
 import com.hippo.ehviewer.library.ArchiveTooLargeException
-import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
+import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.HistoryThumbKey
@@ -193,8 +193,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
     var connectionProbeToken by remember { mutableStateOf(0) }
     val sourceConnectionKey = source?.let { SmbGateway.sourceConfigKey(it) }
-    val contentModePref by Settings.browseContentMode.collectAsState()
-    val contentMode = BrowseContentMode.fromPref(contentModePref)
+    val folderId = BrowseFolderId.smb(sourceId, segments.joinToString("/"))
+    val contentMode = rememberEffectiveBrowseContentMode(folderId)
     val scrollLayoutKey = listMode * 10 + contentMode.prefValue
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
@@ -777,7 +777,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         state = search,
                         onBeforeClose = { focusManager.clearFocus() },
                     )
-                    BrowseViewModeMenu()
+                    BrowseViewModeMenu(folder = folderId)
                     IconButton(
                         enabled = refreshEnabled,
                         onClick = {
