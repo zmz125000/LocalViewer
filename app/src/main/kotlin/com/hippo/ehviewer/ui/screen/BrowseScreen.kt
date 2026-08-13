@@ -19,7 +19,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.InlineTextContent
@@ -43,7 +45,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -59,15 +60,18 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewModelScope
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_FOLDER
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.SmbSourceEntity
+import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
+import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.logcat
@@ -95,6 +99,7 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlin.time.Clock
+import kotlinx.coroutines.launch
 import moe.tarsin.navigate
 import moe.tarsin.snackbar
 import moe.tarsin.string
@@ -109,9 +114,32 @@ private const val URI_FLAGS = FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE
 @Destination<RootGraph>
 @Composable
 fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Screen(navigator) {
-    val roots by LocalLibrary.rootsFlow().collectAsState(initial = emptyList())
-    val smbSources by SmbRepository.sourcesFlow().collectAsState(initial = emptyList())
-    val webDavSources by WebDavRepository.sourcesFlow().collectAsState(initial = emptyList())
+    // Survive NavHost dispose/restore (enter a source → back).
+    // collectAsState(initial=empty) remounted empty lists for one frame and
+    // coerced LazyList scroll to top; VM-held state keeps last data + scroll.
+    val listState = rememberInVM { LazyListState() }
+    val gridState = rememberInVM { LazyGridState() }
+    val roots by rememberInVM {
+        mutableStateOf(emptyList<LibraryRootEntity>()).also { state ->
+            viewModelScope.launch {
+                LocalLibrary.rootsFlow().collect { state.value = it }
+            }
+        }
+    }
+    val smbSources by rememberInVM {
+        mutableStateOf(emptyList<SmbSourceEntity>()).also { state ->
+            viewModelScope.launch {
+                SmbRepository.sourcesFlow().collect { state.value = it }
+            }
+        }
+    }
+    val webDavSources by rememberInVM {
+        mutableStateOf(emptyList<WebDavSourceEntity>()).also { state ->
+            viewModelScope.launch {
+                WebDavRepository.sourcesFlow().collect { state.value = it }
+            }
+        }
+    }
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val gridView by Settings.gridView.collectAsState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
@@ -468,6 +496,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
         } else if (gridView) {
             FastScrollLazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 140.dp),
+                state = gridState,
                 modifier = Modifier
                     .padding(padding)
                     .nestedScroll(scrollBehavior.nestedScrollConnection)
@@ -543,6 +572,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
             }
         } else {
             FastScrollLazyColumn(
+                state = listState,
                 modifier = Modifier
                     .padding(padding)
                     .nestedScroll(scrollBehavior.nestedScrollConnection)
