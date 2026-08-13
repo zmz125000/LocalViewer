@@ -21,6 +21,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -29,6 +30,9 @@ import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.easytier.EasyTierRuntime
 import com.hippo.ehviewer.easytier.EasyTierUiTab
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun EasyTierDialog(
@@ -36,6 +40,7 @@ fun EasyTierDialog(
     onOpenFullSettings: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val runtimeState by EasyTierRuntime.state.collectAsState()
     var tab by remember { mutableStateOf(EasyTierUiTab.STATUS) }
     var config by remember { mutableStateOf(EasyTierRuntime.loadConfig()) }
@@ -45,16 +50,21 @@ fun EasyTierDialog(
         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
     }
 
+    suspend fun startAndToast() {
+        val ok = withContext(Dispatchers.IO) { EasyTierRuntime.start() }
+        if (ok) {
+            toast(context.getString(R.string.easytier_starting))
+        } else {
+            val err = EasyTierRuntime.state.value.lastError ?: "?"
+            toast(context.getString(R.string.easytier_start_failed, err))
+        }
+    }
+
     val vpnLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            if (EasyTierRuntime.start()) {
-                toast(context.getString(R.string.easytier_starting))
-            } else {
-                val err = EasyTierRuntime.state.value.lastError ?: "?"
-                toast(context.getString(R.string.easytier_start_failed, err))
-            }
+            scope.launch { startAndToast() }
         } else {
             toast(context.getString(R.string.easytier_vpn_permission_required))
         }
@@ -70,12 +80,7 @@ fun EasyTierDialog(
         if (prepare != null) {
             vpnLauncher.launch(prepare)
         } else {
-            if (EasyTierRuntime.start()) {
-                toast(context.getString(R.string.easytier_starting))
-            } else {
-                val err = EasyTierRuntime.state.value.lastError ?: "?"
-                toast(context.getString(R.string.easytier_start_failed, err))
-            }
+            scope.launch { startAndToast() }
         }
     }
 

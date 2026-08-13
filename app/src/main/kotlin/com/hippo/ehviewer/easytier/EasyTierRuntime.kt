@@ -2,6 +2,7 @@ package com.hippo.ehviewer.easytier
 
 import android.content.Context
 import android.os.Build
+import android.os.Looper
 import com.easytier.jni.EasyTierJNI
 import com.easytier.jni.EasyTierManager
 import com.easytier.jni.EasyTierVpnService
@@ -106,9 +107,17 @@ object EasyTierRuntime {
 
     /**
      * Start EasyTier after VPN permission has been granted.
+     * Must not run [System.loadLibrary] on the main thread (StrictMode disk read).
      * @return true if native start succeeded
      */
     fun start(): Boolean {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            return nativeIo.submit<Boolean> { startOnWorker() }.get()
+        }
+        return startOnWorker()
+    }
+
+    private fun startOnWorker(): Boolean {
         val ctx = appContext
         if (ctx == null) {
             _state.update { it.copy(lastError = "not initialized") }
@@ -229,4 +238,8 @@ object EasyTierRuntime {
 
     private const val TAG = "EasyTierRuntime"
     private const val STATUS_POLL_MS = 1500L
+
+    private val nativeIo = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "easytier-io").apply { isDaemon = true }
+    }
 }

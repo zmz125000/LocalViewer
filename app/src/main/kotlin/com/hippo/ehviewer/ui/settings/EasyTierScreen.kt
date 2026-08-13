@@ -46,6 +46,8 @@ import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import moe.tarsin.snackbar
 import moe.tarsin.string
 
@@ -61,16 +63,21 @@ fun AnimatedVisibilityScope.EasyTierScreen(navigator: DestinationsNavigator) = S
 
     fun tip(msg: String) = launch { snackbar(msg) }
 
+    suspend fun startAndTip() {
+        val ok = withContext(Dispatchers.IO) { EasyTierRuntime.start() }
+        if (ok) {
+            tip(context.getString(R.string.easytier_starting))
+        } else {
+            val err = EasyTierRuntime.state.value.lastError ?: "?"
+            tip(context.getString(R.string.easytier_start_failed, err))
+        }
+    }
+
     val vpnLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            if (EasyTierRuntime.start()) {
-                tip(context.getString(R.string.easytier_starting))
-            } else {
-                val err = EasyTierRuntime.state.value.lastError ?: "?"
-                tip(context.getString(R.string.easytier_start_failed, err))
-            }
+            launch { startAndTip() }
         } else {
             tip(context.getString(R.string.easytier_vpn_permission_required))
         }
@@ -86,12 +93,7 @@ fun AnimatedVisibilityScope.EasyTierScreen(navigator: DestinationsNavigator) = S
         if (prepare != null) {
             vpnLauncher.launch(prepare)
         } else {
-            if (EasyTierRuntime.start()) {
-                tip(string(R.string.easytier_starting))
-            } else {
-                val err = EasyTierRuntime.state.value.lastError ?: "?"
-                tip(context.getString(R.string.easytier_start_failed, err))
-            }
+            launch { startAndTip() }
         }
     }
 
