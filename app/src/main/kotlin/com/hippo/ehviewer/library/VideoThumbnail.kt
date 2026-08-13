@@ -2,7 +2,6 @@ package com.hippo.ehviewer.library
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.media.MediaDataSource
 import android.media.MediaMetadataRetriever
 import android.os.ParcelFileDescriptor
@@ -72,8 +71,8 @@ object VideoThumbnail {
     private val EDGE_PX: Int get() = OriginDiskCache.THUMB_EDGE
 
     private const val FAILURE_RETRY_MS = 24L * 60 * 60 * 1_000
-    private const val FAILURE_MARKER_DECODE = "decode-sparse-v5"
-    private const val CACHE_FORMAT_VERSION = 5
+    private const val FAILURE_MARKER_DECODE = "decode-sparse-v6"
+    private const val CACHE_FORMAT_VERSION = 6
     private const val REMOTE_CACHE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1_000
     private const val MAX_CONCURRENT_EXTRACTIONS = 2
     private const val EXTRACT_TIMEOUT_MS = 12_000L
@@ -266,8 +265,7 @@ object VideoThumbnail {
     }
 
     /**
-     * Embedded cover first (fast, no video decode) when it is not a black slate.
-     * Otherwise probe early timestamps and **never** cache a near-black frame —
+     * Probe early timestamps and **never** cache a near-black frame —
      * CLOSEST_SYNC often snaps 1s/3s back to the same t=0 fade.
      */
     private fun MediaMetadataRetriever.selectStartFrame(timesUs: LongArray): Bitmap? {
@@ -284,12 +282,6 @@ object VideoThumbnail {
                 candidate.recycle()
             }
         }
-        consider(
-            runCatching {
-                embeddedPicture?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-            }.getOrNull(),
-        )
-        if (bestScore >= MIN_VISIBLE_SAMPLES) return best
         for (timeUs in timesUs) {
             consider(
                 runCatching {
@@ -316,11 +308,8 @@ object VideoThumbnail {
      * Local files only. Representative frame first; extra seeks only if it is mostly black.
      */
     private fun MediaMetadataRetriever.selectThumbnailFrame(): Bitmap? {
-        var best = runCatching {
-            embeddedPicture?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-        }.getOrNull()
-        var bestScore = best?.let(::visibleSampleCount) ?: -1
-        if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+        var best: Bitmap? = null
+        var bestScore = -1
 
         runCatching { getFrameAtTime() }.getOrNull()?.let { representative ->
             val score = visibleSampleCount(representative)
