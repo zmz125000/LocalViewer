@@ -43,6 +43,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import javax.net.SocketFactory
 import kotlin.coroutines.coroutineContext
 import kotlin.math.min
@@ -122,6 +123,9 @@ object SmbGateway {
 
     /** Long enough for large comic page transfers on a busy LAN. */
     private const val SMB_IO_TIMEOUT_SEC = 120L
+
+    /** Cooperative download slice so cancel can abort between SMB READs. */
+    private const val DOWNLOAD_CHUNK = 256 * 1024
 
     /** First connect-failure backoff; doubles each trip until [COOLDOWN_MAX_MS]. */
     private const val COOLDOWN_BASE_MS = 1_000L
@@ -1221,6 +1225,11 @@ object SmbGateway {
         return try {
             deferred.await()
         } catch (e: kotlinx.coroutines.CancellationException) {
+            // Leaving the folder only cancelled this await; drop the process-scoped
+            // QUERY_DIRECTORY so it does not keep the list TCP / NIO group busy.
+            if (!coroutineContext.isActive && listJobs.remove(cacheKey, deferred)) {
+                deferred.cancel()
+            }
             coroutineContext.ensureActive()
             throw IOException("SMB list cancelled (network lost or refresh)", e)
         }
@@ -1607,17 +1616,16 @@ object SmbGateway {
         relativeFilePath: String,
         out: OutputStream,
     ) = withIOContext {
-        withShare(source, password) { share ->
-            val path = remotePath(source, relativeFilePath)
-            share.openFile(
-                path,
-                EnumSet.of(AccessMask.GENERIC_READ),
-                null,
-                SMB2ShareAccess.ALL,
-                SMB2CreateDisposition.FILE_OPEN,
-                null,
-            ).use { file ->
-                file.read(out)
+        val downloadContext = coroutineContext
+        copyOpenFile(source, password, relativeFilePath, downloadContext) { file ->
+            val buffer = ByteArray(DOWNLOAD_CHUNK)
+            var offset = 0L
+            while (true) {
+                downloadContext.ensureActive()
+                val n = file.read(buffer, offset, 0, buffer.size)
+                if (n <= 0) break
+                out.write(buffer, 0, n)
+                offset += n
             }
         }
     }
@@ -1635,29 +1643,19 @@ object SmbGateway {
     ): Long = withIOContext {
         require(maxBytes > 0L)
         val downloadContext = coroutineContext
-        withShare(source, password) { share ->
-            val path = remotePath(source, relativeFilePath)
-            share.openFile(
-                path,
-                EnumSet.of(AccessMask.GENERIC_READ),
-                null,
-                SMB2ShareAccess.ALL,
-                SMB2CreateDisposition.FILE_OPEN,
-                null,
-            ).use { file ->
-                destination.outputStream().buffered().use { out ->
-                    val buffer = ByteArray(256 * 1024)
-                    var copied = 0L
-                    while (copied < maxBytes) {
-                        downloadContext.ensureActive()
-                        val request = minOf(buffer.size.toLong(), maxBytes - copied).toInt()
-                        val read = file.read(buffer, copied, 0, request)
-                        if (read <= 0) break
-                        out.write(buffer, 0, read)
-                        copied += read
-                    }
-                    copied
+        copyOpenFile(source, password, relativeFilePath, downloadContext) { file ->
+            destination.outputStream().buffered().use { out ->
+                val buffer = ByteArray(DOWNLOAD_CHUNK)
+                var copied = 0L
+                while (copied < maxBytes) {
+                    downloadContext.ensureActive()
+                    val request = minOf(buffer.size.toLong(), maxBytes - copied).toInt()
+                    val read = file.read(buffer, copied, 0, request)
+                    if (read <= 0) break
+                    out.write(buffer, 0, read)
+                    copied += read
                 }
+                copied
             }
         }
     }
@@ -1675,46 +1673,88 @@ object SmbGateway {
     ): Long = withIOContext {
         require(maxBytes > 0L)
         val downloadContext = coroutineContext
-        withShare(source, password) { share ->
-            val path = remotePath(source, relativeFilePath)
-            share.openFile(
-                path,
-                EnumSet.of(AccessMask.GENERIC_READ),
-                null,
-                SMB2ShareAccess.ALL,
-                SMB2CreateDisposition.FILE_OPEN,
-                null,
-            ).use { file ->
-                val size = file.fileInformation.standardInformation.endOfFile
-                val prefixLength = destination.length().coerceAtMost(size)
-                val tailStart = maxOf(prefixLength, size - maxBytes)
-                if (tailStart >= size) {
-                    0L
-                } else {
-                    RandomAccessFile(destination, "rw").use { out ->
-                        out.setLength(size)
-                        out.seek(tailStart)
-                        val buffer = ByteArray(256 * 1024)
-                        var copied = 0L
-                        while (tailStart + copied < size) {
-                            downloadContext.ensureActive()
-                            val request = minOf(
-                                buffer.size.toLong(),
-                                size - tailStart - copied,
-                            ).toInt()
-                            val read = file.read(buffer, tailStart + copied, 0, request)
-                            if (read <= 0) break
-                            out.write(buffer, 0, read)
-                            copied += read
-                        }
-                        copied
+        copyOpenFile(source, password, relativeFilePath, downloadContext) { file ->
+            val size = file.fileInformation.standardInformation.endOfFile
+            val prefixLength = destination.length().coerceAtMost(size)
+            val tailStart = maxOf(prefixLength, size - maxBytes)
+            if (tailStart >= size) {
+                0L
+            } else {
+                RandomAccessFile(destination, "rw").use { out ->
+                    out.setLength(size)
+                    out.seek(tailStart)
+                    val buffer = ByteArray(DOWNLOAD_CHUNK)
+                    var copied = 0L
+                    while (tailStart + copied < size) {
+                        downloadContext.ensureActive()
+                        val request = minOf(
+                            buffer.size.toLong(),
+                            size - tailStart - copied,
+                        ).toInt()
+                        val read = file.read(buffer, tailStart + copied, 0, request)
+                        if (read <= 0) break
+                        out.write(buffer, 0, read)
+                        copied += read
                     }
+                    copied
                 }
             }
         }
     }
 
     fun joinRelativePath(parent: String, child: String) = joinRelative(parent, child)
+
+    /**
+     * Open [relativeFilePath] and run [block]. If the caller is cancelled, close the
+     * handle from another thread so a blocking smbj READ unblocks and the host-pool
+     * slot is released. Coroutine cancel alone does not abort AsyncDirectTcp I/O.
+     */
+    private suspend fun <T> copyOpenFile(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        downloadContext: kotlin.coroutines.CoroutineContext,
+        block: (com.hierynomus.smbj.share.File) -> T,
+    ): T {
+        val activeFile = AtomicReference<com.hierynomus.smbj.share.File?>(null)
+        val cancelClose = downloadContext[Job]?.invokeOnCompletion { cause ->
+            if (cause == null) return@invokeOnCompletion
+            val file = activeFile.getAndSet(null) ?: return@invokeOnCompletion
+            Thread(
+                { runCatching { file.close() } },
+                "smb-dl-cancel",
+            ).apply {
+                isDaemon = true
+                start()
+            }
+        }
+        try {
+            return withShare(source, password) { share ->
+                val path = remotePath(source, relativeFilePath)
+                share.openFile(
+                    path,
+                    EnumSet.of(AccessMask.GENERIC_READ),
+                    null,
+                    SMB2ShareAccess.ALL,
+                    SMB2CreateDisposition.FILE_OPEN,
+                    null,
+                ).use { file ->
+                    activeFile.set(file)
+                    try {
+                        block(file)
+                    } finally {
+                        activeFile.compareAndSet(file, null)
+                    }
+                }
+            }
+        } catch (e: Throwable) {
+            downloadContext.ensureActive()
+            throw e
+        } finally {
+            cancelClose?.dispose()
+            activeFile.set(null)
+        }
+    }
 
     private suspend fun <T> withShare(
         source: SmbSourceEntity,
@@ -1746,6 +1786,9 @@ object SmbGateway {
         } catch (first: Throwable) {
             if (first is SMBApiException && isIgnorableListError(first)) throw first
             if (first is kotlinx.coroutines.CancellationException) throw first
+            // File.close() from a cancelled caller often surfaces as IOException.
+            // Do not treat that as a transport blip and restart the whole transfer.
+            ensureActive()
             if (first is IOException && first.message?.contains("recovering") == true) throw first
             if (first is IOException && first.message?.contains("busy:") == true) throw first
             logcat(first)
@@ -1783,6 +1826,7 @@ object SmbGateway {
                 result
             } catch (second: Throwable) {
                 if (second is kotlinx.coroutines.CancellationException) throw second
+                ensureActive()
                 logcat(second)
                 if (isHostCapacityError(second)) throw second
                 if (isNetworkUnreachable(second)) {

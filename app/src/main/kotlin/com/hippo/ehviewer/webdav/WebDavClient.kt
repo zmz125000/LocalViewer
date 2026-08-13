@@ -464,6 +464,7 @@ object WebDavClient {
         relativeFilePath: String,
         out: OutputStream,
     ) = withIOContext {
+        val downloadContext = coroutineContext
         downloadSlots.withPermit {
             withTransportRetry {
                 val url = absoluteUrl(source, relativeFilePath)
@@ -480,7 +481,13 @@ object WebDavClient {
                         error("WebDAV GET ${response.status.value} for $relativeFilePath")
                     }
                     response.bodyAsChannel().toInputStream().use { input ->
-                        input.copyTo(out)
+                        val buffer = ByteArray(256 * 1024)
+                        while (true) {
+                            downloadContext.ensureActive()
+                            val n = input.read(buffer)
+                            if (n <= 0) break
+                            out.write(buffer, 0, n)
+                        }
                     }
                 }
             }
