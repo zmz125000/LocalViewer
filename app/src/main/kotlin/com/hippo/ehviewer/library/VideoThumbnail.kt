@@ -71,8 +71,8 @@ object VideoThumbnail {
     private val EDGE_PX: Int get() = OriginDiskCache.THUMB_EDGE
 
     private const val FAILURE_RETRY_MS = 24L * 60 * 60 * 1_000
-    private const val FAILURE_MARKER_DECODE = "decode-sparse-v6"
-    private const val CACHE_FORMAT_VERSION = 6
+    private const val FAILURE_MARKER_DECODE = "decode-sparse-v7"
+    private const val CACHE_FORMAT_VERSION = 7
     private const val REMOTE_CACHE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1_000
     private const val MAX_CONCURRENT_EXTRACTIONS = 2
     private const val EXTRACT_TIMEOUT_MS = 12_000L
@@ -138,7 +138,8 @@ object VideoThumbnail {
                     return@withPermit null
                 }
                 if (frame == null) {
-                    failure.writeText(FAILURE_MARKER_DECODE)
+                    // Do not write a 24h .failed — one miss (timeout, dark opener,
+                    // budget) used to hide every video including local.
                     return@withPermit null
                 }
                 val scaled = scale(frame)
@@ -182,15 +183,7 @@ object VideoThumbnail {
     }
 
     private suspend fun extractThumbnailFrame(source: VideoThumbnailSource): Bitmap? = when (source) {
-        is VideoThumbnailSource.Local -> {
-            val file = File(source.path)
-            val pfd = if (source.path.startsWith('/') && file.isFile) {
-                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-            } else {
-                source.path.toPath().openFileDescriptor("r")
-            }
-            extractFrame(PfdArchiveByteSource(pfd), allowSeekScan = true)
-        }
+        is VideoThumbnailSource.Local -> extractLocalFrame(source)
         is VideoThumbnailSource.Smb -> {
             val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
             SmbCache.withBrowseThumbFetchSlot {
@@ -248,25 +241,26 @@ object VideoThumbnail {
         }
     }
 
-    private fun extractFrame(source: ArchiveByteSource, allowSeekScan: Boolean): Bitmap? {
-        val dataSource = ArchiveMediaDataSource(source)
+    /** Local files go through the platform path — no 8 MiB MediaDataSource cap. */
+    private fun extractLocalFrame(source: VideoThumbnailSource.Local): Bitmap? {
+        val file = File(source.path)
+        if (source.path.startsWith('/') && file.isFile) {
+            return decodeFrame({ it.setDataSource(file.absolutePath) }) { selectThumbnailFrame() }
+        }
+        val pfd = source.path.toPath().openFileDescriptor("r")
         return try {
-            decodeThumbnailFrame(allowSeekScan) { it.setDataSource(dataSource) }
+            val length = pfd.statSize.coerceAtLeast(0L)
+            decodeFrame(
+                { it.setDataSource(pfd.fileDescriptor, 0L, length) },
+            ) { selectThumbnailFrame() }
         } finally {
-            dataSource.close()
+            runCatching { pfd.close() }
         }
     }
 
-    private inline fun decodeThumbnailFrame(
-        allowSeekScan: Boolean,
-        setDataSource: (MediaMetadataRetriever) -> Unit,
-    ): Bitmap? = decodeFrame(setDataSource) {
-        if (allowSeekScan) selectThumbnailFrame() else selectStartFrame(SHORT_SEEK_TIMES_US)
-    }
-
     /**
-     * Probe early timestamps and **never** cache a near-black frame —
-     * CLOSEST_SYNC often snaps 1s/3s back to the same t=0 fade.
+     * Prefer a non-black frame; if every candidate is a fade, still return the
+     * best bitmap so the row is not empty.
      */
     private fun MediaMetadataRetriever.selectStartFrame(timesUs: LongArray): Bitmap? {
         var best: Bitmap? = null
@@ -298,8 +292,7 @@ object VideoThumbnail {
                 if (bestScore >= MIN_VISIBLE_SAMPLES) return best
             }
         }
-        best?.recycle()
-        return null
+        return best
     }
 
     private fun cacheKey(source: VideoThumbnailSource): String = sha256("$CACHE_FORMAT_VERSION:${source.cacheIdentity}")
