@@ -123,7 +123,6 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
             }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_save_file_markers),
-                summary = stringResource(id = R.string.settings_privacy_save_file_markers_summary),
                 state = Settings.saveFileMarkers.asMutableState(),
             )
             val searchHistoryCleared = stringResource(id = R.string.search_history_cleared)
@@ -142,7 +141,6 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
             val folderBrowseModeCleared = stringResource(id = R.string.folder_browse_mode_cleared)
             Preference(
                 title = stringResource(id = R.string.settings_privacy_clear_folder_browse_mode),
-                summary = stringResource(id = R.string.settings_privacy_clear_folder_browse_mode_summary),
             ) {
                 launch {
                     awaitConfirmationOrCancel(
