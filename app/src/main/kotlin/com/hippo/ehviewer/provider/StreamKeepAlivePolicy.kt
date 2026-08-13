@@ -16,9 +16,9 @@ import splitties.init.appCtx
  * **Streamdoc (Fuse):** live proxy FDs need sticky + FGS while open; tokens age out separately.
  *
  * **HTTP loopback:** session map is a **stateless token** (resume via Range anytime before prune).
- * Warm SMB is optional with **idle timeout** (open/close every Range is costly) — not required
- * for correctness. FGS wake lock only while a body transfer is in flight; idle FGS (grace) is
- * only process rank so the token stays in RAM + self-shutdown — no other CPU work.
+ * Warm SMB exists only while a Range is reading, plus a short seek grace — then evict.
+ * FGS wake lock only while a body transfer is in flight. Idle FGS is process rank for the
+ * session map (no sticky TCP, no idle-ping, no wake lock).
  *
  * Limited (default): shorter token age + drop sticky on screen off / FGS stop.
  * Unlimited (Advanced): longer token age; streamdoc may keep sticky across screen off.
@@ -38,6 +38,12 @@ object StreamKeepAlivePolicy {
      */
     const val FGS_STOP_DELAY_MS = 3L * 60L * 1000L
 
+    /**
+     * HTTP-only: stop FGS shortly after the last Range. Session map stays until token prune;
+     * the next GET restarts FGS. Do not keep a notification + process rank for a stale movie.
+     */
+    const val HTTP_FGS_STOP_DELAY_MS = 45L * 1000L
+
     const val LIMITED_WAKE_LOCK_MS = 20L * 60L * 1000L
     const val UNLIMITED_WAKE_LOCK_MS = 6L * 60L * 60L * 1000L
 
@@ -48,6 +54,8 @@ object StreamKeepAlivePolicy {
     fun wakeLockTimeoutMs(): Long = if (unlimited()) UNLIMITED_WAKE_LOCK_MS else LIMITED_WAKE_LOCK_MS
 
     fun fgsStopDelayMs(): Long = FGS_STOP_DELAY_MS
+
+    fun httpFgsStopDelayMs(): Long = HTTP_FGS_STOP_DELAY_MS
 
     fun dropNetworkOnScreenOff(): Boolean = !unlimited()
 

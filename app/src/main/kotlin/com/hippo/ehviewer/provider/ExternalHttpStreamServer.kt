@@ -52,12 +52,12 @@ import splitties.init.appCtx
  * **Stateless HTTP + timed backend:**
  * - Session map is a **token** (pre-registered files and sizes) until idle max age.
  * - Player may re-Range anytime while the session exists (no need for a live pipe).
- * - Network video may keep a **warm** dual-sticky body across Ranges to avoid open/close
- *   cost, but it is released after [BACKEND_IDLE_MS] with no active readers (timeout).
+ * - Network video may keep a **warm** dual-sticky body across Ranges for a short seek
+ *   grace ([BACKEND_IDLE_MS]); no playback (idle or stalled Range) evicts SMB immediately.
  * - At most [MAX_WARM_CACHE_FILES] warm video bodies process-wide (each holds a RAM window).
  *
- * FGS: wake lock only while a body transfer is in flight. Idle FGS (if still running) is
- * only for process rank so the token stays in RAM + self-stop timer — no CPU work.
+ * FGS: wake lock only while a body transfer is in flight. Idle FGS is process rank for
+ * the session map only — no sticky TCP, no idle-ping.
  */
 object ExternalHttpStreamServer {
     /**
@@ -814,8 +814,8 @@ object ExternalHttpStreamServer {
     // region keep-alive
     //
     // HTTP session token stays in the map until prune (resume without warm SMB).
-    // Warm backend: per-body idle timeout ([BACKEND_IDLE_MS]), not open/close every Range.
-    // FGS: wake lock only during activeTransfers. Idle FGS = token RAM + self-stop only.
+    // Warm backend: short seek grace, then evict. Stall / pause drops SMB now.
+    // FGS: wake lock only during activeTransfers. Idle FGS = session map + self-stop.
 
     private fun onNetworkSessionRegistered(context: Context = appCtx) {
         // Brief FGS so the process is not frozen before the first Range (token in RAM).
@@ -852,15 +852,15 @@ object ExternalHttpStreamServer {
     }
 
     /**
-     * After last network transfer (or session open with no traffic), stop FGS once grace
-     * elapses. Session map can still exist until prune if process survives; next open
-     * re-registers. On stop: tear down any leftover warm backends (token remains until prune).
+     * After last network transfer (or session open with no traffic), stop FGS once a short
+     * grace elapses. Session **map** stays until prune (no SMB, no wake lock). On stop:
+     * tear down leftover warm backends.
      */
     private fun maybeStopKeepAliveLater(context: Context = appCtx) {
         synchronized(keepAliveLock) {
             stopKeepAliveJob?.cancel()
             stopKeepAliveJob = scope.launch {
-                delay(StreamKeepAlivePolicy.fgsStopDelayMs())
+                delay(StreamKeepAlivePolicy.httpFgsStopDelayMs())
                 synchronized(keepAliveLock) {
                     if (activeTransfers.get() == 0 &&
                         StreamDocumentRegistry.networkOpenCount() == 0
@@ -1187,9 +1187,17 @@ object ExternalHttpStreamServer {
                         val idle = SystemClock.elapsedRealtime() - lastProgressMs.get()
                         if (idle >= BODY_STALL_MS) {
                             logcat("ExtHttp") {
-                                "body stall ${idle}ms session=${session.id} name=${entry.displayName} — close socket"
+                                "body stall ${idle}ms session=${session.id} name=${entry.displayName} — " +
+                                    "close socket + evict warm SMB"
                             }
                             runCatching { socket.close() }
+                            // Pause/stop is not a GET-close. Drop fetch lanes now so they
+                            // cannot idle-ping / hold the HTTP sticky pool.
+                            session.evictWarmBody(
+                                pathKey(entry.displayName),
+                                reason = "body-stall",
+                                allowActive = true,
+                            )
                             break
                         }
                     }
@@ -1375,17 +1383,17 @@ object ExternalHttpStreamServer {
     private const val LOOPBACK_HTTP_TRAFFIC_TAG = 0x4C485454
 
     /**
-     * No successful body write for this long → treat player as stopped/paused-with-full-buffer
-     * and abort the socket so [activeTransfers] drops (wake lock / FGS activity ends).
+     * No successful body write for this long → player paused (full buffer) or stopped.
+     * Abort the socket so [activeTransfers] and the wake lock drop; the next Range reconnects.
      */
-    private const val BODY_STALL_MS = 45_000L
-    private const val BODY_STALL_CHECK_MS = 5_000L
+    private const val BODY_STALL_MS = 15_000L
+    private const val BODY_STALL_CHECK_MS = 3_000L
 
     /**
-     * After last reader releases a warm network body, keep dual sticky this long for seeks /
-     * next Range (open/close is costly). Then close backend. Session token still valid for resume.
+     * After the last HTTP reader releases, keep the warm dual-sticky this long so a seek
+     * Range can reuse it. Then evict — session token stays; no playback must not pin SMB.
      */
-    private const val BACKEND_IDLE_MS = 4L * 60L * 1000L
+    private const val BACKEND_IDLE_MS = 8_000L
 
     /** Max warm video bodies (each ≈ one VideoDirectLink RAM window) process-wide. */
     private const val MAX_WARM_CACHE_FILES = 3
