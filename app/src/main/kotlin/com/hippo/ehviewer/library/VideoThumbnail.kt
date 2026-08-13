@@ -76,23 +76,20 @@ object VideoThumbnail {
     private const val MAX_CONCURRENT_EXTRACTIONS = 2
     private const val EXTRACT_TIMEOUT_MS = 12_000L
 
-    /** Enough for a few seconds of 1080p so we can skip a black series opener. */
-    private const val MAX_NETWORK_PREFIX_BYTES = 8L * 1024L * 1024L
+    /** First fetch — enough for t=0 on typical 1080p. */
+    private const val MAX_NETWORK_PREFIX_BYTES = 4L * 1024L * 1024L
+
+    /** Only if the 4 MiB opener is black / undecodable. */
+    private const val MAX_NETWORK_PREFIX_EXTENDED_BYTES = 8L * 1024L * 1024L
     private const val MAX_NETWORK_TAIL_BYTES = 2L * 1024L * 1024L
     private const val SAMPLE_GRID = 12
     private const val BLACK_LUMA = 24
     private const val MIN_VISIBLE_SAMPLES = SAMPLE_GRID * SAMPLE_GRID * 15 / 100
     private const val MIN_ACCEPT_SAMPLES = SAMPLE_GRID * SAMPLE_GRID * 5 / 100
 
-    /** Timestamps still inside a typical 8 MiB prefix. Mid-file seeks hit the sparse hole. */
-    private val PREFIX_SEEK_TIMES_US = longArrayOf(
-        0L,
-        1_000_000L,
-        2_000_000L,
-        3_000_000L,
-        5_000_000L,
-        8_000_000L,
-    )
+    /** Stops at the first non-black frame. Mid-file seeks hit the sparse hole. */
+    private val SHORT_SEEK_TIMES_US = longArrayOf(0L, 1_000_000L, 2_000_000L, 3_000_000L)
+    private val EXTENDED_SEEK_TIMES_US = longArrayOf(5_000_000L, 8_000_000L)
     private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
 
@@ -198,7 +195,7 @@ object VideoThumbnail {
         is VideoThumbnailSource.Smb -> {
             val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
             val password = SmbPasswordStore.get(source.sourceId)
-            extractNetworkSparseFrame(directory, cacheKey, source.remoteRelativeFile) { temporary, tail ->
+            extractNetworkSparseFrame(directory, cacheKey, source.remoteRelativeFile) { temporary, tail, maxBytes ->
                 SmbCache.withBrowseThumbFetchSlot {
                     if (tail) {
                         SmbGateway.downloadFileTail(
@@ -206,7 +203,7 @@ object VideoThumbnail {
                             password = password,
                             relativeFilePath = source.remoteRelativeFile,
                             destination = temporary,
-                            maxBytes = MAX_NETWORK_TAIL_BYTES,
+                            maxBytes = maxBytes,
                         )
                     } else {
                         SmbGateway.downloadFilePrefix(
@@ -214,7 +211,7 @@ object VideoThumbnail {
                             password = password,
                             relativeFilePath = source.remoteRelativeFile,
                             destination = temporary,
-                            maxBytes = MAX_NETWORK_PREFIX_BYTES,
+                            maxBytes = maxBytes,
                         )
                     }
                 }
@@ -223,7 +220,7 @@ object VideoThumbnail {
         is VideoThumbnailSource.WebDav -> {
             val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
             val password = WebDavPasswordStore.get(source.sourceId)
-            extractNetworkSparseFrame(directory, cacheKey, source.remoteRelativeFile) { temporary, tail ->
+            extractNetworkSparseFrame(directory, cacheKey, source.remoteRelativeFile) { temporary, tail, maxBytes ->
                 WebDavCache.withBrowseThumbFetchSlot {
                     if (tail) {
                         WebDavClient.downloadFileTail(
@@ -231,7 +228,7 @@ object VideoThumbnail {
                             password = password,
                             relativeFilePath = source.remoteRelativeFile,
                             destination = temporary,
-                            maxBytes = MAX_NETWORK_TAIL_BYTES,
+                            maxBytes = maxBytes,
                         )
                     } else {
                         WebDavClient.downloadFilePrefix(
@@ -239,7 +236,7 @@ object VideoThumbnail {
                             password = password,
                             relativeFilePath = source.remoteRelativeFile,
                             destination = temporary,
-                            maxBytes = MAX_NETWORK_PREFIX_BYTES,
+                            maxBytes = maxBytes,
                         )
                     }
                 }
@@ -248,14 +245,15 @@ object VideoThumbnail {
     }
 
     /**
-     * Gallery-shaped network path: one browse-slot at a time, bounded prefix, then
-     * a sparse EOF tail only if the prefix has no decodable frame (moov-at-end MP4).
+     * Gallery-shaped network path: 4 MiB prefix first (stop at the first non-black
+     * frame). Tail only if that fails (moov-at-end). 8 MiB prefix only if the opener
+     * is still black.
      */
     private suspend fun extractNetworkSparseFrame(
         directory: File,
         cacheKey: String,
         remoteFileName: String,
-        download: suspend (temporary: File, tail: Boolean) -> Long,
+        download: suspend (temporary: File, tail: Boolean, maxBytes: Long) -> Long,
     ): Bitmap? {
         val extension = remoteFileName
             .substringAfterLast('.', "video")
@@ -265,15 +263,32 @@ object VideoThumbnail {
             .ifEmpty { "video" }
         val temporary = File(directory, "$cacheKey.tmp.${System.nanoTime()}.$extension")
         return try {
-            val downloaded = download(temporary, false)
-            if (downloaded <= 0L || temporary.length() <= 0L) {
-                null
-            } else {
-                extractSparseFileFrame(temporary) ?: run {
-                    val tailDownloaded = download(temporary, true)
-                    if (tailDownloaded > 0L) extractSparseFileFrame(temporary) else null
-                }
+            if (download(temporary, false, MAX_NETWORK_PREFIX_BYTES) <= 0L ||
+                temporary.length() <= 0L
+            ) {
+                return null
             }
+            extractSparseFileFrame(temporary, SHORT_SEEK_TIMES_US)
+                ?: run {
+                    if (download(temporary, true, MAX_NETWORK_TAIL_BYTES) > 0L) {
+                        extractSparseFileFrame(temporary, SHORT_SEEK_TIMES_US)
+                    } else {
+                        null
+                    }
+                }
+                ?: run {
+                    if (download(temporary, false, MAX_NETWORK_PREFIX_EXTENDED_BYTES) <= 0L) {
+                        return@run null
+                    }
+                    extractSparseFileFrame(temporary, EXTENDED_SEEK_TIMES_US)
+                        ?: run {
+                            if (download(temporary, true, MAX_NETWORK_TAIL_BYTES) > 0L) {
+                                extractSparseFileFrame(temporary, EXTENDED_SEEK_TIMES_US)
+                            } else {
+                                null
+                            }
+                        }
+                }
         } finally {
             temporary.delete()
         }
@@ -283,9 +298,9 @@ object VideoThumbnail {
      * Sparse prefix+tail files have holes in the middle. Do not ask MMR for a
      * "representative" or 1/3–2/3 frame — those seeks land in the hole.
      */
-    private fun extractSparseFileFrame(file: File): Bitmap? = decodeThumbnailFrame(allowSeekScan = false) {
-        it.setDataSource(file.absolutePath)
-    }
+    private fun extractSparseFileFrame(file: File, timesUs: LongArray): Bitmap? = decodeFrame(
+        { it.setDataSource(file.absolutePath) },
+    ) { selectStartFrame(timesUs) }
 
     private fun extractFrame(source: ArchiveByteSource, allowSeekScan: Boolean): Bitmap? {
         val dataSource = ArchiveMediaDataSource(source)
@@ -300,14 +315,14 @@ object VideoThumbnail {
         allowSeekScan: Boolean,
         setDataSource: (MediaMetadataRetriever) -> Unit,
     ): Bitmap? = decodeFrame(setDataSource) {
-        if (allowSeekScan) selectThumbnailFrame() else selectStartFrame()
+        if (allowSeekScan) selectThumbnailFrame() else selectStartFrame(SHORT_SEEK_TIMES_US)
     }
 
     /**
-     * Artwork or an early sync frame still inside the downloaded prefix.
-     * TV rips often open on a black fade — t=0 / cover art is not enough.
+     * Stops at the first non-black frame ([MIN_VISIBLE_SAMPLES]). Later timestamps
+     * run only when t=0 (or cover art) is a black fade.
      */
-    private fun MediaMetadataRetriever.selectStartFrame(): Bitmap? {
+    private fun MediaMetadataRetriever.selectStartFrame(timesUs: LongArray): Bitmap? {
         var best: Bitmap? = null
         var bestScore = -1
         fun consider(candidate: Bitmap?) {
@@ -327,7 +342,7 @@ object VideoThumbnail {
             }.getOrNull(),
         )
         if (bestScore >= MIN_VISIBLE_SAMPLES) return best
-        for (timeUs in PREFIX_SEEK_TIMES_US) {
+        for (timeUs in timesUs) {
             consider(
                 runCatching {
                     getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
