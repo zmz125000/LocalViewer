@@ -70,15 +70,29 @@ object VideoThumbnail {
     private val EDGE_PX: Int get() = OriginDiskCache.THUMB_EDGE
 
     private const val FAILURE_RETRY_MS = 24L * 60 * 60 * 1_000
-    private const val FAILURE_MARKER_DECODE = "decode-sparse-v3"
+    private const val FAILURE_MARKER_DECODE = "decode-sparse-v4"
+    private const val CACHE_FORMAT_VERSION = 4
     private const val REMOTE_CACHE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1_000
     private const val MAX_CONCURRENT_EXTRACTIONS = 2
     private const val EXTRACT_TIMEOUT_MS = 12_000L
-    private const val MAX_NETWORK_PREFIX_BYTES = 4L * 1024L * 1024L
+
+    /** Enough for a few seconds of 1080p so we can skip a black series opener. */
+    private const val MAX_NETWORK_PREFIX_BYTES = 8L * 1024L * 1024L
     private const val MAX_NETWORK_TAIL_BYTES = 2L * 1024L * 1024L
     private const val SAMPLE_GRID = 12
     private const val BLACK_LUMA = 24
     private const val MIN_VISIBLE_SAMPLES = SAMPLE_GRID * SAMPLE_GRID * 15 / 100
+    private const val MIN_ACCEPT_SAMPLES = SAMPLE_GRID * SAMPLE_GRID * 5 / 100
+
+    /** Timestamps still inside a typical 8 MiB prefix. Mid-file seeks hit the sparse hole. */
+    private val PREFIX_SEEK_TIMES_US = longArrayOf(
+        0L,
+        1_000_000L,
+        2_000_000L,
+        3_000_000L,
+        5_000_000L,
+        8_000_000L,
+    )
     private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
 
@@ -86,7 +100,7 @@ object VideoThumbnail {
 
     fun cachedJpegIfPresent(source: VideoThumbnailSource): File? {
         val directory = cacheDirectory()
-        val cacheKey = sha256(source.cacheIdentity)
+        val cacheKey = cacheKey(source)
         val target = File(directory, "$cacheKey.jpg")
         return if (isFresh(target, source)) target else null
     }
@@ -94,7 +108,7 @@ object VideoThumbnail {
     @Suppress("UNUSED_PARAMETER")
     suspend fun getOrCreate(context: Context, source: VideoThumbnailSource): File? = withIOContext {
         val directory = cacheDirectory()
-        val cacheKey = sha256(source.cacheIdentity)
+        val cacheKey = cacheKey(source)
         val target = File(directory, "$cacheKey.jpg")
         val failure = File(directory, "$cacheKey.failed")
         if (shouldSkipFailed(failure)) return@withIOContext null
@@ -289,16 +303,46 @@ object VideoThumbnail {
         if (allowSeekScan) selectThumbnailFrame() else selectStartFrame()
     }
 
-    /** Artwork or first sync frame only — safe on a 4 MiB prefix. */
+    /**
+     * Artwork or an early sync frame still inside the downloaded prefix.
+     * TV rips often open on a black fade — t=0 / cover art is not enough.
+     */
     private fun MediaMetadataRetriever.selectStartFrame(): Bitmap? {
-        runCatching {
-            embeddedPicture?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-        }.getOrNull()?.let { return it }
-        runCatching { getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) }
-            .getOrNull()
-            ?.let { return it }
-        return runCatching { getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST) }.getOrNull()
+        var best: Bitmap? = null
+        var bestScore = -1
+        fun consider(candidate: Bitmap?) {
+            if (candidate == null) return
+            val score = visibleSampleCount(candidate)
+            if (score > bestScore) {
+                best?.recycle()
+                best = candidate
+                bestScore = score
+            } else {
+                candidate.recycle()
+            }
+        }
+        consider(
+            runCatching {
+                embeddedPicture?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+            }.getOrNull(),
+        )
+        if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+        for (timeUs in PREFIX_SEEK_TIMES_US) {
+            consider(
+                runCatching {
+                    getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                }.getOrNull(),
+            )
+            if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+        }
+        if (bestScore < MIN_ACCEPT_SAMPLES) {
+            best?.recycle()
+            return null
+        }
+        return best
     }
+
+    private fun cacheKey(source: VideoThumbnailSource): String = sha256("$CACHE_FORMAT_VERSION:${source.cacheIdentity}")
 
     /**
      * Local files only. Representative frame first; extra seeks only if it is mostly black.
