@@ -21,7 +21,7 @@ import java.io.IOException
  */
 @UnstableApi
 class StreamDocDataSource(
-    private val token: String,
+    private val fixedToken: String? = null,
 ) : BaseDataSource(true) { // isNetwork
     private var source: ArchiveByteSource? = null
     private var uri: Uri? = null
@@ -31,6 +31,7 @@ class StreamDocDataSource(
 
     override fun open(dataSpec: DataSpec): Long {
         closeSource()
+        val token = fixedToken ?: tokenFrom(dataSpec.uri)
         val entry = StreamDocumentRegistry.get(token)
             ?: throw IOException("stream token expired or unknown")
         val openLane = entry.openSource
@@ -117,19 +118,28 @@ class StreamDocDataSource(
     }
 
     class Factory(
-        private val token: String,
+        private val fixedToken: String? = null,
     ) : DataSource.Factory {
-        override fun createDataSource(): DataSource = StreamDocDataSource(token)
+        override fun createDataSource(): DataSource = StreamDocDataSource(fixedToken)
     }
 
     companion object {
         /** Synthetic scheme for MediaItem when not using content:// FUSE. */
         const val URI_SCHEME = "localviewer-stream"
+        private const val URI_AUTHORITY = "streamdoc"
 
         fun uriFor(token: String): Uri = Uri.Builder()
             .scheme(URI_SCHEME)
-            .authority("streamdoc")
+            .authority(URI_AUTHORITY)
             .appendPath(token)
             .build()
+
+        private fun tokenFrom(uri: Uri): String {
+            if (uri.scheme != URI_SCHEME || uri.authority != URI_AUTHORITY) {
+                throw IOException("invalid network stream URI: $uri")
+            }
+            return uri.pathSegments.singleOrNull()?.takeIf(String::isNotBlank)
+                ?: throw IOException("network stream URI has no token")
+        }
     }
 }

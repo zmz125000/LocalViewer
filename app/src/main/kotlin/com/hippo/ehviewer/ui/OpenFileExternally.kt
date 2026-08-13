@@ -28,6 +28,9 @@ import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.ui.player.InternalVideoPlaylistRegistry
+import com.hippo.ehviewer.ui.player.InternalVideoSource
+import com.hippo.ehviewer.ui.player.PreparedInternalVideo
 import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
 import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavGateway
@@ -72,9 +75,11 @@ object OpenFileExternally {
         pathStr: String,
         displayName: String = File(pathStr).name,
         mimeType: String = mimeTypeForFileName(displayName),
+        playlistPaths: List<String> = emptyList(),
     ) {
-        val token = registerLocalStreamdoc(pathStr, displayName, mimeType)
-        launchStreamdoc(context, token, displayName, mimeType, networkStream = false, internalPlayer = true)
+        val current = InternalVideoSource.Local(pathStr)
+        val candidates = playlistPaths.map { InternalVideoSource.Local(it) }
+        launchInternalVideo(context, current, candidates, displayName, mimeType)
     }
 
     suspend fun openSmb(
@@ -105,9 +110,11 @@ object OpenFileExternally {
         remoteRelativeFile: String,
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
         mimeType: String = mimeTypeForFileName(displayName),
+        playlistRemoteFiles: List<String> = emptyList(),
     ) {
-        val token = registerSmbStreamdoc(sourceId, remoteRelativeFile, displayName, mimeType)
-        launchStreamdoc(context, token, displayName, mimeType, networkStream = true, internalPlayer = true)
+        val current = InternalVideoSource.Smb(sourceId, remoteRelativeFile)
+        val candidates = playlistRemoteFiles.map { InternalVideoSource.Smb(sourceId, it) }
+        launchInternalVideo(context, current, candidates, displayName, mimeType)
     }
 
     suspend fun openWebDav(
@@ -138,9 +145,59 @@ object OpenFileExternally {
         remoteRelativeFile: String,
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
         mimeType: String = mimeTypeForFileName(displayName),
+        playlistRemoteFiles: List<String> = emptyList(),
     ) {
-        val token = registerWebDavStreamdoc(sourceId, remoteRelativeFile, displayName, mimeType)
-        launchStreamdoc(context, token, displayName, mimeType, networkStream = true, internalPlayer = true)
+        val current = InternalVideoSource.WebDav(sourceId, remoteRelativeFile)
+        val candidates = playlistRemoteFiles.map { InternalVideoSource.WebDav(sourceId, it) }
+        launchInternalVideo(context, current, candidates, displayName, mimeType)
+    }
+
+    private suspend fun launchInternalVideo(
+        context: Context,
+        current: InternalVideoSource,
+        candidates: List<InternalVideoSource>,
+        displayName: String,
+        mimeType: String,
+    ) {
+        val created = InternalVideoPlaylistRegistry.create(current, candidates)
+        try {
+            val prepared = prepareInternalVideo(current, displayName, mimeType)
+            launchStreamdoc(
+                context = context,
+                token = prepared.token,
+                displayName = prepared.displayName,
+                mimeType = prepared.mimeType,
+                networkStream = prepared.network,
+                internalPlayer = true,
+                playlistSessionId = created.session.id,
+                playlistIndex = created.initialIndex,
+            )
+        } catch (e: Throwable) {
+            InternalVideoPlaylistRegistry.remove(created.session.id)
+            throw e
+        }
+    }
+
+    internal suspend fun prepareInternalVideo(
+        source: InternalVideoSource,
+        displayName: String = source.displayName,
+        mimeType: String = source.mimeType,
+    ): PreparedInternalVideo {
+        val token = when (source) {
+            is InternalVideoSource.Local ->
+                registerLocalStreamdoc(source.path, displayName, mimeType)
+            is InternalVideoSource.Smb ->
+                registerSmbStreamdoc(source.sourceId, source.remotePath, displayName, mimeType)
+            is InternalVideoSource.WebDav ->
+                registerWebDavStreamdoc(source.sourceId, source.remotePath, displayName, mimeType)
+        }
+        return PreparedInternalVideo(
+            token = token,
+            uri = StreamDocumentProvider.uriFor(token, displayName),
+            displayName = displayName,
+            mimeType = mimeType,
+            network = source !is InternalVideoSource.Local,
+        )
     }
 
     // region HTTP external video
@@ -892,6 +949,8 @@ object OpenFileExternally {
         mimeType: String,
         networkStream: Boolean,
         internalPlayer: Boolean,
+        playlistSessionId: String? = null,
+        playlistIndex: Int = 0,
     ) {
         val uri = StreamDocumentProvider.uriFor(token, displayName)
         try {
@@ -903,6 +962,8 @@ object OpenFileExternally {
                     title = displayName,
                     mimeType = mimeType,
                     streamToken = token,
+                    playlistSessionId = playlistSessionId,
+                    playlistIndex = playlistIndex,
                 ).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
