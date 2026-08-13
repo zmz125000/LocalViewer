@@ -570,6 +570,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     remoteRelativeFile = remote,
                     displayName = actualName,
                     mimeType = mimeTypeForFileName(actualName),
+                    playlistRemoteFiles = entries
+                        .filterIsInstance<BrowseEntryRemote.VideoFile>()
+                        .map { WebDavGateway.joinRelative(relativeDir, it.fileName) },
                 )
             } catch (e: Throwable) {
                 snackbar(
