@@ -284,6 +284,13 @@ object Settings : DataStorePreferences(null) {
      */
     val saveGalleryHistory = boolPref("save_gallery_history", true)
 
+    /**
+     * Per-file skip / failure notes (video thumb `.failed` and similar sidecars).
+     * Lives in app data, not [android.content.Context.getCacheDir]. Default off.
+     * Turning this off deletes existing markers.
+     */
+    val saveFileMarkers = boolPref("save_file_markers", false).observed(::updateWhenSaveFileMarkersChanges)
+
     // Advanced
     val saveParseErrorBody = boolPref("save_parse_error_body", true)
     val saveCrashLog = boolPref("save_crash_log", false)

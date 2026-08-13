@@ -614,6 +614,8 @@
     <string name="settings_privacy_save_file_history_summary">Record opened archives, videos, and other non-folder files. Parent folders are still recorded when Save history is on.</string>
     <string name="settings_privacy_save_gallery_history">Save gallery history</string>
     <string name="settings_privacy_save_gallery_history_summary">Record opened library and folder galleries. Parent folders are still recorded when Save history is on.</string>
+    <string name="settings_privacy_save_file_markers">Save file markers</string>
+    <string name="settings_privacy_save_file_markers_summary">Keep per-file skip notes in app data (for example video thumb failures). These are not stored in the cache. Turning this off deletes them.</string>
     <string name="history_disabled">History is turned off in Privacy settings</string>
     <string name="clear_search_history">Clear device search history</string>
     <string name="clear_search_history_summary">Remove searches you have performed from this device</string>
