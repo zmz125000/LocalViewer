@@ -71,8 +71,6 @@ object VideoThumbnail {
     private val EDGE_PX: Int get() = OriginDiskCache.THUMB_EDGE
 
     private const val FAILURE_RETRY_MS = 24L * 60 * 60 * 1_000
-    private const val FAILURE_MARKER_DECODE = "decode-sparse-v7"
-    private const val CACHE_FORMAT_VERSION = 7
     private const val REMOTE_CACHE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1_000
     private const val MAX_CONCURRENT_EXTRACTIONS = 2
     private const val EXTRACT_TIMEOUT_MS = 12_000L
@@ -95,8 +93,23 @@ object VideoThumbnail {
     private val NETWORK_SEEK_TIMES_US = SHORT_SEEK_TIMES_US + EXTENDED_SEEK_TIMES_US
     private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
+    private val leftoverMarkersCleared = AtomicBoolean(false)
 
     fun cacheDirectory(): File = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache").apply { mkdirs() }
+
+    /**
+     * Deletes per-file skip notes (`*.failed`) under the video-thumb data dir.
+     * Does not touch JPEG thumbs. Safe if the directory is missing.
+     */
+    fun clearFailureMarkers() {
+        val directory = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache")
+        if (!directory.isDirectory) return
+        directory.listFiles()?.forEach { file ->
+            if (file.isFile && file.name.endsWith(".failed")) {
+                file.delete()
+            }
+        }
+    }
 
     fun cachedJpegIfPresent(source: VideoThumbnailSource): File? {
         val directory = cacheDirectory()
@@ -107,6 +120,9 @@ object VideoThumbnail {
 
     @Suppress("UNUSED_PARAMETER")
     suspend fun getOrCreate(context: Context, source: VideoThumbnailSource): File? = withIOContext {
+        if (!Settings.saveFileMarkers.value && leftoverMarkersCleared.compareAndSet(false, true)) {
+            clearFailureMarkers()
+        }
         val directory = cacheDirectory()
         val cacheKey = cacheKey(source)
         val target = File(directory, "$cacheKey.jpg")
@@ -135,11 +151,11 @@ object VideoThumbnail {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Throwable) {
+                    writeFailureMarker(failure)
                     return@withPermit null
                 }
                 if (frame == null) {
-                    // Do not write a 24h .failed — one miss (timeout, dark opener,
-                    // budget) used to hide every video including local.
+                    writeFailureMarker(failure)
                     return@withPermit null
                 }
                 val scaled = scale(frame)
@@ -165,15 +181,20 @@ object VideoThumbnail {
 
     private fun shouldSkipFailed(failure: File): Boolean {
         if (!failure.isFile) return false
-        val isCurrent = runCatching { failure.readText() == FAILURE_MARKER_DECODE }.getOrDefault(false)
-        if (
-            isCurrent &&
-            System.currentTimeMillis() - failure.lastModified() < FAILURE_RETRY_MS
-        ) {
+        if (!Settings.saveFileMarkers.value) {
+            failure.delete()
+            return false
+        }
+        if (System.currentTimeMillis() - failure.lastModified() < FAILURE_RETRY_MS) {
             return true
         }
         failure.delete()
         return false
+    }
+
+    private fun writeFailureMarker(failure: File) {
+        if (!Settings.saveFileMarkers.value) return
+        runCatching { failure.createNewFile() }
     }
 
     private fun isFresh(target: File, source: VideoThumbnailSource): Boolean {
@@ -295,7 +316,7 @@ object VideoThumbnail {
         return best
     }
 
-    private fun cacheKey(source: VideoThumbnailSource): String = sha256("$CACHE_FORMAT_VERSION:${source.cacheIdentity}")
+    private fun cacheKey(source: VideoThumbnailSource): String = sha256(source.cacheIdentity)
 
     /**
      * Local files only. Representative frame first; extra seeks only if it is mostly black.

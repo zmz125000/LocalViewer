@@ -399,6 +399,8 @@
     <string name="settings_privacy_save_file_history_summary">记录打开的压缩包、视频与其他非文件夹文件。父文件夹仍会在开启“保存历史”时记录。</string>
     <string name="settings_privacy_save_gallery_history">保存图库历史</string>
     <string name="settings_privacy_save_gallery_history_summary">记录打开的库图库与文件夹图库。父文件夹仍会在开启“保存历史”时记录。</string>
+    <string name="settings_privacy_save_file_markers">保存文件标记</string>
+    <string name="settings_privacy_save_file_markers_summary">在应用数据中保存按文件的跳过记录（例如视频缩略图失败）。不在缓存中。关闭后会删除已有标记。</string>
     <string name="history_disabled">历史记录已在隐私设置中关闭</string>
     <string name="library_add_library_source">添加图库源</string>
     <string name="library_add_folder_source">添加浏览文件夹</string>

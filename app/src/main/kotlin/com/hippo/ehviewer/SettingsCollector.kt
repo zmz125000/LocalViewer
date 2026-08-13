@@ -6,6 +6,7 @@ import arrow.core.Either.Companion.catch
 import com.ehviewer.core.preferences.PrefDelegate
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -50,6 +51,12 @@ fun applyNightMode(theme: Int) {
 suspend fun updateWhenThemeChanges(theme: Int) {
     delay(100) // Avoid recompose being cancelled when toggling from settings
     applyNightMode(theme)
+}
+
+suspend fun updateWhenSaveFileMarkersChanges(enabled: Boolean) {
+    if (!enabled) {
+        withIOContext { VideoThumbnail.clearFailureMarkers() }
+    }
 }
 
 // Stubs for removed EH prefs still referenced by Settings property initializers

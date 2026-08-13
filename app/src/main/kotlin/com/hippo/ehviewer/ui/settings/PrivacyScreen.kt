@@ -120,6 +120,11 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 }
                 previousSaveHistory = saveHistory.value
             }
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_privacy_save_file_markers),
+                summary = stringResource(id = R.string.settings_privacy_save_file_markers_summary),
+                state = Settings.saveFileMarkers.asMutableState(),
+            )
             val searchHistoryCleared = stringResource(id = R.string.search_history_cleared)
             Preference(
                 title = stringResource(id = R.string.clear_search_history),

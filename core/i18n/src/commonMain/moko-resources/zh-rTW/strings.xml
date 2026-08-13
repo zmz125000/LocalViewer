@@ -164,6 +164,8 @@
     <string name="settings_privacy_save_file_history_summary">記錄開啟的壓縮檔、影片與其他非資料夾檔案。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
     <string name="settings_privacy_save_gallery_history">儲存圖庫歷史</string>
     <string name="settings_privacy_save_gallery_history_summary">記錄開啟的庫圖庫與資料夾圖庫。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
+    <string name="settings_privacy_save_file_markers">儲存檔案標記</string>
+    <string name="settings_privacy_save_file_markers_summary">在應用程式資料中保存依檔案的略過紀錄（例如影片縮圖失敗）。不在快取中。關閉後會刪除既有標記。</string>
     <string name="history_disabled">歷史記錄已在隱私設定中關閉</string>
     <!-- Theme -->
     <string name="homepage">首頁</string>

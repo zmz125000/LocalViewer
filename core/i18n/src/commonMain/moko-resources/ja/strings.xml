@@ -154,6 +154,8 @@
     <string name="settings_privacy_save_file_history_summary">開いたアーカイブ・動画・その他のファイルを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
     <string name="settings_privacy_save_gallery_history">ギャラリー履歴を保存</string>
     <string name="settings_privacy_save_gallery_history_summary">開いたライブラリ／フォルダギャラリーを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
+    <string name="settings_privacy_save_file_markers">ファイルマーカーを保存</string>
+    <string name="settings_privacy_save_file_markers_summary">ファイルごとのスキップ記録（動画サムネイル失敗など）をアプリデータに残します。キャッシュには保存されません。オフにすると既存マーカーを削除します。</string>
     <string name="history_disabled">プライバシー設定で履歴がオフになっています</string>
     <string name="pref_reader_hardware_bitmap">ハードウェアビットマップデコード</string>
     <string name="pref_reader_hardware_bitmap_summary">より高速な Coil 経路（GPU ビットマップ）。余白切り取りと QR 広告検出を無効化し、ソフトウェアコピーを避けます。</string>
