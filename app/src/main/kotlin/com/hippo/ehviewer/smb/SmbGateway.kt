@@ -1757,6 +1757,7 @@ private fun isTransportError(t: Throwable): Boolean {
             is java.net.SocketException,
             is java.net.SocketTimeoutException,
             is java.net.ConnectException,
+            is java.nio.channels.UnresolvedAddressException,
             is java.net.UnknownHostException,
             is java.net.NoRouteToHostException,
             is java.io.EOFException,
@@ -1797,6 +1798,7 @@ private fun isNetworkUnreachable(t: Throwable): Boolean {
             is java.net.ConnectException,
             is java.net.UnknownHostException,
             is java.net.NoRouteToHostException,
+            is java.nio.channels.UnresolvedAddressException,
             -> return true
         }
         val msg = cur.message.orEmpty()

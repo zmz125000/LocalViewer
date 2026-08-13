@@ -9,7 +9,11 @@ import com.hierynomus.smb.SMBPacketData
 import com.hierynomus.smbj.SmbConfig
 import com.hierynomus.smbj.transport.TransportLayerFactory
 import com.hierynomus.smbj.transport.tcp.async.AsyncDirectTcpTransport
+import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.StandardSocketOptions
+import java.net.UnknownHostException
 import java.nio.channels.AsynchronousChannelGroup
 import java.nio.channels.AsynchronousSocketChannel
 import java.util.concurrent.Executors
@@ -65,7 +69,10 @@ internal object SmbAsyncTransport {
                 group,
             )
             configureChannel(transport)
-            return transport
+            // Android InetSocketAddress(host, port) stays unresolved when DNS
+            // misses; AsynchronousSocketChannel.connect then throws
+            // UnresolvedAddressException. Blocking Socket.connect retries DNS.
+            return ResolvingTransport(transport)
         }
 
         override fun toString(): String = "KeepAliveAsyncTransportFactory"
@@ -83,5 +90,22 @@ internal object SmbAsyncTransport {
         runCatching { channel.setOption(StandardSocketOptions.SO_KEEPALIVE, true) }
         runCatching { channel.setOption(StandardSocketOptions.TCP_NODELAY, true) }
         runCatching { channel.setOption(StandardSocketOptions.SO_LINGER, 0) }
+    }
+
+    private class ResolvingTransport(
+        private val inner: TransportLayer<SMBPacket<*, *>>,
+    ) : TransportLayer<SMBPacket<*, *>> by inner {
+        override fun connect(remoteAddress: InetSocketAddress) {
+            inner.connect(resolve(remoteAddress))
+        }
+    }
+
+    private fun resolve(remote: InetSocketAddress): InetSocketAddress {
+        if (!remote.isUnresolved && remote.address != null) return remote
+        val host = remote.hostString
+        val addrs = InetAddress.getAllByName(host)
+        if (addrs.isEmpty()) throw UnknownHostException(host)
+        val chosen = addrs.firstOrNull { it is Inet4Address } ?: addrs[0]
+        return InetSocketAddress(chosen, remote.port)
     }
 }
