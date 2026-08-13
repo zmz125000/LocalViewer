@@ -32,6 +32,7 @@ class SeekPlayerView @JvmOverloads constructor(
     private var lastSeekMs = C.TIME_UNSET
     private var lastSeekAt = 0L
     private var controllerGesture = false
+    private var shownOnThisTap = false
 
     init {
         // Media3's default chrome animation slides the bottom bar. Fade instead.
@@ -44,10 +45,14 @@ class SeekPlayerView @JvmOverloads constructor(
     override fun showController() {
         val bar = controllerView
         bar?.animate()?.cancel()
+        val alreadyShown = bar != null && bar.visibility == VISIBLE && bar.alpha >= 0.99f
+        if (alreadyShown) {
+            super.showController()
+            return
+        }
+        bar?.alpha = 0f
         super.showController()
-        if (bar == null || (bar.visibility == VISIBLE && bar.alpha == 1f)) return
-        bar.alpha = 0f
-        bar.animate().alpha(1f).setDuration(FADE_MS).start()
+        bar?.animate()?.alpha(1f)?.setDuration(FADE_MS)?.start()
     }
 
     override fun hideController() {
@@ -60,10 +65,7 @@ class SeekPlayerView @JvmOverloads constructor(
         bar.animate()
             .alpha(0f)
             .setDuration(FADE_MS)
-            .withEndAction {
-                super.hideController()
-                bar.alpha = 1f
-            }
+            .withEndAction { super.hideController() }
             .start()
     }
 
@@ -72,9 +74,24 @@ class SeekPlayerView @JvmOverloads constructor(
         object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean = true
 
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                if (seeking) return true
+                // Show on first tap — do not wait for double-tap confirmation.
+                if (!isControllerFullyVisible) {
+                    showController()
+                    shownOnThisTap = true
+                    return true
+                }
+                return false
+            }
+
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (seeking) return true
-                if (isControllerFullyVisible) hideController() else showController()
+                if (shownOnThisTap) {
+                    shownOnThisTap = false
+                    return true
+                }
+                if (isControllerFullyVisible) hideController()
                 return true
             }
 
@@ -129,6 +146,7 @@ class SeekPlayerView @JvmOverloads constructor(
             seeking = false
             lastSeekMs = C.TIME_UNSET
             lastSeekAt = 0L
+            shownOnThisTap = false
             controllerGesture = isControllerFullyVisible &&
                 event.y >= height - 132f * resources.displayMetrics.density
         }
