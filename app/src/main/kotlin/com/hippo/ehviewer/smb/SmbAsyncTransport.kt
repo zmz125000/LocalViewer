@@ -48,16 +48,24 @@ internal object SmbAsyncTransport {
 
     private val group: AsynchronousChannelGroup by lazy { createGroup() }
 
-    private val socketChannelField = field("socketChannel")
-    private val connectedField = field("connected")
-    private val packetReaderField = field("packetReader")
-    private val soTimeoutField = field("soTimeout")
+    // Lazy so SmbGateway init (network callback) does not reflect in <clinit>.
+    private val socketChannelField by lazy { field("socketChannel") }
+    private val connectedField by lazy { field("connected") }
+    private val packetReaderField by lazy { field("packetReader") }
+    private val soTimeoutField by lazy { field("soTimeout") }
 
     val factory: TransportLayerFactory<SMBPacketData<*>, SMBPacket<*, *>> =
         KeepAliveAsyncTransportFactory(group)
 
-    private fun field(name: String) = AsyncDirectTcpTransport::class.java.getDeclaredField(name).apply {
-        isAccessible = true
+    private fun field(name: String) = try {
+        AsyncDirectTcpTransport::class.java.getDeclaredField(name).apply {
+            isAccessible = true
+        }
+    } catch (e: NoSuchFieldException) {
+        throw IllegalStateException(
+            "AsyncDirectTcpTransport.$name missing — keep it in proguard-rules.pro",
+            e,
+        )
     }
 
     private fun createGroup(): AsynchronousChannelGroup {

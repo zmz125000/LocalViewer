@@ -209,8 +209,10 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
      */
     private fun registerNetworkPathCallbacks() {
         fun notifyPath(reason: String) {
-            SmbGateway.onNetworkPathChanged(reason)
-            WebDavClient.onNetworkPathChanged(reason)
+            runCatching {
+                SmbGateway.onNetworkPathChanged(reason)
+                WebDavClient.onNetworkPathChanged(reason)
+            }.onFailure { logcat(it) }
         }
 
         // Track default network identity; ignore repeated callbacks for the same Network.
