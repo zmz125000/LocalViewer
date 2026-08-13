@@ -76,6 +76,7 @@ import com.hippo.ehviewer.webdav.WebDavCache
 import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
+import kotlinx.coroutines.CancellationException
 import okio.Path
 
 /** Cover source for browse list rows (local path or lazy remote download). */
@@ -829,20 +830,20 @@ fun BrowseCoverThumb(
                 fetchFailed = false
                 var lastError: Throwable? = null
                 repeat(3) { attempt ->
-                    val result = runCatching {
+                    try {
                         val source = SmbRepository.load(cover.sourceId) ?: error("SMB source missing")
                         val password = SmbPasswordStore.get(cover.sourceId)
-                        SmbCache.ensureBrowseThumb(cover.sourceId, cover.remoteRelativeFile) { out ->
+                        localPath = SmbCache.ensureBrowseThumb(cover.sourceId, cover.remoteRelativeFile) { out ->
                             SmbGateway.downloadFile(source, password, cover.remoteRelativeFile, out)
                         }
-                    }
-                    if (result.isSuccess) {
-                        localPath = result.getOrNull()
                         fetchFailed = false
                         return@LaunchedEffect
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        lastError = e
+                        if (attempt < 2) kotlinx.coroutines.delay(150L * (attempt + 1))
                     }
-                    lastError = result.exceptionOrNull()
-                    if (attempt < 2) kotlinx.coroutines.delay(150L * (attempt + 1))
                 }
                 lastError?.let { logcat(it) }
                 fetchFailed = true
@@ -863,20 +864,20 @@ fun BrowseCoverThumb(
                 fetchFailed = false
                 var lastError: Throwable? = null
                 repeat(3) { attempt ->
-                    val result = runCatching {
+                    try {
                         val source = WebDavRepository.load(cover.sourceId) ?: error("WebDAV source missing")
                         val password = WebDavPasswordStore.get(cover.sourceId)
-                        WebDavCache.ensureBrowseThumb(cover.sourceId, cover.remoteRelativeFile) { out ->
+                        localPath = WebDavCache.ensureBrowseThumb(cover.sourceId, cover.remoteRelativeFile) { out ->
                             WebDavClient.downloadFile(source, password, cover.remoteRelativeFile, out)
                         }
-                    }
-                    if (result.isSuccess) {
-                        localPath = result.getOrNull()
                         fetchFailed = false
                         return@LaunchedEffect
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        lastError = e
+                        if (attempt < 2) kotlinx.coroutines.delay(150L * (attempt + 1))
                     }
-                    lastError = result.exceptionOrNull()
-                    if (attempt < 2) kotlinx.coroutines.delay(150L * (attempt + 1))
                 }
                 lastError?.let { logcat(it) }
                 fetchFailed = true
