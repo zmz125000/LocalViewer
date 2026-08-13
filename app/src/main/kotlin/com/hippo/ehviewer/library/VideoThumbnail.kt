@@ -215,6 +215,7 @@ object VideoThumbnail {
                         remoteRelativeFile = source.remoteRelativeFile,
                         pipeline = false,
                         readahead = false,
+                        yieldable = true,
                     ),
                 )
             }

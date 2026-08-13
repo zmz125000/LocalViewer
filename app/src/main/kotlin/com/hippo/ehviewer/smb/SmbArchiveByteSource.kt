@@ -76,6 +76,11 @@ class SmbArchiveByteSource(
      */
     videoPlay: Boolean = false,
     /**
+     * Browse-pool cover / video-thumb I/O. Interactive reader or a new play can cancel
+     * this borrow so it retries after they take the slot. Sticky sessions ignore this.
+     */
+    yieldable: Boolean = false,
+    /**
      * Windowed readahead for sequential archive parsing. Off when a higher layer
      * (e.g. [com.hippo.ehviewer.library.BlockCacheArchiveByteSource]) owns caching.
      */
@@ -90,6 +95,7 @@ class SmbArchiveByteSource(
         httpStickyWait,
         knownSize,
         videoPlay,
+        yieldable,
     )
     private val inner: ArchiveByteSource = if (readahead) {
         ReadAheadArchiveByteSource(
@@ -127,6 +133,7 @@ private class KeepOpenSmbFileSource(
     private val httpStickyWait: Boolean = true,
     knownSize: Long = -1L,
     private val videoPlay: Boolean = false,
+    private val yieldable: Boolean = false,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -279,7 +286,13 @@ private class KeepOpenSmbFileSource(
                                     )
                                 }
                                 else -> {
-                                    SmbGateway.withOpenFile(source, password, remote, ::drain)
+                                    SmbGateway.withOpenFile(
+                                        source,
+                                        password,
+                                        remote,
+                                        yieldable = yieldable && !stickySession,
+                                        block = ::drain,
+                                    )
                                 }
                             }
                             break

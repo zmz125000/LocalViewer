@@ -47,6 +47,7 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.net.SocketFactory
 import kotlin.coroutines.coroutineContext
 import kotlin.math.min
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +64,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -99,6 +101,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * On: three [AsynchronousChannelGroup]s (list / browse / video). Sticky video uses
  * the video group so a stale play cannot stall listing or a new handshake.
  * [beginVideoPlay] evicts the previous generation; HTTP cannot signal stop.
+ * Browse thumbs are [ShareOp.Background]: an interactive data wait or new play
+ * cancels them so they retry after the reader / video takes the slot.
  */
 object SmbGateway {
     private const val POOL_CAPACITY = 7
@@ -169,7 +173,57 @@ object SmbGateway {
         dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
 
-    private enum class ShareOp { Data, List }
+    private enum class ShareOp { Data, List, Background }
+
+    /** Thumb / cover I/O cancelled so a reader or new play can take the data slot. */
+    private class YieldCancellation : CancellationException("SMB yield to interactive")
+
+    private const val YIELD_RETRY_MS = 80L
+    private const val BACKGROUND_BACKOFF_MS = 40L
+
+    private val backgroundCancels = ConcurrentHashMap.newKeySet<() -> Unit>()
+
+    private fun yieldBackgroundOps(reason: String) {
+        if (backgroundCancels.isEmpty()) return
+        val victims = backgroundCancels.toList()
+        logcat { "SmbGateway: yield ${victims.size} background op(s) ($reason)" }
+        victims.forEach { cancel -> runCatching { cancel.invoke() } }
+    }
+
+    fun isVideoPlayLive(): Boolean = videoStickies.isNotEmpty()
+
+    private suspend fun <T> withBackgroundRetry(block: suspend () -> T): T {
+        while (true) {
+            try {
+                return supervisorScope {
+                    val deferred = async { block() }
+                    val cancel = { deferred.cancel(YieldCancellation()) }
+                    backgroundCancels.add(cancel)
+                    try {
+                        deferred.await()
+                    } finally {
+                        backgroundCancels.remove(cancel)
+                    }
+                }
+            } catch (e: CancellationException) {
+                coroutineContext.ensureActive()
+                if (e.isYieldCancellation()) {
+                    delay(YIELD_RETRY_MS)
+                    continue
+                }
+                throw e
+            }
+        }
+    }
+
+    private fun Throwable.isYieldCancellation(): Boolean {
+        var cur: Throwable? = this
+        while (cur != null) {
+            if (cur is YieldCancellation) return true
+            cur = cur.cause
+        }
+        return false
+    }
 
     private enum class TransportRole { Browse, List, Video }
 
@@ -332,6 +386,7 @@ object SmbGateway {
         videoPlayListeners.forEach { listener ->
             runCatching { listener.invoke() }
         }
+        yieldBackgroundOps("video-play-$epoch")
         dropVideoStickiesOlderThan(epoch)
         return epoch
     }
@@ -542,6 +597,9 @@ object SmbGateway {
         /** Wakes waiters when an op finishes or a session is added. */
         private val freeSignal = Channel<Unit>(Channel.CONFLATED)
         private var keepAliveJob: Job? = null
+
+        /** Interactive data acquires currently blocked on a slot. */
+        private val interactiveWaiters = AtomicInteger(0)
 
         fun startKeepAlive() {
             if (keepAliveJob?.isActive == true) return
@@ -766,14 +824,48 @@ object SmbGateway {
             openSession: suspend (reservedForList: Boolean) -> PooledSession,
         ): Acquired {
             if (kind == ShareOp.List) return acquireList(credKey, shareName, openSession)
-            hostOpSlots.acquire()
+            if (kind == ShareOp.Background) return acquireBackground(credKey, shareName, openSession)
+            if (!hostOpSlots.tryAcquire()) {
+                interactiveWaiters.incrementAndGet()
+                try {
+                    yieldBackgroundOps("host-op-wait $hostPortKey")
+                    hostOpSlots.acquire()
+                } finally {
+                    interactiveWaiters.decrementAndGet()
+                }
+            }
             try {
-                return Acquired(acquireDataSession(credKey, shareName, openSession), heldHostSlot = true)
+                return Acquired(
+                    acquireDataSession(credKey, shareName, openSession, yieldThumbs = true),
+                    heldHostSlot = true,
+                )
             } catch (e: Throwable) {
                 hostOpSlots.release()
                 throw e
             }
         }
+
+        private suspend fun acquireBackground(
+            credKey: String,
+            shareName: String,
+            openSession: suspend (reservedForList: Boolean) -> PooledSession,
+        ): Acquired {
+            while (interactiveWaiters.get() > 0) {
+                delay(BACKGROUND_BACKOFF_MS)
+            }
+            hostOpSlots.acquire()
+            try {
+                return Acquired(
+                    acquireDataSession(credKey, shareName, openSession, yieldThumbs = false),
+                    heldHostSlot = true,
+                )
+            } catch (e: Throwable) {
+                hostOpSlots.release()
+                throw e
+            }
+        }
+
+        private fun canBorrowDataForList(): Boolean = interactiveWaiters.get() == 0 && !isVideoPlayLive()
 
         private suspend fun acquireList(
             credKey: String,
@@ -784,7 +876,7 @@ object SmbGateway {
                 ?.let { return Acquired(it, heldHostSlot = false) }
             tryGrow(credKey, forList = true, openSession)
                 ?.let { return Acquired(it, heldHostSlot = false) }
-            if (hostOpSlots.tryAcquire()) {
+            if (canBorrowDataForList() && hostOpSlots.tryAcquire()) {
                 tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)
                     ?.let { return Acquired(it, heldHostSlot = true) }
                 hostOpSlots.release()
@@ -796,7 +888,7 @@ object SmbGateway {
                     ?.let { return Acquired(it, heldHostSlot = false) }
                 tryGrow(credKey, forList = true, openSession)
                     ?.let { return Acquired(it, heldHostSlot = false) }
-                if (hostOpSlots.tryAcquire()) {
+                if (canBorrowDataForList() && hostOpSlots.tryAcquire()) {
                     tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)
                         ?.let { return Acquired(it, heldHostSlot = true) }
                     hostOpSlots.release()
@@ -819,34 +911,45 @@ object SmbGateway {
             credKey: String,
             shareName: String,
             openSession: suspend (reservedForList: Boolean) -> PooledSession,
+            yieldThumbs: Boolean,
         ): PooledSession {
             tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
             tryGrow(credKey, forList = false, openSession)?.let { return it }
 
+            var waiting = false
             var waits = 0
-            while (true) {
-                tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
-                tryGrow(credKey, forList = false, openSession)?.let { return it }
+            try {
+                while (true) {
+                    if (yieldThumbs && !waiting) {
+                        waiting = true
+                        interactiveWaiters.incrementAndGet()
+                        yieldBackgroundOps("data-wait $hostPortKey")
+                    }
+                    tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
+                    tryGrow(credKey, forList = false, openSession)?.let { return it }
 
-                val got = withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
-                tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
-                if (got == null) {
-                    waits++
-                    if (liveDataCount() >= maxConnectionsPerHost()) {
-                        if (retireOneOtherCred(credKey)) {
+                    val got = withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
+                    tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
+                    if (got == null) {
+                        waits++
+                        if (liveDataCount() >= maxConnectionsPerHost()) {
+                            if (retireOneOtherCred(credKey)) {
+                                tryGrow(credKey, forList = false, openSession)?.let { return it }
+                            }
+                        } else {
                             tryGrow(credKey, forList = false, openSession)?.let { return it }
                         }
-                    } else {
-                        tryGrow(credKey, forList = false, openSession)?.let { return it }
-                    }
-                    if (waits >= 3) {
-                        error(
-                            "SMB host $hostPortKey busy: no free op slot for this user " +
-                                "(sessions=${liveDataCount()}/${maxConnectionsPerHost()}, " +
-                                "ops/session=${opsPerSession()}, hostOps≤$MAX_SAFE_HOST_OPS)",
-                        )
+                        if (waits >= 3) {
+                            error(
+                                "SMB host $hostPortKey busy: no free op slot for this user " +
+                                    "(sessions=${liveDataCount()}/${maxConnectionsPerHost()}, " +
+                                    "ops/session=${opsPerSession()}, hostOps≤$MAX_SAFE_HOST_OPS)",
+                            )
+                        }
                     }
                 }
+            } finally {
+                if (waiting) interactiveWaiters.decrementAndGet()
             }
         }
 
@@ -1518,22 +1621,18 @@ object SmbGateway {
         source: SmbSourceEntity,
         password: String,
         relativeFilePath: String,
+        yieldable: Boolean = false,
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
     ): T = withIOContext {
-        withShare(source, password) { share ->
-            val path = remotePath(source, relativeFilePath)
-            share.openFile(
-                path,
-                EnumSet.of(AccessMask.GENERIC_READ),
-                null,
-                SMB2ShareAccess.ALL,
-                SMB2CreateDisposition.FILE_OPEN,
-                null,
-            ).use { file ->
+        val kind = if (yieldable) ShareOp.Background else ShareOp.Data
+        val open = suspend {
+            val ctx = coroutineContext
+            copyOpenFile(source, password, relativeFilePath, ctx, kind) { file ->
                 val size = file.fileInformation.standardInformation.endOfFile
                 block(file, size)
             }
         }
+        if (yieldable) withBackgroundRetry { open() } else open()
     }
 
     /**
@@ -1700,19 +1799,24 @@ object SmbGateway {
         password: String,
         relativeFilePath: String,
         out: OutputStream,
+        yieldable: Boolean = false,
     ) = withIOContext {
         val downloadContext = coroutineContext
-        copyOpenFile(source, password, relativeFilePath, downloadContext) { file ->
-            val buffer = ByteArray(DOWNLOAD_CHUNK)
-            var offset = 0L
-            while (true) {
-                downloadContext.ensureActive()
-                val n = file.read(buffer, offset, 0, buffer.size)
-                if (n <= 0) break
-                out.write(buffer, 0, n)
-                offset += n
+        val kind = if (yieldable) ShareOp.Background else ShareOp.Data
+        val copy = suspend {
+            copyOpenFile(source, password, relativeFilePath, downloadContext, kind) { file ->
+                val buffer = ByteArray(DOWNLOAD_CHUNK)
+                var offset = 0L
+                while (true) {
+                    downloadContext.ensureActive()
+                    val n = file.read(buffer, offset, 0, buffer.size)
+                    if (n <= 0) break
+                    out.write(buffer, 0, n)
+                    offset += n
+                }
             }
         }
+        if (yieldable) withBackgroundRetry { copy() } else copy()
     }
 
     /**
@@ -1799,6 +1903,7 @@ object SmbGateway {
         password: String,
         relativeFilePath: String,
         downloadContext: kotlin.coroutines.CoroutineContext,
+        kind: ShareOp = ShareOp.Data,
         block: (com.hierynomus.smbj.share.File) -> T,
     ): T {
         val activeFile = AtomicReference<com.hierynomus.smbj.share.File?>(null)
@@ -1814,7 +1919,7 @@ object SmbGateway {
             }
         }
         try {
-            return withShare(source, password) { share ->
+            return withShare(source, password, kind) { share ->
                 val path = remotePath(source, relativeFilePath)
                 share.openFile(
                     path,

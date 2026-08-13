@@ -737,6 +737,7 @@ fun BrowseCoverThumb(
                                 pipeline = false,
                                 sequentialWindow =
                                 com.hippo.ehviewer.library.ReadAheadArchiveByteSource.COVER_WINDOW,
+                                yieldable = true,
                             )
                         }
                     } else {
@@ -749,6 +750,7 @@ fun BrowseCoverThumb(
                                 password,
                                 cover.remoteRelativeFile,
                                 pipeline = !isDocumentFileName(name),
+                                yieldable = true,
                             )
                         }
                     }
@@ -834,7 +836,13 @@ fun BrowseCoverThumb(
                         val source = SmbRepository.load(cover.sourceId) ?: error("SMB source missing")
                         val password = SmbPasswordStore.get(cover.sourceId)
                         localPath = SmbCache.ensureBrowseThumb(cover.sourceId, cover.remoteRelativeFile) { out ->
-                            SmbGateway.downloadFile(source, password, cover.remoteRelativeFile, out)
+                            SmbGateway.downloadFile(
+                                source,
+                                password,
+                                cover.remoteRelativeFile,
+                                out,
+                                yieldable = true,
+                            )
                         }
                         fetchFailed = false
                         return@LaunchedEffect
