@@ -29,9 +29,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * Shared NIO group for smbj [AsyncDirectTcpTransport].
  *
  * Sync [com.hierynomus.smbj.transport.tcp.direct.DirectTcpTransport] starts one
- * `Packet Reader for <host>` thread per TCP. This group (3 daemon threads) runs
- * every connection's reads/writes, which is what collapses the 6–9 LocalViewer
- * SMB threads down to a handful.
+ * `Packet Reader for <host>` thread per TCP. Data/sticky share one NIO group;
+ * folder listing uses a second group so QUERY_DIRECTORY is not queued behind
+ * video READs. The Advanced async toggle enables both or neither.
  *
  * Socket options that [KeepAliveSocketFactory] sets on blocking sockets are
  * applied here after the channel is opened (async transport ignores SocketFactory).
@@ -41,12 +41,18 @@ import java.util.concurrent.atomic.AtomicInteger
  * and smbj's async connect is hard-capped at 5s (EasyTier / VPN SYN often needs longer).
  */
 internal object SmbAsyncTransport {
-    private const val GROUP_THREADS = 3
+    private const val DATA_GROUP_THREADS = 3
+    private const val LIST_GROUP_THREADS = 2
 
     /** TCP connect only — matches smbj AsyncDirectTcpTransport's 5s cap. */
     private const val CONNECT_TIMEOUT_MS = 5_000L
 
-    private val group: AsynchronousChannelGroup by lazy { createGroup() }
+    private val dataGroup: AsynchronousChannelGroup by lazy {
+        createGroup("smb-nio", DATA_GROUP_THREADS)
+    }
+    private val listGroup: AsynchronousChannelGroup by lazy {
+        createGroup("smb-nio-list", LIST_GROUP_THREADS)
+    }
 
     // Lazy so SmbGateway init (network callback) does not reflect in <clinit>.
     private val socketChannelField by lazy { field("socketChannel") }
@@ -55,7 +61,11 @@ internal object SmbAsyncTransport {
     private val soTimeoutField by lazy { field("soTimeout") }
 
     val factory: TransportLayerFactory<SMBPacketData<*>, SMBPacket<*, *>> =
-        KeepAliveAsyncTransportFactory(group)
+        KeepAliveAsyncTransportFactory(dataGroup)
+
+    /** Same async toggle; separate group so folder-list packets are not queued behind video READs. */
+    val listFactory: TransportLayerFactory<SMBPacketData<*>, SMBPacket<*, *>> =
+        KeepAliveAsyncTransportFactory(listGroup)
 
     private fun field(name: String) = try {
         AsyncDirectTcpTransport::class.java.getDeclaredField(name).apply {
@@ -68,9 +78,9 @@ internal object SmbAsyncTransport {
         )
     }
 
-    private fun createGroup(): AsynchronousChannelGroup {
+    private fun createGroup(namePrefix: String, threads: Int): AsynchronousChannelGroup {
         val seq = AtomicInteger()
-        val pool = Executors.newFixedThreadPool(GROUP_THREADS) { runnable ->
+        val pool = Executors.newFixedThreadPool(threads) { runnable ->
             Thread(
                 {
                     TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
@@ -80,7 +90,7 @@ internal object SmbAsyncTransport {
                         TrafficStats.clearThreadStatsTag()
                     }
                 },
-                "smb-nio-${seq.incrementAndGet()}",
+                "$namePrefix-${seq.incrementAndGet()}",
             ).apply { isDaemon = true }
         }
         return AsynchronousChannelGroup.withThreadPool(pool)
