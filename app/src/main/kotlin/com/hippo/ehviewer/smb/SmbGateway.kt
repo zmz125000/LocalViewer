@@ -1799,6 +1799,7 @@ private fun isNetworkUnreachable(t: Throwable): Boolean {
             is java.net.UnknownHostException,
             is java.net.NoRouteToHostException,
             is java.nio.channels.UnresolvedAddressException,
+            is java.util.concurrent.TimeoutException,
             -> return true
         }
         val msg = cur.message.orEmpty()
