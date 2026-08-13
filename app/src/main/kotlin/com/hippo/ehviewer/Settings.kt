@@ -295,7 +295,7 @@ object Settings : DataStorePreferences(null) {
      * Lives in app data, not [android.content.Context.getCacheDir]. Default off.
      * Turning this off deletes existing markers.
      */
-    val saveFileMarkers = boolPref("save_file_markers", false).observed(::updateWhenSaveFileMarkersChanges)
+    val saveFileMarkers = boolPref("save_file_markers", true).observed(::updateWhenSaveFileMarkersChanges)
 
     // Advanced
     val saveParseErrorBody = boolPref("save_parse_error_body", true)
