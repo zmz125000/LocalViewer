@@ -5,6 +5,7 @@ import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewConfiguration
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -31,6 +32,40 @@ class SeekPlayerView @JvmOverloads constructor(
     private var lastSeekMs = C.TIME_UNSET
     private var lastSeekAt = 0L
     private var controllerGesture = false
+
+    init {
+        // Media3's default chrome animation slides the bottom bar. Fade instead.
+        setControllerAnimationEnabled(false)
+    }
+
+    private val controllerView: View?
+        get() = findViewById(androidx.media3.ui.R.id.exo_controller)
+
+    override fun showController() {
+        val bar = controllerView
+        bar?.animate()?.cancel()
+        super.showController()
+        if (bar == null || (bar.visibility == VISIBLE && bar.alpha == 1f)) return
+        bar.alpha = 0f
+        bar.animate().alpha(1f).setDuration(FADE_MS).start()
+    }
+
+    override fun hideController() {
+        val bar = controllerView
+        if (bar == null || bar.visibility != VISIBLE) {
+            super.hideController()
+            return
+        }
+        bar.animate().cancel()
+        bar.animate()
+            .alpha(0f)
+            .setDuration(FADE_MS)
+            .withEndAction {
+                super.hideController()
+                bar.alpha = 1f
+            }
+            .start()
+    }
 
     private val gestures = GestureDetector(
         context,
@@ -126,5 +161,6 @@ class SeekPlayerView @JvmOverloads constructor(
     companion object {
         private const val MAX_DRAG_WINDOW_MS = 10L * 60L * 1000L
         private const val SCRUB_INTERVAL_MS = 120L
+        private const val FADE_MS = 200L
     }
 }

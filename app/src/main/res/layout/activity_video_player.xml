@@ -5,6 +5,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@android:color/black"
+    app:animation_enabled="false"
     app:controller_layout_id="@layout/video_player_controls"
     app:resize_mode="fit"
     app:show_buffering="when_playing"
