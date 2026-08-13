@@ -166,7 +166,8 @@ object SmbGateway {
         config = buildSmbConfig()
         logcat {
             "SmbGateway: protocol settings changed " +
-                "(smb3Only=${Settings.smb3Only.value}, encrypt=${Settings.smbEncryptData.value}) — resetting pool"
+                "(smb3Only=${Settings.smb3Only.value}, encrypt=${Settings.smbEncryptData.value}, " +
+                "async=${Settings.smbAsyncTransport.value}, crypto=${SmbCrypto.providerName}) — resetting pool"
         }
         dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
@@ -177,8 +178,13 @@ object SmbGateway {
             .withTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
             .withSoTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
             .withSocketFactory(KeepAliveSocketFactory)
+            .withSecurityProvider(SmbCrypto.provider)
+            // SMB 3.x requires signing in smbj 0.14.0; leaving this false throws at build().
             .withSigningEnabled(true)
             .withEncryptData(Settings.smbEncryptData.value)
+        if (Settings.smbAsyncTransport.value) {
+            builder.withTransportLayerFactory(SmbAsyncTransport.factory)
+        }
         // Default smbj dialects: 3.1.1 … 2.0.2. SMB3-only drops 2.x.
         if (Settings.smb3Only.value) {
             builder.withDialects(
@@ -188,6 +194,40 @@ object SmbGateway {
             )
         }
         return builder.build()
+    }
+
+    /**
+     * One-line negotiate dump so htop / speed gaps can be matched to dialect, credits,
+     * and which MAC implementation is running. Safe to call more than once.
+     */
+    private fun logNegotiated(role: String, host: String, port: Int, connection: Connection, session: Session) {
+        runCatching {
+            val ctx = connection.connectionContext
+            val proto = connection.negotiatedProtocol
+            logcat {
+                "SmbGateway: negotiated role=$role $host:$port " +
+                    "dialect=${proto.dialect} " +
+                    "maxRead=${proto.maxReadSize} maxWrite=${proto.maxWriteSize} " +
+                    "maxTransact=${proto.maxTransactSize} " +
+                    "multiCredit=${ctx.supportsMultiCredit()} " +
+                    "serverSign=${if (ctx.isServerRequiresSigning) {
+                        "required"
+                    } else if (ctx.isServerSigningEnabled) {
+                        "enabled"
+                    } else {
+                        "off"
+                    }} " +
+                    "sessionSign=${session.isSigningRequired} " +
+                    "encryptPref=${Settings.smbEncryptData.value} " +
+                    "serverEncrypt=${ctx.supportsEncryption()} " +
+                    "crypto=${SmbCrypto.providerName} " +
+                    "transport=${smbConfig().transportLayerFactory.javaClass.simpleName} " +
+                    "browseHosts=${browsePoolHostCount()} sticky=${stickyConnectionCount()} " +
+                    "httpStickyFree=${httpStickyPoolAvailable()}/${httpStickyPoolSize()}"
+            }
+        }.onFailure { e ->
+            logcat { "SmbGateway: negotiated role=$role $host:$port (partial) ${e.message}" }
+        }
     }
 
     /**
@@ -1403,6 +1443,7 @@ object SmbGateway {
             stickyConnections.add(connection)
             try {
                 val session = connection.authenticate(auth(source, password))
+                logNegotiated("sticky", host, source.port, connection, session)
                 try {
                     val share = session.connectShare(shareName(source)) as DiskShare
                     try {
@@ -1669,6 +1710,7 @@ object SmbGateway {
                 val connection = smbClient.connect(host, source.port)
                 try {
                     val session = connection.authenticate(auth(source, password))
+                    logNegotiated("browse", host, source.port, connection, session)
                     PooledSession(ck, smbClient, connection, session).also {
                         setHostConnected(key, true)
                     }
@@ -1847,7 +1889,7 @@ private fun isIgnorableListError(e: SMBApiException): Boolean {
  * so [TrafficStats.setThreadStatsTag] must run **before** [SocketFactory.createSocket],
  * not only [TrafficStats.tagSocket] afterward (too late).
  */
-private object KeepAliveSocketFactory : SocketFactory() {
+internal object KeepAliveSocketFactory : SocketFactory() {
     /** Distinct app traffic tag for SMB (see TrafficStats.setThreadStatsTag). */
     const val SMB_TRAFFIC_TAG = 0x534D42 // "SMB"
 

@@ -47,7 +47,8 @@ class VideoDirectLinkByteSource(
     private val lastDemandBlock = AtomicLong(-1L)
 
     private val prefetchExecutor: ExecutorService? = if (prefetchAhead > 0) {
-        Executors.newSingleThreadExecutor { runnable ->
+        val n = minOf(prefetchAhead, PREFETCH_PARALLEL)
+        Executors.newFixedThreadPool(n) { runnable ->
             Thread(runnable, "video-direct-prefetch").apply {
                 isDaemon = true
                 priority = Thread.NORM_PRIORITY - 1
@@ -297,6 +298,9 @@ class VideoDirectLinkByteSource(
 
         /** Blocks to keep filled ahead of the playhead on the prefetch lane. */
         const val VIDEO_PREFETCH_AHEAD = 6
+
+        /** Concurrent prefetch loads so one sticky session can keep several READs in flight. */
+        const val PREFETCH_PARALLEL = 4
 
         fun isVideo(mimeType: String, displayName: String): Boolean = mimeType.startsWith("video/", ignoreCase = true) || isVideoFileName(displayName)
 

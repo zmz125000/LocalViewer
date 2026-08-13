@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -188,6 +189,24 @@ private class KeepOpenSmbFileSource(
                                                 if (isShareClosedError(e) || closed.get()) throw e
                                             }
                                         }
+                                        suspend fun runBatch(first: Op) {
+                                            val batch = ArrayList<Op>(READ_PIPELINE)
+                                            batch.add(first)
+                                            while (batch.size < READ_PIPELINE) {
+                                                batch.add(ops.tryReceive().getOrNull() ?: break)
+                                            }
+                                            if (batch.size == 1) {
+                                                handle(batch[0])
+                                                return
+                                            }
+                                            // Concurrent File.read multiplexes on one smbj session
+                                            // (message IDs / credits). readAsync is package-private.
+                                            coroutineScope {
+                                                for (op in batch) {
+                                                    launch(Dispatchers.IO) { handle(op) }
+                                                }
+                                            }
+                                        }
                                         if (stickySession) {
                                             while (isActive && !closed.get()) {
                                                 val op = withTimeoutOrNull(STICKY_IDLE_PING_MS) {
@@ -217,11 +236,11 @@ private class KeepOpenSmbFileSource(
                                                     }
                                                     continue
                                                 }
-                                                handle(op)
+                                                runBatch(op)
                                             }
                                         } else {
                                             for (op in ops) {
-                                                handle(op)
+                                                runBatch(op)
                                             }
                                         }
                                     }
@@ -374,11 +393,14 @@ private class KeepOpenSmbFileSource(
          */
         const val READ_CHUNK = 2 * 1024 * 1024
 
+        /** Outstanding SMB READs on one handle (credits / message IDs). */
+        const val READ_PIPELINE = 4
+
         /**
          * Transient SMB READ blips (credit / stall) should not surface as Fuse EIO. Retry a
          * few times on the same handle before failing the op (share-closed still reconnects).
          */
-        private fun readFullyWithRetry(
+        private suspend fun readFullyWithRetry(
             file: File,
             fileOffset: Long,
             buf: ByteArray,
@@ -397,30 +419,50 @@ private class KeepOpenSmbFileSource(
                     last = e
                 }
                 if (attempt < READ_ATTEMPTS - 1) {
-                    try {
-                        Thread.sleep(READ_RETRY_BACKOFF_MS * (attempt + 1L))
-                    } catch (_: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        break
-                    }
+                    delay(READ_RETRY_BACKOFF_MS * (attempt + 1L))
                 }
             }
             throw last ?: IOException("SMB read failed")
         }
 
-        private fun readFully(
+        private suspend fun readFully(
             file: File,
             fileOffset: Long,
             buf: ByteArray,
             off: Int,
             len: Int,
         ): Int {
+            if (len <= READ_CHUNK) {
+                return file.read(buf, fileOffset, off, len)
+            }
+            val starts = ArrayList<Int>()
+            val sizes = ArrayList<Int>()
+            var pos = 0
+            while (pos < len) {
+                val n = minOf(READ_CHUNK, len - pos)
+                starts.add(pos)
+                sizes.add(n)
+                pos += n
+            }
+            val got = IntArray(sizes.size)
+            coroutineScope {
+                for (i in sizes.indices) {
+                    launch(Dispatchers.IO) {
+                        got[i] = file.read(
+                            buf,
+                            fileOffset + starts[i],
+                            off + starts[i],
+                            sizes[i],
+                        )
+                    }
+                }
+            }
             var total = 0
-            while (total < len) {
-                val chunk = minOf(READ_CHUNK, len - total)
-                val n = file.read(buf, fileOffset + total, off + total, chunk)
+            for (i in sizes.indices) {
+                val n = got[i]
                 if (n <= 0) break
                 total += n
+                if (n < sizes[i]) break
             }
             return total
         }

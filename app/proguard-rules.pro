@@ -34,6 +34,11 @@
 -dontwarn androidx.window.extensions.**
 -dontwarn androidx.window.sidecar.Sidecar*
 
+# Async SMB transport sets SO_KEEPALIVE / TCP_NODELAY via this field after open.
+-keep class com.hierynomus.smbj.transport.tcp.async.AsyncDirectTcpTransport {
+    java.nio.channels.AsynchronousSocketChannel socketChannel;
+}
+
 -keepattributes LineNumberTable
 
 -allowaccessmodification
