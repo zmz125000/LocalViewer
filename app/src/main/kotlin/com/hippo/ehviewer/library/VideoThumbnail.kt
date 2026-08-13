@@ -72,8 +72,8 @@ object VideoThumbnail {
     private val EDGE_PX: Int get() = OriginDiskCache.THUMB_EDGE
 
     private const val FAILURE_RETRY_MS = 24L * 60 * 60 * 1_000
-    private const val FAILURE_MARKER_DECODE = "decode-sparse-v4"
-    private const val CACHE_FORMAT_VERSION = 4
+    private const val FAILURE_MARKER_DECODE = "decode-sparse-v5"
+    private const val CACHE_FORMAT_VERSION = 5
     private const val REMOTE_CACHE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1_000
     private const val MAX_CONCURRENT_EXTRACTIONS = 2
     private const val EXTRACT_TIMEOUT_MS = 12_000L
@@ -89,11 +89,11 @@ object VideoThumbnail {
     private const val SAMPLE_GRID = 12
     private const val BLACK_LUMA = 24
     private const val MIN_VISIBLE_SAMPLES = SAMPLE_GRID * SAMPLE_GRID * 15 / 100
-    private const val MIN_ACCEPT_SAMPLES = SAMPLE_GRID * SAMPLE_GRID * 5 / 100
 
     /** Stops at the first non-black frame. Mid-file seeks hit the sparse hole. */
     private val SHORT_SEEK_TIMES_US = longArrayOf(0L, 1_000_000L, 2_000_000L, 3_000_000L)
     private val EXTENDED_SEEK_TIMES_US = longArrayOf(5_000_000L, 8_000_000L)
+    private val NETWORK_SEEK_TIMES_US = SHORT_SEEK_TIMES_US + EXTENDED_SEEK_TIMES_US
     private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
 
@@ -242,8 +242,7 @@ object VideoThumbnail {
         val dataSource = ArchiveMediaDataSource(source, maxBytes = PROBE_MAX_TOTAL_BYTES)
         return try {
             decodeFrame({ it.setDataSource(dataSource) }) {
-                selectStartFrame(SHORT_SEEK_TIMES_US)
-                    ?: selectStartFrame(EXTENDED_SEEK_TIMES_US)
+                selectStartFrame(NETWORK_SEEK_TIMES_US)
             }
         } finally {
             dataSource.close()
@@ -267,8 +266,9 @@ object VideoThumbnail {
     }
 
     /**
-     * Stops at the first non-black frame ([MIN_VISIBLE_SAMPLES]). Later timestamps
-     * run only when t=0 (or cover art) is a black fade.
+     * Embedded cover first (fast, no video decode) when it is not a black slate.
+     * Otherwise probe early timestamps and **never** cache a near-black frame —
+     * CLOSEST_SYNC often snaps 1s/3s back to the same t=0 fade.
      */
     private fun MediaMetadataRetriever.selectStartFrame(timesUs: LongArray): Bitmap? {
         var best: Bitmap? = null
@@ -297,12 +297,17 @@ object VideoThumbnail {
                 }.getOrNull(),
             )
             if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+            if (timeUs > 0L) {
+                consider(
+                    runCatching {
+                        getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                    }.getOrNull(),
+                )
+                if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+            }
         }
-        if (bestScore < MIN_ACCEPT_SAMPLES) {
-            best?.recycle()
-            return null
-        }
-        return best
+        best?.recycle()
+        return null
     }
 
     private fun cacheKey(source: VideoThumbnailSource): String = sha256("$CACHE_FORMAT_VERSION:${source.cacheIdentity}")
