@@ -112,12 +112,10 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_network_folder_index_cache),
-                summary = stringResource(id = R.string.settings_network_folder_index_cache_summary),
                 state = Settings.networkFolderIndexCache.asMutableState(),
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_network_folder_index_quick_scan),
-                summary = stringResource(id = R.string.settings_network_folder_index_quick_scan_summary),
                 state = Settings.networkFolderIndexQuickScan.asMutableState(),
             )
             SwitchPreference(
