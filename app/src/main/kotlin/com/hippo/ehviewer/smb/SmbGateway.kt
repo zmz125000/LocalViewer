@@ -166,7 +166,7 @@ object SmbGateway {
         logcat {
             "SmbGateway: protocol settings changed " +
                 "(smb3Only=${Settings.smb3Only.value}, encrypt=${Settings.smbEncryptData.value}, " +
-                "crypto=${SmbCrypto.providerName}) — resetting pool"
+                "async=${Settings.smbAsyncTransport.value}, crypto=${SmbCrypto.providerName}) — resetting pool"
         }
         dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
@@ -181,6 +181,9 @@ object SmbGateway {
             // SMB 3.x requires signing in smbj 0.14.0; leaving this false throws at build().
             .withSigningEnabled(true)
             .withEncryptData(Settings.smbEncryptData.value)
+        if (Settings.smbAsyncTransport.value) {
+            builder.withTransportLayerFactory(SmbAsyncTransport.factory)
+        }
         // Default smbj dialects: 3.1.1 … 2.0.2. SMB3-only drops 2.x.
         if (Settings.smb3Only.value) {
             builder.withDialects(
@@ -1885,7 +1888,7 @@ private fun isIgnorableListError(e: SMBApiException): Boolean {
  * so [TrafficStats.setThreadStatsTag] must run **before** [SocketFactory.createSocket],
  * not only [TrafficStats.tagSocket] afterward (too late).
  */
-private object KeepAliveSocketFactory : SocketFactory() {
+internal object KeepAliveSocketFactory : SocketFactory() {
     /** Distinct app traffic tag for SMB (see TrafficStats.setThreadStatsTag). */
     const val SMB_TRAFFIC_TAG = 0x534D42 // "SMB"
 
