@@ -654,6 +654,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     remoteRelativeFile = remote,
                     displayName = actualName,
                     mimeType = mimeTypeForFileName(actualName),
+                    playlistRemoteFiles = entries
+                        .filterIsInstance<BrowseEntryRemote.VideoFile>()
+                        .map { SmbGateway.joinRelativePath(relativeDir, it.fileName) },
                 )
             } catch (e: Throwable) {
                 snackbar(

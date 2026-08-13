@@ -440,6 +440,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     pathStr,
                     displayName = actualName,
                     mimeType = mimeTypeForFileName(actualName),
+                    playlistPaths = entries
+                        .filterIsInstance<BrowseEntry.VideoFile>()
+                        .map { it.path.toString() },
                 )
             } catch (e: Throwable) {
                 snackbar(
