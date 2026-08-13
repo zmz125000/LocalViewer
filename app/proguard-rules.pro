@@ -34,9 +34,14 @@
 -dontwarn androidx.window.extensions.**
 -dontwarn androidx.window.sidecar.Sidecar*
 
-# Async SMB transport sets SO_KEEPALIVE / TCP_NODELAY via this field after open.
+# SmbAsyncTransport looks these up with getDeclaredField. R8 renaming any of
+# them is ExceptionInInitializerError on the first ConnectivityManager callback
+# (debug has minify off).
 -keep class com.hierynomus.smbj.transport.tcp.async.AsyncDirectTcpTransport {
     java.nio.channels.AsynchronousSocketChannel socketChannel;
+    java.util.concurrent.atomic.AtomicBoolean connected;
+    com.hierynomus.smbj.transport.tcp.async.AsyncPacketReader packetReader;
+    int soTimeout;
 }
 
 -keepattributes LineNumberTable
