@@ -16,6 +16,10 @@ import kotlin.math.abs
 /**
  * Stock [PlayerView] plus surface gestures: tap toggles chrome, double-tap play/pause,
  * horizontal drag seeks (rate-limited). Touches on the visible bottom bar go to Media3.
+ *
+ * Media3's built-in chrome animation slides the bottom bar; we disable it and fade alpha
+ * instead. Auto-hide is also owned here so the fade path is used (Media3's timeout would
+ * snap visibility off when its animation is disabled).
  */
 @UnstableApi
 class SeekPlayerView @JvmOverloads constructor(
@@ -34,6 +38,26 @@ class SeekPlayerView @JvmOverloads constructor(
     private var controllerGesture = false
     private var shownOnThisTap = false
 
+    /** Caller-facing auto-hide timeout; Media3's own timer is kept at 0 (see [setControllerShowTimeoutMs]). */
+    private var autoHideTimeoutMs = 0
+    private var hiding = false
+
+    private val autoHideRunnable = Runnable {
+        if (isControllerFullyVisible && !hiding) {
+            hideController()
+        }
+    }
+
+    private val playbackListener = object : Player.Listener {
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            onPlaybackUiChanged()
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            onPlaybackUiChanged()
+        }
+    }
+
     init {
         // Media3's default chrome animation slides the bottom bar. Fade instead.
         setControllerAnimationEnabled(false)
@@ -42,31 +66,88 @@ class SeekPlayerView @JvmOverloads constructor(
     private val controllerView: View?
         get() = findViewById(androidx.media3.ui.R.id.exo_controller)
 
+    /**
+     * Store the desired auto-hide timeout but leave Media3 at 0 ms so its layout manager
+     * never snap-hides. We schedule [autoHideRunnable] ourselves and fade via [hideController].
+     */
+    override fun setControllerShowTimeoutMs(controllerShowTimeoutMs: Int) {
+        autoHideTimeoutMs = controllerShowTimeoutMs
+        super.setControllerShowTimeoutMs(0)
+        if (isControllerFullyVisible) {
+            scheduleAutoHide()
+        }
+    }
+
+    override fun getControllerShowTimeoutMs(): Int = autoHideTimeoutMs
+
+    override fun setPlayer(player: Player?) {
+        getPlayer()?.removeListener(playbackListener)
+        super.setPlayer(player)
+        player?.addListener(playbackListener)
+        onPlaybackUiChanged()
+    }
+
     override fun showController() {
+        hiding = false
+        removeCallbacks(autoHideRunnable)
         val bar = controllerView
         bar?.animate()?.cancel()
         val alreadyShown = bar != null && bar.visibility == VISIBLE && bar.alpha >= 0.99f
         if (alreadyShown) {
             super.showController()
+            scheduleAutoHide()
             return
         }
         bar?.alpha = 0f
         super.showController()
         bar?.animate()?.alpha(1f)?.setDuration(FADE_MS)?.start()
+        scheduleAutoHide()
     }
 
     override fun hideController() {
+        removeCallbacks(autoHideRunnable)
         val bar = controllerView
-        if (bar == null || bar.visibility != VISIBLE) {
+        if (bar == null || bar.visibility != VISIBLE || hiding) {
+            hiding = false
             super.hideController()
             return
         }
+        hiding = true
         bar.animate().cancel()
         bar.animate()
             .alpha(0f)
             .setDuration(FADE_MS)
-            .withEndAction { super.hideController() }
+            .withEndAction {
+                hiding = false
+                super.hideController()
+                // Reset so the next show starts from a clean fully-opaque controller.
+                bar.alpha = 1f
+            }
             .start()
+    }
+
+    private fun scheduleAutoHide() {
+        removeCallbacks(autoHideRunnable)
+        if (autoHideTimeoutMs <= 0 || hiding) return
+        if (!shouldAutoHide()) return
+        postDelayed(autoHideRunnable, autoHideTimeoutMs.toLong())
+    }
+
+    /** Match Media3: keep chrome up while paused / idle / ended. */
+    private fun shouldAutoHide(): Boolean {
+        val current = player ?: return false
+        val state = current.playbackState
+        if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) return false
+        return current.playWhenReady
+    }
+
+    private fun onPlaybackUiChanged() {
+        if (!isControllerFullyVisible || hiding) return
+        if (shouldAutoHide()) {
+            scheduleAutoHide()
+        } else {
+            removeCallbacks(autoHideRunnable)
+        }
     }
 
     private val gestures = GestureDetector(
@@ -126,6 +207,8 @@ class SeekPlayerView @JvmOverloads constructor(
                     seekStartMs = current.currentPosition
                     lastSeekMs = C.TIME_UNSET
                     lastSeekAt = 0L
+                    // Hold chrome (if any) while scrubbing.
+                    removeCallbacks(autoHideRunnable)
                 }
                 val duration = current.duration
                 if (duration <= 0L || duration == C.TIME_UNSET) return true
@@ -149,8 +232,18 @@ class SeekPlayerView @JvmOverloads constructor(
             shownOnThisTap = false
             controllerGesture = isControllerFullyVisible &&
                 event.y >= height - 132f * resources.displayMetrics.density
+            if (controllerGesture) {
+                // User is interacting with the bar — defer auto-hide.
+                removeCallbacks(autoHideRunnable)
+            }
         }
-        if (controllerGesture) return super.onTouchEvent(event)
+        if (controllerGesture) {
+            val handled = super.onTouchEvent(event)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> scheduleAutoHide()
+            }
+            return handled
+        }
 
         val handled = gestures.onTouchEvent(event)
         when (event.actionMasked) {
@@ -161,7 +254,10 @@ class SeekPlayerView @JvmOverloads constructor(
                 }
                 seeking = false
                 lastSeekMs = C.TIME_UNSET
-                if (wasSeeking) return true
+                if (wasSeeking) {
+                    if (isControllerFullyVisible) scheduleAutoHide()
+                    return true
+                }
             }
         }
         if (seeking) return true
