@@ -9,12 +9,12 @@ import android.os.ParcelFileDescriptor
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbCache
-import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
 import com.hippo.ehviewer.webdav.WebDavCache
-import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.job
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -59,9 +60,10 @@ sealed interface VideoThumbnailSource {
 /**
  * Lazy video frame extraction for visible browse rows.
  *
- * Network work matches gallery photo thumbs: browse-host pool only, a shared
- * [SmbCache.withBrowseThumbFetchSlot] / WebDAV twin, and a **bounded** transfer
- * (4 MiB prefix + 2 MiB sparse tail). No sticky sessions, FUSE, or mid-file seeks.
+ * Network: [MediaMetadataRetriever] probes a keep-open SMB/WebDAV handle through
+ * small [MediaDataSource.readAt]s (the old ~30 Mbps pattern). A [HeadTailBudgetSource]
+ * only allows the first [PROBE_HEAD_BYTES] and last [PROBE_TAIL_BYTES], and caps
+ * total transfer so a bad seek cannot pull a multi‑GB file. No sticky / FUSE / HTTP.
  *
  * Disk: `cache/video_thumb_cache/` — same parent budget as other browse thumbs
  * ([OriginDiskCache.THUMB_BUDGET_BYTES]).
@@ -76,12 +78,14 @@ object VideoThumbnail {
     private const val MAX_CONCURRENT_EXTRACTIONS = 2
     private const val EXTRACT_TIMEOUT_MS = 12_000L
 
-    /** First fetch — enough for t=0 on typical 1080p. */
-    private const val MAX_NETWORK_PREFIX_BYTES = 4L * 1024L * 1024L
+    /** MMR may read anywhere in this prefix; it typically only pulls a few hundred KiB. */
+    private const val PROBE_HEAD_BYTES = 8L * 1024L * 1024L
 
-    /** Only if the 4 MiB opener is black / undecodable. */
-    private const val MAX_NETWORK_PREFIX_EXTENDED_BYTES = 8L * 1024L * 1024L
-    private const val MAX_NETWORK_TAIL_BYTES = 2L * 1024L * 1024L
+    /** moov-at-end MP4s. */
+    private const val PROBE_TAIL_BYTES = 2L * 1024L * 1024L
+
+    /** Hard stop on cumulative probe traffic per extract. */
+    private const val PROBE_MAX_TOTAL_BYTES = 8L * 1024L * 1024L
     private const val SAMPLE_GRID = 12
     private const val BLACK_LUMA = 24
     private const val MIN_VISIBLE_SAMPLES = SAMPLE_GRID * SAMPLE_GRID * 15 / 100
@@ -125,7 +129,7 @@ object VideoThumbnail {
                 if (isFresh(target, source)) return@withPermit target
                 val frame = try {
                     withTimeout(EXTRACT_TIMEOUT_MS) {
-                        extractThumbnailFrame(source, directory, cacheKey)
+                        extractThumbnailFrame(source)
                     }
                 } catch (e: TimeoutCancellationException) {
                     return@withPermit null
@@ -178,11 +182,7 @@ object VideoThumbnail {
         return System.currentTimeMillis() - target.lastModified() < REMOTE_CACHE_MAX_AGE_MS
     }
 
-    private suspend fun extractThumbnailFrame(
-        source: VideoThumbnailSource,
-        directory: File,
-        cacheKey: String,
-    ): Bitmap? = when (source) {
+    private suspend fun extractThumbnailFrame(source: VideoThumbnailSource): Bitmap? = when (source) {
         is VideoThumbnailSource.Local -> {
             val file = File(source.path)
             val pfd = if (source.path.startsWith('/') && file.isFile) {
@@ -194,113 +194,61 @@ object VideoThumbnail {
         }
         is VideoThumbnailSource.Smb -> {
             val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
-            val password = SmbPasswordStore.get(source.sourceId)
-            extractNetworkSparseFrame(directory, cacheKey, source.remoteRelativeFile) { temporary, tail, maxBytes ->
-                SmbCache.withBrowseThumbFetchSlot {
-                    if (tail) {
-                        SmbGateway.downloadFileTail(
-                            source = smb,
-                            password = password,
-                            relativeFilePath = source.remoteRelativeFile,
-                            destination = temporary,
-                            maxBytes = maxBytes,
-                        )
-                    } else {
-                        SmbGateway.downloadFilePrefix(
-                            source = smb,
-                            password = password,
-                            relativeFilePath = source.remoteRelativeFile,
-                            destination = temporary,
-                            maxBytes = maxBytes,
-                        )
-                    }
-                }
+            SmbCache.withBrowseThumbFetchSlot {
+                probeRemote(
+                    SmbArchiveByteSource(
+                        source = smb,
+                        password = SmbPasswordStore.get(source.sourceId),
+                        remoteRelativeFile = source.remoteRelativeFile,
+                        pipeline = false,
+                        readahead = false,
+                    ),
+                )
             }
         }
         is VideoThumbnailSource.WebDav -> {
             val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
-            val password = WebDavPasswordStore.get(source.sourceId)
-            extractNetworkSparseFrame(directory, cacheKey, source.remoteRelativeFile) { temporary, tail, maxBytes ->
-                WebDavCache.withBrowseThumbFetchSlot {
-                    if (tail) {
-                        WebDavClient.downloadFileTail(
-                            source = webDav,
-                            password = password,
-                            relativeFilePath = source.remoteRelativeFile,
-                            destination = temporary,
-                            maxBytes = maxBytes,
-                        )
-                    } else {
-                        WebDavClient.downloadFilePrefix(
-                            source = webDav,
-                            password = password,
-                            relativeFilePath = source.remoteRelativeFile,
-                            destination = temporary,
-                            maxBytes = maxBytes,
-                        )
-                    }
-                }
+            WebDavCache.withBrowseThumbFetchSlot {
+                probeRemote(
+                    WebDavArchiveByteSource(
+                        source = webDav,
+                        password = WebDavPasswordStore.get(source.sourceId),
+                        remoteRelativeFile = source.remoteRelativeFile,
+                        pipeline = false,
+                        readahead = false,
+                    ),
+                )
             }
         }
     }
 
-    /**
-     * Gallery-shaped network path: 4 MiB prefix first (stop at the first non-black
-     * frame). Tail only if that fails (moov-at-end). 8 MiB prefix only if the opener
-     * is still black.
-     */
-    private suspend fun extractNetworkSparseFrame(
-        directory: File,
-        cacheKey: String,
-        remoteFileName: String,
-        download: suspend (temporary: File, tail: Boolean, maxBytes: Long) -> Long,
-    ): Bitmap? {
-        val extension = remoteFileName
-            .substringAfterLast('.', "video")
-            .lowercase()
-            .filter { it.isLetterOrDigit() }
-            .take(8)
-            .ifEmpty { "video" }
-        val temporary = File(directory, "$cacheKey.tmp.${System.nanoTime()}.$extension")
+    private suspend fun probeRemote(raw: ArchiveByteSource): Bitmap? {
+        val bounded = HeadTailBudgetSource(
+            inner = raw,
+            headBytes = PROBE_HEAD_BYTES,
+            tailBytes = PROBE_TAIL_BYTES,
+            maxTotalBytes = PROBE_MAX_TOTAL_BYTES,
+        )
+        val closeOnCancel = kotlin.coroutines.coroutineContext.job.invokeOnCompletion { bounded.close() }
         return try {
-            if (download(temporary, false, MAX_NETWORK_PREFIX_BYTES) <= 0L ||
-                temporary.length() <= 0L
-            ) {
-                return null
-            }
-            extractSparseFileFrame(temporary, SHORT_SEEK_TIMES_US)
-                ?: run {
-                    if (download(temporary, true, MAX_NETWORK_TAIL_BYTES) > 0L) {
-                        extractSparseFileFrame(temporary, SHORT_SEEK_TIMES_US)
-                    } else {
-                        null
-                    }
-                }
-                ?: run {
-                    if (download(temporary, false, MAX_NETWORK_PREFIX_EXTENDED_BYTES) <= 0L) {
-                        return@run null
-                    }
-                    extractSparseFileFrame(temporary, EXTENDED_SEEK_TIMES_US)
-                        ?: run {
-                            if (download(temporary, true, MAX_NETWORK_TAIL_BYTES) > 0L) {
-                                extractSparseFileFrame(temporary, EXTENDED_SEEK_TIMES_US)
-                            } else {
-                                null
-                            }
-                        }
-                }
+            extractProbedFrame(bounded)
         } finally {
-            temporary.delete()
+            closeOnCancel.dispose()
+            bounded.close()
         }
     }
 
-    /**
-     * Sparse prefix+tail files have holes in the middle. Do not ask MMR for a
-     * "representative" or 1/3–2/3 frame — those seeks land in the hole.
-     */
-    private fun extractSparseFileFrame(file: File, timesUs: LongArray): Bitmap? = decodeFrame(
-        { it.setDataSource(file.absolutePath) },
-    ) { selectStartFrame(timesUs) }
+    private fun extractProbedFrame(source: ArchiveByteSource): Bitmap? {
+        val dataSource = ArchiveMediaDataSource(source, maxBytes = PROBE_MAX_TOTAL_BYTES)
+        return try {
+            decodeFrame({ it.setDataSource(dataSource) }) {
+                selectStartFrame(SHORT_SEEK_TIMES_US)
+                    ?: selectStartFrame(EXTENDED_SEEK_TIMES_US)
+            }
+        } finally {
+            dataSource.close()
+        }
+    }
 
     private fun extractFrame(source: ArchiveByteSource, allowSeekScan: Boolean): Bitmap? {
         val dataSource = ArchiveMediaDataSource(source)
@@ -463,6 +411,52 @@ object VideoThumbnail {
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray())
         .joinToString("") { "%02x".format(it) }
+}
+
+/**
+ * Lets MMR seek, but only in the file head / tail, and only up to [maxTotalBytes]
+ * of actual transfer. Mid-file reads return EOF so a representative-frame seek
+ * cannot pull the middle of a 10 GB episode.
+ */
+private class HeadTailBudgetSource(
+    private val inner: ArchiveByteSource,
+    private val headBytes: Long,
+    private val tailBytes: Long,
+    private val maxTotalBytes: Long,
+) : ArchiveByteSource {
+    private val closed = AtomicBoolean(false)
+    private val transferred = AtomicLong(0L)
+
+    override val size: Long get() = inner.size
+
+    override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+        if (closed.get() || len <= 0) return -1
+        val fileSize = size
+        if (fileSize <= 0L || offset < 0L || offset >= fileSize) return 0
+        val allowed = allowedLength(offset, len, fileSize)
+        if (allowed <= 0) return -1
+        val remain = maxTotalBytes - transferred.get()
+        if (remain <= 0L) return -1
+        val want = minOf(allowed.toLong(), remain).toInt()
+        val read = inner.readAt(offset, buf, off, want)
+        if (read > 0) transferred.addAndGet(read.toLong())
+        return if (read <= 0) -1 else read
+    }
+
+    private fun allowedLength(offset: Long, len: Int, fileSize: Long): Int {
+        if (offset < headBytes) {
+            return minOf(len.toLong(), headBytes - offset, fileSize - offset).toInt()
+        }
+        val tailStart = (fileSize - tailBytes).coerceAtLeast(0L)
+        if (offset >= tailStart) {
+            return minOf(len.toLong(), fileSize - offset).toInt()
+        }
+        return 0
+    }
+
+    override fun close() {
+        if (closed.compareAndSet(false, true)) runCatching { inner.close() }
+    }
 }
 
 /**
