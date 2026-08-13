@@ -6,6 +6,7 @@ import android.media.MediaDataSource
 import android.media.MediaMetadataRetriever
 import android.os.ParcelFileDescriptor
 import com.ehviewer.core.files.openFileDescriptor
+import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
@@ -22,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.job
 import kotlinx.coroutines.sync.Mutex
@@ -63,6 +65,10 @@ sealed interface VideoThumbnailSource {
  * small [MediaDataSource.readAt]s (the old ~30 Mbps pattern). A [HeadTailBudgetSource]
  * only allows the first [PROBE_HEAD_BYTES] and last [PROBE_TAIL_BYTES], and caps
  * total transfer so a bad seek cannot pull a multi‑GB file. No sticky / FUSE / HTTP.
+ *
+ * Decode runs on a watchdog thread: native MediaExtractor can hang forever, and a
+ * coroutine timeout cannot abort it. On timeout we close the source, release MMR,
+ * mark the file failed, and free the extract / SMB slots.
  *
  * Disk: `cache/video_thumb_cache/` — same parent budget as other browse thumbs
  * ([OriginDiskCache.THUMB_BUDGET_BYTES]).
@@ -143,11 +149,7 @@ object VideoThumbnail {
             extractSemaphore.withPermit {
                 if (isFresh(target, source)) return@withPermit target
                 val frame = try {
-                    withTimeout(EXTRACT_TIMEOUT_MS) {
-                        extractThumbnailFrame(source)
-                    }
-                } catch (e: TimeoutCancellationException) {
-                    return@withPermit null
+                    extractThumbnailFrame(source)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Throwable) {
@@ -252,29 +254,43 @@ object VideoThumbnail {
         }
     }
 
-    private fun extractProbedFrame(source: ArchiveByteSource): Bitmap? {
+    private suspend fun extractProbedFrame(source: ArchiveByteSource): Bitmap? {
         val dataSource = ArchiveMediaDataSource(source, maxBytes = PROBE_MAX_TOTAL_BYTES)
         return try {
-            decodeFrame({ it.setDataSource(dataSource) }) {
-                selectStartFrame(NETWORK_SEEK_TIMES_US)
-            }
+            decodeFrameWatchdog(
+                label = "network",
+                abort = {
+                    runCatching { dataSource.close() }
+                    runCatching { source.close() }
+                },
+                setDataSource = { it.setDataSource(dataSource) },
+                getFrame = { selectStartFrame(NETWORK_SEEK_TIMES_US) },
+            )
         } finally {
             dataSource.close()
         }
     }
 
     /** Local files go through the platform path — no 8 MiB MediaDataSource cap. */
-    private fun extractLocalFrame(source: VideoThumbnailSource.Local): Bitmap? {
+    private suspend fun extractLocalFrame(source: VideoThumbnailSource.Local): Bitmap? {
         val file = File(source.path)
         if (source.path.startsWith('/') && file.isFile) {
-            return decodeFrame({ it.setDataSource(file.absolutePath) }) { selectThumbnailFrame() }
+            return decodeFrameWatchdog(
+                label = file.name,
+                abort = {},
+                setDataSource = { it.setDataSource(file.absolutePath) },
+                getFrame = { selectThumbnailFrame() },
+            )
         }
         val pfd = source.path.toPath().openFileDescriptor("r")
         return try {
             val length = pfd.statSize.coerceAtLeast(0L)
-            decodeFrame(
-                { it.setDataSource(pfd.fileDescriptor, 0L, length) },
-            ) { selectThumbnailFrame() }
+            decodeFrameWatchdog(
+                label = source.path,
+                abort = { runCatching { pfd.close() } },
+                setDataSource = { it.setDataSource(pfd.fileDescriptor, 0L, length) },
+                getFrame = { selectThumbnailFrame() },
+            )
         } finally {
             runCatching { pfd.close() }
         }
@@ -301,18 +317,11 @@ object VideoThumbnail {
         for (timeUs in timesUs) {
             consider(
                 runCatching {
+                    // CLOSEST (non-sync) can hang MediaExtractor on HEVC/AV1 / broken GOPs.
                     getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 }.getOrNull(),
             )
             if (bestScore >= MIN_VISIBLE_SAMPLES) return best
-            if (timeUs > 0L) {
-                consider(
-                    runCatching {
-                        getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST)
-                    }.getOrNull(),
-                )
-                if (bestScore >= MIN_VISIBLE_SAMPLES) return best
-            }
         }
         return best
     }
@@ -389,18 +398,57 @@ object VideoThumbnail {
         visible
     }.getOrDefault(MIN_VISIBLE_SAMPLES)
 
-    private inline fun decodeFrame(
+    /**
+     * MMR [getFrameAtTime] / [setDataSource] are blocking native calls
+     * (MediaExtractor). Coroutine [withTimeout] never fires while they run, so two
+     * hung files used to occupy [extractSemaphore] and the SMB thumb slot forever.
+     *
+     * Decode on a daemon thread. On timeout: close the data source (unblocks SMB
+     * readAt) and [MediaMetadataRetriever.release] to try to stop the extractor.
+     * The native thread may linger; the permit is released so other thumbs proceed.
+     */
+    private suspend fun decodeFrameWatchdog(
+        label: String,
+        abort: () -> Unit,
         setDataSource: (MediaMetadataRetriever) -> Unit,
         getFrame: MediaMetadataRetriever.() -> Bitmap?,
     ): Bitmap? {
         val retriever = MediaMetadataRetriever()
+        val done = CompletableDeferred<Bitmap?>()
+        val thread = Thread(
+            {
+                try {
+                    setDataSource(retriever)
+                    val frame = getFrame(retriever)
+                    if (!done.complete(frame)) {
+                        frame?.recycle()
+                    }
+                } catch (e: Throwable) {
+                    if (!done.complete(null)) {
+                        logcat("VideoThumb") { "mmr abort after timeout ($label): ${e.message}" }
+                    }
+                } finally {
+                    runCatching { retriever.release() }
+                }
+            },
+            "video-thumb-mmr",
+        ).apply {
+            isDaemon = true
+            start()
+        }
         return try {
-            setDataSource(retriever)
-            getFrame(retriever)
-        } catch (_: Throwable) {
-            null
-        } finally {
+            withTimeout(EXTRACT_TIMEOUT_MS) { done.await() }
+        } catch (e: TimeoutCancellationException) {
+            logcat("VideoThumb") { "mmr timeout ${EXTRACT_TIMEOUT_MS}ms ($label) — abort extractor + source" }
+            runCatching { abort() }
             runCatching { retriever.release() }
+            thread.interrupt()
+            null
+        } catch (e: CancellationException) {
+            runCatching { abort() }
+            runCatching { retriever.release() }
+            thread.interrupt()
+            throw e
         }
     }
 
@@ -439,7 +487,7 @@ private class HeadTailBudgetSource(
     override val size: Long get() = inner.size
 
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
-        if (closed.get() || len <= 0) return -1
+        if (closed.get() || len <= 0 || Thread.currentThread().isInterrupted) return -1
         val fileSize = size
         if (fileSize <= 0L || offset < 0L || offset >= fileSize) return 0
         val allowed = allowedLength(offset, len, fileSize)
@@ -483,10 +531,11 @@ private class ArchiveMediaDataSource(
 
     @Synchronized
     override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
-        if (closed.get()) return -1
+        if (closed.get() || Thread.currentThread().isInterrupted) return -1
         if (bytesRead.get() >= maxBytes) return -1
         val want = minOf(size.toLong(), maxBytes - bytesRead.get()).toInt()
         val read = source.readAt(position, buffer, offset, want)
+        if (closed.get() || Thread.currentThread().isInterrupted) return -1
         if (read > 0) bytesRead.addAndGet(read.toLong())
         return if (read <= 0) -1 else read
     }
