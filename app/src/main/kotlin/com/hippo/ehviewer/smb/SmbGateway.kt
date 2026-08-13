@@ -38,6 +38,7 @@ import java.net.Socket
 import java.util.EnumSet
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -92,6 +93,12 @@ import kotlinx.coroutines.withTimeoutOrNull
  * We only set standard socket options ([KeepAliveSocketFactory]: SO_KEEPALIVE, TCP_NODELAY)
  * and smbj timeouts. We do **not** reimplement TCP; health is inferred from smbj I/O
  * and optional idle SMB probes. Circuit-breaker only after repeated connect/path failures.
+ *
+ * ## Async transport (Advanced toggle)
+ * Off: smbj [DirectTcpTransport] — one Packet Reader thread per TCP (legacy).
+ * On: three [AsynchronousChannelGroup]s (list / browse / video). Sticky video uses
+ * the video group so a stale play cannot stall listing or a new handshake.
+ * [beginVideoPlay] evicts the previous generation; HTTP cannot signal stop.
  */
 object SmbGateway {
     private const val POOL_CAPACITY = 7
@@ -164,24 +171,36 @@ object SmbGateway {
 
     private enum class ShareOp { Data, List }
 
-    private fun smbConfig(forList: Boolean = false): SmbConfig = if (forList) listConfig else config
+    private enum class TransportRole { Browse, List, Video }
+
+    private fun smbConfig(forList: Boolean = false): SmbConfig = smbConfig(if (forList) TransportRole.List else TransportRole.Browse)
+
+    private fun smbConfig(role: TransportRole): SmbConfig = when (role) {
+        TransportRole.Browse -> config
+        TransportRole.List -> listConfig
+        TransportRole.Video -> videoConfig
+    }
 
     /**
-     * Advanced toggles (SMB3-only / encryption) changed — rebuild [SmbConfig] and drop every
-     * pooled session so the next op reconnects with the new dialects/capabilities.
+     * Advanced toggles (SMB3-only / encryption / async transport) changed — rebuild
+     * [SmbConfig] and drop browse pools **and** sticky video/FUSE so the next op
+     * reconnects with the new dialects/capabilities/transport.
      */
     fun onProtocolSettingsChanged() {
-        config = buildSmbConfig(forList = false)
-        listConfig = buildSmbConfig(forList = true)
+        config = buildSmbConfig(TransportRole.Browse)
+        listConfig = buildSmbConfig(TransportRole.List)
+        videoConfig = buildSmbConfig(TransportRole.Video)
         logcat {
             "SmbGateway: protocol settings changed " +
                 "(smb3Only=${Settings.smb3Only.value}, encrypt=${Settings.smbEncryptData.value}, " +
-                "async=${Settings.smbAsyncTransport.value}, crypto=${SmbCrypto.providerName}) — resetting pool"
+                "async=${Settings.smbAsyncTransport.value}, crypto=${SmbCrypto.providerName}) — " +
+                "resetting browse, list, and sticky"
         }
         dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
+        dropStickySessions("protocol")
     }
 
-    private fun buildSmbConfig(forList: Boolean = false): SmbConfig {
+    private fun buildSmbConfig(role: TransportRole): SmbConfig {
         val builder = SmbConfig.builder()
             .withNegotiatedBufferSize()
             .withTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
@@ -193,7 +212,11 @@ object SmbGateway {
             .withEncryptData(Settings.smbEncryptData.value)
         if (Settings.smbAsyncTransport.value) {
             builder.withTransportLayerFactory(
-                if (forList) SmbAsyncTransport.listFactory else SmbAsyncTransport.factory,
+                when (role) {
+                    TransportRole.Browse -> SmbAsyncTransport.factory
+                    TransportRole.List -> SmbAsyncTransport.listFactory
+                    TransportRole.Video -> SmbAsyncTransport.videoFactory
+                },
             )
         }
         // Default smbj dialects: 3.1.1 … 2.0.2. SMB3-only drops 2.x.
@@ -232,7 +255,7 @@ object SmbGateway {
                     "encryptPref=${Settings.smbEncryptData.value} " +
                     "serverEncrypt=${ctx.supportsEncryption()} " +
                     "crypto=${SmbCrypto.providerName} " +
-                    "transport=${smbConfig().transportLayerFactory.javaClass.simpleName} " +
+                    "transport=${roleTransportName(role)} " +
                     "browseHosts=${browsePoolHostCount()} sticky=${stickyConnectionCount()} " +
                     "httpStickyFree=${httpStickyPoolAvailable()}/${httpStickyPoolSize()}"
             }
@@ -241,15 +264,27 @@ object SmbGateway {
         }
     }
 
+    private fun roleTransportName(role: String): String {
+        val cfg = when (role) {
+            "list" -> listConfig
+            "sticky" -> videoConfig
+            else -> config
+        }
+        return cfg.transportLayerFactory.javaClass.simpleName
+    }
+
     /**
      * Rebuilt when Advanced SMB dialect/encryption toggles change.
      * Always read via [smbConfig]; never cache a stale client config across toggles.
      */
     @Volatile
-    private var config: SmbConfig = buildSmbConfig(forList = false)
+    private var config: SmbConfig = buildSmbConfig(TransportRole.Browse)
 
     @Volatile
-    private var listConfig: SmbConfig = buildSmbConfig(forList = true)
+    private var listConfig: SmbConfig = buildSmbConfig(TransportRole.List)
+
+    @Volatile
+    private var videoConfig: SmbConfig = buildSmbConfig(TransportRole.Video)
 
     private val hostPools = ConcurrentHashMap<String, HostPool>()
     private val connectedHosts = ConcurrentHashMap.newKeySet<String>()
@@ -273,6 +308,49 @@ object SmbGateway {
      * on screen-off in limited keep-alive mode.
      */
     private val stickyConnections = ConcurrentHashMap.newKeySet<Connection>()
+
+    /**
+     * Sticky TCPs opened for a [beginVideoPlay] generation. A newer play closes older
+     * generations so a stale HTTP GET cannot occupy the video NIO group.
+     * PDF / non-video FUSE stickies are not registered here.
+     */
+    private data class VideoSticky(val epoch: Int, val connection: Connection)
+
+    private val videoStickies = ConcurrentHashMap.newKeySet<VideoSticky>()
+    private val videoPlayEpoch = AtomicInteger(0)
+    private val videoPlayListeners = CopyOnWriteArrayList<() -> Unit>()
+
+    /**
+     * Bump the video generation. Listeners close previous in-app / HTTP video bodies
+     * (so they do not reconnect). Then leftover video-generation TCPs are force-closed.
+     *
+     * Demand + prefetch of the **same** play must share one call — do not invoke per lane.
+     */
+    fun beginVideoPlay(reason: String): Int {
+        val epoch = videoPlayEpoch.incrementAndGet()
+        logcat { "SmbGateway: begin video play epoch=$epoch ($reason)" }
+        videoPlayListeners.forEach { listener ->
+            runCatching { listener.invoke() }
+        }
+        dropVideoStickiesOlderThan(epoch)
+        return epoch
+    }
+
+    fun currentVideoPlayEpoch(): Int = videoPlayEpoch.get()
+
+    fun addVideoPlayListener(listener: () -> Unit) {
+        videoPlayListeners.addIfAbsent(listener)
+    }
+
+    private fun dropVideoStickiesOlderThan(epoch: Int) {
+        val doomed = videoStickies.filter { it.epoch < epoch }
+        if (doomed.isEmpty()) return
+        doomed.forEach { videoStickies.remove(it) }
+        logcat { "SmbGateway: drop video stickies older than epoch=$epoch count=${doomed.size}" }
+        gatewayScope.launch {
+            doomed.forEach { vs -> runCatching { vs.connection.close() } }
+        }
+    }
 
     /**
      * Cap concurrent **HTTP loopback** sticky TCP sessions (external player path).
@@ -1474,9 +1552,10 @@ object SmbGateway {
         source: SmbSourceEntity,
         password: String,
         relativeFilePath: String,
+        videoPlayEpoch: Int? = null,
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
     ): T = withIOContext {
-        openStickyConnection(source, password, relativeFilePath, block)
+        openStickyConnection(source, password, relativeFilePath, videoPlayEpoch, block)
     }
 
     /**
@@ -1492,6 +1571,7 @@ object SmbGateway {
         relativeFilePath: String,
         waitForSlot: Boolean = true,
         lease: HttpStickyLease? = null,
+        videoPlayEpoch: Int? = null,
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
     ): T = withIOContext {
         val permitLease = lease ?: HttpStickyLease()
@@ -1504,7 +1584,7 @@ object SmbGateway {
             )
         }
         try {
-            openStickyConnection(source, password, relativeFilePath, block)
+            openStickyConnection(source, password, relativeFilePath, videoPlayEpoch, block)
         } finally {
             releaseHttpStickyPermit(permitLease, "close")
         }
@@ -1541,19 +1621,23 @@ object SmbGateway {
         source: SmbSourceEntity,
         password: String,
         relativeFilePath: String,
+        videoPlayEpoch: Int? = null,
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
     ): T {
         // Own client+connection so smbj host Connection cache cannot couple sticky to
         // the shared pool (and so dropAllSessions never closes this handle).
         // Must use [endpointHost] — same as browse/pool (EasyTier channel may override).
+        // Video/FUSE use [videoConfig] so async completions stay off the browse NIO group.
         val host = endpointHost(source)
         ensureHostNotCoolingDown(host, source.port)
-        val smbClient = SMBClient(smbConfig())
+        val smbClient = SMBClient(smbConfig(TransportRole.Video))
         val prevTag = TrafficStats.getThreadStatsTag()
         TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
         try {
             val connection = smbClient.connect(host, source.port)
             stickyConnections.add(connection)
+            val videoSticky = videoPlayEpoch?.let { VideoSticky(it, connection) }
+            videoSticky?.let { videoStickies.add(it) }
             try {
                 val session = connection.authenticate(auth(source, password))
                 logNegotiated("sticky", host, source.port, connection, session)
@@ -1579,6 +1663,7 @@ object SmbGateway {
                     runCatching { session.close() }
                 }
             } finally {
+                videoSticky?.let { videoStickies.remove(it) }
                 stickyConnections.remove(connection)
                 runCatching { connection.close() }
             }
@@ -1601,6 +1686,7 @@ object SmbGateway {
         val list = stickyConnections.toList()
         if (list.isEmpty()) return
         list.forEach { stickyConnections.remove(it) }
+        videoStickies.clear()
         logcat { "SmbGateway: drop sticky sessions ($reason) count=${list.size}" }
         gatewayScope.launch {
             list.forEach { conn ->

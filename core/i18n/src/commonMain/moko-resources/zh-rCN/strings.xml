@@ -139,7 +139,7 @@
     <string name="settings_smb_encrypt">允许 SMB 3 加密</string>
     <string name="settings_smb_encrypt_summary">要求加密的 SMB 会话（服务器须支持 SMB 3 加密）。会重置活动 SMB 连接。</string>
     <string name="settings_smb_async_transport">SMB 异步传输</string>
-    <string name="settings_smb_async_transport_summary">用少量 NIO 线程代替每条 TCP 一个 Packet Reader。若某台服务器异常可关闭。会重置活动 SMB 连接。</string>
+    <string name="settings_smb_async_transport_summary">用少量 NIO 线程池（列表 / 浏览 / 视频）代替每条 TCP 一个 Packet Reader。若某台服务器异常可关闭。会重置浏览、列表和视频连接。</string>
     <string name="settings_reader_preload_image">阅读器预载</string>
     <string name="settings_reader_preload_image_summary">预取后续 %s 页（SMB 会提前下载；本地按需打开）</string>
     <string name="settings_advanced_read_cache_size_summary">SMB 页面缓存（及旧版在线图片缓存）的最大容量</string>

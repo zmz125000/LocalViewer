@@ -26,12 +26,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Shared NIO group for smbj [AsyncDirectTcpTransport].
+ * Role-isolated NIO groups for smbj [AsyncDirectTcpTransport].
  *
  * Sync [com.hierynomus.smbj.transport.tcp.direct.DirectTcpTransport] starts one
- * `Packet Reader for <host>` thread per TCP. Data/sticky share one NIO group;
- * folder listing uses a second group so QUERY_DIRECTORY is not queued behind
- * video READs. The Advanced async toggle enables both or neither.
+ * `Packet Reader for <host>` thread per TCP. Async must recreate that isolation
+ * explicitly: one [AsynchronousChannelGroup] is a shared completion pool, so
+ * video READs on the browse group delay listing/reader/new-play handshake.
+ *
+ *   list   — reserved QUERY_DIRECTORY TCP
+ *   browse — host-pool data (reader, thumbs, archives)
+ *   video  — sticky FUSE / loopback-HTTP / in-app streamdoc
+ *
+ * The Advanced async toggle installs all three factories or none.
  *
  * Socket options that [KeepAliveSocketFactory] sets on blocking sockets are
  * applied here after the channel is opened (async transport ignores SocketFactory).
@@ -41,17 +47,21 @@ import java.util.concurrent.atomic.AtomicInteger
  * and smbj's async connect is hard-capped at 5s (EasyTier / VPN SYN often needs longer).
  */
 internal object SmbAsyncTransport {
-    private const val DATA_GROUP_THREADS = 3
+    private const val BROWSE_GROUP_THREADS = 3
     private const val LIST_GROUP_THREADS = 2
+    private const val VIDEO_GROUP_THREADS = 3
 
     /** TCP connect only — matches smbj AsyncDirectTcpTransport's 5s cap. */
     private const val CONNECT_TIMEOUT_MS = 5_000L
 
-    private val dataGroup: AsynchronousChannelGroup by lazy {
-        createGroup("smb-nio", DATA_GROUP_THREADS)
+    private val browseGroup: AsynchronousChannelGroup by lazy {
+        createGroup("smb-nio", BROWSE_GROUP_THREADS)
     }
     private val listGroup: AsynchronousChannelGroup by lazy {
         createGroup("smb-nio-list", LIST_GROUP_THREADS)
+    }
+    private val videoGroup: AsynchronousChannelGroup by lazy {
+        createGroup("smb-nio-video", VIDEO_GROUP_THREADS)
     }
 
     // Lazy so SmbGateway init (network callback) does not reflect in <clinit>.
@@ -61,11 +71,15 @@ internal object SmbAsyncTransport {
     private val soTimeoutField by lazy { field("soTimeout") }
 
     val factory: TransportLayerFactory<SMBPacketData<*>, SMBPacket<*, *>> =
-        KeepAliveAsyncTransportFactory(dataGroup)
+        KeepAliveAsyncTransportFactory(browseGroup, "browse")
 
     /** Same async toggle; separate group so folder-list packets are not queued behind video READs. */
     val listFactory: TransportLayerFactory<SMBPacketData<*>, SMBPacket<*, *>> =
-        KeepAliveAsyncTransportFactory(listGroup)
+        KeepAliveAsyncTransportFactory(listGroup, "list")
+
+    /** Sticky video/FUSE; isolated so a stale play cannot stall browse or a new play handshake. */
+    val videoFactory: TransportLayerFactory<SMBPacketData<*>, SMBPacket<*, *>> =
+        KeepAliveAsyncTransportFactory(videoGroup, "video")
 
     private fun field(name: String) = try {
         AsyncDirectTcpTransport::class.java.getDeclaredField(name).apply {
@@ -98,6 +112,7 @@ internal object SmbAsyncTransport {
 
     private class KeepAliveAsyncTransportFactory(
         private val group: AsynchronousChannelGroup,
+        private val role: String,
     ) : TransportLayerFactory<SMBPacketData<*>, SMBPacket<*, *>> {
         override fun createTransportLayer(
             handlers: PacketHandlers<SMBPacketData<*>, SMBPacket<*, *>>,
@@ -112,7 +127,7 @@ internal object SmbAsyncTransport {
             return ResolvingTransport(transport)
         }
 
-        override fun toString(): String = "KeepAliveAsyncTransportFactory"
+        override fun toString(): String = "KeepAliveAsyncTransportFactory($role)"
     }
 
     private fun configureChannel(transport: AsyncDirectTcpTransport<*, *>) {

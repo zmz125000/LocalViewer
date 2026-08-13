@@ -153,7 +153,7 @@
     <string name="settings_smb_encrypt">允許 SMB 3 加密</string>
     <string name="settings_smb_encrypt_summary">要求加密的 SMB 工作階段（伺服器須支援 SMB 3 加密）。會重設使用中的 SMB 連線。</string>
     <string name="settings_smb_async_transport">SMB 非同步傳輸</string>
-    <string name="settings_smb_async_transport_summary">用少量 NIO 執行緒代替每條 TCP 一個 Packet Reader。若某台伺服器異常可關閉。會重設使用中的 SMB 連線。</string>
+    <string name="settings_smb_async_transport_summary">用少量 NIO 執行緒池（列表 / 瀏覽 / 影片）代替每條 TCP 一個 Packet Reader。若某台伺服器異常可關閉。會重設瀏覽、列表和影片連線。</string>
     <string name="settings_reader_preload_image">閱讀器預載</string>
     <string name="settings_reader_preload_image_summary">預取後續 %s 頁（SMB 會提前下載；本機按需開啟）</string>
     <string name="settings_advanced_read_cache_size_summary">SMB 頁面快取（及舊版線上圖片快取）的最大容量</string>

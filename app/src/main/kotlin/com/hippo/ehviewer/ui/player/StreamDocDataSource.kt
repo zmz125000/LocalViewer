@@ -9,7 +9,9 @@ import androidx.media3.datasource.DataSpec
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
+import com.hippo.ehviewer.smb.SmbGateway
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Media3 [DataSource] that reads network stream-doc tokens **directly** via
@@ -28,6 +30,7 @@ class StreamDocDataSource(
     private var readPosition = 0L
     private var bytesRemaining = 0L
     private var opened = false
+    private val preemptClose: () -> Unit = { closeSource() }
 
     override fun open(dataSpec: DataSpec): Long {
         closeSource()
@@ -36,6 +39,8 @@ class StreamDocDataSource(
             ?: throw IOException("stream token expired or unknown")
         val openLane = entry.openSource
             ?: throw IOException("stream token is not a network source")
+        CurrentNetworkVideoPlay.ensureRegistered()
+        SmbGateway.beginVideoPlay("streamdoc:$token")
         val video = try {
             VideoDirectLinkByteSource.open(
                 openLane = openLane,
@@ -46,6 +51,7 @@ class StreamDocDataSource(
             throw IOException("open network video failed: ${e.message}", e)
         }
         source = video
+        CurrentNetworkVideoPlay.install(preemptClose)
         uri = dataSpec.uri
         val size = video.size.coerceAtLeast(0L)
         if (size < 1L) {
@@ -110,6 +116,7 @@ class StreamDocDataSource(
     }
 
     private fun closeSource() {
+        CurrentNetworkVideoPlay.clear(preemptClose)
         val s = source
         source = null
         if (s != null) {
@@ -141,5 +148,40 @@ class StreamDocDataSource(
             return uri.pathSegments.singleOrNull()?.takeIf(String::isNotBlank)
                 ?: throw IOException("network stream URI has no token")
         }
+    }
+}
+
+/**
+ * One in-app network play at a time. [SmbGateway.beginVideoPlay] closes the previous
+ * [StreamDocDataSource] so a stopped-but-not-destroyed player cannot keep video stickies.
+ */
+internal object CurrentNetworkVideoPlay {
+    private val registered = AtomicBoolean(false)
+    private val lock = Any()
+    private var closer: (() -> Unit)? = null
+
+    fun ensureRegistered() {
+        if (registered.compareAndSet(false, true)) {
+            SmbGateway.addVideoPlayListener { preempt() }
+        }
+    }
+
+    fun install(close: () -> Unit) {
+        synchronized(lock) { closer = close }
+    }
+
+    fun clear(close: () -> Unit) {
+        synchronized(lock) {
+            if (closer === close) closer = null
+        }
+    }
+
+    fun preempt() {
+        val prev: (() -> Unit)?
+        synchronized(lock) {
+            prev = closer
+            closer = null
+        }
+        prev?.invoke()
     }
 }

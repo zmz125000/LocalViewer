@@ -70,6 +70,12 @@ class SmbArchiveByteSource(
      */
     knownSize: Long = -1L,
     /**
+     * This handle belongs to a [SmbGateway.beginVideoPlay] generation. A newer play
+     * force-closes the TCP so a stale HTTP GET cannot occupy the video NIO group.
+     * PDF / non-video FUSE must leave this false.
+     */
+    videoPlay: Boolean = false,
+    /**
      * Windowed readahead for sequential archive parsing. Off when a higher layer
      * (e.g. [com.hippo.ehviewer.library.BlockCacheArchiveByteSource]) owns caching.
      */
@@ -83,6 +89,7 @@ class SmbArchiveByteSource(
         httpStickyPool,
         httpStickyWait,
         knownSize,
+        videoPlay,
     )
     private val inner: ArchiveByteSource = if (readahead) {
         ReadAheadArchiveByteSource(
@@ -119,6 +126,7 @@ private class KeepOpenSmbFileSource(
     private val httpStickyPool: Boolean = false,
     private val httpStickyWait: Boolean = true,
     knownSize: Long = -1L,
+    private val videoPlay: Boolean = false,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -248,6 +256,7 @@ private class KeepOpenSmbFileSource(
                                     activeFile.compareAndSet(file, null)
                                 }
                             }
+                            val playEpoch = if (videoPlay) SmbGateway.currentVideoPlayEpoch() else null
                             when {
                                 stickySession && httpStickyPool -> {
                                     SmbGateway.withHttpStickyOpenFile(
@@ -256,11 +265,18 @@ private class KeepOpenSmbFileSource(
                                         remote,
                                         waitForSlot = httpStickyWait,
                                         lease = checkNotNull(httpStickyLease),
+                                        videoPlayEpoch = playEpoch,
                                         block = ::drain,
                                     )
                                 }
                                 stickySession -> {
-                                    SmbGateway.withStickyOpenFile(source, password, remote, ::drain)
+                                    SmbGateway.withStickyOpenFile(
+                                        source,
+                                        password,
+                                        remote,
+                                        videoPlayEpoch = playEpoch,
+                                        block = ::drain,
+                                    )
                                 }
                                 else -> {
                                     SmbGateway.withOpenFile(source, password, remote, ::drain)

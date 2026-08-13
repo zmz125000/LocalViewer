@@ -63,11 +63,30 @@ class VideoPlayerActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_video_player)
 
-        val token = intent.getStringExtra(EXTRA_STREAM_TOKEN)
-        streamToken = token
-        playlistSessionId = intent.getStringExtra(EXTRA_PLAYLIST_SESSION)
-        playlistIndex = intent.getIntExtra(EXTRA_PLAYLIST_INDEX, 0)
+        val view = findViewById<SeekPlayerView>(R.id.player_view)
+        playerView = view
+        view.controllerShowTimeoutMs = CONTROLLER_TIMEOUT_MS
+        view.controllerAutoShow = false
 
+        bindControls()
+        hideSystemBars()
+        if (!applyPlayIntent(intent, replacePlaylist = false)) {
+            finish()
+            return
+        }
+        view.hideController()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (!applyPlayIntent(intent, replacePlaylist = true)) return
+        playerView?.hideController()
+    }
+
+    /** @return false when the intent has no playable URI. */
+    private fun applyPlayIntent(intent: Intent, replacePlaylist: Boolean): Boolean {
+        val token = intent.getStringExtra(EXTRA_STREAM_TOKEN)
         val title = intent.getStringExtra(EXTRA_TITLE)
         val mimeType = intent.type
         val entry = token?.let { StreamDocumentRegistry.get(it) }
@@ -76,28 +95,31 @@ class VideoPlayerActivity : AppCompatActivity() {
             networkToken != null -> StreamDocDataSource.uriFor(networkToken)
             intent.data != null -> intent.data!!
             token != null -> StreamDocumentProvider.uriFor(token)
-            else -> {
-                finish()
-                return
-            }
+            else -> return false
         }
-
-        val view = findViewById<SeekPlayerView>(R.id.player_view)
-        playerView = view
-        view.controllerShowTimeoutMs = CONTROLLER_TIMEOUT_MS
-        view.controllerAutoShow = false
-
-        bindControls()
+        val oldToken = streamToken
+        val oldPlaylist = playlistSessionId
+        try {
+            playPrepared(
+                uri = playUri,
+                title = title,
+                mimeType = mimeType,
+                network = networkToken != null,
+            )
+        } catch (e: Throwable) {
+            logcat("VideoPlayer", e)
+            token?.let(StreamDocumentRegistry::remove)
+            return oldToken != null
+        }
+        streamToken = token
+        playlistSessionId = intent.getStringExtra(EXTRA_PLAYLIST_SESSION)
+        playlistIndex = intent.getIntExtra(EXTRA_PLAYLIST_INDEX, 0)
+        if (oldToken != null && oldToken != token) StreamDocumentRegistry.remove(oldToken)
+        if (replacePlaylist && oldPlaylist != null && oldPlaylist != playlistSessionId) {
+            InternalVideoPlaylistRegistry.remove(oldPlaylist)
+        }
         updatePlaylistButtons()
-        hideSystemBars()
-
-        playPrepared(
-            uri = playUri,
-            title = title,
-            mimeType = mimeType,
-            network = networkToken != null,
-        )
-        view.hideController()
+        return true
     }
 
     override fun onStart() {

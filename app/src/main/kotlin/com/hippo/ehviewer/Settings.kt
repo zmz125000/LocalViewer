@@ -253,8 +253,9 @@ object Settings : DataStorePreferences(null) {
     }
 
     /**
-     * smbj async NIO transport (shared channel group). Default on.
+     * smbj async NIO transport (list / browse / video channel groups). Default on.
      * Off falls back to one blocking Packet Reader thread per TCP.
+     * Toggle drops browse pools and sticky video/FUSE so the next op uses the new transport.
      */
     val smbAsyncTransport = boolPref("smb_async_transport", true).observed {
         com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()

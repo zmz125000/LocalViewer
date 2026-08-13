@@ -155,6 +155,7 @@
             android:colorMode="hdr"
             android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize|keyboardHidden"
             android:exported="false"
+            android:launchMode="singleTop"
             android:supportsPictureInPicture="false"
             android:theme="@style/AppTheme.VideoPlayer" />
 

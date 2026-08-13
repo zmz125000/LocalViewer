@@ -161,6 +161,9 @@ object OpenFileExternally {
     ) {
         val created = InternalVideoPlaylistRegistry.create(current, candidates)
         try {
+            if (current !is InternalVideoSource.Local) {
+                SmbGateway.beginVideoPlay("prepare:${current.javaClass.simpleName}")
+            }
             val prepared = prepareInternalVideo(current, displayName, mimeType)
             launchStreamdoc(
                 context = context,
@@ -306,15 +309,14 @@ object OpenFileExternally {
         val (session, reused) = withIOContext {
             val source = SmbRepository.load(sourceId) ?: throw IOException("SMB source missing")
             val password = SmbPasswordStore.get(sourceId)
-            val sizeBytes = SmbGateway.fileSizeOrNull(source, password, remoteRelativeFile)
-                ?.takeIf { it > 0L }
-                ?: error("empty or unreachable file")
+            // Size comes from the sticky open on first GET — do not queue behind
+            // browse-pool thumbs on the data NIO group.
             val parentDir = parentRelative(remoteRelativeFile)
             val dirKey = httpSessionKey(smbDirKey(sourceId, parentDir), accessDir, displayName)
             withDirHttpSession(network = true, dirKey = dirKey) { session, wasReused ->
                 // Always refresh the opened video entry (known size).
                 session.put(
-                    smbFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes),
+                    smbFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes = -1L),
                 )
                 // Pre-register only names that exist in the listing (no invent-on-GET for .srt probes).
                 val extras = if (accessDir) {
@@ -349,6 +351,7 @@ object OpenFileExternally {
             }
         }
         val videoUri = ExternalHttpStreamServer.uriFor(session.id, displayName)
+        SmbGateway.beginVideoPlay("http-open:$displayName")
         try {
             launchHttpView(context, videoUri, displayName, mimeType, session, accessDir)
         } catch (e: Throwable) {
@@ -472,6 +475,7 @@ object OpenFileExternally {
                     httpStickyWait = waitForSlot,
                     knownSize = sizeBytes.takeIf { it > 0L } ?: -1L,
                     readahead = false,
+                    videoPlay = video,
                 )
                 ExternalHttpStreamServer.ArchiveBody(
                     if (video) {
@@ -822,16 +826,23 @@ object OpenFileExternally {
             SmbRepository.load(sourceId) ?: throw IOException("SMB source missing")
         }
         val password = SmbPasswordStore.get(sourceId)
-        val sizeBytes = withIOContext {
-            SmbGateway.fileSizeOrNull(source, password, remoteRelativeFile)
-                ?.takeIf { it > 0L }
-                ?: error("empty or unreachable file")
+        val isVideo = DefaultVideoPlayer.isVideoMime(mimeType) || isBrowseVideoFileName(displayName)
+        // Video size is taken from the sticky open. A browse-pool STAT waits behind thumbs
+        // and the data NIO group; PDF/archives still probe so viewers get Content-Length.
+        val sizeBytes = if (isVideo) {
+            -1L
+        } else {
+            withIOContext {
+                SmbGateway.fileSizeOrNull(source, password, remoteRelativeFile)
+                    ?.takeIf { it > 0L }
+                    ?: error("empty or unreachable file")
+            }
         }
         return StreamDocumentRegistry.register(
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
-            parallelPrefetch = true,
+            parallelPrefetch = isVideo,
             openSource = {
                 SmbArchiveByteSource(
                     source = source,
@@ -842,6 +853,7 @@ object OpenFileExternally {
                     stickySession = true,
                     knownSize = sizeBytes,
                     readahead = false,
+                    videoPlay = isVideo,
                 )
             },
         )
@@ -966,6 +978,7 @@ object OpenFileExternally {
                     playlistIndex = playlistIndex,
                 ).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 }
                 withUIContext { context.startActivity(intent) }
             } else {

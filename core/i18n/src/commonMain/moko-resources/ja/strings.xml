@@ -143,7 +143,7 @@
     <string name="settings_smb_encrypt">SMB 3 暗号化</string>
     <string name="settings_smb_encrypt_summary">暗号化 SMB セッションを要求（サーバーが SMB 3 暗号化に対応している必要あり）。有効な接続をリセットします。</string>
     <string name="settings_smb_async_transport">SMB 非同期転送</string>
-    <string name="settings_smb_async_transport_summary">TCP ごとに Packet Reader スレッドを立てず、小さな NIO プールを共有します。不具合時はオフ。有効な接続をリセットします。</string>
+    <string name="settings_smb_async_transport_summary">TCP ごとに Packet Reader を立てず、list / browse / video の小さな NIO プールを使います。不具合時はオフ。参照・一覧・動画接続をリセットします。</string>
     <string name="settings_reader_preload_image">リーダー先読み</string>
     <string name="settings_reader_preload_image_summary">次の %s ページを先読み（SMB は先行ダウンロード、ローカルは必要時に開く）</string>
     <string name="settings_advanced_read_cache_size_summary">SMB ページキャッシュ（および旧オンライン画像キャッシュ）の最大サイズ</string>

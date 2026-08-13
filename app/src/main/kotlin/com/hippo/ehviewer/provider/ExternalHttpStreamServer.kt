@@ -223,6 +223,11 @@ object ExternalHttpStreamServer {
                     return RefBody(key, cached)
                 }
             }
+            // New video file: evict other SMB videos *before* opening lanes so a stale
+            // HTTP GET cannot occupy the video NIO group. Same-file Range hits return above.
+            if (entry.evictOnSmbPoolPressure) {
+                SmbGateway.beginVideoPlay("http:$id/$key")
+            }
             // Make room under the global warm-file cap before opening a new window.
             trimWarmCacheTo(MAX_WARM_CACHE_FILES - 1, protectSessionId = id, protectKey = key)
             val body = entry.open()
@@ -315,6 +320,16 @@ object ExternalHttpStreamServer {
          * Close warm backends with no active HTTP readers (free HTTP sticky SMB slots).
          * @return number of bodies closed
          */
+        fun evictAllSmbBodies(reason: String): Int {
+            var n = 0
+            for (ref in snapshotWarmBodies()) {
+                if (ref.evictOnSmbPoolPressure && evictWarmBody(ref.key, reason, allowActive = true)) {
+                    n++
+                }
+            }
+            return n
+        }
+
         fun evictIdleSmbBodies(): Int {
             synchronized(bodyLock) {
                 val doomed = bodyCache.entries.filter { (_, c) ->
@@ -424,6 +439,7 @@ object ExternalHttpStreamServer {
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
+    private val onVideoPlayGeneration: () -> Unit = { evictAllSmbVideoBodies("video-play") }
     private val tokenSaltLock = Any()
 
     @Volatile
@@ -515,6 +531,17 @@ object ExternalHttpStreamServer {
         runCatching { connectionPool.shutdownNow() }
     }
 
+    fun evictAllSmbVideoBodies(reason: String): Int {
+        var n = 0
+        for (session in sessions.values) {
+            n += session.evictAllSmbBodies(reason)
+        }
+        if (n > 0) {
+            logcat("ExtHttp") { "evict all SMB video bodies ($reason) count=$n" }
+        }
+        return n
+    }
+
     /**
      * Free sticky SMB slots for a new demand read.
      *
@@ -587,6 +614,7 @@ object ExternalHttpStreamServer {
         SmbGateway.onHttpStickyPoolPressure = {
             relieveSmbPoolPressure()
         }
+        SmbGateway.addVideoPlayListener(onVideoPlayGeneration)
         val ss = createServerSocket(randomizePort)
         port = ss.localPort
         serverSocket = ss
