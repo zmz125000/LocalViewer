@@ -80,8 +80,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  *    (Wi‑Fi↔cell, EasyTier VPN up/down/revoke — half-open TCP is common after path changes)
  *
  * ## Pool model
- * - **Budget:** max [maxConnectionsPerHost] TCP/SMB **sessions** per `host:port`
- *   (Settings concurrency, default 5), shared by every source on that server.
+ * - **Budget:** max [maxConnectionsPerHost] TCP/SMB **data** sessions per `host:port`
+ *   (Settings concurrency, default 5), plus one reserved list TCP that data never takes.
  * - **Multiplex:** each session allows up to [opsPerSession] concurrent ops, with a
  *   host-wide hard cap ([MAX_SAFE_HOST_OPS]) so 5–7 TCP sessions do not open 15–21
  *   concurrent large-page reads (OOM / close-under-read crash).
@@ -116,6 +116,9 @@ object SmbGateway {
     /** Skip probe if the session ran a successful op recently. */
     private const val KEEPALIVE_IDLE_BEFORE_PING_MS = 35_000L
     private const val ACQUIRE_WAIT_MS = 12_000L
+
+    /** Extra TCP per host used only for folder list/peek. Not counted in [maxConnectionsPerHost]. */
+    private const val LIST_RESERVED_SESSIONS = 1
 
     /** Long enough for large comic page transfers on a busy LAN. */
     private const val SMB_IO_TIMEOUT_SEC = 120L
@@ -156,14 +159,17 @@ object SmbGateway {
         dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
 
-    private fun smbConfig(): SmbConfig = config
+    private enum class ShareOp { Data, List }
+
+    private fun smbConfig(forList: Boolean = false): SmbConfig = if (forList) listConfig else config
 
     /**
      * Advanced toggles (SMB3-only / encryption) changed — rebuild [SmbConfig] and drop every
      * pooled session so the next op reconnects with the new dialects/capabilities.
      */
     fun onProtocolSettingsChanged() {
-        config = buildSmbConfig()
+        config = buildSmbConfig(forList = false)
+        listConfig = buildSmbConfig(forList = true)
         logcat {
             "SmbGateway: protocol settings changed " +
                 "(smb3Only=${Settings.smb3Only.value}, encrypt=${Settings.smbEncryptData.value}, " +
@@ -172,7 +178,7 @@ object SmbGateway {
         dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
 
-    private fun buildSmbConfig(): SmbConfig {
+    private fun buildSmbConfig(forList: Boolean = false): SmbConfig {
         val builder = SmbConfig.builder()
             .withNegotiatedBufferSize()
             .withTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
@@ -183,7 +189,9 @@ object SmbGateway {
             .withSigningEnabled(true)
             .withEncryptData(Settings.smbEncryptData.value)
         if (Settings.smbAsyncTransport.value) {
-            builder.withTransportLayerFactory(SmbAsyncTransport.factory)
+            builder.withTransportLayerFactory(
+                if (forList) SmbAsyncTransport.listFactory else SmbAsyncTransport.factory,
+            )
         }
         // Default smbj dialects: 3.1.1 … 2.0.2. SMB3-only drops 2.x.
         if (Settings.smb3Only.value) {
@@ -235,7 +243,10 @@ object SmbGateway {
      * Always read via [smbConfig]; never cache a stale client config across toggles.
      */
     @Volatile
-    private var config: SmbConfig = buildSmbConfig()
+    private var config: SmbConfig = buildSmbConfig(forList = false)
+
+    @Volatile
+    private var listConfig: SmbConfig = buildSmbConfig(forList = true)
 
     private val hostPools = ConcurrentHashMap<String, HostPool>()
     private val connectedHosts = ConcurrentHashMap.newKeySet<String>()
@@ -354,6 +365,7 @@ object SmbGateway {
         val client: SMBClient,
         val connection: Connection,
         val session: Session,
+        val reservedForList: Boolean = false,
         val lastUsedMs: AtomicLong = AtomicLong(System.currentTimeMillis()),
     ) {
         private val shares = HashMap<String, DiskShare>()
@@ -527,10 +539,33 @@ object SmbGateway {
             }
         }
 
-        private fun tryReserveSession(credKey: String, shareName: String): PooledSession? = synchronized(sessionsLock) {
+        private fun liveDataCount(): Int = synchronized(sessionsLock) {
+            sessions.count { !it.retired.get() && !it.reservedForList }
+        }
+
+        private fun liveListCount(): Int = synchronized(sessionsLock) {
+            sessions.count { !it.retired.get() && it.reservedForList }
+        }
+
+        private fun tryReserveSession(
+            credKey: String,
+            shareName: String,
+            reservedOnly: Boolean,
+            dataOnly: Boolean,
+        ): PooledSession? = synchronized(sessionsLock) {
             val ordered = sessions
                 .filter { !it.retired.get() && it.credKey == credKey && it.isConnected }
-                .sortedByDescending { it.hasShare(shareName) }
+                .filter { ps ->
+                    when {
+                        reservedOnly -> ps.reservedForList
+                        dataOnly -> !ps.reservedForList
+                        else -> true
+                    }
+                }
+                .sortedWith(
+                    compareByDescending<PooledSession> { it.reservedForList }
+                        .thenByDescending { it.hasShare(shareName) },
+                )
             for (ps in ordered) {
                 if (ps.opSlots.tryAcquire()) {
                     // Re-check after slot: may have been marked dying between filter and acquire.
@@ -584,6 +619,7 @@ object SmbGateway {
         private fun retireOneOtherCred(credKey: String): Boolean = synchronized(sessionsLock) {
             val victim = sessions.firstOrNull {
                 !it.retired.get() &&
+                    !it.reservedForList &&
                     it.credKey != credKey &&
                     it.outstanding.get() == 0 &&
                     it.isConnected
@@ -596,19 +632,32 @@ object SmbGateway {
             true
         }
 
-        private suspend fun tryGrow(credKey: String, openSession: suspend () -> PooledSession): PooledSession? {
-            val max = maxConnectionsPerHost()
-            if (size.get() >= max) {
-                if (!retireOneOtherCred(credKey)) return null
+        private suspend fun tryGrow(
+            credKey: String,
+            forList: Boolean,
+            openSession: suspend (reservedForList: Boolean) -> PooledSession,
+        ): PooledSession? {
+            val atCap = if (forList) {
+                liveListCount() >= LIST_RESERVED_SESSIONS
+            } else {
+                liveDataCount() >= maxConnectionsPerHost()
+            }
+            if (atCap) {
+                if (forList || !retireOneOtherCred(credKey)) return null
             }
             return growLock.withLock {
                 if (closed.get()) return@withLock null
-                if (size.get() >= maxConnectionsPerHost()) {
-                    if (!retireOneOtherCred(credKey)) return@withLock null
-                    if (size.get() >= maxConnectionsPerHost()) return@withLock null
+                val stillAtCap = if (forList) {
+                    liveListCount() >= LIST_RESERVED_SESSIONS
+                } else {
+                    liveDataCount() >= maxConnectionsPerHost()
+                }
+                if (stillAtCap) {
+                    if (forList || !retireOneOtherCred(credKey)) return@withLock null
+                    if (liveDataCount() >= maxConnectionsPerHost()) return@withLock null
                 }
                 val opened = try {
-                    openSession()
+                    openSession(forList)
                 } catch (e: Throwable) {
                     if (isHostCapacityError(e)) {
                         logcat {
@@ -627,34 +676,92 @@ object SmbGateway {
             }
         }
 
+        private data class Acquired(val session: PooledSession, val heldHostSlot: Boolean)
+
         private suspend fun acquire(
             credKey: String,
             shareName: String,
-            openSession: suspend () -> PooledSession,
-        ): PooledSession {
-            tryReserveSession(credKey, shareName)?.let { return it }
-            tryGrow(credKey, openSession)?.let { return it }
+            kind: ShareOp,
+            openSession: suspend (reservedForList: Boolean) -> PooledSession,
+        ): Acquired {
+            if (kind == ShareOp.List) return acquireList(credKey, shareName, openSession)
+            hostOpSlots.acquire()
+            try {
+                return Acquired(acquireDataSession(credKey, shareName, openSession), heldHostSlot = true)
+            } catch (e: Throwable) {
+                hostOpSlots.release()
+                throw e
+            }
+        }
+
+        private suspend fun acquireList(
+            credKey: String,
+            shareName: String,
+            openSession: suspend (reservedForList: Boolean) -> PooledSession,
+        ): Acquired {
+            tryReserveSession(credKey, shareName, reservedOnly = true, dataOnly = false)
+                ?.let { return Acquired(it, heldHostSlot = false) }
+            tryGrow(credKey, forList = true, openSession)
+                ?.let { return Acquired(it, heldHostSlot = false) }
+            if (hostOpSlots.tryAcquire()) {
+                tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)
+                    ?.let { return Acquired(it, heldHostSlot = true) }
+                hostOpSlots.release()
+            }
 
             var waits = 0
             while (true) {
-                tryReserveSession(credKey, shareName)?.let { return it }
-                tryGrow(credKey, openSession)?.let { return it }
-
+                tryReserveSession(credKey, shareName, reservedOnly = true, dataOnly = false)
+                    ?.let { return Acquired(it, heldHostSlot = false) }
+                tryGrow(credKey, forList = true, openSession)
+                    ?.let { return Acquired(it, heldHostSlot = false) }
+                if (hostOpSlots.tryAcquire()) {
+                    tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)
+                        ?.let { return Acquired(it, heldHostSlot = true) }
+                    hostOpSlots.release()
+                }
                 val got = withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
-                tryReserveSession(credKey, shareName)?.let { return it }
                 if (got == null) {
                     waits++
-                    if (size.get() >= maxConnectionsPerHost()) {
+                    if (waits >= 3) {
+                        error(
+                            "SMB host $hostPortKey list busy: no free list slot " +
+                                "(data=${liveDataCount()}/${maxConnectionsPerHost()}, " +
+                                "list=${liveListCount()}/$LIST_RESERVED_SESSIONS)",
+                        )
+                    }
+                }
+            }
+        }
+
+        private suspend fun acquireDataSession(
+            credKey: String,
+            shareName: String,
+            openSession: suspend (reservedForList: Boolean) -> PooledSession,
+        ): PooledSession {
+            tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
+            tryGrow(credKey, forList = false, openSession)?.let { return it }
+
+            var waits = 0
+            while (true) {
+                tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
+                tryGrow(credKey, forList = false, openSession)?.let { return it }
+
+                val got = withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
+                tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
+                if (got == null) {
+                    waits++
+                    if (liveDataCount() >= maxConnectionsPerHost()) {
                         if (retireOneOtherCred(credKey)) {
-                            tryGrow(credKey, openSession)?.let { return it }
+                            tryGrow(credKey, forList = false, openSession)?.let { return it }
                         }
                     } else {
-                        tryGrow(credKey, openSession)?.let { return it }
+                        tryGrow(credKey, forList = false, openSession)?.let { return it }
                     }
                     if (waits >= 3) {
                         error(
                             "SMB host $hostPortKey busy: no free op slot for this user " +
-                                "(sessions=${size.get()}/${maxConnectionsPerHost()}, " +
+                                "(sessions=${liveDataCount()}/${maxConnectionsPerHost()}, " +
                                 "ops/session=${opsPerSession()}, hostOps≤$MAX_SAFE_HOST_OPS)",
                         )
                     }
@@ -709,38 +816,36 @@ object SmbGateway {
         suspend fun <T> borrowForShare(
             credKey: String,
             shareName: String,
-            openSession: suspend () -> PooledSession,
+            kind: ShareOp,
+            openSession: suspend (reservedForList: Boolean) -> PooledSession,
             block: (DiskShare) -> T,
         ): T {
             check(!closed.get()) { "SMB host pool closed" }
-            hostOpSlots.acquire()
+            val acquired = acquire(credKey, shareName, kind, openSession)
+            val ps = acquired.session
+            var killSession = false
             try {
-                val ps = acquire(credKey, shareName, openSession)
-                var killSession = false
-                try {
-                    if (!ps.isConnected) {
-                        killSession = true
-                        throw IOException("SMB session disconnected")
-                    }
-                    val disk = ps.diskShare(shareName)
-                    val result = block(disk)
-                    ps.lastUsedMs.set(System.currentTimeMillis())
-                    return result
-                } catch (e: Throwable) {
-                    if (isShareClosedError(e)) {
-                        // Tree dead; drop cached DiskShare. Retire session if transport also gone.
-                        ps.dropShare(shareName)
-                    }
-                    killSession = isTransportError(e) ||
-                        isSessionRejectError(e) ||
-                        isShareClosedError(e) ||
-                        !ps.isConnected
-                    throw e
-                } finally {
-                    releaseOp(ps, killSession = killSession || closed.get())
+                if (!ps.isConnected) {
+                    killSession = true
+                    throw IOException("SMB session disconnected")
                 }
+                val disk = ps.diskShare(shareName)
+                val result = block(disk)
+                ps.lastUsedMs.set(System.currentTimeMillis())
+                return result
+            } catch (e: Throwable) {
+                if (isShareClosedError(e)) {
+                    // Tree dead; drop cached DiskShare. Retire session if transport also gone.
+                    ps.dropShare(shareName)
+                }
+                killSession = isTransportError(e) ||
+                    isSessionRejectError(e) ||
+                    isShareClosedError(e) ||
+                    !ps.isConnected
+                throw e
             } finally {
-                hostOpSlots.release()
+                releaseOp(ps, killSession = killSession || closed.get())
+                if (acquired.heldHostSlot) hostOpSlots.release()
             }
         }
     }
@@ -996,7 +1101,7 @@ object SmbGateway {
      */
     suspend fun refreshConnectionSignal(source: SmbSourceEntity, password: String) {
         runCatching {
-            withShare(source, password) { share ->
+            withShare(source, password, ShareOp.List) { share ->
                 share.folderExists(remotePath(source, "").ifEmpty { "" })
             }
         }.onFailure { error ->
@@ -1132,7 +1237,7 @@ object SmbGateway {
         relativeDir: String,
     ): List<BrowseEntryRemote> {
         val path = remotePath(source, relativeDir)
-        val children = withShare(source, password) { share ->
+        val children = withShare(source, password, ShareOp.List) { share ->
             listChildren(share, path).filterNot { isProtectedSystemName(it.name) }
         }
         return classifyDirectoryChildren(source, password, relativeDir, children)
@@ -1149,7 +1254,7 @@ object SmbGateway {
         cached: List<BrowseEntryRemote>,
     ): SlimDirectoryRefresh {
         val path = remotePath(source, relativeDir)
-        val children = withShare(source, password) { share ->
+        val children = withShare(source, password, ShareOp.List) { share ->
             listChildren(share, path).filterNot { isProtectedSystemName(it.name) }
         }
         val plan = planRemoteDirectorySlimRefresh(cached, children)
@@ -1183,7 +1288,7 @@ object SmbGateway {
                     async {
                         gate.withPermit {
                             val childPath = if (path.isEmpty()) c.name else "$path\\${c.name}"
-                            peeks[c.name] = withShare(source, password) { share ->
+                            peeks[c.name] = withShare(source, password, ShareOp.List) { share ->
                                 listChildrenLenient(share, childPath)
                             }
                         }
@@ -1219,7 +1324,7 @@ object SmbGateway {
                                 path.isEmpty() -> "$subName\\$leafName"
                                 else -> "$path\\$subName\\$leafName"
                             }
-                            grandPeeks[leafRel] = withShare(source, password) { share ->
+                            grandPeeks[leafRel] = withShare(source, password, ShareOp.List) { share ->
                                 listChildrenLenient(share, leafPath)
                             }
                         }
@@ -1251,7 +1356,7 @@ object SmbGateway {
         password: String,
         relativeDir: String,
     ): List<String> = withIOContext {
-        withShare(source, password) { share ->
+        withShare(source, password, ShareOp.List) { share ->
             val path = remotePath(source, relativeDir)
             share.list(path.ifEmpty { "" })
                 .map { it.fileName }
@@ -1614,6 +1719,7 @@ object SmbGateway {
     private suspend fun <T> withShare(
         source: SmbSourceEntity,
         password: String,
+        kind: ShareOp = ShareOp.Data,
         block: (DiskShare) -> T,
     ): T = withContext(Dispatchers.IO) {
         val host = endpointHost(source)
@@ -1622,12 +1728,16 @@ object SmbGateway {
         trackSource(source)
         ensureHostNotCoolingDown(host, source.port)
         val pool = hostPoolFor(host, source.port)
+        val open: suspend (Boolean) -> PooledSession = { reserved ->
+            openSession(source, password, ck, reservedForList = reserved)
+        }
 
         try {
             val result = pool.borrowForShare(
                 credKey = ck,
                 shareName = share,
-                openSession = { openSession(source, password, ck) },
+                kind = kind,
+                openSession = open,
                 block = block,
             )
             clearHostCircuit(host, source.port)
@@ -1645,7 +1755,8 @@ object SmbGateway {
                 return@withContext pool.borrowForShare(
                     credKey = ck,
                     shareName = share,
-                    openSession = { openSession(source, password, ck) },
+                    kind = kind,
+                    openSession = open,
                     block = block,
                 )
             }
@@ -1663,7 +1774,8 @@ object SmbGateway {
                 val result = hostPoolFor(host, source.port).borrowForShare(
                     credKey = ck,
                     shareName = share,
-                    openSession = { openSession(source, password, ck) },
+                    kind = kind,
+                    openSession = open,
                     block = block,
                 )
                 clearHostCircuit(host, source.port)
@@ -1694,6 +1806,7 @@ object SmbGateway {
         source: SmbSourceEntity,
         password: String,
         ck: String,
+        reservedForList: Boolean = false,
     ): PooledSession {
         val host = endpointHost(source)
         ensureHostNotCoolingDown(host, source.port)
@@ -1703,15 +1816,27 @@ object SmbGateway {
             ensureHostNotCoolingDown(host, source.port)
             // Dedicated SMBClient per session so smbj's host Connection cache
             // cannot poison other pool slots / shares on half-open TCP.
-            val smbClient = SMBClient(smbConfig())
+            val smbClient = SMBClient(smbConfig(forList = reservedForList))
             val prevTag = TrafficStats.getThreadStatsTag()
             TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
             try {
                 val connection = smbClient.connect(host, source.port)
                 try {
                     val session = connection.authenticate(auth(source, password))
-                    logNegotiated("browse", host, source.port, connection, session)
-                    PooledSession(ck, smbClient, connection, session).also {
+                    logNegotiated(
+                        if (reservedForList) "list" else "browse",
+                        host,
+                        source.port,
+                        connection,
+                        session,
+                    )
+                    PooledSession(
+                        credKey = ck,
+                        client = smbClient,
+                        connection = connection,
+                        session = session,
+                        reservedForList = reservedForList,
+                    ).also {
                         setHostConnected(key, true)
                     }
                 } catch (e: Throwable) {
