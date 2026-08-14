@@ -81,6 +81,11 @@ Build with Grok 4.5.
 * Optimized navigation flow for deep folder path.
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB support over network share.
 * JXL/JXR/JPG/AVIF/HEIC HDR support.
+* Compatible with Oppo/OnePlus ProXDR HEIC format.
+* SMB signing JCE AESCMAC hardware acceleration support.
+* Optimized Async TCP connection poll.
+* Full feature network folder listing mode (Videos/Photos/Files listing).
+* Network folder playback for MPV/MX Player/VLC with subtitles and external autio track. 
 * Wide Color Gamut and 10-bit color mode support.
 * Fast smbj client with concurrent connections support.
 * Ktor CIO WebDAV client with HTTP/1.1 and TLS support.

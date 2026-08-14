@@ -80,14 +80,15 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 1. Concurrent SMB downloads (reader prefetch + thumbs)
  * 2. Reuse sessions for same host + user (tree-connect extra shares as needed)
  * 3. Stay under Win11 ~20 inbound session limit (cap TCP sessions, multiplex ops)
- * 4. Keep-alive idle sessions; drop on real transport death / app background / net path change
- *    (Wi‑Fi↔cell, EasyTier VPN up/down/revoke — half-open TCP is common after path changes)
+ * 4. Keep-alive idle sessions **while the process is foreground** (pool exists only
+ *    until [onAppBackgrounded] / path change). Extra unused data TCPs are released
+ *    after [IDLE_RELEASE_MS] so they leave the browse async group; one data + list stay.
  *
  * ## Pool model
  * - **Budget:** max [maxConnectionsPerHost] TCP/SMB **data** sessions per `host:port`
  *   (Settings concurrency, default 5), plus one reserved list TCP that data never takes.
  * - **Multiplex:** each session allows up to [opsPerSession] concurrent ops, with a
- *   host-wide hard cap ([MAX_SAFE_HOST_OPS]) so 5–7 TCP sessions do not open 15–21
+ *   host-wide hard cap ([MAX_SAFE_HOST_OPS]) so 5 TCP sessions do not open 15
  *   concurrent large-page reads (OOM / close-under-read crash).
  * - **Session identity:** `host|port|user|domain|password`
  * - **Retire only** on transport / session death — never on access-denied / not-found
@@ -106,7 +107,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * cancels them so they retry after the reader / video takes the slot.
  */
 object SmbGateway {
-    private const val POOL_CAPACITY = 7
+    private const val POOL_CAPACITY = 5
 
     /**
      * Concurrent file/list ops multiplexed on one TCP session (smbj message IDs).
@@ -118,7 +119,7 @@ object SmbGateway {
 
     /**
      * Hard cap on simultaneous ops **per host** (all sessions).
-     * 5×3=15 or 7×3=21 concurrent ~20MB page downloads OOMs / races Android mid-flight;
+     * 5×3=15 concurrent ~20MB page downloads OOMs / races Android mid-flight;
      * 3×3=9 is the largest configuration confirmed stable on device.
      */
     private const val MAX_SAFE_HOST_OPS = 18
@@ -127,6 +128,14 @@ object SmbGateway {
 
     /** Skip probe if the session ran a successful op recently. */
     private const val KEEPALIVE_IDLE_BEFORE_PING_MS = 35_000L
+
+    /**
+     * Extra gallery TCPs (above [MIN_WARM_DATA_SESSIONS]) unused this long are closed
+     * so they leave the browse async group. The last data session + reserved list stay
+     * and keep getting pings while the app is in the foreground.
+     */
+    private const val IDLE_RELEASE_MS = 90_000L
+    private const val MIN_WARM_DATA_SESSIONS = 1
     private const val ACQUIRE_WAIT_MS = 12_000L
 
     /** Extra TCP per host used only for folder list/peek. Not counted in [maxConnectionsPerHost]. */
@@ -646,14 +655,24 @@ object SmbGateway {
          * Probe only **idle** sessions (no outstanding ops). Does not remove them from
          * the pool while probing — previous design evacuated the free list and starved
          * concurrent downloads during keep-alive.
+         *
+         * Extra data TCPs unused for [IDLE_RELEASE_MS] are closed (oldest first) so they
+         * leave the browse async group. [MIN_WARM_DATA_SESSIONS] + the reserved list
+         * stay and are pinged.
          */
         private fun pingIdleSessions() {
             val candidates = synchronized(sessionsLock) {
                 sessions.filter { !it.retired.get() && it.outstanding.get() == 0 && it.isConnected }
+                    .sortedWith(
+                        compareBy<PooledSession> { it.reservedForList }
+                            .thenBy { it.lastUsedMs.get() },
+                    )
             }
             if (candidates.isEmpty()) return
             var kept = 0
             var dropped = 0
+            var released = 0
+            var dataLive = liveDataCount()
             val now = System.currentTimeMillis()
             for (ps in candidates) {
                 if (closed.get()) break
@@ -661,11 +680,15 @@ object SmbGateway {
                     kept++
                     continue
                 }
-                if (now - ps.lastUsedMs.get() < KEEPALIVE_IDLE_BEFORE_PING_MS) {
+                val idleMs = now - ps.lastUsedMs.get()
+                if (idleMs < KEEPALIVE_IDLE_BEFORE_PING_MS) {
                     kept++
                     continue
                 }
-                // tryAcquire all slots so we don't race an op mid-ping
+                val releaseExtra = !ps.reservedForList &&
+                    idleMs >= IDLE_RELEASE_MS &&
+                    dataLive > MIN_WARM_DATA_SESSIONS
+                // tryAcquire all slots so we don't race an op mid-ping / mid-close
                 var acquired = 0
                 try {
                     while (acquired < ps.opsLimit && ps.opSlots.tryAcquire()) {
@@ -676,10 +699,15 @@ object SmbGateway {
                         kept++
                         continue
                     }
-                    if (ps.ping()) {
+                    if (releaseExtra) {
+                        markDyingAndMaybeClose(ps)
+                        dataLive--
+                        released++
+                    } else if (ps.ping()) {
                         kept++
                     } else {
                         markDyingAndMaybeClose(ps)
+                        if (!ps.reservedForList) dataLive--
                         dropped++
                     }
                 } finally {
@@ -689,11 +717,15 @@ object SmbGateway {
                     }
                 }
             }
-            if (dropped > 0) signalFree()
-            if (dropped > 0 && size.get() == 0) setHostConnected(hostPortKey, false)
-            if (dropped > 0 || kept > 0) {
+            if (dropped > 0 || released > 0) signalFree()
+            if ((dropped > 0 || released > 0) && size.get() == 0) {
+                setHostConnected(hostPortKey, false)
+                stopKeepAlive()
+            }
+            if (dropped > 0 || released > 0 || kept > 0) {
                 logcat {
-                    "SmbGateway: keep-alive $hostPortKey idle-ok≈$kept dropped=$dropped sessions=${size.get()}"
+                    "SmbGateway: keep-alive $hostPortKey idle-ok≈$kept dropped=$dropped " +
+                        "released=$released sessions=${size.get()}"
                 }
             }
         }
@@ -1015,7 +1047,7 @@ object SmbGateway {
          *
          * On transport death: mark session dying but **do not close sockets until the last
          * in-flight op releases** — closing under concurrent smbj reads crashed the process
-         * at 5–7 sessions × 3 multiplex under large-page load.
+         * at 5 sessions × 3 multiplex under large-page load.
          */
         suspend fun <T> borrowForShare(
             credKey: String,

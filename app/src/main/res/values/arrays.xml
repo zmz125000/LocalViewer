@@ -86,14 +86,12 @@
         <item>1</item>
         <item>3</item>
         <item>5</item>
-        <item>7</item>
     </string-array>
 
     <integer-array name="multi_thread_download_entry_values" translatable="false">
         <item>1</item>
         <item>3</item>
         <item>5</item>
-        <item>7</item>
     </integer-array>
 
     <string-array name="download_delay_entries" translatable="false">
