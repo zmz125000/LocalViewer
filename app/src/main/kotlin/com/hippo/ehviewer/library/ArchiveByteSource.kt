@@ -19,6 +19,12 @@ interface ArchiveByteSource : AutoCloseable {
      */
     fun warm(offset: Long, length: Int = ReadAheadArchiveByteSource.SEQUENTIAL_WINDOW) = Unit
 
+    /**
+     * Drop queued (not in-flight) reads so a seek/demand [readAt] is not stuck behind
+     * prefetch. Must not close the remote handle.
+     */
+    fun dropQueuedReads() = Unit
+
     override fun close()
 }
 

@@ -562,6 +562,8 @@ class ReadAheadArchiveByteSource(
         lock.notifyAll()
     }
 
+    override fun dropQueuedReads() = inner.dropQueuedReads()
+
     override fun close() {
         synchronized(lock) {
             closed = true

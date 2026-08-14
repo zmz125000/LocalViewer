@@ -37,8 +37,7 @@ object StreamDocumentRegistry {
         /** Network / stream path: open random-access source for proxy FD. */
         val openSource: (() -> ArchiveByteSource)? = null,
         /**
-         * When true, [openSource] may be invoked twice for independent sticky sessions
-         * (video dual-lane prefetch). SMB/WebDAV sticky opens each own a TCP session.
+         * Unused for video (one sticky lane). Kept so register call sites stay source-compatible.
          */
         val parallelPrefetch: Boolean = false,
         /** Local/SAF path: hand through a real descriptor (preferred when available). */
@@ -135,8 +134,13 @@ object StreamDocumentRegistry {
         return entry
     }
 
+    /** Optional: in-app video backend evicts when its token is dropped. */
+    @Volatile
+    var onTokenRemoved: ((String) -> Unit)? = null
+
     fun remove(token: String) {
         entries.remove(token)
+        onTokenRemoved?.invoke(token)
         schedulePrune()
     }
 
