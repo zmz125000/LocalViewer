@@ -52,8 +52,8 @@ import splitties.init.appCtx
  * **Stateless HTTP + timed backend:**
  * - Session map is a **token** (pre-registered files and sizes) until idle max age.
  * - Player may re-Range anytime while the session exists (no need for a live pipe).
- * - Network video may keep a **warm** dual-sticky body across Ranges for a short seek
- *   grace ([BACKEND_IDLE_MS]); no playback (idle or stalled Range) evicts SMB immediately.
+ * - Network video keeps a **warm** one-lane body across Ranges. No [readAt] for
+ *   [INACTIVE_MS] drops the SMB lane; a new file [SmbGateway.beginVideoPlay] evicts now.
  * - At most [MAX_WARM_CACHE_FILES] warm video bodies process-wide (each holds a RAM window).
  *
  * FGS: wake lock only while a body transfer is in flight. Idle FGS is process rank for
@@ -95,12 +95,15 @@ object ExternalHttpStreamServer {
 
         /** True when [offset] can be served from this body's in-memory window. */
         fun isBuffered(offset: Long): Boolean = false
+
+        fun warm(offset: Long, length: Int) = Unit
     }
 
     class ArchiveBody(private val source: ArchiveByteSource) : StreamBody {
         override val size: Long get() = source.size
         override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = source.readAt(offset, buf, off, len)
         override fun isBuffered(offset: Long): Boolean = (source as? VideoDirectLinkByteSource)?.isBuffered(offset) == true
+        override fun warm(offset: Long, length: Int) = source.warm(offset, length)
         override fun close() = source.close()
     }
 
@@ -203,7 +206,7 @@ object ExternalHttpStreamServer {
          * Open a body for this response. Caller must [StreamBody.close] when the response ends.
          *
          * [FileEntry.cacheBody]: reuse one warm backend across Ranges (open/close is costly on
-         * SMB). Released after [BACKEND_IDLE_MS] with no active readers — not held forever.
+         * SMB). No [readAt] for [INACTIVE_MS] drops the lane; next file evicts immediately.
          * Process-wide cap: [MAX_WARM_CACHE_FILES] warm video windows.
          */
         fun acquireBody(entry: FileEntry): StreamBody {
@@ -219,6 +222,7 @@ object ExternalHttpStreamServer {
                 bodyCache[key]?.let { cached ->
                     cached.refs.incrementAndGet()
                     cached.touch()
+                    armInactiveClose(key, cached)
                     entry.publishSize(cached.body.size)
                     return RefBody(key, cached)
                 }
@@ -244,6 +248,7 @@ object ExternalHttpStreamServer {
                 val cached = CachedBody(body, entry.evictOnSmbPoolPressure)
                 cached.refs.set(1)
                 bodyCache[key] = cached
+                armInactiveClose(key, cached)
                 return RefBody(key, cached)
             }
         }
@@ -289,10 +294,7 @@ object ExternalHttpStreamServer {
             synchronized(bodyLock) {
                 socket?.let { cached.activeSockets.remove(it) }
                 if (cached.refs.decrementAndGet() > 0) return
-                // A pressure eviction already removed/closed this body.
-                if (bodyCache[key] !== cached) return
-                // Keep warm for seeks / next Range; close only after idle timeout.
-                scheduleBodyIdleClose(key, cached)
+                // Keep the backend. Session revisit / seek reuses it; 60s inactive closes.
             }
         }
 
@@ -300,19 +302,16 @@ object ExternalHttpStreamServer {
             bodyIdleJobs.remove(key)?.cancel()
         }
 
-        private fun scheduleBodyIdleClose(key: String, cached: CachedBody) {
-            cancelBodyIdleJob(key)
+        /** Close after [INACTIVE_MS] with no [StreamBody.readAt], even if a Range is still open. */
+        private fun armInactiveClose(key: String, cached: CachedBody) {
+            if (bodyIdleJobs[key] != null) return
             bodyIdleJobs[key] = scope.launch {
-                delay(BACKEND_IDLE_MS)
-                synchronized(bodyLock) {
-                    if (bodyCache[key] !== cached || cached.refs.get() > 0) return@synchronized
-                    bodyCache.remove(key)
-                    bodyIdleJobs.remove(key)
-                    runCatching { cached.body.close() }
-                    logcat("ExtHttp") {
-                        "warm backend idle timeout ${BACKEND_IDLE_MS}ms session=$id file=$key"
-                    }
+                while (isActive) {
+                    val wait = INACTIVE_MS - (SystemClock.elapsedRealtime() - cached.lastAccessMs)
+                    if (wait <= 0L) break
+                    delay(wait.coerceAtLeast(50L))
                 }
+                evictWarmBody(key, reason = "inactive-${INACTIVE_MS}ms", allowActive = true)
             }
         }
 
@@ -411,6 +410,11 @@ object ExternalHttpStreamServer {
                 cached.body.readAt(offset, buf, off, len)
             }
 
+            override fun warm(offset: Long, length: Int) {
+                cached.touch()
+                cached.body.warm(offset, length)
+            }
+
             fun prepareRange(socket: Socket, start: Long) {
                 val staleSockets = synchronized(bodyLock) {
                     rangeSocket = socket
@@ -427,6 +431,11 @@ object ExternalHttpStreamServer {
                         "supersede stale SMB Range on seek session=$id file=$key start=$start"
                     }
                     runCatching { stale.close() }
+                }
+                if (!cached.body.isBuffered(start)) {
+                    runCatching {
+                        cached.body.warm(start, VideoDirectLinkByteSource.VIDEO_BLOCK)
+                    }
                 }
             }
 
@@ -545,8 +554,7 @@ object ExternalHttpStreamServer {
     /**
      * Free sticky SMB slots for a new demand read.
      *
-     * Idle bodies go first. If two dual-lane videos still occupy the four-slot pool,
-     * preempt the least-recently-used active SMB body so a third video replaces the first.
+     * Idle bodies go first. Pool is 2 (one lane per video + teardown cushion).
      */
     fun relieveSmbPoolPressure(): Int {
         var n = 0
@@ -708,7 +716,7 @@ object ExternalHttpStreamServer {
      * Same folder → same session id (player playlist / next video keep working).
      * New folder → **new session**; other dir sessions stay until **idle prune** / soft cap
      * (not closed just because the user opened another folder). Warm SMB backends still
-     * drop per-body after [BACKEND_IDLE_MS] with no readers.
+     * drop per-body after [INACTIVE_MS] with no [readAt].
      *
      * @return session and whether it was reused (caller should not destroy a reused session on launch failure).
      */
@@ -1188,16 +1196,9 @@ object ExternalHttpStreamServer {
                         if (idle >= BODY_STALL_MS) {
                             logcat("ExtHttp") {
                                 "body stall ${idle}ms session=${session.id} name=${entry.displayName} — " +
-                                    "close socket + evict warm SMB"
+                                    "close socket (lane stays for 60s inactive)"
                             }
                             runCatching { socket.close() }
-                            // Pause/stop is not a GET-close. Drop fetch lanes now so they
-                            // cannot idle-ping / hold the HTTP sticky pool.
-                            session.evictWarmBody(
-                                pathKey(entry.displayName),
-                                reason = "body-stall",
-                                allowActive = true,
-                            )
                             break
                         }
                     }
@@ -1390,11 +1391,11 @@ object ExternalHttpStreamServer {
     private const val BODY_STALL_CHECK_MS = 3_000L
 
     /**
-     * After the last HTTP reader releases, keep the warm dual-sticky this long so a seek
-     * Range can reuse it. Then evict — session token stays; no playback must not pin SMB.
+     * No [StreamBody.readAt] for this long → drop the SMB lane. Session token stays;
+     * the next Range reopens one lane.
      */
-    private const val BACKEND_IDLE_MS = 8_000L
+    private const val INACTIVE_MS = 60_000L
 
     /** Max warm video bodies (each ≈ one VideoDirectLink RAM window) process-wide. */
-    private const val MAX_WARM_CACHE_FILES = 3
+    private const val MAX_WARM_CACHE_FILES = 2
 }

@@ -408,11 +408,10 @@ object SmbGateway {
     }
 
     /**
-     * Cap concurrent **HTTP loopback** sticky TCP sessions (external player path).
-     * Demand + prefetch = up to 2 per active video; 4 allows two dual-lane streams.
-     * Fair so new GETs queue fairly after idle-warm eviction.
+     * Cap concurrent **video** sticky TCP sessions (HTTP loopback + in-app streamdoc).
+     * One lane per video; 2 is a teardown cushion while the previous lease's TCP closes.
      */
-    private const val HTTP_STICKY_POOL_SIZE = 4
+    private const val HTTP_STICKY_POOL_SIZE = 2
 
     /** Safety bound if an evicted SMB transport does not release its permit promptly. */
     private const val HTTP_STICKY_WAIT_TIMEOUT_MS = 10_000L
@@ -1658,7 +1657,7 @@ object SmbGateway {
     }
 
     /**
-     * Sticky open limited by [HTTP_STICKY_POOL_SIZE] for **loopback HTTP** video.
+     * Sticky open limited by [HTTP_STICKY_POOL_SIZE] for **video** (HTTP + streamdoc).
      *
      * Before a demand lane blocks for a slot, invokes [onHttpStickyPoolPressure] so idle
      * warm HTTP bodies can release their stickies (new GET first). A non-waiting optional

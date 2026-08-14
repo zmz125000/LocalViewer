@@ -460,7 +460,7 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
-            // Warm dual sticky across Ranges with idle timeout; capped HTTP sticky pool (4).
+            // Warm one-lane sticky across Ranges; 60s inactive / next-file evict. Pool cap 2.
             cacheBody = video,
             evictOnSmbPoolPressure = video,
             open = {
@@ -481,9 +481,7 @@ object OpenFileExternally {
                     if (video) {
                         VideoDirectLinkByteSource.open(
                             openLane = { openLane(waitForSlot = true) },
-                            openPrefetch = { openLane(waitForSlot = false) },
                             knownSize = sizeBytes,
-                            parallelPrefetch = true,
                         )
                     } else {
                         openLane(waitForSlot = true)
@@ -506,7 +504,7 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
-            // Warm dual sticky + idle timeout (see ExternalHttpStreamServer.BACKEND_IDLE_MS).
+            // Warm one-lane sticky + 60s inactive.
             cacheBody = video,
             open = {
                 val openLane = {
@@ -526,7 +524,6 @@ object OpenFileExternally {
                         VideoDirectLinkByteSource.open(
                             openLane = openLane,
                             knownSize = sizeBytes,
-                            parallelPrefetch = true,
                         )
                     } else {
                         openLane()
@@ -842,7 +839,7 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
-            parallelPrefetch = isVideo,
+            parallelPrefetch = false,
             openSource = {
                 SmbArchiveByteSource(
                     source = source,
@@ -851,6 +848,7 @@ object OpenFileExternally {
                     preferSequential = false,
                     pipeline = false,
                     stickySession = true,
+                    httpStickyPool = isVideo,
                     knownSize = sizeBytes,
                     readahead = false,
                     videoPlay = isVideo,
@@ -881,7 +879,7 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
-            parallelPrefetch = true,
+            parallelPrefetch = false,
             openSource = {
                 WebDavArchiveByteSource(
                     source = source,

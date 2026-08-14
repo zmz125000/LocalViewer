@@ -99,7 +99,6 @@ class StreamDocumentProvider : ContentProvider() {
                 VideoDirectLinkByteSource.open(
                     openLane = openSource,
                     knownSize = entry.sizeBytes,
-                    parallelPrefetch = entry.parallelPrefetch,
                 )
             } else {
                 val (blockSize, maxBlocks) = BlockCacheArchiveByteSource.forMimeType(

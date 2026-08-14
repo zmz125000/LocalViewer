@@ -61,7 +61,7 @@ class SmbArchiveByteSource(
      */
     httpStickyPool: Boolean = false,
     /**
-     * If [httpStickyPool]: wait for a free slot (demand lane) or fail fast (prefetch lane).
+     * If [httpStickyPool]: wait for a free slot (video demand). Prefetch shares this lane.
      */
     httpStickyWait: Boolean = true,
     /**
@@ -113,6 +113,8 @@ class SmbArchiveByteSource(
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = inner.readAt(offset, buf, off, len)
 
     override fun warm(offset: Long, length: Int) = inner.warm(offset, length)
+
+    override fun dropQueuedReads() = raw.dropQueuedReads()
 
     override fun close() = inner.close()
 }
@@ -376,6 +378,14 @@ private class KeepOpenSmbFileSource(
             }
             logcat("SmbArchive", e)
             -1
+        }
+    }
+
+    override fun dropQueuedReads() {
+        if (closed.get()) return
+        while (true) {
+            val op = ops.tryReceive().getOrNull() ?: break
+            op.result.complete(-1)
         }
     }
 
