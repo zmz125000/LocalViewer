@@ -49,6 +49,7 @@ import java.util.concurrent.atomic.AtomicInteger
 internal object SmbAsyncTransport {
     private const val BROWSE_GROUP_THREADS = 3
     private const val LIST_GROUP_THREADS = 2
+
     /** Extra threads so a leftover close cannot starve the next-file handshake. */
     private const val VIDEO_GROUP_THREADS = 8
 
