@@ -35,8 +35,10 @@ class StreamDocDataSource(
     private var readPosition = 0L
     private var bytesRemaining = 0L
     private var opened = false
+    private var retainedToken: String? = null
 
     override fun open(dataSpec: DataSpec): Long {
+        if (opened || retainedToken != null) close()
         val token = fixedToken ?: tokenFrom(dataSpec.uri)
         val entry = StreamDocumentRegistry.get(token)
             ?: throw IOException("stream token expired or unknown")
@@ -80,6 +82,10 @@ class StreamDocDataSource(
                 )
             }
         }
+        // Direct Media3 playback must count as an open network stream too. Otherwise the
+        // limited keep-alive policy can prune this live token after 20 minutes.
+        StreamDocumentRegistry.retain(token)
+        retainedToken = token
         opened = true
         transferStarted(dataSpec)
         return bytesRemaining
@@ -111,15 +117,20 @@ class StreamDocDataSource(
     override fun getUri(): Uri? = uri
 
     override fun close() {
-        if (opened) {
-            opened = false
-            transferEnded()
+        try {
+            if (opened) {
+                opened = false
+                transferEnded()
+            }
+        } finally {
+            retainedToken?.let { StreamDocumentRegistry.release(it) }
+            retainedToken = null
+            // Detach only — token backend stays for seek / rebuffer.
+            source = null
+            uri = null
+            readPosition = 0L
+            bytesRemaining = 0L
         }
-        // Detach only — token backend stays for seek / rebuffer.
-        source = null
-        uri = null
-        readPosition = 0L
-        bytesRemaining = 0L
     }
 
     class Factory(
