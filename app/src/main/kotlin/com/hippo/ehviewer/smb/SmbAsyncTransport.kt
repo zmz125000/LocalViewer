@@ -48,9 +48,8 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 internal object SmbAsyncTransport {
     /**
-     * Completions for gallery HostPool TCPs. Default concurrency is 3 and the
-     * usual Advanced range is 3–5; 5 threads lets that many sessions finish
-     * SMB3 sign/decrypt without queuing on each other. 6–7 still share the group.
+     * Completions for gallery HostPool TCPs. Advanced allows 1 / 3 / 5 sessions;
+     * 5 threads lets a full pool finish SMB3 sign/decrypt without queuing.
      */
     private const val BROWSE_GROUP_THREADS = 5
     private const val LIST_GROUP_THREADS = 2

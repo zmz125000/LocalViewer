@@ -87,7 +87,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * - **Budget:** max [maxConnectionsPerHost] TCP/SMB **data** sessions per `host:port`
  *   (Settings concurrency, default 5), plus one reserved list TCP that data never takes.
  * - **Multiplex:** each session allows up to [opsPerSession] concurrent ops, with a
- *   host-wide hard cap ([MAX_SAFE_HOST_OPS]) so 5–7 TCP sessions do not open 15–21
+ *   host-wide hard cap ([MAX_SAFE_HOST_OPS]) so 5 TCP sessions do not open 15
  *   concurrent large-page reads (OOM / close-under-read crash).
  * - **Session identity:** `host|port|user|domain|password`
  * - **Retire only** on transport / session death — never on access-denied / not-found
@@ -106,7 +106,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * cancels them so they retry after the reader / video takes the slot.
  */
 object SmbGateway {
-    private const val POOL_CAPACITY = 7
+    private const val POOL_CAPACITY = 5
 
     /**
      * Concurrent file/list ops multiplexed on one TCP session (smbj message IDs).
@@ -118,7 +118,7 @@ object SmbGateway {
 
     /**
      * Hard cap on simultaneous ops **per host** (all sessions).
-     * 5×3=15 or 7×3=21 concurrent ~20MB page downloads OOMs / races Android mid-flight;
+     * 5×3=15 concurrent ~20MB page downloads OOMs / races Android mid-flight;
      * 3×3=9 is the largest configuration confirmed stable on device.
      */
     private const val MAX_SAFE_HOST_OPS = 18
@@ -1046,7 +1046,7 @@ object SmbGateway {
          *
          * On transport death: mark session dying but **do not close sockets until the last
          * in-flight op releases** — closing under concurrent smbj reads crashed the process
-         * at 5–7 sessions × 3 multiplex under large-page load.
+         * at 5 sessions × 3 multiplex under large-page load.
          */
         suspend fun <T> borrowForShare(
             credKey: String,
