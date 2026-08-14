@@ -2,7 +2,7 @@ package com.hippo.ehviewer.library
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.media.MediaDataSource
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.os.ParcelFileDescriptor
 import com.ehviewer.core.files.openFileDescriptor
@@ -59,9 +59,12 @@ sealed interface VideoThumbnailSource {
 /**
  * Lazy video frame extraction for visible browse rows.
  *
- * Network: copy a small head (+ tail for moov-at-end) under a short I/O timeout,
- * **drop the SMB/WebDAV handle**, then decode from RAM. Native MediaExtractor can
- * hang; decode runs on a watchdog thread and is aborted after [DECODE_TIMEOUT_MS].
+ * Network: copy a small head under a short I/O timeout, **drop the SMB/WebDAV
+ * handle**, write the head to a temp file, then decode. Native MediaExtractor
+ * lives in the `media.extractor` process — aborting [MediaMetadataRetriever]
+ * / a sparse [android.media.MediaDataSource] mid-read leaves that process at
+ * 100% CPU after the app is gone. Timeout only abandons the wait; [release]
+ * runs on the worker after native returns.
  *
  * Disk: `cache/video_thumb_cache/` — same parent budget as other browse thumbs
  * ([OriginDiskCache.THUMB_BUDGET_BYTES]).
@@ -76,7 +79,7 @@ object VideoThumbnail {
     /** Fetch head/tail then close the remote handle. */
     private const val PROBE_IO_TIMEOUT_MS = 2_500L
 
-    /** Native setDataSource + one or two keyframe grabs. */
+    /** Native setDataSource + first keyframe. Timeout abandons; does not abort extractor. */
     private const val DECODE_TIMEOUT_MS = 1_500L
 
     private const val PROBE_HEAD_BYTES = 2 * 1024 * 1024
@@ -84,9 +87,6 @@ object VideoThumbnail {
     private const val SAMPLE_GRID = 12
     private const val BLACK_LUMA = 24
     private const val MIN_VISIBLE_SAMPLES = SAMPLE_GRID * SAMPLE_GRID * 15 / 100
-
-    /** One keyframe; a second only if the first is a black fade. */
-    private val NETWORK_SEEK_TIMES_US = longArrayOf(0L, 1_000_000L)
     private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
     private val leftoverMarkersCleared = AtomicBoolean(false)
@@ -289,19 +289,38 @@ object VideoThumbnail {
         return if (filled == max) buf else buf.copyOf(filled)
     }
 
+    /**
+     * Decode from a real file whose size is the bytes we actually have.
+     * A sparse [android.media.MediaDataSource] that reports the full remote length
+     * and returns -1 in the hole makes `media.extractor` spin at 100% CPU.
+     */
     private suspend fun decodeSnapshot(snapshot: ProbeSnapshot, label: String): Bitmap? {
-        val dataSource = SnapshotMediaDataSource(snapshot)
+        val tmp = File(cacheDirectory(), "mmr-${System.nanoTime()}.bin")
         return try {
+            tmp.outputStream().use { it.write(snapshot.head) }
             decodeFrameWatchdog(
                 label = label,
                 timeoutMs = DECODE_TIMEOUT_MS,
-                abort = { runCatching { dataSource.close() } },
-                setDataSource = { it.setDataSource(dataSource) },
-                getFrame = { selectStartFrame(NETWORK_SEEK_TIMES_US) },
+                setDataSource = { it.setDataSource(tmp.absolutePath) },
+                getFrame = { firstNetworkFrame() },
+                cleanup = { tmp.delete() },
             )
-        } finally {
-            dataSource.close()
+        } catch (e: Throwable) {
+            tmp.delete()
+            throw e
         }
+    }
+
+    /** Embedded cover, then the first sync frame. No mid-file seek on a truncated probe. */
+    private fun MediaMetadataRetriever.firstNetworkFrame(): Bitmap? {
+        runCatching {
+            embeddedPicture?.let { bytes ->
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }
+        }.getOrNull()?.let { return it }
+        return runCatching {
+            getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+        }.getOrNull()
     }
 
     /** Local files go through the platform path — no 8 MiB MediaDataSource cap. */
@@ -311,54 +330,19 @@ object VideoThumbnail {
             return decodeFrameWatchdog(
                 label = file.name,
                 timeoutMs = DECODE_TIMEOUT_MS,
-                abort = {},
                 setDataSource = { it.setDataSource(file.absolutePath) },
                 getFrame = { selectThumbnailFrame() },
             )
         }
         val pfd = source.path.toPath().openFileDescriptor("r")
-        return try {
-            val length = pfd.statSize.coerceAtLeast(0L)
-            decodeFrameWatchdog(
-                label = source.path,
-                timeoutMs = DECODE_TIMEOUT_MS,
-                abort = { runCatching { pfd.close() } },
-                setDataSource = { it.setDataSource(pfd.fileDescriptor, 0L, length) },
-                getFrame = { selectThumbnailFrame() },
-            )
-        } finally {
-            runCatching { pfd.close() }
-        }
-    }
-
-    /**
-     * Prefer a non-black frame; if every candidate is a fade, still return the
-     * best bitmap so the row is not empty.
-     */
-    private fun MediaMetadataRetriever.selectStartFrame(timesUs: LongArray): Bitmap? {
-        var best: Bitmap? = null
-        var bestScore = -1
-        fun consider(candidate: Bitmap?) {
-            if (candidate == null) return
-            val score = visibleSampleCount(candidate)
-            if (score > bestScore) {
-                best?.recycle()
-                best = candidate
-                bestScore = score
-            } else {
-                candidate.recycle()
-            }
-        }
-        for (timeUs in timesUs) {
-            consider(
-                runCatching {
-                    // CLOSEST (non-sync) can hang MediaExtractor on HEVC/AV1 / broken GOPs.
-                    getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                }.getOrNull(),
-            )
-            if (bestScore >= MIN_VISIBLE_SAMPLES) return best
-        }
-        return best
+        val length = pfd.statSize.coerceAtLeast(0L)
+        return decodeFrameWatchdog(
+            label = source.path,
+            timeoutMs = DECODE_TIMEOUT_MS,
+            setDataSource = { it.setDataSource(pfd.fileDescriptor, 0L, length) },
+            getFrame = { selectThumbnailFrame() },
+            cleanup = { runCatching { pfd.close() } },
+        )
     }
 
     private fun cacheKey(source: VideoThumbnailSource): String = sha256(source.cacheIdentity)
@@ -434,24 +418,24 @@ object VideoThumbnail {
     }.getOrDefault(MIN_VISIBLE_SAMPLES)
 
     /**
-     * MMR [getFrameAtTime] / [setDataSource] are blocking native calls
-     * (MediaExtractor). Coroutine [withTimeout] never fires while they run, so two
-     * hung files used to occupy [extractSemaphore] and the SMB thumb slot forever.
+     * MMR [getFrameAtTime] / [setDataSource] are blocking native calls into
+     * `media.extractor`. Coroutine [withTimeout] cannot abort them.
      *
-     * Decode on a daemon thread. On timeout: close the data source (unblocks SMB
-     * readAt) and [MediaMetadataRetriever.release] to try to stop the extractor.
-     * The native thread may linger; the permit is released so other thumbs proceed.
+     * Decode on a daemon thread so the permit is released on timeout. **Do not**
+     * [MediaMetadataRetriever.release] or close the data source from this thread —
+     * that leaves a `mediaex` binder thread at 100% CPU after the app is gone.
+     * The worker [release]s after native returns.
      */
     private suspend fun decodeFrameWatchdog(
         label: String,
         timeoutMs: Long,
-        abort: () -> Unit,
         setDataSource: (MediaMetadataRetriever) -> Unit,
         getFrame: MediaMetadataRetriever.() -> Bitmap?,
+        cleanup: () -> Unit = {},
     ): Bitmap? {
         val retriever = MediaMetadataRetriever()
         val done = CompletableDeferred<Bitmap?>()
-        val thread = Thread(
+        Thread(
             {
                 try {
                     setDataSource(retriever)
@@ -461,10 +445,11 @@ object VideoThumbnail {
                     }
                 } catch (e: Throwable) {
                     if (!done.complete(null)) {
-                        logcat("VideoThumb") { "mmr abort after timeout ($label): ${e.message}" }
+                        logcat("VideoThumb") { "mmr late ($label): ${e.message}" }
                     }
                 } finally {
                     runCatching { retriever.release() }
+                    runCatching { cleanup() }
                 }
             },
             "video-thumb-mmr",
@@ -475,16 +460,8 @@ object VideoThumbnail {
         return try {
             withTimeout(timeoutMs) { done.await() }
         } catch (e: TimeoutCancellationException) {
-            logcat("VideoThumb") { "mmr timeout ${timeoutMs}ms ($label) — abort extractor" }
-            runCatching { abort() }
-            runCatching { retriever.release() }
-            thread.interrupt()
+            logcat("VideoThumb") { "mmr timeout ${timeoutMs}ms ($label) — abandon native (no release)" }
             null
-        } catch (e: CancellationException) {
-            runCatching { abort() }
-            runCatching { retriever.release() }
-            thread.interrupt()
-            throw e
         }
     }
 
@@ -511,44 +488,3 @@ private class ProbeSnapshot(
     val head: ByteArray,
     val tail: ByteArray?,
 )
-
-/** Serves only the prefetched head / tail. Mid-file reads are EOF. */
-private class SnapshotMediaDataSource(
-    private val snapshot: ProbeSnapshot,
-) : MediaDataSource() {
-    private val closed = AtomicBoolean(false)
-
-    override fun getSize(): Long = snapshot.fileSize
-
-    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
-        if (closed.get() || size <= 0 || Thread.currentThread().isInterrupted) return -1
-        val fileSize = snapshot.fileSize
-        if (position < 0L || position >= fileSize) return 0
-        val fromHead = copyFrom(snapshot.head, base = 0L, position, buffer, offset, size)
-        if (fromHead > 0) return fromHead
-        val tail = snapshot.tail ?: return -1
-        val tailStart = fileSize - tail.size
-        if (position < tailStart) return -1
-        return copyFrom(tail, tailStart, position, buffer, offset, size)
-    }
-
-    private fun copyFrom(
-        chunk: ByteArray,
-        base: Long,
-        position: Long,
-        buffer: ByteArray,
-        offset: Int,
-        size: Int,
-    ): Int {
-        val rel = (position - base).toInt()
-        if (rel < 0 || rel >= chunk.size) return 0
-        val n = minOf(size, chunk.size - rel)
-        if (n <= 0) return 0
-        System.arraycopy(chunk, rel, buffer, offset, n)
-        return n
-    }
-
-    override fun close() {
-        closed.set(true)
-    }
-}
