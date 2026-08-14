@@ -33,8 +33,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * explicitly: one [AsynchronousChannelGroup] is a shared completion pool, so
  * video READs on the browse group delay listing/reader/new-play handshake.
  *
- *   list   — reserved QUERY_DIRECTORY TCP
- *   browse — host-pool data (reader, thumbs, archives)
+ *   list   — reserved QUERY_DIRECTORY TCP (1 session)
+ *   browse — host-pool gallery data (reader, thumbs, archives); sized for 3–5 TCPs
  *   video  — sticky FUSE / loopback-HTTP / in-app streamdoc
  *
  * The Advanced async toggle installs all three factories or none.
@@ -47,7 +47,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * and smbj's async connect is hard-capped at 5s (EasyTier / VPN SYN often needs longer).
  */
 internal object SmbAsyncTransport {
-    private const val BROWSE_GROUP_THREADS = 3
+    /**
+     * Completions for gallery HostPool TCPs. Default concurrency is 3 and the
+     * usual Advanced range is 3–5; 5 threads lets that many sessions finish
+     * SMB3 sign/decrypt without queuing on each other. 6–7 still share the group.
+     */
+    private const val BROWSE_GROUP_THREADS = 5
     private const val LIST_GROUP_THREADS = 2
 
     /** Extra threads so a leftover close cannot starve the next-file handshake. */
