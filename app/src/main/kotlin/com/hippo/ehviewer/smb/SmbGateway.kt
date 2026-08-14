@@ -376,7 +376,9 @@ object SmbGateway {
 
     /**
      * Bump the video generation. Listeners close previous in-app / HTTP video bodies
-     * (so they do not reconnect). Then leftover video-generation TCPs are force-closed.
+     * (lease + File). The old worker should then leave [openStickyConnection] and close
+     * the TCP itself. Force-close of leftover TCPs is **delayed** so it does not share
+     * the small video NIO group with the new handshake (next-file hop hang / ANR).
      *
      * Demand + prefetch of the **same** play must share one call — do not invoke per lane.
      */
@@ -387,7 +389,7 @@ object SmbGateway {
             runCatching { listener.invoke() }
         }
         yieldBackgroundOps("video-play-$epoch")
-        dropVideoStickiesOlderThan(epoch)
+        scheduleDropVideoStickiesOlderThan(epoch)
         return epoch
     }
 
@@ -397,13 +399,31 @@ object SmbGateway {
         videoPlayListeners.addIfAbsent(listener)
     }
 
+    /**
+     * Wait for evicted workers to close their own TCP. Only force-close stragglers.
+     * A log here means the previous hop did not finish teardown in time — not a seek.
+     */
+    private const val VIDEO_STICKY_TEARDOWN_MS = 500L
+
+    private fun scheduleDropVideoStickiesOlderThan(epoch: Int) {
+        gatewayScope.launch {
+            delay(VIDEO_STICKY_TEARDOWN_MS)
+            dropVideoStickiesOlderThan(epoch)
+        }
+    }
+
     private fun dropVideoStickiesOlderThan(epoch: Int) {
         val doomed = videoStickies.filter { it.epoch < epoch }
         if (doomed.isEmpty()) return
         doomed.forEach { videoStickies.remove(it) }
-        logcat { "SmbGateway: drop video stickies older than epoch=$epoch count=${doomed.size}" }
-        gatewayScope.launch {
-            doomed.forEach { vs -> runCatching { vs.connection.close() } }
+        logcat {
+            "SmbGateway: drop video stickies older than epoch=$epoch count=${doomed.size} " +
+                "sticky=${stickyConnectionCount()}"
+        }
+        doomed.forEach { vs ->
+            gatewayScope.launch {
+                runCatching { vs.connection.close() }
+            }
         }
     }
 

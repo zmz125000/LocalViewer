@@ -49,7 +49,8 @@ import java.util.concurrent.atomic.AtomicInteger
 internal object SmbAsyncTransport {
     private const val BROWSE_GROUP_THREADS = 3
     private const val LIST_GROUP_THREADS = 2
-    private const val VIDEO_GROUP_THREADS = 3
+    /** Extra threads so a leftover close cannot starve the next-file handshake. */
+    private const val VIDEO_GROUP_THREADS = 8
 
     /** TCP connect only — matches smbj AsyncDirectTcpTransport's 5s cap. */
     private const val CONNECT_TIMEOUT_MS = 5_000L
