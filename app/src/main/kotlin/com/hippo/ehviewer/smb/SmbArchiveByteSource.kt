@@ -61,7 +61,7 @@ class SmbArchiveByteSource(
      */
     httpStickyPool: Boolean = false,
     /**
-     * If [httpStickyPool]: wait for a free slot (video demand). Prefetch shares this lane.
+     * If [httpStickyPool]: wait for a free slot. Always true — one video, one lane.
      */
     httpStickyWait: Boolean = true,
     /**

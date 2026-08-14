@@ -14,8 +14,8 @@ import java.util.concurrent.atomic.AtomicLong
  * External players issue many small Fuse reads (often ≤128 KiB). This source:
  * - Serves from an aligned multi-block sliding window (demand hits are cheap)
  * - Prefetches several blocks **ahead** of the playhead so 4K / ~80 Mbps stays fed
- * - Prefetch uses the **same** lane as demand; a seek drops queued prefetch reads so
- *   demand is not stuck behind the old runway
+ * - Prefetch uses the **same** sticky lane as demand (one handle). A seek drops
+ *   queued prefetch reads so demand is not stuck behind the old runway.
  *
  * Not an archive readahead: no 64 KiB random-probe mode, no ZIP/TAR semantics.
  * PDF / sparse documents stay on [BlockCacheArchiveByteSource].
@@ -58,7 +58,7 @@ class VideoDirectLinkByteSource(
         null
     }
 
-    /** Prefer the dedicated prefetch lane; fall back to demand (serialized by that source). */
+    /** Prefetch shares [demand] unless a separate source was passed (unused; one lane). */
     private val prefetchSource: ArchiveByteSource get() = prefetch ?: demand
 
     override val size: Long = knownSize.takeIf { it > 0L } ?: demand.size
@@ -151,8 +151,8 @@ class VideoDirectLinkByteSource(
                     return null
                 } else {
                     if (existing != null) {
-                        // Demand owns the foreground lane. Never join a speculative future:
-                        // after a seek it may be blocked on a slow or stale prefetch request.
+                        // Demand owns the handle. Never join a speculative future:
+                        // after a seek it may be blocked on a stale prefetch request.
                         inFlight.remove(blockIndex)
                         superseded = existing.future
                     }
@@ -237,7 +237,7 @@ class VideoDirectLinkByteSource(
                 task = FutureTask {
                     try {
                         if (closed.get() || myEpoch != epoch.get()) return@FutureTask null
-                        // Prefetch lane only — never steals demand unless single-lane fallback.
+                        // Speculative fill on the same handle; demand cancels this on seek.
                         loadBlockBytes(blockIndex, usePrefetchLane = true)
                     } finally {
                         synchronized(lock) {
@@ -301,11 +301,14 @@ class VideoDirectLinkByteSource(
         /** ~56 MiB working set (~5–6 s at 80 Mbps) without unbounded download. */
         const val VIDEO_WINDOW_BLOCKS = 28
 
-        /** Blocks to keep filled ahead of the playhead on the prefetch lane. */
+        /** Blocks to keep filled ahead of the playhead on the one sticky lane. */
         const val VIDEO_PREFETCH_AHEAD = 6
 
-        /** Concurrent prefetch loads so one sticky session can keep several READs in flight. */
-        const val PREFETCH_PARALLEL = 4
+        /**
+         * Prefetch worker count. One sticky handle serializes SMB READs, so extra
+         * workers only queue 2 MiB loads and make seek [dropQueuedReads] heavier.
+         */
+        const val PREFETCH_PARALLEL = 1
 
         fun isVideo(mimeType: String, displayName: String): Boolean = mimeType.startsWith("video/", ignoreCase = true) || isVideoFileName(displayName)
 

@@ -380,7 +380,7 @@ object SmbGateway {
      * the TCP itself. Force-close of leftover TCPs is **delayed** so it does not share
      * the small video NIO group with the new handshake (next-file hop hang / ANR).
      *
-     * Demand + prefetch of the **same** play must share one call — do not invoke per lane.
+     * One call per play. Prefetch shares this generation — do not invoke again for it.
      */
     fun beginVideoPlay(reason: String): Int {
         val epoch = videoPlayEpoch.incrementAndGet()
@@ -1679,9 +1679,8 @@ object SmbGateway {
     /**
      * Sticky open limited by [HTTP_STICKY_POOL_SIZE] for **video** (HTTP + streamdoc).
      *
-     * Before a demand lane blocks for a slot, invokes [onHttpStickyPoolPressure] so idle
-     * warm HTTP bodies can release their stickies (new GET first). A non-waiting optional
-     * prefetch lane fails immediately without evicting another stream's warm backend.
+     * Before the video lane blocks for a slot, invokes [onHttpStickyPoolPressure] so idle
+     * warm HTTP bodies can release their stickies (new GET first).
      */
     suspend fun <T> withHttpStickyOpenFile(
         source: SmbSourceEntity,

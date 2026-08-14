@@ -464,27 +464,28 @@ object OpenFileExternally {
             cacheBody = video,
             evictOnSmbPoolPressure = video,
             open = {
-                fun openLane(waitForSlot: Boolean) = SmbArchiveByteSource(
-                    source = source,
-                    password = password,
-                    remoteRelativeFile = remoteRelativeFile,
-                    preferSequential = false,
-                    pipeline = false,
-                    stickySession = true,
-                    httpStickyPool = true,
-                    httpStickyWait = waitForSlot,
-                    knownSize = sizeBytes.takeIf { it > 0L } ?: -1L,
-                    readahead = false,
-                    videoPlay = video,
-                )
+                val openLane = {
+                    SmbArchiveByteSource(
+                        source = source,
+                        password = password,
+                        remoteRelativeFile = remoteRelativeFile,
+                        preferSequential = false,
+                        pipeline = false,
+                        stickySession = true,
+                        httpStickyPool = true,
+                        knownSize = sizeBytes.takeIf { it > 0L } ?: -1L,
+                        readahead = false,
+                        videoPlay = video,
+                    )
+                }
                 ExternalHttpStreamServer.ArchiveBody(
                     if (video) {
                         VideoDirectLinkByteSource.open(
-                            openLane = { openLane(waitForSlot = true) },
+                            openLane = openLane,
                             knownSize = sizeBytes,
                         )
                     } else {
-                        openLane(waitForSlot = true)
+                        openLane()
                     },
                 )
             },
@@ -839,7 +840,6 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
-            parallelPrefetch = false,
             openSource = {
                 SmbArchiveByteSource(
                     source = source,
@@ -879,7 +879,6 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = sizeBytes,
-            parallelPrefetch = false,
             openSource = {
                 WebDavArchiveByteSource(
                     source = source,
