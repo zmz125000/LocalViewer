@@ -480,8 +480,7 @@ private class ProbeMediaDataSource(
 ) : MediaDataSource() {
     override fun getSize(): Long = fileSize
 
-    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int =
-        readVideoThumbProbe(fileSize, head, tail, position, buffer, offset, size)
+    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int = readVideoThumbProbe(fileSize, head, tail, position, buffer, offset, size)
 
     override fun close() {}
 }
