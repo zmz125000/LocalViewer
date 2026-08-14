@@ -9,7 +9,7 @@ import org.junit.Test
 
 class VideoThumbProbeTest {
     @Test
-    fun sparseProbeKeepsMoovAtRealOffset() {
+    fun ramProbeKeepsMoovAtRealOffset() {
         val src = sampleMp4()
         assertTrue("sample missing: ${src.absolutePath}", src.isFile)
         val fileSize = src.length()
@@ -22,28 +22,32 @@ class VideoThumbProbeTest {
             raf.readFully(tail)
         }
 
-        val dest = File.createTempFile("thumb-probe", ".mp4")
-        try {
-            writeVideoThumbProbe(dest, fileSize, head, tail)
-            assertEquals(fileSize, dest.length())
-
-            // moov @ 30628402 in this clip (see box dump). Must match the original.
-            val moovAt = 30_628_402L
-            val want = ByteArray(8)
-            val got = ByteArray(8)
-            RandomAccessFile(src, "r").use {
-                it.seek(moovAt)
-                it.readFully(want)
-            }
-            RandomAccessFile(dest, "r").use {
-                it.seek(moovAt)
-                it.readFully(got)
-            }
-            assertArrayEquals("moov header must sit at the real EOF offset", want, got)
-            assertEquals("moov", got.decodeToString(4, 8))
-        } finally {
-            dest.delete()
+        // moov @ 30628402 in this clip (see box dump). Must match the original.
+        val moovAt = 30_628_402L
+        val want = ByteArray(8)
+        val got = ByteArray(8)
+        RandomAccessFile(src, "r").use {
+            it.seek(moovAt)
+            it.readFully(want)
         }
+        val n = readVideoThumbProbe(fileSize, head, tail, moovAt, got, 0, 8)
+        assertEquals(8, n)
+        assertArrayEquals("moov header must sit at the real EOF offset", want, got)
+        assertEquals("moov", got.decodeToString(4, 8))
+    }
+
+    @Test
+    fun ramProbeZeroFillsHolesAndEofIsMinusOne() {
+        val head = byteArrayOf(1, 2, 3, 4)
+        val tail = byteArrayOf(9, 8)
+        val fileSize = 20L
+        val buf = ByteArray(8) { -1 }
+        assertEquals(8, readVideoThumbProbe(fileSize, head, tail, 6L, buf, 0, 8))
+        assertArrayEquals(byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0), buf)
+        assertEquals(-1, readVideoThumbProbe(fileSize, head, tail, fileSize, buf, 0, 8))
+        assertEquals(2, readVideoThumbProbe(fileSize, head, tail, 18L, buf, 0, 8))
+        assertEquals(9.toByte(), buf[0])
+        assertEquals(8.toByte(), buf[1])
     }
 
     private fun sampleMp4(): File {

@@ -2,6 +2,7 @@ package com.hippo.ehviewer.library
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.media.MediaDataSource
 import android.media.MediaMetadataRetriever
 import android.os.ParcelFileDescriptor
 import com.ehviewer.core.files.openFileDescriptor
@@ -17,7 +18,6 @@ import com.hippo.ehviewer.webdav.WebDavCache
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
-import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -60,10 +60,10 @@ sealed interface VideoThumbnailSource {
  * Lazy video frame extraction for visible browse rows.
  *
  * Network: copy a small head (+ tail for moov-at-end) under a short I/O timeout,
- * **drop the SMB/WebDAV handle**, write a **sparse** temp file (head at 0, tail
- * at EOF), then decode. A holey [android.media.MediaDataSource] that returns −1
- * mid-file, or [MediaMetadataRetriever.release] from the timeout thread, leaves
- * `media.extractor` at 100% CPU. Timeout only abandons the wait.
+ * **drop the SMB/WebDAV handle**, then decode from RAM. Holes are zeros (same as a
+ * sparse file). Returning −1 mid-file, or [MediaMetadataRetriever.release] from
+ * the timeout thread, leaves `media.extractor` at 100% CPU. Timeout only abandons
+ * the wait.
  *
  * Disk: `cache/video_thumb_cache/` — same parent budget as other browse thumbs
  * ([OriginDiskCache.THUMB_BUDGET_BYTES]). A JPEG there is used with **no expiry**
@@ -91,7 +91,6 @@ object VideoThumbnail {
     private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
     private val leftoverMarkersCleared = AtomicBoolean(false)
-    private val leftoverProbesCleared = AtomicBoolean(false)
 
     fun cacheDirectory(): File = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache").apply { mkdirs() }
 
@@ -110,7 +109,6 @@ object VideoThumbnail {
     }
 
     fun cachedJpegIfPresent(source: VideoThumbnailSource): File? {
-        purgeLegacyProbeFiles()
         val target = File(cacheDirectory(), "${cacheKey(source)}.jpg")
         return target.takeIf(::isCachedJpeg)
     }
@@ -120,7 +118,6 @@ object VideoThumbnail {
         if (!Settings.saveFileMarkers.value && leftoverMarkersCleared.compareAndSet(false, true)) {
             clearFailureMarkers()
         }
-        purgeLegacyProbeFiles()
         val directory = cacheDirectory()
         val cacheKey = cacheKey(source)
         val target = File(directory, "$cacheKey.jpg")
@@ -190,18 +187,6 @@ object VideoThumbnail {
     }
 
     private fun isCachedJpeg(target: File): Boolean = target.isFile && target.length() > 0L
-
-    /** Leftover full-size sparse probes from earlier builds sat in the JPEG dir and blew trim. */
-    private fun purgeLegacyProbeFiles() {
-        if (!leftoverProbesCleared.compareAndSet(false, true)) return
-        val directory = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache")
-        if (!directory.isDirectory) return
-        directory.listFiles()?.forEach { file ->
-            if (file.isFile && (file.name.startsWith("mmr-") || file.name.endsWith(".bin"))) {
-                file.delete()
-            }
-        }
-    }
 
     private suspend fun extractThumbnailFrame(source: VideoThumbnailSource): Bitmap? = when (source) {
         is VideoThumbnailSource.Local -> extractSemaphore.withPermit { extractLocalFrame(source) }
@@ -301,34 +286,21 @@ object VideoThumbnail {
     }
 
     /**
-     * Sparse file at the real length: head at 0, tail at EOF. Extractor can read
-     * `moov` at the end; holes are filesystem zeros, not MediaDataSource −1.
+     * Decode from the in-memory head/tail. [ProbeMediaDataSource] reports the real
+     * file size so `moov` at EOF stays at its offset; holes are zeros, never −1.
      */
     private suspend fun decodeSnapshot(snapshot: ProbeSnapshot, label: String): Bitmap? {
-        val tmp = newProbeFile()
-        return try {
-            writeVideoThumbProbe(tmp, snapshot.fileSize, snapshot.head, snapshot.tail)
-            decodeFrameWatchdog(
-                label = label,
-                timeoutMs = DECODE_TIMEOUT_MS,
-                setDataSource = { it.setDataSource(tmp.absolutePath) },
-                getFrame = {
-                    runCatching {
-                        getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                    }.getOrNull()
-                },
-                cleanup = { tmp.delete() },
-            )
-        } catch (e: Throwable) {
-            tmp.delete()
-            throw e
-        }
-    }
-
-    /** Probe temps live in the app cache dir — not next to JPEG thumbs. */
-    private fun newProbeFile(): File {
-        val dir = File(appCtx.cacheDir, "video_thumb_probe").apply { mkdirs() }
-        return File(dir, "mmr-${System.nanoTime()}.bin")
+        val data = ProbeMediaDataSource(snapshot.fileSize, snapshot.head, snapshot.tail)
+        return decodeFrameWatchdog(
+            label = label,
+            timeoutMs = DECODE_TIMEOUT_MS,
+            setDataSource = { it.setDataSource(data) },
+            getFrame = {
+                runCatching {
+                    getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                }.getOrNull()
+            },
+        )
     }
 
     /** Local files go through the platform path — no 8 MiB MediaDataSource cap. */
@@ -497,22 +469,60 @@ private class ProbeSnapshot(
     val tail: ByteArray?,
 )
 
-/** Head at 0, tail at EOF, [fileSize] so `moov`-at-end stays at its real offset. */
-internal fun writeVideoThumbProbe(
-    dest: File,
+/**
+ * Head at 0, tail at EOF, [fileSize] so `moov`-at-end stays at its real offset.
+ * Mid-file holes are zeros. [readAt] returns −1 only at true EOF.
+ */
+private class ProbeMediaDataSource(
+    private val fileSize: Long,
+    private val head: ByteArray,
+    private val tail: ByteArray?,
+) : MediaDataSource() {
+    override fun getSize(): Long = fileSize
+
+    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int =
+        readVideoThumbProbe(fileSize, head, tail, position, buffer, offset, size)
+
+    override fun close() {}
+}
+
+/** Copy one [MediaDataSource.readAt] window from a head+tail probe. */
+internal fun readVideoThumbProbe(
     fileSize: Long,
     head: ByteArray,
     tail: ByteArray?,
-) {
-    if (tail == null || fileSize <= head.size.toLong()) {
-        dest.outputStream().use { it.write(head) }
-        return
+    position: Long,
+    buffer: ByteArray,
+    offset: Int,
+    size: Int,
+): Int {
+    if (position < 0L || position >= fileSize) return -1
+    if (size <= 0) return 0
+    val want = minOf(size.toLong(), fileSize - position).toInt()
+    val tailStart = if (tail != null) fileSize - tail.size else fileSize
+    var copied = 0
+    while (copied < want) {
+        val pos = position + copied
+        val dest = offset + copied
+        val remaining = want - copied
+        when {
+            pos < head.size -> {
+                val n = minOf(remaining, head.size - pos.toInt())
+                System.arraycopy(head, pos.toInt(), buffer, dest, n)
+                copied += n
+            }
+            pos >= tailStart && tail != null -> {
+                val tailOff = (pos - tailStart).toInt()
+                val n = minOf(remaining, tail.size - tailOff)
+                System.arraycopy(tail, tailOff, buffer, dest, n)
+                copied += n
+            }
+            else -> {
+                val n = minOf(remaining.toLong(), tailStart - pos).toInt()
+                buffer.fill(0, dest, dest + n)
+                copied += n
+            }
+        }
     }
-    RandomAccessFile(dest, "rw").use { raf ->
-        raf.setLength(fileSize)
-        raf.seek(0L)
-        raf.write(head)
-        raf.seek(fileSize - tail.size)
-        raf.write(tail)
-    }
+    return copied
 }
