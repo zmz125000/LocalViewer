@@ -432,11 +432,7 @@ object ExternalHttpStreamServer {
                     }
                     runCatching { stale.close() }
                 }
-                if (!cached.body.isBuffered(start)) {
-                    runCatching {
-                        cached.body.warm(start, VideoDirectLinkByteSource.VIDEO_BLOCK)
-                    }
-                }
+                // Do not block headers on a 2 MiB warm. First readAt fills the window.
             }
 
             override fun close() {
