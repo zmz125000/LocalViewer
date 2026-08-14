@@ -926,14 +926,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoGridItem(
                                         name = video.name,
-                                        thumbnailSource = if (allowRemoteThumbs) {
-                                            VideoThumbnailSource.WebDav(
-                                                sourceId,
-                                                joinRemoteArchivePath(relativeDir, "", video.fileName),
-                                            )
-                                        } else {
-                                            null
-                                        },
+                                        thumbnailSource = VideoThumbnailSource.WebDav(
+                                            sourceId,
+                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                        ),
+                                        allowRemoteFetch = allowRemoteThumbs,
                                         onClick = { openVideoPrimary(video.fileName) },
                                         onLongClick = { openVideoSecondary(video.fileName) },
                                     )
@@ -1019,14 +1016,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 items(videos, key = { "v-${it.fileName}" }) { video ->
                                     BrowseVideoRow(
                                         name = video.name,
-                                        thumbnailSource = if (allowRemoteThumbs) {
-                                            VideoThumbnailSource.WebDav(
-                                                sourceId,
-                                                joinRemoteArchivePath(relativeDir, "", video.fileName),
-                                            )
-                                        } else {
-                                            null
-                                        },
+                                        thumbnailSource = VideoThumbnailSource.WebDav(
+                                            sourceId,
+                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                        ),
+                                        allowRemoteFetch = allowRemoteThumbs,
                                         onClick = { openVideoPrimary(video.fileName) },
                                         onLongClick = { openVideoSecondary(video.fileName) },
                                     )

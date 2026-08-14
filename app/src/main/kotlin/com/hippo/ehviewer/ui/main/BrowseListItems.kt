@@ -231,6 +231,10 @@ fun BrowseVideoRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     thumbnailSource: VideoThumbnailSource? = null,
+    /**
+     * When false, only show an on-disk JPEG (old/offline listing). No extract.
+     */
+    allowRemoteFetch: Boolean = true,
     /** Long-press → open in external app; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -243,6 +247,7 @@ fun BrowseVideoRow(
                 source = thumbnailSource,
                 modifier = Modifier.size(56.dp).clip(ShapeDefaults.Medium),
                 iconSize = 32.dp,
+                allowRemoteFetch = allowRemoteFetch,
             )
         },
         modifier = modifier
@@ -488,6 +493,10 @@ fun BrowseVideoGridItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     thumbnailSource: VideoThumbnailSource? = null,
+    /**
+     * When false, only show an on-disk JPEG (old/offline listing). No extract.
+     */
+    allowRemoteFetch: Boolean = true,
     /** Long-press → open in external app; defaults to [onClick]. */
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -497,7 +506,12 @@ fun BrowseVideoGridItem(
         onLongClick = onLongClick ?: onClick,
         modifier = modifier,
         thumb = {
-            BrowseVideoThumbnail(thumbnailSource, Modifier.fillMaxSize(), 48.dp)
+            BrowseVideoThumbnail(
+                thumbnailSource,
+                Modifier.fillMaxSize(),
+                48.dp,
+                allowRemoteFetch,
+            )
         },
     )
 }
@@ -507,14 +521,26 @@ private fun BrowseVideoThumbnail(
     source: VideoThumbnailSource?,
     modifier: Modifier,
     iconSize: Dp,
+    allowRemoteFetch: Boolean = true,
 ) {
     val context = LocalContext.current
     val downloadNetworkVideoThumbs by Settings.downloadNetworkVideoThumbs.collectAsState()
     var thumbnail by remember(source) { mutableStateOf<java.io.File?>(null) }
-    // Re-run when the network toggle changes so enabling mid-browse starts extraction;
-    // disabling only stops new network work (cached files still load inside getOrCreate).
-    LaunchedEffect(source, downloadNetworkVideoThumbs) {
-        thumbnail = source?.let { VideoThumbnail.getOrCreate(context, it) }
+    // Disk first (same as gallery covers). Extract only on a live listing when
+    // network video thumbs are enabled.
+    LaunchedEffect(source, downloadNetworkVideoThumbs, allowRemoteFetch) {
+        val src = source ?: run {
+            thumbnail = null
+            return@LaunchedEffect
+        }
+        thumbnail = withIOContext {
+            VideoThumbnail.cachedJpegIfPresent(src)
+                ?: if (allowRemoteFetch) {
+                    VideoThumbnail.getOrCreate(context, src)
+                } else {
+                    null
+                }
+        }
     }
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Icon(

@@ -2,7 +2,6 @@ package com.hippo.ehviewer.library
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.os.ParcelFileDescriptor
 import com.ehviewer.core.files.openFileDescriptor
@@ -67,13 +66,13 @@ sealed interface VideoThumbnailSource {
  * `media.extractor` at 100% CPU. Timeout only abandons the wait.
  *
  * Disk: `cache/video_thumb_cache/` — same parent budget as other browse thumbs
- * ([OriginDiskCache.THUMB_BUDGET_BYTES]).
+ * ([OriginDiskCache.THUMB_BUDGET_BYTES]). A JPEG there is used with **no expiry**
+ * and without a network round-trip.
  */
 object VideoThumbnail {
     private val EDGE_PX: Int get() = OriginDiskCache.THUMB_EDGE
 
     private const val FAILURE_RETRY_MS = 24L * 60 * 60 * 1_000
-    private const val REMOTE_CACHE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1_000
     private const val MAX_CONCURRENT_EXTRACTIONS = 2
 
     /** Fetch head/tail then close the remote handle. */
@@ -92,6 +91,7 @@ object VideoThumbnail {
     private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
     private val leftoverMarkersCleared = AtomicBoolean(false)
+    private val leftoverProbesCleared = AtomicBoolean(false)
 
     fun cacheDirectory(): File = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache").apply { mkdirs() }
 
@@ -110,10 +110,9 @@ object VideoThumbnail {
     }
 
     fun cachedJpegIfPresent(source: VideoThumbnailSource): File? {
-        val directory = cacheDirectory()
-        val cacheKey = cacheKey(source)
-        val target = File(directory, "$cacheKey.jpg")
-        return if (isFresh(target, source)) target else null
+        purgeLegacyProbeFiles()
+        val target = File(cacheDirectory(), "${cacheKey(source)}.jpg")
+        return target.takeIf(::isCachedJpeg)
     }
 
     @Suppress("UNUSED_PARAMETER")
@@ -121,24 +120,25 @@ object VideoThumbnail {
         if (!Settings.saveFileMarkers.value && leftoverMarkersCleared.compareAndSet(false, true)) {
             clearFailureMarkers()
         }
+        purgeLegacyProbeFiles()
         val directory = cacheDirectory()
         val cacheKey = cacheKey(source)
         val target = File(directory, "$cacheKey.jpg")
         val failure = File(directory, "$cacheKey.failed")
+        // Disk hit first: no expiry, no network, ignore a later .failed marker.
+        if (isCachedJpeg(target)) return@withIOContext target
         if (shouldSkipFailed(failure)) return@withIOContext null
-        if (isFresh(target, source)) return@withIOContext target
         if (source.isNetwork && !Settings.downloadNetworkVideoThumbs.value) {
             return@withIOContext null
         }
 
         val mutex = pathLocks.getOrPut(source.cacheIdentity) { Mutex() }
         mutex.withLock {
+            if (isCachedJpeg(target)) return@withLock target
             if (shouldSkipFailed(failure)) return@withLock null
-            if (isFresh(target, source)) return@withLock target
             if (source.isNetwork && !Settings.downloadNetworkVideoThumbs.value) {
                 return@withLock null
             }
-            if (isFresh(target, source)) return@withLock target
             val frame = try {
                 extractThumbnailFrame(source)
             } catch (e: CancellationException) {
@@ -189,10 +189,18 @@ object VideoThumbnail {
         runCatching { failure.createNewFile() }
     }
 
-    private fun isFresh(target: File, source: VideoThumbnailSource): Boolean {
-        if (!target.isFile || target.length() <= 0L) return false
-        if (!source.isNetwork) return true
-        return System.currentTimeMillis() - target.lastModified() < REMOTE_CACHE_MAX_AGE_MS
+    private fun isCachedJpeg(target: File): Boolean = target.isFile && target.length() > 0L
+
+    /** Leftover full-size sparse probes from earlier builds sat in the JPEG dir and blew trim. */
+    private fun purgeLegacyProbeFiles() {
+        if (!leftoverProbesCleared.compareAndSet(false, true)) return
+        val directory = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache")
+        if (!directory.isDirectory) return
+        directory.listFiles()?.forEach { file ->
+            if (file.isFile && (file.name.startsWith("mmr-") || file.name.endsWith(".bin"))) {
+                file.delete()
+            }
+        }
     }
 
     private suspend fun extractThumbnailFrame(source: VideoThumbnailSource): Bitmap? = when (source) {
@@ -297,14 +305,18 @@ object VideoThumbnail {
      * `moov` at the end; holes are filesystem zeros, not MediaDataSource −1.
      */
     private suspend fun decodeSnapshot(snapshot: ProbeSnapshot, label: String): Bitmap? {
-        val tmp = File(cacheDirectory(), "mmr-${System.nanoTime()}.bin")
+        val tmp = newProbeFile()
         return try {
             writeVideoThumbProbe(tmp, snapshot.fileSize, snapshot.head, snapshot.tail)
             decodeFrameWatchdog(
                 label = label,
                 timeoutMs = DECODE_TIMEOUT_MS,
                 setDataSource = { it.setDataSource(tmp.absolutePath) },
-                getFrame = { firstNetworkFrame() },
+                getFrame = {
+                    runCatching {
+                        getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    }.getOrNull()
+                },
                 cleanup = { tmp.delete() },
             )
         } catch (e: Throwable) {
@@ -313,16 +325,10 @@ object VideoThumbnail {
         }
     }
 
-    /** Embedded cover, then the first sync frame. No mid-file seek on a truncated probe. */
-    private fun MediaMetadataRetriever.firstNetworkFrame(): Bitmap? {
-        runCatching {
-            embeddedPicture?.let { bytes ->
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            }
-        }.getOrNull()?.let { return it }
-        return runCatching {
-            getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-        }.getOrNull()
+    /** Probe temps live in the app cache dir — not next to JPEG thumbs. */
+    private fun newProbeFile(): File {
+        val dir = File(appCtx.cacheDir, "video_thumb_probe").apply { mkdirs() }
+        return File(dir, "mmr-${System.nanoTime()}.bin")
     }
 
     /** Local files go through the platform path — no 8 MiB MediaDataSource cap. */
