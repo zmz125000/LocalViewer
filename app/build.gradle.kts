@@ -77,9 +77,9 @@ android {
         applicationId = "moe.tarsin.localviewer"
         versionCode = 38
         versionName = if (snapshot) {
-            "1.10.14-SNAPSHOT"
+            "1.10.17-SNAPSHOT"
         } else {
-            "1.10.14"
+            "1.10.17"
         }
         buildConfigField("boolean", "SNAPSHOT", "$snapshot")
         buildConfigField("String", "RAW_VERSION_NAME", "\"$versionName\"")
@@ -225,6 +225,7 @@ dependencies {
     implementation(libs.androidx.room.paging)
 
     implementation(libs.smbj)
+    testImplementation("junit:junit:4.13.2")
     implementation(libs.material.motion.core)
     implementation(libs.material.kolor)
 

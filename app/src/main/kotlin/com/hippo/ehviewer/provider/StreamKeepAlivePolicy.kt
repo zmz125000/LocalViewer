@@ -8,48 +8,85 @@ import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.webdav.WebDavClient
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.system.exitProcess
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import splitties.init.appCtx
 
 /**
- * Battery vs reliability knobs for external Fuse **and** loopback HTTP streaming.
+ * Slim foreground service for external Fuse **and** loopback HTTP.
  *
- * **Streamdoc (Fuse):** live proxy FDs need sticky + FGS while open; tokens age out separately.
+ * FGS is process rank only: HTTP listener + session/token map stay in RAM. No wake lock,
+ * no idle-ping, no sticky TCP while idle. Resume is a new Range / URI open — HTTP or
+ * streamdoc starts SMB then.
  *
- * **HTTP loopback:** session map is a **stateless token** (resume via Range anytime before prune).
- * Warm SMB is optional with **idle timeout** (open/close every Range is costly) — not required
- * for correctness. FGS wake lock only while a body transfer is in flight; idle FGS (grace) is
- * only process rank so the token stays in RAM + self-shutdown — no other CPU work.
+ * **Playing** (proxy FD or HTTP body): keep the process so the connection can work.
+ * **Idle grants:** keep FGS so loopback + session survive freeze.
+ * **Screen off:** drop sticky unless something is playing (background playback).
  *
- * Limited (default): shorter token age + drop sticky on screen off / FGS stop.
- * Unlimited (Advanced): longer token age; streamdoc may keep sticky across screen off.
+ * Limited (default): idle grants age out after 20 minutes, then FGS stops.
+ * Unlimited (Advanced): grants stay; FGS stays until Recents swipe.
  *
- * **Recents swipe:** [shutdownAndKillProcess] — FGS alone would keep the process; user kill means die.
+ * **Recents swipe:** [shutdownAndKillProcess] — user kill means die.
  */
 object StreamKeepAlivePolicy {
-    /** Idle token age when limited. */
+    /** Idle token / HTTP session age when limited. */
     const val LIMITED_TOKEN_MAX_AGE_MS = 20L * 60L * 1000L
 
-    /** Idle token age when unlimited (previous default). */
-    const val UNLIMITED_TOKEN_MAX_AGE_MS = 6L * 60L * 60L * 1000L
+    /** Brief pause so session replace does not flicker the notification. */
+    const val FGS_STOP_GRACE_MS = 5_000L
 
-    /**
-     * After last proxy FD closes, keep FGS briefly so reopen after seek/rebuffer works.
-     * Same in both modes — not the long movie budget.
-     */
-    const val FGS_STOP_DELAY_MS = 3L * 60L * 1000L
-
-    const val LIMITED_WAKE_LOCK_MS = 20L * 60L * 1000L
-    const val UNLIMITED_WAKE_LOCK_MS = 6L * 60L * 60L * 1000L
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val reconcileLock = Any()
+    private var stopJob: Job? = null
 
     fun unlimited(): Boolean = Settings.streamKeepAliveUnlimited.value
 
-    fun tokenMaxAgeMs(): Long = if (unlimited()) UNLIMITED_TOKEN_MAX_AGE_MS else LIMITED_TOKEN_MAX_AGE_MS
+    /**
+     * Idle grant lifetime. Null = never age out (unlimited).
+     * Callers must skip age-prune when this is null.
+     */
+    fun tokenMaxAgeMs(): Long? = if (unlimited()) null else LIMITED_TOKEN_MAX_AGE_MS
 
-    fun wakeLockTimeoutMs(): Long = if (unlimited()) UNLIMITED_WAKE_LOCK_MS else LIMITED_WAKE_LOCK_MS
+    fun isPlaying(): Boolean = StreamDocumentRegistry.networkOpenCount() > 0 ||
+        ExternalHttpStreamServer.networkActivityCount() > 0
 
-    fun fgsStopDelayMs(): Long = FGS_STOP_DELAY_MS
+    fun hasIdleGrant(): Boolean = StreamDocumentRegistry.networkTokenCount() > 0 ||
+        ExternalHttpStreamServer.networkSessionCount() > 0
 
-    fun dropNetworkOnScreenOff(): Boolean = !unlimited()
+    fun shouldHoldFgs(): Boolean = isPlaying() || hasIdleGrant()
+
+    fun onUnlimitedChanged() {
+        StreamDocumentRegistry.pruneStale()
+        ExternalHttpStreamServer.pruneStale()
+        reconcileFgs(appCtx)
+    }
+
+    /** Start FGS while a grant or transfer exists; stop shortly after the last one is gone. */
+    fun reconcileFgs(context: Context = appCtx) {
+        val app = context.applicationContext
+        synchronized(reconcileLock) {
+            if (shouldHoldFgs()) {
+                stopJob?.cancel()
+                stopJob = null
+                StreamKeepAliveService.start(app)
+            } else {
+                stopJob?.cancel()
+                stopJob = scope.launch {
+                    delay(FGS_STOP_GRACE_MS)
+                    synchronized(reconcileLock) {
+                        if (!shouldHoldFgs()) {
+                            StreamKeepAliveService.stop(app)
+                            stopJob = null
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /**
      * One-line dump of stream keep-alive / SMB sticky residual work.
@@ -60,9 +97,9 @@ object StreamKeepAlivePolicy {
         return buildString {
             append("unlimited=").append(unlimited())
             append(" fgs=").append(StreamKeepAliveService.isRunning())
-            append(" wake=").append(StreamKeepAliveService.hasWakeLock())
+            append(" playing=").append(isPlaying())
             append(" streamdocFds=").append(StreamDocumentRegistry.networkOpenCount())
-            append(" streamdocTokens=").append(StreamDocumentRegistry.tokenCount())
+            append(" streamdocTokens=").append(StreamDocumentRegistry.networkTokenCount())
             append(" httpTransfers=").append(ExternalHttpStreamServer.networkActivityCount())
             append(" httpSessions=").append(ExternalHttpStreamServer.sessionCount())
             append(" httpWarm=").append(ExternalHttpStreamServer.warmBodyCount())
@@ -90,29 +127,18 @@ object StreamKeepAlivePolicy {
 
     fun onScreenOff() {
         logcat("StreamKeepAlive") { "screen_off before: ${runtimeSnapshot()}" }
-        if (dropNetworkOnScreenOff()) {
-            dropStickyNetwork("screen_off")
-            StreamKeepAliveService.onScreenOffConservePower()
+        if (isPlaying()) {
+            // Background playback: leave the live SMB/WebDAV handle alone.
+            logcat("StreamKeepAlive") { "screen_off: playing — sticky kept" }
         } else {
-            // Unlimited: keep sticky TCP for external players; still log residuals.
-            logcat("StreamKeepAlive") {
-                "screen_off: unlimited — sticky kept; wake lock only if active transfer/FD"
-            }
-            // Drop wake lock when nothing is actively reading (conserve); keep FGS rank if any.
-            StreamKeepAliveService.onNetworkActivityChanged()
+            dropStickyNetwork("screen_off")
         }
         logcat("StreamKeepAlive") { "screen_off after: ${runtimeSnapshot()}" }
     }
 
     fun onScreenOn(context: Context) {
         logcat("StreamKeepAlive") { "screen_on: ${runtimeSnapshot()}" }
-        // Re-arm FGS / wake lock only if something is actively reading (FD or HTTP body).
-        // Idle sessions alone do not restart FGS — next player Range starts it again.
-        if (StreamDocumentRegistry.networkOpenCount() > 0 ||
-            ExternalHttpStreamServer.networkActivityCount() > 0
-        ) {
-            StreamKeepAliveService.start(context)
-        }
+        if (shouldHoldFgs()) StreamKeepAliveService.start(context)
     }
 
     private val processExiting = AtomicBoolean(false)

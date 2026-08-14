@@ -37,8 +37,7 @@ object StreamDocumentRegistry {
         /** Network / stream path: open random-access source for proxy FD. */
         val openSource: (() -> ArchiveByteSource)? = null,
         /**
-         * When true, [openSource] may be invoked twice for independent sticky sessions
-         * (video dual-lane prefetch). SMB/WebDAV sticky opens each own a TCP session.
+         * Unused for video (one sticky lane). Kept so register call sites stay source-compatible.
          */
         val parallelPrefetch: Boolean = false,
         /** Local/SAF path: hand through a real descriptor (preferred when available). */
@@ -56,7 +55,6 @@ object StreamDocumentRegistry {
     /** Serializes global FD accounting with delayed service stop/start transitions. */
     private val keepAliveLock = Any()
     private var totalNetworkOpen = 0
-    private var stopKeepAliveJob: Job? = null
 
     /** Keeps token expiry accurate even when no later registration calls [pruneStale]. */
     private val pruneLock = Any()
@@ -68,14 +66,15 @@ object StreamDocumentRegistry {
     /** Streamdoc tokens still registered (may be idle grants). */
     fun tokenCount(): Int = entries.size
 
+    /** Network streamdoc grants (idle or open). Local/SAF hand-throughs do not hold FGS. */
+    fun networkTokenCount(): Int = entries.values.count { it.openSource != null }
+
     /**
      * Drop all tokens and FGS stop timers. Process exit / Recents swipe only —
      * external viewers will get grant failures on the next open.
      */
     fun clearAll(reason: String = "clear") {
         synchronized(keepAliveLock) {
-            stopKeepAliveJob?.cancel()
-            stopKeepAliveJob = null
             totalNetworkOpen = 0
         }
         synchronized(pruneLock) {
@@ -88,7 +87,7 @@ object StreamDocumentRegistry {
     /** Soft cap so repeated long-press PDF does not retain unbounded lambdas. */
     private const val MAX_ENTRIES = 24
 
-    // Idle token age / FGS stop delay: see [StreamKeepAlivePolicy] (20 min limited / 6 h unlimited).
+    // Idle token age: see [StreamKeepAlivePolicy] (20 min limited / never unlimited).
 
     fun register(
         displayName: String,
@@ -107,6 +106,7 @@ object StreamDocumentRegistry {
             parallelPrefetch = parallelPrefetch,
         )
         schedulePrune()
+        StreamKeepAlivePolicy.reconcileFgs()
         return token
     }
 
@@ -135,9 +135,15 @@ object StreamDocumentRegistry {
         return entry
     }
 
+    /** Optional: in-app video backend evicts when its token is dropped. */
+    @Volatile
+    var onTokenRemoved: ((String) -> Unit)? = null
+
     fun remove(token: String) {
         entries.remove(token)
+        onTokenRemoved?.invoke(token)
         schedulePrune()
+        StreamKeepAlivePolicy.reconcileFgs()
     }
 
     /** Call when a network proxy FD is successfully opened for [token]. */
@@ -148,13 +154,8 @@ object StreamDocumentRegistry {
         schedulePrune()
         synchronized(keepAliveLock) {
             totalNetworkOpen++
-            stopKeepAliveJob?.cancel()
-            stopKeepAliveJob = null
-            // Refresh on every open. This recovers if the OS or user stopped the previous
-            // service, and startForegroundService() is idempotent while it is already alive.
-            StreamKeepAliveService.start(context)
         }
-        StreamKeepAliveService.onNetworkActivityChanged()
+        StreamKeepAlivePolicy.reconcileFgs(context)
     }
 
     /**
@@ -173,24 +174,8 @@ object StreamDocumentRegistry {
         entry.lastAccessMs = SystemClock.elapsedRealtime()
         synchronized(keepAliveLock) {
             totalNetworkOpen = (totalNetworkOpen - 1).coerceAtLeast(0)
-            StreamKeepAliveService.onNetworkActivityChanged()
-            if (totalNetworkOpen == 0) {
-                // Keep the low-priority FGS briefly for URI reopen, but do not keep the CPU
-                // awake during that idle grace period.
-                stopKeepAliveJob?.cancel()
-                stopKeepAliveJob = scope.launch {
-                    delay(StreamKeepAlivePolicy.fgsStopDelayMs())
-                    synchronized(keepAliveLock) {
-                        if (totalNetworkOpen == 0 &&
-                            ExternalHttpStreamServer.networkActivityCount() == 0
-                        ) {
-                            StreamKeepAliveService.stop(context)
-                            stopKeepAliveJob = null
-                        }
-                    }
-                }
-            }
         }
+        StreamKeepAlivePolicy.reconcileFgs(context)
         schedulePrune()
     }
 
@@ -200,33 +185,41 @@ object StreamDocumentRegistry {
      */
     fun pruneStale(
         nowMs: Long = SystemClock.elapsedRealtime(),
-        maxAgeMs: Long = StreamKeepAlivePolicy.tokenMaxAgeMs(),
+        maxAgeMs: Long? = StreamKeepAlivePolicy.tokenMaxAgeMs(),
     ) {
         if (entries.isEmpty()) return
-        for ((token, entry) in entries) {
-            if (entry.openCount.get() > 0) continue
-            if (nowMs - entry.lastAccessMs >= maxAgeMs) {
-                entries.remove(token, entry)
+        if (maxAgeMs != null) {
+            for ((token, entry) in entries) {
+                if (entry.openCount.get() > 0) continue
+                if (nowMs - entry.lastAccessMs >= maxAgeMs) {
+                    entries.remove(token, entry)
+                }
             }
         }
-        if (entries.size <= MAX_ENTRIES) return
-        val overflow = entries.size - MAX_ENTRIES
-        entries.entries
-            .filter { it.value.openCount.get() == 0 }
-            .sortedBy { it.value.lastAccessMs }
-            .take(overflow)
-            .forEach { entries.remove(it.key, it.value) }
+        if (entries.size > MAX_ENTRIES) {
+            val overflow = entries.size - MAX_ENTRIES
+            entries.entries
+                .filter { it.value.openCount.get() == 0 }
+                .sortedBy { it.value.lastAccessMs }
+                .take(overflow)
+                .forEach { entries.remove(it.key, it.value) }
+        }
+        StreamKeepAlivePolicy.reconcileFgs()
     }
 
     /** Arm one timer for the earliest idle token; touches and reopen events rebase it. */
     private fun schedulePrune(nowMs: Long = SystemClock.elapsedRealtime()) {
         val maxAgeMs = StreamKeepAlivePolicy.tokenMaxAgeMs()
-        val nextDelayMs = entries.values
-            .asSequence()
-            .filter { it.openCount.get() == 0 }
-            .map { maxAgeMs - (nowMs - it.lastAccessMs) }
-            .minOrNull()
-            ?.coerceAtLeast(1L)
+        val nextDelayMs = if (maxAgeMs == null) {
+            null
+        } else {
+            entries.values
+                .asSequence()
+                .filter { it.openCount.get() == 0 }
+                .map { maxAgeMs - (nowMs - it.lastAccessMs) }
+                .minOrNull()
+                ?.coerceAtLeast(1L)
+        }
         synchronized(pruneLock) {
             pruneJob?.cancel()
             pruneJob = nextDelayMs?.let { delayMs ->

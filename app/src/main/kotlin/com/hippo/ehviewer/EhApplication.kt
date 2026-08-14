@@ -124,8 +124,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                 }
             },
         )
-        // Limited stream keep-alive: drop sticky Fuse sockets + wake lock when screen offs;
-        // re-arm FGS on screen on if a network proxy FD is still live (resumable reconnect).
+        // Screen off: drop idle sticky sockets; keep them only while a transfer is playing.
         registerScreenPowerReceiver()
         // Path change (Wi‑Fi, cell, VPN/EasyTier) can leave dead keep-alives — reset pools/clients.
         registerNetworkPathCallbacks()

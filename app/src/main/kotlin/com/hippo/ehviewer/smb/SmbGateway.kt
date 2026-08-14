@@ -39,6 +39,7 @@ import java.net.Socket
 import java.util.EnumSet
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -47,6 +48,7 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.net.SocketFactory
 import kotlin.coroutines.coroutineContext
 import kotlin.math.min
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +65,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -93,6 +96,14 @@ import kotlinx.coroutines.withTimeoutOrNull
  * We only set standard socket options ([KeepAliveSocketFactory]: SO_KEEPALIVE, TCP_NODELAY)
  * and smbj timeouts. We do **not** reimplement TCP; health is inferred from smbj I/O
  * and optional idle SMB probes. Circuit-breaker only after repeated connect/path failures.
+ *
+ * ## Async transport (Advanced toggle)
+ * Off: smbj [DirectTcpTransport] — one Packet Reader thread per TCP (legacy).
+ * On: three [AsynchronousChannelGroup]s (list / browse / video). Sticky video uses
+ * the video group so a stale play cannot stall listing or a new handshake.
+ * [beginVideoPlay] evicts the previous generation; HTTP cannot signal stop.
+ * Browse thumbs are [ShareOp.Background]: an interactive data wait or new play
+ * cancels them so they retry after the reader / video takes the slot.
  */
 object SmbGateway {
     private const val POOL_CAPACITY = 7
@@ -163,26 +174,88 @@ object SmbGateway {
         dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
 
-    private enum class ShareOp { Data, List }
+    private enum class ShareOp { Data, List, Background }
 
-    private fun smbConfig(forList: Boolean = false): SmbConfig = if (forList) listConfig else config
+    /** Thumb / cover I/O cancelled so a reader or new play can take the data slot. */
+    private class YieldCancellation : CancellationException("SMB yield to interactive")
+
+    private const val YIELD_RETRY_MS = 80L
+    private const val BACKGROUND_BACKOFF_MS = 40L
+
+    private val backgroundCancels = ConcurrentHashMap.newKeySet<() -> Unit>()
+
+    private fun yieldBackgroundOps(reason: String) {
+        if (backgroundCancels.isEmpty()) return
+        val victims = backgroundCancels.toList()
+        logcat { "SmbGateway: yield ${victims.size} background op(s) ($reason)" }
+        victims.forEach { cancel -> runCatching { cancel.invoke() } }
+    }
+
+    fun isVideoPlayLive(): Boolean = videoStickies.isNotEmpty()
+
+    private suspend fun <T> withBackgroundRetry(block: suspend () -> T): T {
+        while (true) {
+            try {
+                return supervisorScope {
+                    val deferred = async { block() }
+                    val cancel = { deferred.cancel(YieldCancellation()) }
+                    backgroundCancels.add(cancel)
+                    try {
+                        deferred.await()
+                    } finally {
+                        backgroundCancels.remove(cancel)
+                    }
+                }
+            } catch (e: CancellationException) {
+                coroutineContext.ensureActive()
+                if (e.isYieldCancellation()) {
+                    delay(YIELD_RETRY_MS)
+                    continue
+                }
+                throw e
+            }
+        }
+    }
+
+    private fun Throwable.isYieldCancellation(): Boolean {
+        var cur: Throwable? = this
+        while (cur != null) {
+            if (cur is YieldCancellation) return true
+            cur = cur.cause
+        }
+        return false
+    }
+
+    private enum class TransportRole { Browse, List, Video }
+
+    private fun smbConfig(forList: Boolean = false): SmbConfig = smbConfig(if (forList) TransportRole.List else TransportRole.Browse)
+
+    private fun smbConfig(role: TransportRole): SmbConfig = when (role) {
+        TransportRole.Browse -> config
+        TransportRole.List -> listConfig
+        TransportRole.Video -> videoConfig
+    }
 
     /**
-     * Advanced toggles (SMB3-only / encryption) changed — rebuild [SmbConfig] and drop every
-     * pooled session so the next op reconnects with the new dialects/capabilities.
+     * Advanced toggles (SMB3-only / encryption / async transport) changed — rebuild
+     * [SmbConfig] and drop browse pools **and** sticky video/FUSE so the next op
+     * reconnects with the new dialects/capabilities/transport.
      */
     fun onProtocolSettingsChanged() {
-        config = buildSmbConfig(forList = false)
-        listConfig = buildSmbConfig(forList = true)
+        config = buildSmbConfig(TransportRole.Browse)
+        listConfig = buildSmbConfig(TransportRole.List)
+        videoConfig = buildSmbConfig(TransportRole.Video)
         logcat {
             "SmbGateway: protocol settings changed " +
                 "(smb3Only=${Settings.smb3Only.value}, encrypt=${Settings.smbEncryptData.value}, " +
-                "async=${Settings.smbAsyncTransport.value}, crypto=${SmbCrypto.providerName}) — resetting pool"
+                "async=${Settings.smbAsyncTransport.value}, crypto=${SmbCrypto.providerName}) — " +
+                "resetting browse, list, and sticky"
         }
         dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
+        dropStickySessions("protocol")
     }
 
-    private fun buildSmbConfig(forList: Boolean = false): SmbConfig {
+    private fun buildSmbConfig(role: TransportRole): SmbConfig {
         val builder = SmbConfig.builder()
             .withNegotiatedBufferSize()
             .withTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
@@ -194,7 +267,11 @@ object SmbGateway {
             .withEncryptData(Settings.smbEncryptData.value)
         if (Settings.smbAsyncTransport.value) {
             builder.withTransportLayerFactory(
-                if (forList) SmbAsyncTransport.listFactory else SmbAsyncTransport.factory,
+                when (role) {
+                    TransportRole.Browse -> SmbAsyncTransport.factory
+                    TransportRole.List -> SmbAsyncTransport.listFactory
+                    TransportRole.Video -> SmbAsyncTransport.videoFactory
+                },
             )
         }
         // Default smbj dialects: 3.1.1 … 2.0.2. SMB3-only drops 2.x.
@@ -233,7 +310,7 @@ object SmbGateway {
                     "encryptPref=${Settings.smbEncryptData.value} " +
                     "serverEncrypt=${ctx.supportsEncryption()} " +
                     "crypto=${SmbCrypto.providerName} " +
-                    "transport=${smbConfig().transportLayerFactory.javaClass.simpleName} " +
+                    "transport=${roleTransportName(role)} " +
                     "browseHosts=${browsePoolHostCount()} sticky=${stickyConnectionCount()} " +
                     "httpStickyFree=${httpStickyPoolAvailable()}/${httpStickyPoolSize()}"
             }
@@ -242,15 +319,27 @@ object SmbGateway {
         }
     }
 
+    private fun roleTransportName(role: String): String {
+        val cfg = when (role) {
+            "list" -> listConfig
+            "sticky" -> videoConfig
+            else -> config
+        }
+        return cfg.transportLayerFactory.javaClass.simpleName
+    }
+
     /**
      * Rebuilt when Advanced SMB dialect/encryption toggles change.
      * Always read via [smbConfig]; never cache a stale client config across toggles.
      */
     @Volatile
-    private var config: SmbConfig = buildSmbConfig(forList = false)
+    private var config: SmbConfig = buildSmbConfig(TransportRole.Browse)
 
     @Volatile
-    private var listConfig: SmbConfig = buildSmbConfig(forList = true)
+    private var listConfig: SmbConfig = buildSmbConfig(TransportRole.List)
+
+    @Volatile
+    private var videoConfig: SmbConfig = buildSmbConfig(TransportRole.Video)
 
     private val hostPools = ConcurrentHashMap<String, HostPool>()
     private val connectedHosts = ConcurrentHashMap.newKeySet<String>()
@@ -276,11 +365,54 @@ object SmbGateway {
     private val stickyConnections = ConcurrentHashMap.newKeySet<Connection>()
 
     /**
-     * Cap concurrent **HTTP loopback** sticky TCP sessions (external player path).
-     * Demand + prefetch = up to 2 per active video; 4 allows two dual-lane streams.
-     * Fair so new GETs queue fairly after idle-warm eviction.
+     * Sticky TCPs opened for a [beginVideoPlay] generation. A newer play closes older
+     * generations so a stale HTTP GET cannot occupy the video NIO group.
+     * PDF / non-video FUSE stickies are not registered here.
      */
-    private const val HTTP_STICKY_POOL_SIZE = 4
+    private data class VideoSticky(val epoch: Int, val connection: Connection)
+
+    private val videoStickies = ConcurrentHashMap.newKeySet<VideoSticky>()
+    private val videoPlayEpoch = AtomicInteger(0)
+    private val videoPlayListeners = CopyOnWriteArrayList<() -> Unit>()
+
+    /**
+     * Bump the video generation. Listeners close previous in-app / HTTP video bodies
+     * (so they do not reconnect). Then leftover video-generation TCPs are force-closed.
+     *
+     * Demand + prefetch of the **same** play must share one call — do not invoke per lane.
+     */
+    fun beginVideoPlay(reason: String): Int {
+        val epoch = videoPlayEpoch.incrementAndGet()
+        logcat { "SmbGateway: begin video play epoch=$epoch ($reason)" }
+        videoPlayListeners.forEach { listener ->
+            runCatching { listener.invoke() }
+        }
+        yieldBackgroundOps("video-play-$epoch")
+        dropVideoStickiesOlderThan(epoch)
+        return epoch
+    }
+
+    fun currentVideoPlayEpoch(): Int = videoPlayEpoch.get()
+
+    fun addVideoPlayListener(listener: () -> Unit) {
+        videoPlayListeners.addIfAbsent(listener)
+    }
+
+    private fun dropVideoStickiesOlderThan(epoch: Int) {
+        val doomed = videoStickies.filter { it.epoch < epoch }
+        if (doomed.isEmpty()) return
+        doomed.forEach { videoStickies.remove(it) }
+        logcat { "SmbGateway: drop video stickies older than epoch=$epoch count=${doomed.size}" }
+        gatewayScope.launch {
+            doomed.forEach { vs -> runCatching { vs.connection.close() } }
+        }
+    }
+
+    /**
+     * Cap concurrent **video** sticky TCP sessions (HTTP loopback + in-app streamdoc).
+     * One lane per video; 2 is a teardown cushion while the previous lease's TCP closes.
+     */
+    private const val HTTP_STICKY_POOL_SIZE = 2
 
     /** Safety bound if an evicted SMB transport does not release its permit promptly. */
     private const val HTTP_STICKY_WAIT_TIMEOUT_MS = 10_000L
@@ -465,6 +597,9 @@ object SmbGateway {
         /** Wakes waiters when an op finishes or a session is added. */
         private val freeSignal = Channel<Unit>(Channel.CONFLATED)
         private var keepAliveJob: Job? = null
+
+        /** Interactive data acquires currently blocked on a slot. */
+        private val interactiveWaiters = AtomicInteger(0)
 
         fun startKeepAlive() {
             if (keepAliveJob?.isActive == true) return
@@ -689,14 +824,48 @@ object SmbGateway {
             openSession: suspend (reservedForList: Boolean) -> PooledSession,
         ): Acquired {
             if (kind == ShareOp.List) return acquireList(credKey, shareName, openSession)
-            hostOpSlots.acquire()
+            if (kind == ShareOp.Background) return acquireBackground(credKey, shareName, openSession)
+            if (!hostOpSlots.tryAcquire()) {
+                interactiveWaiters.incrementAndGet()
+                try {
+                    yieldBackgroundOps("host-op-wait $hostPortKey")
+                    hostOpSlots.acquire()
+                } finally {
+                    interactiveWaiters.decrementAndGet()
+                }
+            }
             try {
-                return Acquired(acquireDataSession(credKey, shareName, openSession), heldHostSlot = true)
+                return Acquired(
+                    acquireDataSession(credKey, shareName, openSession, yieldThumbs = true),
+                    heldHostSlot = true,
+                )
             } catch (e: Throwable) {
                 hostOpSlots.release()
                 throw e
             }
         }
+
+        private suspend fun acquireBackground(
+            credKey: String,
+            shareName: String,
+            openSession: suspend (reservedForList: Boolean) -> PooledSession,
+        ): Acquired {
+            while (interactiveWaiters.get() > 0) {
+                delay(BACKGROUND_BACKOFF_MS)
+            }
+            hostOpSlots.acquire()
+            try {
+                return Acquired(
+                    acquireDataSession(credKey, shareName, openSession, yieldThumbs = false),
+                    heldHostSlot = true,
+                )
+            } catch (e: Throwable) {
+                hostOpSlots.release()
+                throw e
+            }
+        }
+
+        private fun canBorrowDataForList(): Boolean = interactiveWaiters.get() == 0 && !isVideoPlayLive()
 
         private suspend fun acquireList(
             credKey: String,
@@ -707,7 +876,7 @@ object SmbGateway {
                 ?.let { return Acquired(it, heldHostSlot = false) }
             tryGrow(credKey, forList = true, openSession)
                 ?.let { return Acquired(it, heldHostSlot = false) }
-            if (hostOpSlots.tryAcquire()) {
+            if (canBorrowDataForList() && hostOpSlots.tryAcquire()) {
                 tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)
                     ?.let { return Acquired(it, heldHostSlot = true) }
                 hostOpSlots.release()
@@ -719,7 +888,7 @@ object SmbGateway {
                     ?.let { return Acquired(it, heldHostSlot = false) }
                 tryGrow(credKey, forList = true, openSession)
                     ?.let { return Acquired(it, heldHostSlot = false) }
-                if (hostOpSlots.tryAcquire()) {
+                if (canBorrowDataForList() && hostOpSlots.tryAcquire()) {
                     tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)
                         ?.let { return Acquired(it, heldHostSlot = true) }
                     hostOpSlots.release()
@@ -742,34 +911,45 @@ object SmbGateway {
             credKey: String,
             shareName: String,
             openSession: suspend (reservedForList: Boolean) -> PooledSession,
+            yieldThumbs: Boolean,
         ): PooledSession {
             tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
             tryGrow(credKey, forList = false, openSession)?.let { return it }
 
+            var waiting = false
             var waits = 0
-            while (true) {
-                tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
-                tryGrow(credKey, forList = false, openSession)?.let { return it }
+            try {
+                while (true) {
+                    if (yieldThumbs && !waiting) {
+                        waiting = true
+                        interactiveWaiters.incrementAndGet()
+                        yieldBackgroundOps("data-wait $hostPortKey")
+                    }
+                    tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
+                    tryGrow(credKey, forList = false, openSession)?.let { return it }
 
-                val got = withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
-                tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
-                if (got == null) {
-                    waits++
-                    if (liveDataCount() >= maxConnectionsPerHost()) {
-                        if (retireOneOtherCred(credKey)) {
+                    val got = withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
+                    tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
+                    if (got == null) {
+                        waits++
+                        if (liveDataCount() >= maxConnectionsPerHost()) {
+                            if (retireOneOtherCred(credKey)) {
+                                tryGrow(credKey, forList = false, openSession)?.let { return it }
+                            }
+                        } else {
                             tryGrow(credKey, forList = false, openSession)?.let { return it }
                         }
-                    } else {
-                        tryGrow(credKey, forList = false, openSession)?.let { return it }
-                    }
-                    if (waits >= 3) {
-                        error(
-                            "SMB host $hostPortKey busy: no free op slot for this user " +
-                                "(sessions=${liveDataCount()}/${maxConnectionsPerHost()}, " +
-                                "ops/session=${opsPerSession()}, hostOps≤$MAX_SAFE_HOST_OPS)",
-                        )
+                        if (waits >= 3) {
+                            error(
+                                "SMB host $hostPortKey busy: no free op slot for this user " +
+                                    "(sessions=${liveDataCount()}/${maxConnectionsPerHost()}, " +
+                                    "ops/session=${opsPerSession()}, hostOps≤$MAX_SAFE_HOST_OPS)",
+                            )
+                        }
                     }
                 }
+            } finally {
+                if (waiting) interactiveWaiters.decrementAndGet()
             }
         }
 
@@ -1440,22 +1620,18 @@ object SmbGateway {
         source: SmbSourceEntity,
         password: String,
         relativeFilePath: String,
+        yieldable: Boolean = false,
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
     ): T = withIOContext {
-        withShare(source, password) { share ->
-            val path = remotePath(source, relativeFilePath)
-            share.openFile(
-                path,
-                EnumSet.of(AccessMask.GENERIC_READ),
-                null,
-                SMB2ShareAccess.ALL,
-                SMB2CreateDisposition.FILE_OPEN,
-                null,
-            ).use { file ->
+        val kind = if (yieldable) ShareOp.Background else ShareOp.Data
+        val open = suspend {
+            val ctx = coroutineContext
+            copyOpenFile(source, password, relativeFilePath, ctx, kind) { file ->
                 val size = file.fileInformation.standardInformation.endOfFile
                 block(file, size)
             }
         }
+        if (yieldable) withBackgroundRetry { open() } else open()
     }
 
     /**
@@ -1474,13 +1650,14 @@ object SmbGateway {
         source: SmbSourceEntity,
         password: String,
         relativeFilePath: String,
+        videoPlayEpoch: Int? = null,
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
     ): T = withIOContext {
-        openStickyConnection(source, password, relativeFilePath, block)
+        openStickyConnection(source, password, relativeFilePath, videoPlayEpoch, block)
     }
 
     /**
-     * Sticky open limited by [HTTP_STICKY_POOL_SIZE] for **loopback HTTP** video.
+     * Sticky open limited by [HTTP_STICKY_POOL_SIZE] for **video** (HTTP + streamdoc).
      *
      * Before a demand lane blocks for a slot, invokes [onHttpStickyPoolPressure] so idle
      * warm HTTP bodies can release their stickies (new GET first). A non-waiting optional
@@ -1492,6 +1669,7 @@ object SmbGateway {
         relativeFilePath: String,
         waitForSlot: Boolean = true,
         lease: HttpStickyLease? = null,
+        videoPlayEpoch: Int? = null,
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
     ): T = withIOContext {
         val permitLease = lease ?: HttpStickyLease()
@@ -1504,7 +1682,7 @@ object SmbGateway {
             )
         }
         try {
-            openStickyConnection(source, password, relativeFilePath, block)
+            openStickyConnection(source, password, relativeFilePath, videoPlayEpoch, block)
         } finally {
             releaseHttpStickyPermit(permitLease, "close")
         }
@@ -1541,20 +1719,23 @@ object SmbGateway {
         source: SmbSourceEntity,
         password: String,
         relativeFilePath: String,
+        videoPlayEpoch: Int? = null,
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
     ): T {
         // Own client+connection so smbj host Connection cache cannot couple sticky to
         // the shared pool (and so dropAllSessions never closes this handle).
-        // Must use [endpointHost] (EasyTier virtual host when tunnel is up) — same as
-        // browse/pool. Video/PDF sticky opens used source.host and failed over EasyTier.
+        // Must use [endpointHost] — same as browse/pool (EasyTier channel may override).
+        // Video/FUSE use [videoConfig] so async completions stay off the browse NIO group.
         val host = endpointHost(source)
         ensureHostNotCoolingDown(host, source.port)
-        val smbClient = SMBClient(smbConfig())
+        val smbClient = SMBClient(smbConfig(TransportRole.Video))
         val prevTag = TrafficStats.getThreadStatsTag()
         TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
         try {
             val connection = smbClient.connect(host, source.port)
             stickyConnections.add(connection)
+            val videoSticky = videoPlayEpoch?.let { VideoSticky(it, connection) }
+            videoSticky?.let { videoStickies.add(it) }
             try {
                 val session = connection.authenticate(auth(source, password))
                 logNegotiated("sticky", host, source.port, connection, session)
@@ -1580,6 +1761,7 @@ object SmbGateway {
                     runCatching { session.close() }
                 }
             } finally {
+                videoSticky?.let { videoStickies.remove(it) }
                 stickyConnections.remove(connection)
                 runCatching { connection.close() }
             }
@@ -1602,6 +1784,7 @@ object SmbGateway {
         val list = stickyConnections.toList()
         if (list.isEmpty()) return
         list.forEach { stickyConnections.remove(it) }
+        videoStickies.clear()
         logcat { "SmbGateway: drop sticky sessions ($reason) count=${list.size}" }
         gatewayScope.launch {
             list.forEach { conn ->
@@ -1615,19 +1798,24 @@ object SmbGateway {
         password: String,
         relativeFilePath: String,
         out: OutputStream,
+        yieldable: Boolean = false,
     ) = withIOContext {
         val downloadContext = coroutineContext
-        copyOpenFile(source, password, relativeFilePath, downloadContext) { file ->
-            val buffer = ByteArray(DOWNLOAD_CHUNK)
-            var offset = 0L
-            while (true) {
-                downloadContext.ensureActive()
-                val n = file.read(buffer, offset, 0, buffer.size)
-                if (n <= 0) break
-                out.write(buffer, 0, n)
-                offset += n
+        val kind = if (yieldable) ShareOp.Background else ShareOp.Data
+        val copy = suspend {
+            copyOpenFile(source, password, relativeFilePath, downloadContext, kind) { file ->
+                val buffer = ByteArray(DOWNLOAD_CHUNK)
+                var offset = 0L
+                while (true) {
+                    downloadContext.ensureActive()
+                    val n = file.read(buffer, offset, 0, buffer.size)
+                    if (n <= 0) break
+                    out.write(buffer, 0, n)
+                    offset += n
+                }
             }
         }
+        if (yieldable) withBackgroundRetry { copy() } else copy()
     }
 
     /**
@@ -1714,6 +1902,7 @@ object SmbGateway {
         password: String,
         relativeFilePath: String,
         downloadContext: kotlin.coroutines.CoroutineContext,
+        kind: ShareOp = ShareOp.Data,
         block: (com.hierynomus.smbj.share.File) -> T,
     ): T {
         val activeFile = AtomicReference<com.hierynomus.smbj.share.File?>(null)
@@ -1729,7 +1918,7 @@ object SmbGateway {
             }
         }
         try {
-            return withShare(source, password) { share ->
+            return withShare(source, password, kind) { share ->
                 val path = remotePath(source, relativeFilePath)
                 share.openFile(
                     path,

@@ -14,8 +14,8 @@ import java.util.concurrent.atomic.AtomicLong
  * External players issue many small Fuse reads (often ≤128 KiB). This source:
  * - Serves from an aligned multi-block sliding window (demand hits are cheap)
  * - Prefetches several blocks **ahead** of the playhead so 4K / ~80 Mbps stays fed
- * - Uses a second [ArchiveByteSource] lane for prefetch so speculative SMB/WebDAV I/O
- *   never queues behind (or blocks) demand reads when dual sticky sessions are available
+ * - Prefetch uses the **same** lane as demand; a seek drops queued prefetch reads so
+ *   demand is not stuck behind the old runway
  *
  * Not an archive readahead: no 64 KiB random-probe mode, no ZIP/TAR semantics.
  * PDF / sparse documents stay on [BlockCacheArchiveByteSource].
@@ -124,6 +124,11 @@ class VideoDirectLinkByteSource(
             if (jump > 2L) {
                 epoch.incrementAndGet()
                 cancelStalePrefetch(keep = blockIndex)
+                demand.dropQueuedReads()
+                val prefetchLane = prefetch
+                if (prefetchLane != null && prefetchLane !== demand) {
+                    prefetchLane.dropQueuedReads()
+                }
             }
         }
     }
@@ -305,32 +310,16 @@ class VideoDirectLinkByteSource(
         fun isVideo(mimeType: String, displayName: String): Boolean = mimeType.startsWith("video/", ignoreCase = true) || isVideoFileName(displayName)
 
         /**
-         * Open a dual-lane video source when [openLane] / [openPrefetch] can produce
-         * independent sticky sessions. Falls back to single-lane if prefetch open fails
-         * (e.g. HTTP SMB sticky pool full — pass a non-waiting prefetch factory).
+         * One sticky lane. Prefetch shares [openLane]; a seek [dropQueuedReads]s so
+         * demand is not queued behind speculative work.
          */
         fun open(
             openLane: () -> ArchiveByteSource,
             knownSize: Long,
-            parallelPrefetch: Boolean,
-            /** Optional separate factory for prefetch (e.g. pool try-acquire). Defaults to [openLane]. */
-            openPrefetch: (() -> ArchiveByteSource)? = null,
-        ): VideoDirectLinkByteSource {
-            val demand = openLane()
-            val prefetchLane = if (parallelPrefetch) {
-                try {
-                    (openPrefetch ?: openLane)()
-                } catch (_: Throwable) {
-                    null
-                }
-            } else {
-                null
-            }
-            return VideoDirectLinkByteSource(
-                demand = demand,
-                prefetch = prefetchLane,
-                knownSize = knownSize,
-            )
-        }
+        ): VideoDirectLinkByteSource = VideoDirectLinkByteSource(
+            demand = openLane(),
+            prefetch = null,
+            knownSize = knownSize,
+        )
     }
 }

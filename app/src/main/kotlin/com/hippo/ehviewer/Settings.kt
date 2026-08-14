@@ -253,8 +253,9 @@ object Settings : DataStorePreferences(null) {
     }
 
     /**
-     * smbj async NIO transport (shared channel group). Default on.
+     * smbj async NIO transport (list / browse / video channel groups). Default on.
      * Off falls back to one blocking Packet Reader thread per TCP.
+     * Toggle drops browse pools and sticky video/FUSE so the next op uses the new transport.
      */
     val smbAsyncTransport = boolPref("smb_async_transport", true).observed {
         com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
@@ -314,15 +315,16 @@ object Settings : DataStorePreferences(null) {
     }
 
     /**
-     * External Fuse stream keep-alive (SMB/WebDAV proxy FD).
+     * Slim FGS for external HTTP / streamdoc.
      *
-     * **Default off (limited):** idle token/FGS wake budget **20 minutes**; **screen off**
-     * drops sticky network sockets (next player read reconnects — resumable with a short stall).
+     * **Default off (limited):** idle HTTP session + FGS **20 minutes**, then stop. Screen off
+     * drops sticky sockets unless a transfer is in flight.
      *
-     * **On (unlimited):** long idle grants (6 h), long wake lock, keep sticky sockets across
-     * screen-off (previous behaviour — better for long movies / phone in pocket, more battery).
+     * **On (unlimited):** keep HTTP listener + session map until Recents swipe. No wake lock.
+     * Screen off keeps the connection only while playing (background playback).
      */
     val streamKeepAliveUnlimited = boolPref("stream_keep_alive_unlimited", false)
+        .observed(::updateWhenStreamKeepAliveUnlimitedChanges)
 
     val hardwareBitmapThreshold = intPref("hardware_bitmap_threshold", 16384)
     val preloadThumbAggressively = boolPref("preload_thumb_aggressively", false)

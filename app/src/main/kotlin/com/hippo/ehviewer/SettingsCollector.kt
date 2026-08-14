@@ -59,6 +59,11 @@ suspend fun updateWhenSaveFileMarkersChanges(enabled: Boolean) {
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
+fun updateWhenStreamKeepAliveUnlimitedChanges(enabled: Boolean) {
+    com.hippo.ehviewer.provider.StreamKeepAlivePolicy.onUnlimitedChanged()
+}
+
 // Stubs for removed EH prefs still referenced by Settings property initializers
 fun updateWhenRequestNewsChanges() = Unit
 suspend fun updateWhenGallerySiteChanges(gallerySite: Int) = Unit

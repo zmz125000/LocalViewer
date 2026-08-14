@@ -256,6 +256,7 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_advanced_unlimit_foreground_service),
+                summary = stringResource(id = R.string.settings_advanced_unlimit_foreground_service_summary),
                 state = Settings.streamKeepAliveUnlimited.asMutableState(),
             )
             IntSliderPreference(

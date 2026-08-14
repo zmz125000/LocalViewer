@@ -61,7 +61,7 @@ class SmbArchiveByteSource(
      */
     httpStickyPool: Boolean = false,
     /**
-     * If [httpStickyPool]: wait for a free slot (demand lane) or fail fast (prefetch lane).
+     * If [httpStickyPool]: wait for a free slot (video demand). Prefetch shares this lane.
      */
     httpStickyWait: Boolean = true,
     /**
@@ -69,6 +69,17 @@ class SmbArchiveByteSource(
      * the first [readAt]. Must match the remote file.
      */
     knownSize: Long = -1L,
+    /**
+     * This handle belongs to a [SmbGateway.beginVideoPlay] generation. A newer play
+     * force-closes the TCP so a stale HTTP GET cannot occupy the video NIO group.
+     * PDF / non-video FUSE must leave this false.
+     */
+    videoPlay: Boolean = false,
+    /**
+     * Browse-pool cover / video-thumb I/O. Interactive reader or a new play can cancel
+     * this borrow so it retries after they take the slot. Sticky sessions ignore this.
+     */
+    yieldable: Boolean = false,
     /**
      * Windowed readahead for sequential archive parsing. Off when a higher layer
      * (e.g. [com.hippo.ehviewer.library.BlockCacheArchiveByteSource]) owns caching.
@@ -83,6 +94,8 @@ class SmbArchiveByteSource(
         httpStickyPool,
         httpStickyWait,
         knownSize,
+        videoPlay,
+        yieldable,
     )
     private val inner: ArchiveByteSource = if (readahead) {
         ReadAheadArchiveByteSource(
@@ -100,6 +113,8 @@ class SmbArchiveByteSource(
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = inner.readAt(offset, buf, off, len)
 
     override fun warm(offset: Long, length: Int) = inner.warm(offset, length)
+
+    override fun dropQueuedReads() = raw.dropQueuedReads()
 
     override fun close() = inner.close()
 }
@@ -119,6 +134,8 @@ private class KeepOpenSmbFileSource(
     private val httpStickyPool: Boolean = false,
     private val httpStickyWait: Boolean = true,
     knownSize: Long = -1L,
+    private val videoPlay: Boolean = false,
+    private val yieldable: Boolean = false,
 ) : ArchiveByteSource {
     private val remote = RemoteArchiveOpen.normalizeRemoteRelative(remoteRelativeFile)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -248,6 +265,7 @@ private class KeepOpenSmbFileSource(
                                     activeFile.compareAndSet(file, null)
                                 }
                             }
+                            val playEpoch = if (videoPlay) SmbGateway.currentVideoPlayEpoch() else null
                             when {
                                 stickySession && httpStickyPool -> {
                                     SmbGateway.withHttpStickyOpenFile(
@@ -256,14 +274,27 @@ private class KeepOpenSmbFileSource(
                                         remote,
                                         waitForSlot = httpStickyWait,
                                         lease = checkNotNull(httpStickyLease),
+                                        videoPlayEpoch = playEpoch,
                                         block = ::drain,
                                     )
                                 }
                                 stickySession -> {
-                                    SmbGateway.withStickyOpenFile(source, password, remote, ::drain)
+                                    SmbGateway.withStickyOpenFile(
+                                        source,
+                                        password,
+                                        remote,
+                                        videoPlayEpoch = playEpoch,
+                                        block = ::drain,
+                                    )
                                 }
                                 else -> {
-                                    SmbGateway.withOpenFile(source, password, remote, ::drain)
+                                    SmbGateway.withOpenFile(
+                                        source,
+                                        password,
+                                        remote,
+                                        yieldable = yieldable && !stickySession,
+                                        block = ::drain,
+                                    )
                                 }
                             }
                             break
@@ -347,6 +378,14 @@ private class KeepOpenSmbFileSource(
             }
             logcat("SmbArchive", e)
             -1
+        }
+    }
+
+    override fun dropQueuedReads() {
+        if (closed.get()) return
+        while (true) {
+            val op = ops.tryReceive().getOrNull() ?: break
+            op.result.complete(-1)
         }
     }
 
