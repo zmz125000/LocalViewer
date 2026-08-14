@@ -22,6 +22,7 @@ class VideoBackendHolder(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     private val lock = Any()
+
     /** Serializes open/install with eviction so an older open cannot win after a new play. */
     private val operationLock = Any()
     private var token: String? = null
