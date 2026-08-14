@@ -80,8 +80,12 @@
 * 隐私模式和历史记录
 * ZIP/RAR/CBZ/CBR/CBT/PDF/EPUB 全格式支持边下边看
 * **JXL/JXR/JPG/AVIF/HEIC HDR 格式支持.**
+* 兼容 Oppo/OnePlus ProXDR HEIC 格式
 * 自动色彩管理，广色域和10位色深支持
 * 高性能 smbj 客户端，支持并发连接，图片丝滑加载
+* Async TCP 连接池，本地访问和互联网访问优化
+* SMB 文件夹浏览模式
+* SMB 文件夹播放，支持 MX Player/MPV/VLC 播放器，支持外挂音轨和字幕文件
 * Ktor CIO WebDAV client 客户端 支持 HTTP/1.1 和 TLS.
 * // Cronet WebDAV 客户端，支持 HTTP/2 和 QUIC
 * HQ 模式支持原图解码显示 (HW 位图最大支持两亿像素)
