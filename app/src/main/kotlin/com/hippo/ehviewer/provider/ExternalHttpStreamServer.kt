@@ -411,29 +411,8 @@ object ExternalHttpStreamServer {
             @Volatile
             private var streaming = false
 
-            private val waitedForResume = AtomicBoolean(false)
-
             override val size: Long get() = cached.body.size
             override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
-                // MX resume: GET 0- then GET saved-pos within a few ms. Wait before the
-                // 2 MiB block at 0 so the resume Range can take the playhead first.
-                if (streaming &&
-                    rangeStart == 0L &&
-                    offset == 0L &&
-                    waitedForResume.compareAndSet(false, true)
-                ) {
-                    val deadline = SystemClock.elapsedRealtime() + RESUME_PLAYHEAD_GRACE_MS
-                    while (cached.playhead.get() == 0L &&
-                        SystemClock.elapsedRealtime() < deadline
-                    ) {
-                        try {
-                            Thread.sleep(RESUME_PLAYHEAD_POLL_MS)
-                        } catch (_: InterruptedException) {
-                            Thread.currentThread().interrupt()
-                            break
-                        }
-                    }
-                }
                 if (streaming && cached.playhead.get() != rangeStart) return 0
                 return synchronized(cached.readLock) {
                     if (streaming && cached.playhead.get() != rangeStart) return 0
@@ -1373,11 +1352,4 @@ object ExternalHttpStreamServer {
 
     /** Max warm video bodies (each ≈ one VideoDirectLink RAM window) process-wide. */
     private const val MAX_WARM_CACHE_FILES = 2
-
-    /**
-     * MX Player resume opens `bytes=0-` then `bytes=saved-` a few ms later. Hold the
-     * first 2 MiB fetch so the saved-position Range can claim the playhead.
-     */
-    private const val RESUME_PLAYHEAD_GRACE_MS = 40L
-    private const val RESUME_PLAYHEAD_POLL_MS = 5L
 }
