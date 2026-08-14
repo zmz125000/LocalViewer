@@ -377,9 +377,11 @@ object SmbGateway {
 
     /**
      * Bump the video generation. Listeners close previous in-app / HTTP video bodies
-     * (so they do not reconnect). Then leftover video-generation TCPs are force-closed.
+     * (lease + File). The old worker should then leave [openStickyConnection] and close
+     * the TCP itself. Force-close of leftover TCPs is **delayed** so it does not share
+     * the small video NIO group with the new handshake (next-file hop hang / ANR).
      *
-     * Demand + prefetch of the **same** play must share one call — do not invoke per lane.
+     * One call per play. Prefetch shares this generation — do not invoke again for it.
      */
     fun beginVideoPlay(reason: String): Int {
         val epoch = videoPlayEpoch.incrementAndGet()
@@ -388,7 +390,7 @@ object SmbGateway {
             runCatching { listener.invoke() }
         }
         yieldBackgroundOps("video-play-$epoch")
-        dropVideoStickiesOlderThan(epoch)
+        scheduleDropVideoStickiesOlderThan(epoch)
         return epoch
     }
 
@@ -398,13 +400,31 @@ object SmbGateway {
         videoPlayListeners.addIfAbsent(listener)
     }
 
+    /**
+     * Wait for evicted workers to close their own TCP. Only force-close stragglers.
+     * A log here means the previous hop did not finish teardown in time — not a seek.
+     */
+    private const val VIDEO_STICKY_TEARDOWN_MS = 500L
+
+    private fun scheduleDropVideoStickiesOlderThan(epoch: Int) {
+        gatewayScope.launch {
+            delay(VIDEO_STICKY_TEARDOWN_MS)
+            dropVideoStickiesOlderThan(epoch)
+        }
+    }
+
     private fun dropVideoStickiesOlderThan(epoch: Int) {
         val doomed = videoStickies.filter { it.epoch < epoch }
         if (doomed.isEmpty()) return
         doomed.forEach { videoStickies.remove(it) }
-        logcat { "SmbGateway: drop video stickies older than epoch=$epoch count=${doomed.size}" }
-        gatewayScope.launch {
-            doomed.forEach { vs -> runCatching { vs.connection.close() } }
+        logcat {
+            "SmbGateway: drop video stickies older than epoch=$epoch count=${doomed.size} " +
+                "sticky=${stickyConnectionCount()}"
+        }
+        doomed.forEach { vs ->
+            gatewayScope.launch {
+                runCatching { vs.connection.close() }
+            }
         }
     }
 
@@ -1659,9 +1679,8 @@ object SmbGateway {
     /**
      * Sticky open limited by [HTTP_STICKY_POOL_SIZE] for **video** (HTTP + streamdoc).
      *
-     * Before a demand lane blocks for a slot, invokes [onHttpStickyPoolPressure] so idle
-     * warm HTTP bodies can release their stickies (new GET first). A non-waiting optional
-     * prefetch lane fails immediately without evicting another stream's warm backend.
+     * Before the video lane blocks for a slot, invokes [onHttpStickyPoolPressure] so idle
+     * warm HTTP bodies can release their stickies (new GET first).
      */
     suspend fun <T> withHttpStickyOpenFile(
         source: SmbSourceEntity,
@@ -1715,6 +1734,23 @@ object SmbGateway {
         } ?: false
     }
 
+    /**
+     * One live video/FUSE tree per host. Next-file hop is [DiskShare.openFile] only —
+     * no new TCP / session / tree. Dropped by [dropStickySessions] (screen off / idle).
+     */
+    private data class ReusableSticky(
+        val key: String,
+        val client: SMBClient,
+        val connection: Connection,
+        val session: Session,
+        val share: DiskShare,
+    )
+
+    private val reusableStickyLock = Any()
+    private var reusableSticky: ReusableSticky? = null
+
+    private fun stickyShareKey(source: SmbSourceEntity, host: String): String = "$host:${source.port}:${source.id}:${shareName(source)}"
+
     private fun <T> openStickyConnection(
         source: SmbSourceEntity,
         password: String,
@@ -1722,56 +1758,120 @@ object SmbGateway {
         videoPlayEpoch: Int? = null,
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
     ): T {
-        // Own client+connection so smbj host Connection cache cannot couple sticky to
-        // the shared pool (and so dropAllSessions never closes this handle).
-        // Must use [endpointHost] — same as browse/pool (EasyTier channel may override).
-        // Video/FUSE use [videoConfig] so async completions stay off the browse NIO group.
         val host = endpointHost(source)
         ensureHostNotCoolingDown(host, source.port)
-        val smbClient = SMBClient(smbConfig(TransportRole.Video))
+        val path = remotePath(source, relativeFilePath)
         val prevTag = TrafficStats.getThreadStatsTag()
         TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
         try {
-            val connection = smbClient.connect(host, source.port)
-            stickyConnections.add(connection)
-            val videoSticky = videoPlayEpoch?.let { VideoSticky(it, connection) }
-            videoSticky?.let { videoStickies.add(it) }
-            try {
-                val session = connection.authenticate(auth(source, password))
-                logNegotiated("sticky", host, source.port, connection, session)
+            val reused = takeReusableSticky(source, host)
+            if (reused != null) {
                 try {
-                    val share = session.connectShare(shareName(source)) as DiskShare
-                    try {
-                        val path = remotePath(source, relativeFilePath)
-                        return share.openFile(
-                            path,
-                            EnumSet.of(AccessMask.GENERIC_READ),
-                            null,
-                            SMB2ShareAccess.ALL,
-                            SMB2CreateDisposition.FILE_OPEN,
-                            null,
-                        ).use { file ->
-                            val size = file.fileInformation.standardInformation.endOfFile
-                            block(file, size)
-                        }
-                    } finally {
-                        runCatching { share.close() }
-                    }
-                } finally {
-                    runCatching { session.close() }
+                    adoptVideoEpoch(reused.connection, videoPlayEpoch)
+                    logcat { "SmbGateway: sticky reuse ${reused.key} file=$path" }
+                    return openFileOnShare(reused.share, path, block)
+                } catch (e: Throwable) {
+                    if (!isShareClosedError(e) && !isTransportError(e)) throw e
+                    logcat { "SmbGateway: sticky reuse failed, reconnect: ${e.message}" }
+                    retireReusable(reused, "reuse-fail")
                 }
-            } finally {
-                videoSticky?.let { videoStickies.remove(it) }
-                stickyConnections.remove(connection)
-                runCatching { connection.close() }
             }
+            return connectReusableSticky(source, password, host, path, videoPlayEpoch, block)
         } finally {
-            runCatching { smbClient.close() }
             if (prevTag == -1) {
                 TrafficStats.clearThreadStatsTag()
             } else {
                 TrafficStats.setThreadStatsTag(prevTag)
             }
+        }
+    }
+
+    private fun takeReusableSticky(source: SmbSourceEntity, host: String): ReusableSticky? {
+        val key = stickyShareKey(source, host)
+        synchronized(reusableStickyLock) {
+            val live = reusableSticky ?: return null
+            if (live.key != key || !live.connection.isConnected) {
+                return null
+            }
+            return live
+        }
+    }
+
+    private fun <T> connectReusableSticky(
+        source: SmbSourceEntity,
+        password: String,
+        host: String,
+        path: String,
+        videoPlayEpoch: Int?,
+        block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
+    ): T {
+        val smbClient = SMBClient(smbConfig(TransportRole.Video))
+        val connection = smbClient.connect(host, source.port)
+        stickyConnections.add(connection)
+        val videoSticky = videoPlayEpoch?.let { VideoSticky(it, connection) }
+        videoSticky?.let { videoStickies.add(it) }
+        try {
+            val session = connection.authenticate(auth(source, password))
+            logNegotiated("sticky", host, source.port, connection, session)
+            val share = session.connectShare(shareName(source)) as DiskShare
+            val created = ReusableSticky(
+                key = stickyShareKey(source, host),
+                client = smbClient,
+                connection = connection,
+                session = session,
+                share = share,
+            )
+            val previous = synchronized(reusableStickyLock) {
+                reusableSticky.also { reusableSticky = created }
+            }
+            if (previous != null && previous.connection !== connection) {
+                retireReusable(previous, "replaced")
+            }
+            return openFileOnShare(share, path, block)
+        } catch (e: Throwable) {
+            videoSticky?.let { videoStickies.remove(it) }
+            stickyConnections.remove(connection)
+            runCatching { connection.close() }
+            runCatching { smbClient.close() }
+            throw e
+        }
+    }
+
+    private fun <T> openFileOnShare(
+        share: DiskShare,
+        path: String,
+        block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
+    ): T = share.openFile(
+        path,
+        EnumSet.of(AccessMask.GENERIC_READ),
+        null,
+        SMB2ShareAccess.ALL,
+        SMB2CreateDisposition.FILE_OPEN,
+        null,
+    ).use { file ->
+        val size = file.fileInformation.standardInformation.endOfFile
+        block(file, size)
+    }
+
+    private fun adoptVideoEpoch(connection: Connection, epoch: Int?) {
+        if (epoch == null) return
+        val stale = videoStickies.filter { it.connection === connection }
+        stale.forEach { videoStickies.remove(it) }
+        videoStickies.add(VideoSticky(epoch, connection))
+    }
+
+    private fun retireReusable(sticky: ReusableSticky, reason: String) {
+        synchronized(reusableStickyLock) {
+            if (reusableSticky === sticky) reusableSticky = null
+        }
+        videoStickies.removeIf { it.connection === sticky.connection }
+        stickyConnections.remove(sticky.connection)
+        logcat { "SmbGateway: retire reusable sticky ($reason) ${sticky.key}" }
+        gatewayScope.launch {
+            runCatching { sticky.share.close() }
+            runCatching { sticky.session.close() }
+            runCatching { sticky.connection.close() }
+            runCatching { sticky.client.close() }
         }
     }
 
@@ -1781,12 +1881,20 @@ object SmbGateway {
      * on the next demand read.
      */
     fun dropStickySessions(reason: String) {
+        val reused = synchronized(reusableStickyLock) {
+            reusableSticky.also { reusableSticky = null }
+        }
         val list = stickyConnections.toList()
-        if (list.isEmpty()) return
+        if (list.isEmpty() && reused == null) return
         list.forEach { stickyConnections.remove(it) }
         videoStickies.clear()
         logcat { "SmbGateway: drop sticky sessions ($reason) count=${list.size}" }
         gatewayScope.launch {
+            if (reused != null) {
+                runCatching { reused.share.close() }
+                runCatching { reused.session.close() }
+                runCatching { reused.client.close() }
+            }
             list.forEach { conn ->
                 runCatching { conn.close() }
             }

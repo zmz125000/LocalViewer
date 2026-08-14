@@ -93,16 +93,12 @@ object ExternalHttpStreamServer {
         val size: Long
         fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int
 
-        /** True when [offset] can be served from this body's in-memory window. */
-        fun isBuffered(offset: Long): Boolean = false
-
         fun warm(offset: Long, length: Int) = Unit
     }
 
     class ArchiveBody(private val source: ArchiveByteSource) : StreamBody {
         override val size: Long get() = source.size
         override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = source.readAt(offset, buf, off, len)
-        override fun isBuffered(offset: Long): Boolean = (source as? VideoDirectLinkByteSource)?.isBuffered(offset) == true
         override fun warm(offset: Long, length: Int) = source.warm(offset, length)
         override fun close() = source.close()
     }
@@ -285,14 +281,19 @@ object ExternalHttpStreamServer {
             true
         }
 
-        /** Make a seek outside the RAM window supersede older Ranges for this same video. */
-        fun prepareRange(body: StreamBody, socket: Socket, start: Long) {
-            (body as? RefBody)?.prepareRange(socket, start)
+        /**
+         * Attach this HTTP Range to the shared body.
+         *
+         * A long / open-ended Range is the playhead. Older streaming Ranges then finish
+         * with EOF so MX resume (0 then saved position) and later probes do **not**
+         * close the live socket — that 4-lane kill aborted start/resume.
+         */
+        fun prepareRange(body: StreamBody, start: Long, streaming: Boolean) {
+            (body as? RefBody)?.prepareRange(start, streaming)
         }
 
-        private fun releaseBody(key: String, cached: CachedBody, socket: Socket?) {
+        private fun releaseBody(key: String, cached: CachedBody) {
             synchronized(bodyLock) {
-                socket?.let { cached.activeSockets.remove(it) }
                 if (cached.refs.decrementAndGet() > 0) return
                 // Keep the backend. Session revisit / seek reuses it; 60s inactive closes.
             }
@@ -368,8 +369,11 @@ object ExternalHttpStreamServer {
         ) {
             val refs = AtomicInteger(0)
 
-            /** HTTP Range sockets currently consuming this shared body; guarded by bodyLock. */
-            val activeSockets = HashSet<Socket>()
+            /**
+             * Byte offset of the latest **streaming** Range (playhead). Probes do not
+             * update this. [Long.MIN_VALUE] = none yet.
+             */
+            val playhead = AtomicLong(Long.MIN_VALUE)
 
             @Volatile var lastAccessMs: Long = SystemClock.elapsedRealtime()
 
@@ -402,12 +406,19 @@ object ExternalHttpStreamServer {
             private val closed = AtomicBoolean(false)
 
             @Volatile
-            private var rangeSocket: Socket? = null
+            private var rangeStart = 0L
+
+            @Volatile
+            private var streaming = false
 
             override val size: Long get() = cached.body.size
-            override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = synchronized(cached.readLock) {
-                cached.touch()
-                cached.body.readAt(offset, buf, off, len)
+            override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+                if (streaming && cached.playhead.get() != rangeStart) return 0
+                return synchronized(cached.readLock) {
+                    if (streaming && cached.playhead.get() != rangeStart) return 0
+                    cached.touch()
+                    cached.body.readAt(offset, buf, off, len)
+                }
             }
 
             override fun warm(offset: Long, length: Int) {
@@ -415,33 +426,15 @@ object ExternalHttpStreamServer {
                 cached.body.warm(offset, length)
             }
 
-            fun prepareRange(socket: Socket, start: Long) {
-                val staleSockets = synchronized(bodyLock) {
-                    rangeSocket = socket
-                    val stale = if (cached.evictOnSmbPoolPressure && !cached.body.isBuffered(start)) {
-                        cached.activeSockets.filter { it !== socket }
-                    } else {
-                        emptyList()
-                    }
-                    cached.activeSockets.add(socket)
-                    stale
-                }
-                for (stale in staleSockets) {
-                    logcat("ExtHttp") {
-                        "supersede stale SMB Range on seek session=$id file=$key start=$start"
-                    }
-                    runCatching { stale.close() }
-                }
-                if (!cached.body.isBuffered(start)) {
-                    runCatching {
-                        cached.body.warm(start, VideoDirectLinkByteSource.VIDEO_BLOCK)
-                    }
-                }
+            fun prepareRange(start: Long, streaming: Boolean) {
+                rangeStart = start
+                this.streaming = streaming
+                if (streaming) cached.playhead.set(start)
             }
 
             override fun close() {
                 if (closed.compareAndSet(false, true)) {
-                    releaseBody(key, cached, rangeSocket)
+                    releaseBody(key, cached)
                 }
             }
         }
@@ -551,7 +544,7 @@ object ExternalHttpStreamServer {
     /**
      * Free sticky SMB slots for a new demand read.
      *
-     * Idle bodies go first. Pool is 2 (one lane per video + teardown cushion).
+     * Idle bodies go first. Pool is 2 (one video lane + teardown cushion).
      */
     fun relieveSmbPoolPressure(): Int {
         var n = 0
@@ -1108,8 +1101,14 @@ object ExternalHttpStreamServer {
             )
             return preferKeepAlive
         }
-        session.prepareRange(body, socket, start)
         val contentLength = end - start + 1L
+        // Open-ended / long Ranges are playback. Short finite Ranges are MX probes
+        // (header, moov, resume peek) and must not become the playhead.
+        session.prepareRange(
+            body,
+            start,
+            streaming = contentLength > VideoDirectLinkByteSource.VIDEO_BLOCK,
+        )
         val status = if (range != null) 206 else 200
         val statusText = if (range != null) "Partial Content" else "OK"
         val mime = entry.mimeType.ifBlank { mimeTypeForFileName(entry.displayName) }

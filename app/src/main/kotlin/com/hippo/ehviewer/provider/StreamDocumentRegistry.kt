@@ -36,10 +36,6 @@ object StreamDocumentRegistry {
         val sizeBytes: Long = -1L,
         /** Network / stream path: open random-access source for proxy FD. */
         val openSource: (() -> ArchiveByteSource)? = null,
-        /**
-         * Unused for video (one sticky lane). Kept so register call sites stay source-compatible.
-         */
-        val parallelPrefetch: Boolean = false,
         /** Local/SAF path: hand through a real descriptor (preferred when available). */
         val openFileDescriptor: (() -> ParcelFileDescriptor)? = null,
         /** ElapsedRealtime ms when registered / last touched (for stale prune). */
@@ -93,7 +89,6 @@ object StreamDocumentRegistry {
         displayName: String,
         mimeType: String = "application/pdf",
         sizeBytes: Long = -1L,
-        parallelPrefetch: Boolean = false,
         openSource: () -> ArchiveByteSource,
     ): String {
         pruneStale()
@@ -103,7 +98,6 @@ object StreamDocumentRegistry {
             mimeType = mimeType,
             sizeBytes = sizeBytes,
             openSource = openSource,
-            parallelPrefetch = parallelPrefetch,
         )
         schedulePrune()
         StreamKeepAlivePolicy.reconcileFgs()

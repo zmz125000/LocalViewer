@@ -32,7 +32,7 @@ import java.util.concurrent.TimeoutException
  * Local/SAF documents return their real seekable descriptor. Network documents use
  * [StorageManager.openProxyFileDescriptor] (AppFuse / MiX-style direct link).
  *
- * - **Video:** [VideoDirectLinkByteSource] — sliding window + dual-lane forward prefetch.
+ * - **Video:** [VideoDirectLinkByteSource] — sliding window + one-lane forward prefetch.
  * - **PDF / other:** [BlockCacheArchiveByteSource] — sparse LRU for random probes.
  */
 class StreamDocumentProvider : ContentProvider() {
