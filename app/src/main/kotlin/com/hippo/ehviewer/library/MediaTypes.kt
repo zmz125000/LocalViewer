@@ -166,14 +166,24 @@ fun isSampleVideoFileName(name: String): Boolean {
 /** Video that counts for browse tags / promote (excludes sample previews). */
 fun isBrowseVideoFileName(name: String): Boolean = isVideoFileName(name) && !isSampleVideoFileName(name)
 
-/** MIME for external open; falls back to application/octet-stream. */
+/**
+ * Unknown / no-extension files. `application/octet-stream` matches almost no
+ * ACTION_VIEW filters, so the system picker shows the wrong category (or none).
+ * Wildcard MIME ([GENERIC_FILE_MIME]) is what file managers use so any handler
+ * can appear.
+ */
+const val GENERIC_FILE_MIME = "*/*"
+
+/** MIME for external open. Unknown extensions use [GENERIC_FILE_MIME]. */
 fun mimeTypeForFileName(name: String): String {
-    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return "application/octet-stream"
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return GENERIC_FILE_MIME
     return when {
         ext in IMAGE_EXTENSIONS -> when (ext) {
             "jpg", "jpe", "jfif" -> "image/jpeg"
             "svg", "svgz" -> "image/svg+xml"
             "jxr", "wdp", "hdp" -> "image/vnd.ms-photo"
+            "ico" -> "image/x-icon"
+            "heics", "heifs", "hif" -> "image/heif"
             else -> "image/$ext"
         }
         ext in VIDEO_EXTENSIONS -> when (ext) {
@@ -197,21 +207,60 @@ fun mimeTypeForFileName(name: String): String {
             "rar", "cbr" -> "application/vnd.rar"
             "7z" -> "application/x-7z-compressed"
             "tar", "cbt" -> "application/x-tar"
-            else -> "application/octet-stream"
+            else -> GENERIC_FILE_MIME
         }
-        else -> when (ext) {
-            "txt" -> "text/plain"
-            "srt" -> "application/x-subrip"
-            "ass", "ssa" -> "text/x-ssa"
-            "vtt" -> "text/vtt"
-            "smi", "sami" -> "application/smil+xml"
-            "sub" -> "text/x-microdvd"
-            "json" -> "application/json"
-            "xml" -> "application/xml"
-            "html", "htm" -> "text/html"
-            else -> "application/octet-stream"
-        }
+        else -> extraMimeForExtension(ext) ?: GENERIC_FILE_MIME
     }
+}
+
+/** Non-image / non-video / non-archive types opened as browse regular files. */
+private fun extraMimeForExtension(ext: String): String? = when (ext) {
+    "txt", "text", "log", "nfo", "ini", "conf", "cfg", "yml", "yaml" -> "text/plain"
+    "md", "markdown" -> "text/markdown"
+    "csv" -> "text/csv"
+    "json" -> "application/json"
+    "xml" -> "application/xml"
+    "html", "htm" -> "text/html"
+    "rtf" -> "application/rtf"
+    "srt" -> "application/x-subrip"
+    "ass", "ssa" -> "text/x-ssa"
+    "vtt" -> "text/vtt"
+    "smi", "sami" -> "application/smil+xml"
+    "sub" -> "text/x-microdvd"
+    "mp3" -> "audio/mpeg"
+    "m4a" -> "audio/mp4"
+    "aac" -> "audio/aac"
+    "flac" -> "audio/flac"
+    "ogg", "oga" -> "audio/ogg"
+    "opus" -> "audio/opus"
+    "wav" -> "audio/wav"
+    "wma" -> "audio/x-ms-wma"
+    "aiff", "aif" -> "audio/aiff"
+    "ape" -> "audio/x-ape"
+    "mka" -> "audio/x-matroska"
+    "mid", "midi" -> "audio/midi"
+    "amr" -> "audio/amr"
+    "doc" -> "application/msword"
+    "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    "xls" -> "application/vnd.ms-excel"
+    "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    "ppt" -> "application/vnd.ms-powerpoint"
+    "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    "odt" -> "application/vnd.oasis.opendocument.text"
+    "ods" -> "application/vnd.oasis.opendocument.spreadsheet"
+    "odp" -> "application/vnd.oasis.opendocument.presentation"
+    "apk", "xapk" -> "application/vnd.android.package-archive"
+    "ttf" -> "font/ttf"
+    "otf" -> "font/otf"
+    "woff" -> "font/woff"
+    "woff2" -> "font/woff2"
+    "gz" -> "application/gzip"
+    "bz2" -> "application/x-bzip2"
+    "xz" -> "application/x-xz"
+    "zst" -> "application/zstd"
+    "iso" -> "application/x-iso9660-image"
+    "torrent" -> "application/x-bittorrent"
+    else -> null
 }
 
 /**

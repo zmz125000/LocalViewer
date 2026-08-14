@@ -979,7 +979,11 @@ object OpenFileExternally {
                 }
                 withUIContext { context.startActivity(intent) }
             } else {
-                val view = DefaultVideoPlayer.videoViewIntent(uri, mimeType).apply {
+                val view = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, mimeType)
+                    addCategory(Intent.CATEGORY_DEFAULT)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     putExtra(Intent.EXTRA_TITLE, displayName)
                     clipData = ClipData.newRawUri(displayName, uri)
                 }
