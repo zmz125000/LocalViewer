@@ -124,7 +124,7 @@
     <string name="settings_advanced_webdav_insecure_tls">允许 WebDAV 不安全 TLS</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">信任任意证书（自签名 HTTPS）。</string>
     <string name="settings_advanced_unlimit_foreground_service">不限制前台服务</string>
-    <string name="settings_advanced_unlimit_foreground_service_summary">默认：熄屏断开网络，空闲 20 分钟后回收。开启：保持 SMB/WebDAV 粘性连接与长时间授权（更适合长片，更耗电）。</string>
+    <string name="settings_advanced_unlimit_foreground_service_summary">默认：空闲 20 分钟后结束 HTTP 会话与前台服务。开启：保持回环与会话直到从最近任务划掉。不持唤醒锁。熄屏仅在正在播放时保持连接。</string>
     <string name="history_unavailable">此项目已不可用</string>
     <string name="settings_download_remote_thumbs">下载网络画廊封面</string>
     <string name="settings_download_remote_thumbs_summary">获取网络画廊缩略图。</string>

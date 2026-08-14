@@ -132,7 +132,7 @@
     <string name="settings_advanced_webdav_insecure_tls">Allow insecure TLS for WebDAV</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">Trust any certificate (self-signed HTTPS).</string>
     <string name="settings_advanced_unlimit_foreground_service">Unlimit foreground service</string>
-    <string name="settings_advanced_unlimit_foreground_service_summary">Default: drop network on screen off and idle after 20 minutes. On: keep sticky SMB/WebDAV sockets and long grants (better long movies, more battery).</string>
+    <string name="settings_advanced_unlimit_foreground_service_summary">Default: HTTP session and FGS stop after 20 minutes idle. On: keep the loopback and session until you swipe the app away. No wake lock. Screen off keeps the connection only while playing.</string>
     <string name="site_e" translatable="false">e-hentai</string>
     <string name="site_ex" translatable="false">exhentai</string>
     <!-- Theme -->

@@ -56,8 +56,8 @@ import splitties.init.appCtx
  *   [INACTIVE_MS] drops the SMB lane; a new file [SmbGateway.beginVideoPlay] evicts now.
  * - At most [MAX_WARM_CACHE_FILES] warm video bodies process-wide (each holds a RAM window).
  *
- * FGS: wake lock only while a body transfer is in flight. Idle FGS is process rank for
- * the session map only — no sticky TCP, no idle-ping.
+ * Slim FGS: process rank for the listener + session map. No wake lock, no idle-ping.
+ * Resume is a new Range; SMB starts then. Screen off drops sticky unless a body is live.
  */
 object ExternalHttpStreamServer {
     /**
@@ -488,13 +488,11 @@ object ExternalHttpStreamServer {
 
     private val activeTransfers = AtomicInteger(0)
     private val sessionLock = Any()
-    private val keepAliveLock = Any()
     private val pruneLock = Any()
-    private var stopKeepAliveJob: Job? = null
     private var pruneJob: Job? = null
 
     /**
-     * In-flight network HTTP **body** transfers (wake lock / screen-on).
+     * In-flight network HTTP **body** transfers (playing).
      *
      * Warm backends and idle sessions do **not** count. Stall abort ([BODY_STALL_MS]) prevents
      * half-open Ranges from pinning this counter forever.
@@ -503,6 +501,9 @@ object ExternalHttpStreamServer {
 
     /** Registered HTTP session tokens (warm body optional). */
     fun sessionCount(): Int = sessions.size
+
+    /** Network HTTP sessions (idle grants that hold slim FGS). */
+    fun networkSessionCount(): Int = sessions.values.count { it.network }
 
     /** Process-wide warm video/network bodies still held. */
     fun warmBodyCount(): Int = sessions.values.sumOf { it.warmBodyCount() }
@@ -516,10 +517,6 @@ object ExternalHttpStreamServer {
      */
     fun shutdown(reason: String = "shutdown") {
         logcat("ExtHttp") { "shutdown ($reason) sessions=${sessionCount()} warm=${warmBodyCount()} transfers=${activeTransfers.get()}" }
-        synchronized(keepAliveLock) {
-            stopKeepAliveJob?.cancel()
-            stopKeepAliveJob = null
-        }
         synchronized(pruneLock) {
             pruneJob?.cancel()
             pruneJob = null
@@ -790,7 +787,7 @@ object ExternalHttpStreamServer {
         val removed = sessions.remove(id)
         removed?.closeBodies()
         schedulePrune()
-        maybeStopKeepAliveLater()
+        StreamKeepAlivePolicy.reconcileFgs()
     }
 
     /** True if [id] is still registered. */
@@ -823,75 +820,34 @@ object ExternalHttpStreamServer {
     //
     // HTTP session token stays in the map until prune (resume without warm SMB).
     // Warm backend: short seek grace, then evict. Stall / pause drops SMB now.
-    // FGS: wake lock only during activeTransfers. Idle FGS = session map + self-stop.
+    // Slim FGS holds the process for the listener + session map. No wake lock.
 
     private fun onNetworkSessionRegistered(context: Context = appCtx) {
-        // Brief FGS so the process is not frozen before the first Range (token in RAM).
-        // No wake lock needed until a transfer starts (onStartCommand checks activity).
-        synchronized(keepAliveLock) {
-            stopKeepAliveJob?.cancel()
-            stopKeepAliveJob = null
-            StreamKeepAliveService.start(context)
-        }
-        StreamKeepAliveService.onNetworkActivityChanged()
-        maybeStopKeepAliveLater()
+        StreamKeepAlivePolicy.reconcileFgs(context)
     }
 
     private fun onTransferStarted(network: Boolean, context: Context = appCtx) {
         if (!network) return
         val n = activeTransfers.incrementAndGet()
         logcat("ExtHttp") { "transfer start active=$n" }
-        synchronized(keepAliveLock) {
-            stopKeepAliveJob?.cancel()
-            stopKeepAliveJob = null
-            StreamKeepAliveService.start(context)
-        }
-        StreamKeepAliveService.onNetworkActivityChanged()
+        StreamKeepAlivePolicy.reconcileFgs(context)
     }
 
     private fun onTransferEnded(network: Boolean) {
         if (!network) return
         val n = activeTransfers.updateAndGet { (it - 1).coerceAtLeast(0) }
         logcat("ExtHttp") { "transfer end active=$n" }
-        StreamKeepAliveService.onNetworkActivityChanged()
-        if (n == 0) {
-            maybeStopKeepAliveLater()
-        }
-    }
-
-    /**
-     * After last network transfer (or session open with no traffic), stop FGS once a short
-     * grace elapses. Session **map** stays until prune (no SMB, no wake lock). On stop:
-     * tear down leftover warm backends.
-     */
-    private fun maybeStopKeepAliveLater(context: Context = appCtx) {
-        synchronized(keepAliveLock) {
-            stopKeepAliveJob?.cancel()
-            stopKeepAliveJob = scope.launch {
-                delay(StreamKeepAlivePolicy.httpFgsStopDelayMs())
-                synchronized(keepAliveLock) {
-                    if (activeTransfers.get() == 0 &&
-                        StreamDocumentRegistry.networkOpenCount() == 0
-                    ) {
-                        StreamKeepAliveService.stop(context)
-                        // FGS ended: drop leftover warm backends (idle timeout may already have).
-                        for (session in sessions.values) {
-                            if (session.network) session.closeBodies()
-                        }
-                        if (StreamKeepAlivePolicy.dropNetworkOnScreenOff()) {
-                            StreamKeepAlivePolicy.dropStickyNetwork("http_fgs_stop")
-                        }
-                        stopKeepAliveJob = null
-                    }
-                }
-            }
-        }
+        StreamKeepAlivePolicy.reconcileFgs()
     }
 
     private fun schedulePrune(nowMs: Long = SystemClock.elapsedRealtime()) {
         val maxAge = StreamKeepAlivePolicy.tokenMaxAgeMs()
-        val next = sessions.values.minOfOrNull { maxAge - (nowMs - it.lastAccessMs) }
-            ?.coerceAtLeast(1L)
+        val next = if (maxAge == null) {
+            null
+        } else {
+            sessions.values.minOfOrNull { maxAge - (nowMs - it.lastAccessMs) }
+                ?.coerceAtLeast(1L)
+        }
         synchronized(pruneLock) {
             pruneJob?.cancel()
             pruneJob = next?.let { delayMs ->
@@ -910,10 +866,12 @@ object ExternalHttpStreamServer {
     ) {
         val maxAge = StreamKeepAlivePolicy.tokenMaxAgeMs()
         // lastAccess is touched on every request/byte progress — idle budget is activity-based.
-        for ((id, session) in sessions) {
-            if (nowMs - session.lastAccessMs >= maxAge) {
-                if (sessions.remove(id, session)) {
-                    session.closeBodies()
+        if (maxAge != null) {
+            for ((id, session) in sessions) {
+                if (nowMs - session.lastAccessMs >= maxAge) {
+                    if (sessions.remove(id, session)) {
+                        session.closeBodies()
+                    }
                 }
             }
         }
@@ -930,10 +888,7 @@ object ExternalHttpStreamServer {
                     }
                 }
         }
-        // Do not re-arm FGS from prune; only stop if already idle.
-        if (activeTransfers.get() == 0) {
-            maybeStopKeepAliveLater()
-        }
+        StreamKeepAlivePolicy.reconcileFgs()
     }
 
     // endregion
