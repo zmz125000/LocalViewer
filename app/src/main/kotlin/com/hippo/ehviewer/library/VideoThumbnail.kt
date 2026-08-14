@@ -18,6 +18,7 @@ import com.hippo.ehviewer.webdav.WebDavCache
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
+import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -59,12 +60,11 @@ sealed interface VideoThumbnailSource {
 /**
  * Lazy video frame extraction for visible browse rows.
  *
- * Network: copy a small head under a short I/O timeout, **drop the SMB/WebDAV
- * handle**, write the head to a temp file, then decode. Native MediaExtractor
- * lives in the `media.extractor` process — aborting [MediaMetadataRetriever]
- * / a sparse [android.media.MediaDataSource] mid-read leaves that process at
- * 100% CPU after the app is gone. Timeout only abandons the wait; [release]
- * runs on the worker after native returns.
+ * Network: copy a small head (+ tail for moov-at-end) under a short I/O timeout,
+ * **drop the SMB/WebDAV handle**, write a **sparse** temp file (head at 0, tail
+ * at EOF), then decode. A holey [android.media.MediaDataSource] that returns −1
+ * mid-file, or [MediaMetadataRetriever.release] from the timeout thread, leaves
+ * `media.extractor` at 100% CPU. Timeout only abandons the wait.
  *
  * Disk: `cache/video_thumb_cache/` — same parent budget as other browse thumbs
  * ([OriginDiskCache.THUMB_BUDGET_BYTES]).
@@ -83,7 +83,9 @@ object VideoThumbnail {
     private const val DECODE_TIMEOUT_MS = 1_500L
 
     private const val PROBE_HEAD_BYTES = 2 * 1024 * 1024
-    private const val PROBE_TAIL_BYTES = 1024 * 1024
+
+    /** Phone MP4s keep `moov` at EOF; this sample's moov is ~600 KiB. */
+    private const val PROBE_TAIL_BYTES = 2 * 1024 * 1024
     private const val SAMPLE_GRID = 12
     private const val BLACK_LUMA = 24
     private const val MIN_VISIBLE_SAMPLES = SAMPLE_GRID * SAMPLE_GRID * 15 / 100
@@ -247,8 +249,9 @@ object VideoThumbnail {
                         done.complete(null)
                         return@Thread
                     }
-                    val tail = if (size > head.size + PROBE_TAIL_BYTES) {
-                        readPrefix(raw, size - PROBE_TAIL_BYTES, PROBE_TAIL_BYTES)
+                    val tail = if (size > head.size) {
+                        val tailLen = minOf(PROBE_TAIL_BYTES.toLong(), size - head.size).toInt()
+                        readPrefix(raw, size - tailLen, tailLen)
                     } else {
                         null
                     }
@@ -290,14 +293,13 @@ object VideoThumbnail {
     }
 
     /**
-     * Decode from a real file whose size is the bytes we actually have.
-     * A sparse [android.media.MediaDataSource] that reports the full remote length
-     * and returns -1 in the hole makes `media.extractor` spin at 100% CPU.
+     * Sparse file at the real length: head at 0, tail at EOF. Extractor can read
+     * `moov` at the end; holes are filesystem zeros, not MediaDataSource −1.
      */
     private suspend fun decodeSnapshot(snapshot: ProbeSnapshot, label: String): Bitmap? {
         val tmp = File(cacheDirectory(), "mmr-${System.nanoTime()}.bin")
         return try {
-            tmp.outputStream().use { it.write(snapshot.head) }
+            writeVideoThumbProbe(tmp, snapshot.fileSize, snapshot.head, snapshot.tail)
             decodeFrameWatchdog(
                 label = label,
                 timeoutMs = DECODE_TIMEOUT_MS,
@@ -488,3 +490,23 @@ private class ProbeSnapshot(
     val head: ByteArray,
     val tail: ByteArray?,
 )
+
+/** Head at 0, tail at EOF, [fileSize] so `moov`-at-end stays at its real offset. */
+internal fun writeVideoThumbProbe(
+    dest: File,
+    fileSize: Long,
+    head: ByteArray,
+    tail: ByteArray?,
+) {
+    if (tail == null || fileSize <= head.size.toLong()) {
+        dest.outputStream().use { it.write(head) }
+        return
+    }
+    RandomAccessFile(dest, "rw").use { raf ->
+        raf.setLength(fileSize)
+        raf.seek(0L)
+        raf.write(head)
+        raf.seek(fileSize - tail.size)
+        raf.write(tail)
+    }
+}

@@ -225,6 +225,7 @@ dependencies {
     implementation(libs.androidx.room.paging)
 
     implementation(libs.smbj)
+    testImplementation("junit:junit:4.13.2")
     implementation(libs.material.motion.core)
     implementation(libs.material.kolor)
 
