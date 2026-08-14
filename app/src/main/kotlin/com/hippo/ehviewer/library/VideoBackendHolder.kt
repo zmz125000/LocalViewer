@@ -22,6 +22,9 @@ class VideoBackendHolder(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     private val lock = Any()
+
+    /** Serializes open/install with eviction so an older open cannot win after a new play. */
+    private val operationLock = Any()
     private var token: String? = null
     private var source: ArchiveByteSource? = null
 
@@ -37,29 +40,26 @@ class VideoBackendHolder(
 
     fun currentSource(): ArchiveByteSource? = synchronized(lock) { source }
 
-    fun acquire(token: String, reason: String, open: () -> ArchiveByteSource): ArchiveByteSource {
-        synchronized(lock) {
-            val existing = source
-            if (this.token == token && existing != null) {
-                return existing
-            }
+    fun acquire(token: String, reason: String, open: () -> ArchiveByteSource): ArchiveByteSource = synchronized(operationLock) {
+        val existing = synchronized(lock) {
+            source?.takeIf { this.token == token }
         }
+        if (existing != null) return@synchronized existing
+
+        // beginPlay may synchronously call back into evict(); operationLock is reentrant.
         beginPlay(reason)
         val opened = open()
         openCount.incrementAndGet()
-        val previous: ArchiveByteSource?
-        synchronized(lock) {
-            previous = source?.takeUnless { it === opened }
-            source = opened
-            this.token = token
-            lastReadMs = nowMs()
-            armIdleLocked()
+        val previous = synchronized(lock) {
+            source?.takeUnless { it === opened }.also {
+                source = opened
+                this.token = token
+                lastReadMs = nowMs()
+                armIdleLocked()
+            }
         }
-        if (previous != null) {
-            closeCount.incrementAndGet()
-            runCatching { previous.close() }
-        }
-        return opened
+        closeSource(previous)
+        opened
     }
 
     fun touch() {
@@ -67,39 +67,48 @@ class VideoBackendHolder(
     }
 
     fun evict(@Suppress("UNUSED_PARAMETER") reason: String = "evict") {
-        val old: ArchiveByteSource?
-        synchronized(lock) {
-            old = source
-            source = null
-            token = null
-            idleJob?.cancel()
-            idleJob = null
+        val old = synchronized(operationLock) {
+            synchronized(lock) { detachLocked() }
         }
-        if (old != null) {
-            closeCount.incrementAndGet()
-            runCatching { old.close() }
-        }
+        closeSource(old)
     }
 
     fun evictIfToken(token: String) {
-        if (currentToken() == token) evict("token-removed")
+        val old = synchronized(operationLock) {
+            synchronized(lock) {
+                if (this.token == token) detachLocked() else null
+            }
+        }
+        closeSource(old)
     }
 
     fun checkIdle() {
-        val old: ArchiveByteSource?
-        synchronized(lock) {
-            if (source == null) return
-            if (nowMs() - lastReadMs < idleMs) return
-            old = source
-            source = null
-            token = null
-            idleJob?.cancel()
-            idleJob = null
+        val old = synchronized(operationLock) {
+            synchronized(lock) {
+                if (source == null || nowMs() - lastReadMs < idleMs) {
+                    null
+                } else {
+                    detachLocked()
+                }
+            }
         }
-        if (old != null) {
-            closeCount.incrementAndGet()
-            runCatching { old.close() }
-        }
+        closeSource(old)
+    }
+
+    /** Caller holds [lock]. */
+    private fun detachLocked(): ArchiveByteSource? {
+        val old = source
+        source = null
+        token = null
+        idleJob?.cancel()
+        idleJob = null
+        return old
+    }
+
+    private fun closeSource(old: ArchiveByteSource?) {
+        if (old == null) return
+        closeCount.incrementAndGet()
+        runCatching { old.close() }
     }
 
     private fun armIdleLocked() {
