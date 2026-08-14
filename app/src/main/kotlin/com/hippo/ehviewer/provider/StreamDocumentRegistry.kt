@@ -76,12 +76,12 @@ object StreamDocumentRegistry {
     fun clearAll(reason: String = "clear") {
         synchronized(keepAliveLock) {
             totalNetworkOpen = 0
+            entries.clear()
         }
         synchronized(pruneLock) {
             pruneJob?.cancel()
             pruneJob = null
         }
-        entries.clear()
     }
 
     /** Soft cap so repeated long-press PDF does not retain unbounded lambdas. */
@@ -140,21 +140,34 @@ object StreamDocumentRegistry {
     var onTokenRemoved: ((String) -> Unit)? = null
 
     fun remove(token: String) {
-        entries.remove(token)
-        onTokenRemoved?.invoke(token)
+        val removed = synchronized(keepAliveLock) {
+            entries.remove(token)?.also { entry ->
+                totalNetworkOpen = (totalNetworkOpen - entry.openCount.getAndSet(0)).coerceAtLeast(0)
+            }
+        }
+        if (removed != null) onTokenRemoved?.invoke(token)
         schedulePrune()
         StreamKeepAlivePolicy.reconcileFgs()
     }
 
+    private fun removeIdle(token: String, entry: Entry): Boolean {
+        val removed = synchronized(keepAliveLock) {
+            entry.openCount.get() == 0 && entries.remove(token, entry)
+        }
+        if (removed) onTokenRemoved?.invoke(token)
+        return removed
+    }
+
     /** Call when a network proxy FD is successfully opened for [token]. */
     fun retain(token: String, context: Context = appCtx) {
-        val entry = entries[token] ?: return
-        entry.openCount.incrementAndGet()
+        val entry = synchronized(keepAliveLock) {
+            val current = entries[token] ?: return
+            current.openCount.incrementAndGet()
+            totalNetworkOpen++
+            current
+        }
         entry.lastAccessMs = SystemClock.elapsedRealtime()
         schedulePrune()
-        synchronized(keepAliveLock) {
-            totalNetworkOpen++
-        }
         StreamKeepAlivePolicy.reconcileFgs(context)
     }
 
@@ -164,17 +177,14 @@ object StreamDocumentRegistry {
      * [pruneStale] eventually drops idle grants.
      */
     fun release(token: String, context: Context = appCtx) {
-        val entry = entries[token] ?: return
-        // Floor at 0 — duplicate release must not go negative.
-        var left: Int
-        do {
-            left = entry.openCount.get()
-            if (left <= 0) return
-        } while (!entry.openCount.compareAndSet(left, left - 1))
-        entry.lastAccessMs = SystemClock.elapsedRealtime()
-        synchronized(keepAliveLock) {
+        val entry = synchronized(keepAliveLock) {
+            val current = entries[token] ?: return
+            if (current.openCount.get() <= 0) return
+            current.openCount.decrementAndGet()
             totalNetworkOpen = (totalNetworkOpen - 1).coerceAtLeast(0)
+            current
         }
+        entry.lastAccessMs = SystemClock.elapsedRealtime()
         StreamKeepAlivePolicy.reconcileFgs(context)
         schedulePrune()
     }
@@ -192,7 +202,7 @@ object StreamDocumentRegistry {
             for ((token, entry) in entries) {
                 if (entry.openCount.get() > 0) continue
                 if (nowMs - entry.lastAccessMs >= maxAgeMs) {
-                    entries.remove(token, entry)
+                    removeIdle(token, entry)
                 }
             }
         }
@@ -202,7 +212,7 @@ object StreamDocumentRegistry {
                 .filter { it.value.openCount.get() == 0 }
                 .sortedBy { it.value.lastAccessMs }
                 .take(overflow)
-                .forEach { entries.remove(it.key, it.value) }
+                .forEach { removeIdle(it.key, it.value) }
         }
         StreamKeepAlivePolicy.reconcileFgs()
     }
