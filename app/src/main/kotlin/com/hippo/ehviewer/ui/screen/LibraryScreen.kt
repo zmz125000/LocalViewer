@@ -77,6 +77,7 @@ import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
@@ -171,14 +172,28 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val allVisibleGalleries = remember(rawGalleries) {
         rawGalleries.hideDuplicateGalleriesPreferMediaStore()
     }
-    // Live in-list filter (no re-query / submit).
-    val galleries = remember(allVisibleGalleries, keyword) {
+    // HISTORY.TIME by gallery gid — opened library rows rise to the top.
+    val historyTimeByGid by rememberInVM {
+        mutableStateOf(emptyMap<Long, Long>()).also { state ->
+            viewModelScope.launch {
+                EhDB.historyTimeListFlow.collect { rows ->
+                    state.value = rows.associate { it.gid to it.time }
+                }
+            }
+        }
+    }
+    // Live in-list filter (no re-query / submit). Recently opened (history) first.
+    val galleries = remember(allVisibleGalleries, keyword, historyTimeByGid) {
         val q = keyword.trim()
-        if (q.isEmpty()) {
+        val filtered = if (q.isEmpty()) {
             allVisibleGalleries
         } else {
             allVisibleGalleries.filter { it.title.contains(q, ignoreCase = true) }
         }
+        filtered.sortedWith(
+            compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+        )
     }
 
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()

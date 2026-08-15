@@ -190,6 +190,15 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         withIOContext { EhDB.deleteHistoryInfo(info) }
                         return@launch
                     }
+                    // Re-open → bump this dir pin to the top of Directories.
+                    withIOContext {
+                        LocalHistory.recordLocalBrowseFolder(
+                            rootId = root.id,
+                            relativePath = target.relativePath,
+                            title = info.title ?: root.displayName,
+                            thumbKey = info.thumbKey,
+                        )
+                    }
                     BrowseSession.localStack = buildLocalBrowseStack(
                         rootId = root.id,
                         rootDisplayName = root.displayName,
@@ -205,6 +214,14 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         snackbar(string(R.string.history_unavailable))
                         withIOContext { EhDB.deleteHistoryInfo(info) }
                         return@launch
+                    }
+                    withIOContext {
+                        LocalHistory.recordSmbBrowseFolder(
+                            sourceId = source.id,
+                            relativePath = target.relativePath,
+                            title = info.title ?: source.displayName,
+                            thumbKey = info.thumbKey,
+                        )
                     }
                     val segments = target.relativePath.split('/').filter { it.isNotEmpty() }
                     BrowseSession.setSmbSegments(source.id, segments)
@@ -222,6 +239,14 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         snackbar(string(R.string.history_unavailable))
                         withIOContext { EhDB.deleteHistoryInfo(info) }
                         return@launch
+                    }
+                    withIOContext {
+                        LocalHistory.recordWebDavBrowseFolder(
+                            sourceId = source.id,
+                            relativePath = target.relativePath,
+                            title = info.title ?: source.displayName,
+                            thumbKey = info.thumbKey,
+                        )
                     }
                     val segments = target.relativePath.split('/').filter { it.isNotEmpty() }
                     BrowseSession.setWebDavSegments(source.id, segments)
