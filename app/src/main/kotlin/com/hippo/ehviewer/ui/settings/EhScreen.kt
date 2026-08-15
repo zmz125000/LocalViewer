@@ -210,19 +210,16 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_photo_grid_mode),
-                summary = stringResource(id = R.string.settings_photo_grid_mode_summary),
                 state = Settings.photoGridMode.asMutableState(),
             )
             val downloadPhotoGridThumb = Settings.downloadNetworkPhotoGridThumb.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_download_network_photo_grid_thumb),
-                summary = stringResource(id = R.string.settings_download_network_photo_grid_thumb_summary),
                 state = downloadPhotoGridThumb,
             )
             AnimatedVisibility(visible = downloadPhotoGridThumb.value) {
                 SwitchPreference(
                     title = stringResource(id = R.string.settings_save_photo_grid_original_cache),
-                    summary = stringResource(id = R.string.settings_save_photo_grid_original_cache_summary),
                     state = Settings.savePhotoGridOriginalCache.asMutableState(),
                 )
             }
