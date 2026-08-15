@@ -213,7 +213,7 @@ object Settings : DataStorePreferences(null) {
      * full file in page cache (`smb_cache` / `webdav_cache`). Thumbs always go to
      * `*_thumb_cache`. Default off — grid browse does not fill page cache.
      */
-    val savePhotoGridOriginalCache = boolPref("save_photo_grid_original_cache", false)
+    val savePhotoGridOriginalCache = boolPref("save_photo_grid_original_cache", true)
 
     val showGalleryPages = boolPref("show_gallery_pages", true)
     val showReadingProgress = boolPref("show_reading_progress", false)
