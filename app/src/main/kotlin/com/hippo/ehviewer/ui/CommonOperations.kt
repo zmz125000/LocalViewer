@@ -98,13 +98,13 @@ private fun navToReader(args: ReaderScreenArgs) = nav.navigate(ReaderScreenDesti
 /**
  * Open content from History with an optional parent-directory back stack.
  *
- * When [Settings.alwaysExitToDir] is on (default), [pushParentDir] runs first (set
+ * When [Settings.alwaysExitToDir] is on, [pushParentDir] runs first (set
  * [com.hippo.ehviewer.library.BrowseSession] + navigate to Folder/SMB/WebDAV browser
  * with `fromHistory = true`) so system back from the reader lands on that directory.
  * When off, only [openContent] runs and back returns to History (or the prior stack).
  *
  * Use this for every History → reader path that can land on a parent dir; pure dir
- * pins and external file opens do not need it.
+ * opens use [openLocalBrowseDir] / [openSmbBrowseDir] / [openWebDavBrowseDir] instead.
  */
 inline fun openFromHistoryWithBackStack(
     pushParentDir: () -> Unit,
@@ -117,10 +117,93 @@ inline fun openFromHistoryWithBackStack(
 }
 
 /**
+ * Open a local browse directory (History / Library / Favourites pin).
+ *
+ * [Settings.alwaysExitToDir] on: full root→dir stack so system back walks parents.
+ * Off: leaf frame only so back leaves the browser to History/Library.
+ */
+context(nav: DestinationsNavigator)
+fun openLocalBrowseDir(
+    rootId: Long,
+    rootDisplayName: String,
+    rootPath: Path,
+    relativePath: String,
+    preferMediaStore: Boolean = true,
+    fromHistory: Boolean = false,
+    fromLibrary: Boolean = false,
+) {
+    val full = buildLocalBrowseStack(
+        rootId = rootId,
+        rootDisplayName = rootDisplayName,
+        rootPath = rootPath,
+        relativePath = relativePath,
+        preferMediaStore = preferMediaStore,
+    )
+    BrowseSession.localStack = if (Settings.alwaysExitToDir.value) full else listOf(full.last())
+    nav.navigate(FolderBrowserScreenDestination(fromHistory = fromHistory, fromLibrary = fromLibrary)) {
+        launchSingleTop = true
+    }
+}
+
+/**
+ * Open an SMB browse directory (History / Library / Favourites pin).
+ * When [Settings.alwaysExitToDir] is off and opened from History/Library, first
+ * system back leaves the browser instead of walking parent segments.
+ */
+context(nav: DestinationsNavigator)
+fun openSmbBrowseDir(
+    sourceId: Long,
+    remoteDir: String,
+    fromHistory: Boolean = false,
+    fromLibrary: Boolean = false,
+) {
+    val remote = remoteDir.trim('/').let { if (it == ".") "" else it }
+    val segments = remote.split('/').filter { it.isNotEmpty() }
+    val exitToDir = Settings.alwaysExitToDir.value
+    val fromOrigin = fromHistory || fromLibrary
+    BrowseSession.setSmbSegments(sourceId, segments)
+    BrowseSession.setSmbPhotoGrid(sourceId, null)
+    BrowseSession.setSmbExitToOrigin(sourceId, !exitToDir && fromOrigin)
+    nav.navigate(
+        SmbBrowserScreenDestination(
+            sourceId = sourceId,
+            initialRelativePath = remote,
+            fromHistory = fromHistory,
+            fromLibrary = fromLibrary,
+        ),
+    ) { launchSingleTop = true }
+}
+
+/** Open a WebDAV browse directory (History / Library / Favourites pin). */
+context(nav: DestinationsNavigator)
+fun openWebDavBrowseDir(
+    sourceId: Long,
+    remoteDir: String,
+    fromHistory: Boolean = false,
+    fromLibrary: Boolean = false,
+) {
+    val remote = remoteDir.trim('/').let { if (it == ".") "" else it }
+    val segments = remote.split('/').filter { it.isNotEmpty() }
+    val exitToDir = Settings.alwaysExitToDir.value
+    val fromOrigin = fromHistory || fromLibrary
+    BrowseSession.setWebDavSegments(sourceId, segments)
+    BrowseSession.setWebDavPhotoGrid(sourceId, null)
+    BrowseSession.setWebDavExitToOrigin(sourceId, !exitToDir && fromOrigin)
+    nav.navigate(
+        WebDavBrowserScreenDestination(
+            sourceId = sourceId,
+            initialRelativePath = remote,
+            fromHistory = fromHistory,
+            fromLibrary = fromLibrary,
+        ),
+    ) { launchSingleTop = true }
+}
+
+/**
  * Open a local folder gallery as the photo-grid virtual folder (History / Library tap).
  *
  * Aligns with [Settings.alwaysExitToDir]:
- * - On (default): stack = parent frames + photo-grid frame → back lands on parent dir.
+ * - On: stack = parent frames + photo-grid frame → back lands on parent dir.
  * - Off: stack = photo-grid frame only → back leaves the browser (History/Library).
  */
 context(nav: DestinationsNavigator)
@@ -179,6 +262,7 @@ fun openSmbFolderPhotoGrid(
     val exitToDir = Settings.alwaysExitToDir.value
     val fromOrigin = fromHistory || fromLibrary
     BrowseSession.setSmbSegments(sourceId, segments)
+    BrowseSession.setSmbExitToOrigin(sourceId, false)
     BrowseSession.setSmbPhotoGrid(
         sourceId,
         remote,
@@ -208,6 +292,7 @@ fun openWebDavFolderPhotoGrid(
     val exitToDir = Settings.alwaysExitToDir.value
     val fromOrigin = fromHistory || fromLibrary
     BrowseSession.setWebDavSegments(sourceId, segments)
+    BrowseSession.setWebDavExitToOrigin(sourceId, false)
     BrowseSession.setWebDavPhotoGrid(
         sourceId,
         remote,

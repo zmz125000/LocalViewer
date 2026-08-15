@@ -333,10 +333,11 @@ object Settings : DataStorePreferences(null) {
     val saveGalleryHistory = boolPref("save_gallery_history", true)
 
     /**
-     * When opening a gallery/archive from History: if true (default), push the parent
-     * directory onto the nav stack so system back from the reader lands on that dir.
-     * If false, open the reader only so back returns to History (or the prior back stack).
-     * Shared by [com.hippo.ehviewer.ui.openFromHistoryWithBackStack].
+     * Back to upper directory when opening from History / Library / Favourites.
+     * On: system back from reader or a dir pin walks the parent browse path.
+     * Off (default): back returns to History/Library (or the prior stack).
+     * See [com.hippo.ehviewer.ui.openFromHistoryWithBackStack] and
+     * [com.hippo.ehviewer.ui.openLocalBrowseDir] / openSmbBrowseDir / openWebDavBrowseDir.
      */
     val alwaysExitToDir = boolPref("always_exit_to_dir", false)
 

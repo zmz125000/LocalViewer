@@ -86,9 +86,6 @@ import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.Screen
-import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
-import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
-import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.HistoryDirectoryGridItem
 import com.hippo.ehviewer.ui.main.HistoryGridItem
@@ -100,8 +97,11 @@ import com.hippo.ehviewer.ui.navToSmbStreamArchiveReader
 import com.hippo.ehviewer.ui.navToWebDavFolderReader
 import com.hippo.ehviewer.ui.navToWebDavStreamArchiveReader
 import com.hippo.ehviewer.ui.openFromHistoryWithBackStack
+import com.hippo.ehviewer.ui.openLocalBrowseDir
 import com.hippo.ehviewer.ui.openLocalFolderPhotoGrid
+import com.hippo.ehviewer.ui.openSmbBrowseDir
 import com.hippo.ehviewer.ui.openSmbFolderPhotoGrid
+import com.hippo.ehviewer.ui.openWebDavBrowseDir
 import com.hippo.ehviewer.ui.openWebDavFolderPhotoGrid
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.webdav.WebDavRepository
@@ -235,14 +235,14 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             thumbKey = info.thumbKey,
                         )
                     }
-                    BrowseSession.localStack = buildLocalBrowseStack(
+                    openLocalBrowseDir(
                         rootId = root.id,
                         rootDisplayName = root.displayName,
                         rootPath = rootPath,
                         relativePath = target.relativePath,
                         preferMediaStore = root.prefersMediaStore,
+                        fromHistory = true,
                     )
-                    navigate(FolderBrowserScreenDestination(fromHistory = true))
                 }
                 is LocalHistoryTarget.SmbBrowseFolder -> {
                     val source = withIOContext { SmbRepository.load(target.sourceId) }
@@ -259,14 +259,10 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             thumbKey = info.thumbKey,
                         )
                     }
-                    val segments = target.relativePath.split('/').filter { it.isNotEmpty() }
-                    BrowseSession.setSmbSegments(source.id, segments)
-                    navigate(
-                        SmbBrowserScreenDestination(
-                            sourceId = source.id,
-                            initialRelativePath = target.relativePath,
-                            fromHistory = true,
-                        ),
+                    openSmbBrowseDir(
+                        sourceId = source.id,
+                        remoteDir = target.relativePath,
+                        fromHistory = true,
                     )
                 }
                 is LocalHistoryTarget.WebDavBrowseFolder -> {
@@ -284,14 +280,10 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             thumbKey = info.thumbKey,
                         )
                     }
-                    val segments = target.relativePath.split('/').filter { it.isNotEmpty() }
-                    BrowseSession.setWebDavSegments(source.id, segments)
-                    navigate(
-                        WebDavBrowserScreenDestination(
-                            sourceId = source.id,
-                            initialRelativePath = target.relativePath,
-                            fromHistory = true,
-                        ),
+                    openWebDavBrowseDir(
+                        sourceId = source.id,
+                        remoteDir = target.relativePath,
+                        fromHistory = true,
                     )
                 }
                 is LocalHistoryTarget.LocalFolderGallery -> {
@@ -340,14 +332,14 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     )
                     openFromHistoryWithBackStack(
                         pushParentDir = {
-                            BrowseSession.localStack = buildLocalBrowseStack(
+                            openLocalBrowseDir(
                                 rootId = root.id,
                                 rootDisplayName = root.displayName,
                                 rootPath = rootPath,
                                 relativePath = parentRel,
                                 preferMediaStore = root.prefersMediaStore,
+                                fromHistory = true,
                             )
-                            navigate(FolderBrowserScreenDestination(fromHistory = true))
                         },
                         openContent = { navToLocalFolderReader(galleryPath, gi) },
                     )
@@ -369,7 +361,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         return@launch
                     }
                     val parentRel = parentRelativeOfFile(remote)
-                    val segments = parentRel.split('/').filter { it.isNotEmpty() }
                     val gi = BaseGalleryInfo(
                         gid = info.gid,
                         token = SMB_FOLDER_TOKEN,
@@ -383,13 +374,10 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     )
                     openFromHistoryWithBackStack(
                         pushParentDir = {
-                            BrowseSession.setSmbSegments(source.id, segments)
-                            navigate(
-                                SmbBrowserScreenDestination(
-                                    sourceId = source.id,
-                                    initialRelativePath = parentRel,
-                                    fromHistory = true,
-                                ),
+                            openSmbBrowseDir(
+                                sourceId = source.id,
+                                remoteDir = parentRel,
+                                fromHistory = true,
                             )
                         },
                         // Empty names → reader re-lists full image set.
@@ -413,7 +401,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         return@launch
                     }
                     val parentRel = parentRelativeOfFile(remote)
-                    val segments = parentRel.split('/').filter { it.isNotEmpty() }
                     val gi = BaseGalleryInfo(
                         gid = info.gid,
                         token = WEBDAV_FOLDER_TOKEN,
@@ -427,13 +414,10 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     )
                     openFromHistoryWithBackStack(
                         pushParentDir = {
-                            BrowseSession.setWebDavSegments(source.id, segments)
-                            navigate(
-                                WebDavBrowserScreenDestination(
-                                    sourceId = source.id,
-                                    initialRelativePath = parentRel,
-                                    fromHistory = true,
-                                ),
+                            openWebDavBrowseDir(
+                                sourceId = source.id,
+                                remoteDir = parentRel,
+                                fromHistory = true,
                             )
                         },
                         openContent = { navToWebDavFolderReader(source.id, remote, emptyList(), gi) },
@@ -453,14 +437,14 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     openFromHistoryWithBackStack(
                         pushParentDir = {
                             if (parent != null) {
-                                BrowseSession.localStack = buildLocalBrowseStack(
+                                openLocalBrowseDir(
                                     rootId = parent.rootId,
                                     rootDisplayName = parent.rootDisplayName,
                                     rootPath = parent.rootPath,
                                     relativePath = parent.parentRelativePath,
                                     preferMediaStore = parentPrefersMediaStore,
+                                    fromHistory = true,
                                 )
-                                navigate(FolderBrowserScreenDestination(fromHistory = true))
                             }
                         },
                         openContent = { navToReader(target.path) },
@@ -475,7 +459,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     }
                     val remote = target.remotePath.trim('/')
                     val parentRel = parentRelativeOfFile(remote)
-                    val segments = parentRel.split('/').filter { it.isNotEmpty() }
                     // Always smba: (progress gid). Drop legacy smb-archive: history row if present.
                     val progressGid = stableGalleryId(source.id, "smba:$remote")
                     if (info.gid != progressGid) {
@@ -494,13 +477,10 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     )
                     openFromHistoryWithBackStack(
                         pushParentDir = {
-                            BrowseSession.setSmbSegments(source.id, segments)
-                            navigate(
-                                SmbBrowserScreenDestination(
-                                    sourceId = source.id,
-                                    initialRelativePath = parentRel,
-                                    fromHistory = true,
-                                ),
+                            openSmbBrowseDir(
+                                sourceId = source.id,
+                                remoteDir = parentRel,
+                                fromHistory = true,
                             )
                         },
                         openContent = { navToSmbStreamArchiveReader(source.id, remote, gi) },
@@ -515,7 +495,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     }
                     val remote = target.remotePath.trim('/')
                     val parentRel = parentRelativeOfFile(remote)
-                    val segments = parentRel.split('/').filter { it.isNotEmpty() }
                     val progressGid = stableGalleryId(source.id, "dava:$remote")
                     if (info.gid != progressGid) {
                         withIOContext { EhDB.deleteHistoryInfo(info) }
@@ -533,13 +512,10 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     )
                     openFromHistoryWithBackStack(
                         pushParentDir = {
-                            BrowseSession.setWebDavSegments(source.id, segments)
-                            navigate(
-                                WebDavBrowserScreenDestination(
-                                    sourceId = source.id,
-                                    initialRelativePath = parentRel,
-                                    fromHistory = true,
-                                ),
+                            openWebDavBrowseDir(
+                                sourceId = source.id,
+                                remoteDir = parentRel,
+                                fromHistory = true,
                             )
                         },
                         openContent = { navToWebDavStreamArchiveReader(source.id, remote, gi) },
