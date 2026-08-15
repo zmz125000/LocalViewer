@@ -59,9 +59,9 @@ import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
+import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
-import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.Settings
@@ -113,13 +113,13 @@ import com.hippo.ehviewer.ui.main.BrowseFileGridItem
 import com.hippo.ehviewer.ui.main.BrowseFileRow
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
-import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.BrowseFolderSection
+import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
-import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToWebDavFolderReader
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
@@ -1100,20 +1100,20 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 }
                                 if (BrowseFolderSection.Directories !in collapsedSections) {
                                     items(dirs, key = { "d-${it.relativeName}" }) { dir ->
-                                    BrowseDirectoryGridItem(
-                                        modifier = Modifier.thenIf(animateItems) { animateItem() },
-                                        name = dir.name,
-                                        onClick = { enterDir(dir.relativeName) },
-                                        onLongClick = {
-                                            toggleDirFavorite(dir.relativeName, dir.coverFileName)
-                                        },
-                                        showFavoriteStar = isDirFavorite(dir.relativeName),
-                                        cover = dirCoverFor(dir),
-                                        showFolderThumb = browseFolderThumbs,
-                                        thumbRetryKey = refreshToken,
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                    )
-                                }
+                                        BrowseDirectoryGridItem(
+                                            modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                            name = dir.name,
+                                            onClick = { enterDir(dir.relativeName) },
+                                            onLongClick = {
+                                                toggleDirFavorite(dir.relativeName, dir.coverFileName)
+                                            },
+                                            showFavoriteStar = isDirFavorite(dir.relativeName),
+                                            cover = dirCoverFor(dir),
+                                            showFolderThumb = browseFolderThumbs,
+                                            thumbRetryKey = refreshToken,
+                                            allowRemoteFetch = allowRemoteThumbs,
+                                        )
+                                    }
                                 }
                             }
                             if (galleries.isNotEmpty()) {
@@ -1128,33 +1128,33 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 }
                                 if (BrowseFolderSection.Galleries !in collapsedSections) {
                                     items(galleries, key = { galleryKey(it) }) { entry ->
-                                    when (entry) {
-                                        is BrowseEntryRemote.FolderGallery ->
-                                            BrowseFolderGalleryGridItem(
-                                                modifier = Modifier.thenIf(animateItems) { animateItem() },
-                                                name = entry.name,
-                                                pageCount = entry.pageCount,
-                                                pageCountCapped = entry.pageCountCapped,
-                                                cover = coverFor(entry),
-                                                thumbRetryKey = refreshToken,
-                                                allowRemoteFetch = allowRemoteThumbs,
-                                                showPages = showGalleryPages,
-                                                onClick = { openFolderGalleryPrimary(entry) },
-                                                onLongClick = { openFolderGallerySecondary(entry) },
-                                            )
-                                        is BrowseEntryRemote.ArchiveGallery ->
-                                            BrowseArchiveGridItem(
-                                                modifier = Modifier.thenIf(animateItems) { animateItem() },
-                                                name = entry.name,
-                                                cover = archiveCoverFor(entry),
-                                                thumbRetryKey = refreshToken,
-                                                allowRemoteFetch = allowRemoteThumbs,
-                                                onClick = { openArchive(entry) },
-                                                onLongClick = { openArchiveInOtherApp(entry) },
-                                            )
-                                        else -> Unit
+                                        when (entry) {
+                                            is BrowseEntryRemote.FolderGallery ->
+                                                BrowseFolderGalleryGridItem(
+                                                    modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                                    name = entry.name,
+                                                    pageCount = entry.pageCount,
+                                                    pageCountCapped = entry.pageCountCapped,
+                                                    cover = coverFor(entry),
+                                                    thumbRetryKey = refreshToken,
+                                                    allowRemoteFetch = allowRemoteThumbs,
+                                                    showPages = showGalleryPages,
+                                                    onClick = { openFolderGalleryPrimary(entry) },
+                                                    onLongClick = { openFolderGallerySecondary(entry) },
+                                                )
+                                            is BrowseEntryRemote.ArchiveGallery ->
+                                                BrowseArchiveGridItem(
+                                                    modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                                    name = entry.name,
+                                                    cover = archiveCoverFor(entry),
+                                                    thumbRetryKey = refreshToken,
+                                                    allowRemoteFetch = allowRemoteThumbs,
+                                                    onClick = { openArchive(entry) },
+                                                    onLongClick = { openArchiveInOtherApp(entry) },
+                                                )
+                                            else -> Unit
+                                        }
                                     }
-                                }
                                 }
                             }
                             if (videos.isNotEmpty()) {
@@ -1169,18 +1169,18 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 }
                                 if (BrowseFolderSection.Videos !in collapsedSections) {
                                     items(videos, key = { "v-${it.fileName}" }) { video ->
-                                    BrowseVideoGridItem(
-                                        modifier = Modifier.thenIf(animateItems) { animateItem() },
-                                        name = video.name,
-                                        thumbnailSource = VideoThumbnailSource.WebDav(
-                                            sourceId,
-                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
-                                        ),
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                        onClick = { openVideoPrimary(video.fileName) },
-                                        onLongClick = { openVideoSecondary(video.fileName) },
-                                    )
-                                }
+                                        BrowseVideoGridItem(
+                                            modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                            name = video.name,
+                                            thumbnailSource = VideoThumbnailSource.WebDav(
+                                                sourceId,
+                                                joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                            ),
+                                            allowRemoteFetch = allowRemoteThumbs,
+                                            onClick = { openVideoPrimary(video.fileName) },
+                                            onLongClick = { openVideoSecondary(video.fileName) },
+                                        )
+                                    }
                                 }
                             }
                             if (files.isNotEmpty()) {
@@ -1195,26 +1195,26 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 }
                                 if (BrowseFolderSection.Files !in collapsedSections) {
                                     items(files, key = { "f-${it.fileName}" }) { file ->
-                                    val isImage = isImageFileName(file.fileName.substringAfterLast('/'))
-                                    if (isImage) {
-                                        BrowsePhotoGridImageItem(
-                                            modifier = Modifier.thenIf(animateItems) { animateItem() },
-                                            name = file.name,
-                                            cover = imageCoverFor(file),
-                                            showPhotoThumb = true,
-                                            allowRemoteFetch = allowRemoteThumbs,
-                                            onClick = { openFolderImage(file) },
-                                            onLongClick = { openExternalFile(file.fileName) },
-                                        )
-                                    } else {
-                                        BrowseFileGridItem(
-                                            modifier = Modifier.thenIf(animateItems) { animateItem() },
-                                            name = file.name,
-                                            onClick = { openExternalFile(file.fileName) },
-                                            onLongClick = { openExternalFile(file.fileName) },
-                                        )
+                                        val isImage = isImageFileName(file.fileName.substringAfterLast('/'))
+                                        if (isImage) {
+                                            BrowsePhotoGridImageItem(
+                                                modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                                name = file.name,
+                                                cover = imageCoverFor(file),
+                                                showPhotoThumb = true,
+                                                allowRemoteFetch = allowRemoteThumbs,
+                                                onClick = { openFolderImage(file) },
+                                                onLongClick = { openExternalFile(file.fileName) },
+                                            )
+                                        } else {
+                                            BrowseFileGridItem(
+                                                modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                                name = file.name,
+                                                onClick = { openExternalFile(file.fileName) },
+                                                onLongClick = { openExternalFile(file.fileName) },
+                                            )
+                                        }
                                     }
-                                }
                                 }
                             }
                         }
@@ -1233,19 +1233,19 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 }
                                 if (BrowseFolderSection.Directories !in collapsedSections) {
                                     items(dirs, key = { "d-${it.relativeName}" }) { dir ->
-                                    BrowseDirectoryRow(
-                                        modifier = Modifier.thenIf(animateItems) { animateItem() },
-                                        name = dir.name,
-                                        onClick = { enterDir(dir.relativeName) },
-                                        onLongClick = {
-                                            toggleDirFavorite(dir.relativeName, dir.coverFileName)
-                                        },
-                                        cover = dirCoverFor(dir),
-                                        showFolderThumb = browseFolderThumbs,
-                                        thumbRetryKey = refreshToken,
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                    )
-                                }
+                                        BrowseDirectoryRow(
+                                            modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                            name = dir.name,
+                                            onClick = { enterDir(dir.relativeName) },
+                                            onLongClick = {
+                                                toggleDirFavorite(dir.relativeName, dir.coverFileName)
+                                            },
+                                            cover = dirCoverFor(dir),
+                                            showFolderThumb = browseFolderThumbs,
+                                            thumbRetryKey = refreshToken,
+                                            allowRemoteFetch = allowRemoteThumbs,
+                                        )
+                                    }
                                 }
                             }
                             if (galleries.isNotEmpty()) {
@@ -1257,33 +1257,33 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 }
                                 if (BrowseFolderSection.Galleries !in collapsedSections) {
                                     items(galleries, key = { galleryKey(it) }) { entry ->
-                                    when (entry) {
-                                        is BrowseEntryRemote.FolderGallery ->
-                                            BrowseFolderGalleryRow(
-                                                modifier = Modifier.thenIf(animateItems) { animateItem() },
-                                                name = entry.name,
-                                                pageCount = entry.pageCount,
-                                                pageCountCapped = entry.pageCountCapped,
-                                                cover = coverFor(entry),
-                                                thumbRetryKey = refreshToken,
-                                                allowRemoteFetch = allowRemoteThumbs,
-                                                showPages = showGalleryPages,
-                                                onClick = { openFolderGalleryPrimary(entry) },
-                                                onLongClick = { openFolderGallerySecondary(entry) },
-                                            )
-                                        is BrowseEntryRemote.ArchiveGallery ->
-                                            BrowseArchiveGalleryRow(
-                                                modifier = Modifier.thenIf(animateItems) { animateItem() },
-                                                name = entry.name,
-                                                cover = archiveCoverFor(entry),
-                                                thumbRetryKey = refreshToken,
-                                                allowRemoteFetch = allowRemoteThumbs,
-                                                onClick = { openArchive(entry) },
-                                                onLongClick = { openArchiveInOtherApp(entry) },
-                                            )
-                                        else -> Unit
+                                        when (entry) {
+                                            is BrowseEntryRemote.FolderGallery ->
+                                                BrowseFolderGalleryRow(
+                                                    modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                                    name = entry.name,
+                                                    pageCount = entry.pageCount,
+                                                    pageCountCapped = entry.pageCountCapped,
+                                                    cover = coverFor(entry),
+                                                    thumbRetryKey = refreshToken,
+                                                    allowRemoteFetch = allowRemoteThumbs,
+                                                    showPages = showGalleryPages,
+                                                    onClick = { openFolderGalleryPrimary(entry) },
+                                                    onLongClick = { openFolderGallerySecondary(entry) },
+                                                )
+                                            is BrowseEntryRemote.ArchiveGallery ->
+                                                BrowseArchiveGalleryRow(
+                                                    modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                                    name = entry.name,
+                                                    cover = archiveCoverFor(entry),
+                                                    thumbRetryKey = refreshToken,
+                                                    allowRemoteFetch = allowRemoteThumbs,
+                                                    onClick = { openArchive(entry) },
+                                                    onLongClick = { openArchiveInOtherApp(entry) },
+                                                )
+                                            else -> Unit
+                                        }
                                     }
-                                }
                                 }
                             }
                             if (videos.isNotEmpty()) {
@@ -1295,18 +1295,18 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 }
                                 if (BrowseFolderSection.Videos !in collapsedSections) {
                                     items(videos, key = { "v-${it.fileName}" }) { video ->
-                                    BrowseVideoRow(
-                                        modifier = Modifier.thenIf(animateItems) { animateItem() },
-                                        name = video.name,
-                                        thumbnailSource = VideoThumbnailSource.WebDav(
-                                            sourceId,
-                                            joinRemoteArchivePath(relativeDir, "", video.fileName),
-                                        ),
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                        onClick = { openVideoPrimary(video.fileName) },
-                                        onLongClick = { openVideoSecondary(video.fileName) },
-                                    )
-                                }
+                                        BrowseVideoRow(
+                                            modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                            name = video.name,
+                                            thumbnailSource = VideoThumbnailSource.WebDav(
+                                                sourceId,
+                                                joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                            ),
+                                            allowRemoteFetch = allowRemoteThumbs,
+                                            onClick = { openVideoPrimary(video.fileName) },
+                                            onLongClick = { openVideoSecondary(video.fileName) },
+                                        )
+                                    }
                                 }
                             }
                             if (files.isNotEmpty()) {
@@ -1318,23 +1318,23 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 }
                                 if (BrowseFolderSection.Files !in collapsedSections) {
                                     items(files, key = { "f-${it.fileName}" }) { file ->
-                                    val isImage = isImageFileName(file.fileName.substringAfterLast('/'))
-                                    BrowseFileRow(
-                                        modifier = Modifier.thenIf(animateItems) { animateItem() },
-                                        name = file.name,
-                                        cover = if (isImage) imageCoverFor(file) else null,
-                                        showPhotoThumb = isImage,
-                                        allowRemoteFetch = allowRemoteThumbs,
-                                        onClick = {
-                                            if (isImage) {
-                                                openFolderImage(file)
-                                            } else {
-                                                openExternalFile(file.fileName)
-                                            }
-                                        },
-                                        onLongClick = { openExternalFile(file.fileName) },
-                                    )
-                                }
+                                        val isImage = isImageFileName(file.fileName.substringAfterLast('/'))
+                                        BrowseFileRow(
+                                            modifier = Modifier.thenIf(animateItems) { animateItem() },
+                                            name = file.name,
+                                            cover = if (isImage) imageCoverFor(file) else null,
+                                            showPhotoThumb = isImage,
+                                            allowRemoteFetch = allowRemoteThumbs,
+                                            onClick = {
+                                                if (isImage) {
+                                                    openFolderImage(file)
+                                                } else {
+                                                    openExternalFile(file.fileName)
+                                                }
+                                            },
+                                            onLongClick = { openExternalFile(file.fileName) },
+                                        )
+                                    }
                                 }
                             }
                         }

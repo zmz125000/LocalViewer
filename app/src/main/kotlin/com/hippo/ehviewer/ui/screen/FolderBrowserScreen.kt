@@ -63,9 +63,9 @@ import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
+import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
-import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
@@ -109,13 +109,13 @@ import com.hippo.ehviewer.ui.main.BrowseFileGridItem
 import com.hippo.ehviewer.ui.main.BrowseFileRow
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
-import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.BrowseFolderSection
+import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
-import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.ramcosta.composedestinations.annotation.Destination
