@@ -250,7 +250,8 @@ internal object MsSrvsShareEnum {
             }
         }
         r.align(4)
-        /* totalEntries = */ r.u32()
+        /* totalEntries = */
+        r.u32()
         val resumeRef = r.u32()
         val resume = if (resumeRef != 0) r.u32() else null
         r.align(4)

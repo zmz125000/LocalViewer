@@ -1201,17 +1201,15 @@ object SmbGateway {
      * Enumerate disk shares via [MsSrvsShareEnum] (NetrShareEnum level 1 over IPC$).
      * Hides IPC and admin shares (names ending with `$`).
      */
-    private fun listDiskShareNamesOnSession(session: Session): List<String> {
-        return MsSrvsShareEnum.listSharesLevel1(session)
-            .asSequence()
-            .filter { (it.type and MsSrvsShareEnum.STYPE_TYPE_MASK) == MsSrvsShareEnum.STYPE_DISKTREE }
-            .map { it.name.trim() }
-            .filter { it.isNotEmpty() }
-            .filterNot { it.endsWith('$') }
-            .distinct()
-            .sortedWith { a, b -> naturalCompare(a, b) }
-            .toList()
-    }
+    private fun listDiskShareNamesOnSession(session: Session): List<String> = MsSrvsShareEnum.listSharesLevel1(session)
+        .asSequence()
+        .filter { (it.type and MsSrvsShareEnum.STYPE_TYPE_MASK) == MsSrvsShareEnum.STYPE_DISKTREE }
+        .map { it.name.trim() }
+        .filter { it.isNotEmpty() }
+        .filterNot { it.endsWith('$') }
+        .distinct()
+        .sortedWith { a, b -> naturalCompare(a, b) }
+        .toList()
 
     private fun shareRootEntries(names: List<String>): List<BrowseEntryRemote> = names.map { name ->
         BrowseEntryRemote.Directory(
@@ -2611,17 +2609,16 @@ internal object KeepAliveSocketFactory : SocketFactory() {
         connectPreferIpv4(host, port)
     }
 
-    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
-        withSmbTrafficTag {
-            val addrs = InetAddress.getAllByName(host)
-            val remote = addrs.firstOrNull { it is Inet4Address } ?: addrs.firstOrNull()
-                ?: throw UnknownHostException(host)
-            val socket = defaultFactory.createSocket()
-            socket.configure()
-            socket.bind(InetSocketAddress(localHost, localPort))
-            socket.connect(InetSocketAddress(remote, port), CONNECT_TIMEOUT_MS)
-            socket
-        }
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket = withSmbTrafficTag {
+        val addrs = InetAddress.getAllByName(host)
+        val remote = addrs.firstOrNull { it is Inet4Address } ?: addrs.firstOrNull()
+            ?: throw UnknownHostException(host)
+        val socket = defaultFactory.createSocket()
+        socket.configure()
+        socket.bind(InetSocketAddress(localHost, localPort))
+        socket.connect(InetSocketAddress(remote, port), CONNECT_TIMEOUT_MS)
+        socket
+    }
 
     override fun createSocket(host: InetAddress, port: Int): Socket = withSmbTrafficTag {
         val socket = defaultFactory.createSocket()
