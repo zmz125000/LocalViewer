@@ -31,13 +31,14 @@ import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
-import com.rapid7.client.dcerpc.mssrvs.ServerService
-import com.rapid7.client.dcerpc.transport.SMBTransportFactories
 import java.io.IOException
 import java.io.OutputStream
 import java.io.RandomAccessFile
+import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.UnknownHostException
 import java.util.EnumSet
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -147,9 +148,14 @@ object SmbGateway {
     private const val SMB_IO_TIMEOUT_SEC = 120L
 
     /**
-     * Max transact buffer for dcerpc share enum. Larger values (browse default is
-     * negotiated max, often ≥1 MiB) make SMB 3.1.1 Windows servers return
-     * STATUS_INVALID_PARAMETER on FSCTL_PIPE_TRANSCEIVE (smbj-rpc#165).
+     * Share-enum is a one-shot IPC$ client. Keep timeouts short so a hung LOGOFF/pipe
+     * cannot freeze the RPC root spinner for the full browse budget (was 120s).
+     */
+    private const val SHARE_ENUM_TIMEOUT_SEC = 12L
+
+    /**
+     * Max FSCTL_PIPE_TRANSCEIVE output for [MsSrvsShareEnum]. Values **> 64 KiB** make
+     * SMB 3.1.1 Windows return STATUS_INVALID_PARAMETER (same constraint as smbj-rpc#165).
      */
     private const val SHARE_ENUM_TRANSACT_BUFFER = 64 * 1024
 
@@ -304,24 +310,19 @@ object SmbGateway {
     }
 
     /**
-     * Config for MS-SRVS share enum only (rapid7 dcerpc over IPC$).
+     * Config for in-house [MsSrvsShareEnum] only (NetrShareEnum over IPC$\srvsvc).
      *
-     * dcerpc issues FSCTL_PIPE_TRANSCEIVE with MaxOutputResponse = min(config.transact,
-     * negotiated max). Windows / SMB 3.1.1 reject values **> 64 KiB** with
-     * STATUS_INVALID_PARAMETER on SMB2_IOCTL (rapid7/smbj-rpc#165). Browse uses
-     * [withNegotiatedBufferSize] (up to server max, often 1–8 MiB), so share-list must
-     * use its own short-lived client with a capped transact buffer.
-     *
-     * Also uses DirectTcp (no async factory) and does not request client-preferred
-     * encryption — encrypted pipe IOCTL is fragile on some servers (smbj#600).
+     * Cap transact/read/write at 64 KiB — larger MaxOutputResponse is rejected on
+     * SMB 3.1.1 Windows. Independent of Advanced async toggle; encryption off (pipe
+     * IOCTL + session encryption is fragile). Short timeouts; caller force-closes.
      */
     private fun smbConfigForShareEnum(): SmbConfig {
         val builder = SmbConfig.builder()
             .withReadBufferSize(SHARE_ENUM_TRANSACT_BUFFER)
             .withWriteBufferSize(SHARE_ENUM_TRANSACT_BUFFER)
             .withTransactBufferSize(SHARE_ENUM_TRANSACT_BUFFER)
-            .withTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
-            .withSoTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
+            .withTimeout(SHARE_ENUM_TIMEOUT_SEC, TimeUnit.SECONDS)
+            .withSoTimeout(SHARE_ENUM_TIMEOUT_SEC, TimeUnit.SECONDS)
             .withSocketFactory(KeepAliveSocketFactory)
             .withSecurityProvider(SmbCrypto.provider)
             .withSigningEnabled(true)
@@ -1196,21 +1197,15 @@ object SmbGateway {
 
     private fun joinRelative(parent: String, child: String): String = if (parent.isEmpty()) child else "$parent/$child"
 
-    // [MS-SRVS] share types (low byte). STYPE_SPECIAL (0x80000000) marks admin shares.
-    private const val STYPE_DISKTREE = 0
-    private const val STYPE_TYPE_MASK = 0xFF
-
     /**
-     * Enumerate disk shares via MS-SRVS NetrShareEnum over IPC$ (rapid7 dcerpc / smbj-rpc).
+     * Enumerate disk shares via [MsSrvsShareEnum] (NetrShareEnum level 1 over IPC$).
      * Hides IPC and admin shares (names ending with `$`).
      */
     private fun listDiskShareNamesOnSession(session: Session): List<String> {
-        val transport = SMBTransportFactories.SRVSVC.getTransport(session)
-        val serverService = ServerService(transport)
-        return serverService.getShares1()
+        return MsSrvsShareEnum.listSharesLevel1(session)
             .asSequence()
-            .filter { (it.type and STYPE_TYPE_MASK) == STYPE_DISKTREE }
-            .mapNotNull { it.netName?.trim() }
+            .filter { (it.type and MsSrvsShareEnum.STYPE_TYPE_MASK) == MsSrvsShareEnum.STYPE_DISKTREE }
+            .map { it.name.trim() }
             .filter { it.isNotEmpty() }
             .filterNot { it.endsWith('$') }
             .distinct()
@@ -1236,18 +1231,28 @@ object SmbGateway {
         trackSource(source)
         // Dedicated 64 KiB-transact client — see [smbConfigForShareEnum].
         val smbClient = SMBClient(smbConfigForShareEnum())
+        val t0 = System.nanoTime()
+        fun elapsedMs() = (System.nanoTime() - t0) / 1_000_000L
         try {
-            smbClient.connect(host, source.port).use { connection ->
+            // Skip session.logoff after IPC$ enum — LOGOFF can wait full transactTimeout.
+            val connection = smbClient.connect(host, source.port)
+            try {
                 val session = connection.authenticate(auth(source, password))
-                try {
-                    val names = listDiskShareNamesOnSession(session)
-                    clearHostCircuit(host, source.port)
-                    setHostConnected(hostKey(host, source.port), true)
-                    shareRootEntries(names)
-                } finally {
-                    runCatching { session.close() }
+                val names = listDiskShareNamesOnSession(session)
+                clearHostCircuit(host, source.port)
+                setHostConnected(hostKey(host, source.port), true)
+                logcat {
+                    "SmbGateway: share-enum ok host=$host shares=${names.size} ${elapsedMs()}ms"
                 }
+                shareRootEntries(names)
+            } finally {
+                runCatching { connection.close(true) }
             }
+        } catch (e: Throwable) {
+            logcat {
+                "SmbGateway: share-enum failed host=$host ${elapsedMs()}ms: ${e.message}"
+            }
+            throw e
         } finally {
             runCatching { smbClient.close() }
         }
@@ -1435,21 +1440,20 @@ object SmbGateway {
             // Empty share uses share-enum config (64 KiB transact); fixed share uses browse config.
             val smbClient = SMBClient(if (fixed.isEmpty()) smbConfigForShareEnum() else smbConfig())
             try {
-                smbClient.connect(host, source.port).use { connection ->
+                val connection = smbClient.connect(host, source.port)
+                try {
                     val session = connection.authenticate(auth(source, password))
-                    try {
-                        if (fixed.isNotEmpty()) {
-                            (session.connectShare(fixed) as DiskShare).use { share ->
-                                val path = joinPath(source.pathPrefix, "")
-                                share.list(path.ifEmpty { "" })
-                            }
-                        } else {
-                            // Empty share → exercise MS-SRVS list (same path as browse root).
-                            listDiskShareNamesOnSession(session)
+                    if (fixed.isNotEmpty()) {
+                        (session.connectShare(fixed) as DiskShare).use { share ->
+                            val path = joinPath(source.pathPrefix, "")
+                            share.list(path.ifEmpty { "" })
                         }
-                    } finally {
                         runCatching { session.close() }
+                    } else {
+                        listDiskShareNamesOnSession(session)
                     }
+                } finally {
+                    runCatching { connection.close(true) }
                 }
             } finally {
                 runCatching { smbClient.close() }
@@ -2540,18 +2544,19 @@ private fun isIgnorableListError(e: SMBApiException): Boolean {
 }
 
 /**
- * Standard socket options only — not a custom TCP stack.
- * SO_KEEPALIVE lets the kernel detect dead peers; TCP_NODELAY reduces small-write delay.
- * SO_LINGER 0 sends RST on close so half-open VPN paths do not hang close() for SO timeout.
- * smbj owns protocol framing / credits / reconnect policy beyond this.
+ * Standard socket options + bounded connect for smbj DirectTcp.
+ *
+ * IPv4-first host connect (same order as [SmbAsyncTransport]) with a finite timeout so
+ * dual-stack LAN names cannot sit on a dead AAAA until the OS default.
  *
  * TrafficStats: StrictMode [UntaggedSocketViolation] fires at native socket *create*,
- * so [TrafficStats.setThreadStatsTag] must run **before** [SocketFactory.createSocket],
- * not only [TrafficStats.tagSocket] afterward (too late).
+ * so [TrafficStats.setThreadStatsTag] must run **before** [SocketFactory.createSocket].
  */
 internal object KeepAliveSocketFactory : SocketFactory() {
     /** Distinct app traffic tag for SMB (see TrafficStats.setThreadStatsTag). */
     const val SMB_TRAFFIC_TAG = 0x534D42 // "SMB"
+
+    private const val CONNECT_TIMEOUT_MS = 8_000
 
     private val defaultFactory: SocketFactory = getDefault()
 
@@ -2559,9 +2564,8 @@ internal object KeepAliveSocketFactory : SocketFactory() {
         val previous = TrafficStats.getThreadStatsTag()
         TrafficStats.setThreadStatsTag(SMB_TRAFFIC_TAG)
         return try {
-            create().configure()
+            create()
         } finally {
-            // Restore so we do not leak the tag onto unrelated work on this thread.
             if (previous == -1) {
                 TrafficStats.clearThreadStatsTag()
             } else {
@@ -2571,28 +2575,59 @@ internal object KeepAliveSocketFactory : SocketFactory() {
     }
 
     private fun Socket.configure(): Socket = apply {
-        // Re-tag after create (connected sockets / some OEMs).
         runCatching { TrafficStats.tagSocket(this) }
         keepAlive = true
         tcpNoDelay = true
-        // Abortive close — important when EasyTier/VPN dies under active SMB I/O.
         runCatching { setSoLinger(true, 0) }
     }
 
+    private fun connectPreferIpv4(host: String, port: Int): Socket {
+        val addrs = InetAddress.getAllByName(host)
+        if (addrs.isEmpty()) throw UnknownHostException(host)
+        val ordered = buildList {
+            for (a in addrs) if (a is Inet4Address) add(a)
+            for (a in addrs) if (a !is Inet4Address) add(a)
+        }
+        var last: IOException? = null
+        for (addr in ordered) {
+            val socket = defaultFactory.createSocket()
+            try {
+                socket.configure()
+                socket.connect(InetSocketAddress(addr, port), CONNECT_TIMEOUT_MS)
+                return socket
+            } catch (e: IOException) {
+                last = e
+                runCatching { socket.close() }
+            }
+        }
+        throw last ?: IOException("SMB connect failed: $host:$port")
+    }
+
     override fun createSocket(): Socket = withSmbTrafficTag {
-        defaultFactory.createSocket()
+        defaultFactory.createSocket().configure()
     }
 
     override fun createSocket(host: String, port: Int): Socket = withSmbTrafficTag {
-        defaultFactory.createSocket(host, port)
+        connectPreferIpv4(host, port)
     }
 
-    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket = withSmbTrafficTag {
-        defaultFactory.createSocket(host, port, localHost, localPort)
-    }
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
+        withSmbTrafficTag {
+            val addrs = InetAddress.getAllByName(host)
+            val remote = addrs.firstOrNull { it is Inet4Address } ?: addrs.firstOrNull()
+                ?: throw UnknownHostException(host)
+            val socket = defaultFactory.createSocket()
+            socket.configure()
+            socket.bind(InetSocketAddress(localHost, localPort))
+            socket.connect(InetSocketAddress(remote, port), CONNECT_TIMEOUT_MS)
+            socket
+        }
 
     override fun createSocket(host: InetAddress, port: Int): Socket = withSmbTrafficTag {
-        defaultFactory.createSocket(host, port)
+        val socket = defaultFactory.createSocket()
+        socket.configure()
+        socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+        socket
     }
 
     override fun createSocket(
@@ -2601,6 +2636,10 @@ internal object KeepAliveSocketFactory : SocketFactory() {
         localAddress: InetAddress,
         localPort: Int,
     ): Socket = withSmbTrafficTag {
-        defaultFactory.createSocket(address, port, localAddress, localPort)
+        val socket = defaultFactory.createSocket()
+        socket.configure()
+        socket.bind(InetSocketAddress(localAddress, localPort))
+        socket.connect(InetSocketAddress(address, port), CONNECT_TIMEOUT_MS)
+        socket
     }
 }

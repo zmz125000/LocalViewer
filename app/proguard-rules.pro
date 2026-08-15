@@ -63,16 +63,3 @@
 -dontwarn org.ietf.jgss.GSSName
 -dontwarn org.ietf.jgss.Oid
 
-# rapid7 dcerpc (smbj-rpc / MS-SRVS share enum over IPC$).
-# - References java.rmi.UnmarshalException (Android has no java.rmi) — ignore.
-# - NDR marshallers / enums / helper SMB pipe classes must stay; R8 full mode
-#   otherwise strips or repackages them and release share-list fails while debug
-#   (minify off) works. Keep the packages used on the getShares1() path.
--dontwarn java.rmi.**
--dontwarn javax.rmi.**
--keep class com.rapid7.client.dcerpc.** { *; }
--keep class com.rapid7.helper.** { *; }
--keepclassmembers enum com.rapid7.client.dcerpc.** {
-    public static **[] values();
-    public static ** valueOf(java.lang.String);
-}
