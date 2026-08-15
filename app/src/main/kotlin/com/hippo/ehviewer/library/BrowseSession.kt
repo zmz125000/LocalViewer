@@ -49,10 +49,24 @@ object BrowseSession {
         smbSegments[sourceId] = segments
     }
 
+    /**
+     * When true, the next [com.hippo.ehviewer.ui.screen.SmbBrowserScreen] goUp leaves
+     * the browser (opened from History/Library/Fav with
+     * [com.hippo.ehviewer.Settings.alwaysExitToDir] off). Cleared on enterDir or after use.
+     */
+    private val smbExitToOrigin = ConcurrentHashMap<Long, Boolean>()
+
+    fun smbExitToOrigin(sourceId: Long): Boolean = smbExitToOrigin[sourceId] == true
+
+    fun setSmbExitToOrigin(sourceId: Long, value: Boolean) {
+        if (value) smbExitToOrigin[sourceId] = true else smbExitToOrigin.remove(sourceId)
+    }
+
     /** Drop path stack for a source (e.g. share/pathPrefix edited). */
     fun clearSmbSegments(sourceId: Long) {
         smbSegments[sourceId] = emptyList()
         smbPhotoGridState.remove(sourceId)
+        smbExitToOrigin.remove(sourceId)
     }
 
     /**
@@ -210,9 +224,19 @@ object BrowseSession {
         webDavSegments[sourceId] = segments
     }
 
+    /** Same as [smbExitToOrigin] for WebDAV browser. */
+    private val webDavExitToOrigin = ConcurrentHashMap<Long, Boolean>()
+
+    fun webDavExitToOrigin(sourceId: Long): Boolean = webDavExitToOrigin[sourceId] == true
+
+    fun setWebDavExitToOrigin(sourceId: Long, value: Boolean) {
+        if (value) webDavExitToOrigin[sourceId] = true else webDavExitToOrigin.remove(sourceId)
+    }
+
     fun clearWebDavSegments(sourceId: Long) {
         webDavSegments[sourceId] = emptyList()
         webDavPhotoGridState.remove(sourceId)
+        webDavExitToOrigin.remove(sourceId)
     }
 
     private val webDavPhotoGridState = ConcurrentHashMap<Long, PhotoGridOverlay>()

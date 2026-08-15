@@ -61,7 +61,7 @@ fun rememberEffectiveBrowseContentMode(
 
 /**
  * Top-bar menu for folder browsers: content filter, list/grid layout, and
- * general display toggles (page count, progress, folder thumbs, small galleries).
+ * general display toggles (photo grid, page count, progress, folder thumbs, small galleries).
  *
  * [folder] is the current directory identity. Null (root picker) disables persist.
  * [hideContentModes] hides Media/Galleries/Video/Folder for [BrowseVirtualKind] layers
@@ -89,6 +89,7 @@ fun BrowseViewModeMenu(
     var browseFolderThumbs by Settings.browseFolderThumbs.asMutableState()
     var showSmallGalleries by Settings.browseShowSmallGalleries.asMutableState()
     var favoritesOnTop by Settings.browseFavoritesOnTop.asMutableState()
+    var photoGridMode by Settings.photoGridMode.asMutableState()
 
     Box(modifier) {
         IconButton(
@@ -165,6 +166,11 @@ fun BrowseViewModeMenu(
                 },
             )
             HorizontalDivider()
+            ToggleMenuItem(
+                label = stringResource(R.string.browse_menu_photo_grid),
+                checked = photoGridMode,
+                onClick = { photoGridMode = !photoGridMode },
+            )
             ToggleMenuItem(
                 label = stringResource(R.string.browse_menu_favorites_on_top),
                 checked = favoritesOnTop,

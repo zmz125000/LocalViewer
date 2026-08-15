@@ -14,13 +14,6 @@ plugins {
     alias(libs.plugins.baselineprofile)
 }
 
-// dcerpc (rapid7 smbj-rpc) still declares smbj 0.12.x — keep a single smbj on the classpath.
-configurations.configureEach {
-    resolutionStrategy {
-        force("com.hierynomus:smbj:${libs.versions.smbj.get()}")
-    }
-}
-
 // App ships all three ABIs in release; HDR *convert codecs* (jxr/avif/jxl/uhdr)
 // are only compiled into arm64-v8a + x86_64 (see CMake EHVIEWER_HDR_CODECS).
 // armeabi-v7a still gets libehviewer.so (archive/rust) with HDR JNI stubs.
@@ -84,9 +77,9 @@ android {
         applicationId = "moe.tarsin.localviewer"
         versionCode = 38
         versionName = if (snapshot) {
-            "1.10.19-SNAPSHOT"
+            "1.10.20-SNAPSHOT"
         } else {
-            "1.10.19"
+            "1.10.20"
         }
         buildConfigField("boolean", "SNAPSHOT", "$snapshot")
         buildConfigField("String", "RAW_VERSION_NAME", "\"$versionName\"")
@@ -232,8 +225,7 @@ dependencies {
     implementation(libs.androidx.room.paging)
 
     implementation(libs.smbj)
-    // Share enumeration via MS-SRVS (NetrShareEnum) over IPC$; see smbj issue #600.
-    implementation(libs.dcerpc)
+    // Share enumeration: in-house [MsSrvsShareEnum] (NetrShareEnum over IPC$), no dcerpc.
     testImplementation("junit:junit:4.13.2")
     implementation(libs.material.motion.core)
     implementation(libs.material.kolor)

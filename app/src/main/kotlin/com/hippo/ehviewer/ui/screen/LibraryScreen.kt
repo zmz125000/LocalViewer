@@ -82,13 +82,11 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseFavorites
-import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.FavoriteBrowseSource
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
-import com.hippo.ehviewer.library.buildLocalBrowseStack
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
 import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
 import com.hippo.ehviewer.library.toBaseGalleryInfo
@@ -96,9 +94,6 @@ import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.EasyTierScreenDestination
-import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
-import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
-import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.easytier.EasyTierDialog
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.CoverImage
@@ -107,7 +102,10 @@ import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
+import com.hippo.ehviewer.ui.openLocalBrowseDir
 import com.hippo.ehviewer.ui.openLocalFolderPhotoGrid
+import com.hippo.ehviewer.ui.openSmbBrowseDir
+import com.hippo.ehviewer.ui.openWebDavBrowseDir
 import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -286,56 +284,53 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         when (fav) {
             is FavoriteBrowseSource.Local -> {
                 val path = LocalLibrary.rootPath(fav.root) ?: return
-                BrowseSession.localStack = buildLocalBrowseStack(
+                openLocalBrowseDir(
                     rootId = fav.root.id,
                     rootDisplayName = fav.root.displayName,
                     rootPath = path,
                     relativePath = "",
                     preferMediaStore = fav.root.prefersMediaStore,
+                    fromLibrary = true,
                 )
-                navigate(FolderBrowserScreenDestination(fromLibrary = true))
             }
             is FavoriteBrowseSource.Smb -> {
-                BrowseSession.setSmbSegments(fav.source.id, emptyList())
-                navigate(SmbBrowserScreenDestination(fav.source.id, "", fromLibrary = true))
+                openSmbBrowseDir(
+                    sourceId = fav.source.id,
+                    remoteDir = "",
+                    fromLibrary = true,
+                )
             }
             is FavoriteBrowseSource.WebDav -> {
-                BrowseSession.setWebDavSegments(fav.source.id, emptyList())
-                navigate(WebDavBrowserScreenDestination(fav.source.id, "", fromLibrary = true))
+                openWebDavBrowseDir(
+                    sourceId = fav.source.id,
+                    remoteDir = "",
+                    fromLibrary = true,
+                )
             }
             is FavoriteBrowseSource.Gallery -> openGallery(fav.gallery)
             is FavoriteBrowseSource.LocalFolder -> {
-                // Same stack rebuild as History → browse folder.
                 val rootPath = LocalLibrary.rootPath(fav.root) ?: return
-                BrowseSession.localStack = buildLocalBrowseStack(
+                openLocalBrowseDir(
                     rootId = fav.root.id,
                     rootDisplayName = fav.root.displayName,
                     rootPath = rootPath,
                     relativePath = fav.relativePath,
                     preferMediaStore = fav.root.prefersMediaStore,
+                    fromLibrary = true,
                 )
-                navigate(FolderBrowserScreenDestination(fromLibrary = true))
             }
             is FavoriteBrowseSource.SmbFolder -> {
-                val segments = fav.relativePath.split('/').filter { it.isNotEmpty() }
-                BrowseSession.setSmbSegments(fav.source.id, segments)
-                navigate(
-                    SmbBrowserScreenDestination(
-                        sourceId = fav.source.id,
-                        initialRelativePath = fav.relativePath,
-                        fromLibrary = true,
-                    ),
+                openSmbBrowseDir(
+                    sourceId = fav.source.id,
+                    remoteDir = fav.relativePath,
+                    fromLibrary = true,
                 )
             }
             is FavoriteBrowseSource.WebDavFolder -> {
-                val segments = fav.relativePath.split('/').filter { it.isNotEmpty() }
-                BrowseSession.setWebDavSegments(fav.source.id, segments)
-                navigate(
-                    WebDavBrowserScreenDestination(
-                        sourceId = fav.source.id,
-                        initialRelativePath = fav.relativePath,
-                        fromLibrary = true,
-                    ),
+                openWebDavBrowseDir(
+                    sourceId = fav.source.id,
+                    remoteDir = fav.relativePath,
+                    fromLibrary = true,
                 )
             }
         }

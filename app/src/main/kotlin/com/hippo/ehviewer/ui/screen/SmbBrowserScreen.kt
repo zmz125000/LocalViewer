@@ -551,6 +551,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val parts = relativeName.split('/').filter { it.isNotEmpty() }
         if (parts.isEmpty()) return
         setPhotoGrid(null)
+        // Deeper navigation owns the stack; do not jump back to History/Library on goUp.
+        BrowseSession.setSmbExitToOrigin(sourceId, false)
         val next = segments + parts
         val nextDir = next.joinToString("/")
         enterHopStack = enterHopStack + parts.size
@@ -560,40 +562,6 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             entries = emptyList()
             listedDir = null
             loading = true
-        }
-    }
-
-    fun goUp() {
-        // Exit photo-grid: parent listing, leave browser (alwaysExitToDir off from
-        // History/Library), or clear virtual layer only.
-        if (photoGrid) {
-            val leaveChild = photoGridOverlay?.enteredFromParent == true
-            val exitToOrigin = photoGridOverlay?.exitToOrigin == true
-            setPhotoGrid(null)
-            when {
-                leaveChild -> Unit // Fall through to pop the gallery directory.
-                exitToOrigin -> {
-                    navigator.popBackStack()
-                    return
-                }
-                else -> return
-            }
-        }
-        if (segments.isNotEmpty()) {
-            val hop = (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
-            enterHopStack = if (enterHopStack.isNotEmpty()) enterHopStack.dropLast(1) else enterHopStack
-            val next = segments.dropLast(hop)
-            val nextDir = next.joinToString("/")
-            updateSegments(next)
-            // History deep-link parents are often already in session cache — paint now so
-            // the second/third go-up never flashes empty+infinite refresh while effect starts.
-            if (!applyCachedListing(nextDir)) {
-                entries = emptyList()
-                listedDir = null
-                loading = true
-            }
-        } else {
-            navigator.popBackStack()
         }
     }
 
@@ -615,6 +583,46 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     navigator.navigate(BrowseScreenDestination) { launchSingleTop = true }
                 }
             }
+        }
+    }
+
+    fun goUp() {
+        // Exit photo-grid: parent listing, leave browser (alwaysExitToDir off from
+        // History/Library), or clear virtual layer only.
+        if (photoGrid) {
+            val leaveChild = photoGridOverlay?.enteredFromParent == true
+            val exitToOrigin = photoGridOverlay?.exitToOrigin == true
+            setPhotoGrid(null)
+            when {
+                leaveChild -> Unit // Fall through to pop the gallery directory.
+                exitToOrigin -> {
+                    navigator.popBackStack()
+                    return
+                }
+                else -> return
+            }
+        }
+        // Dir pin from History/Library/Fav with alwaysExitToDir off: leave immediately.
+        if (BrowseSession.smbExitToOrigin(sourceId)) {
+            BrowseSession.setSmbExitToOrigin(sourceId, false)
+            jumpBackToOrigin()
+            return
+        }
+        if (segments.isNotEmpty()) {
+            val hop = (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
+            enterHopStack = if (enterHopStack.isNotEmpty()) enterHopStack.dropLast(1) else enterHopStack
+            val next = segments.dropLast(hop)
+            val nextDir = next.joinToString("/")
+            updateSegments(next)
+            // History deep-link parents are often already in session cache — paint now so
+            // the second/third go-up never flashes empty+infinite refresh while effect starts.
+            if (!applyCachedListing(nextDir)) {
+                entries = emptyList()
+                listedDir = null
+                loading = true
+            }
+        } else {
+            navigator.popBackStack()
         }
     }
 

@@ -66,8 +66,3 @@
 -dontwarn org.ietf.jgss.GSSName
 -dontwarn org.ietf.jgss.Oid
 
-# rapid7 dcerpc (smbj-rpc) references java.rmi.UnmarshalException in method
-# signatures; Android has no java.rmi. Share-enum only needs MS-SRVS over IPC$,
-# and never throws that type on our path — safe to ignore for R8.
--dontwarn java.rmi.**
--dontwarn javax.rmi.**
