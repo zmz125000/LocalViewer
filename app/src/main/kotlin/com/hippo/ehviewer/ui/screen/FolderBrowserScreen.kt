@@ -42,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -53,6 +54,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
@@ -62,6 +66,7 @@ import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseEntry
@@ -771,7 +776,16 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     val files = sections.files.filterIsInstance<BrowseEntry.RegularFile>()
                     if (photoGrid) {
                         // Virtual image-only grid for a folder gallery (long-press).
-                        val gridState = rememberBrowseGridState(pathKey, scrollLayoutKey)
+                        val frame = stack.lastOrNull()
+                        val progressGid = frame?.let {
+                            stableGalleryId(it.rootId, it.relativePath.ifEmpty { "." })
+                        } ?: 0L
+                        val gridState = rememberLocalPhotoGridState(
+                            pathKey = pathKey,
+                            listMode = scrollLayoutKey,
+                            progressGid = progressGid,
+                            imageCount = folderImages.size,
+                        )
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
                             columns = GalleryGridDefaults.columns(),
@@ -1056,6 +1070,73 @@ internal fun rememberBrowseGridState(pathKey: String, listMode: Int): LazyGridSt
     return state
 }
 
+/**
+ * Photo-grid scroll: jump to reader reading progress (same [progressGid] as the folder reader)
+ * when the grid opens / resumes. Falls back to saved scroll only when progress is 0.
+ */
+@Composable
+internal fun rememberLocalPhotoGridState(
+    pathKey: String,
+    listMode: Int,
+    progressGid: Long,
+    imageCount: Int,
+): LazyGridState {
+    val state = remember(pathKey, listMode) { LazyGridState(0, 0) }
+    DisposableEffect(pathKey, listMode, state) {
+        onDispose {
+            BrowseSession.saveLocalScroll(
+                pathKey,
+                state.firstVisibleItemIndex,
+                state.firstVisibleItemScrollOffset,
+                listMode,
+            )
+        }
+    }
+    PhotoGridScrollToProgressEffect(
+        gridState = state,
+        imageCount = imageCount,
+        progressGid = progressGid,
+        layoutKey = pathKey to listMode,
+        loadSaved = { BrowseSession.localScroll(pathKey, listMode) },
+    )
+    return state
+}
+
+/**
+ * Apply [EhDB] page progress to a photo-grid after items layout.
+ * Re-runs on [Lifecycle.Event.ON_RESUME] so return-from-reader lands on the latest page.
+ */
+@Composable
+internal fun PhotoGridScrollToProgressEffect(
+    gridState: LazyGridState,
+    imageCount: Int,
+    progressGid: Long,
+    layoutKey: Any,
+    loadSaved: () -> BrowseSession.ListScrollPosition? = { null },
+) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var resumeEpoch by remember(layoutKey) { mutableIntStateOf(0) }
+    DisposableEffect(lifecycleOwner, layoutKey) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) resumeEpoch++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(layoutKey, imageCount, progressGid, resumeEpoch) {
+        if (imageCount <= 0 || progressGid == 0L) return@LaunchedEffect
+        snapshotFlow { gridState.layoutInfo.totalItemsCount }.first { it > 0 }
+        val page = withIOContext { EhDB.getReadProgress(progressGid) }
+        if (page > 0) {
+            gridState.scrollToItem(page.coerceIn(0, imageCount - 1))
+        } else if (resumeEpoch == 0) {
+            val saved = loadSaved() ?: return@LaunchedEffect
+            val max = (gridState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+            gridState.scrollToItem(saved.index.coerceIn(0, max), saved.offset)
+        }
+    }
+}
+
 /** SMB variant — same mechanics, separate session map. */
 @Composable
 internal fun rememberSmbBrowseListState(
@@ -1116,5 +1197,37 @@ internal fun rememberSmbBrowseGridState(
         val max = (state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
         state.scrollToItem(saved.index.coerceIn(0, max), saved.offset)
     }
+    return state
+}
+
+/** SMB/WebDAV photo-grid: same progress-first scroll as [rememberLocalPhotoGridState]. */
+@Composable
+internal fun rememberSmbPhotoGridState(
+    sourceId: Long,
+    relativeDir: String,
+    listMode: Int,
+    progressGid: Long,
+    imageCount: Int,
+): LazyGridState {
+    val pathKey = "$sourceId|$relativeDir"
+    val state = remember(pathKey, listMode) { LazyGridState(0, 0) }
+    DisposableEffect(pathKey, listMode, state) {
+        onDispose {
+            BrowseSession.saveSmbScroll(
+                sourceId,
+                relativeDir,
+                state.firstVisibleItemIndex,
+                state.firstVisibleItemScrollOffset,
+                listMode,
+            )
+        }
+    }
+    PhotoGridScrollToProgressEffect(
+        gridState = state,
+        imageCount = imageCount,
+        progressGid = progressGid,
+        layoutKey = pathKey to listMode,
+        loadSaved = { BrowseSession.smbScroll(sourceId, relativeDir, listMode) },
+    )
     return state
 }
