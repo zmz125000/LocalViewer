@@ -299,8 +299,16 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
         base.filterByBrowseSearch(search.keyword) { it.name }
     }
-    val photoGridImages = remember(filteredEntries, photoGrid) {
-        if (photoGrid) filteredEntries.filterIsInstance<BrowseEntryRemote.RegularFile>() else emptyList()
+
+    /**
+     * Image RegularFiles in the current listing — photo-grid virtual folder **and**
+     * Folder-mode loose images (shared reader / cover keys).
+     */
+    val folderImages = remember(filteredEntries) {
+        filteredEntries
+            .filterIsInstance<BrowseEntryRemote.RegularFile>()
+            .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
+            .sortedWith { a, b -> naturalCompare(a.name, b.name) }
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
@@ -704,11 +712,15 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         if (photoGridMode) openFolderGallery(entry) else openFolderGalleryPhotoGrid(entry)
     }
 
-    /** Tap image in photo-grid → reader at that page index. */
-    fun openPhotoGridImage(file: BrowseEntryRemote.RegularFile) {
+    /**
+     * Tap an image (photo-grid virtual folder **or** Folder-mode file row) → reader at that page.
+     * Same page list / [HistoryThumbKey] cover path as the photo-grid path.
+     */
+    fun openFolderImage(file: BrowseEntryRemote.RegularFile) {
         val src = source ?: return
-        if (!photoGrid) return
-        val images = photoGridImages
+        if (!isImageFileName(file.fileName.substringAfterLast('/'))) return
+        val images = folderImages
+        if (images.isEmpty()) return
         val page = images.indexOfFirst { it.fileName == file.fileName }.coerceAtLeast(0)
         val names = images.map { it.fileName }
         val coverKey = names.firstOrNull()?.let { fileName ->
@@ -739,6 +751,15 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
         ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
         navToSmbFolderReader(src.id, relativeDir, names, info, page)
+    }
+
+    fun imageCoverFor(file: BrowseEntryRemote.RegularFile): BrowseCover.Smb {
+        val remote = if (relativeDir.isEmpty()) {
+            file.fileName
+        } else {
+            SmbGateway.joinRelativePath(relativeDir, file.fileName)
+        }
+        return BrowseCover.Smb(sourceId, remote)
     }
 
     fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
@@ -1126,19 +1147,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             horizontalArrangement = gridSpacing,
                             verticalArrangement = gridSpacing,
                         ) {
-                            items(photoGridImages, key = { "pg-${it.fileName}" }) { file ->
-                                val remote = if (relativeDir.isEmpty()) {
-                                    file.fileName
-                                } else {
-                                    SmbGateway.joinRelativePath(relativeDir, file.fileName)
-                                }
+                            items(folderImages, key = { "pg-${it.fileName}" }) { file ->
                                 BrowsePhotoGridImageItem(
                                     name = file.name,
-                                    cover = BrowseCover.Smb(sourceId, remote),
+                                    cover = imageCoverFor(file),
                                     showPhotoThumb = true,
                                     thumbRetryKey = refreshToken,
                                     allowRemoteFetch = allowRemoteThumbs,
-                                    onClick = { openPhotoGridImage(file) },
+                                    onClick = { openFolderImage(file) },
                                     onLongClick = { openExternalFile(file.fileName) },
                                 )
                             }
@@ -1240,10 +1256,24 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     BrowseSectionHeader(stringResource(R.string.browse_files))
                                 }
                                 items(files, key = { "f-${it.fileName}" }) { file ->
-                                    BrowseFileGridItem(
-                                        name = file.name,
-                                        onClick = { openExternalFile(file.fileName) },
-                                    )
+                                    val isImage = isImageFileName(file.fileName.substringAfterLast('/'))
+                                    if (isImage) {
+                                        BrowsePhotoGridImageItem(
+                                            name = file.name,
+                                            cover = imageCoverFor(file),
+                                            showPhotoThumb = true,
+                                            thumbRetryKey = refreshToken,
+                                            allowRemoteFetch = allowRemoteThumbs,
+                                            onClick = { openFolderImage(file) },
+                                            onLongClick = { openExternalFile(file.fileName) },
+                                        )
+                                    } else {
+                                        BrowseFileGridItem(
+                                            name = file.name,
+                                            onClick = { openExternalFile(file.fileName) },
+                                            onLongClick = { openExternalFile(file.fileName) },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1324,9 +1354,20 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     BrowseSectionHeader(stringResource(R.string.browse_files))
                                 }
                                 items(files, key = { "f-${it.fileName}" }) { file ->
+                                    val isImage = isImageFileName(file.fileName.substringAfterLast('/'))
                                     BrowseFileRow(
                                         name = file.name,
-                                        onClick = { openExternalFile(file.fileName) },
+                                        cover = if (isImage) imageCoverFor(file) else null,
+                                        showPhotoThumb = isImage,
+                                        thumbRetryKey = refreshToken,
+                                        allowRemoteFetch = allowRemoteThumbs,
+                                        onClick = {
+                                            if (isImage) {
+                                                openFolderImage(file)
+                                            } else {
+                                                openExternalFile(file.fileName)
+                                            }
+                                        },
                                         onLongClick = { openExternalFile(file.fileName) },
                                     )
                                 }

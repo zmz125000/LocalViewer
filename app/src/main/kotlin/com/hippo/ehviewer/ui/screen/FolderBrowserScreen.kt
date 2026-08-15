@@ -180,12 +180,16 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
         base.filterByBrowseSearch(search.keyword) { it.name }
     }
-    val photoGridImages = remember(filteredEntries, photoGrid) {
-        if (photoGrid) {
-            filteredEntries.filterIsInstance<BrowseEntry.RegularFile>()
-        } else {
-            emptyList()
-        }
+
+    /**
+     * Image RegularFiles in the current listing — photo-grid virtual folder **and**
+     * Folder-mode loose images (shared reader / cover keys).
+     */
+    val folderImages = remember(filteredEntries) {
+        filteredEntries
+            .filterIsInstance<BrowseEntry.RegularFile>()
+            .filter { isImageFileName(it.name) }
+            .sortedWith { a, b -> naturalCompare(a.name, b.name) }
     }
 
     /** Path the current [entries] belong to — avoids showing the wrong dir during reload. */
@@ -447,11 +451,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         if (photoGridMode) openFolderGallery(entry) else openFolderGalleryPhotoGrid(entry)
     }
 
-    /** Tap an image in photo-grid → reader at that page. */
-    fun openPhotoGridImage(file: BrowseEntry.RegularFile) {
+    /**
+     * Tap an image (photo-grid virtual folder **or** Folder-mode file row) → reader at that page.
+     * Same page list / cover keys as the photo-grid path.
+     */
+    fun openFolderImage(file: BrowseEntry.RegularFile) {
         val frame = stack.lastOrNull() ?: return
-        if (!frame.photoGrid) return
-        val images = photoGridImages
+        if (!isImageFileName(file.name)) return
+        val images = folderImages
+        if (images.isEmpty()) return
         val page = images.indexOfFirst { it.path == file.path }.coerceAtLeast(0)
         val coverKey = images.firstOrNull()?.path?.toString()
         val gid = stableGalleryId(frame.rootId, frame.relativePath.ifEmpty { "." })
@@ -775,12 +783,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             horizontalArrangement = gridSpacing,
                             verticalArrangement = gridSpacing,
                         ) {
-                            items(photoGridImages, key = { "pg-${it.path}" }) { file ->
+                            items(folderImages, key = { "pg-${it.path}" }) { file ->
                                 BrowsePhotoGridImageItem(
                                     name = file.name,
                                     cover = BrowseCover.Local(file.path),
                                     showPhotoThumb = true,
-                                    onClick = { openPhotoGridImage(file) },
+                                    onClick = { openFolderImage(file) },
                                     onLongClick = { openExternalFile(file.path) },
                                 )
                             }
@@ -877,11 +885,22 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseSectionHeader(stringResource(R.string.browse_files))
                                 }
                                 items(files, key = { "f-${it.path}" }) { file ->
-                                    BrowseFileGridItem(
-                                        name = file.name,
-                                        onClick = { openExternalFile(file.path) },
-                                        onLongClick = { openExternalFile(file.path) },
-                                    )
+                                    val isImage = isImageFileName(file.name)
+                                    if (isImage) {
+                                        BrowsePhotoGridImageItem(
+                                            name = file.name,
+                                            cover = BrowseCover.Local(file.path),
+                                            showPhotoThumb = true,
+                                            onClick = { openFolderImage(file) },
+                                            onLongClick = { openExternalFile(file.path) },
+                                        )
+                                    } else {
+                                        BrowseFileGridItem(
+                                            name = file.name,
+                                            onClick = { openExternalFile(file.path) },
+                                            onLongClick = { openExternalFile(file.path) },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -957,9 +976,18 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseSectionHeader(stringResource(R.string.browse_files))
                                 }
                                 items(files, key = { "f-${it.path}" }) { file ->
+                                    val isImage = isImageFileName(file.name)
                                     BrowseFileRow(
                                         name = file.name,
-                                        onClick = { openExternalFile(file.path) },
+                                        cover = if (isImage) BrowseCover.Local(file.path) else null,
+                                        showPhotoThumb = isImage,
+                                        onClick = {
+                                            if (isImage) {
+                                                openFolderImage(file)
+                                            } else {
+                                                openExternalFile(file.path)
+                                            }
+                                        },
                                         onLongClick = { openExternalFile(file.path) },
                                     )
                                 }

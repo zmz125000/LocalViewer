@@ -292,18 +292,38 @@ fun BrowseFileRow(
     modifier: Modifier = Modifier,
     /** Long-press → system "Open with"; defaults to [onClick]. */
     onLongClick: (() -> Unit)? = null,
+    /**
+     * Image file in Folder mode: same [BrowseCover] key as photo grid; fetch gated by
+     * [Settings.downloadNetworkPhotoGridThumb] / [Settings.savePhotoGridOriginalCache].
+     */
+    cover: BrowseCover? = null,
+    showPhotoThumb: Boolean = false,
+    thumbRetryKey: Any? = null,
+    allowRemoteFetch: Boolean = true,
 ) {
     val haptic = LocalHapticFeedback.current
     val longClick = onLongClick ?: onClick
+    val usePhotoThumb = showPhotoThumb && cover != null
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = { Text(stringResource(R.string.browse_file)) },
         leadingContent = {
-            Icon(
-                Icons.AutoMirrored.Filled.InsertDriveFile,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (usePhotoThumb) {
+                BrowseCoverThumb(
+                    cover = cover,
+                    decodeSizePx = CoverThumb.listDecodePx(),
+                    retryKey = thumbRetryKey,
+                    allowRemoteFetch = allowRemoteFetch,
+                    photoGridThumb = true,
+                    placeholderIcon = Icons.Default.PhotoLibrary,
+                )
+            } else {
+                Icon(
+                    Icons.AutoMirrored.Filled.InsertDriveFile,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         },
         modifier = modifier
             .fillMaxWidth()
@@ -485,7 +505,8 @@ fun BrowseFolderGalleryGridItem(
 }
 
 /**
- * Image cell in a folder-gallery photo-grid virtual folder.
+ * Image cell for photo-grid virtual folder **and** Folder-mode image files.
+ * Uses the same [BrowseCover] path keys and [photoGridThumb] download prefs as photo grid.
  * When [showPhotoThumb] and [cover] are set, shows a cover thumb; otherwise a file icon.
  */
 @Composable
@@ -736,9 +757,10 @@ fun BrowseCoverThumb(
      */
     allowRemoteFetch: Boolean = true,
     /**
-     * Photo-grid image cells: gate network fetch with [Settings.downloadNetworkPhotoGridThumb]
-     * and optional original page-cache write with [Settings.savePhotoGridOriginalCache].
-     * Thumbs always land in `*_thumb_cache`.
+     * Photo image cells (photo-grid virtual folder **or** Folder-mode image files):
+     * gate network fetch with [Settings.downloadNetworkPhotoGridThumb] and optional original
+     * page-cache write with [Settings.savePhotoGridOriginalCache].
+     * Thumbs always land in `*_thumb_cache` under the same path key as photo grid.
      */
     photoGridThumb: Boolean = false,
     placeholderIcon: ImageVector = Icons.Default.PhotoLibrary,

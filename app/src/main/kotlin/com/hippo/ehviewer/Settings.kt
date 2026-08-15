@@ -216,15 +216,16 @@ object Settings : DataStorePreferences(null) {
     val photoGridMode = boolPref("photo_grid_mode", false)
 
     /**
-     * Allow downloading SMB/WebDAV images for photo-grid thumbs (decode to small JPEG like
-     * browse covers). Cached thumbs still show when off. Default true.
+     * Allow downloading SMB/WebDAV images for photo thumbs (photo-grid virtual folder **and**
+     * Folder-mode image files; decode to small JPEG like browse covers). Cached thumbs still
+     * show when off. Default true.
      */
     val downloadNetworkPhotoGridThumb = boolPref("download_network_photo_grid_thumb", true)
 
     /**
-     * When downloading a photo-grid network image for its thumb: also store the **original**
-     * full file in page cache (`smb_cache` / `webdav_cache`). Thumbs always go to
-     * `*_thumb_cache`. Default off — grid browse does not fill page cache.
+     * When downloading a network image for its photo thumb (photo-grid or Folder-mode images):
+     * also store the **original** full file in page cache (`smb_cache` / `webdav_cache`).
+     * Thumbs always go to `*_thumb_cache` under the same path key. Default on.
      */
     val savePhotoGridOriginalCache = boolPref("save_photo_grid_original_cache", true)
 
