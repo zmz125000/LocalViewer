@@ -362,34 +362,32 @@ object VideoThumbnail {
         return if (filled == max) buf else buf.copyOf(filled)
     }
 
-    private suspend fun decodeSnapshot(snapshot: ProbeSnapshot, label: String): Bitmap? {
-        return when (snapshot.mode) {
-            ProbeMode.ContiguousHead -> {
-                // Real truncated file — safer for MTS than sparse full-size MDS.
-                val tmp = File(cacheDirectory(), "mmr-${System.nanoTime()}.bin")
-                try {
-                    tmp.outputStream().use { it.write(snapshot.head) }
-                    decodeFrameWatchdog(
-                        label = label,
-                        timeoutMs = DECODE_TIMEOUT_MS,
-                        setDataSource = { it.setDataSource(tmp.absolutePath) },
-                        getFrame = { selectNetworkFrame() },
-                        cleanup = { tmp.delete() },
-                    )
-                } catch (e: Throwable) {
-                    tmp.delete()
-                    throw e
-                }
-            }
-            ProbeMode.HeadAndTail -> {
-                val data = ProbeMediaDataSource(snapshot.fileSize, snapshot.head, snapshot.tail)
+    private suspend fun decodeSnapshot(snapshot: ProbeSnapshot, label: String): Bitmap? = when (snapshot.mode) {
+        ProbeMode.ContiguousHead -> {
+            // Real truncated file — safer for MTS than sparse full-size MDS.
+            val tmp = File(cacheDirectory(), "mmr-${System.nanoTime()}.bin")
+            try {
+                tmp.outputStream().use { it.write(snapshot.head) }
                 decodeFrameWatchdog(
                     label = label,
                     timeoutMs = DECODE_TIMEOUT_MS,
-                    setDataSource = { it.setDataSource(data) },
+                    setDataSource = { it.setDataSource(tmp.absolutePath) },
                     getFrame = { selectNetworkFrame() },
+                    cleanup = { tmp.delete() },
                 )
+            } catch (e: Throwable) {
+                tmp.delete()
+                throw e
             }
+        }
+        ProbeMode.HeadAndTail -> {
+            val data = ProbeMediaDataSource(snapshot.fileSize, snapshot.head, snapshot.tail)
+            decodeFrameWatchdog(
+                label = label,
+                timeoutMs = DECODE_TIMEOUT_MS,
+                setDataSource = { it.setDataSource(data) },
+                getFrame = { selectNetworkFrame() },
+            )
         }
     }
 
@@ -633,8 +631,7 @@ private class ProbeMediaDataSource(
 ) : MediaDataSource() {
     override fun getSize(): Long = fileSize
 
-    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int =
-        readVideoThumbProbe(fileSize, head, tail, position, buffer, offset, size)
+    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int = readVideoThumbProbe(fileSize, head, tail, position, buffer, offset, size)
 
     override fun close() {}
 }
