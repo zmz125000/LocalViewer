@@ -149,8 +149,9 @@ object WebDavCache {
 
     /**
      * Browse thumb: reuse page cache if present; else RAM download → MaxEdge-only thumb.
-     * Decoded JPEG **always** lands in the thumb cache. When [cacheOriginal] is true and a
-     * network download was needed, also commit the full file to page cache (photo-grid opt-in).
+     * Decoded JPEG **always** lands in the thumb cache. When [cacheOriginal] is true and page
+     * cache is missing, download via [downloadIfNeeded] (same path + HDR convert as the reader),
+     * then encode the thumb from that page file.
      */
     suspend fun ensureBrowseThumb(
         sourceId: Long,
@@ -181,11 +182,16 @@ object WebDavCache {
                 File(destPath.parent!!.toString()).mkdirs()
                 val dest = File(key)
                 val pageForThumb = resolveReaderPath(pagePath)
-                if (probeDisk(pageForThumb)) {
+                if (!probeDisk(pageForThumb) && cacheOriginal) {
+                    // Same path + convert pipeline as the folder-gallery reader.
+                    downloadIfNeeded(pagePath, originalFileName = name, write = download)
+                }
+                val pageAfter = resolveReaderPath(pagePath)
+                if (probeDisk(pageAfter)) {
                     val jpgTmp = File("$key.jpg.${System.nanoTime()}")
                     try {
                         writeSubsampledJpeg(
-                            File(pageForThumb.toString()),
+                            File(pageAfter.toString()),
                             jpgTmp,
                             THUMB_DISK_EDGE,
                             THUMB_JPEG_QUALITY,
@@ -201,11 +207,11 @@ object WebDavCache {
                         if (jpgTmp.exists()) jpgTmp.delete()
                     }
                 } else {
+                    // No page cache: MaxEdge-only thumb (no full-page UHDR from grid browse).
                     val bos = ByteArrayOutputStream(256 * 1024)
                     download(bos)
-                    val bytes = bos.toByteArray()
                     val ok = HdrConvertCache.writeThumbFromBytes(
-                        bytes = bytes,
+                        bytes = bos.toByteArray(),
                         destJpeg = dest,
                         maxEdge = THUMB_DISK_EDGE,
                         quality = THUMB_JPEG_QUALITY,
@@ -216,23 +222,6 @@ object WebDavCache {
                     }
                     markPresent(destPath)
                     touch(destPath)
-                    if (cacheOriginal && bytes.isNotEmpty() && !probeDisk(pagePath)) {
-                        try {
-                            File(pagePath.parent!!.toString()).mkdirs()
-                            val pageDest = File(pagePath.toString())
-                            val pageTmp = File("${pageDest.path}.tmp.${System.nanoTime()}")
-                            try {
-                                pageTmp.writeBytes(bytes)
-                                commitTmp(pageTmp, pageDest)
-                                markPresent(pagePath)
-                                touch(pagePath)
-                            } finally {
-                                if (pageTmp.exists()) pageTmp.delete()
-                            }
-                        } catch (_: Throwable) {
-                            // Thumb is enough; page-cache write is best-effort.
-                        }
-                    }
                 }
                 scheduleTrim()
                 destPath
