@@ -227,6 +227,11 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.settings_persist_main_nav),
                 state = Settings.persistMainNav.asMutableState(),
             )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_hide_back_to_fab),
+                summary = stringResource(id = R.string.settings_hide_back_to_fab_summary),
+                state = Settings.hideBackToFab.asMutableState(),
+            )
         }
     }
 }

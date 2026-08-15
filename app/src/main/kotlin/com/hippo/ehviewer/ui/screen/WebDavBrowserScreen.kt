@@ -466,6 +466,32 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    /** Same jump as the Back-to Browse/History/Library FAB. */
+    fun jumpBackToOrigin() {
+        when {
+            fromHistory -> {
+                if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
+                    navigator.navigate(HistoryScreenDestination) { launchSingleTop = true }
+                }
+            }
+            fromLibrary -> {
+                if (!navigator.popBackStack(LibraryScreenDestination, inclusive = false)) {
+                    navigator.navigate(LibraryScreenDestination) { launchSingleTop = true }
+                }
+            }
+            else -> {
+                if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
+                    navigator.navigate(BrowseScreenDestination) { launchSingleTop = true }
+                }
+            }
+        }
+    }
+
+    val hideBackToFab by Settings.hideBackToFab.collectAsState()
+    fun onTopBarBack() {
+        if (hideBackToFab) jumpBackToOrigin() else goUp()
+    }
+
     BackHandler(enabled = search.active || segments.isNotEmpty() || photoGrid) {
         if (!search.handleBack { focusManager.clearFocus() }) {
             goUp()
@@ -808,7 +834,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 colors = adaptiveTopAppBarColors(),
                 navigationIcon = {
-                    IconButton(onClick = { goUp() }, shapes = IconButtonDefaults.shapes()) {
+                    IconButton(onClick = { onTopBarBack() }, shapes = IconButtonDefaults.shapes()) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                     }
                 },
@@ -833,9 +859,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         },
         floatingActionButton = {
             // Compact phones without persistent main nav: shortcut FAB.
-            // Tablets (rail) and Settings → Keep main navigation: re-tap tab instead.
+            // Settings → Hide Back-to FAB: hide and map top-bar back to the same jump.
             // Visibility follows enterAlways top-bar scroll (same collapsedFraction).
-            if (LocalShowNavShortcutFab.current) {
+            if (LocalShowNavShortcutFab.current && !hideBackToFab) {
                 AnimatedVisibility(
                     visible = showScrollFab,
                     enter = fadeIn() + scaleIn(),
@@ -843,39 +869,21 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 ) {
                     when {
                         fromHistory -> ExtendedFloatingActionButton(
-                            onClick = {
-                                if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
-                                    navigator.navigate(HistoryScreenDestination) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
+                            onClick = { jumpBackToOrigin() },
                             icon = {
                                 Icon(Icons.Default.History, contentDescription = null)
                             },
                             text = { Text(stringResource(R.string.back_to_history)) },
                         )
                         fromLibrary -> ExtendedFloatingActionButton(
-                            onClick = {
-                                if (!navigator.popBackStack(LibraryScreenDestination, inclusive = false)) {
-                                    navigator.navigate(LibraryScreenDestination) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
+                            onClick = { jumpBackToOrigin() },
                             icon = {
                                 Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null)
                             },
                             text = { Text(stringResource(R.string.back_to_library)) },
                         )
                         else -> ExtendedFloatingActionButton(
-                            onClick = {
-                                if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
-                                    navigator.navigate(BrowseScreenDestination) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
+                            onClick = { jumpBackToOrigin() },
                             icon = {
                                 Icon(Icons.Default.Explore, contentDescription = null)
                             },

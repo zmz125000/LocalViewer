@@ -173,6 +173,13 @@ object Settings : DataStorePreferences(null) {
      * “Back to browse/history” FAB instead. Large screens always use a rail and never the FAB.
      */
     val persistMainNav = boolPref("persist_main_nav", false)
+
+    /**
+     * When true, hide the “Back to Browse/History/Library” FAB on folder screens and make the
+     * top-bar back button run that same jump instead of climbing one path segment.
+     * Default false (current: FAB when main nav is hidden; top-bar back = go up).
+     */
+    val hideBackToFab = boolPref("hide_back_to_fab", false)
     val listThumbSize = intPref("list_tile_size", 40)
     val detailSize = intPref("detail_size_2", 0)
     val thumbColumns = intPref("thumb_columns", 3)

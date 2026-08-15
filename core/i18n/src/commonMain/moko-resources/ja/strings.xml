@@ -144,6 +144,8 @@
     <string name="settings_save_photo_grid_original_cache_summary">サムネイルは常にサムネイルキャッシュへ保存します。オン時は取得時に原画像もページキャッシュへ保存。オフ（既定）は小さな JPEG サムネのみです。</string>
     <string name="settings_persist_main_nav">フォルダ画面でメインナビを維持</string>
     <string name="settings_persist_main_nav_summary">フォルダ閲覧中も下部バーを表示し、「ブラウズ/履歴」の再タップで戻れます。オフ時はショートカット FAB（スマホ）。</string>
+    <string name="settings_hide_back_to_fab">戻る FAB を隠す</string>
+    <string name="settings_hide_back_to_fab_summary">「ブラウズ/履歴/ライブラリへ戻る」FAB を隠します。トップバーの戻るは 1 つ上のフォルダではなく、その画面へジャンプします。</string>
     <string name="settings_eh_show_reading_progress">読書進捗を表示</string>
     <string name="settings_eh_show_reading_progress_summary">ギャラリー一覧に読書進捗を表示</string>
     <string name="settings_smb_concurrency">SMB 同時接続数</string>

@@ -154,6 +154,8 @@
     <string name="settings_save_photo_grid_original_cache_summary">縮圖一律寫入縮圖快取。開啟後，下載照片網格時也會把完整原圖寫入頁面快取。關閉（預設）只保留小 JPEG 縮圖。</string>
     <string name="settings_persist_main_nav">資料夾頁面保留主導覽</string>
     <string name="settings_persist_main_nav_summary">瀏覽資料夾時顯示底部導覽，再次點按「瀏覽/歷史」可返回。關閉則使用快捷懸浮按鈕（手機）。</string>
+    <string name="settings_hide_back_to_fab">隱藏返回懸浮按鈕</string>
+    <string name="settings_hide_back_to_fab_summary">隱藏「返回瀏覽/歷史/收藏庫」懸浮按鈕。頂欄返回改為跳到該頁，而不是上一層資料夾。</string>
     <string name="settings_eh_show_reading_progress">顯示閱讀進度</string>
     <string name="settings_eh_show_reading_progress_summary">在圖庫列表中顯示閱讀進度</string>
     <string name="settings_smb_concurrency">SMB 並行連線數</string>
