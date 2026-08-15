@@ -264,6 +264,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
         base.filterByBrowseSearch(search.keyword) { it.name }
     }
+
     /**
      * Image RegularFiles in the current listing — photo-grid virtual folder **and**
      * Folder-mode loose images (shared reader / cover keys).
