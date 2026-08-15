@@ -737,7 +737,8 @@ fun BrowseCoverThumb(
     allowRemoteFetch: Boolean = true,
     /**
      * Photo-grid image cells: gate network fetch with [Settings.downloadNetworkPhotoGridThumb]
-     * and persist with [Settings.savePhotoGridThumbCache] (not gallery-cover prefs).
+     * and optional original page-cache write with [Settings.savePhotoGridOriginalCache].
+     * Thumbs always land in `*_thumb_cache`.
      */
     photoGridThumb: Boolean = false,
     placeholderIcon: ImageVector = Icons.Default.PhotoLibrary,
@@ -747,9 +748,9 @@ fun BrowseCoverThumb(
     val downloadRemoteThumbs by Settings.downloadRemoteThumbs.collectAsState()
     val downloadNetworkArchiveThumbs by Settings.downloadNetworkArchiveThumbs.collectAsState()
     val downloadNetworkPhotoGridThumb by Settings.downloadNetworkPhotoGridThumb.collectAsState()
-    val savePhotoGridThumbCache by Settings.savePhotoGridThumbCache.collectAsState()
+    val savePhotoGridOriginalCache by Settings.savePhotoGridOriginalCache.collectAsState()
     val allowNetworkImageDownload = if (photoGridThumb) downloadNetworkPhotoGridThumb else downloadRemoteThumbs
-    val persistNetworkThumb = if (photoGridThumb) savePhotoGridThumbCache else true
+    val cachePhotoGridOriginal = photoGridThumb && savePhotoGridOriginalCache
     // Stable keys: BrowseCover is a new instance per list paint; identity by fields.
     val remoteKey = when (cover) {
         is BrowseCover.Smb -> "smb\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
@@ -807,7 +808,7 @@ fun BrowseCoverThumb(
         retryKey,
         resumeEpoch,
         allowNetworkImageDownload,
-        persistNetworkThumb,
+        cachePhotoGridOriginal,
         downloadNetworkArchiveThumbs,
         allowRemoteFetch,
     ) {
@@ -959,7 +960,7 @@ fun BrowseCoverThumb(
                         localPath = SmbCache.ensureBrowseThumb(
                             cover.sourceId,
                             cover.remoteRelativeFile,
-                            persistToDisk = persistNetworkThumb,
+                            cacheOriginal = cachePhotoGridOriginal,
                         ) { out ->
                             SmbGateway.downloadFile(
                                 source,
@@ -1003,7 +1004,7 @@ fun BrowseCoverThumb(
                         localPath = WebDavCache.ensureBrowseThumb(
                             cover.sourceId,
                             cover.remoteRelativeFile,
-                            persistToDisk = persistNetworkThumb,
+                            cacheOriginal = cachePhotoGridOriginal,
                         ) { out ->
                             WebDavClient.downloadFile(source, password, cover.remoteRelativeFile, out)
                         }

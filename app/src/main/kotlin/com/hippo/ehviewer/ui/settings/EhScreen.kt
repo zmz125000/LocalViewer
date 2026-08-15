@@ -221,9 +221,9 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             )
             AnimatedVisibility(visible = downloadPhotoGridThumb.value) {
                 SwitchPreference(
-                    title = stringResource(id = R.string.settings_save_photo_grid_thumb_cache),
-                    summary = stringResource(id = R.string.settings_save_photo_grid_thumb_cache_summary),
-                    state = Settings.savePhotoGridThumbCache.asMutableState(),
+                    title = stringResource(id = R.string.settings_save_photo_grid_original_cache),
+                    summary = stringResource(id = R.string.settings_save_photo_grid_original_cache_summary),
+                    state = Settings.savePhotoGridOriginalCache.asMutableState(),
                 )
             }
             SwitchPreference(

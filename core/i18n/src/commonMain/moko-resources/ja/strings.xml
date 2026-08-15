@@ -139,8 +139,8 @@
     <string name="settings_photo_grid_mode_summary">オン: タップでフォトグリッド、長押しでリーダー。オフ: タップでリーダー、長押しでフォトグリッド。</string>
     <string name="settings_download_network_photo_grid_thumb">ネットワークのフォトグリッドサムネイルを取得</string>
     <string name="settings_download_network_photo_grid_thumb_summary">フォトグリッドで SMB/WebDAV 画像を小さな JPEG にデコードします。オフでもキャッシュ済みは表示されます。</string>
-    <string name="settings_save_photo_grid_thumb_cache">フォトグリッドサムネイルをキャッシュに保存</string>
-    <string name="settings_save_photo_grid_thumb_cache_summary">オフ: 表示用にのみデコード（サムネイルキャッシュへ書き込まず、原画像も書きません）。オン: ギャラリー表紙と同様に保存します。</string>
+    <string name="settings_save_photo_grid_original_cache">フォトグリッドの原画像をキャッシュに保存</string>
+    <string name="settings_save_photo_grid_original_cache_summary">サムネイルは常にサムネイルキャッシュへ保存します。オン時は取得時に原画像もページキャッシュへ保存。オフ（既定）は小さな JPEG サムネのみです。</string>
     <string name="settings_persist_main_nav">フォルダ画面でメインナビを維持</string>
     <string name="settings_persist_main_nav_summary">フォルダ閲覧中も下部バーを表示し、「ブラウズ/履歴」の再タップで戻れます。オフ時はショートカット FAB（スマホ）。</string>
     <string name="settings_eh_show_reading_progress">読書進捗を表示</string>

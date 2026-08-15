@@ -209,11 +209,11 @@ object Settings : DataStorePreferences(null) {
     val downloadNetworkPhotoGridThumb = boolPref("download_network_photo_grid_thumb", true)
 
     /**
-     * When [downloadNetworkPhotoGridThumb] is on: write decoded photo-grid thumbs to
-     * `*_thumb_cache`. When false (default), decode for display only (no thumb-cache write;
-     * never writes the original full file for grid thumbs).
+     * When downloading a photo-grid network image for its thumb: also store the **original**
+     * full file in page cache (`smb_cache` / `webdav_cache`). Thumbs always go to
+     * `*_thumb_cache`. Default off — grid browse does not fill page cache.
      */
-    val savePhotoGridThumbCache = boolPref("save_photo_grid_thumb_cache", false)
+    val savePhotoGridOriginalCache = boolPref("save_photo_grid_original_cache", false)
 
     val showGalleryPages = boolPref("show_gallery_pages", true)
     val showReadingProgress = boolPref("show_reading_progress", false)
