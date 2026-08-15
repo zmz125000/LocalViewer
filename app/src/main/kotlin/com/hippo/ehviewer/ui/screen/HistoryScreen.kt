@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -83,8 +84,8 @@ import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
-import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.HistoryDirectoryGridItem
 import com.hippo.ehviewer.ui.main.HistoryGridItem
 import com.hippo.ehviewer.ui.main.HistoryListItem
 import com.hippo.ehviewer.ui.navToLocalFolderReader
@@ -651,9 +652,6 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                 verticalArrangement = Arrangement.spacedBy(listInterval),
             ) {
                 if (directoryItems.isNotEmpty()) {
-                    item(key = "hdr-dirs") {
-                        BrowseSectionHeader(stringResource(R.string.browse_directories))
-                    }
                     items(directoryItems, key = { "dir-${it.gid}" }) { info ->
                         val dismissState = rememberSwipeToDismissBoxState()
                         SwipeToDismissBox(
@@ -671,6 +669,12 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                                 showProgress = showProgress,
                                 modifier = Modifier.height(cardHeight).fillMaxWidth(),
                             )
+                        }
+                    }
+                    // Small gap between dir pins and the main history list.
+                    if (historyItems.isNotEmpty()) {
+                        item(key = "dir-gap") {
+                            Spacer(modifier = Modifier.height(HISTORY_DIRECTORY_SECTION_GAP))
                         }
                     }
                 }
@@ -706,21 +710,22 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                 horizontalArrangement = gridSpacing,
             ) {
                 if (directoryItems.isNotEmpty()) {
-                    item(
-                        key = "hdr-dirs",
-                        span = { GridItemSpan(maxLineSpan) },
-                    ) {
-                        BrowseSectionHeader(stringResource(R.string.browse_directories))
-                    }
                     items(directoryItems, key = { "dir-${it.gid}" }) { info ->
-                        HistoryGridItem(
+                        HistoryDirectoryGridItem(
                             info = info,
                             onClick = { openEntry(info) },
                             onLongClick = { deleteEntry(info) },
-                            showPages = showPages,
-                            showProgress = showProgress,
                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                         )
+                    }
+                    // Small gap between dir pins and the main history list.
+                    if (historyItems.isNotEmpty()) {
+                        item(
+                            key = "dir-gap",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
+                            Spacer(modifier = Modifier.height(HISTORY_DIRECTORY_SECTION_GAP))
+                        }
                     }
                 }
                 items(historyItems, key = { it.gid }) { info ->
@@ -758,3 +763,6 @@ private const val HISTORY_DIRECTORY_LIST_LIMIT = 10
 
 /** Max rows of browse-dir pins shown in History grid mode. */
 private const val HISTORY_DIRECTORY_GRID_ROWS = 2
+
+/** Extra space under the dir pin strip before main history items. */
+private val HISTORY_DIRECTORY_SECTION_GAP = 12.dp
