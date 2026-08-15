@@ -292,6 +292,14 @@ object Settings : DataStorePreferences(null) {
     val saveGalleryHistory = boolPref("save_gallery_history", true)
 
     /**
+     * When opening a gallery/archive from History: if true (default), push the parent
+     * directory onto the nav stack so system back from the reader lands on that dir.
+     * If false, open the reader only so back returns to History (or the prior back stack).
+     * Shared by [com.hippo.ehviewer.ui.openFromHistoryWithBackStack].
+     */
+    val alwaysExitToDir = boolPref("always_exit_to_dir", true)
+
+    /**
      * Per-file skip / failure notes (video thumb `.failed` and similar sidecars).
      * Lives in app data, not [android.content.Context.getCacheDir]. Default off.
      * Turning this off deletes existing markers.

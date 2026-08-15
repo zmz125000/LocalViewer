@@ -194,6 +194,15 @@ object LocalHistory {
     }
 
     /**
+     * Browse-directory pin only (folder listing, not a folder gallery / archive / file).
+     * History UI puts these in the top "Directories" section.
+     */
+    fun isBrowseDirectory(info: GalleryInfo): Boolean = when (info.token) {
+        LOCAL_BROWSE_TOKEN, SMB_BROWSE_TOKEN, WEBDAV_BROWSE_TOKEN -> true
+        else -> false
+    }
+
+    /**
      * History page / progress chip when the row is a readable gallery (not a dir-only pin).
      * Browse-dir history keeps [pages] at 0 so it still hides the chip.
      */

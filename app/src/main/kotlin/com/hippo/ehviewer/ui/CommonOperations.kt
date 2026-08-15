@@ -89,6 +89,27 @@ fun navToWebDavStreamArchiveReader(
 context(nav: DestinationsNavigator)
 private fun navToReader(args: ReaderScreenArgs) = nav.navigate(ReaderScreenDestination(args)) { launchSingleTop = true }
 
+/**
+ * Open content from History with an optional parent-directory back stack.
+ *
+ * When [Settings.alwaysExitToDir] is on (default), [pushParentDir] runs first (set
+ * [com.hippo.ehviewer.library.BrowseSession] + navigate to Folder/SMB/WebDAV browser
+ * with `fromHistory = true`) so system back from the reader lands on that directory.
+ * When off, only [openContent] runs and back returns to History (or the prior stack).
+ *
+ * Use this for every History → reader path that can land on a parent dir; pure dir
+ * pins and external file opens do not need it.
+ */
+inline fun openFromHistoryWithBackStack(
+    pushParentDir: () -> Unit,
+    openContent: () -> Unit,
+) {
+    if (Settings.alwaysExitToDir.value) {
+        pushParentDir()
+    }
+    openContent()
+}
+
 context(_: Context, _: DialogState)
 suspend fun showRestartDialog() {
     awaitConfirmationOrCancel {
