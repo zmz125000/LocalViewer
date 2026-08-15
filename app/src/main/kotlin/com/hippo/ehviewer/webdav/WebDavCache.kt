@@ -150,10 +150,14 @@ object WebDavCache {
     /**
      * Browse thumb: reuse page cache if present; else RAM download → MaxEdge-only thumb
      * (no full-page UHDR from list covers).
+     *
+     * When [persistToDisk] is false (photo-grid ephemeral): reuses on-disk thumbs / page
+     * cache for encode, but never commits a new file into the thumb cache root.
      */
     suspend fun ensureBrowseThumb(
         sourceId: Long,
         remoteRelativeFile: String,
+        persistToDisk: Boolean = true,
         download: suspend (OutputStream) -> Unit,
     ): Path = withContext(Dispatchers.IO) {
         val destPath = thumbCachePath(sourceId, remoteRelativeFile)
@@ -175,49 +179,83 @@ object WebDavCache {
                     return@withContext destPath
                 }
                 val name = remoteRelativeFile.substringAfterLast('/')
-                ensureRootDirs()
-                File(destPath.parent!!.toString()).mkdirs()
-                val dest = File(key)
                 val pageForThumb = resolveReaderPath(pagePath)
-                if (probeDisk(pageForThumb)) {
-                    val jpgTmp = File("$key.jpg.${System.nanoTime()}")
-                    try {
+                if (persistToDisk) {
+                    ensureRootDirs()
+                    File(destPath.parent!!.toString()).mkdirs()
+                    val dest = File(key)
+                    if (probeDisk(pageForThumb)) {
+                        val jpgTmp = File("$key.jpg.${System.nanoTime()}")
+                        try {
+                            writeSubsampledJpeg(
+                                File(pageForThumb.toString()),
+                                jpgTmp,
+                                THUMB_DISK_EDGE,
+                                THUMB_JPEG_QUALITY,
+                            )
+                            commitTmp(jpgTmp, dest)
+                            markPresent(destPath)
+                            touch(destPath)
+                        } catch (e: Throwable) {
+                            if (jpgTmp.exists()) jpgTmp.delete()
+                            if (probeDisk(destPath)) return@withContext destPath
+                            throw e
+                        } finally {
+                            if (jpgTmp.exists()) jpgTmp.delete()
+                        }
+                    } else {
+                        val bos = ByteArrayOutputStream(256 * 1024)
+                        download(bos)
+                        val ok = HdrConvertCache.writeThumbFromBytes(
+                            bytes = bos.toByteArray(),
+                            destJpeg = dest,
+                            maxEdge = THUMB_DISK_EDGE,
+                            quality = THUMB_JPEG_QUALITY,
+                            fileNameHint = name,
+                        )
+                        if (!ok || !dest.isFile || dest.length() == 0L) {
+                            error("WebDAV browse thumb failed for $remoteRelativeFile")
+                        }
+                        markPresent(destPath)
+                        touch(destPath)
+                    }
+                    scheduleTrim()
+                    destPath
+                } else {
+                    val tmpDir = File(appCtx.cacheDir, "photo_grid_ephemeral").apply { mkdirs() }
+                    val hash = MessageDigest.getInstance("SHA-256")
+                        .digest(key.toByteArray())
+                        .joinToString("") { "%02x".format(it) }
+                    val dest = File(tmpDir, "dav-$hash.jpg")
+                    if (dest.isFile && dest.length() > 0L) {
+                        return@withContext dest.toOkioPath()
+                    }
+                    if (probeDisk(pageForThumb)) {
                         writeSubsampledJpeg(
                             File(pageForThumb.toString()),
-                            jpgTmp,
+                            dest,
                             THUMB_DISK_EDGE,
                             THUMB_JPEG_QUALITY,
                         )
-                        commitTmp(jpgTmp, dest)
-                        markPresent(destPath)
-                        touch(destPath)
-                    } catch (e: Throwable) {
-                        if (jpgTmp.exists()) jpgTmp.delete()
-                        if (probeDisk(destPath)) return@withContext destPath
-                        throw e
-                    } finally {
-                        if (jpgTmp.exists()) jpgTmp.delete()
+                    } else {
+                        val bos = ByteArrayOutputStream(256 * 1024)
+                        download(bos)
+                        val ok = HdrConvertCache.writeThumbFromBytes(
+                            bytes = bos.toByteArray(),
+                            destJpeg = dest,
+                            maxEdge = THUMB_DISK_EDGE,
+                            quality = THUMB_JPEG_QUALITY,
+                            fileNameHint = name,
+                        )
+                        if (!ok || !dest.isFile || dest.length() == 0L) {
+                            dest.delete()
+                            error("WebDAV photo-grid thumb failed for $remoteRelativeFile")
+                        }
                     }
-                } else {
-                    val bos = ByteArrayOutputStream(256 * 1024)
-                    download(bos)
-                    val ok = HdrConvertCache.writeThumbFromBytes(
-                        bytes = bos.toByteArray(),
-                        destJpeg = dest,
-                        maxEdge = THUMB_DISK_EDGE,
-                        quality = THUMB_JPEG_QUALITY,
-                        fileNameHint = name,
-                    )
-                    if (!ok || !dest.isFile || dest.length() == 0L) {
-                        error("WebDAV browse thumb failed for $remoteRelativeFile")
-                    }
-                    markPresent(destPath)
-                    touch(destPath)
+                    dest.toOkioPath()
                 }
             }
         }
-        scheduleTrim()
-        destPath
     }
 
     /**

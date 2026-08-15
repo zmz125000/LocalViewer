@@ -135,6 +135,12 @@
     <string name="settings_download_network_archive_thumbs_summary">ネットワーク上の ZIP/TAR/RAR/7z の先頭ページをサムネイルにします。</string>
     <string name="settings_download_network_video_thumbs">ネットワーク動画の表紙を取得</string>
     <string name="settings_download_network_video_thumbs_summary">SMB/WebDAV 動画からフレームサムネイルを抽出します。オフでもキャッシュ済みの表紙は表示されます。</string>
+    <string name="settings_photo_grid_mode">フォトグリッドモード</string>
+    <string name="settings_photo_grid_mode_summary">フォルダギャラリーを長押しすると画像のみのグリッドを開きます。オンでサムネイル表示、オフではファイルアイコンのみです。</string>
+    <string name="settings_download_network_photo_grid_thumb">ネットワークのフォトグリッドサムネイルを取得</string>
+    <string name="settings_download_network_photo_grid_thumb_summary">フォトグリッドで SMB/WebDAV 画像を小さな JPEG にデコードします。オフでもキャッシュ済みは表示されます。</string>
+    <string name="settings_save_photo_grid_thumb_cache">フォトグリッドサムネイルをキャッシュに保存</string>
+    <string name="settings_save_photo_grid_thumb_cache_summary">オフ: 表示用にのみデコード（サムネイルキャッシュへ書き込まず、原画像も書きません）。オン: ギャラリー表紙と同様に保存します。</string>
     <string name="settings_persist_main_nav">フォルダ画面でメインナビを維持</string>
     <string name="settings_persist_main_nav_summary">フォルダ閲覧中も下部バーを表示し、「ブラウズ/履歴」の再タップで戻れます。オフ時はショートカット FAB（スマホ）。</string>
     <string name="settings_eh_show_reading_progress">読書進捗を表示</string>

@@ -438,6 +438,12 @@
     <string name="settings_download_network_archive_thumbs_summary">Extract first-page thumbs for network ZIP/TAR/RAR/7z.</string>
     <string name="settings_download_network_video_thumbs">Download network video covers</string>
     <string name="settings_download_network_video_thumbs_summary">Extract frame thumbs for network (SMB/WebDAV) videos. Cached covers still show when off.</string>
+    <string name="settings_photo_grid_mode">Photo grid mode</string>
+    <string name="settings_photo_grid_mode_summary">Long-press a folder gallery opens an image-only grid. On shows photo thumbs in that grid; off shows file icons only.</string>
+    <string name="settings_download_network_photo_grid_thumb">Download network photo grid thumbs</string>
+    <string name="settings_download_network_photo_grid_thumb_summary">Fetch and decode small JPEG thumbs for SMB/WebDAV images in photo grid. Cached thumbs still show when off.</string>
+    <string name="settings_save_photo_grid_thumb_cache">Save photo grid thumbs to cache</string>
+    <string name="settings_save_photo_grid_thumb_cache_summary">Off: decode for display only (no thumb-cache write; never writes the original full file). On: store decoded thumbs like gallery covers.</string>
     <string name="settings_persist_main_nav">Keep main navigation on folder screens</string>
     <string name="settings_persist_main_nav_summary">Show the bottom bar while browsing folders; re-tap Browse/History to jump back. Off uses a shortcut FAB instead (phones).</string>
     <string name="settings_eh_sign_out">Sign out</string>

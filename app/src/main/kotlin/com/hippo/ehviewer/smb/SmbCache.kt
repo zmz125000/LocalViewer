@@ -214,10 +214,15 @@ object SmbCache {
      * 2. If page cache already has the file (reader opened first) → MaxEdge/subsample offline
      * 3. Else download to **RAM** → [HdrConvertCache.writeThumbFromBytes] (HDR = MaxEdge only,
      *    **no** full-page UHDR in page cache from browse)
+     *
+     * When [persistToDisk] is false (photo-grid ephemeral): still reuses on-disk thumbs / page
+     * cache for encode, but never commits a new file into [thumbRoot] — returns a temp path
+     * under the app cache that the caller may discard.
      */
     suspend fun ensureBrowseThumb(
         sourceId: Long,
         remoteRelativeFile: String,
+        persistToDisk: Boolean = true,
         download: suspend (OutputStream) -> Unit,
     ): Path = withContext(Dispatchers.IO) {
         val destPath = thumbCachePath(sourceId, remoteRelativeFile)
@@ -238,52 +243,84 @@ object SmbCache {
                     touch(destPath)
                     return@withContext destPath
                 }
-                ensureRootDirs()
-                File(destPath.parent!!.toString()).mkdirs()
-                val dest = File(key)
                 val pageName = remoteRelativeFile.substringAfterLast('/')
                 val pageForThumb = resolveReaderPath(pagePath)
-                if (isCachedOnDisk(pageForThumb)) {
-                    val jpgTmp = File("$key.jpg.${System.nanoTime()}")
-                    try {
+                if (persistToDisk) {
+                    ensureRootDirs()
+                    File(destPath.parent!!.toString()).mkdirs()
+                    val dest = File(key)
+                    if (isCachedOnDisk(pageForThumb)) {
+                        val jpgTmp = File("$key.jpg.${System.nanoTime()}")
+                        try {
+                            writeSubsampledJpeg(
+                                File(pageForThumb.toString()),
+                                jpgTmp,
+                                THUMB_DISK_EDGE,
+                                THUMB_JPEG_QUALITY,
+                            )
+                            commitTmp(jpgTmp, dest)
+                            markPresent(destPath)
+                            touch(destPath)
+                        } catch (e: Throwable) {
+                            if (jpgTmp.exists()) jpgTmp.delete()
+                            if (isCachedOnDisk(destPath)) return@withContext destPath
+                            throw e
+                        } finally {
+                            if (jpgTmp.exists()) jpgTmp.delete()
+                        }
+                    } else {
+                        // MaxEdge-only (HDR) / decode-subsample — no full-page convert.
+                        val bos = ByteArrayOutputStream(256 * 1024)
+                        download(bos)
+                        val bytes = bos.toByteArray()
+                        val ok = HdrConvertCache.writeThumbFromBytes(
+                            bytes = bytes,
+                            destJpeg = dest,
+                            maxEdge = THUMB_DISK_EDGE,
+                            quality = THUMB_JPEG_QUALITY,
+                            fileNameHint = pageName,
+                        )
+                        if (!ok || !dest.isFile || dest.length() == 0L) {
+                            error("SMB browse thumb failed for $remoteRelativeFile")
+                        }
+                        markPresent(destPath)
+                        touch(destPath)
+                    }
+                    scheduleTrim()
+                    destPath
+                } else {
+                    // Ephemeral: decode only — never write original page or thumb cache entry.
+                    val tmpDir = File(appCtx.cacheDir, "photo_grid_ephemeral").apply { mkdirs() }
+                    val dest = File(tmpDir, "smb-${sha256Hex(key)}.jpg")
+                    if (dest.isFile && dest.length() > 0L) {
+                        return@withContext dest.toOkioPath()
+                    }
+                    if (isCachedOnDisk(pageForThumb)) {
                         writeSubsampledJpeg(
                             File(pageForThumb.toString()),
-                            jpgTmp,
+                            dest,
                             THUMB_DISK_EDGE,
                             THUMB_JPEG_QUALITY,
                         )
-                        commitTmp(jpgTmp, dest)
-                        markPresent(destPath)
-                        touch(destPath)
-                    } catch (e: Throwable) {
-                        if (jpgTmp.exists()) jpgTmp.delete()
-                        if (isCachedOnDisk(destPath)) return@withContext destPath
-                        throw e
-                    } finally {
-                        if (jpgTmp.exists()) jpgTmp.delete()
+                    } else {
+                        val bos = ByteArrayOutputStream(256 * 1024)
+                        download(bos)
+                        val ok = HdrConvertCache.writeThumbFromBytes(
+                            bytes = bos.toByteArray(),
+                            destJpeg = dest,
+                            maxEdge = THUMB_DISK_EDGE,
+                            quality = THUMB_JPEG_QUALITY,
+                            fileNameHint = pageName,
+                        )
+                        if (!ok || !dest.isFile || dest.length() == 0L) {
+                            dest.delete()
+                            error("SMB photo-grid thumb failed for $remoteRelativeFile")
+                        }
                     }
-                } else {
-                    // MaxEdge-only (HDR) / decode-subsample — no full-page convert.
-                    val bos = ByteArrayOutputStream(256 * 1024)
-                    download(bos)
-                    val bytes = bos.toByteArray()
-                    val ok = HdrConvertCache.writeThumbFromBytes(
-                        bytes = bytes,
-                        destJpeg = dest,
-                        maxEdge = THUMB_DISK_EDGE,
-                        quality = THUMB_JPEG_QUALITY,
-                        fileNameHint = pageName,
-                    )
-                    if (!ok || !dest.isFile || dest.length() == 0L) {
-                        error("SMB browse thumb failed for $remoteRelativeFile")
-                    }
-                    markPresent(destPath)
-                    touch(destPath)
+                    dest.toOkioPath()
                 }
             }
         }
-        scheduleTrim()
-        destPath
     }
 
     /**

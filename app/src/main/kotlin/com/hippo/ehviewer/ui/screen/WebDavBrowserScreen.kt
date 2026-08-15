@@ -82,11 +82,13 @@ import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
+import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.mimeTypeForFileName
+import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toRemoteBrowseSections
 import com.hippo.ehviewer.ui.DrawerHandle
@@ -108,6 +110,7 @@ import com.hippo.ehviewer.ui.main.BrowseFileGridItem
 import com.hippo.ehviewer.ui.main.BrowseFileRow
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
+import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
@@ -172,12 +175,22 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
-    val useGrid = listMode == 1
+    var photoGridDir by remember {
+        mutableStateOf(BrowseSession.webDavPhotoGridDir(sourceId))
+    }
+    fun setPhotoGridDir(dir: String?) {
+        photoGridDir = dir
+        BrowseSession.setWebDavPhotoGridDir(sourceId, dir)
+    }
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
+    val photoGridMode by Settings.photoGridMode.collectAsState()
     val folderId = BrowseFolderId.webDav(sourceId, segments.joinToString("/"))
     val contentMode = rememberEffectiveBrowseContentMode(folderId)
-    val scrollLayoutKey = listMode * 10 + contentMode.prefValue
+    val relativeDirForMode = segments.joinToString("/")
+    val photoGrid = photoGridDir == relativeDirForMode
+    val useGrid = photoGrid || listMode == 1
+    val scrollLayoutKey = listMode * 10 + contentMode.prefValue + if (photoGrid) 100 else 0
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
@@ -188,7 +201,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         derivedStateOf { scrollBehavior.state.collapsedFraction < 0.5f }
     }
 
-    val relativeDir = segments.joinToString("/")
+    val relativeDir = relativeDirForMode
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else WebDavGateway.joinRelative(relativeDir, name)
@@ -224,11 +237,22 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         contentMode,
         showSmallGalleries,
         smallGalleryMinPages,
+        photoGrid,
     ) {
-        displayEntries
-            .filterRemoteByContentMode(contentMode)
-            .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
-            .filterByBrowseSearch(search.keyword) { it.name }
+        val base = if (photoGrid) {
+            displayEntries
+                .filterIsInstance<BrowseEntryRemote.RegularFile>()
+                .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
+                .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+        } else {
+            displayEntries
+                .filterRemoteByContentMode(contentMode)
+                .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
+        }
+        base.filterByBrowseSearch(search.keyword) { it.name }
+    }
+    val photoGridImages = remember(filteredEntries, photoGrid) {
+        if (photoGrid) filteredEntries.filterIsInstance<BrowseEntryRemote.RegularFile>() else emptyList()
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
@@ -399,6 +423,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     fun enterDir(relativeName: String) {
         val parts = relativeName.split('/').filter { it.isNotEmpty() }
         if (parts.isEmpty()) return
+        setPhotoGridDir(null)
         val next = segments + parts
         val nextDir = next.joinToString("/")
         enterHopStack = enterHopStack + parts.size
@@ -412,6 +437,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
 
     fun goUp() {
+        if (photoGrid) {
+            setPhotoGridDir(null)
+            return
+        }
         if (segments.isNotEmpty()) {
             val hop = (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
             enterHopStack = if (enterHopStack.isNotEmpty()) enterHopStack.dropLast(1) else enterHopStack
@@ -430,7 +459,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
-    BackHandler(enabled = search.active || segments.isNotEmpty()) {
+    BackHandler(enabled = search.active || segments.isNotEmpty() || photoGrid) {
         if (!search.handleBack { focusManager.clearFocus() }) {
             goUp()
         }
@@ -501,6 +530,54 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         // When capped or partial, pass empty names so reader re-lists full set
         val names = if (entry.pageCountCapped) emptyList() else entry.imageFileNames
         navToWebDavFolderReader(src.id, remote, names, info)
+    }
+
+    fun openFolderGalleryPhotoGrid(entry: BrowseEntryRemote.FolderGallery) {
+        val remote = if (entry.relativeName.isEmpty()) {
+            relativeDir
+        } else {
+            WebDavGateway.joinRelative(relativeDir, entry.relativeName)
+        }
+        if (entry.relativeName.isNotEmpty()) {
+            enterDir(entry.relativeName)
+        }
+        setPhotoGridDir(remote)
+    }
+
+    fun openPhotoGridImage(file: BrowseEntryRemote.RegularFile) {
+        val src = source ?: return
+        if (!photoGrid) return
+        val images = photoGridImages
+        val page = images.indexOfFirst { it.fileName == file.fileName }.coerceAtLeast(0)
+        val names = images.map { it.fileName }
+        val coverKey = names.firstOrNull()?.let { fileName ->
+            HistoryThumbKey.webdav(src.id, WebDavGateway.joinRelative(relativeDir, fileName))
+        }
+        val gid = stableGalleryId(src.id, "webdav:$relativeDir")
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = WEBDAV_FOLDER_TOKEN,
+            title = title,
+            pages = names.size,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            thumbKey = coverKey,
+            uploader = "${src.id}\u0000${relativeDir.trim('/')}",
+            category = 3,
+        )
+        launchIO {
+            recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordWebDavFolderGallery(
+                sourceId = src.id,
+                remoteDir = relativeDir,
+                title = title,
+                thumbKey = coverKey,
+                pages = names.size,
+                info = info,
+            )
+        }
+        ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
+        navToWebDavFolderReader(src.id, relativeDir, names, info, page)
     }
 
     fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
@@ -875,7 +952,36 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         )
                         return BrowseCover.WebDavArchive(sourceId, remote)
                     }
-                    if (useGrid) {
+                    if (photoGrid) {
+                        val gridState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey#pg", scrollLayoutKey)
+                        val gridSpacing = GalleryGridDefaults.spacedBy()
+                        FastScrollLazyVerticalGrid(
+                            columns = GalleryGridDefaults.columns(),
+                            state = gridState,
+                            modifier = Modifier
+                                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                                .fillMaxSize(),
+                            contentPadding = GalleryGridDefaults.contentPadding(),
+                            horizontalArrangement = gridSpacing,
+                            verticalArrangement = gridSpacing,
+                        ) {
+                            items(photoGridImages, key = { "pg-${it.fileName}" }) { file ->
+                                val remote = if (relativeDir.isEmpty()) {
+                                    file.fileName
+                                } else {
+                                    WebDavGateway.joinRelative(relativeDir, file.fileName)
+                                }
+                                BrowsePhotoGridImageItem(
+                                    name = file.name,
+                                    cover = BrowseCover.WebDav(sourceId, remote),
+                                    photoGridMode = photoGridMode,
+                                    allowRemoteFetch = allowRemoteThumbs,
+                                    onClick = { openPhotoGridImage(file) },
+                                    onLongClick = { openExternalFile(file.fileName) },
+                                )
+                            }
+                        }
+                    } else if (useGrid) {
                         val gridState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey", scrollLayoutKey)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
@@ -929,6 +1035,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
                                                 onClick = { openFolderGallery(entry) },
+                                                onLongClick = { openFolderGalleryPhotoGrid(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
                                             BrowseArchiveGridItem(
@@ -1018,6 +1125,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
                                                 onClick = { openFolderGallery(entry) },
+                                                onLongClick = { openFolderGalleryPhotoGrid(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
                                             BrowseArchiveGalleryRow(

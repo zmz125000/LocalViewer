@@ -26,6 +26,11 @@ object BrowseSession {
          * When false, keep file access so archives remain visible.
          */
         val preferMediaStore: Boolean = true,
+        /**
+         * Virtual image-only view of a folder gallery (long-press). Forces grid of
+         * direct image files; does not change global list/content mode.
+         */
+        val photoGrid: Boolean = false,
     )
 
     @Volatile
@@ -47,7 +52,23 @@ object BrowseSession {
     /** Drop path stack for a source (e.g. share/pathPrefix edited). */
     fun clearSmbSegments(sourceId: Long) {
         smbSegments[sourceId] = emptyList()
+        smbPhotoGridDirs.remove(sourceId)
     }
+
+    /**
+     * When non-null, the SMB browser shows a photo-grid (image-only) overlay for that
+     * relative directory path (process lifetime; survives reader navigation).
+     */
+    private val smbPhotoGridDirs = ConcurrentHashMap<Long, String>()
+
+    fun smbPhotoGridDir(sourceId: Long): String? = smbPhotoGridDirs[sourceId]
+
+    fun setSmbPhotoGridDir(sourceId: Long, relativeDir: String?) {
+        if (relativeDir == null) smbPhotoGridDirs.remove(sourceId) else smbPhotoGridDirs[sourceId] = relativeDir
+    }
+
+    fun isSmbPhotoGrid(sourceId: Long, relativeDir: String): Boolean =
+        smbPhotoGridDirs[sourceId] == relativeDir
 
     // --- Listing cache (session) ---
     private val localListings = ConcurrentHashMap<String, List<BrowseEntry>>()
@@ -169,7 +190,19 @@ object BrowseSession {
 
     fun clearWebDavSegments(sourceId: Long) {
         webDavSegments[sourceId] = emptyList()
+        webDavPhotoGridDirs.remove(sourceId)
     }
+
+    private val webDavPhotoGridDirs = ConcurrentHashMap<Long, String>()
+
+    fun webDavPhotoGridDir(sourceId: Long): String? = webDavPhotoGridDirs[sourceId]
+
+    fun setWebDavPhotoGridDir(sourceId: Long, relativeDir: String?) {
+        if (relativeDir == null) webDavPhotoGridDirs.remove(sourceId) else webDavPhotoGridDirs[sourceId] = relativeDir
+    }
+
+    fun isWebDavPhotoGrid(sourceId: Long, relativeDir: String): Boolean =
+        webDavPhotoGridDirs[sourceId] == relativeDir
 
     fun webDavListingKey(sourceId: Long, relativeDir: String) = "dav:$sourceId|$relativeDir"
 

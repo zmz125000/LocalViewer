@@ -77,9 +77,11 @@ import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
+import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.listLocalDirectory
 import com.hippo.ehviewer.library.mimeTypeForFileName
+import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toBrowseSections
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
@@ -99,6 +101,7 @@ import com.hippo.ehviewer.ui.main.BrowseFileGridItem
 import com.hippo.ehviewer.ui.main.BrowseFileRow
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
+import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
@@ -146,17 +149,35 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val contentMode = rememberEffectiveBrowseContentMode(folderId)
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
     val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
+    val photoGrid = stack.lastOrNull()?.photoGrid == true
+    val photoGridMode by Settings.photoGridMode.collectAsState()
     val filteredEntries = remember(
         displayEntries,
         search.keyword,
         contentMode,
         showSmallGalleries,
         smallGalleryMinPages,
+        photoGrid,
     ) {
-        displayEntries
-            .filterByContentMode(contentMode)
-            .filterSmallGalleries(showSmallGalleries, smallGalleryMinPages)
-            .filterByBrowseSearch(search.keyword) { it.name }
+        val base = if (photoGrid) {
+            // Virtual image-only list: ignore global content mode / small-gallery filter.
+            displayEntries
+                .filterIsInstance<BrowseEntry.RegularFile>()
+                .filter { isImageFileName(it.name) }
+                .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+        } else {
+            displayEntries
+                .filterByContentMode(contentMode)
+                .filterSmallGalleries(showSmallGalleries, smallGalleryMinPages)
+        }
+        base.filterByBrowseSearch(search.keyword) { it.name }
+    }
+    val photoGridImages = remember(filteredEntries, photoGrid) {
+        if (photoGrid) {
+            filteredEntries.filterIsInstance<BrowseEntry.RegularFile>()
+        } else {
+            emptyList()
+        }
     }
 
     /** Path the current [entries] belong to — avoids showing the wrong dir during reload. */
@@ -165,12 +186,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
-    val useGrid = listMode == 1
+    // Photo-grid virtual folder always uses grid layout (does not change global listMode).
+    val useGrid = photoGrid || listMode == 1
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
 
-    /** Scroll restore key: layout (list/grid) + content mode. */
-    val scrollLayoutKey = listMode * 10 + contentMode.prefValue
+    /** Scroll restore key: layout (list/grid) + content mode (+ photo-grid overlay). */
+    val scrollLayoutKey = listMode * 10 + contentMode.prefValue + if (photoGrid) 100 else 0
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
@@ -316,22 +338,26 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         )
     }
 
-    fun openFolderGallery(entry: BrowseEntry.FolderGallery) {
+    fun folderGalleryRelative(entry: BrowseEntry.FolderGallery, frame: BrowseSession.LocalFrame): String = when {
+        frame.relativePath.isEmpty() && entry.path.toString() == frame.path -> ""
+        frame.relativePath.isEmpty() -> entry.name
+        entry.path.toString() == frame.path -> frame.relativePath
+        else -> "${frame.relativePath}/${entry.name}"
+    }
+
+    fun openFolderGallery(entry: BrowseEntry.FolderGallery, page: Int = -1) {
         val frame = stack.lastOrNull() ?: return
         // Playlist = gallery/archive rows in this browse list (lazy galleries), not only
-        // path-parent siblings.
+        // path-parent siblings. When already inside a photo-grid overlay, siblings are
+        // parent-list galleries if we came from a leaf enter; playlist still uses current
+        // entries which is fine for single-gallery open.
         ReaderGalleryPlaylist.setFromLocalBrowse(
             rootId = frame.rootId,
             parentPath = frame.path,
             parentRelative = frame.relativePath,
             entries = entries,
         )
-        val rel = when {
-            frame.relativePath.isEmpty() && entry.path.toString() == frame.path -> ""
-            frame.relativePath.isEmpty() -> entry.name
-            entry.path.toString() == frame.path -> frame.relativePath
-            else -> "${frame.relativePath}/${entry.name}"
-        }
+        val rel = folderGalleryRelative(entry, frame)
         val coverKey = entry.coverPath?.toString()
         val gid = stableGalleryId(frame.rootId, rel.ifEmpty { "." })
         val info = BaseGalleryInfo(
@@ -358,7 +384,66 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 info = info,
             )
         }
-        navToLocalFolderReader(entry.path.toString(), info)
+        navToLocalFolderReader(entry.path.toString(), info, page)
+    }
+
+    /**
+     * Long-press folder gallery → virtual image-only folder (grid). Does not change the
+     * global list/content mode. Back exits the overlay only.
+     */
+    fun openFolderGalleryPhotoGrid(entry: BrowseEntry.FolderGallery) {
+        val frame = stack.lastOrNull() ?: return
+        val rel = folderGalleryRelative(entry, frame)
+        updateStack(
+            stack + BrowseSession.LocalFrame(
+                rootId = frame.rootId,
+                path = entry.path.toString(),
+                title = entry.name,
+                relativePath = rel,
+                preferMediaStore = frame.preferMediaStore,
+                photoGrid = true,
+            ),
+        )
+    }
+
+    /** Tap an image in photo-grid → reader at that page. */
+    fun openPhotoGridImage(file: BrowseEntry.RegularFile) {
+        val frame = stack.lastOrNull() ?: return
+        if (!frame.photoGrid) return
+        val images = photoGridImages
+        val page = images.indexOfFirst { it.path == file.path }.coerceAtLeast(0)
+        val coverKey = images.firstOrNull()?.path?.toString()
+        val gid = stableGalleryId(frame.rootId, frame.relativePath.ifEmpty { "." })
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = LOCAL_FOLDER_TOKEN,
+            title = frame.title,
+            pages = images.size,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            thumbKey = coverKey,
+            uploader = "${frame.rootId}\u0000${frame.relativePath.trim('/')}",
+            category = 0,
+        )
+        launchIO {
+            recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFolderGallery(
+                rootId = frame.rootId,
+                relativePath = frame.relativePath,
+                title = frame.title,
+                thumbKey = coverKey,
+                pages = images.size,
+                info = info,
+            )
+        }
+        // Parent playlist: use gallery path as single-item context (images are pages).
+        ReaderGalleryPlaylist.setFromLocalBrowse(
+            rootId = frame.rootId,
+            parentPath = frame.path,
+            parentRelative = frame.relativePath,
+            entries = entries,
+        )
+        navToLocalFolderReader(frame.path, info, page)
     }
 
     fun openArchive(entry: BrowseEntry.ArchiveGallery) {
@@ -636,13 +721,37 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 else -> {
                     // List only composes when this path's entries are ready. State is keyed by
                     // path+layout so parent/child never share one LazyList scroll index.
-                    val pathKey = listedPath ?: currentPath!!
+                    val pathKey = (listedPath ?: currentPath!!) + if (photoGrid) "#pg" else ""
                     val sections = filteredEntries.toBrowseSections()
                     val dirs = sections.directories.filterIsInstance<BrowseEntry.Directory>()
                     val galleries = sections.galleries
                     val videos = sections.videos.filterIsInstance<BrowseEntry.VideoFile>()
                     val files = sections.files.filterIsInstance<BrowseEntry.RegularFile>()
-                    if (useGrid) {
+                    if (photoGrid) {
+                        // Virtual image-only grid for a folder gallery (long-press).
+                        val gridState = rememberBrowseGridState(pathKey, scrollLayoutKey)
+                        val gridSpacing = GalleryGridDefaults.spacedBy()
+                        FastScrollLazyVerticalGrid(
+                            columns = GalleryGridDefaults.columns(),
+                            state = gridState,
+                            modifier = Modifier
+                                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                                .fillMaxSize(),
+                            contentPadding = GalleryGridDefaults.contentPadding(),
+                            horizontalArrangement = gridSpacing,
+                            verticalArrangement = gridSpacing,
+                        ) {
+                            items(photoGridImages, key = { "pg-${it.path}" }) { file ->
+                                BrowsePhotoGridImageItem(
+                                    name = file.name,
+                                    cover = BrowseCover.Local(file.path),
+                                    photoGridMode = photoGridMode,
+                                    onClick = { openPhotoGridImage(file) },
+                                    onLongClick = { openExternalFile(file.path) },
+                                )
+                            }
+                        }
+                    } else if (useGrid) {
                         val gridState = rememberBrowseGridState(pathKey, scrollLayoutKey)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
@@ -698,6 +807,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             cover = entry.coverPath?.let { BrowseCover.Local(it) },
                                             showPages = showGalleryPages,
                                             onClick = { openFolderGallery(entry) },
+                                            onLongClick = { openFolderGalleryPhotoGrid(entry) },
                                         )
                                         is BrowseEntry.ArchiveGallery -> BrowseArchiveGridItem(
                                             name = entry.name,
@@ -736,6 +846,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseFileGridItem(
                                         name = file.name,
                                         onClick = { openExternalFile(file.path) },
+                                        onLongClick = { openExternalFile(file.path) },
                                     )
                                 }
                             }
@@ -782,6 +893,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             cover = entry.coverPath?.let { BrowseCover.Local(it) },
                                             showPages = showGalleryPages,
                                             onClick = { openFolderGallery(entry) },
+                                            onLongClick = { openFolderGalleryPhotoGrid(entry) },
                                         )
                                         is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(
                                             name = entry.name,
@@ -814,6 +926,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseFileRow(
                                         name = file.name,
                                         onClick = { openExternalFile(file.path) },
+                                        onLongClick = { openExternalFile(file.path) },
                                     )
                                 }
                             }

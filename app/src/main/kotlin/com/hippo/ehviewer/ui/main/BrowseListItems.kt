@@ -153,7 +153,10 @@ fun BrowseFolderGalleryRow(
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
     showPages: Boolean = true,
+    /** Long-press → photo-grid virtual folder; null keeps click-only. */
+    onLongClick: (() -> Unit)? = null,
 ) {
+    val haptic = LocalHapticFeedback.current
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
     ListItem(
         headlineContent = { Text(name) },
@@ -175,7 +178,21 @@ fun BrowseFolderGalleryRow(
                 allowRemoteFetch = allowRemoteFetch,
             )
         },
-        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = onClick,
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick()
+                        },
+                    )
+                } else {
+                    Modifier.clickable(onClick = onClick)
+                },
+            ),
     )
 }
 
@@ -424,11 +441,14 @@ fun BrowseFolderGalleryGridItem(
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
     showPages: Boolean = true,
+    /** Long-press → photo-grid virtual folder; defaults to [onClick] when null. */
+    onLongClick: (() -> Unit)? = null,
 ) {
     BrowseGridCell(
         name = name,
         onClick = onClick,
         modifier = modifier,
+        onLongClick = onLongClick,
         thumb = {
             Box(Modifier.fillMaxSize()) {
                 BrowseCoverThumb(
@@ -462,6 +482,55 @@ fun BrowseFolderGalleryGridItem(
             }
         },
     )
+}
+
+/**
+ * Image cell in a folder-gallery photo-grid virtual folder.
+ * When [photoGridMode] is on, shows a cover thumb; otherwise a file icon.
+ */
+@Composable
+fun BrowsePhotoGridImageItem(
+    name: String,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    cover: BrowseCover? = null,
+    photoGridMode: Boolean = false,
+    thumbRetryKey: Any? = null,
+    allowRemoteFetch: Boolean = true,
+) {
+    if (photoGridMode && cover != null) {
+        BrowseGridCell(
+            name = name,
+            onClick = onClick,
+            onLongClick = onLongClick,
+            modifier = modifier,
+            thumb = {
+                BrowseCoverThumb(
+                    cover = cover,
+                    modifier = Modifier.fillMaxSize().clip(ShapeDefaults.Medium),
+                    placeholderSize = 40.dp,
+                    decodeSizePx = CoverThumb.gridDecodePx(
+                        screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                        columns = GalleryGridDefaults.columnCount(),
+                        margin = GalleryGridDefaults.margin(),
+                        gutter = GalleryGridDefaults.gutter(),
+                    ),
+                    retryKey = thumbRetryKey,
+                    allowRemoteFetch = allowRemoteFetch,
+                    photoGridThumb = true,
+                    placeholderIcon = Icons.Default.PhotoLibrary,
+                )
+            },
+        )
+    } else {
+        BrowseFileGridItem(
+            name = name,
+            onClick = onClick,
+            onLongClick = onLongClick,
+            modifier = modifier,
+        )
+    }
 }
 
 @Composable
@@ -666,12 +735,21 @@ fun BrowseCoverThumb(
      * Skips remote download / stream extract so offline cached rows stay quiet.
      */
     allowRemoteFetch: Boolean = true,
+    /**
+     * Photo-grid image cells: gate network fetch with [Settings.downloadNetworkPhotoGridThumb]
+     * and persist with [Settings.savePhotoGridThumbCache] (not gallery-cover prefs).
+     */
+    photoGridThumb: Boolean = false,
     placeholderIcon: ImageVector = Icons.Default.PhotoLibrary,
 ) {
     val resolvedDecodePx = decodeSizePx ?: CoverThumb.listDecodePx()
     val context = LocalContext.current
     val downloadRemoteThumbs by Settings.downloadRemoteThumbs.collectAsState()
     val downloadNetworkArchiveThumbs by Settings.downloadNetworkArchiveThumbs.collectAsState()
+    val downloadNetworkPhotoGridThumb by Settings.downloadNetworkPhotoGridThumb.collectAsState()
+    val savePhotoGridThumbCache by Settings.savePhotoGridThumbCache.collectAsState()
+    val allowNetworkImageDownload = if (photoGridThumb) downloadNetworkPhotoGridThumb else downloadRemoteThumbs
+    val persistNetworkThumb = if (photoGridThumb) savePhotoGridThumbCache else true
     // Stable keys: BrowseCover is a new instance per list paint; identity by fields.
     val remoteKey = when (cover) {
         is BrowseCover.Smb -> "smb\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
@@ -722,12 +800,14 @@ fun BrowseCoverThumb(
 
     // Lazy: only runs when this row is composed (in LazyColumn viewport).
     // Always probe disk on IO first so cached thumbs show even when download is off.
-    // Folder image covers use [downloadRemoteThumbs]; archive first-page uses [downloadNetworkArchiveThumbs].
+    // Folder image covers use [downloadRemoteThumbs] (or photo-grid prefs);
+    // archive first-page uses [downloadNetworkArchiveThumbs].
     LaunchedEffect(
         remoteKey,
         retryKey,
         resumeEpoch,
-        downloadRemoteThumbs,
+        allowNetworkImageDownload,
+        persistNetworkThumb,
         downloadNetworkArchiveThumbs,
         allowRemoteFetch,
     ) {
@@ -865,7 +945,7 @@ fun BrowseCoverThumb(
                     fetchFailed = false
                     return@LaunchedEffect
                 }
-                if (!allowRemoteFetch || !downloadRemoteThumbs) {
+                if (!allowRemoteFetch || !allowNetworkImageDownload) {
                     // No network; placeholder only when nothing cached.
                     fetchFailed = false
                     return@LaunchedEffect
@@ -876,7 +956,11 @@ fun BrowseCoverThumb(
                     try {
                         val source = SmbRepository.load(cover.sourceId) ?: error("SMB source missing")
                         val password = SmbPasswordStore.get(cover.sourceId)
-                        localPath = SmbCache.ensureBrowseThumb(cover.sourceId, cover.remoteRelativeFile) { out ->
+                        localPath = SmbCache.ensureBrowseThumb(
+                            cover.sourceId,
+                            cover.remoteRelativeFile,
+                            persistToDisk = persistNetworkThumb,
+                        ) { out ->
                             SmbGateway.downloadFile(
                                 source,
                                 password,
@@ -906,7 +990,7 @@ fun BrowseCoverThumb(
                     fetchFailed = false
                     return@LaunchedEffect
                 }
-                if (!allowRemoteFetch || !downloadRemoteThumbs) {
+                if (!allowRemoteFetch || !allowNetworkImageDownload) {
                     fetchFailed = false
                     return@LaunchedEffect
                 }
@@ -916,7 +1000,11 @@ fun BrowseCoverThumb(
                     try {
                         val source = WebDavRepository.load(cover.sourceId) ?: error("WebDAV source missing")
                         val password = WebDavPasswordStore.get(cover.sourceId)
-                        localPath = WebDavCache.ensureBrowseThumb(cover.sourceId, cover.remoteRelativeFile) { out ->
+                        localPath = WebDavCache.ensureBrowseThumb(
+                            cover.sourceId,
+                            cover.remoteRelativeFile,
+                            persistToDisk = persistNetworkThumb,
+                        ) { out ->
                             WebDavClient.downloadFile(source, password, cover.remoteRelativeFile, out)
                         }
                         fetchFailed = false

@@ -195,6 +195,25 @@ object Settings : DataStorePreferences(null) {
      */
     val downloadNetworkVideoThumbs = boolPref("download_network_video_thumbs", true)
 
+    /**
+     * Long-press a folder gallery opens an image-only virtual folder (always grid layout).
+     * When true, each image cell shows a photo thumb; when false (default), file-icon cells only.
+     */
+    val photoGridMode = boolPref("photo_grid_mode", false)
+
+    /**
+     * When [photoGridMode] is on, allow downloading SMB/WebDAV images for photo-grid thumbs
+     * (decode to small JPEG like browse covers). Cached thumbs still show when off. Default true.
+     */
+    val downloadNetworkPhotoGridThumb = boolPref("download_network_photo_grid_thumb", true)
+
+    /**
+     * When [downloadNetworkPhotoGridThumb] is on: write decoded photo-grid thumbs to
+     * `*_thumb_cache`. When false (default), decode for display only (no thumb-cache write;
+     * never writes the original full file for grid thumbs).
+     */
+    val savePhotoGridThumbCache = boolPref("save_photo_grid_thumb_cache", false)
+
     val showGalleryPages = boolPref("show_gallery_pages", true)
     val showReadingProgress = boolPref("show_reading_progress", false)
 
