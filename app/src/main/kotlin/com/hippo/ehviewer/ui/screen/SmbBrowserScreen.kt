@@ -182,6 +182,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
+
     /** Photo-grid overlay; session-backed so reader navigation restores it. */
     var photoGridOverlay by remember {
         mutableStateOf(BrowseSession.smbPhotoGrid(sourceId))

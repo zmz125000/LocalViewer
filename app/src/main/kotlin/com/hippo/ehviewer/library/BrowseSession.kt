@@ -77,8 +77,7 @@ object BrowseSession {
         }
     }
 
-    fun isSmbPhotoGrid(sourceId: Long, relativeDir: String): Boolean =
-        smbPhotoGridState[sourceId]?.dir == relativeDir
+    fun isSmbPhotoGrid(sourceId: Long, relativeDir: String): Boolean = smbPhotoGridState[sourceId]?.dir == relativeDir
 
     // --- Listing cache (session) ---
     private val localListings = ConcurrentHashMap<String, List<BrowseEntry>>()
@@ -217,8 +216,7 @@ object BrowseSession {
         }
     }
 
-    fun isWebDavPhotoGrid(sourceId: Long, relativeDir: String): Boolean =
-        webDavPhotoGridState[sourceId]?.dir == relativeDir
+    fun isWebDavPhotoGrid(sourceId: Long, relativeDir: String): Boolean = webDavPhotoGridState[sourceId]?.dir == relativeDir
 
     fun webDavListingKey(sourceId: Long, relativeDir: String) = "dav:$sourceId|$relativeDir"
 
