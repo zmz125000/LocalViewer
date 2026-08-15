@@ -229,7 +229,6 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_hide_back_to_fab),
-                summary = stringResource(id = R.string.settings_hide_back_to_fab_summary),
                 state = Settings.hideBackToFab.asMutableState(),
             )
         }

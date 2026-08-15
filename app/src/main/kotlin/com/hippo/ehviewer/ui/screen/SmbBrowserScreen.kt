@@ -72,8 +72,6 @@ import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseVirtualKind
-import com.hippo.ehviewer.library.browseScrollLayoutKey
-import com.hippo.ehviewer.library.smbBrowseVirtual
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
@@ -82,6 +80,7 @@ import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
 import com.hippo.ehviewer.library.VideoThumbnailSource
+import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
@@ -92,6 +91,7 @@ import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
+import com.hippo.ehviewer.library.smbBrowseVirtual
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toRemoteBrowseSections
 import com.hippo.ehviewer.smb.SmbGateway
@@ -285,15 +285,17 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     ) {
         val base = when (virtual) {
             // Image-only virtual folder.
-            BrowseVirtualKind.PhotoGrid -> displayEntries
-                .filterIsInstance<BrowseEntryRemote.RegularFile>()
-                .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
-                .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+            BrowseVirtualKind.PhotoGrid ->
+                displayEntries
+                    .filterIsInstance<BrowseEntryRemote.RegularFile>()
+                    .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
+                    .sortedWith { a, b -> naturalCompare(a.name, b.name) }
             // Share names only — no content-mode filter.
             BrowseVirtualKind.RpcShareRoot -> displayEntries
-            BrowseVirtualKind.None -> displayEntries
-                .filterRemoteByContentMode(contentMode)
-                .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
+            BrowseVirtualKind.None ->
+                displayEntries
+                    .filterRemoteByContentMode(contentMode)
+                    .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
         }
         base.filterByBrowseSearch(search.keyword) { it.name }
     }

@@ -69,7 +69,6 @@ import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseVirtualKind
-import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
@@ -77,6 +76,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.VideoThumbnailSource
+import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
 import com.hippo.ehviewer.library.isImageFileName
@@ -168,13 +168,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         virtual,
     ) {
         val base = when (virtual) {
-            BrowseVirtualKind.PhotoGrid -> displayEntries
-                .filterIsInstance<BrowseEntry.RegularFile>()
-                .filter { isImageFileName(it.name) }
-                .sortedWith { a, b -> naturalCompare(a.name, b.name) }
-            else -> displayEntries
-                .filterByContentMode(contentMode)
-                .filterSmallGalleries(showSmallGalleries, smallGalleryMinPages)
+            BrowseVirtualKind.PhotoGrid ->
+                displayEntries
+                    .filterIsInstance<BrowseEntry.RegularFile>()
+                    .filter { isImageFileName(it.name) }
+                    .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+            else ->
+                displayEntries
+                    .filterByContentMode(contentMode)
+                    .filterSmallGalleries(showSmallGalleries, smallGalleryMinPages)
         }
         base.filterByBrowseSearch(search.keyword) { it.name }
     }

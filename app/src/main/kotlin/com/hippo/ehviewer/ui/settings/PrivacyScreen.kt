@@ -89,7 +89,6 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
             }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_secure),
-                summary = stringResource(id = R.string.settings_privacy_secure_summary),
                 state = Settings.enabledSecurity.asMutableState(),
             )
             val saveHistory = Settings.saveHistory.asMutableState()
@@ -123,12 +122,10 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
             }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_always_exit_to_dir),
-                summary = stringResource(id = R.string.settings_privacy_always_exit_to_dir_summary),
                 state = Settings.alwaysExitToDir.asMutableState(),
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_library_recent_open),
-                summary = stringResource(id = R.string.settings_privacy_library_recent_open_summary),
                 state = Settings.libraryRecentOpen.asMutableState(),
             )
             SwitchPreference(

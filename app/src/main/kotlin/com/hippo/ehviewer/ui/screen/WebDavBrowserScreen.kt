@@ -72,7 +72,6 @@ import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseVirtualKind
-import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
@@ -81,6 +80,7 @@ import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
+import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
@@ -252,13 +252,15 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         virtual,
     ) {
         val base = when (virtual) {
-            BrowseVirtualKind.PhotoGrid -> displayEntries
-                .filterIsInstance<BrowseEntryRemote.RegularFile>()
-                .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
-                .sortedWith { a, b -> naturalCompare(a.name, b.name) }
-            else -> displayEntries
-                .filterRemoteByContentMode(contentMode)
-                .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
+            BrowseVirtualKind.PhotoGrid ->
+                displayEntries
+                    .filterIsInstance<BrowseEntryRemote.RegularFile>()
+                    .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
+                    .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+            else ->
+                displayEntries
+                    .filterRemoteByContentMode(contentMode)
+                    .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
         }
         base.filterByBrowseSearch(search.keyword) { it.name }
     }
