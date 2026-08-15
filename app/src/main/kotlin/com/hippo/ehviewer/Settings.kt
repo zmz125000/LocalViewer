@@ -331,7 +331,7 @@ object Settings : DataStorePreferences(null) {
      * If false, open the reader only so back returns to History (or the prior back stack).
      * Shared by [com.hippo.ehviewer.ui.openFromHistoryWithBackStack].
      */
-    val alwaysExitToDir = boolPref("always_exit_to_dir", true)
+    val alwaysExitToDir = boolPref("always_exit_to_dir", false)
 
     /**
      * Library list: when true (default), sort galleries by HISTORY recency so recently
