@@ -39,6 +39,8 @@ uiautomator = "2.4.0-beta02"
 benchmark = "1.5.0-alpha06"
 profileinstaller = "1.4.1"
 smbj = "0.14.0"
+# MS-SRVS share enum over IPC$ (rapid7 smbj-rpc). See hierynomus/smbj#600.
+dcerpc = "0.12.13"
 
 [libraries]
 aboutlibraries-core = { module = "com.mikepenz:aboutlibraries-core", version.ref = "aboutlibraries" }
@@ -136,6 +138,7 @@ androidx-benchmark-macro-junit4 = { module = "androidx.benchmark:benchmark-macro
 androidx-profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileinstaller" }
 
 smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
+dcerpc = { module = "com.rapid7.client:dcerpc", version.ref = "dcerpc" }
 
 android-gradlePlugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 kotlin-gradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }

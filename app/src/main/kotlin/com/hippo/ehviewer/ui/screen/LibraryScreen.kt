@@ -258,10 +258,6 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 navigate(FolderBrowserScreenDestination(fromLibrary = true))
             }
             is FavoriteBrowseSource.Smb -> {
-                if (fav.source.share.isBlank()) {
-                    launch { snackbar(string(R.string.network_share_required)) }
-                    return
-                }
                 BrowseSession.setSmbSegments(fav.source.id, emptyList())
                 navigate(SmbBrowserScreenDestination(fav.source.id, "", fromLibrary = true))
             }
@@ -283,10 +279,6 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 navigate(FolderBrowserScreenDestination(fromLibrary = true))
             }
             is FavoriteBrowseSource.SmbFolder -> {
-                if (fav.source.share.isBlank()) {
-                    launch { snackbar(string(R.string.network_share_required)) }
-                    return
-                }
                 val segments = fav.relativePath.split('/').filter { it.isNotEmpty() }
                 BrowseSession.setSmbSegments(fav.source.id, segments)
                 navigate(
