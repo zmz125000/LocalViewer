@@ -50,6 +50,26 @@ class VideoThumbProbeTest {
         assertEquals(8.toByte(), buf[1])
     }
 
+    @Test
+    fun mpegTsNameDetection() {
+        assertTrue(isMpegTsVideoName("clip.MTS"))
+        assertTrue(isMpegTsVideoName("a/b/c.m2ts"))
+        assertTrue(isMpegTsVideoName("broadcast.ts"))
+        assertTrue(!isMpegTsVideoName("movie.mp4"))
+        assertTrue(!isMpegTsVideoName("video.mkv"))
+    }
+
+    @Test
+    fun looksLikeMpegTsSyncBytes() {
+        val packet = ByteArray(188) { 0 }
+        packet[0] = 0x47
+        val head = packet + packet + packet
+        assertTrue(looksLikeMpegTs(head))
+        val notTs = ByteArray(188 * 3) { 0 }
+        notTs[0] = 0x00
+        assertTrue(!looksLikeMpegTs(notTs))
+    }
+
     private fun sampleMp4(): File {
         val name = "VID20260523162315.mp4"
         val cwd = File(System.getProperty("user.dir")!!)
