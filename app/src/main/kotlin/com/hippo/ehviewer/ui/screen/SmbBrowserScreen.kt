@@ -67,11 +67,13 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
 import com.hippo.ehviewer.library.ArchiveTooLargeException
-import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.BrowseVirtualKind
+import com.hippo.ehviewer.library.browseScrollLayoutKey
+import com.hippo.ehviewer.library.smbBrowseVirtual
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
@@ -211,17 +213,29 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
     var connectionProbeToken by remember { mutableStateOf(0) }
     val sourceConnectionKey = source?.let { SmbGateway.sourceConfigKey(it) }
-    val folderId = BrowseFolderId.smb(sourceId, segments.joinToString("/"))
-    val contentModePref = rememberEffectiveBrowseContentMode(folderId)
     val relativeDirForMode = segments.joinToString("/")
-    // Empty-share (RPC) host root: share names only — force Folder filter like photo-grid forces layout.
-    val forceShareRootFolder =
-        source?.let { SmbGateway.isServerRootSource(it) } == true && relativeDirForMode.isEmpty()
-    val contentMode = if (forceShareRootFolder) BrowseContentMode.Folder else contentModePref
-    val photoGrid = photoGridDir == relativeDirForMode
-    // Photo-grid virtual folder always uses grid layout (does not change global listMode).
-    val useGrid = photoGrid || listMode == 1
-    val scrollLayoutKey = listMode * 10 + contentMode.prefValue + if (photoGrid) 100 else 0
+    // Virtual layers (RPC share list / photo grid): not regular folder-view modes.
+    val virtual = smbBrowseVirtual(
+        isServerRootSource = source?.let { SmbGateway.isServerRootSource(it) } == true,
+        relativeDir = relativeDirForMode,
+        photoGridDir = photoGridDir,
+    )
+    val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
+    // Virtual share-list key must not govern mode under real share paths.
+    val smbModeSkipAncestors = remember(sourceId, source) {
+        if (source?.let { SmbGateway.isServerRootSource(it) } == true) {
+            setOf(BrowseFavorites.smbFolderKey(sourceId, ""))
+        } else {
+            emptySet()
+        }
+    }
+    val folderId = BrowseFolderId.smb(sourceId, relativeDirForMode)
+    val contentMode = rememberEffectiveBrowseContentMode(
+        folder = folderId,
+        skipAncestorKeys = smbModeSkipAncestors,
+    )
+    val useGrid = virtual.forceGrid || listMode == 1
+    val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual)
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
@@ -267,15 +281,17 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         contentMode,
         showSmallGalleries,
         smallGalleryMinPages,
-        photoGrid,
+        virtual,
     ) {
-        val base = if (photoGrid) {
-            displayEntries
+        val base = when (virtual) {
+            // Image-only virtual folder.
+            BrowseVirtualKind.PhotoGrid -> displayEntries
                 .filterIsInstance<BrowseEntryRemote.RegularFile>()
                 .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
                 .sortedWith { a, b -> naturalCompare(a.name, b.name) }
-        } else {
-            displayEntries
+            // Share names only — no content-mode filter.
+            BrowseVirtualKind.RpcShareRoot -> displayEntries
+            BrowseVirtualKind.None -> displayEntries
                 .filterRemoteByContentMode(contentMode)
                 .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
         }
@@ -948,8 +964,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         onBeforeClose = { focusManager.clearFocus() },
                     )
                     BrowseViewModeMenu(
-                        folder = folderId,
-                        forceContentMode = if (forceShareRootFolder) BrowseContentMode.Folder else null,
+                        // Virtual layers: list/grid + toggles only (no content-mode persist).
+                        folder = if (virtual.isVirtual) null else folderId,
+                        skipAncestorKeys = smbModeSkipAncestors,
+                        hideContentModes = virtual.hideContentModes,
                     )
                     IconButton(
                         enabled = refreshEnabled,

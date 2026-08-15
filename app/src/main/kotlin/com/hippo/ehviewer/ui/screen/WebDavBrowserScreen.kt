@@ -71,6 +71,8 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.BrowseVirtualKind
+import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
@@ -190,12 +192,17 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val photoGridMode by Settings.photoGridMode.collectAsState()
-    val folderId = BrowseFolderId.webDav(sourceId, segments.joinToString("/"))
-    val contentMode = rememberEffectiveBrowseContentMode(folderId)
     val relativeDirForMode = segments.joinToString("/")
-    val photoGrid = photoGridDir == relativeDirForMode
-    val useGrid = photoGrid || listMode == 1
-    val scrollLayoutKey = listMode * 10 + contentMode.prefValue + if (photoGrid) 100 else 0
+    val virtual = if (photoGridDir == relativeDirForMode) {
+        BrowseVirtualKind.PhotoGrid
+    } else {
+        BrowseVirtualKind.None
+    }
+    val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
+    val folderId = BrowseFolderId.webDav(sourceId, relativeDirForMode)
+    val contentMode = rememberEffectiveBrowseContentMode(folderId)
+    val useGrid = virtual.forceGrid || listMode == 1
+    val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual)
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
@@ -242,15 +249,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         contentMode,
         showSmallGalleries,
         smallGalleryMinPages,
-        photoGrid,
+        virtual,
     ) {
-        val base = if (photoGrid) {
-            displayEntries
+        val base = when (virtual) {
+            BrowseVirtualKind.PhotoGrid -> displayEntries
                 .filterIsInstance<BrowseEntryRemote.RegularFile>()
                 .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
                 .sortedWith { a, b -> naturalCompare(a.name, b.name) }
-        } else {
-            displayEntries
+            else -> displayEntries
                 .filterRemoteByContentMode(contentMode)
                 .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
         }
@@ -843,7 +849,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         state = search,
                         onBeforeClose = { focusManager.clearFocus() },
                     )
-                    BrowseViewModeMenu(folder = folderId)
+                    BrowseViewModeMenu(
+                        folder = if (virtual.isVirtual) null else folderId,
+                        hideContentModes = virtual.hideContentModes,
+                    )
                     IconButton(
                         onClick = {
                             refreshing = true

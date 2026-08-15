@@ -49,9 +49,17 @@ object BrowseModePersist {
     private val _revision = MutableStateFlow(0)
     val revision: StateFlow<Int> = _revision.asStateFlow()
 
-    fun resolve(folder: BrowseFolderId): BrowseModeMatch? {
+    fun resolve(
+        folder: BrowseFolderId,
+        /**
+         * Ancestor keys to ignore when walking persist inheritance (e.g. SMB RPC virtual
+         * share-list root `sf:id:` must not govern real share paths under a server-root source).
+         */
+        skipAncestorKeys: Set<String> = emptySet(),
+    ): BrowseModeMatch? {
         val map = parse(Settings.persistBrowseModes.value)
-        val governing = ancestorKeys(folder).firstOrNull { it in map } ?: return null
+        val governing = ancestorKeys(folder).firstOrNull { it in map && it !in skipAncestorKeys }
+            ?: return null
         val saved = map.getValue(governing)
         val effective = overrides[governing] ?: saved
         return BrowseModeMatch(
@@ -62,10 +70,17 @@ object BrowseModePersist {
         )
     }
 
-    fun effective(folder: BrowseFolderId?): BrowseContentMode? = folder?.let { resolve(it)?.effective }
+    fun effective(
+        folder: BrowseFolderId?,
+        skipAncestorKeys: Set<String> = emptySet(),
+    ): BrowseContentMode? = folder?.let { resolve(it, skipAncestorKeys)?.effective }
 
-    fun tap(folder: BrowseFolderId?, mode: BrowseContentMode) {
-        val match = folder?.let { resolve(it) }
+    fun tap(
+        folder: BrowseFolderId?,
+        mode: BrowseContentMode,
+        skipAncestorKeys: Set<String> = emptySet(),
+    ) {
+        val match = folder?.let { resolve(it, skipAncestorKeys) }
         if (match == null) {
             Settings.browseContentMode.value = mode.prefValue
             return
@@ -78,9 +93,13 @@ object BrowseModePersist {
         bump()
     }
 
-    fun longPress(folder: BrowseFolderId?, mode: BrowseContentMode) {
+    fun longPress(
+        folder: BrowseFolderId?,
+        mode: BrowseContentMode,
+        skipAncestorKeys: Set<String> = emptySet(),
+    ) {
         if (folder == null) return
-        val match = resolve(folder)
+        val match = resolve(folder, skipAncestorKeys)
         if (match != null && match.showLock && match.saved == mode) {
             remove(folder)
             return

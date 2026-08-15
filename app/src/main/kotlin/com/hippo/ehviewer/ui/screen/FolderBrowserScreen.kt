@@ -68,6 +68,8 @@ import com.hippo.ehviewer.library.BrowseEntry
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.BrowseVirtualKind
+import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
@@ -149,7 +151,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val contentMode = rememberEffectiveBrowseContentMode(folderId)
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
     val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
-    val photoGrid = stack.lastOrNull()?.photoGrid == true
+    // Same virtual-layer rules as SMB RPC root / photo grid (not regular folder-view mode).
+    val virtual = if (stack.lastOrNull()?.photoGrid == true) {
+        BrowseVirtualKind.PhotoGrid
+    } else {
+        BrowseVirtualKind.None
+    }
+    val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
     val photoGridMode by Settings.photoGridMode.collectAsState()
     val filteredEntries = remember(
         displayEntries,
@@ -157,16 +165,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         contentMode,
         showSmallGalleries,
         smallGalleryMinPages,
-        photoGrid,
+        virtual,
     ) {
-        val base = if (photoGrid) {
-            // Virtual image-only list: ignore global content mode / small-gallery filter.
-            displayEntries
+        val base = when (virtual) {
+            BrowseVirtualKind.PhotoGrid -> displayEntries
                 .filterIsInstance<BrowseEntry.RegularFile>()
                 .filter { isImageFileName(it.name) }
                 .sortedWith { a, b -> naturalCompare(a.name, b.name) }
-        } else {
-            displayEntries
+            else -> displayEntries
                 .filterByContentMode(contentMode)
                 .filterSmallGalleries(showSmallGalleries, smallGalleryMinPages)
         }
@@ -186,13 +192,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
-    // Photo-grid virtual folder always uses grid layout (does not change global listMode).
-    val useGrid = photoGrid || listMode == 1
+    val useGrid = virtual.forceGrid || listMode == 1
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
 
-    /** Scroll restore key: layout (list/grid) + content mode (+ photo-grid overlay). */
-    val scrollLayoutKey = listMode * 10 + contentMode.prefValue + if (photoGrid) 100 else 0
+    val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual)
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
@@ -637,7 +641,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         state = search,
                         onBeforeClose = { focusManager.clearFocus() },
                     )
-                    BrowseViewModeMenu(folder = folderId)
+                    BrowseViewModeMenu(
+                        folder = if (virtual.isVirtual) null else folderId,
+                        hideContentModes = virtual.hideContentModes,
+                    )
                     IconButton(
                         onClick = {
                             launch {
