@@ -627,6 +627,8 @@
     <string name="settings_privacy_save_gallery_history_summary">Record opened library and folder galleries. Parent folders are still recorded when Save history is on.</string>
     <string name="settings_general_back_to_upper_dir">Back to upper dir</string>
     <string name="settings_general_back_to_upper_dir_summary">When opening a folder or gallery from History, Library, or Favourites, system back walks to the parent directory. Turn off (default) to return to that list instead.</string>
+    <string name="settings_general_history_dir_back_to_upper">History dir back to upper</string>
+    <string name="settings_general_history_dir_back_to_upper_summary">When Back to upper dir is off: folders opened from History still walk parent directories on back (default on). Turning Back to upper dir on also turns this on.</string>
     <string name="settings_privacy_library_recent_open">Library recent open</string>
     <string name="settings_privacy_library_recent_open_summary">Sort the Library list so recently opened galleries appear at the top. Turn off to keep title order only.</string>
     <string name="settings_privacy_save_file_markers">Save file markers</string>

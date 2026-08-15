@@ -335,11 +335,18 @@ object Settings : DataStorePreferences(null) {
     /**
      * Back to upper directory when opening from History / Library / Favourites.
      * On: system back from reader or a dir pin walks the parent browse path.
-     * Off (default): back returns to History/Library (or the prior stack).
-     * See [com.hippo.ehviewer.ui.openFromHistoryWithBackStack] and
-     * [com.hippo.ehviewer.ui.openLocalBrowseDir] / openSmbBrowseDir / openWebDavBrowseDir.
+     * Off (default): back returns to History/Library (or the prior stack), except
+     * History folder pins when [historyDirBackToUpper] is on.
+     * Turning this on also forces [historyDirBackToUpper] on (one-way follow).
      */
     val alwaysExitToDir = boolPref("always_exit_to_dir", false)
+
+    /**
+     * When [alwaysExitToDir] is off: folders opened from History still walk upper dirs
+     * on back (default on). Hidden in UI while [alwaysExitToDir] is on; enabling
+     * [alwaysExitToDir] turns this on and never auto-turns it off.
+     */
+    val historyDirBackToUpper = boolPref("history_dir_back_to_upper", true)
 
     /**
      * Library list: when true (default), sort galleries by HISTORY recency so recently

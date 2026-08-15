@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -110,10 +111,26 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.browse_folder_thumbs),
                 state = Settings.browseFolderThumbs.asMutableState(),
             )
+            val alwaysExitToDir = Settings.alwaysExitToDir.asMutableState()
+            val historyDirBackToUpper = Settings.historyDirBackToUpper.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_general_back_to_upper_dir),
-                state = Settings.alwaysExitToDir.asMutableState(),
+                state = alwaysExitToDir,
             )
+            // Nested: only when parent is off. Enabling parent one-way turns this on.
+            // Turning parent off does not change this value.
+            AnimatedVisibility(visible = !alwaysExitToDir.value) {
+                SwitchPreference(
+                    title = stringResource(id = R.string.settings_general_history_dir_back_to_upper),
+                    state = historyDirBackToUpper,
+                )
+            }
+            // One-way follow: parent ON → child ON (never auto-off).
+            LaunchedEffect(alwaysExitToDir.value) {
+                if (alwaysExitToDir.value && !historyDirBackToUpper.value) {
+                    historyDirBackToUpper.value = true
+                }
+            }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_network_folder_index_cache),
                 state = Settings.networkFolderIndexCache.asMutableState(),
