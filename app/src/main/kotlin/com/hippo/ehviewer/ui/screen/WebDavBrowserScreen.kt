@@ -915,8 +915,15 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 else -> {
                     val dirKey = listedDir ?: relativeDir
                     val allowRemoteThumbs = listingSessionCurrent
+                    val favoritesOnTop by Settings.browseFavoritesOnTop.collectAsState()
                     val sections = filteredEntries.toRemoteBrowseSections()
-                    val dirs = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
+                    val dirsRaw = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
+                    val dirs = if (favoritesOnTop) {
+                        val (fav, rest) = dirsRaw.partition { isDirFavorite(it.relativeName) }
+                        fav + rest
+                    } else {
+                        dirsRaw
+                    }
                     val galleries = sections.galleries
                     val videos = sections.videos.filterIsInstance<BrowseEntryRemote.VideoFile>()
                     val files = sections.files.filterIsInstance<BrowseEntryRemote.RegularFile>()

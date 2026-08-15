@@ -65,6 +65,11 @@ fun rememberEffectiveBrowseContentMode(folder: BrowseFolderId?): BrowseContentMo
 fun BrowseViewModeMenu(
     modifier: Modifier = Modifier,
     folder: BrowseFolderId? = null,
+    /**
+     * When non-null (e.g. SMB RPC share-list root), force this content mode for the menu
+     * mark and block mode switches — same idea as photo-grid forcing grid layout.
+     */
+    forceContentMode: BrowseContentMode? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val listMode by Settings.listMode.collectAsState()
@@ -74,12 +79,16 @@ fun BrowseViewModeMenu(
     val match = remember(folder, persistRev, persistModes) {
         folder?.let { BrowseModePersist.resolve(it) }
     }
-    val contentMode = match?.effective ?: BrowseContentMode.fromPref(contentModePref)
+    val contentMode = forceContentMode
+        ?: match?.effective
+        ?: BrowseContentMode.fromPref(contentModePref)
+    val modesLocked = forceContentMode != null
     val useGrid = listMode == 1
     var showGalleryPages by Settings.showGalleryPages.asMutableState()
     var showReadingProgress by Settings.showReadingProgress.asMutableState()
     var browseFolderThumbs by Settings.browseFolderThumbs.asMutableState()
     var showSmallGalleries by Settings.browseShowSmallGalleries.asMutableState()
+    var favoritesOnTop by Settings.browseFavoritesOnTop.asMutableState()
 
     Box(modifier) {
         IconButton(
@@ -98,27 +107,43 @@ fun BrowseViewModeMenu(
         ) {
             ContentModeItem(
                 label = stringResource(R.string.browse_mode_media),
-                mark = markFor(BrowseContentMode.Media, contentMode, match?.showLock == true),
-                onClick = { BrowseModePersist.tap(folder, BrowseContentMode.Media) },
-                onLongClick = { BrowseModePersist.longPress(folder, BrowseContentMode.Media) },
+                mark = markFor(BrowseContentMode.Media, contentMode, modesLocked || match?.showLock == true),
+                onClick = {
+                    if (!modesLocked) BrowseModePersist.tap(folder, BrowseContentMode.Media)
+                },
+                onLongClick = {
+                    if (!modesLocked) BrowseModePersist.longPress(folder, BrowseContentMode.Media)
+                },
             )
             ContentModeItem(
                 label = stringResource(R.string.browse_mode_galleries),
-                mark = markFor(BrowseContentMode.Galleries, contentMode, match?.showLock == true),
-                onClick = { BrowseModePersist.tap(folder, BrowseContentMode.Galleries) },
-                onLongClick = { BrowseModePersist.longPress(folder, BrowseContentMode.Galleries) },
+                mark = markFor(BrowseContentMode.Galleries, contentMode, modesLocked || match?.showLock == true),
+                onClick = {
+                    if (!modesLocked) BrowseModePersist.tap(folder, BrowseContentMode.Galleries)
+                },
+                onLongClick = {
+                    if (!modesLocked) BrowseModePersist.longPress(folder, BrowseContentMode.Galleries)
+                },
             )
             ContentModeItem(
                 label = stringResource(R.string.browse_mode_video),
-                mark = markFor(BrowseContentMode.Video, contentMode, match?.showLock == true),
-                onClick = { BrowseModePersist.tap(folder, BrowseContentMode.Video) },
-                onLongClick = { BrowseModePersist.longPress(folder, BrowseContentMode.Video) },
+                mark = markFor(BrowseContentMode.Video, contentMode, modesLocked || match?.showLock == true),
+                onClick = {
+                    if (!modesLocked) BrowseModePersist.tap(folder, BrowseContentMode.Video)
+                },
+                onLongClick = {
+                    if (!modesLocked) BrowseModePersist.longPress(folder, BrowseContentMode.Video)
+                },
             )
             ContentModeItem(
                 label = stringResource(R.string.browse_mode_folder),
-                mark = markFor(BrowseContentMode.Folder, contentMode, match?.showLock == true),
-                onClick = { BrowseModePersist.tap(folder, BrowseContentMode.Folder) },
-                onLongClick = { BrowseModePersist.longPress(folder, BrowseContentMode.Folder) },
+                mark = markFor(BrowseContentMode.Folder, contentMode, modesLocked || match?.showLock == true),
+                onClick = {
+                    if (!modesLocked) BrowseModePersist.tap(folder, BrowseContentMode.Folder)
+                },
+                onLongClick = {
+                    if (!modesLocked) BrowseModePersist.longPress(folder, BrowseContentMode.Folder)
+                },
             )
             HorizontalDivider()
             ContentModeItem(
@@ -138,6 +163,11 @@ fun BrowseViewModeMenu(
                 },
             )
             HorizontalDivider()
+            ToggleMenuItem(
+                label = stringResource(R.string.browse_menu_favorites_on_top),
+                checked = favoritesOnTop,
+                onClick = { favoritesOnTop = !favoritesOnTop },
+            )
             ToggleMenuItem(
                 label = stringResource(R.string.browse_menu_page_count),
                 checked = showGalleryPages,

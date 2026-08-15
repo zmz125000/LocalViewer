@@ -731,8 +731,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     // List only composes when this path's entries are ready. State is keyed by
                     // path+layout so parent/child never share one LazyList scroll index.
                     val pathKey = (listedPath ?: currentPath!!) + if (photoGrid) "#pg" else ""
+                    val favoritesOnTop by Settings.browseFavoritesOnTop.collectAsState()
                     val sections = filteredEntries.toBrowseSections()
-                    val dirs = sections.directories.filterIsInstance<BrowseEntry.Directory>()
+                    val dirsRaw = sections.directories.filterIsInstance<BrowseEntry.Directory>()
+                    val dirs = if (favoritesOnTop) {
+                        val (fav, rest) = dirsRaw.partition { isDirFavorite(it) }
+                        fav + rest
+                    } else {
+                        dirsRaw
+                    }
                     val galleries = sections.galleries
                     val videos = sections.videos.filterIsInstance<BrowseEntry.VideoFile>()
                     val files = sections.files.filterIsInstance<BrowseEntry.RegularFile>()

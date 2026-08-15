@@ -155,6 +155,12 @@ object Settings : DataStorePreferences(null) {
     val browseShowSmallGalleries = boolPref("browse_show_small_galleries", false)
 
     /**
+     * When true (default), favourited directories are listed first in the Directories section
+     * of folder browsers (order within each group is unchanged). Top-bar view menu toggle.
+     */
+    val browseFavoritesOnTop = boolPref("browse_favorites_on_top", true)
+
+    /**
      * Minimum image count for a folder gallery when [browseShowSmallGalleries] is off.
      * Galleries with fewer pages are hidden in the UI only. Default 3.
      */

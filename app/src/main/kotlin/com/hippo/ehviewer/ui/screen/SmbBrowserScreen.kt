@@ -67,6 +67,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
 import com.hippo.ehviewer.library.ArchiveTooLargeException
+import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
@@ -211,8 +212,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     var connectionProbeToken by remember { mutableStateOf(0) }
     val sourceConnectionKey = source?.let { SmbGateway.sourceConfigKey(it) }
     val folderId = BrowseFolderId.smb(sourceId, segments.joinToString("/"))
-    val contentMode = rememberEffectiveBrowseContentMode(folderId)
+    val contentModePref = rememberEffectiveBrowseContentMode(folderId)
     val relativeDirForMode = segments.joinToString("/")
+    // Empty-share (RPC) host root: share names only — force Folder filter like photo-grid forces layout.
+    val forceShareRootFolder =
+        source?.let { SmbGateway.isServerRootSource(it) } == true && relativeDirForMode.isEmpty()
+    val contentMode = if (forceShareRootFolder) BrowseContentMode.Folder else contentModePref
     val photoGrid = photoGridDir == relativeDirForMode
     // Photo-grid virtual folder always uses grid layout (does not change global listMode).
     val useGrid = photoGrid || listMode == 1
@@ -916,7 +921,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         state = search,
                         onBeforeClose = { focusManager.clearFocus() },
                     )
-                    BrowseViewModeMenu(folder = folderId)
+                    BrowseViewModeMenu(
+                        folder = folderId,
+                        forceContentMode = if (forceShareRootFolder) BrowseContentMode.Folder else null,
+                    )
                     IconButton(
                         enabled = refreshEnabled,
                         onClick = {
@@ -1016,8 +1024,15 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     val dirKey = listedDir ?: relativeDir
                     // Old (disk-hydrated / unrefreshed) listings: disk thumbs OK, no network jobs.
                     val allowRemoteThumbs = listingSessionCurrent
+                    val favoritesOnTop by Settings.browseFavoritesOnTop.collectAsState()
                     val sections = filteredEntries.toRemoteBrowseSections()
-                    val dirs = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
+                    val dirsRaw = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
+                    val dirs = if (favoritesOnTop) {
+                        val (fav, rest) = dirsRaw.partition { isDirFavorite(it.relativeName) }
+                        fav + rest
+                    } else {
+                        dirsRaw
+                    }
                     val galleries = sections.galleries
                     val videos = sections.videos.filterIsInstance<BrowseEntryRemote.VideoFile>()
                     val files = sections.files.filterIsInstance<BrowseEntryRemote.RegularFile>()

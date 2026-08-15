@@ -100,6 +100,9 @@ import com.hippo.ehviewer.ui.navToSmbStreamArchiveReader
 import com.hippo.ehviewer.ui.navToWebDavFolderReader
 import com.hippo.ehviewer.ui.navToWebDavStreamArchiveReader
 import com.hippo.ehviewer.ui.openFromHistoryWithBackStack
+import com.hippo.ehviewer.ui.openLocalFolderPhotoGrid
+import com.hippo.ehviewer.ui.openSmbFolderPhotoGrid
+import com.hippo.ehviewer.ui.openWebDavFolderPhotoGrid
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.annotation.Destination
@@ -195,6 +198,22 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     }
                     if (local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
                         navToReader(local.contentPath)
+                    } else if (Settings.photoGridMode.value) {
+                        val root = withIOContext { LocalLibrary.loadRoot(local.rootId) }
+                        val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                        if (root == null || rootPath == null) {
+                            navToLocalFolderReader(local.contentPath, local.toBaseGalleryInfo())
+                        } else {
+                            openLocalFolderPhotoGrid(
+                                rootId = root.id,
+                                rootDisplayName = root.displayName,
+                                rootPath = rootPath,
+                                relativePath = local.relativePath,
+                                preferMediaStore = root.prefersMediaStore,
+                                title = local.title,
+                                fromHistory = true,
+                            )
+                        }
                     } else {
                         navToLocalFolderReader(local.contentPath, local.toBaseGalleryInfo())
                     }
@@ -276,7 +295,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     )
                 }
                 is LocalHistoryTarget.LocalFolderGallery -> {
-                    // Open reader; optional parent dir on stack (Privacy → Always exit to directory).
+                    // Photo-grid mode: tap opens image grid. Else reader (+ optional parent stack).
                     val root = withIOContext { LocalLibrary.loadRoot(target.rootId) }
                     val rootPath = root?.let { LocalLibrary.rootPath(it) }
                     if (root == null || rootPath == null) {
@@ -295,10 +314,23 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     val parentRel = parentRelativeOfFile(target.relativePath)
                     // Same identity as browse openFolderGallery so progress stubs keep path.
                     val rel = target.relativePath.trim('/')
+                    val title = info.title ?: rel.substringAfterLast('/').ifEmpty { "Folder" }
+                    if (Settings.photoGridMode.value) {
+                        openLocalFolderPhotoGrid(
+                            rootId = root.id,
+                            rootDisplayName = root.displayName,
+                            rootPath = rootPath,
+                            relativePath = target.relativePath,
+                            preferMediaStore = root.prefersMediaStore,
+                            title = title,
+                            fromHistory = true,
+                        )
+                        return@launch
+                    }
                     val gi = BaseGalleryInfo(
                         gid = info.gid,
                         token = LOCAL_FOLDER_TOKEN,
-                        title = info.title ?: rel.substringAfterLast('/').ifEmpty { "Folder" },
+                        title = title,
                         pages = info.pages,
                         favoriteSlot = NOT_FAVORITED,
                         rating = -1f,
@@ -328,6 +360,14 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         return@launch
                     }
                     val remote = target.remoteDir.trim('/')
+                    if (Settings.photoGridMode.value) {
+                        openSmbFolderPhotoGrid(
+                            sourceId = source.id,
+                            remoteDir = remote,
+                            fromHistory = true,
+                        )
+                        return@launch
+                    }
                     val parentRel = parentRelativeOfFile(remote)
                     val segments = parentRel.split('/').filter { it.isNotEmpty() }
                     val gi = BaseGalleryInfo(
@@ -364,6 +404,14 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         return@launch
                     }
                     val remote = target.remoteDir.trim('/')
+                    if (Settings.photoGridMode.value) {
+                        openWebDavFolderPhotoGrid(
+                            sourceId = source.id,
+                            remoteDir = remote,
+                            fromHistory = true,
+                        )
+                        return@launch
+                    }
                     val parentRel = parentRelativeOfFile(remote)
                     val segments = parentRel.split('/').filter { it.isNotEmpty() }
                     val gi = BaseGalleryInfo(
@@ -617,6 +665,22 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (local != null) {
                         if (local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
                             navToReader(local.contentPath)
+                        } else if (Settings.photoGridMode.value) {
+                            val root = withIOContext { LocalLibrary.loadRoot(local.rootId) }
+                            val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                            if (root == null || rootPath == null) {
+                                navToLocalFolderReader(local.contentPath, local.toBaseGalleryInfo())
+                            } else {
+                                openLocalFolderPhotoGrid(
+                                    rootId = root.id,
+                                    rootDisplayName = root.displayName,
+                                    rootPath = rootPath,
+                                    relativePath = local.relativePath,
+                                    preferMediaStore = root.prefersMediaStore,
+                                    title = local.title,
+                                    fromHistory = true,
+                                )
+                            }
                         } else {
                             navToLocalFolderReader(local.contentPath, local.toBaseGalleryInfo())
                         }

@@ -105,6 +105,7 @@ import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
+import com.hippo.ehviewer.ui.openLocalFolderPhotoGrid
 import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -234,6 +235,23 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
             // Pass info so read progress uses library id (same as progress chip).
             navToReader(gallery.contentPath, info)
+        } else if (Settings.photoGridMode.value) {
+            // Tap → photo-grid virtual folder (same as browse primary when mode on).
+            val root = roots.firstOrNull { it.id == gallery.rootId }
+            val rootPath = root?.let { LocalLibrary.rootPath(it) }
+            if (root == null || rootPath == null) {
+                navToLocalFolderReader(gallery.contentPath, info)
+            } else {
+                openLocalFolderPhotoGrid(
+                    rootId = root.id,
+                    rootDisplayName = root.displayName,
+                    rootPath = rootPath,
+                    relativePath = gallery.relativePath,
+                    preferMediaStore = root.prefersMediaStore,
+                    title = gallery.title,
+                    fromLibrary = true,
+                )
+            }
         } else {
             navToLocalFolderReader(gallery.contentPath, info)
         }
