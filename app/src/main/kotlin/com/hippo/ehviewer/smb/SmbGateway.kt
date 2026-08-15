@@ -1932,8 +1932,7 @@ object SmbGateway {
     private val reusableStickyLock = Any()
     private var reusableSticky: ReusableSticky? = null
 
-    private fun stickyShareKey(source: SmbSourceEntity, host: String, share: String): String =
-        "$host:${source.port}:${source.id}:$share"
+    private fun stickyShareKey(source: SmbSourceEntity, host: String, share: String): String = "$host:${source.port}:${source.id}:$share"
 
     private fun <T> openStickyConnection(
         source: SmbSourceEntity,
