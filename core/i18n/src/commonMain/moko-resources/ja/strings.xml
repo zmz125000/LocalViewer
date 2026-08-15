@@ -171,6 +171,8 @@
     <string name="settings_privacy_save_gallery_history_summary">開いたライブラリ／フォルダギャラリーを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
     <string name="settings_general_back_to_upper_dir">上位ディレクトリに戻る</string>
     <string name="settings_general_back_to_upper_dir_summary">履歴・ライブラリ・お気に入りからフォルダ/ギャラリーを開いたとき、システム戻るで親フォルダに戻ります。オフ（既定）では一覧に戻ります。</string>
+    <string name="settings_general_history_dir_back_to_upper">履歴フォルダは上位へ</string>
+    <string name="settings_general_history_dir_back_to_upper_summary">「上位ディレクトリに戻る」がオフのとき: 履歴から開いたフォルダは戻るで親フォルダへ進みます（既定オン）。親をオンにすると本項目もオンになります。</string>
     <string name="settings_privacy_library_recent_open">ライブラリの最近開いた順</string>
     <string name="settings_privacy_library_recent_open_summary">ライブラリ一覧を最近開いた順に並べます。オフにするとタイトル順のみになります。</string>
     <string name="settings_privacy_save_file_markers">ファイルマーカーを保存</string>
