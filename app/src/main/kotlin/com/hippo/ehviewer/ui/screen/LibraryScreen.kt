@@ -77,6 +77,7 @@ import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
@@ -106,6 +107,7 @@ import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
+import com.hippo.ehviewer.ui.openLocalFolderPhotoGrid
 import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -174,13 +176,32 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val allVisibleGalleries = remember(rawGalleries) {
         rawGalleries.hideDuplicateGalleriesPreferMediaStore()
     }
-    // Live in-list filter (no re-query / submit).
-    val galleries = remember(allVisibleGalleries, keyword) {
+    val libraryRecentOpen by Settings.libraryRecentOpen.collectAsState()
+    // HISTORY.TIME by gallery gid — opened library rows rise to the top when privacy allows.
+    val historyTimeByGid by rememberInVM {
+        mutableStateOf(emptyMap<Long, Long>()).also { state ->
+            viewModelScope.launch {
+                EhDB.historyTimeListFlow.collect { rows ->
+                    state.value = rows.associate { it.gid to it.time }
+                }
+            }
+        }
+    }
+    // Live in-list filter (no re-query / submit). Optional recency sort via Privacy.
+    val galleries = remember(allVisibleGalleries, keyword, historyTimeByGid, libraryRecentOpen) {
         val q = keyword.trim()
-        if (q.isEmpty()) {
+        val filtered = if (q.isEmpty()) {
             allVisibleGalleries
         } else {
             allVisibleGalleries.filter { it.title.contains(q, ignoreCase = true) }
+        }
+        if (!libraryRecentOpen) {
+            filtered
+        } else {
+            filtered.sortedWith(
+                compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
+                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+            )
         }
     }
 
@@ -217,6 +238,23 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
             // Pass info so read progress uses library id (same as progress chip).
             navToReader(gallery.contentPath, info)
+        } else if (Settings.photoGridMode.value) {
+            // Tap → photo-grid virtual folder (same as browse primary when mode on).
+            val root = roots.firstOrNull { it.id == gallery.rootId }
+            val rootPath = root?.let { LocalLibrary.rootPath(it) }
+            if (root == null || rootPath == null) {
+                navToLocalFolderReader(gallery.contentPath, info)
+            } else {
+                openLocalFolderPhotoGrid(
+                    rootId = root.id,
+                    rootDisplayName = root.displayName,
+                    rootPath = rootPath,
+                    relativePath = gallery.relativePath,
+                    preferMediaStore = root.prefersMediaStore,
+                    title = gallery.title,
+                    fromLibrary = true,
+                )
+            }
         } else {
             navToLocalFolderReader(gallery.contentPath, info)
         }

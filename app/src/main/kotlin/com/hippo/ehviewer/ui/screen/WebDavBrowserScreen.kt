@@ -71,6 +71,7 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
@@ -79,14 +80,17 @@ import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
+import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
+import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.mimeTypeForFileName
+import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toRemoteBrowseSections
 import com.hippo.ehviewer.ui.DrawerHandle
@@ -108,6 +112,7 @@ import com.hippo.ehviewer.ui.main.BrowseFileGridItem
 import com.hippo.ehviewer.ui.main.BrowseFileRow
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
+import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
@@ -172,12 +177,32 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
-    val useGrid = listMode == 1
+    var photoGridOverlay by remember {
+        mutableStateOf(BrowseSession.webDavPhotoGrid(sourceId))
+    }
+    fun setPhotoGrid(dir: String?, enteredFromParent: Boolean = false) {
+        photoGridOverlay = if (dir == null) {
+            null
+        } else {
+            BrowseSession.PhotoGridOverlay(dir, enteredFromParent)
+        }
+        BrowseSession.setWebDavPhotoGrid(sourceId, dir, enteredFromParent)
+    }
+    val photoGridDir = photoGridOverlay?.dir
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
-    val folderId = BrowseFolderId.webDav(sourceId, segments.joinToString("/"))
+    val photoGridMode by Settings.photoGridMode.collectAsState()
+    val relativeDirForMode = segments.joinToString("/")
+    val virtual = if (photoGridDir == relativeDirForMode) {
+        BrowseVirtualKind.PhotoGrid
+    } else {
+        BrowseVirtualKind.None
+    }
+    val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
+    val folderId = BrowseFolderId.webDav(sourceId, relativeDirForMode)
     val contentMode = rememberEffectiveBrowseContentMode(folderId)
-    val scrollLayoutKey = listMode * 10 + contentMode.prefValue
+    val useGrid = virtual.forceGrid || listMode == 1
+    val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual)
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
@@ -188,7 +213,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         derivedStateOf { scrollBehavior.state.collapsedFraction < 0.5f }
     }
 
-    val relativeDir = segments.joinToString("/")
+    val relativeDir = relativeDirForMode
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else WebDavGateway.joinRelative(relativeDir, name)
@@ -224,11 +249,23 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         contentMode,
         showSmallGalleries,
         smallGalleryMinPages,
+        virtual,
     ) {
-        displayEntries
-            .filterRemoteByContentMode(contentMode)
-            .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
-            .filterByBrowseSearch(search.keyword) { it.name }
+        val base = when (virtual) {
+            BrowseVirtualKind.PhotoGrid ->
+                displayEntries
+                    .filterIsInstance<BrowseEntryRemote.RegularFile>()
+                    .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
+                    .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+            else ->
+                displayEntries
+                    .filterRemoteByContentMode(contentMode)
+                    .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
+        }
+        base.filterByBrowseSearch(search.keyword) { it.name }
+    }
+    val photoGridImages = remember(filteredEntries, photoGrid) {
+        if (photoGrid) filteredEntries.filterIsInstance<BrowseEntryRemote.RegularFile>() else emptyList()
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
@@ -399,6 +436,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     fun enterDir(relativeName: String) {
         val parts = relativeName.split('/').filter { it.isNotEmpty() }
         if (parts.isEmpty()) return
+        setPhotoGrid(null)
         val next = segments + parts
         val nextDir = next.joinToString("/")
         enterHopStack = enterHopStack + parts.size
@@ -412,6 +450,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
 
     fun goUp() {
+        // Exit photo-grid: return to the parent listing that showed the gallery row.
+        if (photoGrid) {
+            val leaveChild = photoGridOverlay?.enteredFromParent == true
+            setPhotoGrid(null)
+            if (!leaveChild) return
+        }
         if (segments.isNotEmpty()) {
             val hop = (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
             enterHopStack = if (enterHopStack.isNotEmpty()) enterHopStack.dropLast(1) else enterHopStack
@@ -430,7 +474,33 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
-    BackHandler(enabled = search.active || segments.isNotEmpty()) {
+    /** Same jump as the Back-to Browse/History/Library FAB. */
+    fun jumpBackToOrigin() {
+        when {
+            fromHistory -> {
+                if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
+                    navigator.navigate(HistoryScreenDestination) { launchSingleTop = true }
+                }
+            }
+            fromLibrary -> {
+                if (!navigator.popBackStack(LibraryScreenDestination, inclusive = false)) {
+                    navigator.navigate(LibraryScreenDestination) { launchSingleTop = true }
+                }
+            }
+            else -> {
+                if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
+                    navigator.navigate(BrowseScreenDestination) { launchSingleTop = true }
+                }
+            }
+        }
+    }
+
+    val hideBackToFab by Settings.hideBackToFab.collectAsState()
+    fun onTopBarBack() {
+        if (hideBackToFab) jumpBackToOrigin() else goUp()
+    }
+
+    BackHandler(enabled = search.active || segments.isNotEmpty() || photoGrid) {
         if (!search.handleBack { focusManager.clearFocus() }) {
             goUp()
         }
@@ -503,6 +573,63 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         navToWebDavFolderReader(src.id, remote, names, info)
     }
 
+    fun openFolderGalleryPhotoGrid(entry: BrowseEntryRemote.FolderGallery) {
+        val remote = if (entry.relativeName.isEmpty()) {
+            relativeDir
+        } else {
+            WebDavGateway.joinRelative(relativeDir, entry.relativeName)
+        }
+        val entered = entry.relativeName.isNotEmpty()
+        if (entered) {
+            enterDir(entry.relativeName)
+        }
+        setPhotoGrid(remote, enteredFromParent = entered)
+    }
+
+    fun openFolderGalleryPrimary(entry: BrowseEntryRemote.FolderGallery) {
+        if (photoGridMode) openFolderGalleryPhotoGrid(entry) else openFolderGallery(entry)
+    }
+
+    fun openFolderGallerySecondary(entry: BrowseEntryRemote.FolderGallery) {
+        if (photoGridMode) openFolderGallery(entry) else openFolderGalleryPhotoGrid(entry)
+    }
+
+    fun openPhotoGridImage(file: BrowseEntryRemote.RegularFile) {
+        val src = source ?: return
+        if (!photoGrid) return
+        val images = photoGridImages
+        val page = images.indexOfFirst { it.fileName == file.fileName }.coerceAtLeast(0)
+        val names = images.map { it.fileName }
+        val coverKey = names.firstOrNull()?.let { fileName ->
+            HistoryThumbKey.webdav(src.id, WebDavGateway.joinRelative(relativeDir, fileName))
+        }
+        val gid = stableGalleryId(src.id, "webdav:$relativeDir")
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = WEBDAV_FOLDER_TOKEN,
+            title = title,
+            pages = names.size,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            thumbKey = coverKey,
+            uploader = "${src.id}\u0000${relativeDir.trim('/')}",
+            category = 3,
+        )
+        launchIO {
+            recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordWebDavFolderGallery(
+                sourceId = src.id,
+                remoteDir = relativeDir,
+                title = title,
+                thumbKey = coverKey,
+                pages = names.size,
+                info = info,
+            )
+        }
+        ReaderGalleryPlaylist.setFromWebDavBrowse(src.id, relativeDir, entries)
+        navToWebDavFolderReader(src.id, relativeDir, names, info, page)
+    }
+
     fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
         if (!isPdfFileName(entry.fileName)) return
         val src = source ?: return
@@ -524,6 +651,37 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         R.string.open_pdf_external_failed,
                         e.message ?: e.toString(),
                     ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Long-press archive → system "Open with". Tap still opens in-app reader.
+     * PDF uses [openPdfInOtherApp].
+     */
+    fun openArchiveInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
+        if (isPdfFileName(entry.fileName)) {
+            openPdfInOtherApp(entry)
+            return
+        }
+        val src = source ?: return
+        val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
+        launchIO {
+            recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordWebDavFile(src.id, remote, title = entry.name)
+            try {
+                OpenFileExternally.openWebDav(
+                    context = context,
+                    sourceId = src.id,
+                    remoteRelativeFile = remote,
+                    displayName = entry.name,
+                    mimeType = mimeTypeForFileName(entry.name),
+                )
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_open_failed) +
+                        " " + (e.message ?: e.toString()),
                 )
             }
         }
@@ -684,7 +842,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 colors = adaptiveTopAppBarColors(),
                 navigationIcon = {
-                    IconButton(onClick = { goUp() }, shapes = IconButtonDefaults.shapes()) {
+                    IconButton(onClick = { onTopBarBack() }, shapes = IconButtonDefaults.shapes()) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                     }
                 },
@@ -693,7 +851,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         state = search,
                         onBeforeClose = { focusManager.clearFocus() },
                     )
-                    BrowseViewModeMenu(folder = folderId)
+                    BrowseViewModeMenu(
+                        folder = if (virtual.isVirtual) null else folderId,
+                        hideContentModes = virtual.hideContentModes,
+                    )
                     IconButton(
                         onClick = {
                             refreshing = true
@@ -709,9 +870,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         },
         floatingActionButton = {
             // Compact phones without persistent main nav: shortcut FAB.
-            // Tablets (rail) and Settings → Keep main navigation: re-tap tab instead.
+            // Settings → Hide Back-to FAB: hide and map top-bar back to the same jump.
             // Visibility follows enterAlways top-bar scroll (same collapsedFraction).
-            if (LocalShowNavShortcutFab.current) {
+            if (LocalShowNavShortcutFab.current && !hideBackToFab) {
                 AnimatedVisibility(
                     visible = showScrollFab,
                     enter = fadeIn() + scaleIn(),
@@ -719,39 +880,21 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 ) {
                     when {
                         fromHistory -> ExtendedFloatingActionButton(
-                            onClick = {
-                                if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
-                                    navigator.navigate(HistoryScreenDestination) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
+                            onClick = { jumpBackToOrigin() },
                             icon = {
                                 Icon(Icons.Default.History, contentDescription = null)
                             },
                             text = { Text(stringResource(R.string.back_to_history)) },
                         )
                         fromLibrary -> ExtendedFloatingActionButton(
-                            onClick = {
-                                if (!navigator.popBackStack(LibraryScreenDestination, inclusive = false)) {
-                                    navigator.navigate(LibraryScreenDestination) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
+                            onClick = { jumpBackToOrigin() },
                             icon = {
                                 Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null)
                             },
                             text = { Text(stringResource(R.string.back_to_library)) },
                         )
                         else -> ExtendedFloatingActionButton(
-                            onClick = {
-                                if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
-                                    navigator.navigate(BrowseScreenDestination) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
+                            onClick = { jumpBackToOrigin() },
                             icon = {
                                 Icon(Icons.Default.Explore, contentDescription = null)
                             },
@@ -791,8 +934,15 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 else -> {
                     val dirKey = listedDir ?: relativeDir
                     val allowRemoteThumbs = listingSessionCurrent
+                    val favoritesOnTop by Settings.browseFavoritesOnTop.collectAsState()
                     val sections = filteredEntries.toRemoteBrowseSections()
-                    val dirs = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
+                    val dirsRaw = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
+                    val dirs = if (favoritesOnTop) {
+                        val (fav, rest) = dirsRaw.partition { isDirFavorite(it.relativeName) }
+                        fav + rest
+                    } else {
+                        dirsRaw
+                    }
                     val galleries = sections.galleries
                     val videos = sections.videos.filterIsInstance<BrowseEntryRemote.VideoFile>()
                     val files = sections.files.filterIsInstance<BrowseEntryRemote.RegularFile>()
@@ -844,7 +994,36 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         )
                         return BrowseCover.WebDavArchive(sourceId, remote)
                     }
-                    if (useGrid) {
+                    if (photoGrid) {
+                        val gridState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey#pg", scrollLayoutKey)
+                        val gridSpacing = GalleryGridDefaults.spacedBy()
+                        FastScrollLazyVerticalGrid(
+                            columns = GalleryGridDefaults.columns(),
+                            state = gridState,
+                            modifier = Modifier
+                                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                                .fillMaxSize(),
+                            contentPadding = GalleryGridDefaults.contentPadding(),
+                            horizontalArrangement = gridSpacing,
+                            verticalArrangement = gridSpacing,
+                        ) {
+                            items(photoGridImages, key = { "pg-${it.fileName}" }) { file ->
+                                val remote = if (relativeDir.isEmpty()) {
+                                    file.fileName
+                                } else {
+                                    WebDavGateway.joinRelative(relativeDir, file.fileName)
+                                }
+                                BrowsePhotoGridImageItem(
+                                    name = file.name,
+                                    cover = BrowseCover.WebDav(sourceId, remote),
+                                    showPhotoThumb = true,
+                                    allowRemoteFetch = allowRemoteThumbs,
+                                    onClick = { openPhotoGridImage(file) },
+                                    onLongClick = { openExternalFile(file.fileName) },
+                                )
+                            }
+                        }
+                    } else if (useGrid) {
                         val gridState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey", scrollLayoutKey)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
@@ -897,7 +1076,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
-                                                onClick = { openFolderGallery(entry) },
+                                                onClick = { openFolderGalleryPrimary(entry) },
+                                                onLongClick = { openFolderGallerySecondary(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
                                             BrowseArchiveGridItem(
@@ -906,11 +1086,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 onClick = { openArchive(entry) },
-                                                onLongClick = if (isPdfFileName(entry.fileName)) {
-                                                    { openPdfInOtherApp(entry) }
-                                                } else {
-                                                    null
-                                                },
+                                                onLongClick = { openArchiveInOtherApp(entry) },
                                             )
                                         else -> Unit
                                     }
@@ -990,7 +1166,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
-                                                onClick = { openFolderGallery(entry) },
+                                                onClick = { openFolderGalleryPrimary(entry) },
+                                                onLongClick = { openFolderGallerySecondary(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
                                             BrowseArchiveGalleryRow(
@@ -999,11 +1176,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 onClick = { openArchive(entry) },
-                                                onLongClick = if (isPdfFileName(entry.fileName)) {
-                                                    { openPdfInOtherApp(entry) }
-                                                } else {
-                                                    null
-                                                },
+                                                onLongClick = { openArchiveInOtherApp(entry) },
                                             )
                                         else -> Unit
                                     }

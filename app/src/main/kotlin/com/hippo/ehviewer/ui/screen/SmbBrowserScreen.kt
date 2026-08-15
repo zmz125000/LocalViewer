@@ -71,6 +71,7 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
@@ -79,14 +80,18 @@ import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
 import com.hippo.ehviewer.library.VideoThumbnailSource
+import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
+import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.mimeTypeForFileName
+import com.hippo.ehviewer.library.naturalCompare
+import com.hippo.ehviewer.library.smbBrowseVirtual
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toRemoteBrowseSections
 import com.hippo.ehviewer.smb.SmbGateway
@@ -111,6 +116,7 @@ import com.hippo.ehviewer.ui.main.BrowseFileGridItem
 import com.hippo.ehviewer.ui.main.BrowseFileRow
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
+import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
@@ -179,9 +185,23 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
-    val useGrid = listMode == 1
+
+    /** Photo-grid overlay; session-backed so reader navigation restores it. */
+    var photoGridOverlay by remember {
+        mutableStateOf(BrowseSession.smbPhotoGrid(sourceId))
+    }
+    fun setPhotoGrid(dir: String?, enteredFromParent: Boolean = false) {
+        photoGridOverlay = if (dir == null) {
+            null
+        } else {
+            BrowseSession.PhotoGridOverlay(dir, enteredFromParent)
+        }
+        BrowseSession.setSmbPhotoGrid(sourceId, dir, enteredFromParent)
+    }
+    val photoGridDir = photoGridOverlay?.dir
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
+    val photoGridMode by Settings.photoGridMode.collectAsState()
     val networkFolderIndexCacheEnabled by Settings.networkFolderIndexCache.collectAsState()
     val networkFolderIndexQuickScanEnabled by Settings.networkFolderIndexQuickScan.collectAsState()
     val smbConnectionRevision by SmbGateway.connectionRevision.collectAsState()
@@ -193,9 +213,29 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
     var connectionProbeToken by remember { mutableStateOf(0) }
     val sourceConnectionKey = source?.let { SmbGateway.sourceConfigKey(it) }
-    val folderId = BrowseFolderId.smb(sourceId, segments.joinToString("/"))
-    val contentMode = rememberEffectiveBrowseContentMode(folderId)
-    val scrollLayoutKey = listMode * 10 + contentMode.prefValue
+    val relativeDirForMode = segments.joinToString("/")
+    // Virtual layers (RPC share list / photo grid): not regular folder-view modes.
+    val virtual = smbBrowseVirtual(
+        isServerRootSource = source?.let { SmbGateway.isServerRootSource(it) } == true,
+        relativeDir = relativeDirForMode,
+        photoGridDir = photoGridDir,
+    )
+    val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
+    // Virtual share-list key must not govern mode under real share paths.
+    val smbModeSkipAncestors = remember(sourceId, source) {
+        if (source?.let { SmbGateway.isServerRootSource(it) } == true) {
+            setOf(BrowseFavorites.smbFolderKey(sourceId, ""))
+        } else {
+            emptySet()
+        }
+    }
+    val folderId = BrowseFolderId.smb(sourceId, relativeDirForMode)
+    val contentMode = rememberEffectiveBrowseContentMode(
+        folder = folderId,
+        skipAncestorKeys = smbModeSkipAncestors,
+    )
+    val useGrid = virtual.forceGrid || listMode == 1
+    val scrollLayoutKey = browseScrollLayoutKey(listMode, contentMode, virtual)
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
@@ -206,7 +246,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         derivedStateOf { scrollBehavior.state.collapsedFraction < 0.5f }
     }
 
-    val relativeDir = segments.joinToString("/")
+    val relativeDir = relativeDirForMode
     val title = segments.lastOrNull() ?: source?.displayName ?: stringResource(R.string.network)
 
     fun dirRelative(name: String): String = if (relativeDir.isEmpty()) name else SmbGateway.joinRelativePath(relativeDir, name)
@@ -241,11 +281,26 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         contentMode,
         showSmallGalleries,
         smallGalleryMinPages,
+        virtual,
     ) {
-        displayEntries
-            .filterRemoteByContentMode(contentMode)
-            .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
-            .filterByBrowseSearch(search.keyword) { it.name }
+        val base = when (virtual) {
+            // Image-only virtual folder.
+            BrowseVirtualKind.PhotoGrid ->
+                displayEntries
+                    .filterIsInstance<BrowseEntryRemote.RegularFile>()
+                    .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
+                    .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+            // Share names only — no content-mode filter.
+            BrowseVirtualKind.RpcShareRoot -> displayEntries
+            BrowseVirtualKind.None ->
+                displayEntries
+                    .filterRemoteByContentMode(contentMode)
+                    .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
+        }
+        base.filterByBrowseSearch(search.keyword) { it.name }
+    }
+    val photoGridImages = remember(filteredEntries, photoGrid) {
+        if (photoGrid) filteredEntries.filterIsInstance<BrowseEntryRemote.RegularFile>() else emptyList()
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
@@ -483,6 +538,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     fun enterDir(relativeName: String) {
         val parts = relativeName.split('/').filter { it.isNotEmpty() }
         if (parts.isEmpty()) return
+        setPhotoGrid(null)
         val next = segments + parts
         val nextDir = next.joinToString("/")
         enterHopStack = enterHopStack + parts.size
@@ -496,6 +552,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     fun goUp() {
+        // Exit photo-grid: return to the parent listing that showed the gallery row
+        // (leave the gallery folder when open entered it from the parent).
+        if (photoGrid) {
+            val leaveChild = photoGridOverlay?.enteredFromParent == true
+            setPhotoGrid(null)
+            if (!leaveChild) return
+            // Fall through to pop the gallery directory.
+        }
         if (segments.isNotEmpty()) {
             val hop = (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
             enterHopStack = if (enterHopStack.isNotEmpty()) enterHopStack.dropLast(1) else enterHopStack
@@ -514,7 +578,33 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
-    BackHandler(enabled = search.active || segments.isNotEmpty()) {
+    /** Same jump as the Back-to Browse/History/Library FAB. */
+    fun jumpBackToOrigin() {
+        when {
+            fromHistory -> {
+                if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
+                    navigator.navigate(HistoryScreenDestination) { launchSingleTop = true }
+                }
+            }
+            fromLibrary -> {
+                if (!navigator.popBackStack(LibraryScreenDestination, inclusive = false)) {
+                    navigator.navigate(LibraryScreenDestination) { launchSingleTop = true }
+                }
+            }
+            else -> {
+                if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
+                    navigator.navigate(BrowseScreenDestination) { launchSingleTop = true }
+                }
+            }
+        }
+    }
+
+    val hideBackToFab by Settings.hideBackToFab.collectAsState()
+    fun onTopBarBack() {
+        if (hideBackToFab) jumpBackToOrigin() else goUp()
+    }
+
+    BackHandler(enabled = search.active || segments.isNotEmpty() || photoGrid) {
         if (!search.handleBack { focusManager.clearFocus() }) {
             goUp()
         }
@@ -587,6 +677,70 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         navToSmbFolderReader(src.id, remote, names, info)
     }
 
+    /**
+     * Photo-grid virtual folder for a gallery. Does not change global list/content mode.
+     * Back returns to the parent listing (leaves the gallery dir when open entered it).
+     */
+    fun openFolderGalleryPhotoGrid(entry: BrowseEntryRemote.FolderGallery) {
+        val remote = if (entry.relativeName.isEmpty()) {
+            relativeDir
+        } else {
+            SmbGateway.joinRelativePath(relativeDir, entry.relativeName)
+        }
+        val entered = entry.relativeName.isNotEmpty()
+        if (entered) {
+            enterDir(entry.relativeName)
+        }
+        // enterDir clears photo grid; re-enable for the target path.
+        setPhotoGrid(remote, enteredFromParent = entered)
+    }
+
+    /** Primary / secondary open for folder galleries based on [Settings.photoGridMode]. */
+    fun openFolderGalleryPrimary(entry: BrowseEntryRemote.FolderGallery) {
+        if (photoGridMode) openFolderGalleryPhotoGrid(entry) else openFolderGallery(entry)
+    }
+
+    fun openFolderGallerySecondary(entry: BrowseEntryRemote.FolderGallery) {
+        if (photoGridMode) openFolderGallery(entry) else openFolderGalleryPhotoGrid(entry)
+    }
+
+    /** Tap image in photo-grid → reader at that page index. */
+    fun openPhotoGridImage(file: BrowseEntryRemote.RegularFile) {
+        val src = source ?: return
+        if (!photoGrid) return
+        val images = photoGridImages
+        val page = images.indexOfFirst { it.fileName == file.fileName }.coerceAtLeast(0)
+        val names = images.map { it.fileName }
+        val coverKey = names.firstOrNull()?.let { fileName ->
+            HistoryThumbKey.smb(src.id, SmbGateway.joinRelativePath(relativeDir, fileName))
+        }
+        val gid = stableGalleryId(src.id, "smb:$relativeDir")
+        val info = BaseGalleryInfo(
+            gid = gid,
+            token = SMB_FOLDER_TOKEN,
+            title = title,
+            pages = names.size,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            thumbKey = coverKey,
+            uploader = "${src.id}\u0000${relativeDir.trim('/')}",
+            category = 2,
+        )
+        launchIO {
+            recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordSmbFolderGallery(
+                sourceId = src.id,
+                remoteDir = relativeDir,
+                title = title,
+                thumbKey = coverKey,
+                pages = names.size,
+                info = info,
+            )
+        }
+        ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
+        navToSmbFolderReader(src.id, relativeDir, names, info, page)
+    }
+
     fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
         if (!isPdfFileName(entry.fileName)) return
         val src = source ?: return
@@ -608,6 +762,37 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         R.string.open_pdf_external_failed,
                         e.message ?: e.toString(),
                     ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Long-press archive → system "Open with". Tap still opens in-app reader.
+     * PDF uses [openPdfInOtherApp].
+     */
+    fun openArchiveInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
+        if (isPdfFileName(entry.fileName)) {
+            openPdfInOtherApp(entry)
+            return
+        }
+        val src = source ?: return
+        val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
+        launchIO {
+            recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordSmbFile(src.id, remote, title = entry.name)
+            try {
+                OpenFileExternally.openSmb(
+                    context = context,
+                    sourceId = src.id,
+                    remoteRelativeFile = remote,
+                    displayName = entry.name,
+                    mimeType = mimeTypeForFileName(entry.name),
+                )
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_open_failed) +
+                        " " + (e.message ?: e.toString()),
                 )
             }
         }
@@ -771,7 +956,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                 colors = adaptiveTopAppBarColors(),
                 navigationIcon = {
-                    IconButton(onClick = { goUp() }, shapes = IconButtonDefaults.shapes()) {
+                    IconButton(onClick = { onTopBarBack() }, shapes = IconButtonDefaults.shapes()) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                     }
                 },
@@ -780,7 +965,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         state = search,
                         onBeforeClose = { focusManager.clearFocus() },
                     )
-                    BrowseViewModeMenu(folder = folderId)
+                    BrowseViewModeMenu(
+                        // Virtual layers: list/grid + toggles only (no content-mode persist).
+                        folder = if (virtual.isVirtual) null else folderId,
+                        skipAncestorKeys = smbModeSkipAncestors,
+                        hideContentModes = virtual.hideContentModes,
+                    )
                     IconButton(
                         enabled = refreshEnabled,
                         onClick = {
@@ -797,9 +987,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         },
         floatingActionButton = {
             // Compact phones without persistent main nav: shortcut FAB.
-            // Tablets (rail) and Settings → Keep main navigation: re-tap tab instead.
+            // Settings → Hide Back-to FAB: hide and map top-bar back to the same jump.
             // Visibility follows enterAlways top-bar scroll (same collapsedFraction).
-            if (LocalShowNavShortcutFab.current) {
+            if (LocalShowNavShortcutFab.current && !hideBackToFab) {
                 AnimatedVisibility(
                     visible = showScrollFab,
                     enter = fadeIn() + scaleIn(),
@@ -807,39 +997,21 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 ) {
                     when {
                         fromHistory -> ExtendedFloatingActionButton(
-                            onClick = {
-                                if (!navigator.popBackStack(HistoryScreenDestination, inclusive = false)) {
-                                    navigator.navigate(HistoryScreenDestination) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
+                            onClick = { jumpBackToOrigin() },
                             icon = {
                                 Icon(Icons.Default.History, contentDescription = null)
                             },
                             text = { Text(stringResource(R.string.back_to_history)) },
                         )
                         fromLibrary -> ExtendedFloatingActionButton(
-                            onClick = {
-                                if (!navigator.popBackStack(LibraryScreenDestination, inclusive = false)) {
-                                    navigator.navigate(LibraryScreenDestination) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
+                            onClick = { jumpBackToOrigin() },
                             icon = {
                                 Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null)
                             },
                             text = { Text(stringResource(R.string.back_to_library)) },
                         )
                         else -> ExtendedFloatingActionButton(
-                            onClick = {
-                                if (!navigator.popBackStack(BrowseScreenDestination, inclusive = false)) {
-                                    navigator.navigate(BrowseScreenDestination) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
+                            onClick = { jumpBackToOrigin() },
                             icon = {
                                 Icon(Icons.Default.Explore, contentDescription = null)
                             },
@@ -880,8 +1052,15 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     val dirKey = listedDir ?: relativeDir
                     // Old (disk-hydrated / unrefreshed) listings: disk thumbs OK, no network jobs.
                     val allowRemoteThumbs = listingSessionCurrent
+                    val favoritesOnTop by Settings.browseFavoritesOnTop.collectAsState()
                     val sections = filteredEntries.toRemoteBrowseSections()
-                    val dirs = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
+                    val dirsRaw = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
+                    val dirs = if (favoritesOnTop) {
+                        val (fav, rest) = dirsRaw.partition { isDirFavorite(it.relativeName) }
+                        fav + rest
+                    } else {
+                        dirsRaw
+                    }
                     val galleries = sections.galleries
                     val videos = sections.videos.filterIsInstance<BrowseEntryRemote.VideoFile>()
                     val files = sections.files.filterIsInstance<BrowseEntryRemote.RegularFile>()
@@ -934,7 +1113,37 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         )
                         return BrowseCover.SmbArchive(sourceId, remote)
                     }
-                    if (useGrid) {
+                    if (photoGrid) {
+                        val gridState = rememberSmbBrowseGridState(sourceId, "$dirKey#pg", scrollLayoutKey)
+                        val gridSpacing = GalleryGridDefaults.spacedBy()
+                        FastScrollLazyVerticalGrid(
+                            columns = GalleryGridDefaults.columns(),
+                            state = gridState,
+                            modifier = Modifier
+                                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                                .fillMaxSize(),
+                            contentPadding = GalleryGridDefaults.contentPadding(),
+                            horizontalArrangement = gridSpacing,
+                            verticalArrangement = gridSpacing,
+                        ) {
+                            items(photoGridImages, key = { "pg-${it.fileName}" }) { file ->
+                                val remote = if (relativeDir.isEmpty()) {
+                                    file.fileName
+                                } else {
+                                    SmbGateway.joinRelativePath(relativeDir, file.fileName)
+                                }
+                                BrowsePhotoGridImageItem(
+                                    name = file.name,
+                                    cover = BrowseCover.Smb(sourceId, remote),
+                                    showPhotoThumb = true,
+                                    thumbRetryKey = refreshToken,
+                                    allowRemoteFetch = allowRemoteThumbs,
+                                    onClick = { openPhotoGridImage(file) },
+                                    onLongClick = { openExternalFile(file.fileName) },
+                                )
+                            }
+                        }
+                    } else if (useGrid) {
                         val gridState = rememberSmbBrowseGridState(sourceId, dirKey, scrollLayoutKey)
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
@@ -987,7 +1196,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
-                                                onClick = { openFolderGallery(entry) },
+                                                onClick = { openFolderGalleryPrimary(entry) },
+                                                onLongClick = { openFolderGallerySecondary(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
                                             BrowseArchiveGridItem(
@@ -996,11 +1206,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 onClick = { openArchive(entry) },
-                                                onLongClick = if (isPdfFileName(entry.fileName)) {
-                                                    { openPdfInOtherApp(entry) }
-                                                } else {
-                                                    null
-                                                },
+                                                onLongClick = { openArchiveInOtherApp(entry) },
                                             )
                                         else -> Unit
                                     }
@@ -1080,7 +1286,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
-                                                onClick = { openFolderGallery(entry) },
+                                                onClick = { openFolderGalleryPrimary(entry) },
+                                                onLongClick = { openFolderGallerySecondary(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
                                             BrowseArchiveGalleryRow(
@@ -1089,11 +1296,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 onClick = { openArchive(entry) },
-                                                onLongClick = if (isPdfFileName(entry.fileName)) {
-                                                    { openPdfInOtherApp(entry) }
-                                                } else {
-                                                    null
-                                                },
+                                                onLongClick = { openArchiveInOtherApp(entry) },
                                             )
                                         else -> Unit
                                     }
@@ -1124,6 +1327,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                     BrowseFileRow(
                                         name = file.name,
                                         onClick = { openExternalFile(file.fileName) },
+                                        onLongClick = { openExternalFile(file.fileName) },
                                     )
                                 }
                             }

@@ -61,6 +61,8 @@ import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.SMB_BROWSE_TOKEN
+import com.hippo.ehviewer.library.WEBDAV_BROWSE_TOKEN
 import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.ui.screen.collectListThumbSizeAsState
 import okio.Path.Companion.toPath
@@ -466,6 +468,113 @@ fun HistoryGridItem(
                         modifier = Modifier.weight(1f),
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * History **Directories** section grid cell — same square layout as Library
+ * [FavoriteSourceGridCell]: full-bleed cover + bottom scrim when a thumb is cached;
+ * otherwise 48.dp folder icon + caption (Lan/Cloud badge for network browse pins).
+ */
+@Composable
+fun HistoryDirectoryGridItem(
+    info: GalleryInfo,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = onClick,
+    modifier: Modifier = Modifier,
+) {
+    val namePadH = GalleryGridDefaults.namePaddingH()
+    val namePadBottom = GalleryGridDefaults.namePaddingBottom()
+    val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
+        historyCoverKey(info)
+    }
+    var resolvedThumb by remember(coverKey) { mutableStateOf<String?>(null) }
+    LaunchedEffect(coverKey) {
+        resolvedThumb = withIOContext { HistoryThumbKey.resolveReadablePath(coverKey) }
+    }
+    val useThumbStyle = resolvedThumb != null
+    val networkBadge = when (info.token) {
+        SMB_BROWSE_TOKEN -> Icons.Default.Lan
+        WEBDAV_BROWSE_TOKEN -> Icons.Default.Cloud
+        else -> null
+    }
+    ElevatedCard(
+        onClick = onClick,
+        onLongClick = onLongClick,
+        modifier = modifier.fillMaxWidth().aspectRatio(1f),
+    ) {
+        if (useThumbStyle) {
+            Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
+                CoverImage(
+                    coverPath = coverKey,
+                    sizePx = CoverThumb.gridDecodePx(
+                        screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                        columns = GalleryGridDefaults.columnCount(),
+                        margin = GalleryGridDefaults.margin(),
+                        gutter = GalleryGridDefaults.gutter(),
+                    ),
+                    placeholder = Icons.Default.Folder,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Text(
+                    text = info.title.orEmpty(),
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                        .padding(horizontal = namePadH)
+                        .padding(top = 4.dp, bottom = namePadBottom),
+                )
+            }
+        } else {
+            val labelIconSize = with(LocalDensity.current) {
+                MaterialTheme.typography.labelMedium.fontSize.toDp()
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clip(ShapeDefaults.Medium),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.Folder,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = namePadH)
+                    .padding(bottom = namePadBottom),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (networkBadge != null) {
+                    Icon(
+                        networkBadge,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(end = 4.dp)
+                            .size(labelIconSize),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    text = info.title.orEmpty(),
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }

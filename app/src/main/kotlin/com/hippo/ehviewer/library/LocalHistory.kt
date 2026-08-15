@@ -7,6 +7,8 @@ import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.webdav.WebDavRepository
 // LocalLibrary used for archive path → library row history
 
 /** Library gallery (scanned). Click → reader. */
@@ -191,6 +193,109 @@ object LocalHistory {
         return path.substringAfterLast('/').substringAfterLast('\\').ifEmpty {
             info.title.orEmpty()
         }
+    }
+
+    /**
+     * Browse-directory pin only (folder listing, not a folder gallery / archive / file).
+     * History UI puts these in the top "Directories" section.
+     */
+    fun isBrowseDirectory(info: GalleryInfo): Boolean = when (info.token) {
+        LOCAL_BROWSE_TOKEN, SMB_BROWSE_TOKEN, WEBDAV_BROWSE_TOKEN -> true
+        else -> false
+    }
+
+    /**
+     * After recording a content history row (gallery / archive / file), also promote the
+     * parent browse-directory pin so it rises in the History Directories strip.
+     * No-op for browse-dir tokens (avoids recursion from [recordLocalBrowseFolder] etc.).
+     * Called from [EhDB.putHistoryInfo].
+     */
+    suspend fun bumpParentBrowseDirectory(info: GalleryInfo) {
+        when (val target = parse(info)) {
+            is LocalHistoryTarget.LocalBrowseFolder,
+            is LocalHistoryTarget.SmbBrowseFolder,
+            is LocalHistoryTarget.WebDavBrowseFolder,
+            is LocalHistoryTarget.Orphan,
+            -> return
+            is LocalHistoryTarget.LocalFolderGallery -> bumpLocalBrowseParent(
+                rootId = target.rootId,
+                contentRelativePath = target.relativePath,
+            )
+            is LocalHistoryTarget.SmbFolderGallery -> bumpSmbBrowseParent(
+                sourceId = target.sourceId,
+                contentRelativePath = target.remoteDir,
+            )
+            is LocalHistoryTarget.WebDavFolderGallery -> bumpWebDavBrowseParent(
+                sourceId = target.sourceId,
+                contentRelativePath = target.remoteDir,
+            )
+            is LocalHistoryTarget.SmbStreamArchive -> bumpSmbBrowseParent(
+                sourceId = target.sourceId,
+                contentRelativePath = target.remotePath,
+            )
+            is LocalHistoryTarget.WebDavStreamArchive -> bumpWebDavBrowseParent(
+                sourceId = target.sourceId,
+                contentRelativePath = target.remotePath,
+            )
+            is LocalHistoryTarget.SmbFile -> bumpSmbBrowseParent(
+                sourceId = target.sourceId,
+                contentRelativePath = target.remotePath,
+            )
+            is LocalHistoryTarget.WebDavFile -> bumpWebDavBrowseParent(
+                sourceId = target.sourceId,
+                contentRelativePath = target.remotePath,
+            )
+            is LocalHistoryTarget.LocalArchive -> bumpLocalPathParent(target.path)
+            is LocalHistoryTarget.LocalFile -> bumpLocalPathParent(target.path)
+            is LocalHistoryTarget.LibraryGallery -> {
+                val gallery = LocalLibrary.loadGallery(target.galleryId) ?: return
+                bumpLocalPathParent(gallery.contentPath)
+            }
+        }
+    }
+
+    private suspend fun bumpLocalPathParent(absolutePath: String) {
+        val parent = LocalLibrary.resolveArchiveBrowseParent(absolutePath) ?: return
+        val title = if (parent.parentRelativePath.isEmpty()) {
+            parent.rootDisplayName
+        } else {
+            humanizePathName(parent.parentRelativePath.substringAfterLast('/'))
+        }
+        recordLocalBrowseFolder(
+            rootId = parent.rootId,
+            relativePath = parent.parentRelativePath,
+            title = title,
+        )
+    }
+
+    private suspend fun bumpLocalBrowseParent(rootId: Long, contentRelativePath: String) {
+        val parentRel = parentRelativeOfFile(contentRelativePath)
+        val title = if (parentRel.isEmpty()) {
+            LocalLibrary.loadRoot(rootId)?.displayName ?: "Folder"
+        } else {
+            humanizePathName(parentRel.substringAfterLast('/'))
+        }
+        recordLocalBrowseFolder(rootId = rootId, relativePath = parentRel, title = title)
+    }
+
+    private suspend fun bumpSmbBrowseParent(sourceId: Long, contentRelativePath: String) {
+        val parentRel = parentRelativeOfFile(contentRelativePath)
+        val title = if (parentRel.isEmpty()) {
+            SmbRepository.load(sourceId)?.displayName ?: "Share"
+        } else {
+            parentRel.substringAfterLast('/')
+        }
+        recordSmbBrowseFolder(sourceId = sourceId, relativePath = parentRel, title = title)
+    }
+
+    private suspend fun bumpWebDavBrowseParent(sourceId: Long, contentRelativePath: String) {
+        val parentRel = parentRelativeOfFile(contentRelativePath)
+        val title = if (parentRel.isEmpty()) {
+            WebDavRepository.load(sourceId)?.displayName ?: "WebDAV"
+        } else {
+            parentRel.substringAfterLast('/')
+        }
+        recordWebDavBrowseFolder(sourceId = sourceId, relativePath = parentRel, title = title)
     }
 
     /**

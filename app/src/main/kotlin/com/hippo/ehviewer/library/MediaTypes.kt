@@ -209,6 +209,8 @@ fun mimeTypeForFileName(name: String): String {
             "tar", "cbt" -> "application/x-tar"
             else -> GENERIC_FILE_MIME
         }
+        // Unknown extensions (incl. .exe, .iso, .img, …) → [GENERIC_FILE_MIME] so the
+        // system "Open with" picker lists general handlers, not a niche type filter.
         else -> extraMimeForExtension(ext) ?: GENERIC_FILE_MIME
     }
 }
@@ -258,7 +260,6 @@ private fun extraMimeForExtension(ext: String): String? = when (ext) {
     "bz2" -> "application/x-bzip2"
     "xz" -> "application/x-xz"
     "zst" -> "application/zstd"
-    "iso" -> "application/x-iso9660-image"
     "torrent" -> "application/x-bittorrent"
     else -> null
 }

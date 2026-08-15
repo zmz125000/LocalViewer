@@ -11,7 +11,13 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.download.downloadLocation
+import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.buildLocalBrowseStack
+import com.hippo.ehviewer.library.parentRelativeOfFile
+import com.hippo.ehviewer.ui.destinations.FolderBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
+import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
+import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
@@ -88,6 +94,114 @@ fun navToWebDavStreamArchiveReader(
 
 context(nav: DestinationsNavigator)
 private fun navToReader(args: ReaderScreenArgs) = nav.navigate(ReaderScreenDestination(args)) { launchSingleTop = true }
+
+/**
+ * Open content from History with an optional parent-directory back stack.
+ *
+ * When [Settings.alwaysExitToDir] is on (default), [pushParentDir] runs first (set
+ * [com.hippo.ehviewer.library.BrowseSession] + navigate to Folder/SMB/WebDAV browser
+ * with `fromHistory = true`) so system back from the reader lands on that directory.
+ * When off, only [openContent] runs and back returns to History (or the prior stack).
+ *
+ * Use this for every History → reader path that can land on a parent dir; pure dir
+ * pins and external file opens do not need it.
+ */
+inline fun openFromHistoryWithBackStack(
+    pushParentDir: () -> Unit,
+    openContent: () -> Unit,
+) {
+    if (Settings.alwaysExitToDir.value) {
+        pushParentDir()
+    }
+    openContent()
+}
+
+/**
+ * Open a local folder gallery as the photo-grid virtual folder (History / Library tap).
+ * Stack = parent listing frames + photo-grid frame so back returns to the parent dir.
+ */
+context(nav: DestinationsNavigator)
+fun openLocalFolderPhotoGrid(
+    rootId: Long,
+    rootDisplayName: String,
+    rootPath: Path,
+    relativePath: String,
+    preferMediaStore: Boolean = true,
+    title: String? = null,
+    fromHistory: Boolean = false,
+    fromLibrary: Boolean = false,
+) {
+    val parentRel = parentRelativeOfFile(relativePath)
+    val parentStack = buildLocalBrowseStack(
+        rootId = rootId,
+        rootDisplayName = rootDisplayName,
+        rootPath = rootPath,
+        relativePath = parentRel,
+        preferMediaStore = preferMediaStore,
+    )
+    val galleryStack = buildLocalBrowseStack(
+        rootId = rootId,
+        rootDisplayName = rootDisplayName,
+        rootPath = rootPath,
+        relativePath = relativePath,
+        preferMediaStore = preferMediaStore,
+    )
+    val galleryFrame = galleryStack.last().copy(
+        photoGrid = true,
+        title = title?.takeIf { it.isNotBlank() } ?: galleryStack.last().title,
+    )
+    BrowseSession.localStack = parentStack + galleryFrame
+    nav.navigate(FolderBrowserScreenDestination(fromHistory = fromHistory, fromLibrary = fromLibrary)) {
+        launchSingleTop = true
+    }
+}
+
+/**
+ * Open an SMB folder gallery as photo-grid (History tap). Back leaves the gallery dir
+ * when [remoteDir] is non-empty ([BrowseSession.PhotoGridOverlay.enteredFromParent]).
+ */
+context(nav: DestinationsNavigator)
+fun openSmbFolderPhotoGrid(
+    sourceId: Long,
+    remoteDir: String,
+    fromHistory: Boolean = false,
+    fromLibrary: Boolean = false,
+) {
+    val remote = remoteDir.trim('/').let { if (it == ".") "" else it }
+    val segments = remote.split('/').filter { it.isNotEmpty() }
+    BrowseSession.setSmbSegments(sourceId, segments)
+    BrowseSession.setSmbPhotoGrid(sourceId, remote, enteredFromParent = remote.isNotEmpty())
+    nav.navigate(
+        SmbBrowserScreenDestination(
+            sourceId = sourceId,
+            initialRelativePath = remote,
+            fromHistory = fromHistory,
+            fromLibrary = fromLibrary,
+        ),
+    ) { launchSingleTop = true }
+}
+
+/** Open a WebDAV folder gallery as photo-grid (History tap). */
+context(nav: DestinationsNavigator)
+fun openWebDavFolderPhotoGrid(
+    sourceId: Long,
+    remoteDir: String,
+    fromHistory: Boolean = false,
+    fromLibrary: Boolean = false,
+) {
+    val remote = remoteDir.trim('/').let { if (it == ".") "" else it }
+    val segments = remote.split('/').filter { it.isNotEmpty() }
+    BrowseSession.setWebDavSegments(sourceId, segments)
+    BrowseSession.setWebDavPhotoGrid(sourceId, remote, enteredFromParent = remote.isNotEmpty())
+    nav.navigate(
+        WebDavBrowserScreenDestination(
+            sourceId = sourceId,
+            initialRelativePath = remote,
+            fromHistory = fromHistory,
+            fromLibrary = fromLibrary,
+        ),
+    ) { launchSingleTop = true }
+}
 
 context(_: Context, _: DialogState)
 suspend fun showRestartDialog() {

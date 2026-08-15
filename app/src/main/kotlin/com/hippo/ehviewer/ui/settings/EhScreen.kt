@@ -209,8 +209,27 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 state = Settings.downloadNetworkVideoThumbs.asMutableState(),
             )
             SwitchPreference(
+                title = stringResource(id = R.string.settings_photo_grid_mode),
+                state = Settings.photoGridMode.asMutableState(),
+            )
+            val downloadPhotoGridThumb = Settings.downloadNetworkPhotoGridThumb.asMutableState()
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_download_network_photo_grid_thumb),
+                state = downloadPhotoGridThumb,
+            )
+            AnimatedVisibility(visible = downloadPhotoGridThumb.value) {
+                SwitchPreference(
+                    title = stringResource(id = R.string.settings_save_photo_grid_original_cache),
+                    state = Settings.savePhotoGridOriginalCache.asMutableState(),
+                )
+            }
+            SwitchPreference(
                 title = stringResource(id = R.string.settings_persist_main_nav),
                 state = Settings.persistMainNav.asMutableState(),
+            )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_hide_back_to_fab),
+                state = Settings.hideBackToFab.asMutableState(),
             )
         }
     }

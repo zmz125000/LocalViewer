@@ -78,6 +78,7 @@
     <string name="settings_external_video_pass_folder_playlist_summary">在外部播放器中以 m3u8 播放清單開啟目前資料夾中的影片</string>
     <string name="settings_external_video_randomize_token">隨機化影片播放器權杖</string>
     <string name="settings_external_video_randomize_token_summary">外部影片播放使用隨機的本機 HTTP 工作階段權杖和連接埠，而非固定值</string>
+    <string name="browse_menu_favorites_on_top">收藏置頂</string>
     <string name="browse_menu_page_count">頁數</string>
     <string name="browse_menu_reading_progress">閱讀進度</string>
     <string name="browse_menu_small_galleries">小圖庫</string>
@@ -145,8 +146,16 @@
     <string name="settings_download_network_archive_thumbs_summary">擷取網路 ZIP/TAR/RAR/7z 的首頁縮圖。</string>
     <string name="settings_download_network_video_thumbs">下載網路影片封面</string>
     <string name="settings_download_network_video_thumbs_summary">為 SMB/WebDAV 影片擷取影格縮圖。關閉後仍顯示已快取的封面。</string>
+    <string name="settings_photo_grid_mode">照片網格模式</string>
+    <string name="settings_photo_grid_mode_summary">開啟：點擊資料夾圖庫開啟照片網格，長按開啟閱讀器。關閉：點擊開啟閱讀器，長按開啟照片網格。</string>
+    <string name="settings_download_network_photo_grid_thumb">下載網路照片網格縮圖</string>
+    <string name="settings_download_network_photo_grid_thumb_summary">在照片網格中為 SMB/WebDAV 圖片取得並解碼為小 JPEG。關閉後仍顯示已快取縮圖。</string>
+    <string name="settings_save_photo_grid_original_cache">將照片網格原圖儲存到快取</string>
+    <string name="settings_save_photo_grid_original_cache_summary">縮圖一律寫入縮圖快取。開啟後，下載照片網格時也會把完整原圖寫入頁面快取。關閉（預設）只保留小 JPEG 縮圖。</string>
     <string name="settings_persist_main_nav">資料夾頁面保留主導覽</string>
     <string name="settings_persist_main_nav_summary">瀏覽資料夾時顯示底部導覽，再次點按「瀏覽/歷史」可返回。關閉則使用快捷懸浮按鈕（手機）。</string>
+    <string name="settings_hide_back_to_fab">隱藏返回懸浮按鈕</string>
+    <string name="settings_hide_back_to_fab_summary">隱藏「返回瀏覽/歷史/收藏庫」懸浮按鈕。頂欄返回改為跳到該頁，而不是上一層資料夾。</string>
     <string name="settings_eh_show_reading_progress">顯示閱讀進度</string>
     <string name="settings_eh_show_reading_progress_summary">在圖庫列表中顯示閱讀進度</string>
     <string name="settings_smb_concurrency">SMB 並行連線數</string>
@@ -167,6 +176,10 @@
     <string name="settings_privacy_save_file_history_summary">記錄開啟的壓縮檔、影片與其他非資料夾檔案。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
     <string name="settings_privacy_save_gallery_history">儲存圖庫歷史</string>
     <string name="settings_privacy_save_gallery_history_summary">記錄開啟的庫圖庫與資料夾圖庫。父資料夾仍會在開啟「儲存歷史」時記錄。</string>
+    <string name="settings_privacy_always_exit_to_dir">一律返回目錄</string>
+    <string name="settings_privacy_always_exit_to_dir_summary">從歷史開啟時，閱讀器系統返回會回到父資料夾。關閉後返回歷史（或上一畫面）。</string>
+    <string name="settings_privacy_library_recent_open">圖庫最近開啟</string>
+    <string name="settings_privacy_library_recent_open_summary">依最近開啟排序圖庫列表，最近閱讀的會排在前面。關閉後僅依標題排序。</string>
     <string name="settings_privacy_save_file_markers">儲存檔案標記</string>
     <string name="settings_privacy_save_file_markers_summary">在應用程式資料中保存依檔案的略過紀錄（例如影片縮圖失敗）。不在快取中。關閉後會刪除既有標記。</string>
     <string name="history_disabled">歷史記錄已在隱私設定中關閉</string>

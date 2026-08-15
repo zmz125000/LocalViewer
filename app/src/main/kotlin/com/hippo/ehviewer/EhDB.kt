@@ -245,6 +245,10 @@ object EhDB {
     val historyListFlow
         get() = db.historyDao().joinListFlow()
 
+    /** Raw HISTORY rows (gid + time) for sorting other lists by recency. */
+    val historyTimeListFlow
+        get() = db.historyDao().listFlow()
+
     fun searchHistory(keyword: String) = db.historyDao().joinListLazy("*$keyword*")
 
     val localFavLazyList
@@ -280,6 +284,9 @@ object EhDB {
             // Concurrent insert won the race — still force TIME to now.
             dao.bumpTime(entity.gid, now)
         }
+        // Content opens (gallery/file/archive) also promote the parent browse-dir pin.
+        // Browse-dir tokens no-op inside [LocalHistory.bumpParentBrowseDirectory].
+        LocalHistory.bumpParentBrowseDirectory(galleryInfo)
     }
 
     /** Existing GALLERIES row, if any (used to preserve thumbKey on re-record). */

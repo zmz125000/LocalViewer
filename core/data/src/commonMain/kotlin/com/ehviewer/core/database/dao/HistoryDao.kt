@@ -15,6 +15,10 @@ interface HistoryDao {
     @Query("SELECT HISTORY.* FROM HISTORY JOIN GALLERIES USING(GID) ORDER BY TIME")
     suspend fun list(): List<HistoryInfo>
 
+    /** History rows (gid + time) for recency sorts (e.g. Library list). */
+    @Query("SELECT * FROM HISTORY")
+    fun listFlow(): Flow<List<HistoryInfo>>
+
     @Query("SELECT GALLERIES.* FROM HISTORY JOIN GALLERIES USING(GID) ORDER BY TIME DESC")
     fun joinListLazy(): PagingSource<Int, GalleryEntity>
 

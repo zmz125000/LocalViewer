@@ -155,6 +155,12 @@ object Settings : DataStorePreferences(null) {
     val browseShowSmallGalleries = boolPref("browse_show_small_galleries", false)
 
     /**
+     * When true (default), favourited directories are listed first in the Directories section
+     * of folder browsers (order within each group is unchanged). Top-bar view menu toggle.
+     */
+    val browseFavoritesOnTop = boolPref("browse_favorites_on_top", true)
+
+    /**
      * Minimum image count for a folder gallery when [browseShowSmallGalleries] is off.
      * Galleries with fewer pages are hidden in the UI only. Default 3.
      */
@@ -167,6 +173,13 @@ object Settings : DataStorePreferences(null) {
      * “Back to browse/history” FAB instead. Large screens always use a rail and never the FAB.
      */
     val persistMainNav = boolPref("persist_main_nav", false)
+
+    /**
+     * When true, hide the “Back to Browse/History/Library” FAB on folder screens and make the
+     * top-bar back button run that same jump instead of climbing one path segment.
+     * Default false (current: FAB when main nav is hidden; top-bar back = go up).
+     */
+    val hideBackToFab = boolPref("hide_back_to_fab", false)
     val listThumbSize = intPref("list_tile_size", 40)
     val detailSize = intPref("detail_size_2", 0)
     val thumbColumns = intPref("thumb_columns", 3)
@@ -194,6 +207,26 @@ object Settings : DataStorePreferences(null) {
      * Local video always uses disk cache extraction. Default true.
      */
     val downloadNetworkVideoThumbs = boolPref("download_network_video_thumbs", true)
+
+    /**
+     * Default folder-gallery open gesture.
+     * On: tap → photo-grid virtual folder; long-press → reader.
+     * Off (default): tap → reader; long-press → photo-grid virtual folder.
+     */
+    val photoGridMode = boolPref("photo_grid_mode", false)
+
+    /**
+     * Allow downloading SMB/WebDAV images for photo-grid thumbs (decode to small JPEG like
+     * browse covers). Cached thumbs still show when off. Default true.
+     */
+    val downloadNetworkPhotoGridThumb = boolPref("download_network_photo_grid_thumb", true)
+
+    /**
+     * When downloading a photo-grid network image for its thumb: also store the **original**
+     * full file in page cache (`smb_cache` / `webdav_cache`). Thumbs always go to
+     * `*_thumb_cache`. Default off — grid browse does not fill page cache.
+     */
+    val savePhotoGridOriginalCache = boolPref("save_photo_grid_original_cache", true)
 
     val showGalleryPages = boolPref("show_gallery_pages", true)
     val showReadingProgress = boolPref("show_reading_progress", false)
@@ -290,6 +323,20 @@ object Settings : DataStorePreferences(null) {
      * browse folder-galleries). Default on. Does not gate browse-dir history.
      */
     val saveGalleryHistory = boolPref("save_gallery_history", true)
+
+    /**
+     * When opening a gallery/archive from History: if true (default), push the parent
+     * directory onto the nav stack so system back from the reader lands on that dir.
+     * If false, open the reader only so back returns to History (or the prior back stack).
+     * Shared by [com.hippo.ehviewer.ui.openFromHistoryWithBackStack].
+     */
+    val alwaysExitToDir = boolPref("always_exit_to_dir", true)
+
+    /**
+     * Library list: when true (default), sort galleries by HISTORY recency so recently
+     * opened items rise to the top. When false, keep the default title order only.
+     */
+    val libraryRecentOpen = boolPref("library_recent_open", true)
 
     /**
      * Per-file skip / failure notes (video thumb `.failed` and similar sidecars).

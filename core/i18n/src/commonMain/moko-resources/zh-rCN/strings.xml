@@ -74,6 +74,7 @@
     <string name="settings_external_video_pass_folder_playlist_summary">在外部播放器中以 m3u8 播放列表打开当前文件夹中的视频</string>
     <string name="settings_external_video_randomize_token">随机化视频播放器令牌</string>
     <string name="settings_external_video_randomize_token_summary">外部视频播放使用随机的本地 HTTP 会话令牌和端口，而不是固定值</string>
+    <string name="browse_menu_favorites_on_top">收藏置顶</string>
     <string name="browse_menu_page_count">页数</string>
     <string name="browse_menu_reading_progress">阅读进度</string>
     <string name="browse_menu_small_galleries">小图库</string>
@@ -135,6 +136,12 @@
     <string name="settings_download_network_archive_thumbs_summary">提取网络 ZIP/TAR/RAR/7z 的首页缩略图。</string>
     <string name="settings_download_network_video_thumbs">下载网络视频封面</string>
     <string name="settings_download_network_video_thumbs_summary">为 SMB/WebDAV 视频提取帧缩略图。关闭后仍显示已缓存的封面。</string>
+    <string name="settings_photo_grid_mode">照片网格模式</string>
+    <string name="settings_photo_grid_mode_summary">开启：点击文件夹画廊打开照片网格，长按打开阅读器。关闭：点击打开阅读器，长按打开照片网格。</string>
+    <string name="settings_download_network_photo_grid_thumb">下载网络照片网格缩略图</string>
+    <string name="settings_download_network_photo_grid_thumb_summary">在照片网格中为 SMB/WebDAV 图片获取并解码为小 JPEG。关闭后仍显示已缓存缩略图。</string>
+    <string name="settings_save_photo_grid_original_cache">将照片网格原图保存到缓存</string>
+    <string name="settings_save_photo_grid_original_cache_summary">缩略图始终写入缩略图缓存。开启后，下载照片网格时也会把完整原图写入页面缓存。关闭（默认）只保留小 JPEG 缩略图。</string>
     <string name="settings_smb_concurrency">SMB 并发连接数</string>
     <string name="settings_smb_concurrency_summary">每个主机最多 %s 个会话（该服务器上所有共享共用；用于定位与预取）</string>
     <string name="settings_smb3_only">仅 SMB 3</string>
@@ -402,6 +409,10 @@
     <string name="settings_privacy_save_file_history_summary">记录打开的压缩包、视频与其他非文件夹文件。父文件夹仍会在开启“保存历史”时记录。</string>
     <string name="settings_privacy_save_gallery_history">保存图库历史</string>
     <string name="settings_privacy_save_gallery_history_summary">记录打开的库图库与文件夹图库。父文件夹仍会在开启“保存历史”时记录。</string>
+    <string name="settings_privacy_always_exit_to_dir">始终返回目录</string>
+    <string name="settings_privacy_always_exit_to_dir_summary">从历史打开时，阅读器系统返回会回到父文件夹。关闭后返回历史（或上一屏）。</string>
+    <string name="settings_privacy_library_recent_open">图库最近打开</string>
+    <string name="settings_privacy_library_recent_open_summary">按最近打开排序图库列表，最近阅读的会排在前面。关闭后仅按标题排序。</string>
     <string name="settings_privacy_save_file_markers">保存文件标记</string>
     <string name="settings_privacy_save_file_markers_summary">在应用数据中保存按文件的跳过记录（例如视频缩略图失败）。不在缓存中。关闭后会删除已有标记。</string>
     <string name="history_disabled">历史记录已在隐私设置中关闭</string>
@@ -437,6 +448,8 @@
     <string name="settings_general">通用</string>
     <string name="settings_persist_main_nav">文件夹页面保留主导航</string>
     <string name="settings_persist_main_nav_summary">浏览文件夹时显示底部导航，再次点按“浏览/历史”可返回。关闭则使用快捷悬浮按钮（手机）。</string>
+    <string name="settings_hide_back_to_fab">隐藏返回悬浮按钮</string>
+    <string name="settings_hide_back_to_fab_summary">隐藏“返回浏览/历史/收藏库”悬浮按钮。顶栏返回改为跳转到该页，而不是上一级文件夹。</string>
     <string name="settings_eh_sign_out">退出登录</string>
     <string name="settings_eh_identity_cookies_signed">身份 Cookie 可用于登录该账号。&lt;br&gt;&lt;b&gt;注意数据安全&lt;/b&gt;</string>
     <string name="settings_eh_identity_cookies_guest">游客模式</string>

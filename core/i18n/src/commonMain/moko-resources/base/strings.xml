@@ -78,6 +78,7 @@
     <string name="settings_external_video_pass_folder_playlist_summary">Open folder videos as an m3u8 playlist in the external player</string>
     <string name="settings_external_video_randomize_token">Randomize video player token</string>
     <string name="settings_external_video_randomize_token_summary">Use a random local HTTP session token and port instead of stable values for external video playback</string>
+    <string name="browse_menu_favorites_on_top">Favorites on top</string>
     <string name="browse_menu_page_count">Page count</string>
     <string name="browse_menu_reading_progress">Reading progress</string>
     <string name="browse_menu_small_galleries">Small galleries</string>
@@ -440,8 +441,16 @@
     <string name="settings_download_network_archive_thumbs_summary">Extract first-page thumbs for network ZIP/TAR/RAR/7z.</string>
     <string name="settings_download_network_video_thumbs">Download network video covers</string>
     <string name="settings_download_network_video_thumbs_summary">Extract frame thumbs for network (SMB/WebDAV) videos. Cached covers still show when off.</string>
+    <string name="settings_photo_grid_mode">Photo grid mode</string>
+    <string name="settings_photo_grid_mode_summary">On: tap folder gallery opens photo grid, long-press opens reader. Off: tap opens reader, long-press opens photo grid.</string>
+    <string name="settings_download_network_photo_grid_thumb">Download network photo grid thumbs</string>
+    <string name="settings_download_network_photo_grid_thumb_summary">Fetch and decode small JPEG thumbs for SMB/WebDAV images in photo grid. Cached thumbs still show when off.</string>
+    <string name="settings_save_photo_grid_original_cache">Save photo grid originals to cache</string>
+    <string name="settings_save_photo_grid_original_cache_summary">Thumbs always save to thumb cache. On also stores the full original image in page cache when downloading for the photo grid. Off (default) keeps only the small JPEG thumb.</string>
     <string name="settings_persist_main_nav">Keep main navigation on folder screens</string>
     <string name="settings_persist_main_nav_summary">Show the bottom bar while browsing folders; re-tap Browse/History to jump back. Off uses a shortcut FAB instead (phones).</string>
+    <string name="settings_hide_back_to_fab">Hide Back-to FAB</string>
+    <string name="settings_hide_back_to_fab_summary">Hide the Back to Browse/History/Library FAB. Top-bar back jumps to that screen instead of going up one folder.</string>
     <string name="settings_eh_sign_out">Sign out</string>
     <string name="settings_eh_identity_cookies_signed">Identity cookies can be used to sign in to this account.&lt;br&gt;&lt;b&gt;KEEP IT SAFE&lt;/b&gt;</string>
     <string name="settings_eh_identity_cookies_guest">Guest mode</string>
@@ -615,6 +624,10 @@
     <string name="settings_privacy_save_file_history_summary">Record opened archives, videos, and other non-folder files. Parent folders are still recorded when Save history is on.</string>
     <string name="settings_privacy_save_gallery_history">Save gallery history</string>
     <string name="settings_privacy_save_gallery_history_summary">Record opened library and folder galleries. Parent folders are still recorded when Save history is on.</string>
+    <string name="settings_privacy_always_exit_to_dir">Always exit to directory</string>
+    <string name="settings_privacy_always_exit_to_dir_summary">When opening from History, system back from the reader returns to the parent folder. Turn off to return to History (or the previous screen).</string>
+    <string name="settings_privacy_library_recent_open">Library recent open</string>
+    <string name="settings_privacy_library_recent_open_summary">Sort the Library list so recently opened galleries appear at the top. Turn off to keep title order only.</string>
     <string name="settings_privacy_save_file_markers">Save file markers</string>
     <string name="settings_privacy_save_file_markers_summary">Keep per-file skip notes in app data (for example video thumb failures). These are not stored in the cache. Turning this off deletes them.</string>
     <string name="history_disabled">History is turned off in Privacy settings</string>
