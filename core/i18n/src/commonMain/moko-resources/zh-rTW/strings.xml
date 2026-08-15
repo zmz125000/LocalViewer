@@ -146,7 +146,7 @@
     <string name="settings_download_network_video_thumbs">下載網路影片封面</string>
     <string name="settings_download_network_video_thumbs_summary">為 SMB/WebDAV 影片擷取影格縮圖。關閉後仍顯示已快取的封面。</string>
     <string name="settings_photo_grid_mode">照片網格模式</string>
-    <string name="settings_photo_grid_mode_summary">長按資料夾圖庫進入僅圖片的網格。開啟後顯示縮圖；關閉時僅顯示檔案圖示。</string>
+    <string name="settings_photo_grid_mode_summary">開啟：點擊資料夾圖庫開啟照片網格，長按開啟閱讀器。關閉：點擊開啟閱讀器，長按開啟照片網格。</string>
     <string name="settings_download_network_photo_grid_thumb">下載網路照片網格縮圖</string>
     <string name="settings_download_network_photo_grid_thumb_summary">在照片網格中為 SMB/WebDAV 圖片取得並解碼為小 JPEG。關閉後仍顯示已快取縮圖。</string>
     <string name="settings_save_photo_grid_thumb_cache">將照片網格縮圖儲存到快取</string>

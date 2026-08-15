@@ -52,23 +52,33 @@ object BrowseSession {
     /** Drop path stack for a source (e.g. share/pathPrefix edited). */
     fun clearSmbSegments(sourceId: Long) {
         smbSegments[sourceId] = emptyList()
-        smbPhotoGridDirs.remove(sourceId)
+        smbPhotoGridState.remove(sourceId)
     }
 
     /**
      * When non-null, the SMB browser shows a photo-grid (image-only) overlay for that
      * relative directory path (process lifetime; survives reader navigation).
+     * [enteredFromParent] true when open entered a child path — back should leave that
+     * directory and return to the parent listing, not stay inside the gallery folder.
      */
-    private val smbPhotoGridDirs = ConcurrentHashMap<Long, String>()
+    data class PhotoGridOverlay(val dir: String, val enteredFromParent: Boolean)
 
-    fun smbPhotoGridDir(sourceId: Long): String? = smbPhotoGridDirs[sourceId]
+    private val smbPhotoGridState = ConcurrentHashMap<Long, PhotoGridOverlay>()
 
-    fun setSmbPhotoGridDir(sourceId: Long, relativeDir: String?) {
-        if (relativeDir == null) smbPhotoGridDirs.remove(sourceId) else smbPhotoGridDirs[sourceId] = relativeDir
+    fun smbPhotoGrid(sourceId: Long): PhotoGridOverlay? = smbPhotoGridState[sourceId]
+
+    fun smbPhotoGridDir(sourceId: Long): String? = smbPhotoGridState[sourceId]?.dir
+
+    fun setSmbPhotoGrid(sourceId: Long, relativeDir: String?, enteredFromParent: Boolean = false) {
+        if (relativeDir == null) {
+            smbPhotoGridState.remove(sourceId)
+        } else {
+            smbPhotoGridState[sourceId] = PhotoGridOverlay(relativeDir, enteredFromParent)
+        }
     }
 
     fun isSmbPhotoGrid(sourceId: Long, relativeDir: String): Boolean =
-        smbPhotoGridDirs[sourceId] == relativeDir
+        smbPhotoGridState[sourceId]?.dir == relativeDir
 
     // --- Listing cache (session) ---
     private val localListings = ConcurrentHashMap<String, List<BrowseEntry>>()
@@ -190,19 +200,25 @@ object BrowseSession {
 
     fun clearWebDavSegments(sourceId: Long) {
         webDavSegments[sourceId] = emptyList()
-        webDavPhotoGridDirs.remove(sourceId)
+        webDavPhotoGridState.remove(sourceId)
     }
 
-    private val webDavPhotoGridDirs = ConcurrentHashMap<Long, String>()
+    private val webDavPhotoGridState = ConcurrentHashMap<Long, PhotoGridOverlay>()
 
-    fun webDavPhotoGridDir(sourceId: Long): String? = webDavPhotoGridDirs[sourceId]
+    fun webDavPhotoGrid(sourceId: Long): PhotoGridOverlay? = webDavPhotoGridState[sourceId]
 
-    fun setWebDavPhotoGridDir(sourceId: Long, relativeDir: String?) {
-        if (relativeDir == null) webDavPhotoGridDirs.remove(sourceId) else webDavPhotoGridDirs[sourceId] = relativeDir
+    fun webDavPhotoGridDir(sourceId: Long): String? = webDavPhotoGridState[sourceId]?.dir
+
+    fun setWebDavPhotoGrid(sourceId: Long, relativeDir: String?, enteredFromParent: Boolean = false) {
+        if (relativeDir == null) {
+            webDavPhotoGridState.remove(sourceId)
+        } else {
+            webDavPhotoGridState[sourceId] = PhotoGridOverlay(relativeDir, enteredFromParent)
+        }
     }
 
     fun isWebDavPhotoGrid(sourceId: Long, relativeDir: String): Boolean =
-        webDavPhotoGridDirs[sourceId] == relativeDir
+        webDavPhotoGridState[sourceId]?.dir == relativeDir
 
     fun webDavListingKey(sourceId: Long, relativeDir: String) = "dav:$sourceId|$relativeDir"
 

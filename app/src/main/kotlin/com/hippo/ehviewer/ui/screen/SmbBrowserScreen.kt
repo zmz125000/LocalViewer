@@ -182,14 +182,19 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
-    /** Photo-grid overlay path; session-backed so reader navigation restores it. */
-    var photoGridDir by remember {
-        mutableStateOf(BrowseSession.smbPhotoGridDir(sourceId))
+    /** Photo-grid overlay; session-backed so reader navigation restores it. */
+    var photoGridOverlay by remember {
+        mutableStateOf(BrowseSession.smbPhotoGrid(sourceId))
     }
-    fun setPhotoGridDir(dir: String?) {
-        photoGridDir = dir
-        BrowseSession.setSmbPhotoGridDir(sourceId, dir)
+    fun setPhotoGrid(dir: String?, enteredFromParent: Boolean = false) {
+        photoGridOverlay = if (dir == null) {
+            null
+        } else {
+            BrowseSession.PhotoGridOverlay(dir, enteredFromParent)
+        }
+        BrowseSession.setSmbPhotoGrid(sourceId, dir, enteredFromParent)
     }
+    val photoGridDir = photoGridOverlay?.dir
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val photoGridMode by Settings.photoGridMode.collectAsState()
@@ -509,7 +514,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     fun enterDir(relativeName: String) {
         val parts = relativeName.split('/').filter { it.isNotEmpty() }
         if (parts.isEmpty()) return
-        setPhotoGridDir(null)
+        setPhotoGrid(null)
         val next = segments + parts
         val nextDir = next.joinToString("/")
         enterHopStack = enterHopStack + parts.size
@@ -523,10 +528,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     fun goUp() {
-        // Exit photo-grid overlay first (stay on same directory listing).
+        // Exit photo-grid: return to the parent listing that showed the gallery row
+        // (leave the gallery folder when open entered it from the parent).
         if (photoGrid) {
-            setPhotoGridDir(null)
-            return
+            val leaveChild = photoGridOverlay?.enteredFromParent == true
+            setPhotoGrid(null)
+            if (!leaveChild) return
+            // Fall through to pop the gallery directory.
         }
         if (segments.isNotEmpty()) {
             val hop = (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
@@ -620,8 +628,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     }
 
     /**
-     * Long-press folder gallery → virtual image-only grid. Does not change global
-     * list/content mode. Back exits the overlay (or parent after leaf enter).
+     * Photo-grid virtual folder for a gallery. Does not change global list/content mode.
+     * Back returns to the parent listing (leaves the gallery dir when open entered it).
      */
     fun openFolderGalleryPhotoGrid(entry: BrowseEntryRemote.FolderGallery) {
         val remote = if (entry.relativeName.isEmpty()) {
@@ -629,11 +637,21 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         } else {
             SmbGateway.joinRelativePath(relativeDir, entry.relativeName)
         }
-        if (entry.relativeName.isNotEmpty()) {
+        val entered = entry.relativeName.isNotEmpty()
+        if (entered) {
             enterDir(entry.relativeName)
         }
         // enterDir clears photo grid; re-enable for the target path.
-        setPhotoGridDir(remote)
+        setPhotoGrid(remote, enteredFromParent = entered)
+    }
+
+    /** Primary / secondary open for folder galleries based on [Settings.photoGridMode]. */
+    fun openFolderGalleryPrimary(entry: BrowseEntryRemote.FolderGallery) {
+        if (photoGridMode) openFolderGalleryPhotoGrid(entry) else openFolderGallery(entry)
+    }
+
+    fun openFolderGallerySecondary(entry: BrowseEntryRemote.FolderGallery) {
+        if (photoGridMode) openFolderGallery(entry) else openFolderGalleryPhotoGrid(entry)
     }
 
     /** Tap image in photo-grid → reader at that page index. */
@@ -1073,7 +1091,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 BrowsePhotoGridImageItem(
                                     name = file.name,
                                     cover = BrowseCover.Smb(sourceId, remote),
-                                    photoGridMode = photoGridMode,
+                                    showPhotoThumb = true,
                                     thumbRetryKey = refreshToken,
                                     allowRemoteFetch = allowRemoteThumbs,
                                     onClick = { openPhotoGridImage(file) },
@@ -1134,8 +1152,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
-                                                onClick = { openFolderGallery(entry) },
-                                                onLongClick = { openFolderGalleryPhotoGrid(entry) },
+                                                onClick = { openFolderGalleryPrimary(entry) },
+                                                onLongClick = { openFolderGallerySecondary(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
                                             BrowseArchiveGridItem(
@@ -1224,8 +1242,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
-                                                onClick = { openFolderGallery(entry) },
-                                                onLongClick = { openFolderGalleryPhotoGrid(entry) },
+                                                onClick = { openFolderGalleryPrimary(entry) },
+                                                onLongClick = { openFolderGallerySecondary(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
                                             BrowseArchiveGalleryRow(

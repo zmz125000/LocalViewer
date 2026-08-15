@@ -175,13 +175,18 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listMode by Settings.listMode.collectAsState()
-    var photoGridDir by remember {
-        mutableStateOf(BrowseSession.webDavPhotoGridDir(sourceId))
+    var photoGridOverlay by remember {
+        mutableStateOf(BrowseSession.webDavPhotoGrid(sourceId))
     }
-    fun setPhotoGridDir(dir: String?) {
-        photoGridDir = dir
-        BrowseSession.setWebDavPhotoGridDir(sourceId, dir)
+    fun setPhotoGrid(dir: String?, enteredFromParent: Boolean = false) {
+        photoGridOverlay = if (dir == null) {
+            null
+        } else {
+            BrowseSession.PhotoGridOverlay(dir, enteredFromParent)
+        }
+        BrowseSession.setWebDavPhotoGrid(sourceId, dir, enteredFromParent)
     }
+    val photoGridDir = photoGridOverlay?.dir
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
     val photoGridMode by Settings.photoGridMode.collectAsState()
@@ -423,7 +428,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     fun enterDir(relativeName: String) {
         val parts = relativeName.split('/').filter { it.isNotEmpty() }
         if (parts.isEmpty()) return
-        setPhotoGridDir(null)
+        setPhotoGrid(null)
         val next = segments + parts
         val nextDir = next.joinToString("/")
         enterHopStack = enterHopStack + parts.size
@@ -437,9 +442,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
 
     fun goUp() {
+        // Exit photo-grid: return to the parent listing that showed the gallery row.
         if (photoGrid) {
-            setPhotoGridDir(null)
-            return
+            val leaveChild = photoGridOverlay?.enteredFromParent == true
+            setPhotoGrid(null)
+            if (!leaveChild) return
         }
         if (segments.isNotEmpty()) {
             val hop = (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
@@ -538,10 +545,19 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         } else {
             WebDavGateway.joinRelative(relativeDir, entry.relativeName)
         }
-        if (entry.relativeName.isNotEmpty()) {
+        val entered = entry.relativeName.isNotEmpty()
+        if (entered) {
             enterDir(entry.relativeName)
         }
-        setPhotoGridDir(remote)
+        setPhotoGrid(remote, enteredFromParent = entered)
+    }
+
+    fun openFolderGalleryPrimary(entry: BrowseEntryRemote.FolderGallery) {
+        if (photoGridMode) openFolderGalleryPhotoGrid(entry) else openFolderGallery(entry)
+    }
+
+    fun openFolderGallerySecondary(entry: BrowseEntryRemote.FolderGallery) {
+        if (photoGridMode) openFolderGallery(entry) else openFolderGalleryPhotoGrid(entry)
     }
 
     fun openPhotoGridImage(file: BrowseEntryRemote.RegularFile) {
@@ -974,7 +990,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 BrowsePhotoGridImageItem(
                                     name = file.name,
                                     cover = BrowseCover.WebDav(sourceId, remote),
-                                    photoGridMode = photoGridMode,
+                                    showPhotoThumb = true,
                                     allowRemoteFetch = allowRemoteThumbs,
                                     onClick = { openPhotoGridImage(file) },
                                     onLongClick = { openExternalFile(file.fileName) },
@@ -1034,8 +1050,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
-                                                onClick = { openFolderGallery(entry) },
-                                                onLongClick = { openFolderGalleryPhotoGrid(entry) },
+                                                onClick = { openFolderGalleryPrimary(entry) },
+                                                onLongClick = { openFolderGallerySecondary(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
                                             BrowseArchiveGridItem(
@@ -1124,8 +1140,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 showPages = showGalleryPages,
-                                                onClick = { openFolderGallery(entry) },
-                                                onLongClick = { openFolderGalleryPhotoGrid(entry) },
+                                                onClick = { openFolderGalleryPrimary(entry) },
+                                                onLongClick = { openFolderGallerySecondary(entry) },
                                             )
                                         is BrowseEntryRemote.ArchiveGallery ->
                                             BrowseArchiveGalleryRow(

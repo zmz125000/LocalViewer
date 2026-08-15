@@ -388,8 +388,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     /**
-     * Long-press folder gallery → virtual image-only folder (grid). Does not change the
-     * global list/content mode. Back exits the overlay only.
+     * Photo-grid virtual folder for a gallery. Pushes a photo-grid frame so back returns
+     * to the parent listing (does not change global list/content mode).
      */
     fun openFolderGalleryPhotoGrid(entry: BrowseEntry.FolderGallery) {
         val frame = stack.lastOrNull() ?: return
@@ -404,6 +404,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 photoGrid = true,
             ),
         )
+    }
+
+    /** Primary / secondary open for folder galleries based on [Settings.photoGridMode]. */
+    fun openFolderGalleryPrimary(entry: BrowseEntry.FolderGallery) {
+        if (photoGridMode) openFolderGalleryPhotoGrid(entry) else openFolderGallery(entry)
+    }
+
+    fun openFolderGallerySecondary(entry: BrowseEntry.FolderGallery) {
+        if (photoGridMode) openFolderGallery(entry) else openFolderGalleryPhotoGrid(entry)
     }
 
     /** Tap an image in photo-grid → reader at that page. */
@@ -745,7 +754,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 BrowsePhotoGridImageItem(
                                     name = file.name,
                                     cover = BrowseCover.Local(file.path),
-                                    photoGridMode = photoGridMode,
+                                    showPhotoThumb = true,
                                     onClick = { openPhotoGridImage(file) },
                                     onLongClick = { openExternalFile(file.path) },
                                 )
@@ -806,8 +815,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             pageCountCapped = entry.pageCountCapped,
                                             cover = entry.coverPath?.let { BrowseCover.Local(it) },
                                             showPages = showGalleryPages,
-                                            onClick = { openFolderGallery(entry) },
-                                            onLongClick = { openFolderGalleryPhotoGrid(entry) },
+                                            onClick = { openFolderGalleryPrimary(entry) },
+                                            onLongClick = { openFolderGallerySecondary(entry) },
                                         )
                                         is BrowseEntry.ArchiveGallery -> BrowseArchiveGridItem(
                                             name = entry.name,
@@ -892,8 +901,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             pageCountCapped = entry.pageCountCapped,
                                             cover = entry.coverPath?.let { BrowseCover.Local(it) },
                                             showPages = showGalleryPages,
-                                            onClick = { openFolderGallery(entry) },
-                                            onLongClick = { openFolderGalleryPhotoGrid(entry) },
+                                            onClick = { openFolderGalleryPrimary(entry) },
+                                            onLongClick = { openFolderGallerySecondary(entry) },
                                         )
                                         is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(
                                             name = entry.name,

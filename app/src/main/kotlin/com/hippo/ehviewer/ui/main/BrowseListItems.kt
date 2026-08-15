@@ -486,7 +486,7 @@ fun BrowseFolderGalleryGridItem(
 
 /**
  * Image cell in a folder-gallery photo-grid virtual folder.
- * When [photoGridMode] is on, shows a cover thumb; otherwise a file icon.
+ * When [showPhotoThumb] and [cover] are set, shows a cover thumb; otherwise a file icon.
  */
 @Composable
 fun BrowsePhotoGridImageItem(
@@ -495,11 +495,11 @@ fun BrowsePhotoGridImageItem(
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
     cover: BrowseCover? = null,
-    photoGridMode: Boolean = false,
+    showPhotoThumb: Boolean = true,
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
 ) {
-    if (photoGridMode && cover != null) {
+    if (showPhotoThumb && cover != null) {
         BrowseGridCell(
             name = name,
             onClick = onClick,

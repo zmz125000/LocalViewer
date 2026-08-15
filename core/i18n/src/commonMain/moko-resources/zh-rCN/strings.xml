@@ -136,7 +136,7 @@
     <string name="settings_download_network_video_thumbs">下载网络视频封面</string>
     <string name="settings_download_network_video_thumbs_summary">为 SMB/WebDAV 视频提取帧缩略图。关闭后仍显示已缓存的封面。</string>
     <string name="settings_photo_grid_mode">照片网格模式</string>
-    <string name="settings_photo_grid_mode_summary">长按文件夹画廊进入仅图片的网格。开启后显示缩略图；关闭时仅显示文件图标。</string>
+    <string name="settings_photo_grid_mode_summary">开启：点击文件夹画廊打开照片网格，长按打开阅读器。关闭：点击打开阅读器，长按打开照片网格。</string>
     <string name="settings_download_network_photo_grid_thumb">下载网络照片网格缩略图</string>
     <string name="settings_download_network_photo_grid_thumb_summary">在照片网格中为 SMB/WebDAV 图片获取并解码为小 JPEG。关闭后仍显示已缓存缩略图。</string>
     <string name="settings_save_photo_grid_thumb_cache">将照片网格缩略图保存到缓存</string>

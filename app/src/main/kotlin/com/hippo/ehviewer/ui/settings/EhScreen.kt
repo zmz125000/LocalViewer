@@ -208,28 +208,23 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.settings_download_network_video_thumbs),
                 state = Settings.downloadNetworkVideoThumbs.asMutableState(),
             )
-            val photoGridMode = Settings.photoGridMode.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_photo_grid_mode),
                 summary = stringResource(id = R.string.settings_photo_grid_mode_summary),
-                state = photoGridMode,
+                state = Settings.photoGridMode.asMutableState(),
             )
-            AnimatedVisibility(visible = photoGridMode.value) {
-                Column {
-                    val downloadPhotoGridThumb = Settings.downloadNetworkPhotoGridThumb.asMutableState()
-                    SwitchPreference(
-                        title = stringResource(id = R.string.settings_download_network_photo_grid_thumb),
-                        summary = stringResource(id = R.string.settings_download_network_photo_grid_thumb_summary),
-                        state = downloadPhotoGridThumb,
-                    )
-                    AnimatedVisibility(visible = downloadPhotoGridThumb.value) {
-                        SwitchPreference(
-                            title = stringResource(id = R.string.settings_save_photo_grid_thumb_cache),
-                            summary = stringResource(id = R.string.settings_save_photo_grid_thumb_cache_summary),
-                            state = Settings.savePhotoGridThumbCache.asMutableState(),
-                        )
-                    }
-                }
+            val downloadPhotoGridThumb = Settings.downloadNetworkPhotoGridThumb.asMutableState()
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_download_network_photo_grid_thumb),
+                summary = stringResource(id = R.string.settings_download_network_photo_grid_thumb_summary),
+                state = downloadPhotoGridThumb,
+            )
+            AnimatedVisibility(visible = downloadPhotoGridThumb.value) {
+                SwitchPreference(
+                    title = stringResource(id = R.string.settings_save_photo_grid_thumb_cache),
+                    summary = stringResource(id = R.string.settings_save_photo_grid_thumb_cache_summary),
+                    state = Settings.savePhotoGridThumbCache.asMutableState(),
+                )
             }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_persist_main_nav),
