@@ -1101,12 +1101,28 @@ fun BrowseCoverThumb(
  * Optional [onClick] (e.g. collapse) uses **no ripple** (`indication = null`).
  */
 @Composable
-fun BrowseSectionHeader(text: String, modifier: Modifier = Modifier) {
+fun BrowseSectionHeader(
+    text: String,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+) {
     Text(
         text = text,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
-        modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = modifier
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(
+                        interactionSource = null,
+                        indication = null,
+                        onClick = onClick,
+                    )
+                } else {
+                    Modifier
+                },
+            )
+            .padding(horizontal = 16.dp, vertical = 8.dp),
     )
 }
 
