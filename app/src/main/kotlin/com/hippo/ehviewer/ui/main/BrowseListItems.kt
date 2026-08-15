@@ -1096,6 +1096,10 @@ fun BrowseCoverThumb(
     }
 }
 
+/**
+ * Section label for folder browse lists (Directories / Galleries / …).
+ * Optional [onClick] (e.g. collapse) uses **no ripple** (`indication = null`).
+ */
 @Composable
 fun BrowseSectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
@@ -1104,6 +1108,24 @@ fun BrowseSectionHeader(text: String, modifier: Modifier = Modifier) {
         color = MaterialTheme.colorScheme.primary,
         modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp),
     )
+}
+
+/** In-memory collapse keys for folder-view section headers (not persisted). */
+enum class BrowseFolderSection {
+    Directories,
+    Galleries,
+    Videos,
+    Files,
+}
+
+/** Collapse set for the current listing; resets when [resetKey] changes (e.g. path). */
+@Composable
+fun rememberBrowseSectionCollapse(resetKey: Any?): Pair<Set<BrowseFolderSection>, (BrowseFolderSection) -> Unit> {
+    var collapsed by remember(resetKey) { mutableStateOf(emptySet<BrowseFolderSection>()) }
+    val toggle: (BrowseFolderSection) -> Unit = { section ->
+        collapsed = if (section in collapsed) collapsed - section else collapsed + section
+    }
+    return collapsed to toggle
 }
 
 @Composable
