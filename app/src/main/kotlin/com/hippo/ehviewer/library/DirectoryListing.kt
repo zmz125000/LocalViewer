@@ -1119,7 +1119,6 @@ fun classifyRemoteListingWithPeeks(
                 }
             }
             isImageFileName(e.name) -> {
-                if (coverFileName == null) coverFileName = e.name
                 imageNames += e.name
                 // Loose images for Folder mode.
                 regularFiles += BrowseEntryRemote.RegularFile(e.name)
@@ -1144,7 +1143,9 @@ fun classifyRemoteListingWithPeeks(
     archives.sortWith { a, b -> naturalCompare(a.name, b.name) }
     videos.sortWith { a, b -> naturalCompare(a.name, b.name) }
     regularFiles.sortWith { a, b -> naturalCompare(a.name, b.name) }
+    // Reader page list is natural-sorted here — cover must match page 0, not list order.
     imageNames.sortWith { a, b -> naturalCompare(a, b) }
+    if (imageNames.isNotEmpty()) coverFileName = imageNames.first()
 
     val result = ArrayList<BrowseEntryRemote>(
         dirs.size + leafGalleries.size + archives.size + videos.size + regularFiles.size + 1,
@@ -1173,23 +1174,20 @@ private fun imagesInPeekAsGallery(
     peek: List<RemoteChild>,
     displayName: String,
 ): BrowseEntryRemote.FolderGallery? {
-    var cover: String? = null
     val images = ArrayList<String>()
     for (c in peek) {
         if (c.name.startsWith('.') || c.isDirectory) continue
-        if (isImageFileName(c.name)) {
-            if (cover == null) cover = c.name
-            images += c.name
-        }
+        if (isImageFileName(c.name)) images += c.name
     }
     if (images.isEmpty()) return null
+    // Same natural order the reader uses from [imageFileNames].
     images.sortWith { a, b -> naturalCompare(a, b) }
     return BrowseEntryRemote.FolderGallery(
         name = displayName,
         relativeName = relativeName,
         pageCount = images.size,
         pageCountCapped = false,
-        coverFileName = cover,
+        coverFileName = images.first(),
         imageFileNames = images,
     )
 }
@@ -1263,7 +1261,6 @@ private sealed interface RemoteChildKind {
 }
 
 private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): RemoteChildKind {
-    var coverFileName: String? = null
     val imageNames = ArrayList<String>()
     val videoFileNames = ArrayList<String>()
     var sawSubdir = false
@@ -1277,10 +1274,7 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
             continue
         }
         when {
-            isImageFileName(e.name) -> {
-                if (coverFileName == null) coverFileName = e.name
-                imageNames += e.name
-            }
+            isImageFileName(e.name) -> imageNames += e.name
             isArchiveFileName(e.name) -> sawArchive = true
             isBrowseVideoFileName(e.name) -> videoFileNames += e.name
         }
@@ -1292,10 +1286,11 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
     val videos = if (sawVideo) videoFileNames.toList() else emptyList()
 
     val gallery = if (imageNames.isNotEmpty()) {
+        // Reader page list is natural-sorted here — cover = page 0, not first-meet.
         imageNames.sortWith { a, b -> naturalCompare(a, b) }
         RemoteChildKind.LeafGallery(
             pageCount = imageNames.size,
-            coverFileName = coverFileName,
+            coverFileName = imageNames.first(),
             imageFileNames = imageNames,
             videoFileNames = videos,
             hasVideo = sawVideo,
