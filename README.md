@@ -36,6 +36,14 @@
     <img src="https://img.shields.io/github/issues/zmz125000/LocalViewer" alt="Issues">
   </a>
 </p>
+<p align="center">
+  <a href="https://github.com/zmz125000/LocalViewer/releases/latest">
+    <img src="https://img.shields.io/github/downloads/zmz125000/LocalViewer/latest/total?label=Latest%20Downloads&labelColor=27303D&color=0D1117&logo=github&logoColor=FFFFFF&style=flat" alt="Github Actions">
+  </a>
+  <a href="https://github.com/zmz125000/LocalViewer/releases">
+    <img src="https://img.shields.io/github/downloads/zmz125000/LocalViewer/total?label=Total%20Downloads&labelColor=27303D&color=0D1117&logo=github&logoColor=FFFFFF&style=flat" alt="LICENSE">
+  </a>
+</p>
 
 <div align="center">
   <h3>
