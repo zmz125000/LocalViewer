@@ -99,14 +99,15 @@
     <string name="network_share">Share</string>
     <string name="network_path">Path (optional)</string>
     <string name="network_share_path">Share / Path</string>
-    // <string name="network_share_path_hint">e.g. Media or Media/Books. First segment is the share (required); rest is optional folder path. Share only = share root.</string>
-    <string name="network_share_path_hint">e.g. Media or Media/Books.</string>
+    <string name="network_share_path_optional">Share / Path (optional)</string>
+    <string name="network_share_path_hint">e.g. Media or Media/Books. Leave empty to list all shares on the server.</string>
     <string name="network_anonymous_login">Anonymous login</string>
     <string name="network_anonymous_login_summary">Connect as Guest without username or password</string>
     <string name="network_username">Username</string>
     <string name="network_password">Password</string>
     <string name="network_domain">Domain (optional)</string>
     <string name="network_share_required">Enter a share name in Share / path (e.g. Media).</string>
+    <string name="network_no_disk_shares">No disk shares found on this server.</string>
     <string name="network_test">Test connection</string>
     <string name="network_test_ok">Connection OK</string>
     <string name="network_test_fail">Connection failed: %s</string>

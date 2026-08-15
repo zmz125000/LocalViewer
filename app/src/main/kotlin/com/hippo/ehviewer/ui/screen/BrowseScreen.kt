@@ -287,10 +287,6 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     }
 
     fun openSmb(source: SmbSourceEntity) {
-        if (source.share.isBlank()) {
-            launch { snackbar(string(R.string.network_share_required)) }
-            return
-        }
         BrowseSession.setSmbSegments(source.id, emptyList())
         navigate(SmbBrowserScreenDestination(source.id, ""))
     }

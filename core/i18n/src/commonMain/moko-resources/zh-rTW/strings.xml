@@ -99,12 +99,15 @@
     <string name="network_share">共享</string>
     <string name="network_path">路徑（選填）</string>
     <string name="network_share_path">共享 / 路徑</string>
+    <string name="network_share_path_optional">共享 / 路徑（選填）</string>
+    <string name="network_share_path_hint">例如 Media 或 Media/Books。留空則列出伺服器上的全部共享。</string>
     <string name="network_anonymous_login">匿名登入</string>
     <string name="network_anonymous_login_summary">以 Guest 連線，無需使用者名稱或密碼</string>
     <string name="network_username">使用者名稱</string>
     <string name="network_password">密碼</string>
     <string name="network_domain">網域（選填）</string>
     <string name="network_share_required">請在共享 / 路徑中輸入共享名稱（例如 Media）。</string>
+    <string name="network_no_disk_shares">此伺服器上找不到磁碟共享。</string>
     <string name="network_test">測試連線</string>
     <string name="network_test_ok">連線成功</string>
     <string name="network_test_fail">連線失敗：%s</string>

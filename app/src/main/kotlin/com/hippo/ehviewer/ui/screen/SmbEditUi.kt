@@ -39,7 +39,10 @@ data class SmbEditorState(
     val displayName: String = "",
     val host: String = "",
     val port: String = "445",
-    /** Combined share + optional subpath, e.g. `Media` or `Media/Books`. Empty = server/share root. */
+    /**
+     * Combined share + optional subpath, e.g. `Media` or `Media/Books`.
+     * Empty = server root (list all disk shares via MS-SRVS RPC).
+     */
     val sharePath: String = "",
     val username: String = "",
     val domain: String = "",
@@ -49,7 +52,7 @@ data class SmbEditorState(
 /**
  * Parse a combined share/path string.
  * First segment is the share name; the rest is the path within the share.
- * Empty input → empty share and path (browse at SMB root / require share when listing).
+ * Empty input → empty share and path (server root: list shares via RPC).
  */
 fun parseSharePath(input: String): Pair<String, String> {
     val normalized = input.trim()
@@ -145,7 +148,8 @@ fun SmbEditDialog(
 
     fun currentPassword(): String = if (anonymous) "" else password
 
-    val canSave = host.isNotBlank() && sharePath.isNotBlank()
+    // Share is optional: empty → list disk shares via MS-SRVS RPC after connect.
+    val canSave = host.isNotBlank()
 
     fun submit() {
         if (!canSave) return
@@ -203,7 +207,7 @@ fun SmbEditDialog(
                 OutlinedTextField(
                     value = sharePath,
                     onValueChange = { sharePath = it },
-                    label = { Text(stringResource(R.string.network_share_path)) },
+                    label = { Text(stringResource(R.string.network_share_path_optional)) },
                     supportingText = { Text(stringResource(R.string.network_share_path_hint)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(

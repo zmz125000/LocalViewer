@@ -89,12 +89,15 @@
     <string name="network_share">共有</string>
     <string name="network_path">パス（任意）</string>
     <string name="network_share_path">共有 / パス</string>
+    <string name="network_share_path_optional">共有 / パス（任意）</string>
+    <string name="network_share_path_hint">例: Media または Media/Books。空欄にするとサーバー上の共有を一覧表示します。</string>
     <string name="network_anonymous_login">匿名ログイン</string>
     <string name="network_anonymous_login_summary">ユーザー名とパスワードなしで Guest として接続</string>
     <string name="network_username">ユーザー名</string>
     <string name="network_password">パスワード</string>
     <string name="network_domain">ドメイン（任意）</string>
     <string name="network_share_required">共有 / パスに共有名を入力してください（例: Media）。</string>
+    <string name="network_no_disk_shares">このサーバーにディスク共有が見つかりません。</string>
     <string name="network_test">接続テスト</string>
     <string name="network_test_ok">接続成功</string>
     <string name="network_test_fail">接続に失敗しました: %s</string>

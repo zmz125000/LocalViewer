@@ -95,12 +95,15 @@
     <string name="network_share">共享</string>
     <string name="network_path">路径（可选）</string>
     <string name="network_share_path">共享 / 路径</string>
+    <string name="network_share_path_optional">共享 / 路径（可选）</string>
+    <string name="network_share_path_hint">例如 Media 或 Media/Books。留空则列出服务器上的全部共享。</string>
     <string name="network_anonymous_login">匿名登录</string>
     <string name="network_anonymous_login_summary">以 Guest 连接，无需用户名或密码</string>
     <string name="network_username">用户名</string>
     <string name="network_password">密码</string>
     <string name="network_domain">域（可选）</string>
     <string name="network_share_required">请在共享 / 路径中输入共享名（例如 Media）。</string>
+    <string name="network_no_disk_shares">此服务器上未找到磁盘共享。</string>
     <string name="network_test">测试连接</string>
     <string name="network_test_ok">连接成功</string>
     <string name="network_test_fail">连接失败：%s</string>

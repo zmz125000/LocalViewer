@@ -20,6 +20,7 @@ import com.hierynomus.smbj.share.DiskShare
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.DirPresence
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
@@ -30,6 +31,8 @@ import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
+import com.rapid7.client.dcerpc.mssrvs.ServerService
+import com.rapid7.client.dcerpc.transport.SMBTransportFactories
 import java.io.IOException
 import java.io.OutputStream
 import java.io.RandomAccessFile
@@ -1113,7 +1116,32 @@ object SmbGateway {
         append(password)
     }
 
-    private fun shareName(source: SmbSourceEntity): String = source.share.trim().trim('/')
+    /** Configured share on the source (empty = server root: list shares via MS-SRVS). */
+    private fun fixedShare(source: SmbSourceEntity): String = source.share.trim().trim('/')
+
+    /** True when the source has no fixed share — browse path starts with a share name. */
+    fun isServerRootSource(source: SmbSourceEntity): Boolean = fixedShare(source).isEmpty()
+
+    /**
+     * Disk share + path inside that share for a browse-relative path.
+     * - Fixed share: entity share + pathPrefix + relative.
+     * - Server root: first relative segment is the share; rest is the path (pathPrefix ignored).
+     */
+    private data class SmbLocation(val share: String, val pathInShare: String)
+
+    private fun resolveLocation(source: SmbSourceEntity, relative: String): SmbLocation {
+        val fixed = fixedShare(source)
+        if (fixed.isNotEmpty()) {
+            return SmbLocation(fixed, joinPath(source.pathPrefix, relative))
+        }
+        val segs = relative.replace('\\', '/').split('/').filter { it.isNotEmpty() }
+        require(segs.isNotEmpty()) {
+            "SMB share name required (server-root source needs a share as the first path segment)"
+        }
+        val share = segs.first()
+        val rest = segs.drop(1).joinToString("/")
+        return SmbLocation(share, joinPath("", rest))
+    }
 
     private fun joinPath(prefix: String, vararg parts: String): String {
         val segments = buildList {
@@ -1126,9 +1154,63 @@ object SmbGateway {
         return segments.joinToString("\\")
     }
 
-    private fun remotePath(source: SmbSourceEntity, relative: String): String = joinPath(source.pathPrefix, relative)
-
     private fun joinRelative(parent: String, child: String): String = if (parent.isEmpty()) child else "$parent/$child"
+
+    // [MS-SRVS] share types (low byte). STYPE_SPECIAL (0x80000000) marks admin shares.
+    private const val STYPE_DISKTREE = 0
+    private const val STYPE_TYPE_MASK = 0xFF
+
+    /**
+     * Enumerate disk shares via MS-SRVS NetrShareEnum over IPC$ (rapid7 dcerpc / smbj-rpc).
+     * Hides IPC and admin shares (names ending with `$`).
+     */
+    private fun listDiskShareNamesOnSession(session: Session): List<String> {
+        val transport = SMBTransportFactories.SRVSVC.getTransport(session)
+        val serverService = ServerService(transport)
+        return serverService.getShares1()
+            .asSequence()
+            .filter { (it.type and STYPE_TYPE_MASK) == STYPE_DISKTREE }
+            .mapNotNull { it.netName?.trim() }
+            .filter { it.isNotEmpty() }
+            .filterNot { it.endsWith('$') }
+            .distinct()
+            .sortedWith { a, b -> naturalCompare(a, b) }
+            .toList()
+    }
+
+    private fun shareRootEntries(names: List<String>): List<BrowseEntryRemote> = names.map { name ->
+        BrowseEntryRemote.Directory(
+            name = name,
+            hasVideo = false,
+            hasGallery = false,
+            presence = DirPresence.Navigable,
+        )
+    }
+
+    private suspend fun listShareRootEntries(
+        source: SmbSourceEntity,
+        password: String,
+    ): List<BrowseEntryRemote> = withIOContext {
+        val host = endpointHost(source)
+        ensureHostNotCoolingDown(host, source.port)
+        trackSource(source)
+        val smbClient = SMBClient(smbConfig())
+        try {
+            smbClient.connect(host, source.port).use { connection ->
+                val session = connection.authenticate(auth(source, password))
+                try {
+                    val names = listDiskShareNamesOnSession(session)
+                    clearHostCircuit(host, source.port)
+                    setHostConnected(hostKey(host, source.port), true)
+                    shareRootEntries(names)
+                } finally {
+                    runCatching { session.close() }
+                }
+            }
+        } finally {
+            runCatching { smbClient.close() }
+        }
+    }
 
     private fun hostKey(host: String, port: Int) = "${host.trim().lowercase(Locale.US)}:$port"
 
@@ -1313,11 +1395,15 @@ object SmbGateway {
                 smbClient.connect(host, source.port).use { connection ->
                     val session = connection.authenticate(auth(source, password))
                     try {
-                        if (source.share.isNotBlank()) {
-                            (session.connectShare(source.share) as DiskShare).use { share ->
-                                val path = remotePath(source, "")
+                        val fixed = fixedShare(source)
+                        if (fixed.isNotEmpty()) {
+                            (session.connectShare(fixed) as DiskShare).use { share ->
+                                val path = joinPath(source.pathPrefix, "")
                                 share.list(path.ifEmpty { "" })
                             }
+                        } else {
+                            // Empty share → exercise MS-SRVS list (same path as browse root).
+                            listDiskShareNamesOnSession(session)
                         }
                     } finally {
                         runCatching { session.close() }
@@ -1337,8 +1423,14 @@ object SmbGateway {
      */
     suspend fun refreshConnectionSignal(source: SmbSourceEntity, password: String) {
         runCatching {
-            withShare(source, password, ShareOp.List) { share ->
-                share.folderExists(remotePath(source, "").ifEmpty { "" })
+            if (isServerRootSource(source)) {
+                // Cheap enough: auth + share enum proves the host is live for toolbar state.
+                listShareRootEntries(source, password)
+            } else {
+                val loc = resolveLocation(source, "")
+                withShare(source, password, ShareOp.List, loc.share) { share ->
+                    share.folderExists(loc.pathInShare.ifEmpty { "" })
+                }
             }
         }.onFailure { error ->
             if (isTransportError(error) || isNetworkUnreachable(error)) {
@@ -1477,9 +1569,13 @@ object SmbGateway {
         password: String,
         relativeDir: String,
     ): List<BrowseEntryRemote> {
-        val path = remotePath(source, relativeDir)
-        val children = withShare(source, password, ShareOp.List) { share ->
-            listChildren(share, path).filterNot { isProtectedSystemName(it.name) }
+        // Server-root source at "" → MS-SRVS share list (not a DiskShare tree).
+        if (isServerRootSource(source) && relativeDir.isBlank()) {
+            return listShareRootEntries(source, password)
+        }
+        val loc = resolveLocation(source, relativeDir)
+        val children = withShare(source, password, ShareOp.List, loc.share) { share ->
+            listChildren(share, loc.pathInShare).filterNot { isProtectedSystemName(it.name) }
         }
         return classifyDirectoryChildren(source, password, relativeDir, children)
     }
@@ -1494,9 +1590,21 @@ object SmbGateway {
         relativeDir: String,
         cached: List<BrowseEntryRemote>,
     ): SlimDirectoryRefresh {
-        val path = remotePath(source, relativeDir)
-        val children = withShare(source, password, ShareOp.List) { share ->
-            listChildren(share, path).filterNot { isProtectedSystemName(it.name) }
+        if (isServerRootSource(source) && relativeDir.isBlank()) {
+            val children = listShareRootEntries(source, password).map {
+                RemoteChild(name = it.name, isDirectory = true)
+            }
+            val plan = planRemoteDirectorySlimRefresh(cached, children)
+            if (plan.isUnchanged) return SlimDirectoryRefresh(cached, emptySet())
+            val addedEntries = shareRootEntries(plan.addedDirectories.map { it.name })
+            return SlimDirectoryRefresh(
+                entries = mergeRemoteDirectorySlimRefresh(cached, plan, addedEntries),
+                removedDirectoryNames = plan.removedDirectoryNames,
+            )
+        }
+        val loc = resolveLocation(source, relativeDir)
+        val children = withShare(source, password, ShareOp.List, loc.share) { share ->
+            listChildren(share, loc.pathInShare).filterNot { isProtectedSystemName(it.name) }
         }
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         if (plan.isUnchanged) return SlimDirectoryRefresh(cached, emptySet())
@@ -1517,7 +1625,8 @@ object SmbGateway {
         relativeDir: String,
         children: List<RemoteChild>,
     ): List<BrowseEntryRemote> {
-        val path = remotePath(source, relativeDir)
+        val loc = resolveLocation(source, relativeDir)
+        val path = loc.pathInShare
         val dirsToPeek = children.filter { it.isDirectory && !it.name.startsWith('.') }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
         val parallelism = maxConcurrentOpsPerHost().coerceAtLeast(1)
@@ -1529,7 +1638,7 @@ object SmbGateway {
                     async {
                         gate.withPermit {
                             val childPath = if (path.isEmpty()) c.name else "$path\\${c.name}"
-                            peeks[c.name] = withShare(source, password, ShareOp.List) { share ->
+                            peeks[c.name] = withShare(source, password, ShareOp.List, loc.share) { share ->
                                 listChildrenLenient(share, childPath)
                             }
                         }
@@ -1565,7 +1674,7 @@ object SmbGateway {
                                 path.isEmpty() -> "$subName\\$leafName"
                                 else -> "$path\\$subName\\$leafName"
                             }
-                            grandPeeks[leafRel] = withShare(source, password, ShareOp.List) { share ->
+                            grandPeeks[leafRel] = withShare(source, password, ShareOp.List, loc.share) { share ->
                                 listChildrenLenient(share, leafPath)
                             }
                         }
@@ -1597,9 +1706,9 @@ object SmbGateway {
         password: String,
         relativeDir: String,
     ): List<String> = withIOContext {
-        withShare(source, password, ShareOp.List) { share ->
-            val path = remotePath(source, relativeDir)
-            share.list(path.ifEmpty { "" })
+        val loc = resolveLocation(source, relativeDir)
+        withShare(source, password, ShareOp.List, loc.share) { share ->
+            share.list(loc.pathInShare.ifEmpty { "" })
                 .map { it.fileName }
                 .filter { isImageFileName(it) }
                 .sortedWith { a, b -> naturalCompare(a, b) }
@@ -1613,10 +1722,10 @@ object SmbGateway {
         relativeFilePath: String,
     ): Long? = withIOContext {
         runCatching {
-            withShare(source, password) { share ->
-                val path = remotePath(source, relativeFilePath)
+            val loc = resolveLocation(source, relativeFilePath)
+            withShare(source, password, shareName = loc.share) { share ->
                 share.openFile(
-                    path,
+                    loc.pathInShare,
                     EnumSet.of(AccessMask.GENERIC_READ),
                     null,
                     SMB2ShareAccess.ALL,
@@ -1642,10 +1751,10 @@ object SmbGateway {
         off: Int,
         len: Int,
     ): Int = withIOContext {
-        withShare(source, password) { share ->
-            val path = remotePath(source, relativeFilePath)
+        val loc = resolveLocation(source, relativeFilePath)
+        withShare(source, password, shareName = loc.share) { share ->
             share.openFile(
-                path,
+                loc.pathInShare,
                 EnumSet.of(AccessMask.GENERIC_READ),
                 null,
                 SMB2ShareAccess.ALL,
@@ -1781,7 +1890,8 @@ object SmbGateway {
     private val reusableStickyLock = Any()
     private var reusableSticky: ReusableSticky? = null
 
-    private fun stickyShareKey(source: SmbSourceEntity, host: String): String = "$host:${source.port}:${source.id}:${shareName(source)}"
+    private fun stickyShareKey(source: SmbSourceEntity, host: String, share: String): String =
+        "$host:${source.port}:${source.id}:$share"
 
     private fun <T> openStickyConnection(
         source: SmbSourceEntity,
@@ -1792,11 +1902,12 @@ object SmbGateway {
     ): T {
         val host = endpointHost(source)
         ensureHostNotCoolingDown(host, source.port)
-        val path = remotePath(source, relativeFilePath)
+        val loc = resolveLocation(source, relativeFilePath)
+        val path = loc.pathInShare
         val prevTag = TrafficStats.getThreadStatsTag()
         TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
         try {
-            val reused = takeReusableSticky(source, host)
+            val reused = takeReusableSticky(source, host, loc.share)
             if (reused != null) {
                 try {
                     adoptVideoEpoch(reused.connection, videoPlayEpoch)
@@ -1808,7 +1919,7 @@ object SmbGateway {
                     retireReusable(reused, "reuse-fail")
                 }
             }
-            return connectReusableSticky(source, password, host, path, videoPlayEpoch, block)
+            return connectReusableSticky(source, password, host, loc.share, path, videoPlayEpoch, block)
         } finally {
             if (prevTag == -1) {
                 TrafficStats.clearThreadStatsTag()
@@ -1818,8 +1929,12 @@ object SmbGateway {
         }
     }
 
-    private fun takeReusableSticky(source: SmbSourceEntity, host: String): ReusableSticky? {
-        val key = stickyShareKey(source, host)
+    private fun takeReusableSticky(
+        source: SmbSourceEntity,
+        host: String,
+        share: String,
+    ): ReusableSticky? {
+        val key = stickyShareKey(source, host, share)
         synchronized(reusableStickyLock) {
             val live = reusableSticky ?: return null
             if (live.key != key || !live.connection.isConnected) {
@@ -1833,6 +1948,7 @@ object SmbGateway {
         source: SmbSourceEntity,
         password: String,
         host: String,
+        shareName: String,
         path: String,
         videoPlayEpoch: Int?,
         block: (file: com.hierynomus.smbj.share.File, size: Long) -> T,
@@ -1845,9 +1961,9 @@ object SmbGateway {
         try {
             val session = connection.authenticate(auth(source, password))
             logNegotiated("sticky", host, source.port, connection, session)
-            val share = session.connectShare(shareName(source)) as DiskShare
+            val share = session.connectShare(shareName) as DiskShare
             val created = ReusableSticky(
-                key = stickyShareKey(source, host),
+                key = stickyShareKey(source, host, shareName),
                 client = smbClient,
                 connection = connection,
                 session = session,
@@ -2058,10 +2174,10 @@ object SmbGateway {
             }
         }
         try {
-            return withShare(source, password, kind) { share ->
-                val path = remotePath(source, relativeFilePath)
+            val loc = resolveLocation(source, relativeFilePath)
+            return withShare(source, password, kind, loc.share) { share ->
                 share.openFile(
-                    path,
+                    loc.pathInShare,
                     EnumSet.of(AccessMask.GENERIC_READ),
                     null,
                     SMB2ShareAccess.ALL,
@@ -2089,11 +2205,13 @@ object SmbGateway {
         source: SmbSourceEntity,
         password: String,
         kind: ShareOp = ShareOp.Data,
+        shareName: String = fixedShare(source),
         block: (DiskShare) -> T,
     ): T = withContext(Dispatchers.IO) {
+        require(shareName.isNotBlank()) { "SMB share name required" }
         val host = endpointHost(source)
         val ck = credKey(source, password)
-        val share = shareName(source)
+        val share = shareName.trim().trim('/')
         trackSource(source)
         ensureHostNotCoolingDown(host, source.port)
         val pool = hostPoolFor(host, source.port)
