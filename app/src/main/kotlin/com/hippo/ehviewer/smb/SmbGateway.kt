@@ -146,6 +146,13 @@ object SmbGateway {
     /** Long enough for large comic page transfers on a busy LAN. */
     private const val SMB_IO_TIMEOUT_SEC = 120L
 
+    /**
+     * Max transact buffer for dcerpc share enum. Larger values (browse default is
+     * negotiated max, often ≥1 MiB) make SMB 3.1.1 Windows servers return
+     * STATUS_INVALID_PARAMETER on FSCTL_PIPE_TRANSCEIVE (smbj-rpc#165).
+     */
+    private const val SHARE_ENUM_TRANSACT_BUFFER = 64 * 1024
+
     /** Cooperative download slice so cancel can abort between SMB READs. */
     private const val DOWNLOAD_CHUNK = 256 * 1024
 
@@ -286,6 +293,39 @@ object SmbGateway {
             )
         }
         // Default smbj dialects: 3.1.1 … 2.0.2. SMB3-only drops 2.x.
+        if (Settings.smb3Only.value) {
+            builder.withDialects(
+                SMB2Dialect.SMB_3_1_1,
+                SMB2Dialect.SMB_3_0_2,
+                SMB2Dialect.SMB_3_0,
+            )
+        }
+        return builder.build()
+    }
+
+    /**
+     * Config for MS-SRVS share enum only (rapid7 dcerpc over IPC$).
+     *
+     * dcerpc issues FSCTL_PIPE_TRANSCEIVE with MaxOutputResponse = min(config.transact,
+     * negotiated max). Windows / SMB 3.1.1 reject values **> 64 KiB** with
+     * STATUS_INVALID_PARAMETER on SMB2_IOCTL (rapid7/smbj-rpc#165). Browse uses
+     * [withNegotiatedBufferSize] (up to server max, often 1–8 MiB), so share-list must
+     * use its own short-lived client with a capped transact buffer.
+     *
+     * Also uses DirectTcp (no async factory) and does not request client-preferred
+     * encryption — encrypted pipe IOCTL is fragile on some servers (smbj#600).
+     */
+    private fun smbConfigForShareEnum(): SmbConfig {
+        val builder = SmbConfig.builder()
+            .withReadBufferSize(SHARE_ENUM_TRANSACT_BUFFER)
+            .withWriteBufferSize(SHARE_ENUM_TRANSACT_BUFFER)
+            .withTransactBufferSize(SHARE_ENUM_TRANSACT_BUFFER)
+            .withTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
+            .withSoTimeout(SMB_IO_TIMEOUT_SEC, TimeUnit.SECONDS)
+            .withSocketFactory(KeepAliveSocketFactory)
+            .withSecurityProvider(SmbCrypto.provider)
+            .withSigningEnabled(true)
+            .withEncryptData(false)
         if (Settings.smb3Only.value) {
             builder.withDialects(
                 SMB2Dialect.SMB_3_1_1,
@@ -1194,7 +1234,8 @@ object SmbGateway {
         val host = endpointHost(source)
         ensureHostNotCoolingDown(host, source.port)
         trackSource(source)
-        val smbClient = SMBClient(smbConfig())
+        // Dedicated 64 KiB-transact client — see [smbConfigForShareEnum].
+        val smbClient = SMBClient(smbConfigForShareEnum())
         try {
             smbClient.connect(host, source.port).use { connection ->
                 val session = connection.authenticate(auth(source, password))
@@ -1390,12 +1431,13 @@ object SmbGateway {
         runCatching {
             val host = endpointHost(source)
             ensureHostNotCoolingDown(host, source.port)
-            val smbClient = SMBClient(smbConfig())
+            val fixed = fixedShare(source)
+            // Empty share uses share-enum config (64 KiB transact); fixed share uses browse config.
+            val smbClient = SMBClient(if (fixed.isEmpty()) smbConfigForShareEnum() else smbConfig())
             try {
                 smbClient.connect(host, source.port).use { connection ->
                     val session = connection.authenticate(auth(source, password))
                     try {
-                        val fixed = fixedShare(source)
                         if (fixed.isNotEmpty()) {
                             (session.connectShare(fixed) as DiskShare).use { share ->
                                 val path = joinPath(source.pathPrefix, "")
