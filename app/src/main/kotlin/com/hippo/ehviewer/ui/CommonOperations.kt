@@ -118,7 +118,10 @@ inline fun openFromHistoryWithBackStack(
 
 /**
  * Open a local folder gallery as the photo-grid virtual folder (History / Library tap).
- * Stack = parent listing frames + photo-grid frame so back returns to the parent dir.
+ *
+ * Aligns with [Settings.alwaysExitToDir]:
+ * - On (default): stack = parent frames + photo-grid frame → back lands on parent dir.
+ * - Off: stack = photo-grid frame only → back leaves the browser (History/Library).
  */
 context(nav: DestinationsNavigator)
 fun openLocalFolderPhotoGrid(
@@ -131,14 +134,6 @@ fun openLocalFolderPhotoGrid(
     fromHistory: Boolean = false,
     fromLibrary: Boolean = false,
 ) {
-    val parentRel = parentRelativeOfFile(relativePath)
-    val parentStack = buildLocalBrowseStack(
-        rootId = rootId,
-        rootDisplayName = rootDisplayName,
-        rootPath = rootPath,
-        relativePath = parentRel,
-        preferMediaStore = preferMediaStore,
-    )
     val galleryStack = buildLocalBrowseStack(
         rootId = rootId,
         rootDisplayName = rootDisplayName,
@@ -150,15 +145,27 @@ fun openLocalFolderPhotoGrid(
         photoGrid = true,
         title = title?.takeIf { it.isNotBlank() } ?: galleryStack.last().title,
     )
-    BrowseSession.localStack = parentStack + galleryFrame
+    BrowseSession.localStack = if (Settings.alwaysExitToDir.value) {
+        val parentRel = parentRelativeOfFile(relativePath)
+        val parentStack = buildLocalBrowseStack(
+            rootId = rootId,
+            rootDisplayName = rootDisplayName,
+            rootPath = rootPath,
+            relativePath = parentRel,
+            preferMediaStore = preferMediaStore,
+        )
+        parentStack + galleryFrame
+    } else {
+        listOf(galleryFrame)
+    }
     nav.navigate(FolderBrowserScreenDestination(fromHistory = fromHistory, fromLibrary = fromLibrary)) {
         launchSingleTop = true
     }
 }
 
 /**
- * Open an SMB folder gallery as photo-grid (History tap). Back leaves the gallery dir
- * when [remoteDir] is non-empty ([BrowseSession.PhotoGridOverlay.enteredFromParent]).
+ * Open an SMB folder gallery as photo-grid (History / Library tap).
+ * Back aligns with [Settings.alwaysExitToDir] (parent dir vs leave browser).
  */
 context(nav: DestinationsNavigator)
 fun openSmbFolderPhotoGrid(
@@ -169,8 +176,15 @@ fun openSmbFolderPhotoGrid(
 ) {
     val remote = remoteDir.trim('/').let { if (it == ".") "" else it }
     val segments = remote.split('/').filter { it.isNotEmpty() }
+    val exitToDir = Settings.alwaysExitToDir.value
+    val fromOrigin = fromHistory || fromLibrary
     BrowseSession.setSmbSegments(sourceId, segments)
-    BrowseSession.setSmbPhotoGrid(sourceId, remote, enteredFromParent = remote.isNotEmpty())
+    BrowseSession.setSmbPhotoGrid(
+        sourceId,
+        remote,
+        enteredFromParent = exitToDir && remote.isNotEmpty(),
+        exitToOrigin = !exitToDir && fromOrigin,
+    )
     nav.navigate(
         SmbBrowserScreenDestination(
             sourceId = sourceId,
@@ -181,7 +195,7 @@ fun openSmbFolderPhotoGrid(
     ) { launchSingleTop = true }
 }
 
-/** Open a WebDAV folder gallery as photo-grid (History tap). */
+/** Open a WebDAV folder gallery as photo-grid (History / Library tap). */
 context(nav: DestinationsNavigator)
 fun openWebDavFolderPhotoGrid(
     sourceId: Long,
@@ -191,8 +205,15 @@ fun openWebDavFolderPhotoGrid(
 ) {
     val remote = remoteDir.trim('/').let { if (it == ".") "" else it }
     val segments = remote.split('/').filter { it.isNotEmpty() }
+    val exitToDir = Settings.alwaysExitToDir.value
+    val fromOrigin = fromHistory || fromLibrary
     BrowseSession.setWebDavSegments(sourceId, segments)
-    BrowseSession.setWebDavPhotoGrid(sourceId, remote, enteredFromParent = remote.isNotEmpty())
+    BrowseSession.setWebDavPhotoGrid(
+        sourceId,
+        remote,
+        enteredFromParent = exitToDir && remote.isNotEmpty(),
+        exitToOrigin = !exitToDir && fromOrigin,
+    )
     nav.navigate(
         WebDavBrowserScreenDestination(
             sourceId = sourceId,
