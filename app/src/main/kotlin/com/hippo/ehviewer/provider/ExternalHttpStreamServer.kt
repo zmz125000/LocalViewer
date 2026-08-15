@@ -72,10 +72,16 @@ object ExternalHttpStreamServer {
         val cacheBody: Boolean = false,
         /** Whether an idle cached body may be closed to free an HTTP SMB pool slot. */
         val evictOnSmbPoolPressure: Boolean = false,
+        /**
+         * Fired once when an external player starts real playback of this entry
+         * (long Range / full GET — not short header probes). Used to bump History.
+         */
+        private val onPlaybackStart: (() -> Unit)? = null,
         /** Open a random-access source (cached with idle timeout when [cacheBody]). */
         val open: () -> StreamBody,
     ) {
         private val sizeRef = AtomicLong(sizeBytes)
+        private val playbackNotified = AtomicBoolean(false)
 
         /** Known length, or −1 until first successful open. */
         var sizeBytes: Long
@@ -86,6 +92,13 @@ object ExternalHttpStreamServer {
 
         fun publishSize(size: Long) {
             if (size >= 1L) sizeRef.updateAndGet { cur -> if (cur >= 1L) cur else size }
+        }
+
+        /** One-shot; safe to call from the HTTP worker thread. */
+        fun notifyPlaybackStart() {
+            val cb = onPlaybackStart ?: return
+            if (!playbackNotified.compareAndSet(false, true)) return
+            runCatching { cb.invoke() }
         }
     }
 
@@ -1104,10 +1117,15 @@ object ExternalHttpStreamServer {
         val contentLength = end - start + 1L
         // Open-ended / long Ranges are playback. Short finite Ranges are MX probes
         // (header, moov, resume peek) and must not become the playhead.
+        val streaming = contentLength > VideoDirectLinkByteSource.VIDEO_BLOCK
+        // History: first real playback GET (full file or long Range), not HEAD / probes.
+        if (!headOnly && (range == null || streaming)) {
+            entry.notifyPlaybackStart()
+        }
         session.prepareRange(
             body,
             start,
-            streaming = contentLength > VideoDirectLinkByteSource.VIDEO_BLOCK,
+            streaming = streaming,
         )
         val status = if (range != null) 206 else 200
         val statusText = if (range != null) "Partial Content" else "OK"

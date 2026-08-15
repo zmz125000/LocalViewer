@@ -16,6 +16,7 @@ import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.SidecarSubtitles
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.library.isBrowseVideoFileName
@@ -38,6 +39,10 @@ import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
 import java.io.IOException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okio.Path.Companion.toPath
 
 /**
@@ -49,6 +54,39 @@ import okio.Path.Companion.toPath
  * - **In-app Media3** ([playLocal]/[playSmb]/[playWebDav]) → streamdoc / StreamDocDataSource.
  */
 object OpenFileExternally {
+    private val historyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Record video + parent browse-dir history for playlist next/prev / HTTP loopback
+     * playback. Parent dir bump runs inside [LocalHistory] → [com.hippo.ehviewer.EhDB.putHistoryInfo].
+     */
+    suspend fun recordVideoPlaybackHistory(source: InternalVideoSource) {
+        when (source) {
+            is InternalVideoSource.Local ->
+                LocalHistory.recordLocalFile(source.path, title = source.displayName)
+            is InternalVideoSource.Smb ->
+                LocalHistory.recordSmbFile(
+                    sourceId = source.sourceId,
+                    remotePath = source.remotePath,
+                    title = source.displayName,
+                )
+            is InternalVideoSource.WebDav ->
+                LocalHistory.recordWebDavFile(
+                    sourceId = source.sourceId,
+                    remotePath = source.remotePath,
+                    title = source.displayName,
+                )
+        }
+    }
+
+    /** Fire-and-forget history write from non-suspend paths (HTTP worker, etc.). */
+    fun scheduleRecordVideoPlaybackHistory(source: InternalVideoSource) {
+        historyScope.launch {
+            runCatching { recordVideoPlaybackHistory(source) }
+                .onFailure { logcat("OpenFileExternally", it) }
+        }
+    }
+
     suspend fun openLocal(
         context: Context,
         pathStr: String,
@@ -425,6 +463,14 @@ object OpenFileExternally {
         displayName: String,
         mimeType: String,
     ): ExternalHttpStreamServer.FileEntry {
+        val video = DefaultVideoPlayer.isVideoMime(mimeType) || isBrowseVideoFileName(displayName)
+        val onPlay = if (video) {
+            {
+                scheduleRecordVideoPlaybackHistory(InternalVideoSource.Local(pathStr))
+            }
+        } else {
+            null
+        }
         val file = File(pathStr)
         if (pathStr.startsWith('/') && file.isFile) {
             val size = file.length().takeIf { it > 0L } ?: error("empty file")
@@ -432,6 +478,7 @@ object OpenFileExternally {
                 displayName = displayName,
                 mimeType = mimeType,
                 sizeBytes = size,
+                onPlaybackStart = onPlay,
                 open = { ExternalHttpStreamServer.LocalFileBody(file) },
             )
         }
@@ -441,6 +488,7 @@ object OpenFileExternally {
             displayName = displayName,
             mimeType = mimeType,
             sizeBytes = size,
+            onPlaybackStart = onPlay,
             open = {
                 ExternalHttpStreamServer.PfdBody(openPfd())
             },
@@ -463,6 +511,15 @@ object OpenFileExternally {
             // Warm one-lane sticky across Ranges; 60s inactive / next-file evict. Pool cap 2.
             cacheBody = video,
             evictOnSmbPoolPressure = video,
+            onPlaybackStart = if (video) {
+                {
+                    scheduleRecordVideoPlaybackHistory(
+                        InternalVideoSource.Smb(source.id, remoteRelativeFile),
+                    )
+                }
+            } else {
+                null
+            },
             open = {
                 val openLane = {
                     SmbArchiveByteSource(
@@ -507,6 +564,15 @@ object OpenFileExternally {
             sizeBytes = sizeBytes,
             // Warm one-lane sticky + 60s inactive.
             cacheBody = video,
+            onPlaybackStart = if (video) {
+                {
+                    scheduleRecordVideoPlaybackHistory(
+                        InternalVideoSource.WebDav(source.id, remoteRelativeFile),
+                    )
+                }
+            } else {
+                null
+            },
             open = {
                 val openLane = {
                     WebDavArchiveByteSource(

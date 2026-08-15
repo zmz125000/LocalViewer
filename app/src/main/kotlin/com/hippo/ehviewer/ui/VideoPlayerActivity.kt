@@ -157,6 +157,9 @@ class VideoPlayerActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 switchToPrepared(target, OpenFileExternally.prepareInternalVideo(source))
+                // Next/prev (and end-of-file auto-next) skips browse open — record here.
+                // Parent browse-dir pin is bumped inside putHistoryInfo.
+                OpenFileExternally.recordVideoPlaybackHistory(source)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
