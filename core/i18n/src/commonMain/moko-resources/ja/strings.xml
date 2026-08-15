@@ -68,6 +68,7 @@
     <string name="browse_view_mode">表示モード</string>
     <string name="browse_folder_thumbs">フォルダサムネイル</string>
     <string name="settings_browse_folder_thumbs_summary">フォルダ一覧で表紙サムネイルを表示します（ギャラリー表紙と同じキャッシュを使用）。</string>
+    <string name="browse_menu_photo_grid">フォトグリッド</string>
     <string name="browse_menu_favorites_on_top">お気に入りを先頭に</string>
     <string name="browse_menu_page_count">ページ数</string>
     <string name="browse_menu_reading_progress">読書進捗</string>

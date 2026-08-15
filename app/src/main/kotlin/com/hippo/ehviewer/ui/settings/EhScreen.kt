@@ -112,7 +112,6 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_general_back_to_upper_dir),
-                summary = stringResource(id = R.string.settings_general_back_to_upper_dir_summary),
                 state = Settings.alwaysExitToDir.asMutableState(),
             )
             SwitchPreference(
