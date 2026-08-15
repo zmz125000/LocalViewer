@@ -60,8 +60,15 @@ object BrowseSession {
      * relative directory path (process lifetime; survives reader navigation).
      * [enteredFromParent] true when open entered a child path — back should leave that
      * directory and return to the parent listing, not stay inside the gallery folder.
+     * [exitToOrigin] true when opened from History/Library with
+     * [com.hippo.ehviewer.Settings.alwaysExitToDir] off — back leaves the browser
+     * (same idea as reader → History/Library).
      */
-    data class PhotoGridOverlay(val dir: String, val enteredFromParent: Boolean)
+    data class PhotoGridOverlay(
+        val dir: String,
+        val enteredFromParent: Boolean,
+        val exitToOrigin: Boolean = false,
+    )
 
     private val smbPhotoGridState = ConcurrentHashMap<Long, PhotoGridOverlay>()
 
@@ -69,11 +76,17 @@ object BrowseSession {
 
     fun smbPhotoGridDir(sourceId: Long): String? = smbPhotoGridState[sourceId]?.dir
 
-    fun setSmbPhotoGrid(sourceId: Long, relativeDir: String?, enteredFromParent: Boolean = false) {
+    fun setSmbPhotoGrid(
+        sourceId: Long,
+        relativeDir: String?,
+        enteredFromParent: Boolean = false,
+        exitToOrigin: Boolean = false,
+    ) {
         if (relativeDir == null) {
             smbPhotoGridState.remove(sourceId)
         } else {
-            smbPhotoGridState[sourceId] = PhotoGridOverlay(relativeDir, enteredFromParent)
+            smbPhotoGridState[sourceId] =
+                PhotoGridOverlay(relativeDir, enteredFromParent, exitToOrigin)
         }
     }
 
@@ -208,11 +221,17 @@ object BrowseSession {
 
     fun webDavPhotoGridDir(sourceId: Long): String? = webDavPhotoGridState[sourceId]?.dir
 
-    fun setWebDavPhotoGrid(sourceId: Long, relativeDir: String?, enteredFromParent: Boolean = false) {
+    fun setWebDavPhotoGrid(
+        sourceId: Long,
+        relativeDir: String?,
+        enteredFromParent: Boolean = false,
+        exitToOrigin: Boolean = false,
+    ) {
         if (relativeDir == null) {
             webDavPhotoGridState.remove(sourceId)
         } else {
-            webDavPhotoGridState[sourceId] = PhotoGridOverlay(relativeDir, enteredFromParent)
+            webDavPhotoGridState[sourceId] =
+                PhotoGridOverlay(relativeDir, enteredFromParent, exitToOrigin)
         }
     }
 

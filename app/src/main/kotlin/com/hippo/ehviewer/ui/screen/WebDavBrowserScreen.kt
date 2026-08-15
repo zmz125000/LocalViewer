@@ -180,13 +180,17 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     var photoGridOverlay by remember {
         mutableStateOf(BrowseSession.webDavPhotoGrid(sourceId))
     }
-    fun setPhotoGrid(dir: String?, enteredFromParent: Boolean = false) {
+    fun setPhotoGrid(
+        dir: String?,
+        enteredFromParent: Boolean = false,
+        exitToOrigin: Boolean = false,
+    ) {
         photoGridOverlay = if (dir == null) {
             null
         } else {
-            BrowseSession.PhotoGridOverlay(dir, enteredFromParent)
+            BrowseSession.PhotoGridOverlay(dir, enteredFromParent, exitToOrigin)
         }
-        BrowseSession.setWebDavPhotoGrid(sourceId, dir, enteredFromParent)
+        BrowseSession.setWebDavPhotoGrid(sourceId, dir, enteredFromParent, exitToOrigin)
     }
     val photoGridDir = photoGridOverlay?.dir
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
@@ -458,11 +462,20 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
 
     fun goUp() {
-        // Exit photo-grid: return to the parent listing that showed the gallery row.
+        // Exit photo-grid: parent listing, leave browser (alwaysExitToDir off from
+        // History/Library), or clear virtual layer only.
         if (photoGrid) {
             val leaveChild = photoGridOverlay?.enteredFromParent == true
+            val exitToOrigin = photoGridOverlay?.exitToOrigin == true
             setPhotoGrid(null)
-            if (!leaveChild) return
+            when {
+                leaveChild -> Unit // Fall through to pop the gallery directory.
+                exitToOrigin -> {
+                    navigator.popBackStack()
+                    return
+                }
+                else -> return
+            }
         }
         if (segments.isNotEmpty()) {
             val hop = (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
