@@ -148,6 +148,8 @@
     <string name="settings_download_network_video_thumbs_summary">為 SMB/WebDAV 影片擷取影格縮圖。關閉後仍顯示已快取的封面。</string>
     <string name="settings_photo_grid_mode">照片網格模式</string>
     <string name="settings_photo_grid_mode_summary">開啟：點擊資料夾圖庫開啟照片網格，長按開啟閱讀器。關閉：點擊開啟閱讀器，長按開啟照片網格。</string>
+    <string name="settings_photo_grid_scroll_to_progress">照片網格捲動到閱讀進度</string>
+    <string name="settings_photo_grid_scroll_to_progress_summary">開啟照片網格時跳轉到該資料夾上次閱讀的頁面。關閉則保持上次網格捲動位置。</string>
     <string name="settings_download_network_photo_grid_thumb">下載網路照片縮圖</string>
     <string name="settings_download_network_photo_grid_thumb_summary">在照片網格與資料夾檢視中為 SMB/WebDAV 圖片取得並解碼為小 JPEG。關閉後仍顯示已快取縮圖。兩處使用相同快取路徑鍵。</string>
     <string name="settings_save_photo_grid_original_cache">將照片原圖儲存到快取</string>

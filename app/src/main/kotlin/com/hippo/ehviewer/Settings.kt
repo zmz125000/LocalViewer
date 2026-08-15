@@ -216,6 +216,13 @@ object Settings : DataStorePreferences(null) {
     val photoGridMode = boolPref("photo_grid_mode", false)
 
     /**
+     * When opening a photo-grid virtual folder, scroll the grid to the last reader page
+     * (same progress gid as the folder reader). Off keeps the last photo-grid scroll position.
+     * Default on.
+     */
+    val photoGridScrollToProgress = boolPref("photo_grid_scroll_to_progress", true)
+
+    /**
      * Allow downloading SMB/WebDAV images for photo thumbs (photo-grid virtual folder **and**
      * Folder-mode image files; decode to small JPEG like browse covers). Cached thumbs still
      * show when off. Default true.

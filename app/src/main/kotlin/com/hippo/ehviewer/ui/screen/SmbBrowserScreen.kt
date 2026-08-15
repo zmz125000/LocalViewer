@@ -1146,7 +1146,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         return BrowseCover.SmbArchive(sourceId, remote)
                     }
                     if (photoGrid) {
-                        val gridState = rememberSmbBrowseGridState(sourceId, "$dirKey#pg", scrollLayoutKey)
+                        val progressGid = stableGalleryId(sourceId, "smb:$relativeDir")
+                        val gridState = rememberSmbPhotoGridState(
+                            sourceId = sourceId,
+                            relativeDir = "$dirKey#pg",
+                            listMode = scrollLayoutKey,
+                            progressGid = progressGid,
+                            imageCount = folderImages.size,
+                        )
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
                             columns = GalleryGridDefaults.columns(),

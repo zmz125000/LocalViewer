@@ -1030,7 +1030,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         return BrowseCover.WebDavArchive(sourceId, remote)
                     }
                     if (photoGrid) {
-                        val gridState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey#pg", scrollLayoutKey)
+                        val progressGid = stableGalleryId(sourceId, "webdav:$relativeDir")
+                        val gridState = rememberSmbPhotoGridState(
+                            sourceId = sourceId,
+                            relativeDir = "dav|$dirKey#pg",
+                            listMode = scrollLayoutKey,
+                            progressGid = progressGid,
+                            imageCount = folderImages.size,
+                        )
                         val gridSpacing = GalleryGridDefaults.spacedBy()
                         FastScrollLazyVerticalGrid(
                             columns = GalleryGridDefaults.columns(),
