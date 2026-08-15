@@ -1,7 +1,10 @@
 package com.hippo.ehviewer.ui.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.fork.SwipeToDismissBox
 import androidx.compose.material3.fork.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.ehviewer.core.database.model.GalleryEntity
@@ -157,10 +162,22 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     val marginV = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_v)
     val listInterval = dimensionResource(com.hippo.ehviewer.R.dimen.gallery_list_interval)
     val gridColumnCount = GalleryGridDefaults.columnCount()
-    // List: at most 10 dirs. Grid: at most two full rows of thumbs.
-    val directoryItems = remember(allDirectoryItems, listMode, gridColumnCount) {
-        val limit = if (listMode == 0) HISTORY_DIRECTORY_LIST_LIMIT else gridColumnCount * HISTORY_DIRECTORY_GRID_ROWS
-        allDirectoryItems.take(limit)
+    // Collapsed: list max 10 / grid max two rows. Expanded: full dir pin list.
+    var directoriesExpanded by rememberSaveable { mutableStateOf(false) }
+    val directoryCollapsedLimit = remember(listMode, gridColumnCount) {
+        if (listMode == 0) HISTORY_DIRECTORY_LIST_LIMIT else gridColumnCount * HISTORY_DIRECTORY_GRID_ROWS
+    }
+    val canExpandDirectories = allDirectoryItems.size > directoryCollapsedLimit
+    // Drop expanded state when there is nothing left to expand (filter / fewer pins).
+    LaunchedEffect(canExpandDirectories) {
+        if (!canExpandDirectories) directoriesExpanded = false
+    }
+    val directoryItems = remember(allDirectoryItems, directoriesExpanded, directoryCollapsedLimit) {
+        if (directoriesExpanded) allDirectoryItems else allDirectoryItems.take(directoryCollapsedLimit)
+    }
+    // Back collapses the dir strip before leaving History.
+    BackHandler(enabled = directoriesExpanded) {
+        directoriesExpanded = false
     }
 
     fun openEntry(info: GalleryEntity) {
@@ -696,10 +713,13 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             )
                         }
                     }
-                    // Small gap between dir pins and the main history list.
-                    if (historyItems.isNotEmpty()) {
+                    // Gap under dirs: tap toggles expand/collapse when there is overflow.
+                    if (historyItems.isNotEmpty() || canExpandDirectories) {
                         item(key = "dir-gap") {
-                            Spacer(modifier = Modifier.height(HISTORY_DIRECTORY_SECTION_GAP))
+                            HistoryDirectorySectionGap(
+                                tappable = canExpandDirectories,
+                                onToggle = { directoriesExpanded = !directoriesExpanded },
+                            )
                         }
                     }
                 }
@@ -743,13 +763,16 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                         )
                     }
-                    // Small gap between dir pins and the main history list.
-                    if (historyItems.isNotEmpty()) {
+                    // Gap under dirs: tap toggles expand/collapse when there is overflow.
+                    if (historyItems.isNotEmpty() || canExpandDirectories) {
                         item(
                             key = "dir-gap",
                             span = { GridItemSpan(maxLineSpan) },
                         ) {
-                            Spacer(modifier = Modifier.height(HISTORY_DIRECTORY_SECTION_GAP))
+                            HistoryDirectorySectionGap(
+                                tappable = canExpandDirectories,
+                                onToggle = { directoriesExpanded = !directoriesExpanded },
+                            )
                         }
                     }
                 }
@@ -783,11 +806,34 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     }
 }
 
-/** Max browse-dir pins shown in History list mode. */
-private const val HISTORY_DIRECTORY_LIST_LIMIT = 10
+/** Max browse-dir pins shown in History list mode (collapsed). */
+private const val HISTORY_DIRECTORY_LIST_LIMIT = 5
 
-/** Max rows of browse-dir pins shown in History grid mode. */
+/** Max rows of browse-dir pins shown in History grid mode (collapsed). */
 private const val HISTORY_DIRECTORY_GRID_ROWS = 2
 
-/** Extra space under the dir pin strip before main history items. */
-private val HISTORY_DIRECTORY_SECTION_GAP = 12.dp
+/** Extra space under the dir pin strip before main history items (also expand hit target). */
+private val HISTORY_DIRECTORY_SECTION_GAP = 16.dp
+
+/**
+ * Spacer between directory pins and main history.
+ * When [tappable], tap toggles expand/collapse of the dir section.
+ */
+@Composable
+private fun HistoryDirectorySectionGap(
+    tappable: Boolean,
+    onToggle: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(HISTORY_DIRECTORY_SECTION_GAP)
+            .then(
+                if (tappable) {
+                    Modifier.clickable(role = Role.Button, onClick = onToggle)
+                } else {
+                    Modifier
+                },
+            ),
+    )
+}

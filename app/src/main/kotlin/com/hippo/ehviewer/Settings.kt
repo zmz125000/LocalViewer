@@ -300,6 +300,12 @@ object Settings : DataStorePreferences(null) {
     val alwaysExitToDir = boolPref("always_exit_to_dir", true)
 
     /**
+     * Library list: when true (default), sort galleries by HISTORY recency so recently
+     * opened items rise to the top. When false, keep the default title order only.
+     */
+    val libraryRecentOpen = boolPref("library_recent_open", true)
+
+    /**
      * Per-file skip / failure notes (video thumb `.failed` and similar sidecars).
      * Lives in app data, not [android.content.Context.getCacheDir]. Default off.
      * Turning this off deletes existing markers.

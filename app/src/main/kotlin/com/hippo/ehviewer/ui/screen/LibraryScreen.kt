@@ -172,7 +172,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val allVisibleGalleries = remember(rawGalleries) {
         rawGalleries.hideDuplicateGalleriesPreferMediaStore()
     }
-    // HISTORY.TIME by gallery gid — opened library rows rise to the top.
+    val libraryRecentOpen by Settings.libraryRecentOpen.collectAsState()
+    // HISTORY.TIME by gallery gid — opened library rows rise to the top when privacy allows.
     val historyTimeByGid by rememberInVM {
         mutableStateOf(emptyMap<Long, Long>()).also { state ->
             viewModelScope.launch {
@@ -182,18 +183,22 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
     }
-    // Live in-list filter (no re-query / submit). Recently opened (history) first.
-    val galleries = remember(allVisibleGalleries, keyword, historyTimeByGid) {
+    // Live in-list filter (no re-query / submit). Optional recency sort via Privacy.
+    val galleries = remember(allVisibleGalleries, keyword, historyTimeByGid, libraryRecentOpen) {
         val q = keyword.trim()
         val filtered = if (q.isEmpty()) {
             allVisibleGalleries
         } else {
             allVisibleGalleries.filter { it.title.contains(q, ignoreCase = true) }
         }
-        filtered.sortedWith(
-            compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
-                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
-        )
+        if (!libraryRecentOpen) {
+            filtered
+        } else {
+            filtered.sortedWith(
+                compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
+                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+            )
+        }
     }
 
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()

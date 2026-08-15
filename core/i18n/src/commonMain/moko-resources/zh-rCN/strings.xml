@@ -404,6 +404,8 @@
     <string name="settings_privacy_save_gallery_history_summary">记录打开的库图库与文件夹图库。父文件夹仍会在开启“保存历史”时记录。</string>
     <string name="settings_privacy_always_exit_to_dir">始终返回目录</string>
     <string name="settings_privacy_always_exit_to_dir_summary">从历史打开时，阅读器系统返回会回到父文件夹。关闭后返回历史（或上一屏）。</string>
+    <string name="settings_privacy_library_recent_open">图库最近打开</string>
+    <string name="settings_privacy_library_recent_open_summary">按最近打开排序图库列表，最近阅读的会排在前面。关闭后仅按标题排序。</string>
     <string name="settings_privacy_save_file_markers">保存文件标记</string>
     <string name="settings_privacy_save_file_markers_summary">在应用数据中保存按文件的跳过记录（例如视频缩略图失败）。不在缓存中。关闭后会删除已有标记。</string>
     <string name="history_disabled">历史记录已在隐私设置中关闭</string>

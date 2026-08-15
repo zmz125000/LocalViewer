@@ -159,6 +159,8 @@
     <string name="settings_privacy_save_gallery_history_summary">開いたライブラリ／フォルダギャラリーを記録します。親フォルダは「履歴を保存」がオンなら引き続き記録されます。</string>
     <string name="settings_privacy_always_exit_to_dir">常にディレクトリに戻る</string>
     <string name="settings_privacy_always_exit_to_dir_summary">履歴から開いたとき、リーダーのシステム戻るで親フォルダに戻ります。オフにすると履歴（または前の画面）に戻ります。</string>
+    <string name="settings_privacy_library_recent_open">ライブラリの最近開いた順</string>
+    <string name="settings_privacy_library_recent_open_summary">ライブラリ一覧を最近開いた順に並べます。オフにするとタイトル順のみになります。</string>
     <string name="settings_privacy_save_file_markers">ファイルマーカーを保存</string>
     <string name="settings_privacy_save_file_markers_summary">ファイルごとのスキップ記録（動画サムネイル失敗など）をアプリデータに残します。キャッシュには保存されません。オフにすると既存マーカーを削除します。</string>
     <string name="history_disabled">プライバシー設定で履歴がオフになっています</string>
