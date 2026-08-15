@@ -529,6 +529,37 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    /**
+     * Long-press archive → system "Open with". Tap still opens in-app reader.
+     * PDF uses [openPdfInOtherApp].
+     */
+    fun openArchiveInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
+        if (isPdfFileName(entry.fileName)) {
+            openPdfInOtherApp(entry)
+            return
+        }
+        val src = source ?: return
+        val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
+        launchIO {
+            recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordWebDavFile(src.id, remote, title = entry.name)
+            try {
+                OpenFileExternally.openWebDav(
+                    context = context,
+                    sourceId = src.id,
+                    remoteRelativeFile = remote,
+                    displayName = entry.name,
+                    mimeType = mimeTypeForFileName(entry.name),
+                )
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_open_failed) +
+                        " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
     fun openExternalFile(fileName: String) {
         val src = source ?: return
         // fileName may be multi-segment for promoted single-video rows (`S/leaf/movie.mp4`).
@@ -906,11 +937,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 onClick = { openArchive(entry) },
-                                                onLongClick = if (isPdfFileName(entry.fileName)) {
-                                                    { openPdfInOtherApp(entry) }
-                                                } else {
-                                                    null
-                                                },
+                                                onLongClick = { openArchiveInOtherApp(entry) },
                                             )
                                         else -> Unit
                                     }
@@ -999,11 +1026,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 onClick = { openArchive(entry) },
-                                                onLongClick = if (isPdfFileName(entry.fileName)) {
-                                                    { openPdfInOtherApp(entry) }
-                                                } else {
-                                                    null
-                                                },
+                                                onLongClick = { openArchiveInOtherApp(entry) },
                                             )
                                         else -> Unit
                                     }

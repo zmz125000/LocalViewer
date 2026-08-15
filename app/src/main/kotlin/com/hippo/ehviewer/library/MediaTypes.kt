@@ -209,9 +209,15 @@ fun mimeTypeForFileName(name: String): String {
             "tar", "cbt" -> "application/x-tar"
             else -> GENERIC_FILE_MIME
         }
+        // Disk images / unknown containers: same MIME family as tar/rar so archive apps
+        // appear in the system "Open with" picker (not a niche ISO-only filter).
+        ext in DISK_IMAGE_EXTENSIONS -> "application/x-tar"
         else -> extraMimeForExtension(ext) ?: GENERIC_FILE_MIME
     }
 }
+
+/** ISO / raw disk images — not in-app archives; external open uses tar MIME. */
+private val DISK_IMAGE_EXTENSIONS = setOf("iso", "img")
 
 /** Non-image / non-video / non-archive types opened as browse regular files. */
 private fun extraMimeForExtension(ext: String): String? = when (ext) {
@@ -258,7 +264,6 @@ private fun extraMimeForExtension(ext: String): String? = when (ext) {
     "bz2" -> "application/x-bzip2"
     "xz" -> "application/x-xz"
     "zst" -> "application/zstd"
-    "iso" -> "application/x-iso9660-image"
     "torrent" -> "application/x-bittorrent"
     else -> null
 }

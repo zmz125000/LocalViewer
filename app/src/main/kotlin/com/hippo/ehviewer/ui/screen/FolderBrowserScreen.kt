@@ -401,6 +401,36 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    /**
+     * Long-press archive (zip/rar/7z/…) → system "Open with" picker.
+     * Tap still opens the in-app reader. PDF uses [openPdfInOtherApp].
+     */
+    fun openArchiveInOtherApp(entry: BrowseEntry.ArchiveGallery) {
+        if (isPdfFileName(entry.name)) {
+            openPdfInOtherApp(entry)
+            return
+        }
+        val path = entry.path.toString()
+        val name = entry.name
+        launchIO {
+            recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFile(path, title = name)
+            try {
+                OpenFileExternally.openLocal(
+                    context,
+                    path,
+                    displayName = name,
+                    mimeType = mimeTypeForFileName(name),
+                )
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_open_failed) +
+                        " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
     fun openExternalFile(path: okio.Path) {
         // Always launch with the real path basename — promoted VideoFile rows use a
         // virtual `@dir` display name without extension (wrong MIME / player title).
@@ -673,11 +703,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             name = entry.name,
                                             cover = BrowseCover.LocalArchive(entry.path),
                                             onClick = { openArchive(entry) },
-                                            onLongClick = if (isPdfFileName(entry.name)) {
-                                                { openPdfInOtherApp(entry) }
-                                            } else {
-                                                null
-                                            },
+                                            onLongClick = { openArchiveInOtherApp(entry) },
                                         )
                                         else -> Unit
                                     }
@@ -761,11 +787,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             name = entry.name,
                                             cover = BrowseCover.LocalArchive(entry.path),
                                             onClick = { openArchive(entry) },
-                                            onLongClick = if (isPdfFileName(entry.name)) {
-                                                { openPdfInOtherApp(entry) }
-                                            } else {
-                                                null
-                                            },
+                                            onLongClick = { openArchiveInOtherApp(entry) },
                                         )
                                         else -> Unit
                                     }

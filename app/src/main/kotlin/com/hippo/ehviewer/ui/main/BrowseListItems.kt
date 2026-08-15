@@ -273,7 +273,11 @@ fun BrowseFileRow(
     name: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Long-press → system "Open with"; defaults to [onClick]. */
+    onLongClick: (() -> Unit)? = null,
 ) {
+    val haptic = LocalHapticFeedback.current
+    val longClick = onLongClick ?: onClick
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = { Text(stringResource(R.string.browse_file)) },
@@ -284,7 +288,15 @@ fun BrowseFileRow(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
-        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    longClick()
+                },
+            ),
     )
 }
 
@@ -565,10 +577,13 @@ fun BrowseFileGridItem(
     name: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Long-press → system "Open with"; defaults to [onClick]. */
+    onLongClick: (() -> Unit)? = null,
 ) {
     BrowseGridCell(
         name = name,
         onClick = onClick,
+        onLongClick = onLongClick ?: onClick,
         modifier = modifier,
         thumb = {
             Box(
