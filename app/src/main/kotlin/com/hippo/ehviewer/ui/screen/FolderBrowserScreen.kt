@@ -1103,8 +1103,10 @@ internal fun rememberLocalPhotoGridState(
 }
 
 /**
- * Apply [EhDB] page progress to a photo-grid after items layout.
+ * Apply [EhDB] page progress to a photo-grid after items layout when
+ * [Settings.photoGridScrollToProgress] is on.
  * Re-runs on [Lifecycle.Event.ON_RESUME] so return-from-reader lands on the latest page.
+ * When the setting is off (or progress is 0), restores saved grid scroll on first open.
  */
 @Composable
 internal fun PhotoGridScrollToProgressEffect(
@@ -1114,6 +1116,7 @@ internal fun PhotoGridScrollToProgressEffect(
     layoutKey: Any,
     loadSaved: () -> BrowseSession.ListScrollPosition? = { null },
 ) {
+    val scrollToProgress by Settings.photoGridScrollToProgress.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     var resumeEpoch by remember(layoutKey) { mutableIntStateOf(0) }
     DisposableEffect(lifecycleOwner, layoutKey) {
@@ -1123,13 +1126,17 @@ internal fun PhotoGridScrollToProgressEffect(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(layoutKey, imageCount, progressGid, resumeEpoch) {
-        if (imageCount <= 0 || progressGid == 0L) return@LaunchedEffect
+    LaunchedEffect(layoutKey, imageCount, progressGid, resumeEpoch, scrollToProgress) {
+        if (imageCount <= 0) return@LaunchedEffect
         snapshotFlow { gridState.layoutInfo.totalItemsCount }.first { it > 0 }
-        val page = withIOContext { EhDB.getReadProgress(progressGid) }
-        if (page > 0) {
-            gridState.scrollToItem(page.coerceIn(0, imageCount - 1))
-        } else if (resumeEpoch == 0) {
+        if (scrollToProgress && progressGid != 0L) {
+            val page = withIOContext { EhDB.getReadProgress(progressGid) }
+            if (page > 0) {
+                gridState.scrollToItem(page.coerceIn(0, imageCount - 1))
+                return@LaunchedEffect
+            }
+        }
+        if (resumeEpoch == 0) {
             val saved = loadSaved() ?: return@LaunchedEffect
             val max = (gridState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
             gridState.scrollToItem(saved.index.coerceIn(0, max), saved.offset)
