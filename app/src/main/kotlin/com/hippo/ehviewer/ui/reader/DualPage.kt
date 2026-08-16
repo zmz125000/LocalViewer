@@ -6,17 +6,23 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
  * Landscape dual-page helpers.
  *
  * User-facing progress (slider, startPage, indicator) always uses **real page indices**.
- * HorizontalPager only uses spread indices when [isPagerDual] is true.
+ * HorizontalPager / VerticalPager use **spread** indices when [isPagerDual] is true.
+ *
+ * - LTR / Vertical: left = 2i, right = 2i+1; next slot = next two pages
+ * - RTL: left = 2i+1, right = 2i (manga book order); reverseLayout handles direction
+ * - Webtoon / continuous: not paired — landscape uses horizontal strip instead
  */
 
 fun dualPageActive(dualPref: Boolean, isLandscape: Boolean): Boolean = dualPref && isLandscape
 
-/** LTR/RTL two-up spreads only (not Vertical, not webtoon). */
+/**
+ * Two-up spreads for paged readers: LTR, RTL, and Vertical.
+ * Webtoon modes use [isWebtoonHorizontal] instead.
+ */
 fun isPagerDual(dualActive: Boolean, type: ReadingModeType): Boolean =
-    dualActive &&
-        (type == ReadingModeType.LEFT_TO_RIGHT || type == ReadingModeType.RIGHT_TO_LEFT)
+    dualActive && !ReadingModeType.isWebtoon(type)
 
-/** Webtoon / continuous horizontal strip (no pairing). */
+/** Webtoon / continuous landscape: horizontal strip (no pairing). */
 fun isWebtoonHorizontal(dualActive: Boolean, type: ReadingModeType): Boolean =
     dualActive && ReadingModeType.isWebtoon(type)
 
@@ -29,7 +35,7 @@ fun dualFirstPageIndex(spreadIndex: Int): Int = (spreadIndex * 2).coerceAtLeast(
 
 /**
  * Left/right real page indices for a spread.
- * LTR: left = 2i, right = 2i+1
+ * LTR / Vertical: left = 2i, right = 2i+1
  * RTL: left = 2i+1, right = 2i (manga book order)
  */
 fun dualLeftRight(spreadIndex: Int, pageCount: Int, isRtl: Boolean): Pair<Int?, Int?> {

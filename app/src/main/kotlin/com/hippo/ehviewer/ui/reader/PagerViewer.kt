@@ -67,7 +67,10 @@ fun PagerViewer(
     onPrevFolder: () -> Unit = {},
     onNextFolder: () -> Unit = {},
     onBack: () -> Unit = {},
-    /** Landscape dual: each pager slot is a two-page spread (LTR/RTL only). */
+    /**
+     * Landscape dual: each pager slot is a two-page spread.
+     * Used for LTR, RTL, and Vertical (same pairing; Vertical scrolls up/down between spreads).
+     */
     dualPage: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -99,19 +102,36 @@ fun PagerViewer(
             onBack = onBack,
         )
     }
-    if (isVertical) {
-        VerticalPager(
-            state = pagerState,
-            modifier = modifier,
-            beyondViewportPageCount = 1,
-            userScrollEnabled = realPageCount > 0,
-            key = { it },
-        ) { index ->
-            val page = items.getOrNull(index) ?: return@VerticalPager
+    // Vertical is never RTL; dual spreads still use LTR left/right order.
+    val dualRtl = isRtl && !isVertical
+    val canScroll = realPageCount > 0
+
+    @Composable
+    fun SpreadOrPage(index: Int) {
+        if (dualPage) {
+            val (leftIdx, rightIdx) = dualLeftRight(index, realPageCount, dualRtl)
+            val left = leftIdx?.let { items.getOrNull(it) }
+            val right = rightIdx?.let { items.getOrNull(it) }
+            if (left == null && right == null) return
+            DualPageContainer(
+                leftPage = left,
+                rightPage = right,
+                pageLoader = pageLoader,
+                isRtl = dualRtl,
+                layoutSize = layoutSize,
+                navigator = navigator,
+                pagerState = pagerState,
+                onSelectPage = onSelectPage,
+                onMenuRegionClick = onMenuRegionClick,
+                onDoubleClick = doubleTap,
+                scope = scope,
+            )
+        } else {
+            val page = items.getOrNull(index) ?: return
             PageContainer(
                 page = page,
                 pageLoader = pageLoader,
-                isRtl = false,
+                isRtl = if (isVertical) false else isRtl,
                 scaleType = scaleType,
                 landscapeZoom = landscapeZoom,
                 autoRotateMode = autoRotateMode,
@@ -125,6 +145,18 @@ fun PagerViewer(
                 scope = scope,
             )
         }
+    }
+
+    if (isVertical) {
+        VerticalPager(
+            state = pagerState,
+            modifier = modifier,
+            beyondViewportPageCount = 1,
+            userScrollEnabled = canScroll,
+            key = { it },
+        ) { index ->
+            SpreadOrPage(index)
+        }
     } else {
         val isRtlLayout = LocalLayoutDirection.current == LayoutDirection.Rtl
         HorizontalPager(
@@ -132,46 +164,10 @@ fun PagerViewer(
             modifier = modifier,
             beyondViewportPageCount = 1,
             reverseLayout = isRtl xor isRtlLayout,
-            userScrollEnabled = realPageCount > 0,
+            userScrollEnabled = canScroll,
             key = { it },
         ) { index ->
-            if (dualPage) {
-                val (leftIdx, rightIdx) = dualLeftRight(index, realPageCount, isRtl)
-                val left = leftIdx?.let { items.getOrNull(it) }
-                val right = rightIdx?.let { items.getOrNull(it) }
-                if (left == null && right == null) return@HorizontalPager
-                DualPageContainer(
-                    leftPage = left,
-                    rightPage = right,
-                    pageLoader = pageLoader,
-                    isRtl = isRtl,
-                    layoutSize = layoutSize,
-                    navigator = navigator,
-                    pagerState = pagerState,
-                    onSelectPage = onSelectPage,
-                    onMenuRegionClick = onMenuRegionClick,
-                    onDoubleClick = doubleTap,
-                    scope = scope,
-                )
-            } else {
-                val page = items.getOrNull(index) ?: return@HorizontalPager
-                PageContainer(
-                    page = page,
-                    pageLoader = pageLoader,
-                    isRtl = isRtl,
-                    scaleType = scaleType,
-                    landscapeZoom = landscapeZoom,
-                    autoRotateMode = autoRotateMode,
-                    alignment = alignment,
-                    layoutSize = layoutSize,
-                    navigator = navigator,
-                    pagerState = pagerState,
-                    onSelectPage = onSelectPage,
-                    onMenuRegionClick = onMenuRegionClick,
-                    onDoubleClick = doubleTap,
-                    scope = scope,
-                )
-            }
+            SpreadOrPage(index)
         }
     }
 }

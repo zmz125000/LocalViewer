@@ -568,7 +568,7 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * Landscape dual-page behavior (not a reading mode).
-     * - LTR/RTL: two pages side-by-side; next advances one spread.
+     * - LTR/RTL/Vertical: two pages side-by-side; next advances one spread.
      * - Webtoon/continuous: horizontal continuous strip (no pairing).
      * - Vertical paged / portrait: unchanged.
      */

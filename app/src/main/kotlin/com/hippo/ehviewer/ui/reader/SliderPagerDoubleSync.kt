@@ -38,7 +38,7 @@ class SliderPagerDoubleSync(
 
     /**
      * @param webtoon continuous / webtoon list
-     * @param pagerDual true when HorizontalPager uses spread indices (LTR/RTL dual)
+     * @param pagerDual true when pager uses spread indices (LTR/RTL/Vertical dual)
      */
     fun currentPageFlow(webtoon: Boolean, pagerDual: Boolean) = if (webtoon) {
         snapshotFlow {

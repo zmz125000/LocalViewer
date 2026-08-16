@@ -470,7 +470,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     // placeholders and sibling replace do not drop fullscreen. Only sync chrome here.
     val lazyListState = rememberLazyListState(LazyLayoutCacheWindow(SCROLL_FRACTION, SCROLL_FRACTION), pageLoader.startPage)
     // Snapshot-backed [PageLoader.size] so pager pageCount tracks solid lazy-list growth.
-    // Dual LTR/RTL: pager pages are spreads; slider/startPage stay on real page indices.
+    // Dual LTR/RTL/Vertical: pager pages are spreads; slider/startPage stay on real page indices.
     val pagerState = rememberPagerState(
         initialPage = if (pagerDual) {
             dualSpreadIndex(pageLoader.startPage)
