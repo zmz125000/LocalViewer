@@ -32,8 +32,10 @@ import java.util.concurrent.TimeoutException
  * Local/SAF documents return their real seekable descriptor. Network documents use
  * [StorageManager.openProxyFileDescriptor] (AppFuse / MiX-style direct link).
  *
- * - **Video:** [VideoDirectLinkByteSource] — sliding window + one-lane forward prefetch.
- * - **PDF / other:** [BlockCacheArchiveByteSource] — sparse LRU for random probes.
+ * Cache window policy:
+ * - **PDF / document (EPUB):** [BlockCacheArchiveByteSource] with PDF sparse defaults.
+ * - **Everything else (video, archives, binary, …):** [VideoDirectLinkByteSource]
+ *   sliding window + one-lane forward prefetch.
  */
 class StreamDocumentProvider : ContentProvider() {
     override fun onCreate(): Boolean = true
@@ -93,9 +95,14 @@ class StreamDocumentProvider : ContentProvider() {
         val storage = context.getSystemService(StorageManager::class.java)
             ?: throw FileNotFoundException("StorageManager unavailable")
 
-        val isVideo = VideoDirectLinkByteSource.isVideo(entry.mimeType, entry.displayName)
+        // PDF/doc → sparse PDF block cache; all other files → video cache window path.
+        val isDocument = BlockCacheArchiveByteSource.isDocumentStream(
+            entry.mimeType,
+            entry.displayName,
+        )
+        val useVideoWindow = !isDocument
         val source = try {
-            if (isVideo) {
+            if (useVideoWindow) {
                 VideoDirectLinkByteSource.open(
                     openLane = openSource,
                     knownSize = entry.sizeBytes,
@@ -128,8 +135,12 @@ class StreamDocumentProvider : ContentProvider() {
             throw FileNotFoundException("empty document")
         }
 
-        val threadName = if (isVideo) "LocalViewer-streamdoc-video" else "LocalViewer-streamdoc"
-        val callbackPriority = if (isVideo) {
+        val threadName = if (useVideoWindow) {
+            "LocalViewer-streamdoc-video"
+        } else {
+            "LocalViewer-streamdoc"
+        }
+        val callbackPriority = if (useVideoWindow) {
             Process.THREAD_PRIORITY_FOREGROUND
         } else {
             Process.THREAD_PRIORITY_DEFAULT
@@ -145,7 +156,7 @@ class StreamDocumentProvider : ContentProvider() {
                     thread,
                     token,
                     exactMidFile = true,
-                    foregroundIo = isVideo,
+                    foregroundIo = useVideoWindow,
                 ),
                 Handler(thread.looper),
             )

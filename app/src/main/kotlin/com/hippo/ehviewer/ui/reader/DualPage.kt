@@ -10,7 +10,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
  *
  * - LTR / Vertical: left = 2i, right = 2i+1; next slot = next two pages
  * - RTL: left = 2i+1, right = 2i (manga book order); reverseLayout handles direction
- * - Webtoon / continuous: not paired — landscape uses horizontal strip instead
+ * - Webtoon / continuous: not paired — landscape uses a **right-to-left** horizontal strip
  */
 
 fun dualPageActive(dualPref: Boolean, isLandscape: Boolean): Boolean = dualPref && isLandscape
@@ -21,7 +21,10 @@ fun dualPageActive(dualPref: Boolean, isLandscape: Boolean): Boolean = dualPref 
  */
 fun isPagerDual(dualActive: Boolean, type: ReadingModeType): Boolean = dualActive && !ReadingModeType.isWebtoon(type)
 
-/** Webtoon / continuous landscape: horizontal strip (no pairing). */
+/**
+ * Webtoon / continuous landscape: continuous horizontal strip (no pairing),
+ * laid out right-to-left (page 0 on the right).
+ */
 fun isWebtoonHorizontal(dualActive: Boolean, type: ReadingModeType): Boolean = dualActive && ReadingModeType.isWebtoon(type)
 
 fun dualSpreadCount(pageCount: Int): Int = if (pageCount <= 0) 0 else (pageCount + 1) / 2
