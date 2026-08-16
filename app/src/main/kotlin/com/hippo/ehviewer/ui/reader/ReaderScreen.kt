@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.reader
 
 import android.content.Context
+import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.fadeIn
@@ -60,6 +61,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.keepScreenOn
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.stringResource
@@ -458,18 +460,45 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     val fullscreen by Settings.fullscreen.collectAsState()
     val cutoutShort by Settings.cutoutShort.collectAsState()
     val keepScreenOn by Settings.keepScreenOn.collectAsState()
+    val dualPagePref by Settings.dualPageLandscape.collectAsState()
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val dualActive = dualPageActive(dualPagePref, isLandscape)
+    val pagerDual = isPagerDual(dualActive, readingMode)
+    val webtoonHorizontal = isWebtoonHorizontal(dualActive, readingMode)
     val uiController = rememberSystemUiController()
     // Immersive enter/exit is owned by the outer ReaderScreen destination so loading
     // placeholders and sibling replace do not drop fullscreen. Only sync chrome here.
     val lazyListState = rememberLazyListState(LazyLayoutCacheWindow(SCROLL_FRACTION, SCROLL_FRACTION), pageLoader.startPage)
     // Snapshot-backed [PageLoader.size] so pager pageCount tracks solid lazy-list growth.
-    val pagerState = rememberPagerState(pageLoader.startPage) { pageLoader.size.coerceAtLeast(1) }
+    // Dual LTR/RTL/Vertical: pager pages are spreads; slider/startPage stay on real page indices.
+    val pagerState = rememberPagerState(
+        initialPage = if (pagerDual) {
+            dualSpreadIndex(pageLoader.startPage)
+        } else {
+            pageLoader.startPage
+        },
+    ) {
+        if (pagerDual) {
+            dualSpreadCount(pageLoader.size).coerceAtLeast(1)
+        } else {
+            pageLoader.size.coerceAtLeast(1)
+        }
+    }
+    // Remap pager slot when dual mode toggles or orientation flips (always from real page).
+    LaunchedEffect(pagerDual) {
+        val real = pageLoader.startPage.coerceAtLeast(0)
+        val target = if (pagerDual) dualSpreadIndex(real) else real
+        val max = (pagerState.pageCount - 1).coerceAtLeast(0)
+        if (pagerState.currentPage != target.coerceIn(0, max)) {
+            pagerState.scrollToPage(target.coerceIn(0, max))
+        }
+    }
     val syncState = rememberSliderPagerDoubleSyncState(lazyListState, pagerState, pageLoader)
     var appbarVisible by remember { mutableStateOf(false) }
     val isWebtoon by rememberUpdatedState(ReadingModeType.isWebtoon(readingMode))
     val focusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(pageLoader, hdrDisplayEnabled, advancedColorEnabled) {
+    LaunchedEffect(pageLoader, hdrDisplayEnabled, advancedColorEnabled, pagerDual) {
         if (!hdrDisplayEnabled && !advancedColorEnabled) {
             activity.setReaderColorMode(hdr = false, wideColor = false)
             return@LaunchedEffect
@@ -499,6 +528,18 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                     val end = items.last().index
                     (first - 1).coerceAtLeast(0)..(end + 1).coerceAtMost(last)
                 }
+            } else if (pagerDual) {
+                // Pager indices are spreads — expand to real page indices for HDR scan.
+                val pages = pagerState.layoutInfo.visiblePagesInfo
+                val spreadRange = if (pages.isEmpty()) {
+                    val s = pagerState.currentPage
+                    s..s
+                } else {
+                    pages.first().index..pages.last().index
+                }
+                val firstReal = dualFirstPageIndex(spreadRange.first).coerceAtLeast(0)
+                val lastReal = (dualFirstPageIndex(spreadRange.last) + 1).coerceAtMost(last)
+                (firstReal - 1).coerceAtLeast(0)..(lastReal + 1).coerceAtMost(last)
             } else {
                 val pages = pagerState.layoutInfo.visiblePagesInfo
                 if (pages.isEmpty()) {
@@ -578,14 +619,30 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
         Modifier.keyEventHandler(
             volumeKeysEnabled = { volumeKeysEnabled && !appbarVisible },
             volumeKeysInverted = { volumeKeysInverted },
-            movePrevious = { launch { if (isWebtoon) lazyListState.scrollUp() else pagerState.moveToPrevious() } },
-            moveNext = { launch { if (isWebtoon) lazyListState.scrollDown() else pagerState.moveToNext() } },
+            movePrevious = {
+                launch {
+                    when {
+                        isWebtoon && webtoonHorizontal -> lazyListState.scrollLeft()
+                        isWebtoon -> lazyListState.scrollUp()
+                        else -> pagerState.moveToPrevious()
+                    }
+                }
+            },
+            moveNext = {
+                launch {
+                    when {
+                        isWebtoon && webtoonHorizontal -> lazyListState.scrollRight()
+                        isWebtoon -> lazyListState.scrollDown()
+                        else -> pagerState.moveToNext()
+                    }
+                }
+            },
         ).focusRequester(focusRequester).focusable().thenIf(keepScreenOn) { keepScreenOn() },
     ) {
         LaunchedEffect(Unit) {
             focusRequester.requestFocus()
         }
-        syncState.Sync(isWebtoon) { appbarVisible = false }
+        syncState.Sync(webtoon = isWebtoon, pagerDual = pagerDual) { appbarVisible = false }
         val bgColor by collectBackgroundColorAsState()
         LaunchedEffect(fullscreen) {
             snapshotFlow { appbarVisible }.collect { visible ->
@@ -753,6 +810,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 onNextFolder = { goFolder(next = true) },
                 // Same path as edge-swipe / system back (OnBackPressedDispatcher callbacks).
                 onBack = { activity.onBackPressedDispatcher.onBackPressed() },
+                dualActive = dualActive,
                 modifier = Modifier.background(bgColor).pointerInput(syncState) {
                     awaitEachGesture {
                         waitForUpOrCancellation()

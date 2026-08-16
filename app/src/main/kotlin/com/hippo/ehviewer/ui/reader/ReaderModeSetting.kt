@@ -31,6 +31,10 @@ fun ReaderModeSetting(isWebtoon: Boolean) = Column(modifier = Modifier.verticalS
         values = ReadingModeType.entries.map { it.prefValue },
         field = Settings.readingMode.asMutableState(),
     )
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_dual_page_landscape),
+        field = Settings.dualPageLandscape.asMutableState(),
+    )
     SpinnerChoice(
         title = stringResource(id = R.string.rotation_type),
         entries = stringArrayResource(id = com.hippo.ehviewer.R.array.rotation_type),

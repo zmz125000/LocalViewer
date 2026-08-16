@@ -2,6 +2,8 @@ package com.hippo.ehviewer.ui.reader
 
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
@@ -65,11 +67,16 @@ fun PagerViewer(
     onPrevFolder: () -> Unit = {},
     onNextFolder: () -> Unit = {},
     onBack: () -> Unit = {},
+    /**
+     * Landscape dual: each pager slot is a two-page spread.
+     * Used for LTR, RTL, and Vertical (same pairing; Vertical scrolls up/down between spreads).
+     */
+    dualPage: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
-    // Read Snapshot size so pager recomposes when solid extract grows the list.
-    val pageCount = pageLoader.size
+    // Real page count for content; pager pageCount (spread or page) comes from [pagerState].
+    val realPageCount = pageLoader.size
     val items = pageLoader.pages
     val scaleType by Settings.imageScaleType.collectAsState()
     val landscapeZoom by Settings.landscapeZoom.collectAsState()
@@ -95,19 +102,36 @@ fun PagerViewer(
             onBack = onBack,
         )
     }
-    if (isVertical) {
-        VerticalPager(
-            state = pagerState,
-            modifier = modifier,
-            beyondViewportPageCount = 1,
-            userScrollEnabled = pageCount > 0,
-            key = { it },
-        ) { index ->
-            val page = items.getOrNull(index) ?: return@VerticalPager
+    // Vertical is never RTL; dual spreads still use LTR left/right order.
+    val dualRtl = isRtl && !isVertical
+    val canScroll = realPageCount > 0
+
+    @Composable
+    fun SpreadOrPage(index: Int) {
+        if (dualPage) {
+            val (leftIdx, rightIdx) = dualLeftRight(index, realPageCount, dualRtl)
+            val left = leftIdx?.let { items.getOrNull(it) }
+            val right = rightIdx?.let { items.getOrNull(it) }
+            if (left == null && right == null) return
+            DualPageContainer(
+                leftPage = left,
+                rightPage = right,
+                pageLoader = pageLoader,
+                isRtl = dualRtl,
+                layoutSize = layoutSize,
+                navigator = navigator,
+                pagerState = pagerState,
+                onSelectPage = onSelectPage,
+                onMenuRegionClick = onMenuRegionClick,
+                onDoubleClick = doubleTap,
+                scope = scope,
+            )
+        } else {
+            val page = items.getOrNull(index) ?: return
             PageContainer(
                 page = page,
                 pageLoader = pageLoader,
-                isRtl = false,
+                isRtl = if (isVertical) false else isRtl,
                 scaleType = scaleType,
                 landscapeZoom = landscapeZoom,
                 autoRotateMode = autoRotateMode,
@@ -121,6 +145,18 @@ fun PagerViewer(
                 scope = scope,
             )
         }
+    }
+
+    if (isVertical) {
+        VerticalPager(
+            state = pagerState,
+            modifier = modifier,
+            beyondViewportPageCount = 1,
+            userScrollEnabled = canScroll,
+            key = { it },
+        ) { index ->
+            SpreadOrPage(index)
+        }
     } else {
         val isRtlLayout = LocalLayoutDirection.current == LayoutDirection.Rtl
         HorizontalPager(
@@ -128,26 +164,156 @@ fun PagerViewer(
             modifier = modifier,
             beyondViewportPageCount = 1,
             reverseLayout = isRtl xor isRtlLayout,
-            userScrollEnabled = pageCount > 0,
+            userScrollEnabled = canScroll,
             key = { it },
         ) { index ->
-            val page = items.getOrNull(index) ?: return@HorizontalPager
-            PageContainer(
+            SpreadOrPage(index)
+        }
+    }
+}
+
+/**
+ * Two pages side-by-side (or one centered when the spread has a single page).
+ * One zoom state for the whole spread; long-press picks left/right by x.
+ */
+@Composable
+private fun DualPageContainer(
+    leftPage: Page?,
+    rightPage: Page?,
+    pageLoader: PageLoader,
+    isRtl: Boolean,
+    layoutSize: Size,
+    navigator: () -> NavigationRegions,
+    pagerState: PagerState,
+    onSelectPage: (Page) -> Unit,
+    onMenuRegionClick: () -> Unit,
+    onDoubleClick: DoubleClickToZoomListener,
+    scope: CoroutineScope,
+) {
+    @Suppress("NAME_SHADOWING")
+    val isRtl by rememberUpdatedState(isRtl)
+    val zoomableState = rememberZoomableState(zoomSpec = PagerZoomSpec)
+    val solo = leftPage != null && rightPage == null || leftPage == null && rightPage != null
+    val halfSize = if (layoutSize == Size.Zero) {
+        Size.Zero
+    } else {
+        Size(layoutSize.width / 2f, layoutSize.height)
+    }
+
+    if (layoutSize != Size.Zero) {
+        // Spread fills the viewport; telephoto zooms the pair as one unit.
+        zoomableState.contentScale = ContentScale.Fit
+        LaunchedEffect(layoutSize) {
+            zoomableState.setContentLocation(
+                ZoomableContentLocation.scaledInsideAndCenterAligned(layoutSize),
+            )
+            zoomableState.contentAlignment = Alignment.Center
+        }
+    }
+
+    val onLongClick: (Offset) -> Unit = { offset ->
+        val page = when {
+            solo -> leftPage ?: rightPage
+            offset.x < layoutSize.width / 2f -> leftPage
+            else -> rightPage
+        }
+        if (page != null) onSelectPage(page)
+    }
+    val onTap: ZoomableState?.(Offset) -> Unit = { offset ->
+        scope.launch {
+            with(pagerState) {
+                val size = layoutInfo.viewportSize.toSize()
+                val (w, h) = size
+                val (x, y) = offset
+                val distance = size.width
+                val bounds = size.toRect()
+                when (navigator().getAction(Offset(x / w, y / h))) {
+                    NavigationRegion.MENU -> onMenuRegionClick()
+                    NavigationRegion.NEXT -> {
+                        val canPan = if (isRtl) panRight(distance, bounds) else panLeft(distance, bounds)
+                        if (!canPan) moveToNext()
+                    }
+                    NavigationRegion.PREV -> {
+                        val canPan = if (isRtl) panLeft(distance, bounds) else panRight(distance, bounds)
+                        if (!canPan) moveToPrevious()
+                    }
+                    NavigationRegion.RIGHT -> {
+                        if (!panLeft(distance, bounds)) {
+                            if (isRtl) moveToPrevious() else moveToNext()
+                        }
+                    }
+                    NavigationRegion.LEFT -> {
+                        if (!panRight(distance, bounds)) {
+                            if (isRtl) moveToNext() else moveToPrevious()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    val isCurrent = remember(pagerState, leftPage, rightPage) {
+        derivedStateOf {
+            val cur = pagerState.currentPage
+            val first = leftPage?.index ?: rightPage?.index ?: return@derivedStateOf false
+            dualSpreadIndex(first) == cur ||
+                (rightPage != null && dualSpreadIndex(rightPage.index) == cur)
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val zoomMod = Modifier.zoomable(
+            state = zoomableState,
+            onClick = onTap.partially1(zoomableState),
+            onLongClick = onLongClick,
+            onDoubleClick = onDoubleClick,
+        )
+        if (solo) {
+            val page = leftPage ?: rightPage!!
+            // Odd last page: full-width single page (no half-column).
+            PagerItem(
                 page = page,
                 pageLoader = pageLoader,
-                isRtl = isRtl,
-                scaleType = scaleType,
-                landscapeZoom = landscapeZoom,
-                autoRotateMode = autoRotateMode,
-                alignment = alignment,
-                layoutSize = layoutSize,
-                navigator = navigator,
-                pagerState = pagerState,
-                onSelectPage = onSelectPage,
-                onMenuRegionClick = onMenuRegionClick,
-                onDoubleClick = doubleTap,
-                scope = scope,
+                contentScale = ContentScale.Inside,
+                viewportSize = layoutSize,
+                prioritizeDecode = isCurrent.value,
+                modifier = Modifier.pointerInput(onTap) {
+                    detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
+                },
+                contentModifier = zoomMod,
             )
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(onTap) {
+                        detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
+                    }
+                    .then(zoomMod),
+            ) {
+                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                    if (leftPage != null) {
+                        PagerItem(
+                            page = leftPage,
+                            pageLoader = pageLoader,
+                            contentScale = ContentScale.Fit,
+                            viewportSize = halfSize,
+                            prioritizeDecode = isCurrent.value,
+                        )
+                    }
+                }
+                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                    if (rightPage != null) {
+                        PagerItem(
+                            page = rightPage,
+                            pageLoader = pageLoader,
+                            contentScale = ContentScale.Fit,
+                            viewportSize = halfSize,
+                            prioritizeDecode = isCurrent.value,
+                        )
+                    }
+                }
+            }
         }
     }
 }

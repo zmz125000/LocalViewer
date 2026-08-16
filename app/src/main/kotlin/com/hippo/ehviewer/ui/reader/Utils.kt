@@ -94,14 +94,27 @@ suspend fun LazyListState.performScrollBy(value: Float) {
 }
 
 suspend fun LazyListState.scrollUp() {
-    performScrollBy(-scrollDistance)
+    performScrollBy(-scrollDistanceVertical)
 }
 
 suspend fun LazyListState.scrollDown() {
-    performScrollBy(scrollDistance)
+    performScrollBy(scrollDistanceVertical)
 }
 
-private val LazyListState.scrollDistance
+/** Horizontal continuous (landscape dual webtoon): scroll toward previous pages. */
+suspend fun LazyListState.scrollLeft() {
+    performScrollBy(-scrollDistanceHorizontal)
+}
+
+/** Horizontal continuous: scroll toward next pages. */
+suspend fun LazyListState.scrollRight() {
+    performScrollBy(scrollDistanceHorizontal)
+}
+
+private val LazyListState.scrollDistanceVertical
     get() = layoutInfo.viewportSize.height * SCROLL_FRACTION
+
+private val LazyListState.scrollDistanceHorizontal
+    get() = layoutInfo.viewportSize.width * SCROLL_FRACTION
 
 const val SCROLL_FRACTION = 0.75f

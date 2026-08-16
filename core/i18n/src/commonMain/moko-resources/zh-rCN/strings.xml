@@ -818,6 +818,8 @@
     <string name="label_default">默认</string>
     <string name="webtoon_side_padding_5">5%</string>
     <string name="pref_landscape_zoom">放大横向图片</string>
+    <string name="pref_dual_page_landscape">横屏双页</string>
+    <string name="pref_dual_page_landscape_summary">横屏时左右翻页与纵向翻页一屏两页；条漫改为横向连续。竖屏不变。</string>
     <string name="pref_navigate_pan">图片放大时先平移再翻页</string>
     <string name="rotation_reverse_portrait">反向竖屏</string>
     <string name="disabled_nav">关闭</string>

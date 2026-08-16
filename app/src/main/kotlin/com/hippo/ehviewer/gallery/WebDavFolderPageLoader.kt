@@ -99,7 +99,8 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 private fun cancelDistantDownloads(center: Int) {
                     val centerLib = isLibHdrCandidate(imageFileNames.getOrNull(center).orEmpty())
                     val window = if (centerLib) libHdrKeepWindow else keepWindow
-                    for ((idx, job) in downloadJobs.entries.toList()) {
+                    // ConcurrentHashMap.forEach — avoid entries.toList() iterator race on Android.
+                    downloadJobs.forEach { idx, job ->
                         if (kotlin.math.abs(idx - center) > window) job.cancel()
                     }
                 }

@@ -122,10 +122,12 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 private fun isLibHdrCandidate(name: String): Boolean = HdrConvertCache.usesNetworkLibConvert(name)
 
                 private fun cancelDistantDownloads(center: Int) {
-                    val snapshot = downloadJobs.entries.toList()
                     val centerLib = isLibHdrCandidate(imageFileNames.getOrNull(center).orEmpty())
                     val window = if (centerLib) libHdrKeepWindow else keepWindow
-                    for ((idx, job) in snapshot) {
+                    // ConcurrentHashMap.forEach (BiConsumer) — never entries/keys iterator.
+                    // Android EntryIterator.next can throw NoSuchElementException under concurrent
+                    // put/remove; dual-page fires two onRequest close together.
+                    downloadJobs.forEach { idx, job ->
                         if (kotlin.math.abs(idx - center) > window) {
                             // Do not remove waiters here — job's CancellationException handler
                             // restarts download if the UI is still waiting for this page.

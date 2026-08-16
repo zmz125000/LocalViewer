@@ -45,9 +45,13 @@ fun GalleryPager(
     onPrevFolder: () -> Unit = {},
     onNextFolder: () -> Unit = {},
     onBack: () -> Unit = {},
+    /** Landscape dual pref active (pref + landscape). */
+    dualActive: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val isPagerType = !ReadingModeType.isWebtoon(type)
+    val pagerDual = isPagerDual(dualActive, type)
+    val webtoonHorizontal = isWebtoonHorizontal(dualActive, type)
     val pagerNavigation by Settings.readerPagerNav.collectAsState()
     val pagerInvertMode by Settings.readerPagerNavInverted.collectAsState()
     val webtoonNavigation by Settings.readerWebtoonNav.collectAsState()
@@ -100,6 +104,7 @@ fun GalleryPager(
             onPrevFolder = onPrevFolder,
             onNextFolder = onNextFolder,
             onBack = onBack,
+            dualPage = pagerDual,
             modifier = modifier.pointerInput(channel) {
                 awaitPointerEventScope {
                     while (true) {
@@ -121,6 +126,7 @@ fun GalleryPager(
             onPrevFolder = onPrevFolder,
             onNextFolder = onNextFolder,
             onBack = onBack,
+            horizontal = webtoonHorizontal,
             modifier = modifier,
         )
     }

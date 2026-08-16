@@ -565,6 +565,14 @@ object Settings : DataStorePreferences(null) {
     val navigateToPan = boolPref("navigate_pan", true)
     val imageScaleType = intPref("pref_image_scale_type_key", 1)
     val landscapeZoom = boolPref("landscape_zoom", false)
+
+    /**
+     * Landscape dual-page behavior (not a reading mode).
+     * - LTR/RTL/Vertical: two pages side-by-side; next advances one spread.
+     * - Webtoon/continuous: horizontal continuous strip (no pairing).
+     * - Vertical paged / portrait: unchanged.
+     */
+    val dualPageLandscape = boolPref("pref_dual_page_landscape", false)
     val zoomStart = intPref("pref_zoom_start_key", 1)
     val showNavigationOverlayNewUser = boolPref("reader_navigation_overlay_new_user", true)
     val showNavigationOverlayOnStart = boolPref("reader_navigation_overlay_on_start", false)
