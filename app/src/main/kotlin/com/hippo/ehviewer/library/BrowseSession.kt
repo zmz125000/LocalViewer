@@ -360,4 +360,27 @@ object BrowseSession {
     }
 
     fun takeSmbScrollAnchor(sourceId: Long, relativeDir: String): String? = smbAnchor.remove(smbListingKey(sourceId, relativeDir))
+
+    // --- Folder-view section collapse (per directory; process lifetime) ---
+
+    /**
+     * Collapsed section names ([com.hippo.ehviewer.ui.main.BrowseFolderSection]) keyed by
+     * folder path (`pathKey` / `smb:id|dir` / `dav:…`). Hide in one folder does not affect
+     * another. Not written to disk.
+     */
+    private val collapsedBrowseSectionsByFolder = ConcurrentHashMap<String, Set<String>>()
+
+    fun collapsedBrowseSections(folderKey: String): Set<String> {
+        if (folderKey.isEmpty()) return emptySet()
+        return collapsedBrowseSectionsByFolder[folderKey].orEmpty()
+    }
+
+    fun setCollapsedBrowseSections(folderKey: String, names: Set<String>) {
+        if (folderKey.isEmpty()) return
+        if (names.isEmpty()) {
+            collapsedBrowseSectionsByFolder.remove(folderKey)
+        } else {
+            collapsedBrowseSectionsByFolder[folderKey] = names
+        }
+    }
 }

@@ -59,6 +59,7 @@ import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.coil.coverThumbRequest
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ArchiveCoverCache
+import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LocalLibrary
@@ -1126,7 +1127,7 @@ fun BrowseSectionHeader(
     )
 }
 
-/** In-memory collapse keys for folder-view section headers (not persisted). */
+/** In-memory collapse keys for folder-view section headers (not disk-persisted). */
 enum class BrowseFolderSection {
     Directories,
     Galleries,
@@ -1134,12 +1135,27 @@ enum class BrowseFolderSection {
     Files,
 }
 
-/** Collapse set for the current listing; resets when [resetKey] changes (e.g. path). */
+/**
+ * Section collapse for **one folder** ([folderKey] = path / SMB-WebDAV dir key).
+ * Hide Videos here does not collapse Videos in other directories. Process memory only
+ * (return to the same folder restores; process death clears).
+ */
 @Composable
-fun rememberBrowseSectionCollapse(resetKey: Any?): Pair<Set<BrowseFolderSection>, (BrowseFolderSection) -> Unit> {
-    var collapsed by remember(resetKey) { mutableStateOf(emptySet<BrowseFolderSection>()) }
+fun rememberBrowseSectionCollapse(
+    folderKey: Any? = null,
+): Pair<Set<BrowseFolderSection>, (BrowseFolderSection) -> Unit> {
+    val key = folderKey?.toString().orEmpty()
+    var collapsed by remember(key) {
+        mutableStateOf(
+            BrowseSession.collapsedBrowseSections(key).mapNotNull { name ->
+                runCatching { BrowseFolderSection.valueOf(name) }.getOrNull()
+            }.toSet(),
+        )
+    }
     val toggle: (BrowseFolderSection) -> Unit = { section ->
-        collapsed = if (section in collapsed) collapsed - section else collapsed + section
+        val next = if (section in collapsed) collapsed - section else collapsed + section
+        collapsed = next
+        BrowseSession.setCollapsedBrowseSections(key, next.map { it.name }.toSet())
     }
     return collapsed to toggle
 }
