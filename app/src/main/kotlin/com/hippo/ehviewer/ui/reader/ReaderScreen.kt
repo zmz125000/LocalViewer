@@ -662,7 +662,10 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 launch {
                     val blocked = page.status is PageStatus.Blocked
                     dialog { cont ->
-                        fun dispose() = cont.resume(Unit)
+                        // hide() + onDismissRequest can both run; never double-resume.
+                        fun dispose() {
+                            if (cont.isActive) cont.resume(Unit)
+                        }
                         val state = rememberModalBottomSheetState()
                         ModalBottomSheet(
                             onDismissRequest = { dispose() },
@@ -678,7 +681,8 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                                 save = { launchIO { with(pageLoader) { save(page) } } },
                                 saveTo = { launchIO { with(pageLoader) { saveTo(page) } } },
                                 showAds = { page.unblock() }.takeIf { blocked },
-                                dismiss = { launch { state.hide().also { dispose() } } },
+                                // hide() ends with onDismissRequest → dispose once.
+                                dismiss = { launch { runCatching { state.hide() }.onFailure { dispose() } } },
                             )
                         }
                     }
@@ -955,7 +959,11 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
             onClickSettings = {
                 launch {
                     dialog { cont ->
-                        fun dispose() = cont.resume(Unit)
+                        // Sheet dismiss can fire onDismissRequest more than once (animation /
+                        // back / mode change under a transparent scrim). Guard the resume.
+                        fun dispose() {
+                            if (cont.isActive) cont.resume(Unit)
+                        }
                         // No dim overlay while settings are open (was BottomSheetDefaults.ScrimColor
                         // with color-filter tab force-undim). Keep reader fully visible underneath.
                         ModalBottomSheet(

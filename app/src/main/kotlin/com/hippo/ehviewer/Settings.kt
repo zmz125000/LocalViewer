@@ -461,7 +461,7 @@ object Settings : DataStorePreferences(null) {
      * Fit-rotate mode: 0=off, 1=CW, 2=CCW ([eu.kanade.tachiyomi.ui.reader.setting.AutoRotateMode]).
      * Default CW (matches previous auto-on + clockwise).
      */
-    val autoRotateMode = intPref("pref_auto_rotate_mode", 1)
+    val autoRotateMode = intPref("pref_auto_rotate_mode", 0)
 
     /**
      * Coil decode size vs shorter screen edge:
@@ -572,7 +572,7 @@ object Settings : DataStorePreferences(null) {
      * - Webtoon/continuous: horizontal continuous strip (no pairing).
      * - Vertical paged / portrait: unchanged.
      */
-    val dualPageLandscape = boolPref("pref_dual_page_landscape", false)
+    val dualPageLandscape = boolPref("pref_dual_page_landscape", true)
     val zoomStart = intPref("pref_zoom_start_key", 1)
     val showNavigationOverlayNewUser = boolPref("reader_navigation_overlay_new_user", true)
     val showNavigationOverlayOnStart = boolPref("reader_navigation_overlay_on_start", false)
