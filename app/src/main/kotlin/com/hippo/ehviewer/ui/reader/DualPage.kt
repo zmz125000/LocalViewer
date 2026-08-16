@@ -19,12 +19,10 @@ fun dualPageActive(dualPref: Boolean, isLandscape: Boolean): Boolean = dualPref 
  * Two-up spreads for paged readers: LTR, RTL, and Vertical.
  * Webtoon modes use [isWebtoonHorizontal] instead.
  */
-fun isPagerDual(dualActive: Boolean, type: ReadingModeType): Boolean =
-    dualActive && !ReadingModeType.isWebtoon(type)
+fun isPagerDual(dualActive: Boolean, type: ReadingModeType): Boolean = dualActive && !ReadingModeType.isWebtoon(type)
 
 /** Webtoon / continuous landscape: horizontal strip (no pairing). */
-fun isWebtoonHorizontal(dualActive: Boolean, type: ReadingModeType): Boolean =
-    dualActive && ReadingModeType.isWebtoon(type)
+fun isWebtoonHorizontal(dualActive: Boolean, type: ReadingModeType): Boolean = dualActive && ReadingModeType.isWebtoon(type)
 
 fun dualSpreadCount(pageCount: Int): Int = if (pageCount <= 0) 0 else (pageCount + 1) / 2
 
