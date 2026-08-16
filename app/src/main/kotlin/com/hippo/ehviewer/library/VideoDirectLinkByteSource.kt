@@ -18,7 +18,8 @@ import java.util.concurrent.atomic.AtomicLong
  *   queued prefetch reads so demand is not stuck behind the old runway.
  *
  * Not an archive readahead: no 64 KiB random-probe mode, no ZIP/TAR semantics.
- * PDF / sparse documents stay on [BlockCacheArchiveByteSource].
+ * Streamdoc uses this path for **video and all non-document files**; PDF / EPUB stay
+ * on [BlockCacheArchiveByteSource] sparse defaults.
  */
 class VideoDirectLinkByteSource(
     private val demand: ArchiveByteSource,

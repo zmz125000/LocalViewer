@@ -9,8 +9,9 @@ package com.hippo.ehviewer.library
  * jump. This cache keeps a small LRU working set and aligns misses so nearby backward/forward
  * probes share one fetch. It never downloads the whole document.
  *
- * Video external open uses [VIDEO_BLOCK_SIZE] / [VIDEO_MAX_BLOCKS] so sequential playback can
- * sustain high bitrates with fewer network round-trips (still sparse — only touched blocks).
+ * Streamdoc sizing via [forMimeType]:
+ * - **PDF / document** → [DEFAULT_BLOCK_SIZE] / [DEFAULT_MAX_BLOCKS] (sparse probes)
+ * - **Everything else** → [VIDEO_BLOCK_SIZE] / [VIDEO_MAX_BLOCKS] (larger sequential window)
  */
 class BlockCacheArchiveByteSource(
     private val inner: ArchiveByteSource,
@@ -108,14 +109,25 @@ class BlockCacheArchiveByteSource(
         /** 128 MiB LRU (~5 s at 200 Mbps) — enough headroom without unbounded download. */
         const val VIDEO_MAX_BLOCKS = 24
 
-        fun forMimeType(mimeType: String, displayName: String = ""): Pair<Int, Int> {
-            val video = mimeType.startsWith("video/", ignoreCase = true) ||
-                isVideoFileName(displayName)
-            return if (video) {
-                VIDEO_BLOCK_SIZE to VIDEO_MAX_BLOCKS
-            } else {
+        /**
+         * Cache window for streamdoc [BlockCacheArchiveByteSource]:
+         * - PDF / EPUB (and document mime) → sparse PDF defaults
+         * - All other types → video-sized blocks (large sequential window)
+         */
+        fun forMimeType(mimeType: String, displayName: String = ""): Pair<Int, Int> =
+            if (isDocumentStream(mimeType, displayName)) {
                 DEFAULT_BLOCK_SIZE to DEFAULT_MAX_BLOCKS
+            } else {
+                VIDEO_BLOCK_SIZE to VIDEO_MAX_BLOCKS
             }
+
+        /** PDF / EPUB (and matching mime) — sparse document cache, not video window. */
+        fun isDocumentStream(mimeType: String, displayName: String = ""): Boolean {
+            if (isDocumentFileName(displayName)) return true
+            val m = mimeType.lowercase()
+            return m == "application/pdf" ||
+                m == "application/epub+zip" ||
+                m.startsWith("application/epub")
         }
     }
 }
