@@ -114,12 +114,11 @@ class BlockCacheArchiveByteSource(
          * - PDF / EPUB (and document mime) → sparse PDF defaults
          * - All other types → video-sized blocks (large sequential window)
          */
-        fun forMimeType(mimeType: String, displayName: String = ""): Pair<Int, Int> =
-            if (isDocumentStream(mimeType, displayName)) {
-                DEFAULT_BLOCK_SIZE to DEFAULT_MAX_BLOCKS
-            } else {
-                VIDEO_BLOCK_SIZE to VIDEO_MAX_BLOCKS
-            }
+        fun forMimeType(mimeType: String, displayName: String = ""): Pair<Int, Int> = if (isDocumentStream(mimeType, displayName)) {
+            DEFAULT_BLOCK_SIZE to DEFAULT_MAX_BLOCKS
+        } else {
+            VIDEO_BLOCK_SIZE to VIDEO_MAX_BLOCKS
+        }
 
         /** PDF / EPUB (and matching mime) — sparse document cache, not video window. */
         fun isDocumentStream(mimeType: String, displayName: String = ""): Boolean {
