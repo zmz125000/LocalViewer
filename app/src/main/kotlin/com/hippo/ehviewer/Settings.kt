@@ -120,6 +120,7 @@ object Settings : DataStorePreferences(null) {
      * opened video plus matching sidecar subs are published. Settings → General.
      */
     val externalVideoAccessDir = boolPref("external_video_access_dir", true)
+        .observed(::updateWhenExternalVideoAccessDirChanges)
 
     /**
      * When true (and [externalVideoAccessDir] is on), external open hands the folder to the
@@ -135,6 +136,7 @@ object Settings : DataStorePreferences(null) {
      * the same playback URL for resume.
      */
     val externalVideoRandomizeToken = boolPref("external_video_randomize_token", false)
+        .observed(::updateWhenExternalVideoRandomizeTokenChanges)
 
     /**
      * Private per-install salt for stable external HTTP session tokens. Generated lazily;

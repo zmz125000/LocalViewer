@@ -64,6 +64,18 @@ fun updateWhenStreamKeepAliveUnlimitedChanges(enabled: Boolean) {
     com.hippo.ehviewer.provider.StreamKeepAlivePolicy.onUnlimitedChanged()
 }
 
+/** Folder vs single-file HTTP tokens are incompatible — drop every loopback session. */
+@Suppress("UNUSED_PARAMETER")
+fun updateWhenExternalVideoAccessDirChanges(enabled: Boolean) {
+    com.hippo.ehviewer.provider.ExternalHttpStreamServer.removeAllSessions("access-dir=$enabled")
+}
+
+/** Stable vs random session tokens / ports — drop every loopback session. */
+@Suppress("UNUSED_PARAMETER")
+fun updateWhenExternalVideoRandomizeTokenChanges(enabled: Boolean) {
+    com.hippo.ehviewer.provider.ExternalHttpStreamServer.removeAllSessions("randomize-token=$enabled")
+}
+
 // Stubs for removed EH prefs still referenced by Settings property initializers
 fun updateWhenRequestNewsChanges() = Unit
 suspend fun updateWhenGallerySiteChanges(gallerySite: Int) = Unit

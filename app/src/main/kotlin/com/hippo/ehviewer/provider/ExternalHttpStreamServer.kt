@@ -796,6 +796,22 @@ object ExternalHttpStreamServer {
         StreamKeepAlivePolicy.reconcileFgs()
     }
 
+    /**
+     * Drop every HTTP session (folder + one-file tokens). Used when
+     * [Settings.externalVideoAccessDir] flips so the next open rebuilds
+     * with the new exposure mode instead of reusing a stale map.
+     */
+    fun removeAllSessions(reason: String = "clear") {
+        val doomed = sessions.keys.toList()
+        if (doomed.isEmpty()) return
+        logcat("ExtHttp") { "remove all sessions ($reason) count=${doomed.size}" }
+        for (id in doomed) {
+            sessions.remove(id)?.closeBodies()
+        }
+        schedulePrune()
+        StreamKeepAlivePolicy.reconcileFgs()
+    }
+
     /** True if [id] is still registered. */
     fun hasSession(id: String): Boolean = sessions.containsKey(id)
 

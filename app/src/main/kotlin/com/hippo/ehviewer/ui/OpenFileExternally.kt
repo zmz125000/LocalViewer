@@ -307,10 +307,17 @@ object OpenFileExternally {
         val dirKey = httpSessionKey(localDirKey(pathStr), accessDir, displayName)
         val (session, reused) = withIOContext {
             withDirHttpSession(network = false, dirKey = dirKey) { session, _ ->
+                // Skip re-list when this folder session already has entries; unknown
+                // names 404 on GET instead of QUERY_DIRECTORY every open.
+                val skipDirList = accessDir && session.files.isNotEmpty()
                 session.put(localFileEntry(pathStr, displayName, mimeType))
-                // Only pre-listed files — no invent-on-GET for player subtitle probes.
                 val extras = if (accessDir) {
-                    listLocalDirMediaNames(pathStr).filterNot { it.equals(displayName, ignoreCase = true) }
+                    if (skipDirList) {
+                        emptyList()
+                    } else {
+                        listLocalDirMediaNames(pathStr)
+                            .filterNot { it.equals(displayName, ignoreCase = true) }
+                    }
                 } else {
                     findLocalSidecarNames(pathStr, displayName)
                 }
@@ -352,15 +359,18 @@ object OpenFileExternally {
             val parentDir = parentRelative(remoteRelativeFile)
             val dirKey = httpSessionKey(smbDirKey(sourceId, parentDir), accessDir, displayName)
             withDirHttpSession(network = true, dirKey = dirKey) { session, wasReused ->
-                // Always refresh the opened video entry (known size).
+                // Skip SMB re-list when folder session already populated; missing names 404.
+                val skipDirList = accessDir && session.files.isNotEmpty()
                 session.put(
                     smbFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes = -1L),
                 )
-                // Pre-register only names that exist in the listing (no invent-on-GET for .srt probes).
                 val extras = if (accessDir) {
-                    // Always merge full remote dir listing (reuse must not freeze a partial set).
-                    listSmbDirMediaNames(sourceId, source, password, parentDir)
-                        .filterNot { it.equals(displayName, ignoreCase = true) }
+                    if (skipDirList) {
+                        emptyList()
+                    } else {
+                        listSmbDirMediaNames(sourceId, source, password, parentDir)
+                            .filterNot { it.equals(displayName, ignoreCase = true) }
+                    }
                 } else {
                     findSmbSidecarNames(sourceId, source, password, remoteRelativeFile, displayName)
                 }
@@ -380,7 +390,8 @@ object OpenFileExternally {
                 }
                 logcat("OpenFileExternally") {
                     "HTTP SMB session ${session.id} files=${session.files.size} " +
-                        "accessDir=$accessDir reused=$wasReused dirKey=$dirKey extras=${extras.size}"
+                        "accessDir=$accessDir reused=$wasReused skipList=$skipDirList " +
+                        "dirKey=$dirKey extras=${extras.size}"
                 }
             }
         }
@@ -412,13 +423,18 @@ object OpenFileExternally {
             val parentDir = parentRelative(remoteRelativeFile)
             val dirKey = httpSessionKey(webDavDirKey(sourceId, parentDir), accessDir, displayName)
             withDirHttpSession(network = true, dirKey = dirKey) { session, wasReused ->
+                // Skip re-list when folder session already populated; missing names 404.
+                val skipDirList = accessDir && session.files.isNotEmpty()
                 session.put(
                     webDavFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes),
                 )
                 val extras = if (accessDir) {
-                    // Always merge full remote dir listing (reuse must not freeze a partial set).
-                    listWebDavDirMediaNames(sourceId, source, password, parentDir)
-                        .filterNot { it.equals(displayName, ignoreCase = true) }
+                    if (skipDirList) {
+                        emptyList()
+                    } else {
+                        listWebDavDirMediaNames(sourceId, source, password, parentDir)
+                            .filterNot { it.equals(displayName, ignoreCase = true) }
+                    }
                 } else {
                     findWebDavSidecarNames(sourceId, source, password, remoteRelativeFile, displayName)
                 }
@@ -438,7 +454,8 @@ object OpenFileExternally {
                 }
                 logcat("OpenFileExternally") {
                     "HTTP WebDAV session ${session.id} files=${session.files.size} " +
-                        "accessDir=$accessDir reused=$wasReused dirKey=$dirKey extras=${extras.size}"
+                        "accessDir=$accessDir reused=$wasReused skipList=$skipDirList " +
+                        "dirKey=$dirKey extras=${extras.size}"
                 }
             }
         }
