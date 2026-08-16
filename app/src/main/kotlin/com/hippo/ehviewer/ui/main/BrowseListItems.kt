@@ -1136,16 +1136,18 @@ enum class BrowseFolderSection {
 }
 
 /**
- * Section collapse for folder browse. Survives **directory navigation** (process
- * [BrowseSession]); not keyed by path. Leave app / process death clears it.
+ * Section collapse for **one folder** ([folderKey] = path / SMB-WebDAV dir key).
+ * Hide Videos here does not collapse Videos in other directories. Process memory only
+ * (return to the same folder restores; process death clears).
  */
 @Composable
 fun rememberBrowseSectionCollapse(
-    @Suppress("UNUSED_PARAMETER") resetKey: Any? = null,
+    folderKey: Any? = null,
 ): Pair<Set<BrowseFolderSection>, (BrowseFolderSection) -> Unit> {
-    var collapsed by remember {
+    val key = folderKey?.toString().orEmpty()
+    var collapsed by remember(key) {
         mutableStateOf(
-            BrowseSession.collapsedBrowseSections.mapNotNull { name ->
+            BrowseSession.collapsedBrowseSections(key).mapNotNull { name ->
                 runCatching { BrowseFolderSection.valueOf(name) }.getOrNull()
             }.toSet(),
         )
@@ -1153,7 +1155,7 @@ fun rememberBrowseSectionCollapse(
     val toggle: (BrowseFolderSection) -> Unit = { section ->
         val next = if (section in collapsed) collapsed - section else collapsed + section
         collapsed = next
-        BrowseSession.setCollapsedBrowseSections(next.map { it.name }.toSet())
+        BrowseSession.setCollapsedBrowseSections(key, next.map { it.name }.toSet())
     }
     return collapsed to toggle
 }

@@ -1109,7 +1109,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     val files = sections.files.filterIsInstance<BrowseEntryRemote.RegularFile>()
                     // In-memory only; resets when dirKey changes. No prefs / no ripple on header.
                     val animateItems by Settings.animateItems.collectAsState()
-                    val (collapsedSections, toggleSection) = rememberBrowseSectionCollapse(dirKey)
+                    val (collapsedSections, toggleSection) = rememberBrowseSectionCollapse(
+                        BrowseSession.smbListingKey(sourceId, dirKey),
+                    )
 
                     // Keys must stay unique when dual-list + "this folder as gallery" share a name
                     // (e.g. parent/ff has images and a child dir also named ff → g-self vs g-child-ff).
