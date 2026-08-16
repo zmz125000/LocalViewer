@@ -265,10 +265,10 @@ object VideoThumbnail {
                         readahead = false,
                         yieldable = true,
                     )
-                    fetchProbeSnapshot(raw, source.fileName)
+                    fetchProbeSnapshot(raw, source)
                 }
             } ?: return null
-            extractSemaphore.withPermit { decodeSnapshot(snapshot, source.fileName) }
+            extractSemaphore.withPermit { decodeSnapshot(snapshot, source) }
         }
         is VideoThumbnailSource.WebDav -> {
             val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
@@ -281,10 +281,10 @@ object VideoThumbnail {
                         pipeline = false,
                         readahead = false,
                     )
-                    fetchProbeSnapshot(raw, source.fileName)
+                    fetchProbeSnapshot(raw, source)
                 }
             } ?: return null
-            extractSemaphore.withPermit { decodeSnapshot(snapshot, source.fileName) }
+            extractSemaphore.withPermit { decodeSnapshot(snapshot, source) }
         }
     }
 
@@ -292,7 +292,11 @@ object VideoThumbnail {
      * Pull probe bytes then close [raw] before native decode.
      * Stuck SMB read runs on a worker; [ArchiveByteSource.close] unblocks it.
      */
-    private suspend fun fetchProbeSnapshot(raw: ArchiveByteSource, fileName: String): ProbeSnapshot? {
+    private suspend fun fetchProbeSnapshot(
+        raw: ArchiveByteSource,
+        source: VideoThumbnailSource,
+    ): ProbeSnapshot? {
+        val fileName = source.fileName
         val done = CompletableDeferred<ProbeSnapshot?>()
         val thread = Thread(
             {
@@ -312,7 +316,9 @@ object VideoThumbnail {
         return try {
             withTimeout(PROBE_IO_TIMEOUT_MS) { done.await() }
         } catch (e: TimeoutCancellationException) {
-            logcat("VideoThumb") { "probe I/O timeout ${PROBE_IO_TIMEOUT_MS}ms ($fileName)" }
+            logcat("VideoThumb") {
+                "probe I/O timeout ${PROBE_IO_TIMEOUT_MS}ms (${privacyLogLabel(source)})"
+            }
             runCatching { raw.close() }
             thread.interrupt()
             null
@@ -362,41 +368,48 @@ object VideoThumbnail {
         return if (filled == max) buf else buf.copyOf(filled)
     }
 
-    private suspend fun decodeSnapshot(snapshot: ProbeSnapshot, label: String): Bitmap? = when (snapshot.mode) {
-        ProbeMode.ContiguousHead -> {
-            // Real truncated file — safer for MTS than sparse full-size MDS.
-            val tmp = File(cacheDirectory(), "mmr-${System.nanoTime()}.bin")
-            try {
-                tmp.outputStream().use { it.write(snapshot.head) }
+    private suspend fun decodeSnapshot(
+        snapshot: ProbeSnapshot,
+        source: VideoThumbnailSource,
+    ): Bitmap? {
+        val label = privacyLogLabel(source)
+        return when (snapshot.mode) {
+            ProbeMode.ContiguousHead -> {
+                // Real truncated file — safer for MTS than sparse full-size MDS.
+                val tmp = File(cacheDirectory(), "mmr-${System.nanoTime()}.bin")
+                try {
+                    tmp.outputStream().use { it.write(snapshot.head) }
+                    decodeFrameWatchdog(
+                        label = label,
+                        timeoutMs = DECODE_TIMEOUT_MS,
+                        setDataSource = { it.setDataSource(tmp.absolutePath) },
+                        getFrame = { selectNetworkFrame() },
+                        cleanup = { tmp.delete() },
+                    )
+                } catch (e: Throwable) {
+                    tmp.delete()
+                    throw e
+                }
+            }
+            ProbeMode.HeadAndTail -> {
+                val data = ProbeMediaDataSource(snapshot.fileSize, snapshot.head, snapshot.tail)
                 decodeFrameWatchdog(
                     label = label,
                     timeoutMs = DECODE_TIMEOUT_MS,
-                    setDataSource = { it.setDataSource(tmp.absolutePath) },
+                    setDataSource = { it.setDataSource(data) },
                     getFrame = { selectNetworkFrame() },
-                    cleanup = { tmp.delete() },
                 )
-            } catch (e: Throwable) {
-                tmp.delete()
-                throw e
             }
-        }
-        ProbeMode.HeadAndTail -> {
-            val data = ProbeMediaDataSource(snapshot.fileSize, snapshot.head, snapshot.tail)
-            decodeFrameWatchdog(
-                label = label,
-                timeoutMs = DECODE_TIMEOUT_MS,
-                setDataSource = { it.setDataSource(data) },
-                getFrame = { selectNetworkFrame() },
-            )
         }
     }
 
     /** Local files go through the platform path — full random access. */
     private suspend fun extractLocalFrame(source: VideoThumbnailSource.Local): Bitmap? {
+        val label = privacyLogLabel(source)
         val file = File(source.path)
         if (source.path.startsWith('/') && file.isFile) {
             return decodeFrameWatchdog(
-                label = file.name,
+                label = label,
                 timeoutMs = DECODE_TIMEOUT_MS,
                 setDataSource = { it.setDataSource(file.absolutePath) },
                 getFrame = { selectThumbnailFrame() },
@@ -405,12 +418,26 @@ object VideoThumbnail {
         val pfd = source.path.toPath().openFileDescriptor("r")
         val length = pfd.statSize.coerceAtLeast(0L)
         return decodeFrameWatchdog(
-            label = source.path,
+            label = label,
             timeoutMs = DECODE_TIMEOUT_MS,
             setDataSource = { it.setDataSource(pfd.fileDescriptor, 0L, length) },
             getFrame = { selectThumbnailFrame() },
             cleanup = { runCatching { pfd.close() } },
         )
+    }
+
+    /**
+     * Logcat identity only: extension + short hash of [VideoThumbnailSource.cacheIdentity].
+     * Never full path or display name. Example: `mts#a1b2c3d4`
+     */
+    private fun privacyLogLabel(source: VideoThumbnailSource): String {
+        val ext = source.fileName
+            .substringAfterLast('.', missingDelimiterValue = "")
+            .lowercase()
+            .filter { it.isLetterOrDigit() }
+            .take(8)
+            .ifEmpty { "bin" }
+        return "$ext#${sha256(source.cacheIdentity).take(8)}"
     }
 
     private fun cacheKey(source: VideoThumbnailSource): String = sha256(source.cacheIdentity)
