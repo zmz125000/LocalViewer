@@ -80,6 +80,7 @@ object WebDavClient {
         "<d:resourcetype/>" +
         "<d:getcontentlength/>" +
         "<d:getcontenttype/>" +
+        "<d:getlastmodified/>" +
         "</d:prop>" +
         "</d:propfind>"
 
@@ -765,54 +766,61 @@ object WebDavClient {
         var href: String? = null
         var displayName: String? = null
         var isCollection = false
+        var contentLength: Long = 0L
+        var lastModifiedMs: Long = 0L
         var inResponse = false
         var inResourceType = false
+
+        fun resetResponse() {
+            href = null
+            displayName = null
+            isCollection = false
+            contentLength = 0L
+            lastModifiedMs = 0L
+        }
 
         fun finishResponse() {
             val h = href ?: return
             val decodedHref = decodeHref(h)
             val abs = resolveHref(dirUrl, decodedHref)
             if (sameCollection(abs, dirUrl)) {
-                href = null
-                displayName = null
-                isCollection = false
+                resetResponse()
                 return
             }
             val name = displayName?.takeIf { it.isNotBlank() }
                 ?: abs.encodedPath.trimEnd('/').substringAfterLast('/').let { decodeHref(it) }
             if (name.isEmpty() || name == "." || name == "..") {
-                href = null
-                displayName = null
-                isCollection = false
+                resetResponse()
                 return
             }
             // Only include direct children of relativeDir.
             val childRel = relativeFromRoot(rootUrl, abs) ?: run {
-                href = null
-                displayName = null
-                isCollection = false
+                resetResponse()
                 return
             }
             val parent = relativeDir.replace('\\', '/').trim('/')
             val expectedPrefix = if (parent.isEmpty()) "" else "$parent/"
             if (parent.isNotEmpty() && !childRel.startsWith(expectedPrefix)) {
-                href = null
-                displayName = null
-                isCollection = false
+                resetResponse()
                 return
             }
             val remainder = if (parent.isEmpty()) childRel else childRel.removePrefix(expectedPrefix)
             if (remainder.isEmpty() || remainder.contains('/')) {
                 // Self or nested deeper than depth-1 noise.
-                href = null
-                displayName = null
-                isCollection = false
+                resetResponse()
                 return
             }
-            out += RemoteChild(name = remainder, isDirectory = isCollection)
-            href = null
-            displayName = null
-            isCollection = false
+            out += RemoteChild(
+                name = remainder,
+                isDirectory = isCollection,
+                path = remainder,
+                size = if (isCollection) 0L else contentLength.coerceAtLeast(0L),
+                lastModifiedMs = lastModifiedMs.coerceAtLeast(0L),
+                // WebDAV has no portable hidden/readonly props we always get.
+                hidden = false,
+                readOnly = false,
+            )
+            resetResponse()
         }
 
         while (event != XmlPullParser.END_DOCUMENT) {
@@ -822,15 +830,19 @@ object WebDavClient {
                     when {
                         local.equals("response", ignoreCase = true) -> {
                             inResponse = true
-                            href = null
-                            displayName = null
-                            isCollection = false
+                            resetResponse()
                         }
                         inResponse && local.equals("href", ignoreCase = true) -> {
                             href = parser.nextText().trim()
                         }
                         inResponse && local.equals("displayname", ignoreCase = true) -> {
                             displayName = parser.nextText().trim()
+                        }
+                        inResponse && local.equals("getcontentlength", ignoreCase = true) -> {
+                            contentLength = parser.nextText().trim().toLongOrNull() ?: 0L
+                        }
+                        inResponse && local.equals("getlastmodified", ignoreCase = true) -> {
+                            lastModifiedMs = parseHttpDateMs(parser.nextText().trim())
                         }
                         inResponse && local.equals("resourcetype", ignoreCase = true) -> {
                             inResourceType = true
@@ -854,6 +866,28 @@ object WebDavClient {
             event = parser.next()
         }
         return out.distinctBy { it.name }
+    }
+
+    /** RFC 1123 / HTTP-date for DAV:getlastmodified → epoch ms, or 0. */
+    private fun parseHttpDateMs(raw: String): Long {
+        if (raw.isBlank()) return 0L
+        // Instant.parse handles ISO-8601 some servers send; HTTP-date via SimpleDateFormat fallbacks.
+        runCatching { return java.time.Instant.parse(raw).toEpochMilli() }
+        val patterns = arrayOf(
+            "EEE, dd MMM yyyy HH:mm:ss zzz",
+            "EEEE, dd-MMM-yy HH:mm:ss zzz",
+            "EEE MMM d HH:mm:ss yyyy",
+        )
+        for (p in patterns) {
+            val ms = runCatching {
+                java.text.SimpleDateFormat(p, java.util.Locale.US).apply {
+                    timeZone = java.util.TimeZone.getTimeZone("GMT")
+                    isLenient = true
+                }.parse(raw)?.time
+            }.getOrNull()
+            if (ms != null && ms > 0L) return ms
+        }
+        return 0L
     }
 
     private fun decodeHref(href: String): String = try {

@@ -362,6 +362,7 @@ object BrowseSession {
     fun takeSmbScrollAnchor(sourceId: Long, relativeDir: String): String? = smbAnchor.remove(smbListingKey(sourceId, relativeDir))
 
     // --- Folder-view section collapse (process lifetime; survives path navigation) ---
+
     /**
      * Collapsed section keys ([com.hippo.ehviewer.ui.main.BrowseFolderSection] names).
      * Shared across local/SMB/WebDAV folder browser so “tap header to hide” stays
