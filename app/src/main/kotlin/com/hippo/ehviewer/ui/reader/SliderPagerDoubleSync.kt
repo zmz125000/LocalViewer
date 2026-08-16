@@ -28,14 +28,19 @@ class SliderPagerDoubleSync(
 
     fun sliderScrollTo(index: Int) {
         sliderFollowPager = false
-        sliderValue = index.coerceIn(1, pageLoader.size)
+        // Always real page indices (1-based).
+        sliderValue = index.coerceIn(1, pageLoader.size.coerceAtLeast(1))
     }
 
     fun reset() {
         sliderFollowPager = true
     }
 
-    fun currentPageFlow(webtoon: Boolean) = if (webtoon) {
+    /**
+     * @param webtoon continuous / webtoon list
+     * @param pagerDual true when HorizontalPager uses spread indices (LTR/RTL dual)
+     */
+    fun currentPageFlow(webtoon: Boolean, pagerDual: Boolean) = if (webtoon) {
         snapshotFlow {
             with(lazyListState.layoutInfo) {
                 visibleItemsInfo.lastOrNull {
@@ -43,34 +48,43 @@ class SliderPagerDoubleSync(
                 }?.index
             }
         }.filterNotNull()
+    } else if (pagerDual) {
+        // Pager page = spread; expose first real page of the spread.
+        snapshotFlow { dualFirstPageIndex(pagerState.currentPage) }
     } else {
         snapshotFlow { pagerState.currentPage }
     }
 
     @Composable
-    fun Sync(webtoon: Boolean, onPageSelected: () -> Unit) {
-        val currentIndexFlow = remember(webtoon) {
+    fun Sync(webtoon: Boolean, pagerDual: Boolean = false, onPageSelected: () -> Unit) {
+        val currentIndexFlow = remember(webtoon, pagerDual) {
             val initialIndex = sliderValue - 1
             sliderFollowPager = if (webtoon) {
                 lazyListState.firstVisibleItemIndex == initialIndex
+            } else if (pagerDual) {
+                dualFirstPageIndex(pagerState.currentPage) == initialIndex ||
+                    dualSpreadIndex(initialIndex) == pagerState.currentPage
             } else {
                 pagerState.currentPage == initialIndex
             }
-            currentPageFlow(webtoon)
+            currentPageFlow(webtoon, pagerDual)
         }
         if (sliderFollowPager) {
             LaunchedEffect(currentIndexFlow) {
                 currentIndexFlow.drop(1).collect { index ->
+                    // Always store real page index.
                     sliderValue = index + 1
                     pageLoader.startPage = index
                     onPageSelected()
                 }
             }
         } else {
-            LaunchedEffect(webtoon) {
+            LaunchedEffect(webtoon, pagerDual) {
                 snapshotFlow { sliderValue - 1 }.collectLatest { index ->
                     if (webtoon) {
                         lazyListState.scrollToItem(index)
+                    } else if (pagerDual) {
+                        pagerState.animateScrollToPage(dualSpreadIndex(index))
                     } else {
                         pagerState.animateScrollToPage(index)
                     }

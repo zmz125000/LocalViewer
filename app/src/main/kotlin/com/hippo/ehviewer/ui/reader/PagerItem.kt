@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -73,6 +74,8 @@ fun PagerItem(
     contentModifier: Modifier = Modifier,
     viewportSize: Size = Size.Zero,
     prioritizeDecode: Boolean = false,
+    /** Landscape dual webtoon: height-driven width in a LazyRow. */
+    horizontalStrip: Boolean = false,
 ) {
     // Do NOT cancelRequest on dispose — that raced with notifySourceReady and left pages
     // in Queued with no active decode job (forever spinner) even when the file was cached.
@@ -91,10 +94,15 @@ fun PagerItem(
         }
     }
     val defaultError = stringResource(id = R.string.decode_image_error)
+    val placeholderMod = if (horizontalStrip) {
+        modifier.fillMaxHeight().aspectRatio(DEFAULT_ASPECT, matchHeightConstraintsFirst = true)
+    } else {
+        modifier.fillMaxWidth().aspectRatio(DEFAULT_ASPECT)
+    }
     when (val state = page.statusObserved) {
         is PageStatus.Queued, is PageStatus.Loading -> {
             Box(
-                modifier = modifier.fillMaxWidth().aspectRatio(DEFAULT_ASPECT),
+                modifier = placeholderMod,
                 contentAlignment = Alignment.Center,
             ) {
                 AnimatedContent(
@@ -157,6 +165,7 @@ fun PagerItem(
                     clockwise = clockwise,
                     contentScale = contentScale,
                     colorFilter = colorFilter,
+                    horizontalStrip = horizontalStrip,
                     modifier = Modifier.thenIf(drawable is Animatable) {
                         onVisibilityChanged(minDurationMs = 33, minFractionVisible = 0.5f) {
                             drawable!!.setVisible(it, false)
@@ -164,16 +173,20 @@ fun PagerItem(
                     }.then(modifier),
                     contentModifier = contentModifier,
                 )
-            } ?: Spacer(modifier = modifier.fillMaxWidth().aspectRatio(DEFAULT_ASPECT))
+            } ?: Spacer(modifier = placeholderMod)
         }
         is PageStatus.Blocked -> {
             AdsPlaceholder(
-                modifier = modifier.fillMaxSize(),
+                modifier = if (horizontalStrip) {
+                    modifier.fillMaxHeight().aspectRatio(DEFAULT_ASPECT, matchHeightConstraintsFirst = true)
+                } else {
+                    modifier.fillMaxSize()
+                },
                 contentScale = if (contentScale == ContentScale.Inside) ContentScale.Fit else contentScale,
             )
         }
         is PageStatus.Error -> {
-            Box(modifier = modifier.fillMaxWidth().aspectRatio(DEFAULT_ASPECT)) {
+            Box(modifier = placeholderMod) {
                 Column(
                     modifier = Modifier.align(Alignment.Center),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -208,7 +221,8 @@ fun PagerItem(
  * Pre-fitting with Fit upscaled small pages (1220×889 → scale > 1), then telephoto Fit
  * upscaled again → crop. Large pages only downscaled once so they looked fine.
  *
- * **Webtoon:** no per-page telephoto fit — width-driven post-rotation row height.
+ * **Webtoon (vertical):** no per-page telephoto fit — width-driven post-rotation row height.
+ * **Webtoon (horizontal strip):** height-driven post-rotation item width.
  *
  * Whether to rotate must match [shouldAutoRotate] used in [PagerViewer] for contentLocation.
  */
@@ -219,17 +233,33 @@ private fun FitPageImage(
     clockwise: Boolean,
     contentScale: ContentScale,
     colorFilter: ColorFilter?,
+    horizontalStrip: Boolean,
     modifier: Modifier,
     contentModifier: Modifier,
 ) {
     if (!rotate) {
-        Image(
-            painter = painter,
-            contentDescription = null,
-            modifier = modifier.then(contentModifier).fillMaxSize(),
-            contentScale = contentScale,
-            colorFilter = colorFilter,
-        )
+        if (horizontalStrip) {
+            val src = painter.intrinsicSize
+            val aspect = (src.width / src.height.coerceAtLeast(1f)).coerceAtLeast(0.01f)
+            Image(
+                painter = painter,
+                contentDescription = null,
+                modifier = modifier
+                    .then(contentModifier)
+                    .fillMaxHeight()
+                    .aspectRatio(aspect, matchHeightConstraintsFirst = true),
+                contentScale = ContentScale.FillBounds,
+                colorFilter = colorFilter,
+            )
+        } else {
+            Image(
+                painter = painter,
+                contentDescription = null,
+                modifier = modifier.then(contentModifier).fillMaxSize(),
+                contentScale = contentScale,
+                colorFilter = colorFilter,
+            )
+        }
         return
     }
 
@@ -243,8 +273,8 @@ private fun FitPageImage(
         contentDescription = null,
         modifier = modifier
             .then(contentModifier)
-            .fillMaxWidth()
-            .rotate90FitLayout(bitmapW = srcW, bitmapH = srcH)
+            .then(if (horizontalStrip) Modifier.fillMaxHeight() else Modifier.fillMaxWidth())
+            .rotate90FitLayout(bitmapW = srcW, bitmapH = srcH, horizontalStrip = horizontalStrip)
             .graphicsLayer {
                 rotationZ = degrees
                 clip = false
@@ -259,21 +289,37 @@ private fun FitPageImage(
 /**
  * - **Pager (bounded H):** measure at ContentScale.**Inside** of post-rotation size (no upscale),
  *   report full viewport so telephoto can Fit-upscale / zoom.
- * - **Webtoon (unbounded H):** width-driven post-rotation row height from bitmap aspect.
+ * - **Webtoon vertical (unbounded H):** width-driven post-rotation row height from bitmap aspect.
+ * - **Webtoon horizontal (unbounded W):** height-driven post-rotation item width.
  */
 private fun Modifier.rotate90FitLayout(
     bitmapW: Int,
     bitmapH: Int,
+    horizontalStrip: Boolean = false,
 ): Modifier = layout { measurable, constraints ->
-    val maxW = constraints.maxWidth.coerceAtLeast(1)
+    val maxW = constraints.maxWidth
     val maxH = constraints.maxHeight
     val hasBoundedH = maxH != Constraints.Infinity
+    val hasBoundedW = maxW != Constraints.Infinity
     // Post-rotation aspect (width/height) = origH/origW
     val displayAspect = bitmapH.toFloat().coerceAtLeast(1f) / bitmapW.toFloat().coerceAtLeast(1f)
 
-    if (!hasBoundedH) {
-        // Webtoon: width-driven strip; fit rotated image to max width.
-        val displayW = maxW
+    if (horizontalStrip && hasBoundedH && !hasBoundedW) {
+        // Horizontal continuous: height-driven strip; fit rotated image to max height.
+        val displayH = maxH.coerceAtLeast(1)
+        val displayW = (displayH * displayAspect).roundToInt().coerceAtLeast(1)
+        val preW = displayH
+        val preH = displayW
+        val placeable = measurable.measure(Constraints.fixed(preW, preH))
+        layout(displayW, displayH) {
+            placeable.place(
+                x = (displayW - preW) / 2,
+                y = (displayH - preH) / 2,
+            )
+        }
+    } else if (!hasBoundedH) {
+        // Vertical webtoon: width-driven strip; fit rotated image to max width.
+        val displayW = maxW.coerceAtLeast(1)
         val displayH = (displayW / displayAspect).roundToInt().coerceAtLeast(1)
         val preW = displayH
         val preH = displayW
@@ -288,7 +334,10 @@ private fun Modifier.rotate90FitLayout(
         // Post-rotation logical size = swap of bitmap (matches fitDisplaySize / contentLocation).
         val logicalW = bitmapH.toFloat().coerceAtLeast(1f)
         val logicalH = bitmapW.toFloat().coerceAtLeast(1f)
-        val viewport = Size(maxW.toFloat(), maxH.toFloat().coerceAtLeast(1f))
+        val viewport = Size(
+            maxW.coerceAtLeast(1).toFloat(),
+            maxH.coerceAtLeast(1).toFloat(),
+        )
         // Same as telephoto scaledInsideAndCenterAligned: Inside never upscales.
         val inside = ContentScale.Inside.computeScaleFactor(
             srcSize = Size(logicalW, logicalH),
