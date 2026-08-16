@@ -33,6 +33,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -203,10 +205,19 @@ abstract class PageLoader(
 
     private val prefetchPageCount = Settings.preloadImage.value
 
+    /**
+     * Bumped on [restart] so composed [PagerItem]s re-run their request effect.
+     * Status alone is not enough: a page already [PageStatus.Queued] does not re-emit,
+     * and collectors that [drop] the first value can miss the post-restart Queued.
+     */
+    private val _reloadGeneration = MutableStateFlow(0)
+    val reloadGeneration: StateFlow<Int> = _reloadGeneration.asStateFlow()
+
     fun restart() {
         cancelDecodeJobs()
         lock.write { cache.evictAll() }
         pages.forEach(Page::reset)
+        _reloadGeneration.update { it + 1 }
     }
 
     /**

@@ -63,7 +63,6 @@ import com.hippo.ehviewer.ui.tools.DrawablePainter
 import com.hippo.ehviewer.util.AdsPlaceholderFile
 import kotlin.math.roundToInt
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.flow.drop
 
 @Composable
 fun PagerItem(
@@ -80,10 +79,16 @@ fun PagerItem(
     // Do NOT cancelRequest on dispose — that raced with notifySourceReady and left pages
     // in Queued with no active decode job (forever spinner) even when the file was cached.
     // Decodes are semaphore-limited and finish into the memory cache for revisit.
-    LaunchedEffect(page.index, pageLoader, prioritizeDecode) {
+    //
+    // Key [reloadGeneration] so HDR / lib-direct / crop / etc. restart() always re-requests
+    // visible pages. Without it, status can stay Queued with no job (StateFlow no-op if
+    // already Queued, or drop(1) swallowed the only Queued emission) until the user scrolls.
+    val reloadGen by pageLoader.reloadGeneration.collectAsState()
+    LaunchedEffect(page.index, pageLoader, prioritizeDecode, reloadGen) {
         pageLoader.request(page.index, prioritize = prioritizeDecode)
         // Re-request when status falls back to Queued (eviction / restart) or blank Error.
-        page.statusFlow.drop(1).collect { status ->
+        // Do not drop(1): the first value after a restart may be the only Queued we get.
+        page.statusFlow.collect { status ->
             when (status) {
                 PageStatus.Queued -> pageLoader.request(page.index, prioritize = prioritizeDecode)
                 is PageStatus.Error -> if (status.message == null) {
