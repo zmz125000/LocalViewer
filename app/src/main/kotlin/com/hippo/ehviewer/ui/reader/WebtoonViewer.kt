@@ -2,12 +2,14 @@ package com.hippo.ehviewer.ui.reader
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -48,6 +50,8 @@ fun WebtoonViewer(
     onPrevFolder: () -> Unit = {},
     onNextFolder: () -> Unit = {},
     onBack: () -> Unit = {},
+    /** Landscape dual: continuous horizontal strip (no page pairing). */
+    horizontal: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -57,14 +61,16 @@ fun WebtoonViewer(
     val zoomableState = rememberZoomableState(zoomSpec = WebtoonZoomSpec)
     val density = LocalDensity.current
     val paddingPercent by Settings.webtoonSidePadding.collectAsState()
-    val sidePadding by remember(density) {
+    val sidePadding by remember(density, horizontal) {
         snapshotFlow {
             with(density) {
-                (lazyListState.layoutInfo.viewportSize.width * paddingPercent / 100f).toDp()
+                val viewport = lazyListState.layoutInfo.viewportSize
+                val edge = if (horizontal) viewport.height else viewport.width
+                (edge * paddingPercent / 100f).toDp()
             }
         }
     }.collectAsState(0.dp)
-    val doubleTap = remember(navigator, onPrevFolder, onNextFolder, onBack) {
+    val doubleTap = remember(navigator, onPrevFolder, onNextFolder, onBack, horizontal) {
         doubleTapAction(
             isRtl = false,
             getViewportSize = {
@@ -77,7 +83,7 @@ fun WebtoonViewer(
         )
     }
 
-    // At 1×: pinch only — one-finger drag belongs to LazyColumn.
+    // At 1×: pinch only — one-finger drag belongs to LazyColumn/Row.
     // When zoomed: pan + pinch so content can be moved; edge pass-through via Telephoto canPan.
     val zoomFraction = zoomableState.zoomFraction ?: 0f
     val zoomedIn = zoomFraction > 0.01f
@@ -90,59 +96,103 @@ fun WebtoonViewer(
     // While 2+ fingers are down, stop list scroll so pinch can own the pointer stream.
     var multiTouch by remember { mutableStateOf(false) }
 
-    LazyColumn(
-        modifier = modifier
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        multiTouch = event.changes.count { it.pressed } >= 2
-                    }
+    val listModifier = modifier
+        .pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    multiTouch = event.changes.count { it.pressed } >= 2
                 }
             }
-            .zoomable(
-                state = zoomableState,
-                gestures = gestures,
-                onClick = { offset ->
-                    scope.launch {
-                        with(lazyListState) {
-                            val (w, h) = layoutInfo.viewportSize
-                            val (x, y) = offset
-                            when (navigator().getAction(Offset(x / w, y / h))) {
-                                NavigationRegion.MENU -> onMenuRegionClick()
-                                NavigationRegion.NEXT, NavigationRegion.RIGHT -> scrollDown()
-                                NavigationRegion.PREV, NavigationRegion.LEFT -> scrollUp()
+        }
+        .zoomable(
+            state = zoomableState,
+            gestures = gestures,
+            onClick = { offset ->
+                scope.launch {
+                    with(lazyListState) {
+                        val (w, h) = layoutInfo.viewportSize
+                        val (x, y) = offset
+                        when (navigator().getAction(Offset(x / w, y / h))) {
+                            NavigationRegion.MENU -> onMenuRegionClick()
+                            NavigationRegion.NEXT, NavigationRegion.RIGHT -> {
+                                if (horizontal) scrollRight() else scrollDown()
+                            }
+                            NavigationRegion.PREV, NavigationRegion.LEFT -> {
+                                if (horizontal) scrollLeft() else scrollUp()
                             }
                         }
                     }
-                },
-                onLongClick = { ofs ->
-                    val info = lazyListState.layoutInfo.visibleItemsInfo.find { info ->
+                }
+            },
+            onLongClick = { ofs ->
+                val info = if (horizontal) {
+                    lazyListState.layoutInfo.visibleItemsInfo.find { info ->
+                        info.offset <= ofs.x && info.offset + info.size > ofs.x
+                    }
+                } else {
+                    lazyListState.layoutInfo.visibleItemsInfo.find { info ->
                         info.offset <= ofs.y && info.offset + info.size > ofs.y
                     }
-                    if (info != null) {
-                        onSelectPage(items[info.index])
-                    }
-                },
-                onDoubleClick = doubleTap,
-            ),
-        state = lazyListState,
-        userScrollEnabled = !multiTouch,
-        contentPadding = PaddingValues(horizontal = sidePadding),
-        verticalArrangement = Arrangement.spacedBy(if (withGaps) 15.dp else 0.dp),
-    ) {
-        items(
-            count = pageCount,
-            key = { index -> items.getOrNull(index)?.index ?: index },
-        ) { index ->
-            val page = items.getOrNull(index) ?: return@items
-            val viewport = lazyListState.layoutInfo.viewportSize.toSize()
-            PagerItem(
-                page = page,
-                pageLoader = pageLoader,
-                contentScale = ContentScale.FillWidth,
-                viewportSize = viewport,
-            )
+                }
+                if (info != null) {
+                    onSelectPage(items[info.index])
+                }
+            },
+            onDoubleClick = doubleTap,
+        )
+
+    val gap = if (withGaps) 15.dp else 0.dp
+    val contentScale = if (horizontal) ContentScale.FillHeight else ContentScale.FillWidth
+
+    // key axis so LazyColumn ↔ LazyRow swap does not reuse incompatible item measure.
+    key(horizontal) {
+        if (horizontal) {
+            LazyRow(
+                modifier = listModifier,
+                state = lazyListState,
+                userScrollEnabled = !multiTouch,
+                contentPadding = PaddingValues(vertical = sidePadding),
+                horizontalArrangement = Arrangement.spacedBy(gap),
+            ) {
+                items(
+                    count = pageCount,
+                    key = { index -> items.getOrNull(index)?.index ?: index },
+                ) { index ->
+                    val page = items.getOrNull(index) ?: return@items
+                    val viewport = lazyListState.layoutInfo.viewportSize.toSize()
+                    PagerItem(
+                        page = page,
+                        pageLoader = pageLoader,
+                        contentScale = contentScale,
+                        viewportSize = viewport,
+                        horizontalStrip = true,
+                        modifier = Modifier.fillMaxHeight(),
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = listModifier,
+                state = lazyListState,
+                userScrollEnabled = !multiTouch,
+                contentPadding = PaddingValues(horizontal = sidePadding),
+                verticalArrangement = Arrangement.spacedBy(gap),
+            ) {
+                items(
+                    count = pageCount,
+                    key = { index -> items.getOrNull(index)?.index ?: index },
+                ) { index ->
+                    val page = items.getOrNull(index) ?: return@items
+                    val viewport = lazyListState.layoutInfo.viewportSize.toSize()
+                    PagerItem(
+                        page = page,
+                        pageLoader = pageLoader,
+                        contentScale = contentScale,
+                        viewportSize = viewport,
+                    )
+                }
+            }
         }
     }
 }

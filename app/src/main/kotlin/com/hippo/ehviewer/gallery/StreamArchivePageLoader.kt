@@ -379,7 +379,8 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     }
 
                     private fun cancelDistantExtracts(center: Int) {
-                        for ((idx, job) in extractJobs.entries.toList()) {
+                        // ConcurrentHashMap.forEach — avoid entries.toList() iterator race on Android.
+                        extractJobs.forEach { idx, job ->
                             if (kotlin.math.abs(idx - center) > keepWindow) {
                                 job.cancel()
                             }
