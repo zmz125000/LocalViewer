@@ -857,7 +857,7 @@ private val HISTORY_DIRECTORY_SECTION_GAP = 16.dp
 
 /**
  * Spacer between directory pins and main history.
- * When [tappable], tap toggles expand/collapse of the dir section.
+ * When [tappable], tap toggles expand/collapse of the dir section (**no ripple**).
  */
 @Composable
 private fun HistoryDirectorySectionGap(
@@ -870,7 +870,12 @@ private fun HistoryDirectorySectionGap(
             .height(HISTORY_DIRECTORY_SECTION_GAP)
             .then(
                 if (tappable) {
-                    Modifier.clickable(role = Role.Button, onClick = onToggle)
+                    Modifier.clickable(
+                        interactionSource = null,
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onToggle,
+                    )
                 } else {
                     Modifier
                 },
