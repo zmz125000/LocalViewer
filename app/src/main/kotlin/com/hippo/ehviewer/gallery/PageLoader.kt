@@ -210,14 +210,20 @@ abstract class PageLoader(
     }
 
     /**
-     * Cancel queued/offscreen work before a pager-current request. Native codec calls cannot
-     * be interrupted mid-call, but removing non-cancellable wrapping prevents obsolete jobs
-     * from continuing through bitmap copies and publishing stale results afterward.
+     * Drop **stale** decode work far from [index] so a newly needed current page can claim a
+     * semaphore slot. Must **not** cancel the warm window (index ± prefetch): prefetcher /
+     * beyond-viewport pages decode into cache for the next turn.
+     *
+     * Call only when actually starting a decode for [index] — never on Ready re-request
+     * (that used to wipe warm jobs every composition of the current page).
      */
     private fun prioritizeDecode(index: Int) {
+        val radius = prefetchPageCount.coerceAtLeast(1)
+        val lo = (index - radius).coerceAtLeast(0)
+        val hi = (index + radius).coerceAtMost((size - 1).coerceAtLeast(0))
         val obsolete = synchronized(jobs) {
             jobs.entries
-                .filter { (jobIndex, job) -> jobIndex != index && job.isActive }
+                .filter { (jobIndex, job) -> job.isActive && (jobIndex < lo || jobIndex > hi) }
                 .map { it.key to it.value }
                 .also { stale -> stale.forEach { (jobIndex, _) -> jobs.remove(jobIndex) } }
         }
@@ -298,7 +304,6 @@ abstract class PageLoader(
 
     fun request(index: Int, prioritize: Boolean = false) {
         if (index !in 0 until size) return
-        if (prioritize) prioritizeDecode(index)
         val prefetchRange = if (index >= prevIndex.load()) {
             index + 1..(index + prefetchPageCount).coerceAtMost(size - 1)
         } else {
@@ -311,6 +316,8 @@ abstract class PageLoader(
             is PageStatus.Ready -> {
                 // Keep showing a live decode; only reload if bitmap was recycled.
                 if (st.image.innerImage != null) {
+                    // Do not prioritizeDecode here — current is already warm; canceling
+                    // would kill neighbor prefetch/beyond-viewport warm decodes.
                     prefetchAbsent(prefetchRange)
                     return
                 }
@@ -338,6 +345,8 @@ abstract class PageLoader(
             return
         }
 
+        // Only when starting a new decode for this index: drop far-away jobs, keep warm window.
+        if (prioritize) prioritizeDecode(index)
         notifyPageWait(index)
         onRequest(index)
         prefetchAbsent(prefetchRange)
