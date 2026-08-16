@@ -358,13 +358,9 @@ object OpenFileExternally {
                 )
                 // Pre-register only names that exist in the listing (no invent-on-GET for .srt probes).
                 val extras = if (accessDir) {
-                    // Reuse: skip re-list when folder media already populated.
-                    if (wasReused && session.files.size > 1) {
-                        emptyList()
-                    } else {
-                        listSmbDirMediaNames(sourceId, source, password, parentDir)
-                            .filterNot { it.equals(displayName, ignoreCase = true) }
-                    }
+                    // Always merge full remote dir listing (reuse must not freeze a partial set).
+                    listSmbDirMediaNames(sourceId, source, password, parentDir)
+                        .filterNot { it.equals(displayName, ignoreCase = true) }
                 } else {
                     findSmbSidecarNames(sourceId, source, password, remoteRelativeFile, displayName)
                 }
@@ -384,7 +380,7 @@ object OpenFileExternally {
                 }
                 logcat("OpenFileExternally") {
                     "HTTP SMB session ${session.id} files=${session.files.size} " +
-                        "accessDir=$accessDir reused=$wasReused dirKey=$dirKey"
+                        "accessDir=$accessDir reused=$wasReused dirKey=$dirKey extras=${extras.size}"
                 }
             }
         }
@@ -420,12 +416,9 @@ object OpenFileExternally {
                     webDavFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes),
                 )
                 val extras = if (accessDir) {
-                    if (wasReused && session.files.size > 1) {
-                        emptyList()
-                    } else {
-                        listWebDavDirMediaNames(sourceId, source, password, parentDir)
-                            .filterNot { it.equals(displayName, ignoreCase = true) }
-                    }
+                    // Always merge full remote dir listing (reuse must not freeze a partial set).
+                    listWebDavDirMediaNames(sourceId, source, password, parentDir)
+                        .filterNot { it.equals(displayName, ignoreCase = true) }
                 } else {
                     findWebDavSidecarNames(sourceId, source, password, remoteRelativeFile, displayName)
                 }
@@ -445,7 +438,7 @@ object OpenFileExternally {
                 }
                 logcat("OpenFileExternally") {
                     "HTTP WebDAV session ${session.id} files=${session.files.size} " +
-                        "accessDir=$accessDir reused=$wasReused dirKey=$dirKey"
+                        "accessDir=$accessDir reused=$wasReused dirKey=$dirKey extras=${extras.size}"
                 }
             }
         }
@@ -634,16 +627,29 @@ object OpenFileExternally {
         return SidecarSubtitles.matchSiblings(videoName, names)
     }
 
+    /**
+     * Full media basenames for HTTP access-dir. Uses a raw share.list (not classified
+     * BrowseSession) so 300-video folders are not truncated to a partial UI cache.
+     */
     private suspend fun listSmbDirMediaNames(
         sourceId: Long,
         source: SmbSourceEntity,
         password: String,
         parentDir: String,
-    ): List<String> = listSmbDirChildNames(sourceId, source, password, parentDir)
-        .filter { isHttpExposedMediaName(it) }
-        .distinct()
-        .sorted()
-        .take(MAX_DIR_MEDIA_FILES)
+    ): List<String> {
+        val names = runCatching {
+            SmbGateway.listChildFileNames(source, password, parentDir)
+        }.onFailure {
+            logcat("OpenFileExternally", it)
+        }.getOrElse {
+            listSmbDirChildNames(sourceId, source, password, parentDir)
+        }
+        return names
+            .filter { ExternalHttpStreamServer.isSafeFileName(it) && isHttpExposedMediaName(it) }
+            .distinct()
+            .sorted()
+            .take(MAX_DIR_MEDIA_FILES)
+    }
 
     private suspend fun listSmbDirChildNames(
         sourceId: Long,
@@ -651,6 +657,11 @@ object OpenFileExternally {
         password: String,
         parentDir: String,
     ): List<String> {
+        // Prefer raw names; classified cache can omit files or only hold a partial set.
+        val live = runCatching {
+            SmbGateway.listChildFileNames(source, password, parentDir)
+        }.getOrDefault(emptyList())
+        if (live.isNotEmpty()) return live
         val cached = siblingNamesFromCache(sourceId, parentDir, smb = true)
         if (cached.isNotEmpty()) return cached
         return runCatching {
@@ -683,6 +694,10 @@ object OpenFileExternally {
         password: String,
         parentDir: String,
     ): List<String> {
+        val live = runCatching {
+            WebDavGateway.listChildFileNames(source, password, parentDir)
+        }.getOrDefault(emptyList())
+        if (live.isNotEmpty()) return live
         val cached = siblingNamesFromCache(sourceId, parentDir, smb = false)
         if (cached.isNotEmpty()) return cached
         return runCatching {
@@ -703,9 +718,15 @@ object OpenFileExternally {
         password: String,
         parentDir: String,
     ): List<String> {
-        val names = listWebDavDirChildNames(sourceId, source, password, parentDir)
+        val names = runCatching {
+            WebDavGateway.listChildFileNames(source, password, parentDir)
+        }.onFailure {
+            logcat("OpenFileExternally", it)
+        }.getOrElse {
+            listWebDavDirChildNames(sourceId, source, password, parentDir)
+        }
         return names
-            .filter { isHttpExposedMediaName(it) }
+            .filter { ExternalHttpStreamServer.isSafeFileName(it) && isHttpExposedMediaName(it) }
             .distinct()
             .sorted()
             .take(MAX_DIR_MEDIA_FILES)
@@ -1099,8 +1120,11 @@ object OpenFileExternally {
         if (idx >= 0) putExtra("playlist_index", idx)
     }
 
-    /** Cap directory publish so open-with stays snappy on huge shares. */
-    private const val MAX_DIR_MEDIA_FILES = 80
+    /**
+     * Cap directory publish for HTTP access-dir / playlist extras.
+     * High enough for large video folders (300+) without unbounded multi-GB intent clips.
+     */
+    private const val MAX_DIR_MEDIA_FILES = 2000
 
     /** Virtual playlist basename served from the HTTP session (not a real on-disk file). */
     private fun playlistNameFor(sessionId: String): String = ".localviewer-$sessionId.m3u8"

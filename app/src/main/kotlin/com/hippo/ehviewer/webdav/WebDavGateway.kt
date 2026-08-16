@@ -124,6 +124,22 @@ object WebDavGateway {
     }
 
     /**
+     * Flat non-directory child basenames (one PROPFIND, no classify / peeks).
+     * Used by HTTP access-dir so folder playlists match the real remote directory.
+     */
+    suspend fun listChildFileNames(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeDir: String,
+    ): List<String> = withIOContext {
+        WebDavClient.listChildren(source, password, relativeDir)
+            .asSequence()
+            .filterNot { it.isDirectory || it.name.startsWith('.') || isProtectedSystemName(it.name) }
+            .map { it.name }
+            .toList()
+    }
+
+    /**
      * Cache-hit refresh: one PROPFIND for the current directory. Only new child folders
      * run the existing child/leaf peek classifier.
      */

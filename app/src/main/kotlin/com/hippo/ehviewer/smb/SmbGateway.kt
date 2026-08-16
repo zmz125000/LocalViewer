@@ -1739,6 +1739,27 @@ object SmbGateway {
         RemoteChild(name, isDir)
     }
 
+    /**
+     * Flat non-directory child basenames (one [share.list], no classify / peeks).
+     * Used by HTTP access-dir so folder playlists are not limited to a partial
+     * browse-session or classified UI listing.
+     */
+    suspend fun listChildFileNames(
+        source: SmbSourceEntity,
+        password: String,
+        relativeDir: String,
+    ): List<String> = withIOContext {
+        if (isServerRootSource(source) && relativeDir.isBlank()) return@withIOContext emptyList()
+        val loc = resolveLocation(source, relativeDir)
+        withShare(source, password, ShareOp.List, loc.share) { share ->
+            listChildren(share, loc.pathInShare)
+                .asSequence()
+                .filterNot { it.isDirectory || isProtectedSystemName(it.name) || it.name.startsWith('.') }
+                .map { it.name }
+                .toList()
+        }
+    }
+
     private fun listChildrenLenient(share: DiskShare, path: String): List<RemoteChild> = try {
         listChildren(share, path)
     } catch (e: SMBApiException) {
