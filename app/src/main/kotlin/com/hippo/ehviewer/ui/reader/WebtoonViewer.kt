@@ -50,7 +50,10 @@ fun WebtoonViewer(
     onPrevFolder: () -> Unit = {},
     onNextFolder: () -> Unit = {},
     onBack: () -> Unit = {},
-    /** Landscape dual: continuous horizontal strip (no page pairing). */
+    /**
+     * Landscape dual: continuous horizontal strip (no page pairing).
+     * Always right-to-left (manga): page 0 on the right, next pages toward the left.
+     */
     horizontal: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -60,6 +63,8 @@ fun WebtoonViewer(
     val items = pageLoader.pages
     val zoomableState = rememberZoomableState(zoomSpec = WebtoonZoomSpec)
     val density = LocalDensity.current
+    // Horizontal dual webtoon reads RTL like a manga strip.
+    val isRtl = horizontal
     val paddingPercent by Settings.webtoonSidePadding.collectAsState()
     val sidePadding by remember(density, horizontal) {
         snapshotFlow {
@@ -70,9 +75,9 @@ fun WebtoonViewer(
             }
         }
     }.collectAsState(0.dp)
-    val doubleTap = remember(navigator, onPrevFolder, onNextFolder, onBack, horizontal) {
+    val doubleTap = remember(navigator, onPrevFolder, onNextFolder, onBack, isRtl) {
         doubleTapAction(
-            isRtl = false,
+            isRtl = isRtl,
             getViewportSize = {
                 lazyListState.layoutInfo.viewportSize.toSize().takeIf { it != Size.Zero } ?: Size.Zero
             },
@@ -113,13 +118,29 @@ fun WebtoonViewer(
                     with(lazyListState) {
                         val (w, h) = layoutInfo.viewportSize
                         val (x, y) = offset
+                        // Index++ = next page. With reverseLayout, that is still scrollRight().
+                        // LEFT/RIGHT zones flip in RTL so the left side advances (manga).
                         when (navigator().getAction(Offset(x / w, y / h))) {
                             NavigationRegion.MENU -> onMenuRegionClick()
-                            NavigationRegion.NEXT, NavigationRegion.RIGHT -> {
+                            NavigationRegion.NEXT -> {
                                 if (horizontal) scrollRight() else scrollDown()
                             }
-                            NavigationRegion.PREV, NavigationRegion.LEFT -> {
+                            NavigationRegion.PREV -> {
                                 if (horizontal) scrollLeft() else scrollUp()
+                            }
+                            NavigationRegion.RIGHT -> {
+                                when {
+                                    !horizontal -> scrollDown()
+                                    isRtl -> scrollLeft()
+                                    else -> scrollRight()
+                                }
+                            }
+                            NavigationRegion.LEFT -> {
+                                when {
+                                    !horizontal -> scrollUp()
+                                    isRtl -> scrollRight()
+                                    else -> scrollLeft()
+                                }
                             }
                         }
                     }
@@ -127,8 +148,11 @@ fun WebtoonViewer(
             },
             onLongClick = { ofs ->
                 val info = if (horizontal) {
+                    // reverseLayout may place items with negative offsets; hit-test both axes.
                     lazyListState.layoutInfo.visibleItemsInfo.find { info ->
-                        info.offset <= ofs.x && info.offset + info.size > ofs.x
+                        val start = info.offset.toFloat()
+                        val end = start + info.size
+                        ofs.x in start..end || ofs.x in end..start
                     }
                 } else {
                     lazyListState.layoutInfo.visibleItemsInfo.find { info ->
@@ -151,6 +175,7 @@ fun WebtoonViewer(
             LazyRow(
                 modifier = listModifier,
                 state = lazyListState,
+                reverseLayout = true,
                 userScrollEnabled = !multiTouch,
                 contentPadding = PaddingValues(vertical = sidePadding),
                 horizontalArrangement = Arrangement.spacedBy(gap),

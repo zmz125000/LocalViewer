@@ -101,12 +101,18 @@ suspend fun LazyListState.scrollDown() {
     performScrollBy(scrollDistanceVertical)
 }
 
-/** Horizontal continuous (landscape dual webtoon): scroll toward previous pages. */
+/**
+ * Horizontal continuous (landscape dual webtoon): decrease list index.
+ * With reverseLayout RTL strip this is visual scroll toward the right (previous pages).
+ */
 suspend fun LazyListState.scrollLeft() {
     performScrollBy(-scrollDistanceHorizontal)
 }
 
-/** Horizontal continuous: scroll toward next pages. */
+/**
+ * Horizontal continuous: increase list index (next pages).
+ * With reverseLayout RTL strip this is visual scroll toward the left.
+ */
 suspend fun LazyListState.scrollRight() {
     performScrollBy(scrollDistanceHorizontal)
 }
