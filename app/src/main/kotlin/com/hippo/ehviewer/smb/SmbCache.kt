@@ -15,7 +15,6 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -386,22 +385,23 @@ object SmbCache {
     /**
      * Decode [source] → small JPEG at [destJpeg] (same [smb_thumb_cache] key as always).
      * Convert-path formats: native decode + libultrahdr; else ImageDecoder subsample.
+     *
+     * Must stay suspend (no [runBlocking]): photo-grid leave cancels the parent
+     * [ensureBrowseThumb] coroutine — runBlocking would keep encoding at high CPU.
      */
-    private fun writeSubsampledJpeg(
+    private suspend fun writeSubsampledJpeg(
         source: File,
         destJpeg: File,
         maxEdge: Int,
         quality: Int,
     ) {
-        val ok = runBlocking {
-            HdrConvertCache.writeThumbJpeg(
-                source = source.toOkioPath(),
-                destJpeg = destJpeg,
-                maxEdge = maxEdge,
-                quality = quality,
-                fileNameHint = source.name,
-            )
-        }
+        val ok = HdrConvertCache.writeThumbJpeg(
+            source = source.toOkioPath(),
+            destJpeg = destJpeg,
+            maxEdge = maxEdge,
+            quality = quality,
+            fileNameHint = source.name,
+        )
         if (!ok || !destJpeg.isFile || destJpeg.length() == 0L) {
             error("Empty JPEG thumb for ${source.name}")
         }
