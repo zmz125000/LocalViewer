@@ -397,15 +397,9 @@ private class KeepOpenSmbFileSource(
         demand.close()
         failClosedSizeReady()
         activeFile.getAndSet(null)?.let { file ->
-            // smbj close may itself touch a dead socket. Do it off-caller so a Fuse read
-            // timeout/onRelease remains bounded while the handle teardown interrupts I/O.
-            Thread(
-                { runCatching { file.close() } },
-                "smb-stream-close",
-            ).apply {
-                isDaemon = true
-                start()
-            }
+            // smbj close may itself touch a dead socket. Off-caller so Fuse timeout/onRelease
+            // stays bounded. Shared pool — not Thread().start() per close.
+            SmbAsyncClose.run { file.close() }
         }
         worker.cancel()
         scope.coroutineContext[Job]?.cancel()

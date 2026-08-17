@@ -2229,13 +2229,8 @@ object SmbGateway {
         val cancelClose = downloadContext[Job]?.invokeOnCompletion { cause ->
             if (cause == null) return@invokeOnCompletion
             val file = activeFile.getAndSet(null) ?: return@invokeOnCompletion
-            Thread(
-                { runCatching { file.close() } },
-                "smb-dl-cancel",
-            ).apply {
-                isDaemon = true
-                start()
-            }
+            // Bounded pool — do not Thread().start() per cancel (mass leave-folder pile-up).
+            SmbAsyncClose.run { file.close() }
         }
         try {
             val loc = resolveLocation(source, relativeFilePath)
