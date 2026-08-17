@@ -22,9 +22,11 @@ import com.hippo.ehviewer.library.ArchiveAccess
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.ArchiveStreamBridge
+import com.hippo.ehviewer.library.ArchiveStreamClosedException
 import com.hippo.ehviewer.library.CachePagePublish
 import com.hippo.ehviewer.library.SolidExtractCache
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
@@ -329,10 +331,16 @@ suspend inline fun <T> useSolidExtractPageLoader(
                                 }
                                 throw e
                             } catch (e: Throwable) {
-                                logcat("SolidExtract", e)
-                                val waiters = readyWaiters.remove(index).orEmpty()
-                                if (waiters.isNotEmpty() || interactive) {
-                                    notifyPageFailed(index, e.message)
+                                // Leave mid-flight: abort + source.close → quiet closed/IO; do not
+                                // log or fail pages that are already going away with the reader.
+                                if (engine.isAborted || e is ArchiveStreamClosedException) {
+                                    readyWaiters.remove(index)
+                                } else {
+                                    logcat("SolidExtract", e)
+                                    val waiters = readyWaiters.remove(index).orEmpty()
+                                    if (waiters.isNotEmpty() || interactive) {
+                                        notifyPageFailed(index, e.message)
+                                    }
                                 }
                             } finally {
                                 extractJobs.remove(index, coroutineContext[Job])
@@ -370,7 +378,10 @@ suspend inline fun <T> useSolidExtractPageLoader(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {
-                        if (!engine.isAborted) logcat("SolidExtract", e)
+                        // Mid-exit close under solid extract is expected (not a real fault).
+                        if (!engine.isAborted && e !is ArchiveStreamClosedException) {
+                            logcat("SolidExtract", e)
+                        }
                     }
                 },
             )
@@ -385,7 +396,10 @@ suspend inline fun <T> useSolidExtractPageLoader(
                 background?.cancel()
                 jobs.forEach { it.cancel() }
                 extractJobs.clear()
-                // Close transport first so a blocking libarchive callback can return, then
+                // Mark bridge closed **before** tearing down the source so concurrent
+                // nativeRead does not log "archive read error" (expected mid-exit).
+                runCatching { solidBridgeRef.get()?.close() }
+                // Close transport so a blocking libarchive callback can return, then
                 // wait for every native child before AutoCloseScope invokes closeArchive.
                 runCatching { source.close() }
                 withContext(NonCancellable) {
@@ -707,7 +721,18 @@ class SolidExtractEngine(
                     ParcelFileDescriptor.MODE_CREATE or
                     ParcelFileDescriptor.MODE_TRUNCATE,
             ).use { pfd ->
-                val ok = solidExtractCurrentToFd(pfd.fd)
+                val ok = try {
+                    solidExtractCurrentToFd(pfd.fd)
+                } catch (e: ArchiveStreamClosedException) {
+                    throw CancellationException("Solid extract aborted during page $index", e)
+                } catch (e: IOException) {
+                    // source.close under JNI often surfaces as generic read error before
+                    // closed flag is visible; abort still maps to cancel.
+                    if (aborted.get()) {
+                        throw CancellationException("Solid extract aborted during page $index", e)
+                    }
+                    throw e
+                }
                 // Abort / source.close() during extract: discard even if JNI returned true.
                 if (aborted.get()) {
                     throw CancellationException("Solid extract aborted during page $index")
