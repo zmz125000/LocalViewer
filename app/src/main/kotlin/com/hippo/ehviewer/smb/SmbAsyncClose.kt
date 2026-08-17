@@ -12,8 +12,10 @@ import java.util.concurrent.TimeUnit
  */
 internal object SmbAsyncClose {
     private val pool = ThreadPoolExecutor(
-        /* core */ 1,
-        /* max */ 4,
+        /* core */
+        1,
+        /* max */
+        4,
         30L,
         TimeUnit.SECONDS,
         LinkedBlockingQueue(32),

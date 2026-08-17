@@ -595,8 +595,10 @@ class ReadAheadArchiveByteSource(
          * One in-flight prefetch per source; shared pool caps process-wide fan-out.
          */
         private val PREFETCH_EXECUTOR = ThreadPoolExecutor(
-            /* core */ 2,
-            /* max */ 8,
+            /* core */
+            2,
+            /* max */
+            8,
             30L,
             TimeUnit.SECONDS,
             LinkedBlockingQueue(16),
