@@ -7,23 +7,22 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.Page
@@ -66,20 +65,22 @@ fun WebtoonViewer(
     // Horizontal dual webtoon reads RTL like a manga strip.
     val isRtl = horizontal
     val paddingPercent by Settings.webtoonSidePadding.collectAsState()
-    val sidePadding by remember(density, horizontal) {
-        snapshotFlow {
-            with(density) {
-                val viewport = lazyListState.layoutInfo.viewportSize
-                val edge = if (horizontal) viewport.height else viewport.width
-                (edge * paddingPercent / 100f).toDp()
-            }
-        }
-    }.collectAsState(0.dp)
-    val doubleTap = remember(navigator, onPrevFolder, onNextFolder, onBack, isRtl) {
+    // Viewport from onSizeChanged only (not layoutInfo). Reading layoutInfo inside Lazy
+    // items recomposes every scroll frame; landscape dual shows many narrow pages so that
+    // thrash is much worse than portrait webtoon (1–2 tall items).
+    var viewportPx by remember { mutableStateOf(IntSize.Zero) }
+    val viewportSize = remember(viewportPx) {
+        Size(viewportPx.width.toFloat(), viewportPx.height.toFloat())
+    }
+    val sidePadding = with(density) {
+        val edge = if (horizontal) viewportPx.height else viewportPx.width
+        (edge * paddingPercent / 100f).toDp()
+    }
+    val doubleTap = remember(navigator, onPrevFolder, onNextFolder, onBack, isRtl, viewportSize) {
         doubleTapAction(
             isRtl = isRtl,
             getViewportSize = {
-                lazyListState.layoutInfo.viewportSize.toSize().takeIf { it != Size.Zero } ?: Size.Zero
+                viewportSize.takeIf { it != Size.Zero } ?: Size.Zero
             },
             getNavigator = navigator,
             onPrevFolder = onPrevFolder,
@@ -102,6 +103,9 @@ fun WebtoonViewer(
     var multiTouch by remember { mutableStateOf(false) }
 
     val listModifier = modifier
+        .onSizeChanged { size ->
+            if (size != viewportPx) viewportPx = size
+        }
         .pointerInput(Unit) {
             awaitPointerEventScope {
                 while (true) {
@@ -116,7 +120,12 @@ fun WebtoonViewer(
             onClick = { offset ->
                 scope.launch {
                     with(lazyListState) {
-                        val (w, h) = layoutInfo.viewportSize
+                        // Prefer stable size; fall back to layoutInfo only for the tap gesture.
+                        val w = viewportPx.width.takeIf { it > 0 }
+                            ?: layoutInfo.viewportSize.width
+                        val h = viewportPx.height.takeIf { it > 0 }
+                            ?: layoutInfo.viewportSize.height
+                        if (w <= 0 || h <= 0) return@with
                         val (x, y) = offset
                         // Index++ = next page. With reverseLayout, that is still scrollRight().
                         // LEFT/RIGHT zones flip in RTL so the left side advances (manga).
@@ -185,12 +194,11 @@ fun WebtoonViewer(
                     key = { index -> items.getOrNull(index)?.index ?: index },
                 ) { index ->
                     val page = items.getOrNull(index) ?: return@items
-                    val viewport = lazyListState.layoutInfo.viewportSize.toSize()
                     PagerItem(
                         page = page,
                         pageLoader = pageLoader,
                         contentScale = contentScale,
-                        viewportSize = viewport,
+                        viewportSize = viewportSize,
                         horizontalStrip = true,
                         modifier = Modifier.fillMaxHeight(),
                     )
@@ -209,12 +217,11 @@ fun WebtoonViewer(
                     key = { index -> items.getOrNull(index)?.index ?: index },
                 ) { index ->
                     val page = items.getOrNull(index) ?: return@items
-                    val viewport = lazyListState.layoutInfo.viewportSize.toSize()
                     PagerItem(
                         page = page,
                         pageLoader = pageLoader,
                         contentScale = contentScale,
-                        viewportSize = viewport,
+                        viewportSize = viewportSize,
                     )
                 }
             }
