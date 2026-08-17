@@ -260,6 +260,18 @@ private fun DualPageContainer(
                 (rightPage != null && dualSpreadIndex(rightPage.index) == cur)
         }
     }
+    // One prioritize anchor per spread (lower real index). Both pages requesting
+    // prioritize=true double-called prioritizeDecode and flipped prevIndex twice.
+    val prioritizePrimaryIndex = remember(leftPage, rightPage) {
+        val l = leftPage?.index
+        val r = rightPage?.index
+        when {
+            l != null && r != null -> minOf(l, r)
+            l != null -> l
+            r != null -> r
+            else -> -1
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val zoomMod = Modifier.zoomable(
@@ -298,7 +310,7 @@ private fun DualPageContainer(
                             pageLoader = pageLoader,
                             contentScale = ContentScale.Fit,
                             viewportSize = halfSize,
-                            prioritizeDecode = isCurrent,
+                            prioritizeDecode = isCurrent && leftPage.index == prioritizePrimaryIndex,
                         )
                     }
                 }
@@ -309,7 +321,7 @@ private fun DualPageContainer(
                             pageLoader = pageLoader,
                             contentScale = ContentScale.Fit,
                             viewportSize = halfSize,
-                            prioritizeDecode = isCurrent,
+                            prioritizeDecode = isCurrent && rightPage.index == prioritizePrimaryIndex,
                         )
                     }
                 }
