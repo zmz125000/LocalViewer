@@ -1,6 +1,8 @@
 package com.hippo.ehviewer.library
 
-import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -587,8 +589,20 @@ class ReadAheadArchiveByteSource(
         const val COVER_WINDOW = 2 * 1024 * 1024
         const val RANDOM_WINDOW = 64 * 1024
 
-        private val PREFETCH_EXECUTOR = Executors.newCachedThreadPool { r ->
-            Thread(r, "archive-readahead").apply { isDaemon = true }
-        }
+        /**
+         * Bounded pipeline prefetch. Was [java.util.concurrent.Executors.newCachedThreadPool]
+         * (unbounded grow) — many concurrent archive streams could spawn a thread each.
+         * One in-flight prefetch per source; shared pool caps process-wide fan-out.
+         */
+        private val PREFETCH_EXECUTOR = ThreadPoolExecutor(
+            /* core */ 2,
+            /* max */ 8,
+            30L,
+            TimeUnit.SECONDS,
+            LinkedBlockingQueue(16),
+            { r -> Thread(r, "archive-readahead").apply { isDaemon = true } },
+            // Drop oldest speculative work rather than spawn more threads.
+            ThreadPoolExecutor.DiscardOldestPolicy(),
+        )
     }
 }
