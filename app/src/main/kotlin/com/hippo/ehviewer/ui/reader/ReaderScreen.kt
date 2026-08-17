@@ -470,7 +470,15 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     val uiController = rememberSystemUiController()
     // Immersive enter/exit is owned by the outer ReaderScreen destination so loading
     // placeholders and sibling replace do not drop fullscreen. Only sync chrome here.
-    val lazyListState = rememberLazyListState(LazyLayoutCacheWindow(SCROLL_FRACTION, SCROLL_FRACTION), pageLoader.startPage)
+    // Cache window is a rememberSaveable key: horizontal dual uses a short window so
+    // Original-size pages do not keep a full extra viewport of multi‑MP bitmaps composed.
+    // Orientation flip recreates state from [pageLoader.startPage] (same as rotate "fix").
+    val webtoonCacheFraction =
+        if (webtoonHorizontal) WEBTOON_HORIZONTAL_CACHE_FRACTION else SCROLL_FRACTION
+    val lazyListState = rememberLazyListState(
+        LazyLayoutCacheWindow(webtoonCacheFraction, webtoonCacheFraction),
+        pageLoader.startPage,
+    )
     // Snapshot-backed [PageLoader.size] so pager pageCount tracks solid lazy-list growth.
     // Dual LTR/RTL/Vertical: pager pages are spreads; slider/startPage stay on real page indices.
     val pagerState = rememberPagerState(

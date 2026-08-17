@@ -123,4 +123,15 @@ private val LazyListState.scrollDistanceVertical
 private val LazyListState.scrollDistanceHorizontal
     get() = layoutInfo.viewportSize.width * SCROLL_FRACTION
 
+/** Tap / volume-key scroll step as a fraction of the viewport. */
 const val SCROLL_FRACTION = 0.75f
+
+/**
+ * Lazy list keep-around window (fraction of viewport ahead + behind).
+ *
+ * Portrait webtoon: few tall items → [SCROLL_FRACTION] is cheap.
+ * Landscape dual strip: many narrow pages; with **Original** decode each is multi‑MP,
+ * so a large window pins 6–10 full-res textures and janks scroll. Keep a short window;
+ * [PageLoader] prefetch still warms neighbors without composing them.
+ */
+const val WEBTOON_HORIZONTAL_CACHE_FRACTION = 0.15f
