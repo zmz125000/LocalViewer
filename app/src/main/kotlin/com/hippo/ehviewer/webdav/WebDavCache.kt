@@ -15,7 +15,6 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -314,17 +313,17 @@ object WebDavCache {
     /**
      * Same [webdav_thumb_cache] dest/key as platform thumbs.
      * Convert-path → lib+libultrahdr; else ImageDecoder subsample.
+     *
+     * Suspend (no [runBlocking]) so leave-folder cancel can stop thumb encode work.
      */
-    private fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {
-        val ok = runBlocking {
-            HdrConvertCache.writeThumbJpeg(
-                source = source.toOkioPath(),
-                destJpeg = destJpeg,
-                maxEdge = maxEdge,
-                quality = quality,
-                fileNameHint = source.name,
-            )
-        }
+    private suspend fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {
+        val ok = HdrConvertCache.writeThumbJpeg(
+            source = source.toOkioPath(),
+            destJpeg = destJpeg,
+            maxEdge = maxEdge,
+            quality = quality,
+            fileNameHint = source.name,
+        )
         check(ok && destJpeg.isFile && destJpeg.length() > 0L) {
             "JPEG thumb failed for ${source.name}"
         }

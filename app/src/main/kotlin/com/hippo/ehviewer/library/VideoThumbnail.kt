@@ -75,10 +75,14 @@ sealed interface VideoThumbnailSource {
  * semaphore, so up to [MAX_CONCURRENT_PROBES] I/O jobs and [MAX_CONCURRENT_EXTRACTIONS]
  * MMR decodes can overlap.
  *
- * **Timeout safety:** [MediaMetadataRetriever] runs on a pool worker. Waiter uses
- * [withTimeout] only — **never** [MediaMetadataRetriever.release] from the waiter
- * (that left `media.extractor` at 100% CPU until reboot). Worker releases after native
- * returns. Abandoned workers are capped so stuck extractors do not queue forever.
+ * **Timeout / leave-folder safety:**
+ * - [MediaMetadataRetriever] runs on [decodePool]. Waiter uses [withTimeout] only —
+ *   **never** [MediaMetadataRetriever.release] from the waiter (that left
+ *   `media.extractor` at 100% CPU until reboot). Worker releases after native returns.
+ * - Probe I/O runs on [probePool] (not unbounded `Thread()`). Timeout **and**
+ *   composition cancel both count as abandon so permits are not recycled under still-
+ *   running workers (that stacked ~N stuck threads after scrolling ~30 cells).
+ * - Abandoned probe/decode caps reject new work until workers finish.
  *
  * Disk: `cache/video_thumb_cache/` under [OriginDiskCache.THUMB_BUDGET_BYTES].
  */
@@ -93,8 +97,11 @@ object VideoThumbnail {
     /** Parallel remote head/tail probes (pipeline with decode). */
     private const val MAX_CONCURRENT_PROBES = 3
 
-    /** Extra abandoned native jobs allowed beyond the 3 active decode slots. */
+    /** Extra abandoned native jobs allowed beyond the active decode slots. */
     private const val MAX_ABANDONED_WORKERS = 3
+
+    /** Extra abandoned probe jobs allowed beyond active probe slots. */
+    private const val MAX_ABANDONED_PROBES = 3
 
     /** Fetch probe then close remote. Slightly higher for 8 MiB TS heads. */
     private const val PROBE_IO_TIMEOUT_MS = 4_000L
@@ -132,6 +139,7 @@ object VideoThumbnail {
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
     private val leftoverMarkersCleared = AtomicBoolean(false)
     private val abandonedWorkers = AtomicInteger(0)
+    private val abandonedProbes = AtomicInteger(0)
 
     /**
      * Fixed pool: at most [MAX_CONCURRENT_EXTRACTIONS] + [MAX_ABANDONED_WORKERS] native
@@ -144,6 +152,20 @@ object VideoThumbnail {
         TimeUnit.SECONDS,
         LinkedBlockingQueue(MAX_CONCURRENT_EXTRACTIONS + MAX_ABANDONED_WORKERS),
         { r -> Thread(r, "video-thumb-mmr").apply { isDaemon = true } },
+        ThreadPoolExecutor.AbortPolicy(),
+    )
+
+    /**
+     * Bounded probe I/O (was unbounded `Thread` per cell — timeout/cancel released the
+     * probe semaphore while the old thread kept reading, stacking CPU after a grid scroll).
+     */
+    private val probePool = ThreadPoolExecutor(
+        MAX_CONCURRENT_PROBES,
+        MAX_CONCURRENT_PROBES + MAX_ABANDONED_PROBES,
+        30L,
+        TimeUnit.SECONDS,
+        LinkedBlockingQueue(MAX_CONCURRENT_PROBES + MAX_ABANDONED_PROBES),
+        { r -> Thread(r, "video-thumb-probe").apply { isDaemon = true } },
         ThreadPoolExecutor.AbortPolicy(),
     )
 
@@ -192,6 +214,11 @@ object VideoThumbnail {
             }
             if (abandonedWorkers.get() >= MAX_ABANDONED_WORKERS) {
                 logcat("VideoThumb") { "skip decode: too many abandoned extractors" }
+                writeFailureMarker(failure)
+                return@withLock null
+            }
+            if (source.isNetwork && abandonedProbes.get() >= MAX_ABANDONED_PROBES) {
+                logcat("VideoThumb") { "skip probe: too many abandoned probe workers" }
                 writeFailureMarker(failure)
                 return@withLock null
             }
@@ -290,42 +317,73 @@ object VideoThumbnail {
 
     /**
      * Pull probe bytes then close [raw] before native decode.
-     * Stuck SMB read runs on a worker; [ArchiveByteSource.close] unblocks it.
+     * Runs on [probePool]; stuck SMB read is unblocked via [ArchiveByteSource.close].
+     * Waiter timeout **or** cancel abandons the worker and counts it so permits are not
+     * reused under still-running I/O (leave-folder / scroll-away pile-up).
      */
     private suspend fun fetchProbeSnapshot(
         raw: ArchiveByteSource,
         source: VideoThumbnailSource,
     ): ProbeSnapshot? {
+        if (abandonedProbes.get() >= MAX_ABANDONED_PROBES) {
+            logcat("VideoThumb") {
+                "reject probe (${privacyLogLabel(source)}): abandonedProbes=${abandonedProbes.get()}"
+            }
+            runCatching { raw.close() }
+            return null
+        }
         val fileName = source.fileName
         val done = CompletableDeferred<ProbeSnapshot?>()
-        val thread = Thread(
-            {
-                try {
-                    done.complete(buildProbeSnapshot(raw, fileName))
-                } catch (_: Throwable) {
-                    done.complete(null)
-                } finally {
-                    runCatching { raw.close() }
+        val timedOut = AtomicBoolean(false)
+        val task = Runnable {
+            try {
+                done.complete(buildProbeSnapshot(raw, fileName))
+            } catch (_: Throwable) {
+                done.complete(null)
+            } finally {
+                runCatching { raw.close() }
+                if (timedOut.get()) {
+                    abandonedProbes.updateAndGet { (it - 1).coerceAtLeast(0) }
                 }
-            },
-            "video-thumb-probe",
-        ).apply {
-            isDaemon = true
-            start()
+            }
+        }
+        try {
+            probePool.execute(task)
+        } catch (_: Throwable) {
+            logcat("VideoThumb") { "probe pool full (${privacyLogLabel(source)})" }
+            runCatching { raw.close() }
+            return null
         }
         return try {
             withTimeout(PROBE_IO_TIMEOUT_MS) { done.await() }
         } catch (e: TimeoutCancellationException) {
-            logcat("VideoThumb") {
-                "probe I/O timeout ${PROBE_IO_TIMEOUT_MS}ms (${privacyLogLabel(source)})"
-            }
-            runCatching { raw.close() }
-            thread.interrupt()
+            abandonProbeWaiter(timedOut, done, raw, source, "timeout")
             null
         } catch (e: CancellationException) {
-            runCatching { raw.close() }
-            thread.interrupt()
+            // Leave folder / scroll away — same as timeout: close + count abandon.
+            abandonProbeWaiter(timedOut, done, raw, source, "cancel")
             throw e
+        }
+    }
+
+    private fun abandonProbeWaiter(
+        timedOut: AtomicBoolean,
+        done: CompletableDeferred<ProbeSnapshot?>,
+        raw: ArchiveByteSource,
+        source: VideoThumbnailSource,
+        reason: String,
+    ) {
+        timedOut.set(true)
+        abandonedProbes.incrementAndGet()
+        if (!done.complete(null)) {
+            // Worker already finished — drop abandon bookkeeping.
+            timedOut.set(false)
+            abandonedProbes.updateAndGet { (it - 1).coerceAtLeast(0) }
+        }
+        runCatching { raw.close() }
+        logcat("VideoThumb") {
+            "probe $reason ${PROBE_IO_TIMEOUT_MS}ms (${privacyLogLabel(source)}) — abandon " +
+                "(abandonedProbes=${abandonedProbes.get()})"
         }
     }
 
@@ -597,19 +655,34 @@ object VideoThumbnail {
         return try {
             withTimeout(timeoutMs) { done.await() }
         } catch (e: TimeoutCancellationException) {
-            timedOut.set(true)
-            abandonedWorkers.incrementAndGet()
-            // Prefer worker recycle: if still running, complete(null) loses the race harmlessly.
-            if (!done.complete(null)) {
-                // Already completed with a late frame — drop abandoned bookkeeping.
-                timedOut.set(false)
-                abandonedWorkers.updateAndGet { (it - 1).coerceAtLeast(0) }
-            }
-            logcat("VideoThumb") {
-                "mmr timeout ${timeoutMs}ms ($label) — abandon native " +
-                    "(abandoned=${abandonedWorkers.get()})"
-            }
+            abandonDecodeWaiter(timedOut, done, label, timeoutMs, "timeout")
             null
+        } catch (e: CancellationException) {
+            // Composition dispose (leave folder) must count abandon too — otherwise
+            // extractSemaphore recycles under still-running MMR workers (70% sticky CPU).
+            abandonDecodeWaiter(timedOut, done, label, timeoutMs, "cancel")
+            throw e
+        }
+    }
+
+    private fun abandonDecodeWaiter(
+        timedOut: AtomicBoolean,
+        done: CompletableDeferred<Bitmap?>,
+        label: String,
+        timeoutMs: Long,
+        reason: String,
+    ) {
+        timedOut.set(true)
+        abandonedWorkers.incrementAndGet()
+        // Prefer worker recycle: if still running, complete(null) loses the race harmlessly.
+        if (!done.complete(null)) {
+            // Already completed with a late frame — drop abandoned bookkeeping.
+            timedOut.set(false)
+            abandonedWorkers.updateAndGet { (it - 1).coerceAtLeast(0) }
+        }
+        logcat("VideoThumb") {
+            "mmr $reason ${timeoutMs}ms ($label) — abandon native " +
+                "(abandoned=${abandonedWorkers.get()})"
         }
     }
 
