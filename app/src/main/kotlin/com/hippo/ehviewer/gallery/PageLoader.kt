@@ -225,11 +225,14 @@ abstract class PageLoader(
      * semaphore slot. Must **not** cancel the warm window (index ± prefetch): prefetcher /
      * beyond-viewport pages decode into cache for the next turn.
      *
+     * Radius is at least **2** so dual-page mates (2i / 2i+1) and pager
+     * [beyondViewportPageCount]=1 stay warm when only the primary page prioritizes.
+     *
      * Call only when actually starting a decode for [index] — never on Ready re-request
      * (that used to wipe warm jobs every composition of the current page).
      */
     private fun prioritizeDecode(index: Int) {
-        val radius = prefetchPageCount.coerceAtLeast(1)
+        val radius = prefetchPageCount.coerceAtLeast(2)
         val lo = (index - radius).coerceAtLeast(0)
         val hi = (index + radius).coerceAtMost((size - 1).coerceAtLeast(0))
         val obsolete = synchronized(jobs) {
@@ -315,12 +318,15 @@ abstract class PageLoader(
 
     fun request(index: Int, prioritize: Boolean = false) {
         if (index !in 0 until size) return
-        val prefetchRange = if (index >= prevIndex.load()) {
+        // Prefetch direction follows the last *anchor* (current page / new decode), not every
+        // composed beyond-viewport or dual partner. Updating prevIndex on every request made
+        // dual (2 pages × 3 spreads) and webtoon thrash forward/back prefetch while scrolling.
+        val last = prevIndex.load()
+        val prefetchRange = if (last < 0 || index >= last) {
             index + 1..(index + prefetchPageCount).coerceAtMost(size - 1)
         } else {
             index - 1 downTo (index - prefetchPageCount).coerceAtLeast(0)
         }
-        prevIndex.store(index)
 
         val page = pages.getOrNull(index) ?: return
         when (val st = page.status) {
@@ -329,11 +335,13 @@ abstract class PageLoader(
                 if (st.image.innerImage != null) {
                     // Do not prioritizeDecode here — current is already warm; canceling
                     // would kill neighbor prefetch/beyond-viewport warm decodes.
+                    if (prioritize) prevIndex.store(index)
                     prefetchAbsent(prefetchRange)
                     return
                 }
             }
             is PageStatus.Blocked -> {
+                if (prioritize) prevIndex.store(index)
                 prefetchAbsent(prefetchRange)
                 return
             }
@@ -344,6 +352,7 @@ abstract class PageLoader(
         if (image != null && image.innerImage != null) {
             // Re-insert so cache stays coherent after partial eviction.
             notifyPageSucceed(index, image, replaceCache = true)
+            if (prioritize) prevIndex.store(index)
             prefetchAbsent(prefetchRange)
             return
         }
@@ -352,10 +361,13 @@ abstract class PageLoader(
         // when a second request no-op'd notifySourceReady while wiping Ready/progress).
         val decoding = synchronized(jobs) { jobs[index]?.isActive == true }
         if (decoding) {
+            if (prioritize) prevIndex.store(index)
             prefetchAbsent(prefetchRange)
             return
         }
 
+        // Starting real work for this index — anchor scroll direction here.
+        prevIndex.store(index)
         // Only when starting a new decode for this index: drop far-away jobs, keep warm window.
         if (prioritize) prioritizeDecode(index)
         notifyPageWait(index)
