@@ -252,7 +252,7 @@ private fun DualPageContainer(
         }
     }
 
-    val isCurrent = remember(pagerState, leftPage, rightPage) {
+    val isCurrent by remember(pagerState, leftPage, rightPage) {
         derivedStateOf {
             val cur = pagerState.currentPage
             val first = leftPage?.index ?: rightPage?.index ?: return@derivedStateOf false
@@ -276,7 +276,7 @@ private fun DualPageContainer(
                 pageLoader = pageLoader,
                 contentScale = ContentScale.Inside,
                 viewportSize = layoutSize,
-                prioritizeDecode = isCurrent.value,
+                prioritizeDecode = isCurrent,
                 modifier = Modifier.pointerInput(onTap) {
                     detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
                 },
@@ -298,7 +298,7 @@ private fun DualPageContainer(
                             pageLoader = pageLoader,
                             contentScale = ContentScale.Fit,
                             viewportSize = halfSize,
-                            prioritizeDecode = isCurrent.value,
+                            prioritizeDecode = isCurrent,
                         )
                     }
                 }
@@ -309,7 +309,7 @@ private fun DualPageContainer(
                             pageLoader = pageLoader,
                             contentScale = ContentScale.Fit,
                             viewportSize = halfSize,
-                            prioritizeDecode = isCurrent.value,
+                            prioritizeDecode = isCurrent,
                         )
                     }
                 }
@@ -423,13 +423,18 @@ private fun PageContainer(
             }
         }
     }
+    // derivedStateOf so only the boolean flips notify; avoid recompose thrash on scroll
+    // position while still marking the settled current page for prioritizeDecode.
+    val isCurrent by remember(pagerState, page.index) {
+        derivedStateOf { pagerState.currentPage == page.index }
+    }
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         PagerItem(
             page = page,
             pageLoader = pageLoader,
             contentScale = ContentScale.Inside,
             viewportSize = layoutSize,
-            prioritizeDecode = pagerState.currentPage == page.index,
+            prioritizeDecode = isCurrent,
             modifier = Modifier.pointerInput(onTap) {
                 detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
             },

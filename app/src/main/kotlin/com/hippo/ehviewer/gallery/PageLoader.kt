@@ -411,8 +411,13 @@ abstract class PageLoader(
                         }
                     }
                 } catch (e: CancellationException) {
-                    // Do not force Queued/Error — page may still be visible; a later
-                    // request()/notifySourceReady will start a fresh job.
+                    // prioritizeDecode / distant-cancel can abort mid-flight. Leave Ready/
+                    // Blocked alone; reset anything else to Queued so composed PagerItems
+                    // (statusFlow collector) restart a job instead of forever-Loading.
+                    val st = pages.getOrNull(index)?.status
+                    if (st !is PageStatus.Ready && st !is PageStatus.Blocked) {
+                        notifyPageWait(index)
+                    }
                     throw e
                 } catch (e: Throwable) {
                     notifyPageFailed(index, e.displayString())

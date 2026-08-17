@@ -27,6 +27,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,19 +84,31 @@ fun PagerItem(
     // Key [reloadGeneration] so HDR / lib-direct / crop / etc. restart() always re-requests
     // visible pages. Without it, status can stay Queued with no job (StateFlow no-op if
     // already Queued, or drop(1) swallowed the only Queued emission) until the user scrolls.
+    //
+    // Do **not** key the main effect on [prioritizeDecode]: pager current flips every page
+    // change and would restart the status collector + re-request thrash (baseline never did).
+    // Prioritize is a one-shot boost when this item becomes the current page.
     val reloadGen by pageLoader.reloadGeneration.collectAsState()
-    LaunchedEffect(page.index, pageLoader, prioritizeDecode, reloadGen) {
-        pageLoader.request(page.index, prioritize = prioritizeDecode)
-        // Re-request when status falls back to Queued (eviction / restart) or blank Error.
-        // Do not drop(1): the first value after a restart may be the only Queued we get.
+    val prioritizeLatest by rememberUpdatedState(prioritizeDecode)
+    LaunchedEffect(page.index, pageLoader, reloadGen) {
+        pageLoader.request(page.index, prioritize = prioritizeLatest)
+        // Re-request when status falls back to Queued (eviction / restart / cancelled job)
+        // or blank Error. Do not drop(1): the first value after a restart may be the only
+        // Queued we get.
         page.statusFlow.collect { status ->
             when (status) {
-                PageStatus.Queued -> pageLoader.request(page.index, prioritize = prioritizeDecode)
+                PageStatus.Queued -> pageLoader.request(page.index, prioritize = prioritizeLatest)
                 is PageStatus.Error -> if (status.message == null) {
-                    pageLoader.request(page.index, prioritize = prioritizeDecode)
+                    pageLoader.request(page.index, prioritize = prioritizeLatest)
                 }
                 else -> Unit
             }
+        }
+    }
+    // Current-page boost only (PagerViewer). Webtoon leaves prioritizeDecode=false.
+    LaunchedEffect(page.index, pageLoader, prioritizeDecode) {
+        if (prioritizeDecode) {
+            pageLoader.request(page.index, prioritize = true)
         }
     }
     val defaultError = stringResource(id = R.string.decode_image_error)
