@@ -425,6 +425,8 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 stripExtraneousAds.changesFlow(),
                 readerHardwareBitmap.changesFlow(),
                 readerLibDirectBitmap.changesFlow(),
+                // Decode size (1.5×…origin) — re-decode visible pages.
+                readerDecodeSize.changesFlow(),
                 // Advanced color changes F16 pack / CS for lib-direct — re-decode.
                 readerAdvancedColor.changesFlow(),
                 // Platform HBD (nested under WCG): software F16 + AHB wrap path.
