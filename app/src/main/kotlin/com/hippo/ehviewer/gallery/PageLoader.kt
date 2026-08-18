@@ -424,12 +424,10 @@ abstract class PageLoader(
      * [last] must be the previous anchor, captured **before** [prevIndex] is overwritten.
      * Reading [prevIndex] here after store made [index >= last] always true (forward-only).
      */
-    private fun prefetchRangeFor(index: Int, last: Int): IntProgression {
-        return if (last < 0 || index >= last) {
-            index + 1..(index + prefetchPageCount).coerceAtMost(size - 1)
-        } else {
-            index - 1 downTo (index - prefetchPageCount).coerceAtLeast(0)
-        }
+    private fun prefetchRangeFor(index: Int, last: Int): IntProgression = if (last < 0 || index >= last) {
+        index + 1..(index + prefetchPageCount).coerceAtMost(size - 1)
+    } else {
+        index - 1 downTo (index - prefetchPageCount).coerceAtLeast(0)
     }
 
     private fun prefetchAbsent(prefetchRange: IntProgression) {
