@@ -413,15 +413,18 @@ abstract class PageLoader(
             // Seek/scroll often lands on Ready pages; still cancel far jobs so
             // Original-size decode backlog does not grow across a session.
             prioritizeDecode(index)
-            prefetchAbsent(prefetchRangeFor(index))
+            prefetchAbsent(prefetchRangeFor(index, last))
         } else if (last < 0) {
             prevIndex.store(index)
-            prefetchAbsent(prefetchRangeFor(index))
+            prefetchAbsent(prefetchRangeFor(index, last))
         }
     }
 
-    private fun prefetchRangeFor(index: Int): IntProgression {
-        val last = prevIndex.load()
+    /**
+     * [last] must be the previous anchor, captured **before** [prevIndex] is overwritten.
+     * Reading [prevIndex] here after store made [index >= last] always true (forward-only).
+     */
+    private fun prefetchRangeFor(index: Int, last: Int): IntProgression {
         return if (last < 0 || index >= last) {
             index + 1..(index + prefetchPageCount).coerceAtMost(size - 1)
         } else {
