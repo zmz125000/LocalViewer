@@ -64,6 +64,7 @@ import com.hippo.ehviewer.ui.tools.DrawablePainter
 import com.hippo.ehviewer.util.AdsPlaceholderFile
 import kotlin.math.roundToInt
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.drop
 
 @Composable
 fun PagerItem(
@@ -83,7 +84,7 @@ fun PagerItem(
     //
     // Key [reloadGeneration] so HDR / lib-direct / crop / etc. restart() always re-requests
     // visible pages. Without it, status can stay Queued with no job (StateFlow no-op if
-    // already Queued, or drop(1) swallowed the only Queued emission) until the user scrolls.
+    // already Queued) until the user scrolls.
     //
     // Do **not** key the main effect on [prioritizeDecode]: pager current flips every page
     // change and would restart the status collector + re-request thrash (baseline never did).
@@ -92,10 +93,10 @@ fun PagerItem(
     val prioritizeLatest by rememberUpdatedState(prioritizeDecode)
     LaunchedEffect(page.index, pageLoader, reloadGen) {
         pageLoader.request(page.index, prioritize = prioritizeLatest)
-        // Re-request when status falls back to Queued (eviction / restart / cancelled job)
-        // or blank Error. Do not drop(1): the first value after a restart may be the only
-        // Queued we get.
-        page.statusFlow.collect { status ->
+        // Re-request when status later falls back to Queued (eviction / cancelled job)
+        // or blank Error. drop(1): this effect already requested; restart is keyed on
+        // [reloadGeneration] so the current Queued emission must not double-request.
+        page.statusFlow.drop(1).collect { status ->
             when (status) {
                 PageStatus.Queued -> pageLoader.request(page.index, prioritize = prioritizeLatest)
                 is PageStatus.Error -> if (status.message == null) {

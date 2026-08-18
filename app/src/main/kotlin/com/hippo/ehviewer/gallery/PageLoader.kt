@@ -86,6 +86,14 @@ abstract class PageLoader(
     var startPage = if (size <= 0) 0 else startPage.coerceIn(0, size - 1)
 
     private val jobs = HashMap<Int, Job>()
+
+    /**
+     * Indices that have entered [onRequest] / decode and are not yet Ready/Error/cancelled.
+     * Covers the download/extract window **before** [notifySourceReady] puts a job in [jobs],
+     * so a second [request] (status collect, dual mate, slider) cannot start the same page twice.
+     * Guarded by the same lock as [jobs].
+     */
+    private val inflight = HashSet<Int>()
     private val mutex = NamedMutex<Int>()
 
     /**
@@ -228,27 +236,46 @@ abstract class PageLoader(
      * Radius is at least **2** so dual-page mates (2i / 2i+1) and pager
      * [beyondViewportPageCount]=1 stay warm when only the primary page prioritizes.
      *
-     * Call only when actually starting a decode for [index] — never on Ready re-request
-     * (that used to wipe warm jobs every composition of the current page).
+     * Only the scroll anchor ([maybeAnchorAndPrefetch] with prioritize) calls this —
+     * not every composed [request].
      */
     private fun prioritizeDecode(index: Int) {
         val radius = prefetchPageCount.coerceAtLeast(2)
         val lo = (index - radius).coerceAtLeast(0)
         val hi = (index + radius).coerceAtMost((size - 1).coerceAtLeast(0))
         val obsolete = synchronized(jobs) {
-            jobs.entries
+            val staleJobs = jobs.entries
                 .filter { (jobIndex, job) -> job.isActive && (jobIndex < lo || jobIndex > hi) }
                 .map { it.key to it.value }
-                .also { stale -> stale.forEach { (jobIndex, _) -> jobs.remove(jobIndex) } }
+            staleJobs.forEach { (jobIndex, _) ->
+                jobs.remove(jobIndex)
+                inflight.remove(jobIndex)
+            }
+            // Download/extract may be claimed with no decode job yet — drop far claims so
+            // a later scroll-back can request again instead of sticking forever.
+            inflight.filter { it < lo || it > hi }.forEach { inflight.remove(it) }
+            staleJobs
         }
         obsolete.forEach { (_, job) -> job.cancel() }
     }
 
     private fun cancelDecodeJobs() {
         val active = synchronized(jobs) {
+            inflight.clear()
             jobs.values.toList().also { jobs.clear() }
         }
         active.forEach { it.cancel() }
+    }
+
+    /** True if this call now owns [index]; false if download/decode is already running. */
+    private fun claimInflight(index: Int): Boolean = synchronized(jobs) {
+        if (index in inflight || jobs[index]?.isActive == true) return false
+        inflight.add(index)
+        true
+    }
+
+    private fun releaseInflight(index: Int) {
+        synchronized(jobs) { inflight.remove(index) }
     }
 
     private val prevIndex = AtomicInt(-1)
@@ -257,6 +284,10 @@ abstract class PageLoader(
         cancelRequest(index)
         notifyPageWait(index)
         lock.write { cache.remove(index) }
+        if (index !in 0 until size) return
+        claimInflight(index)
+        prevIndex.store(index)
+        prioritizeDecode(index)
         onRequest(index, true, orgImg)
     }
 
@@ -284,17 +315,25 @@ abstract class PageLoader(
     fun notifyPageSucceed(index: Int, image: Image, replaceCache: Boolean = true) {
         if (replaceCache) {
             lock.write {
-                // Replace any prior entry first so put() doesn't sum two huge weights.
-                cache.remove(index)
-                // sizeOf is clamped to maxSize — safe for SieveCache put/trim.
-                cache[index] = image
+                val existing = cache[index]
+                if (existing === image) {
+                    // Same instance: remove() would unpin/recycle then put a dead image.
+                } else {
+                    // Replace any prior entry first so put() doesn't sum two huge weights.
+                    cache.remove(index)
+                    // sizeOf is clamped to maxSize — safe for SieveCache put/trim.
+                    // Construction refcnt=1 is the cache ownership; do not pin again.
+                    cache[index] = image
+                }
             }
         }
         pages[index].statusFlow.update { if (image.hasQrCode) PageStatus.Blocked(image) else PageStatus.Ready(image) }
+        releaseInflight(index)
     }
 
     fun notifyPageFailed(index: Int, error: String?) {
         pages[index].statusFlow.update { PageStatus.Error(error) }
+        releaseInflight(index)
     }
 
     override fun close() {
@@ -318,31 +357,17 @@ abstract class PageLoader(
 
     fun request(index: Int, prioritize: Boolean = false) {
         if (index !in 0 until size) return
-        // Prefetch direction follows the last *anchor* (current page / new decode), not every
-        // composed beyond-viewport or dual partner. Updating prevIndex on every request made
-        // dual (2 pages × 3 spreads) and webtoon thrash forward/back prefetch while scrolling.
-        val last = prevIndex.load()
-        val prefetchRange = if (last < 0 || index >= last) {
-            index + 1..(index + prefetchPageCount).coerceAtMost(size - 1)
-        } else {
-            index - 1 downTo (index - prefetchPageCount).coerceAtLeast(0)
-        }
-
         val page = pages.getOrNull(index) ?: return
         when (val st = page.status) {
             is PageStatus.Ready -> {
                 // Keep showing a live decode; only reload if bitmap was recycled.
                 if (st.image.innerImage != null) {
-                    // Do not prioritizeDecode here — current is already warm; canceling
-                    // would kill neighbor prefetch/beyond-viewport warm decodes.
-                    if (prioritize) prevIndex.store(index)
-                    prefetchAbsent(prefetchRange)
+                    maybeAnchorAndPrefetch(index, prioritize)
                     return
                 }
             }
             is PageStatus.Blocked -> {
-                if (prioritize) prevIndex.store(index)
-                prefetchAbsent(prefetchRange)
+                maybeAnchorAndPrefetch(index, prioritize)
                 return
             }
             else -> Unit
@@ -350,29 +375,61 @@ abstract class PageLoader(
 
         val image = lock.read { cache[index] }
         if (image != null && image.innerImage != null) {
-            // Re-insert so cache stays coherent after partial eviction.
+            // Re-publish status; same-instance replace is a no-op in notifyPageSucceed.
             notifyPageSucceed(index, image, replaceCache = true)
-            if (prioritize) prevIndex.store(index)
-            prefetchAbsent(prefetchRange)
+            maybeAnchorAndPrefetch(index, prioritize)
             return
         }
 
-        // Already decoding this page — do not reset to Queued (that caused forever spinners
-        // when a second request no-op'd notifySourceReady while wiping Ready/progress).
-        val decoding = synchronized(jobs) { jobs[index]?.isActive == true }
-        if (decoding) {
-            if (prioritize) prevIndex.store(index)
-            prefetchAbsent(prefetchRange)
-            return
+        // Claim before onRequest so a second call during download/extract (jobs still empty)
+        // cannot notifyPageWait + start the same page again.
+        val started = claimInflight(index)
+        maybeAnchorAndPrefetch(index, prioritize)
+        if (!started) return
+        // Already Loading: keep progress. Queued/Error: show wait until source is ready.
+        if (page.status !is PageStatus.Loading) {
+            notifyPageWait(index)
         }
+        try {
+            onRequest(index)
+        } catch (e: Throwable) {
+            releaseInflight(index)
+            notifyPageFailed(index, e.displayString())
+        }
+    }
 
-        // Starting real work for this index — anchor scroll direction here.
-        prevIndex.store(index)
-        // Only when starting a new decode for this index: drop far-away jobs, keep warm window.
-        if (prioritize) prioritizeDecode(index)
-        notifyPageWait(index)
-        onRequest(index)
-        prefetchAbsent(prefetchRange)
+    /**
+     * Prefetch + cancel-far only from the scroll **anchor**.
+     *
+     * Extra [request]s (dual mate, beyond-viewport, status collect, slider echo) must not
+     * overwrite [prevIndex] or fire another prefetch window — that is the scroll storm.
+     * Cold start ([prevIndex] < 0): webtoon items never pass prioritize, and slider drop(1)
+     * skips the first page, so the first [request] still has to seed prefetch.
+     */
+    private fun maybeAnchorAndPrefetch(index: Int, prioritize: Boolean) {
+        val last = prevIndex.load()
+        if (prioritize) {
+            prevIndex.store(index)
+            // Seek/scroll often lands on Ready pages; still cancel far jobs so
+            // Original-size decode backlog does not grow across a session.
+            prioritizeDecode(index)
+            prefetchAbsent(prefetchRangeFor(index, last))
+        } else if (last < 0) {
+            prevIndex.store(index)
+            prefetchAbsent(prefetchRangeFor(index, last))
+        }
+    }
+
+    /**
+     * [last] must be the previous anchor, captured **before** [prevIndex] is overwritten.
+     * Reading [prevIndex] here after store made [index >= last] always true (forward-only).
+     */
+    private fun prefetchRangeFor(index: Int, last: Int): IntProgression {
+        return if (last < 0 || index >= last) {
+            index + 1..(index + prefetchPageCount).coerceAtMost(size - 1)
+        } else {
+            index - 1 downTo (index - prefetchPageCount).coerceAtLeast(0)
+        }
     }
 
     private fun prefetchAbsent(prefetchRange: IntProgression) {
@@ -394,7 +451,10 @@ abstract class PageLoader(
      * on pager dispose — let decode finish into memory cache to avoid Queued/no-job races.
      */
     fun cancelRequest(index: Int) {
-        val job = synchronized(jobs) { jobs.remove(index) }
+        val job = synchronized(jobs) {
+            inflight.remove(index)
+            jobs.remove(index)
+        }
         job?.cancel()
     }
 
@@ -409,8 +469,14 @@ abstract class PageLoader(
         if (index !in 0 until size) return
         // Already have a live Ready image — skip redundant decode.
         val st = pages.getOrNull(index)?.status
-        if (st is PageStatus.Ready && st.image.innerImage != null && !orgImg) return
-        if (st is PageStatus.Blocked && !orgImg) return
+        if (st is PageStatus.Ready && st.image.innerImage != null && !orgImg) {
+            releaseInflight(index)
+            return
+        }
+        if (st is PageStatus.Blocked && !orgImg) {
+            releaseInflight(index)
+            return
+        }
 
         synchronized(jobs) {
             val existing = jobs[index]
@@ -423,11 +489,11 @@ abstract class PageLoader(
                         }
                     }
                 } catch (e: CancellationException) {
-                    // prioritizeDecode / distant-cancel can abort mid-flight. Leave Ready/
-                    // Blocked alone; reset anything else to Queued so composed PagerItems
-                    // (statusFlow collector) restart a job instead of forever-Loading.
-                    val st = pages.getOrNull(index)?.status
-                    if (st !is PageStatus.Ready && st !is PageStatus.Blocked) {
+                    // Release before Queued so a composed PagerItem can claim again.
+                    // Leave Ready/Blocked alone; otherwise reset so the collector restarts.
+                    releaseInflight(index)
+                    val cur = pages.getOrNull(index)?.status
+                    if (cur !is PageStatus.Ready && cur !is PageStatus.Blocked) {
                         notifyPageWait(index)
                     }
                     throw e
