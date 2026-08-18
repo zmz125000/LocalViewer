@@ -284,10 +284,16 @@ abstract class PageLoader(
     fun notifyPageSucceed(index: Int, image: Image, replaceCache: Boolean = true) {
         if (replaceCache) {
             lock.write {
-                // Replace any prior entry first so put() doesn't sum two huge weights.
-                cache.remove(index)
-                // sizeOf is clamped to maxSize — safe for SieveCache put/trim.
-                cache[index] = image
+                val existing = cache[index]
+                if (existing === image) {
+                    // Same instance: remove() would unpin/recycle then put a dead image.
+                } else {
+                    // Replace any prior entry first so put() doesn't sum two huge weights.
+                    cache.remove(index)
+                    // sizeOf is clamped to maxSize — safe for SieveCache put/trim.
+                    // Construction refcnt=1 is the cache ownership; do not pin again.
+                    cache[index] = image
+                }
             }
         }
         pages[index].statusFlow.update { if (image.hasQrCode) PageStatus.Blocked(image) else PageStatus.Ready(image) }
@@ -333,15 +339,21 @@ abstract class PageLoader(
             is PageStatus.Ready -> {
                 // Keep showing a live decode; only reload if bitmap was recycled.
                 if (st.image.innerImage != null) {
-                    // Do not prioritizeDecode here — current is already warm; canceling
-                    // would kill neighbor prefetch/beyond-viewport warm decodes.
-                    if (prioritize) prevIndex.store(index)
+                    if (prioritize) {
+                        prevIndex.store(index)
+                        // Seek/scroll often lands on Ready pages; still cancel far jobs so
+                        // Original-size decode backlog does not grow across a session.
+                        prioritizeDecode(index)
+                    }
                     prefetchAbsent(prefetchRange)
                     return
                 }
             }
             is PageStatus.Blocked -> {
-                if (prioritize) prevIndex.store(index)
+                if (prioritize) {
+                    prevIndex.store(index)
+                    prioritizeDecode(index)
+                }
                 prefetchAbsent(prefetchRange)
                 return
             }
@@ -350,9 +362,12 @@ abstract class PageLoader(
 
         val image = lock.read { cache[index] }
         if (image != null && image.innerImage != null) {
-            // Re-insert so cache stays coherent after partial eviction.
+            // Re-publish status; same-instance replace is a no-op in notifyPageSucceed.
             notifyPageSucceed(index, image, replaceCache = true)
-            if (prioritize) prevIndex.store(index)
+            if (prioritize) {
+                prevIndex.store(index)
+                prioritizeDecode(index)
+            }
             prefetchAbsent(prefetchRange)
             return
         }
@@ -361,14 +376,17 @@ abstract class PageLoader(
         // when a second request no-op'd notifySourceReady while wiping Ready/progress).
         val decoding = synchronized(jobs) { jobs[index]?.isActive == true }
         if (decoding) {
-            if (prioritize) prevIndex.store(index)
+            if (prioritize) {
+                prevIndex.store(index)
+                prioritizeDecode(index)
+            }
             prefetchAbsent(prefetchRange)
             return
         }
 
         // Starting real work for this index — anchor scroll direction here.
         prevIndex.store(index)
-        // Only when starting a new decode for this index: drop far-away jobs, keep warm window.
+        // Drop far-away jobs, keep warm window around the new anchor.
         if (prioritize) prioritizeDecode(index)
         notifyPageWait(index)
         onRequest(index)

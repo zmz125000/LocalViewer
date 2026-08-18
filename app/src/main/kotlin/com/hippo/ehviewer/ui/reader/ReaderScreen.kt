@@ -644,7 +644,11 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
         LaunchedEffect(Unit) {
             focusRequester.requestFocus()
         }
-        syncState.Sync(webtoon = isWebtoon, pagerDual = pagerDual) { appbarVisible = false }
+        syncState.Sync(
+            webtoon = isWebtoon,
+            pagerDual = pagerDual,
+            webtoonHorizontal = webtoonHorizontal,
+        ) { appbarVisible = false }
         val bgColor by collectBackgroundColorAsState()
         LaunchedEffect(fullscreen) {
             snapshotFlow { appbarVisible }.collect { visible ->
@@ -953,7 +957,9 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
             visible = appbarVisible,
             showTopBar = !hideTopBar,
             title = pageLoader.title,
-            isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT,
+            // Dual webtoon strip is reverseLayout RTL (e4682de); seek bar must match
+            // or thumb direction fights page order after landscape dual turns on.
+            isRtl = readingMode == ReadingModeType.RIGHT_TO_LEFT || webtoonHorizontal,
             showSeekBar = showSeekbar,
             currentPage = syncState.sliderValue,
             totalPages = pageLoader.size,
