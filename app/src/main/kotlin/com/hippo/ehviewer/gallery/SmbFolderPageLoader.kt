@@ -13,6 +13,7 @@ import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.util.FileUtils
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -61,11 +62,6 @@ suspend inline fun <T> useSmbFolderPageLoader(
 
         /** UI/decode callbacks waiting for [index] to land in [SmbCache]. */
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
-        // Pages within this distance of the target keep running; farther jobs are cancelled.
-        // Tighter for convert-mode lib so we do not pile 30MB RAM buffers.
-        val keepWindow = 4
-        val libHdrKeepWindow = 2
-
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
                 override val title by lazy {
@@ -111,28 +107,28 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
-                    // Large seek: drop distant prefeches so pool capacity frees for the new region.
-                    cancelDistantDownloads(index)
                     ensureDownload(index, interactive = true) {
                         notifySourceReady(index, orgImg)
                     }
                 }
 
+                override fun onNavigation(demand: ReaderDemand) {
+                    // Reprioritize once per viewport update, not once for every decode-ahead page.
+                    cancelStaleDownloads(demand.sourcePages, demand.decodedPages)
+                }
+
                 /** Restrict prefetch only when download will RAM→UHDR convert. */
                 private fun isLibHdrCandidate(name: String): Boolean = HdrConvertCache.usesNetworkLibConvert(name)
 
-                private fun cancelDistantDownloads(center: Int) {
-                    val centerLib = isLibHdrCandidate(imageFileNames.getOrNull(center).orEmpty())
-                    val window = if (centerLib) libHdrKeepWindow else keepWindow
+                private fun cancelStaleDownloads(sourcePages: Set<Int>, decodedPages: Set<Int>) {
+                    // A waiter represents decode demand. Drop it before cancelling so the
+                    // cancellation handler cannot resurrect an obsolete interactive transfer.
+                    readyWaiters.forEach { idx, _ -> if (idx !in decodedPages) readyWaiters.remove(idx) }
                     // ConcurrentHashMap.forEach (BiConsumer) — never entries/keys iterator.
                     // Android EntryIterator.next can throw NoSuchElementException under concurrent
                     // put/remove; dual-page fires two onRequest close together.
                     downloadJobs.forEach { idx, job ->
-                        if (kotlin.math.abs(idx - center) > window) {
-                            // Do not remove waiters here — job's CancellationException handler
-                            // restarts download if the UI is still waiting for this page.
-                            job.cancel()
-                        }
+                        if (idx !in sourcePages) job.cancel()
                     }
                 }
 
@@ -174,7 +170,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                         // Waiters already registered; in-flight job will dispatch or retry.
                         return
                     }
-                    val job = scope.launch(Dispatchers.IO) {
+                    val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                         var needsInteractive = interactive
                         try {
                             // Authoritative disk check on IO (StrictMode + LRU correctness).
@@ -217,9 +213,11 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             }
                         } catch (e: Throwable) {
                             // Never rethrow: a failed child would cancel the whole reader scope.
-                            val waiters = takeReadyWaiters(index)
-                            if (waiters.isNotEmpty() || needsInteractive) {
-                                notifyPageFailed(index, e.message)
+                            if (downloadJobs[index] === coroutineContext[Job]) {
+                                val waiters = takeReadyWaiters(index)
+                                if (waiters.isNotEmpty() || needsInteractive) {
+                                    notifyPageFailed(index, e.message)
+                                }
                             }
                         } finally {
                             // Only remove *this* job — a replacement may already be registered.
@@ -227,13 +225,16 @@ suspend inline fun <T> useSmbFolderPageLoader(
                         }
                     }
                     val prev = downloadJobs.putIfAbsent(index, job)
-                    if (prev != null) {
-                        if (prev.isActive) {
-                            // Lost the race — keep the owner; waiters are already registered.
-                            job.cancel()
-                        } else {
-                            downloadJobs[index] = job
-                        }
+                    val ownsSlot = when {
+                        prev == null -> true
+                        prev.isActive -> false
+                        else -> downloadJobs.replace(index, prev, job)
+                    }
+                    if (ownsSlot) {
+                        job.start()
+                    } else {
+                        // Lost the race — keep the owner; waiters are already registered.
+                        job.cancel()
                     }
                 }
 

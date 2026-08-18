@@ -13,6 +13,7 @@ import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -46,8 +47,6 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         val libHdrPrefetchSlots = Semaphore(2)
         val downloadJobs = ConcurrentHashMap<Int, Job>()
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
-        val keepWindow = 4
-        val libHdrKeepWindow = 2
 
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
@@ -88,20 +87,22 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
-                    cancelDistantDownloads(index)
                     ensureDownload(index, interactive = true) {
                         notifySourceReady(index, orgImg)
                     }
                 }
 
+                override fun onNavigation(demand: ReaderDemand) {
+                    cancelStaleDownloads(demand.sourcePages, demand.decodedPages)
+                }
+
                 private fun isLibHdrCandidate(name: String): Boolean = HdrConvertCache.usesNetworkLibConvert(name)
 
-                private fun cancelDistantDownloads(center: Int) {
-                    val centerLib = isLibHdrCandidate(imageFileNames.getOrNull(center).orEmpty())
-                    val window = if (centerLib) libHdrKeepWindow else keepWindow
+                private fun cancelStaleDownloads(sourcePages: Set<Int>, decodedPages: Set<Int>) {
+                    readyWaiters.forEach { idx, _ -> if (idx !in decodedPages) readyWaiters.remove(idx) }
                     // ConcurrentHashMap.forEach — avoid entries.toList() iterator race on Android.
                     downloadJobs.forEach { idx, job ->
-                        if (kotlin.math.abs(idx - center) > window) job.cancel()
+                        if (idx !in sourcePages) job.cancel()
                     }
                 }
 
@@ -132,17 +133,17 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     val existing = downloadJobs[index]
                     if (existing != null && existing.isActive) return
 
-                    val slots = when {
-                        interactive -> interactiveSlots
-                        isLibHdrCandidate(name) -> libHdrPrefetchSlots
-                        else -> prefetchSlots
-                    }
-                    val job = launch(Dispatchers.IO) {
+                    val job = launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                         try {
                             // Authoritative disk check on IO (StrictMode + LRU correctness).
                             if (WebDavCache.isPageCachedOnDisk(cache)) {
                                 dispatchReady(index)
                                 return@launch
+                            }
+                            val slots = when {
+                                interactive || readyWaiters[index]?.isNotEmpty() == true -> interactiveSlots
+                                isLibHdrCandidate(name) -> libHdrPrefetchSlots
+                                else -> prefetchSlots
                             }
                             slots.withPermit {
                                 if (WebDavCache.isPageCachedOnDisk(cache)) {
@@ -171,15 +172,23 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                             }
                             throw e
                         } catch (e: Throwable) {
-                            val waiters = takeReadyWaiters(index)
-                            if (waiters.isNotEmpty()) {
-                                notifyPageFailed(index, e.message)
+                            if (downloadJobs[index] === coroutineContext[Job]) {
+                                val waiters = takeReadyWaiters(index)
+                                if (waiters.isNotEmpty()) {
+                                    notifyPageFailed(index, e.message)
+                                }
                             }
                         } finally {
                             downloadJobs.remove(index, coroutineContext[Job])
                         }
                     }
-                    downloadJobs[index] = job
+                    val prev = downloadJobs.putIfAbsent(index, job)
+                    val ownsSlot = when {
+                        prev == null -> true
+                        prev.isActive -> false
+                        else -> downloadJobs.replace(index, prev, job)
+                    }
+                    if (ownsSlot) job.start() else job.cancel()
                 }
             },
         )

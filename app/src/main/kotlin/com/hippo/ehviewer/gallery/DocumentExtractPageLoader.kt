@@ -236,11 +236,10 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     ensureExtract(index, interactive = true) {
                         notifySourceReady(index, orgImg)
                     }
-                    requestDiscoveryThrough(index + prefetchN)
-                    // One neighbor is enough here; PageLoader also supplies a preload list.
-                    if (prefetchN > 0 && index + 1 < engine.pageCount) {
-                        ensureExtract(index + 1, interactive = false)
-                    }
+                }
+
+                override fun onNavigation(demand: ReaderDemand) {
+                    requestDiscoveryThrough(demand.sourcePages.maxOrNull() ?: demand.navigation.anchor)
                 }
 
                 override fun close() {

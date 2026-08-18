@@ -138,6 +138,22 @@
         <item>17</item>
     </integer-array>
 
+    <string-array name="reader_decode_ahead_entries" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>5</item>
+    </string-array>
+
+    <integer-array name="reader_decode_ahead_entry_values" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>5</item>
+    </integer-array>
+
     <string-array name="read_cache_size_entries" translatable="false">
         <item>320 MB</item>
         <item>640 MB</item>

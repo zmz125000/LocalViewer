@@ -23,18 +23,16 @@ import com.hippo.ehviewer.util.OSUtils
 import com.hippo.ehviewer.util.detectAds
 import com.hippo.ehviewer.util.displayString
 import java.util.concurrent.locks.ReentrantReadWriteLock
-import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.read
 import kotlin.concurrent.write
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -68,11 +66,11 @@ private fun pageImageCacheMaxBytes(): Int {
 
 abstract class PageLoader(
     val scope: CoroutineScope,
-    val info: GalleryInfo?,
+    override val info: GalleryInfo?,
     startPage: Int,
     initialSize: Int,
     val hasAds: Boolean = false,
-) : AutoCloseable {
+) : ReaderSession {
     /**
      * Page count. Snapshot-backed so Compose pager/list recompose when solid extract
      * grows the lazy list. [growTo] publishes on the main thread.
@@ -80,10 +78,10 @@ abstract class PageLoader(
     private val sizeState = mutableIntStateOf(initialSize.coerceAtLeast(0))
 
     /** Observable page count (Compose Snapshot). Seek bar / pager must read this. */
-    val size: Int
+    override val size: Int
         get() = sizeState.intValue
 
-    var startPage = if (size <= 0) 0 else startPage.coerceIn(0, size - 1)
+    override var startPage = if (size <= 0) 0 else startPage.coerceIn(0, size - 1)
 
     private val jobs = HashMap<Int, Job>()
 
@@ -94,6 +92,7 @@ abstract class PageLoader(
      * Guarded by the same lock as [jobs].
      */
     private val inflight = HashSet<Int>()
+    private val forcedDecode = HashSet<Int>()
     private val mutex = NamedMutex<Int>()
 
     /**
@@ -146,6 +145,12 @@ abstract class PageLoader(
                     image.unpin()
                     throw e
                 }
+                val runningJob = currentCoroutineContext()[Job]
+                if (!isDecodeDemanded(index) || !ownsDecodeSlot(index, runningJob)) {
+                    // Navigation changed in the narrow window after decode completed.
+                    image.unpin()
+                    return@bracketCase
+                }
                 notifyPageSucceed(index, image)
             },
             { src, case -> if (case !is ExitCase.Completed) src.close() },
@@ -179,7 +184,7 @@ abstract class PageLoader(
     }
 
     /** Live page slots; grows with [growTo] for solid lazy lists. */
-    val pages: List<Page> get() = pageList
+    override val pages: List<Page> get() = pageList
 
     /**
      * Expand lazy list to [newSize] (seek bar + pager max). Only grows; never shrinks.
@@ -203,57 +208,50 @@ abstract class PageLoader(
     private fun publishSize(n: Int) {
         if (n <= sizeState.intValue) return
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            if (n > sizeState.intValue) sizeState.intValue = n
+            if (n > sizeState.intValue) {
+                sizeState.intValue = n
+                replan()
+            }
         } else {
             pageLoaderMainHandler.post {
-                if (n > sizeState.intValue) sizeState.intValue = n
+                if (n > sizeState.intValue) {
+                    sizeState.intValue = n
+                    replan()
+                }
             }
         }
     }
 
-    private val prefetchPageCount = Settings.preloadImage.value
+    private val demandPlanner = ReaderDemandPlanner()
 
-    /**
-     * Bumped on [restart] so composed [PagerItem]s re-run their request effect.
-     * Status alone is not enough: a page already [PageStatus.Queued] does not re-emit,
-     * and collectors that [drop] the first value can miss the post-restart Queued.
-     */
-    private val _reloadGeneration = MutableStateFlow(0)
-    val reloadGeneration: StateFlow<Int> = _reloadGeneration.asStateFlow()
+    @Volatile
+    private var lastNavigation: ReaderNavigation? = null
 
-    fun restart() {
+    @Volatile
+    private var desiredDecodedPages: Set<Int> = emptySet()
+
+    override fun restart() {
         cancelDecodeJobs()
         lock.write { cache.evictAll() }
         pages.forEach(Page::reset)
-        _reloadGeneration.update { it + 1 }
+        replan()
     }
 
-    /**
-     * Drop **stale** decode work far from [index] so a newly needed current page can claim a
-     * semaphore slot. Must **not** cancel the warm window (index ± prefetch): prefetcher /
-     * beyond-viewport pages decode into cache for the next turn.
-     *
-     * Radius is at least **2** so dual-page mates (2i / 2i+1) and pager
-     * [beyondViewportPageCount]=1 stay warm when only the primary page prioritizes.
-     *
-     * Only the scroll anchor ([maybeAnchorAndPrefetch] with prioritize) calls this —
-     * not every composed [request].
-     */
-    private fun prioritizeDecode(index: Int) {
-        val radius = prefetchPageCount.coerceAtLeast(2)
-        val lo = (index - radius).coerceAtLeast(0)
-        val hi = (index + radius).coerceAtMost((size - 1).coerceAtLeast(0))
+    /** Drop decode work outside the explicit visible + decode-ahead demand set. */
+    private fun prioritizeDecode(desired: Set<Int>) {
         val obsolete = synchronized(jobs) {
             val staleJobs = jobs.entries
-                .filter { (jobIndex, job) -> job.isActive && (jobIndex < lo || jobIndex > hi) }
+                .filter { (jobIndex, job) -> job.isActive && jobIndex !in desired }
                 .map { it.key to it.value }
             staleJobs.forEach { (jobIndex, _) ->
                 jobs.remove(jobIndex)
                 inflight.remove(jobIndex)
+                forcedDecode.remove(jobIndex)
             }
             // Download/extract may be claimed with no decode job yet — drop far claims so
             // a later scroll-back can request again instead of sticking forever.
-            inflight.filter { it < lo || it > hi }.forEach { inflight.remove(it) }
+            inflight.filter { it !in desired }.forEach { inflight.remove(it) }
+            forcedDecode.filter { it !in desired }.forEach { forcedDecode.remove(it) }
             staleJobs
         }
         obsolete.forEach { (_, job) -> job.cancel() }
@@ -262,6 +260,7 @@ abstract class PageLoader(
     private fun cancelDecodeJobs() {
         val active = synchronized(jobs) {
             inflight.clear()
+            forcedDecode.clear()
             jobs.values.toList().also { jobs.clear() }
         }
         active.forEach { it.cancel() }
@@ -275,20 +274,31 @@ abstract class PageLoader(
     }
 
     private fun releaseInflight(index: Int) {
-        synchronized(jobs) { inflight.remove(index) }
+        synchronized(jobs) {
+            inflight.remove(index)
+            forcedDecode.remove(index)
+        }
     }
 
-    private val prevIndex = AtomicInt(-1)
+    private fun isDecodeDemanded(index: Int): Boolean = index in desiredDecodedPages || synchronized(jobs) { index in forcedDecode }
 
-    fun retryPage(index: Int, orgImg: Boolean = false) {
+    private fun ownsDecodeSlot(index: Int, job: Job?): Boolean = synchronized(jobs) {
+        job != null && jobs[index] === job
+    }
+
+    override fun retryPage(index: Int, orgImg: Boolean) {
         cancelRequest(index)
         notifyPageWait(index)
         lock.write { cache.remove(index) }
         if (index !in 0 until size) return
-        claimInflight(index)
-        prevIndex.store(index)
-        prioritizeDecode(index)
-        onRequest(index, true, orgImg)
+        if (!claimInflight(index)) return
+        synchronized(jobs) { forcedDecode.add(index) }
+        try {
+            onRequest(index, true, orgImg)
+        } catch (e: Throwable) {
+            releaseInflight(index)
+            notifyPageFailed(index, e.displayString())
+        }
     }
 
     protected abstract fun prefetchPages(pages: List<Int>, bounds: IntRange)
@@ -298,6 +308,9 @@ abstract class PageLoader(
      *   Otherwise uses [Settings.readerDecodeSize] (1.5x…3x / origin).
      */
     protected abstract fun onRequest(index: Int, force: Boolean = false, orgImg: Boolean = false)
+
+    /** Source adapters may reprioritize transport/extraction once per navigation update. */
+    protected open fun onNavigation(demand: ReaderDemand) = Unit
 
     fun notifyPageWait(index: Int) {
         pages[index].reset()
@@ -347,27 +360,25 @@ abstract class PageLoader(
         }
     }
 
-    abstract val title: String
+    abstract override val title: String
 
     protected abstract fun getImageExtension(index: Int): String?
 
-    fun getImageFilename(index: Int): String? = getImageExtension(index)?.let {
+    override fun getImageFilename(index: Int): String? = getImageExtension(index)?.let {
         FileUtils.sanitizeFilename("$title - ${index + 1}.${it.lowercase()}")
     }
 
-    fun request(index: Int, prioritize: Boolean = false) {
+    private fun requestDecode(index: Int) {
         if (index !in 0 until size) return
         val page = pages.getOrNull(index) ?: return
         when (val st = page.status) {
             is PageStatus.Ready -> {
                 // Keep showing a live decode; only reload if bitmap was recycled.
                 if (st.image.innerImage != null) {
-                    maybeAnchorAndPrefetch(index, prioritize)
                     return
                 }
             }
             is PageStatus.Blocked -> {
-                maybeAnchorAndPrefetch(index, prioritize)
                 return
             }
             else -> Unit
@@ -377,14 +388,12 @@ abstract class PageLoader(
         if (image != null && image.innerImage != null) {
             // Re-publish status; same-instance replace is a no-op in notifyPageSucceed.
             notifyPageSucceed(index, image, replaceCache = true)
-            maybeAnchorAndPrefetch(index, prioritize)
             return
         }
 
         // Claim before onRequest so a second call during download/extract (jobs still empty)
         // cannot notifyPageWait + start the same page again.
         val started = claimInflight(index)
-        maybeAnchorAndPrefetch(index, prioritize)
         if (!started) return
         // Already Loading: keep progress. Queued/Error: show wait until source is ready.
         if (page.status !is PageStatus.Loading) {
@@ -399,48 +408,50 @@ abstract class PageLoader(
     }
 
     /**
-     * Prefetch + cancel-far only from the scroll **anchor**.
-     *
-     * Extra [request]s (dual mate, beyond-viewport, status collect, slider echo) must not
-     * overwrite [prevIndex] or fire another prefetch window — that is the scroll storm.
-     * Cold start ([prevIndex] < 0): webtoon items never pass prioritize, and slider drop(1)
-     * skips the first page, so the first [request] still has to seed prefetch.
+     * Submit complete viewport truth. This is the only method that changes scheduling direction
+     * or creates speculative work; composed [PagerItem]s do not request pages independently.
      */
-    private fun maybeAnchorAndPrefetch(index: Int, prioritize: Boolean) {
-        val last = prevIndex.load()
-        if (prioritize) {
-            prevIndex.store(index)
-            // Seek/scroll often lands on Ready pages; still cancel far jobs so
-            // Original-size decode backlog does not grow across a session.
-            prioritizeDecode(index)
-            prefetchAbsent(prefetchRangeFor(index, last))
-        } else if (last < 0) {
-            prevIndex.store(index)
-            prefetchAbsent(prefetchRangeFor(index, last))
-        }
+    @Synchronized
+    override fun navigate(navigation: ReaderNavigation) {
+        if (size <= 0) return
+        val policy = ReaderLoadPolicy(
+            sourceAhead = Settings.preloadImage.value.coerceAtLeast(0),
+            decodeAhead = Settings.readerDecodeAhead.value.coerceAtLeast(0),
+        )
+        val demand = demandPlanner.plan(navigation, size, policy)
+        lastNavigation = demand.navigation
+        desiredDecodedPages = demand.decodedPages
+        startPage = demand.navigation.anchor
+
+        onNavigation(demand)
+        prioritizeDecode(demand.decodedPages)
+        // Interactive viewport first, then nearest decoded neighbors.
+        demand.visibleDecode.forEach(::requestDecode)
+        demand.decodeAhead.forEach(::requestDecode)
+        prefetchAbsent(demand.sourceOnly)
     }
 
-    /**
-     * [last] must be the previous anchor, captured **before** [prevIndex] is overwritten.
-     * Reading [prevIndex] here after store made [index >= last] always true (forward-only).
-     */
-    private fun prefetchRangeFor(index: Int, last: Int): IntProgression = if (last < 0 || index >= last) {
-        index + 1..(index + prefetchPageCount).coerceAtMost(size - 1)
-    } else {
-        index - 1 downTo (index - prefetchPageCount).coerceAtLeast(0)
+    /** Recompute windows after policy/catalog changes without clearing decoded images. */
+    override fun replan() {
+        lastNavigation?.let(::navigate)
     }
 
-    private fun prefetchAbsent(prefetchRange: IntProgression) {
-        if (prefetchRange.isEmpty()) return
-        val pagesAbsent = prefetchRange.filter {
+    /** Retry currently demanded pages after network transports are recreated on resume. */
+    override fun onForeground() {
+        replan()
+    }
+
+    private fun prefetchAbsent(prefetchIndices: List<Int>) {
+        if (prefetchIndices.isEmpty()) return
+        val pagesAbsent = prefetchIndices.filter {
             it in 0 until size && when (pages[it].status) {
                 PageStatus.Queued, is PageStatus.Error -> true
                 else -> false
             }
         }
         if (pagesAbsent.isEmpty()) return
-        val start = if (prefetchRange.step > 0) prefetchRange.first else prefetchRange.last
-        val end = if (prefetchRange.step > 0) prefetchRange.last else prefetchRange.first
+        val start = pagesAbsent.min()
+        val end = pagesAbsent.max()
         prefetchPages(pagesAbsent, start - 5..end + 5)
     }
 
@@ -451,12 +462,13 @@ abstract class PageLoader(
     fun cancelRequest(index: Int) {
         val job = synchronized(jobs) {
             inflight.remove(index)
+            forcedDecode.remove(index)
             jobs.remove(index)
         }
         job?.cancel()
     }
 
-    abstract fun save(index: Int, file: Path): Boolean
+    abstract override fun save(index: Int, file: Path): Boolean
 
     /**
      * Decode [index] when the source file is ready.
@@ -465,6 +477,11 @@ abstract class PageLoader(
      */
     fun notifySourceReady(index: Int, orgImg: Boolean = false) {
         if (index !in 0 until size) return
+        if (!isDecodeDemanded(index)) {
+            // A cancelled/old source operation completed after a seek or reversal.
+            releaseInflight(index)
+            return
+        }
         // Already have a live Ready image — skip redundant decode.
         val st = pages.getOrNull(index)?.status
         if (st is PageStatus.Ready && st.image.innerImage != null && !orgImg) {
@@ -479,7 +496,8 @@ abstract class PageLoader(
         synchronized(jobs) {
             val existing = jobs[index]
             if (existing?.isActive == true) return
-            val job = scope.launch {
+            val job = scope.launch(start = CoroutineStart.LAZY) {
+                val runningJob = currentCoroutineContext()[Job]
                 try {
                     mutex.withLock(index) {
                         semaphore.withPermit {
@@ -487,25 +505,32 @@ abstract class PageLoader(
                         }
                     }
                 } catch (e: CancellationException) {
-                    // Release before Queued so a composed PagerItem can claim again.
-                    // Leave Ready/Blocked alone; otherwise reset so the collector restarts.
-                    releaseInflight(index)
-                    val cur = pages.getOrNull(index)?.status
-                    if (cur !is PageStatus.Ready && cur !is PageStatus.Blocked) {
-                        notifyPageWait(index)
+                    // A replacement job may already own this index after a jump/restart.
+                    // Never clear its claim or overwrite its Loading/Ready state.
+                    if (ownsDecodeSlot(index, runningJob)) {
+                        releaseInflight(index)
+                        val cur = pages.getOrNull(index)?.status
+                        if (cur !is PageStatus.Ready && cur !is PageStatus.Blocked) {
+                            notifyPageWait(index)
+                        }
                     }
                     throw e
                 } catch (e: Throwable) {
-                    notifyPageFailed(index, e.displayString())
+                    if (ownsDecodeSlot(index, runningJob)) {
+                        notifyPageFailed(index, e.displayString())
+                    }
                 } finally {
                     synchronized(jobs) {
-                        if (jobs[index] === coroutineContext[Job]) {
+                        if (jobs[index] === runningJob) {
                             jobs.remove(index)
+                            inflight.remove(index)
+                            forcedDecode.remove(index)
                         }
                     }
                 }
             }
             jobs[index] = job
+            job.start()
         }
     }
 

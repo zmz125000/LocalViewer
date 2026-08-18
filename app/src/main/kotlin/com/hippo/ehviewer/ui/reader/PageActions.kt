@@ -19,7 +19,7 @@ import com.ehviewer.core.util.isAtLeastT
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.BuildConfig.APPLICATION_ID
 import com.hippo.ehviewer.gallery.Page
-import com.hippo.ehviewer.gallery.PageLoader
+import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.awaitActivityResult
@@ -31,7 +31,7 @@ import moe.tarsin.snackbar
 import moe.tarsin.string
 import splitties.systemservices.clipboardManager
 
-context(loader: PageLoader, ctx: Context)
+context(loader: ReaderSession, ctx: Context)
 private fun provideImage(index: Int): Uri? {
     val dir = AppConfig.externalTempDir ?: return null
     val name = loader.getImageFilename(index) ?: return null
@@ -39,7 +39,7 @@ private fun provideImage(index: Int): Uri? {
     return FileProvider.getUriForFile(ctx, "$APPLICATION_ID.fileprovider", file.toFile())
 }
 
-context(_: SnackbarHostState, ctx: Context, _: PageLoader)
+context(_: SnackbarHostState, ctx: Context, _: ReaderSession)
 suspend fun shareImage(page: Page, info: GalleryInfo? = null) {
     val error = string(R.string.error_cant_save_image)
     val share = string(R.string.share_image)
@@ -64,7 +64,7 @@ suspend fun shareImage(page: Page, info: GalleryInfo? = null) {
     }
 }
 
-context(_: SnackbarHostState, ctx: Context, _: PageLoader)
+context(_: SnackbarHostState, ctx: Context, _: ReaderSession)
 suspend fun copy(page: Page) {
     val error = string(R.string.error_cant_save_image)
     val copied = string(R.string.copied_to_clipboard)
@@ -80,7 +80,7 @@ suspend fun copy(page: Page) {
     }
 }
 
-context(_: SnackbarHostState, ctx: Context, loader: PageLoader)
+context(_: SnackbarHostState, ctx: Context, loader: ReaderSession)
 suspend fun save(page: Page) {
     // minSdk 32: MediaStore scoped storage only (no WRITE_EXTERNAL_STORAGE).
     val cannotSave = string(R.string.error_cant_save_image)
@@ -122,7 +122,7 @@ suspend fun save(page: Page) {
     }
 }
 
-context(_: SnackbarHostState, _: Context, loader: PageLoader)
+context(_: SnackbarHostState, _: Context, loader: ReaderSession)
 suspend fun saveTo(page: Page) {
     val filename = loader.getImageFilename(page.index)
     if (filename == null) {
