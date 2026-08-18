@@ -425,7 +425,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                             addReadyWaiter(index, onReady)
                         }
                         val existing = extractJobs[index]
-                        if (existing != null && existing.isActive) {
+                        if (existing != null && !existing.isCompleted) {
                             return
                         }
                         val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
@@ -469,11 +469,19 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 extractJobs.remove(index, coroutineContext[Job])
                             }
                         }
-                        val prev = extractJobs.putIfAbsent(index, job)
-                        val ownsSlot = when {
-                            prev == null -> true
-                            prev.isActive -> false
-                            else -> extractJobs.replace(index, prev, job)
+                        var ownsSlot = false
+                        while (true) {
+                            val owner = extractJobs.putIfAbsent(index, job)
+                            if (owner == null) {
+                                ownsSlot = true
+                                break
+                            }
+                            // Lazy jobs are New (not active) between registration and start.
+                            if (!owner.isCompleted) break
+                            if (extractJobs.replace(index, owner, job)) {
+                                ownsSlot = true
+                                break
+                            }
                         }
                         if (ownsSlot) job.start() else job.cancel()
                     }

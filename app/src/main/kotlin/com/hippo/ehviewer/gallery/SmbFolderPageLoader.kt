@@ -166,7 +166,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                         addReadyWaiter(index, onReady)
                     }
                     val existing = downloadJobs[index]
-                    if (existing != null && existing.isActive) {
+                    if (existing != null && !existing.isCompleted) {
                         // Waiters already registered; in-flight job will dispatch or retry.
                         return
                     }
@@ -224,11 +224,19 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             downloadJobs.remove(index, coroutineContext[Job])
                         }
                     }
-                    val prev = downloadJobs.putIfAbsent(index, job)
-                    val ownsSlot = when {
-                        prev == null -> true
-                        prev.isActive -> false
-                        else -> downloadJobs.replace(index, prev, job)
+                    var ownsSlot = false
+                    while (true) {
+                        val owner = downloadJobs.putIfAbsent(index, job)
+                        if (owner == null) {
+                            ownsSlot = true
+                            break
+                        }
+                        // Lazy jobs are New (not active) between registration and start.
+                        if (!owner.isCompleted) break
+                        if (downloadJobs.replace(index, owner, job)) {
+                            ownsSlot = true
+                            break
+                        }
                     }
                     if (ownsSlot) {
                         job.start()
