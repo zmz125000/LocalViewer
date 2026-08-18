@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -223,8 +224,6 @@ suspend inline fun <T> useStreamArchivePageLoader(
             val extractJobs = ConcurrentHashMap<Int, Job>()
             val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
             val pagePaths = ConcurrentHashMap<Int, Path>()
-            // Pages within this distance of the target keep running; farther jobs cancel.
-            val keepWindow = 4
             val hostScope = this
             val tarIndexJob = AtomicReference<Job?>(null)
             val coverScheduled = AtomicBoolean(false)
@@ -326,7 +325,6 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     }
 
                     override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
-                        cancelDistantExtracts(index)
                         ensureExtract(index, interactive = true) {
                             notifySourceReady(index, orgImg)
                             // Any interactive page: reuse cached page 0 for cover if present.
@@ -340,6 +338,10 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                     ?.ext,
                             )
                         }
+                    }
+
+                    override fun onNavigation(demand: ReaderDemand) {
+                        cancelStaleExtracts(demand.sourcePages, demand.decodedPages)
                     }
 
                     override fun close() {
@@ -378,12 +380,11 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         super.close()
                     }
 
-                    private fun cancelDistantExtracts(center: Int) {
+                    private fun cancelStaleExtracts(sourcePages: Set<Int>, decodedPages: Set<Int>) {
+                        readyWaiters.forEach { idx, _ -> if (idx !in decodedPages) readyWaiters.remove(idx) }
                         // ConcurrentHashMap.forEach — avoid entries.toList() iterator race on Android.
                         extractJobs.forEach { idx, job ->
-                            if (kotlin.math.abs(idx - center) > keepWindow) {
-                                job.cancel()
-                            }
+                            if (idx !in sourcePages) job.cancel()
                         }
                     }
 
@@ -424,10 +425,10 @@ suspend inline fun <T> useStreamArchivePageLoader(
                             addReadyWaiter(index, onReady)
                         }
                         val existing = extractJobs[index]
-                        if (existing != null && existing.isActive) {
+                        if (existing != null && !existing.isCompleted) {
                             return
                         }
-                        val job = scope.launch(Dispatchers.IO) {
+                        val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                             try {
                                 if (isPageCached(index)) {
                                     dispatchReady(index)
@@ -457,23 +458,32 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 }
                                 throw e
                             } catch (e: Throwable) {
-                                logcat(e)
-                                val waiters = takeReadyWaiters(index)
-                                if (waiters.isNotEmpty() || interactive) {
-                                    notifyPageFailed(index, e.message)
+                                if (extractJobs[index] === coroutineContext[Job]) {
+                                    logcat(e)
+                                    val waiters = takeReadyWaiters(index)
+                                    if (waiters.isNotEmpty() || interactive) {
+                                        notifyPageFailed(index, e.message)
+                                    }
                                 }
                             } finally {
                                 extractJobs.remove(index, coroutineContext[Job])
                             }
                         }
-                        val prev = extractJobs.putIfAbsent(index, job)
-                        if (prev != null) {
-                            if (prev.isActive) {
-                                job.cancel()
-                            } else {
-                                extractJobs[index] = job
+                        var ownsSlot = false
+                        while (true) {
+                            val owner = extractJobs.putIfAbsent(index, job)
+                            if (owner == null) {
+                                ownsSlot = true
+                                break
+                            }
+                            // Lazy jobs are New (not active) between registration and start.
+                            if (!owner.isCompleted) break
+                            if (extractJobs.replace(index, owner, job)) {
+                                ownsSlot = true
+                                break
                             }
                         }
+                        if (ownsSlot) job.start() else job.cancel()
                     }
 
                     private fun markCompleteIfReady() {

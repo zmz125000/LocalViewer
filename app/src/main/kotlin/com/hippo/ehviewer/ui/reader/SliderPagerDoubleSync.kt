@@ -13,7 +13,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import com.hippo.ehviewer.gallery.PageLoader
+import com.hippo.ehviewer.gallery.NavigationKind
+import com.hippo.ehviewer.gallery.ReaderNavigation
+import com.hippo.ehviewer.gallery.ReaderSession
 import kotlin.math.abs
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -24,7 +26,7 @@ import kotlinx.coroutines.flow.filterNotNull
 class SliderPagerDoubleSync(
     private val lazyListState: LazyListState,
     private val pagerState: PagerState,
-    private val pageLoader: PageLoader,
+    private val pageLoader: ReaderSession,
 ) {
     private var sliderFollowPager by mutableStateOf(true)
     var sliderValue by mutableIntStateOf(pageLoader.startPage + 1)
@@ -83,9 +85,6 @@ class SliderPagerDoubleSync(
                     // Always store real page index.
                     sliderValue = index + 1
                     pageLoader.startPage = index
-                    // Webtoon never sets PagerItem.prioritizeDecode; cancel far decode
-                    // jobs on the reading anchor so Original-size backlog does not grow.
-                    pageLoader.request(index, prioritize = true)
                     onPageSelected()
                 }
             }
@@ -93,6 +92,21 @@ class SliderPagerDoubleSync(
             LaunchedEffect(webtoon, pagerDual, pageLoader) {
                 snapshotFlow { sliderValue - 1 }.collectLatest { index ->
                     val safe = index.coerceIn(0, (pageLoader.size - 1).coerceAtLeast(0))
+                    val visible = if (pagerDual) {
+                        val first = dualFirstPageIndex(dualSpreadIndex(safe))
+                        first..minOf(first + 1, pageLoader.size - 1)
+                    } else {
+                        safe..safe
+                    }
+                    // Every seekbar tick is a real latest-wins jump. Demand is published
+                    // before UI scrolling so source/decode work can preempt stale windows.
+                    pageLoader.navigate(
+                        ReaderNavigation(
+                            anchor = visible.first,
+                            visiblePages = visible,
+                            kind = NavigationKind.Jump,
+                        ),
+                    )
                     if (webtoon) {
                         lazyListState.scrollToItem(safe)
                     } else if (pagerDual) {
@@ -101,7 +115,6 @@ class SliderPagerDoubleSync(
                         pagerState.animateScrollToPage(safe)
                     }
                     pageLoader.startPage = safe
-                    pageLoader.request(safe, prioritize = true)
                     // Resume follow only after the jump lands. onValueChangeFinished
                     // runs in the same frame as a tap and would cancel this scroll.
                     sliderFollowPager = true
@@ -120,7 +133,7 @@ class SliderPagerDoubleSync(
  * so the vertical predicate matches nothing and the slider freezes. Use the item
  * closest to the viewport center instead.
  */
-private fun LazyListLayoutInfo.webtoonReadingIndex(horizontal: Boolean): Int? {
+internal fun LazyListLayoutInfo.webtoonReadingIndex(horizontal: Boolean): Int? {
     val items = visibleItemsInfo
     if (items.isEmpty()) return null
     if (!horizontal) {
@@ -139,7 +152,7 @@ private fun LazyListLayoutInfo.webtoonReadingIndex(horizontal: Boolean): Int? {
 fun rememberSliderPagerDoubleSyncState(
     lazyListState: LazyListState,
     pagerState: PagerState,
-    pageLoader: PageLoader,
+    pageLoader: ReaderSession,
 ): SliderPagerDoubleSync = remember(lazyListState, pagerState, pageLoader) {
     SliderPagerDoubleSync(lazyListState, pagerState, pageLoader)
 }

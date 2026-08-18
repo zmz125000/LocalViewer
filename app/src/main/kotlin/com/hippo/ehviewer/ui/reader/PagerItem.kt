@@ -27,7 +27,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,8 +54,8 @@ import com.ehviewer.core.util.unreachable
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.Page
-import com.hippo.ehviewer.gallery.PageLoader
 import com.hippo.ehviewer.gallery.PageStatus
+import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.gallery.progressObserved
 import com.hippo.ehviewer.gallery.statusObserved
 import com.hippo.ehviewer.image.Image
@@ -64,54 +63,20 @@ import com.hippo.ehviewer.ui.tools.DrawablePainter
 import com.hippo.ehviewer.util.AdsPlaceholderFile
 import kotlin.math.roundToInt
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.flow.drop
 
 @Composable
 fun PagerItem(
     page: Page,
-    pageLoader: PageLoader,
+    pageLoader: ReaderSession,
     contentScale: ContentScale,
     modifier: Modifier = Modifier,
     contentModifier: Modifier = Modifier,
     viewportSize: Size = Size.Zero,
-    prioritizeDecode: Boolean = false,
     /** Landscape dual webtoon: height-driven width in a LazyRow. */
     horizontalStrip: Boolean = false,
 ) {
-    // Do NOT cancelRequest on dispose — that raced with notifySourceReady and left pages
-    // in Queued with no active decode job (forever spinner) even when the file was cached.
-    // Decodes are semaphore-limited and finish into the memory cache for revisit.
-    //
-    // Key [reloadGeneration] so HDR / lib-direct / crop / etc. restart() always re-requests
-    // visible pages. Without it, status can stay Queued with no job (StateFlow no-op if
-    // already Queued) until the user scrolls.
-    //
-    // Do **not** key the main effect on [prioritizeDecode]: pager current flips every page
-    // change and would restart the status collector + re-request thrash (baseline never did).
-    // Prioritize is a one-shot boost when this item becomes the current page.
-    val reloadGen by pageLoader.reloadGeneration.collectAsState()
-    val prioritizeLatest by rememberUpdatedState(prioritizeDecode)
-    LaunchedEffect(page.index, pageLoader, reloadGen) {
-        pageLoader.request(page.index, prioritize = prioritizeLatest)
-        // Re-request when status later falls back to Queued (eviction / cancelled job)
-        // or blank Error. drop(1): this effect already requested; restart is keyed on
-        // [reloadGeneration] so the current Queued emission must not double-request.
-        page.statusFlow.drop(1).collect { status ->
-            when (status) {
-                PageStatus.Queued -> pageLoader.request(page.index, prioritize = prioritizeLatest)
-                is PageStatus.Error -> if (status.message == null) {
-                    pageLoader.request(page.index, prioritize = prioritizeLatest)
-                }
-                else -> Unit
-            }
-        }
-    }
-    // Current-page boost only (PagerViewer). Webtoon leaves prioritizeDecode=false.
-    LaunchedEffect(page.index, pageLoader, prioritizeDecode) {
-        if (prioritizeDecode) {
-            pageLoader.request(page.index, prioritize = true)
-        }
-    }
+    // Scheduling is driven by one ReaderNavigation from the viewport. This item only renders
+    // status and owns a display pin; Compose retention no longer determines decode-ahead.
     val defaultError = stringResource(id = R.string.decode_image_error)
     val placeholderMod = if (horizontalStrip) {
         modifier.fillMaxHeight().aspectRatio(DEFAULT_ASPECT, matchHeightConstraintsFirst = true)
@@ -149,8 +114,7 @@ fun PagerItem(
                 if (!image.pin()) {
                     // Recycled / dead image still marked Ready — force a clean reload.
                     painter = null
-                    pageLoader.notifyPageWait(page.index)
-                    pageLoader.request(page.index, prioritize = prioritizeDecode)
+                    pageLoader.retryPage(page.index)
                     return@LaunchedEffect
                 }
                 painter = image.toPainter()

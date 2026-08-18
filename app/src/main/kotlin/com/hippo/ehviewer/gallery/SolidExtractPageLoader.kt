@@ -212,10 +212,13 @@ suspend inline fun <T> useSolidExtractPageLoader(
                     }
 
                     override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
-                        bumpTarget(index)
                         ensureExtract(index, interactive = true) {
                             notifySourceReady(index, orgImg)
                         }
+                    }
+
+                    override fun onNavigation(demand: ReaderDemand) {
+                        bumpTarget(demand.progressiveDiscoveryTarget(prefetchN))
                     }
 
                     override fun close() {
@@ -234,8 +237,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
                     }
 
                     private fun bumpTarget(index: Int) {
-                        val want = index + prefetchN
-                        extractTarget.updateAndGet { cur -> maxOf(cur, want) }
+                        extractTarget.updateAndGet { cur -> maxOf(cur, index) }
                     }
 
                     /** In-memory only — safe on main / onRequest. */

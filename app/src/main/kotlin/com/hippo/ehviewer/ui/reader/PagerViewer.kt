@@ -33,8 +33,8 @@ import arrow.core.partially1
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.Page
-import com.hippo.ehviewer.gallery.PageLoader
 import com.hippo.ehviewer.gallery.PageStatus
+import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.gallery.statusObserved
 import eu.kanade.tachiyomi.ui.reader.viewer.NavigationRegions
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
@@ -60,7 +60,7 @@ fun PagerViewer(
     pagerState: PagerState,
     isRtl: Boolean,
     isVertical: Boolean,
-    pageLoader: PageLoader,
+    pageLoader: ReaderSession,
     navigator: () -> NavigationRegions,
     onSelectPage: (Page) -> Unit,
     onMenuRegionClick: () -> Unit,
@@ -180,7 +180,7 @@ fun PagerViewer(
 private fun DualPageContainer(
     leftPage: Page?,
     rightPage: Page?,
-    pageLoader: PageLoader,
+    pageLoader: ReaderSession,
     isRtl: Boolean,
     layoutSize: Size,
     navigator: () -> NavigationRegions,
@@ -252,27 +252,6 @@ private fun DualPageContainer(
         }
     }
 
-    val isCurrent by remember(pagerState, leftPage, rightPage) {
-        derivedStateOf {
-            val cur = pagerState.currentPage
-            val first = leftPage?.index ?: rightPage?.index ?: return@derivedStateOf false
-            dualSpreadIndex(first) == cur ||
-                (rightPage != null && dualSpreadIndex(rightPage.index) == cur)
-        }
-    }
-    // One prioritize anchor per spread (lower real index). Both pages requesting
-    // prioritize=true double-called prioritizeDecode and flipped prevIndex twice.
-    val prioritizePrimaryIndex = remember(leftPage, rightPage) {
-        val l = leftPage?.index
-        val r = rightPage?.index
-        when {
-            l != null && r != null -> minOf(l, r)
-            l != null -> l
-            r != null -> r
-            else -> -1
-        }
-    }
-
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val zoomMod = Modifier.zoomable(
             state = zoomableState,
@@ -288,7 +267,6 @@ private fun DualPageContainer(
                 pageLoader = pageLoader,
                 contentScale = ContentScale.Inside,
                 viewportSize = layoutSize,
-                prioritizeDecode = isCurrent,
                 modifier = Modifier.pointerInput(onTap) {
                     detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
                 },
@@ -310,7 +288,6 @@ private fun DualPageContainer(
                             pageLoader = pageLoader,
                             contentScale = ContentScale.Fit,
                             viewportSize = halfSize,
-                            prioritizeDecode = isCurrent && leftPage.index == prioritizePrimaryIndex,
                         )
                     }
                 }
@@ -321,7 +298,6 @@ private fun DualPageContainer(
                             pageLoader = pageLoader,
                             contentScale = ContentScale.Fit,
                             viewportSize = halfSize,
-                            prioritizeDecode = isCurrent && rightPage.index == prioritizePrimaryIndex,
                         )
                     }
                 }
@@ -333,7 +309,7 @@ private fun DualPageContainer(
 @Composable
 private fun PageContainer(
     page: Page,
-    pageLoader: PageLoader,
+    pageLoader: ReaderSession,
     isRtl: Boolean,
     scaleType: Int,
     landscapeZoom: Boolean,
@@ -435,18 +411,12 @@ private fun PageContainer(
             }
         }
     }
-    // derivedStateOf so only the boolean flips notify; avoid recompose thrash on scroll
-    // position while still marking the settled current page for prioritizeDecode.
-    val isCurrent by remember(pagerState, page.index) {
-        derivedStateOf { pagerState.currentPage == page.index }
-    }
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         PagerItem(
             page = page,
             pageLoader = pageLoader,
             contentScale = ContentScale.Inside,
             viewportSize = layoutSize,
-            prioritizeDecode = isCurrent,
             modifier = Modifier.pointerInput(onTap) {
                 detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
             },

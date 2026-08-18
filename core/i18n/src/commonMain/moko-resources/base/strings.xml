@@ -508,8 +508,10 @@
     <string name="settings_smb_encrypt_summary">Require encrypted SMB sessions (server must support SMB 3 encryption). Resets active SMB connections.</string>
     <string name="settings_smb_async_transport">SMB async transport</string>
     <string name="settings_smb_async_transport_summary">Share small NIO pools (list / browse / video) instead of one Packet Reader thread per TCP. Turn off if a server misbehaves. Resets browse, list, and video connections.</string>
-    <string name="settings_reader_preload_image">Reader preload</string>
-    <string name="settings_reader_preload_image_summary">Prefetch next %s pages (SMB downloads ahead; local opens on demand)</string>
+    <string name="settings_reader_preload_image">Source prefetch ahead</string>
+    <string name="settings_reader_preload_image_summary">Download or extract the next %s pages in the reading direction</string>
+    <string name="settings_reader_decode_ahead">Decode ahead</string>
+    <string name="settings_reader_decode_ahead_summary">Keep the next %s pages decoded in the reading direction</string>
     <string name="settings_download_download_delay">Download delay</string>
     <string name="settings_download_download_delay_summary">Delay %s ms per download</string>
     <string name="settings_download_timeout_speed">Minimum download speed (in KB/s)</string>

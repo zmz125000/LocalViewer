@@ -86,10 +86,12 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.gallery.NavigationKind
 import com.hippo.ehviewer.gallery.Page
-import com.hippo.ehviewer.gallery.PageLoader
 import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.PasswdProvider
+import com.hippo.ehviewer.gallery.ReaderNavigation
+import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.gallery.status
 import com.hippo.ehviewer.gallery.unblock
 import com.hippo.ehviewer.gallery.useArchivePageLoader
@@ -139,6 +141,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.sample
@@ -348,7 +351,7 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
 
 @Composable
 context(activity: MainActivity, _: SnackbarHostState, _: DialogState, _: CoroutineScope, nav: DestinationsNavigator)
-fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScreenArgs) {
+fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: ReaderScreenArgs) {
     LaunchedEffect(Unit) {
         val orientation = activity.requestedOrientation
         Settings.orientationMode.valueFlow()
@@ -439,6 +442,15 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
             }
         }
     }
+    LaunchedEffect(pageLoader) {
+        merge(
+            Settings.preloadImage.changesFlow(),
+            Settings.readerDecodeAhead.changesFlow(),
+        ).collect {
+            // Lookahead policy changes do not invalidate already decoded images.
+            pageLoader.replan()
+        }
+    }
     // Window color mode: HDR > WCG > default.
     // Session WCG enter/leave is owned by the outer destination + [activeReaderSessions]
     // (sibling double-tap must not clear colorMode). This scan only upgrades to HDR when
@@ -507,6 +519,60 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     var appbarVisible by remember { mutableStateOf(false) }
     val isWebtoon by rememberUpdatedState(ReadingModeType.isWebtoon(readingMode))
     val focusRequester = remember { FocusRequester() }
+
+    // Single source of loading truth. Pager cache items and individual PagerItems never
+    // request work; only real pages intersecting the viewport are interactive demand.
+    LaunchedEffect(pageLoader, readingMode, pagerDual, webtoonHorizontal) {
+        snapshotFlow {
+            val count = pageLoader.size
+            if (count <= 0) return@snapshotFlow null
+            val last = count - 1
+            if (isWebtoon) {
+                val visibleItems = lazyListState.layoutInfo.visibleItemsInfo
+                val fallback = (syncState.sliderValue - 1).coerceIn(0, last)
+                val first = visibleItems.minOfOrNull { it.index }?.coerceIn(0, last) ?: fallback
+                val end = visibleItems.maxOfOrNull { it.index }?.coerceIn(first, last) ?: fallback
+                val anchor = lazyListState.layoutInfo
+                    .webtoonReadingIndex(horizontal = webtoonHorizontal)
+                    ?.coerceIn(first, end)
+                    ?: fallback.coerceIn(first, end)
+                ReaderNavigation(
+                    anchor = anchor,
+                    visiblePages = first..end,
+                    kind = if (lazyListState.isScrollInProgress) NavigationKind.Scroll else NavigationKind.Settled,
+                )
+            } else {
+                val layout = pagerState.layoutInfo
+                val visibleSlots = layout.visiblePagesInfo
+                    .filter { page ->
+                        page.offset + layout.pageSize > layout.viewportStartOffset &&
+                            page.offset < layout.viewportEndOffset
+                    }
+                    .map { it.index }
+                val firstSlot = visibleSlots.minOrNull() ?: pagerState.currentPage
+                val lastSlot = visibleSlots.maxOrNull() ?: pagerState.currentPage
+                if (pagerDual) {
+                    val first = dualFirstPageIndex(firstSlot).coerceIn(0, last)
+                    val end = (dualFirstPageIndex(lastSlot) + 1).coerceIn(first, last)
+                    ReaderNavigation(
+                        anchor = dualFirstPageIndex(pagerState.currentPage).coerceIn(0, last),
+                        visiblePages = first..end,
+                        kind = if (pagerState.isScrollInProgress) NavigationKind.Scroll else NavigationKind.Settled,
+                    )
+                } else {
+                    val first = firstSlot.coerceIn(0, last)
+                    val end = lastSlot.coerceIn(first, last)
+                    ReaderNavigation(
+                        anchor = pagerState.currentPage.coerceIn(0, last),
+                        visiblePages = first..end,
+                        kind = if (pagerState.isScrollInProgress) NavigationKind.Scroll else NavigationKind.Settled,
+                    )
+                }
+            }
+        }.distinctUntilChanged().collect { navigation ->
+            if (navigation != null) pageLoader.navigate(navigation)
+        }
+    }
 
     LaunchedEffect(pageLoader, hdrDisplayEnabled, advancedColorEnabled, pagerDual) {
         if (!hdrDisplayEnabled && !advancedColorEnabled) {
@@ -601,7 +667,6 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentArgs by rememberUpdatedState(args)
     val currentLoader by rememberUpdatedState(pageLoader)
-    val currentPage1 by rememberUpdatedState(syncState.sliderValue)
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
@@ -610,17 +675,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
                 currentArgs is ReaderScreenArgs.SmbStreamArchive ||
                 currentArgs is ReaderScreenArgs.WebDavStreamArchive
             if (!remote) return@LifecycleEventObserver
-            val loader = currentLoader
-            if (loader.size <= 0) return@LifecycleEventObserver
-            val center = (currentPage1 - 1).coerceIn(0, loader.size - 1)
-            val from = (center - 2).coerceAtLeast(0)
-            val to = (center + 2).coerceAtMost(loader.size - 1)
-            for (i in from..to) {
-                when (loader.pages[i].status) {
-                    is PageStatus.Ready, is PageStatus.Blocked -> Unit
-                    else -> loader.retryPage(i)
-                }
-            }
+            currentLoader.onForeground()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -999,7 +1054,7 @@ fun ReaderScreen(pageLoader: PageLoader, info: BaseGalleryInfo?, args: ReaderScr
 }
 
 context(_: Context, _: DialogState, nav: DestinationsNavigator)
-suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: suspend (PageLoader) -> T) = when (args) {
+suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: suspend (ReaderSession) -> T) = when (args) {
     is ReaderScreenArgs.LocalFolder -> {
         val info = args.info
         val page = when {
