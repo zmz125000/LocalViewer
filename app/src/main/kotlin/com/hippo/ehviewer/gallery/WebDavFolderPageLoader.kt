@@ -13,6 +13,7 @@ import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -130,14 +131,14 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     if (onReady != null) addReadyWaiter(index, onReady)
 
                     val existing = downloadJobs[index]
-                    if (existing != null && existing.isActive) return
+                    if (existing != null && !existing.isCompleted) return
 
                     val slots = when {
                         interactive -> interactiveSlots
                         isLibHdrCandidate(name) -> libHdrPrefetchSlots
                         else -> prefetchSlots
                     }
-                    val job = launch(Dispatchers.IO) {
+                    val job = launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                         try {
                             // Authoritative disk check on IO (StrictMode + LRU correctness).
                             if (WebDavCache.isPageCachedOnDisk(cache)) {
@@ -179,7 +180,21 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                             downloadJobs.remove(index, coroutineContext[Job])
                         }
                     }
-                    downloadJobs[index] = job
+                    var ownsSlot = false
+                    while (true) {
+                        val owner = downloadJobs.putIfAbsent(index, job)
+                        if (owner == null) {
+                            ownsSlot = true
+                            break
+                        }
+                        // Lazy jobs are New (not active) between registration and start.
+                        if (!owner.isCompleted) break
+                        if (downloadJobs.replace(index, owner, job)) {
+                            ownsSlot = true
+                            break
+                        }
+                    }
+                    if (ownsSlot) job.start() else job.cancel()
                 }
             },
         )

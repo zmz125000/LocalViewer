@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -424,10 +425,10 @@ suspend inline fun <T> useStreamArchivePageLoader(
                             addReadyWaiter(index, onReady)
                         }
                         val existing = extractJobs[index]
-                        if (existing != null && existing.isActive) {
+                        if (existing != null && !existing.isCompleted) {
                             return
                         }
-                        val job = scope.launch(Dispatchers.IO) {
+                        val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                             try {
                                 if (isPageCached(index)) {
                                     dispatchReady(index)
@@ -466,14 +467,21 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 extractJobs.remove(index, coroutineContext[Job])
                             }
                         }
-                        val prev = extractJobs.putIfAbsent(index, job)
-                        if (prev != null) {
-                            if (prev.isActive) {
-                                job.cancel()
-                            } else {
-                                extractJobs[index] = job
+                        var ownsSlot = false
+                        while (true) {
+                            val owner = extractJobs.putIfAbsent(index, job)
+                            if (owner == null) {
+                                ownsSlot = true
+                                break
+                            }
+                            // Lazy jobs are New (not active) between registration and start.
+                            if (!owner.isCompleted) break
+                            if (extractJobs.replace(index, owner, job)) {
+                                ownsSlot = true
+                                break
                             }
                         }
+                        if (ownsSlot) job.start() else job.cancel()
                     }
 
                     private fun markCompleteIfReady() {
