@@ -67,6 +67,20 @@ data class ReaderDemand(
 }
 
 /**
+ * High-water target for sources whose catalog grows while reading (solid archives, TAR, PDF).
+ *
+ * [sourcePages] is intentionally clamped to the currently published catalog and is therefore
+ * suitable only for acquisition. Discovery must cross that boundary or the catalog can never
+ * reveal its next page. It always advances from the furthest visible page, independent of the
+ * current reading direction; progressive catalogs can only discover toward increasing indices.
+ */
+@PublishedApi
+internal fun ReaderDemand.progressiveDiscoveryTarget(lookahead: Int): Int {
+    val visibleEnd = maxOf(navigation.anchor, navigation.visiblePages.last)
+    return visibleEnd + lookahead.coerceAtLeast(1)
+}
+
+/**
  * Stateful direction tracker and pure window calculator.
  *
  * Direction is semantic page order: increasing indices are forward regardless of RTL or

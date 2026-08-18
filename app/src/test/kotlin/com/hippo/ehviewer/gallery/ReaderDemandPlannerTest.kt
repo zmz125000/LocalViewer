@@ -74,6 +74,19 @@ class ReaderDemandPlannerTest {
     }
 
     @Test
+    fun `progressive source discovery crosses the published page boundary`() {
+        val demand = ReaderDemandPlanner().plan(
+            navigation = ReaderNavigation(3, 3..3, NavigationKind.Settled),
+            pageCount = 4,
+            policy = ReaderLoadPolicy(sourceAhead = 5, decodeAhead = 2),
+        )
+
+        // RAR, 7z, TAR, and progressive PDF must ask their indexer past the four
+        // currently published pages or the reader can never discover page five.
+        assertEquals(8, demand.progressiveDiscoveryTarget(lookahead = 5))
+    }
+
+    @Test
     fun `stationary updates retain the last movement direction`() {
         val planner = ReaderDemandPlanner()
         val policy = ReaderLoadPolicy(sourceAhead = 3, decodeAhead = 1)
