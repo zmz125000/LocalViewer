@@ -1732,11 +1732,28 @@ object SmbGateway {
         return classifyRemoteListingWithPeeks(dirName, children, peeks, grandPeeks)
     }
 
+    /**
+     * SMB QUERY_DIRECTORY → [RemoteChild] with MS-FSCC attributes from
+     * FileIdBothDirectoryInformation (size, lastWrite, HIDDEN, READONLY, DIRECTORY).
+     */
     private fun listChildren(share: DiskShare, path: String): List<RemoteChild> = share.list(path.ifEmpty { "" }).mapNotNull { info ->
         val name = info.fileName
         if (name == "." || name == "..") return@mapNotNull null
-        val isDir = (info.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
-        RemoteChild(name, isDir)
+        val attrs = info.fileAttributes
+        val isDir = (attrs and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
+        val hidden = (attrs and FileAttributes.FILE_ATTRIBUTE_HIDDEN.value) != 0L
+        val readOnly = (attrs and FileAttributes.FILE_ATTRIBUTE_READONLY.value) != 0L
+        val size = if (isDir) 0L else info.endOfFile.coerceAtLeast(0L)
+        val lastModifiedMs = runCatching { info.lastWriteTime.toEpochMillis() }.getOrDefault(0L).coerceAtLeast(0L)
+        RemoteChild(
+            name = name,
+            isDirectory = isDir,
+            path = name,
+            size = size,
+            lastModifiedMs = lastModifiedMs,
+            hidden = hidden,
+            readOnly = readOnly,
+        )
     }
 
     /**

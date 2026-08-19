@@ -212,6 +212,8 @@ object MediaStoreFs {
         val name: String,
         val isDirectory: Boolean,
         val path: Path,
+        val size: Long = 0L,
+        val lastModifiedMs: Long = 0L,
     )
 
     fun listChildren(dir: Path): List<Child> {
@@ -315,6 +317,8 @@ object MediaStoreFs {
             val projection = arrayOf(
                 MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.RELATIVE_PATH,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.DATE_MODIFIED,
             )
             runCatching {
                 appCtx.contentResolver.query(
@@ -326,16 +330,31 @@ object MediaStoreFs {
                 )?.use { c ->
                     val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                     val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+                    val sizeIdx = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
+                    val modIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
                     while (c.moveToNext()) {
                         val displayName = c.getString(nameIdx) ?: continue
                         if (displayName.startsWith('.')) continue
                         val relPath = (c.getString(pathIdx) ?: "").trim('/').trimEnd('/')
+                        val size = if (sizeIdx < 0 || c.isNull(sizeIdx)) 0L else c.getLong(sizeIdx).coerceAtLeast(0L)
+                        // DATE_MODIFIED is seconds; convert to epoch ms.
+                        val lastMod = if (modIdx < 0 || c.isNull(modIdx)) {
+                            0L
+                        } else {
+                            (c.getLong(modIdx) * 1000L).coerceAtLeast(0L)
+                        }
 
                         if (relativeDir.isEmpty()) {
                             if (relPath.isEmpty()) {
                                 files.putIfAbsent(
                                     displayName,
-                                    Child(displayName, false, mediaStoreFilePath("", displayName)),
+                                    Child(
+                                        displayName,
+                                        false,
+                                        mediaStoreFilePath("", displayName),
+                                        size = size,
+                                        lastModifiedMs = lastMod,
+                                    ),
                                 )
                             } else {
                                 val top = relPath.substringBefore('/')
@@ -349,7 +368,13 @@ object MediaStoreFs {
                         if (relPath == relativeDir) {
                             files.putIfAbsent(
                                 displayName,
-                                Child(displayName, false, mediaStoreFilePath(relativeDir, displayName)),
+                                Child(
+                                    displayName,
+                                    false,
+                                    mediaStoreFilePath(relativeDir, displayName),
+                                    size = size,
+                                    lastModifiedMs = lastMod,
+                                ),
                             )
                             continue
                         }
