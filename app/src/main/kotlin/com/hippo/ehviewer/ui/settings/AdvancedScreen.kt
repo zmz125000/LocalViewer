@@ -180,17 +180,17 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 state = preloadImage,
             )
             val decodeAhead = Settings.readerDecodeAhead.asMutableState()
-            SwitchPreference(
-                title = stringResource(id = R.string.settings_advanced_auto_decode_ahead),
-                summary = stringResource(id = R.string.settings_advanced_auto_decode_ahead_summary),
-                state = Settings.readerAutoDecodeAhead.asMutableState(),
-            )
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_reader_decode_ahead),
                 summary = stringResource(id = R.string.settings_reader_decode_ahead_summary, decodeAhead.value),
                 entry = com.hippo.ehviewer.R.array.reader_decode_ahead_entries,
                 entryValueRes = com.hippo.ehviewer.R.array.reader_decode_ahead_entry_values,
                 state = decodeAhead,
+            )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_advanced_auto_decode_ahead),
+                summary = stringResource(id = R.string.settings_advanced_auto_decode_ahead_summary),
+                state = Settings.readerAutoDecodeAhead.asMutableState(),
             )
             val smbSafeConcurrency = Settings.smbReaderSafeConcurrency.asMutableState()
             SwitchPreference(
