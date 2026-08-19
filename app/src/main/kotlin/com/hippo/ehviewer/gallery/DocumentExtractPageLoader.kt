@@ -239,7 +239,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 }
 
                 override fun onNavigation(demand: ReaderDemand) {
-                    requestDiscoveryThrough(demand.progressiveDiscoveryTarget(prefetchN))
+                    requestDiscoveryThrough(demand.progressiveDiscoveryTarget(demand.sourceAhead))
                 }
 
                 override fun close() {

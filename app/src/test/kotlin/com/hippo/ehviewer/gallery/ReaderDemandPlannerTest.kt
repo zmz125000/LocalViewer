@@ -87,6 +87,18 @@ class ReaderDemandPlannerTest {
     }
 
     @Test
+    fun `progressive discovery uses each replanned live source policy`() {
+        val planner = ReaderDemandPlanner()
+        val navigation = ReaderNavigation(3, 3..3, NavigationKind.Settled)
+
+        val before = planner.plan(navigation, 4, ReaderLoadPolicy(sourceAhead = 2, decodeAhead = 0))
+        val after = planner.plan(navigation, 4, ReaderLoadPolicy(sourceAhead = 9, decodeAhead = 0))
+
+        assertEquals(5, before.progressiveDiscoveryTarget(before.sourceAhead))
+        assertEquals(12, after.progressiveDiscoveryTarget(after.sourceAhead))
+    }
+
+    @Test
     fun `stationary updates retain the last movement direction`() {
         val planner = ReaderDemandPlanner()
         val policy = ReaderLoadPolicy(sourceAhead = 3, decodeAhead = 1)

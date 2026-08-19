@@ -180,6 +180,11 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 state = preloadImage,
             )
             val decodeAhead = Settings.readerDecodeAhead.asMutableState()
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_advanced_auto_decode_ahead),
+                summary = stringResource(id = R.string.settings_advanced_auto_decode_ahead_summary),
+                state = Settings.readerAutoDecodeAhead.asMutableState(),
+            )
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_reader_decode_ahead),
                 summary = stringResource(id = R.string.settings_reader_decode_ahead_summary, decodeAhead.value),

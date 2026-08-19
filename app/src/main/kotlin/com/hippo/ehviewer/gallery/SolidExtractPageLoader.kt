@@ -218,7 +218,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
                     }
 
                     override fun onNavigation(demand: ReaderDemand) {
-                        bumpTarget(demand.progressiveDiscoveryTarget(prefetchN))
+                        bumpTarget(demand.progressiveDiscoveryTarget(demand.sourceAhead))
                     }
 
                     override fun close() {

@@ -221,7 +221,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
 
             // Single-flight native extract (shared stream position / buffer).
             val extractMutex = Mutex()
-            val extractJobs = ConcurrentHashMap<Int, Job>()
+            val extractJobs = KeyedJobRegistry<Int>()
             val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
             val pagePaths = ConcurrentHashMap<Int, Path>()
             val hostScope = this
@@ -349,8 +349,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         // Snapshot: cancel handlers remove from extractJobs concurrently
                         // (live CHM.values iter on main → NoSuchElementException).
                         tarIndexJob.getAndSet(null)?.cancel()
-                        extractJobs.values.toList().forEach { it.cancel() }
-                        extractJobs.clear()
+                        extractJobs.cancelAll()
                         readyWaiters.clear()
                         // Prefer pagePaths (memory only — close runs on main via Compose dispose).
                         // Disk readdir for "all pages present" is deferred to IO so StrictMode
@@ -383,9 +382,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     private fun cancelStaleExtracts(sourcePages: Set<Int>, decodedPages: Set<Int>) {
                         readyWaiters.forEach { idx, _ -> if (idx !in decodedPages) readyWaiters.remove(idx) }
                         // ConcurrentHashMap.forEach — avoid entries.toList() iterator race on Android.
-                        extractJobs.forEach { idx, job ->
-                            if (idx !in sourcePages) job.cancel()
-                        }
+                        extractJobs.cancelOutside(sourcePages)
                     }
 
                     private fun addReadyWaiter(index: Int, onReady: () -> Unit) {
@@ -424,7 +421,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         if (onReady != null) {
                             addReadyWaiter(index, onReady)
                         }
-                        val existing = extractJobs[index]
+                        val existing = extractJobs.owner(index)
                         if (existing != null && !existing.isCompleted) {
                             return
                         }
@@ -446,19 +443,19 @@ suspend inline fun <T> useStreamArchivePageLoader(
                             } catch (e: CancellationException) {
                                 // Re-queue only for in-session job races. On reader exit /
                                 // ArchiveAccess preempt, scope is cancelled — do not restart.
-                                val owns = extractJobs[index] == coroutineContext[Job]
+                                val runningJob = coroutineContext[Job]
+                                val owns = extractJobs.owns(index, runningJob)
                                 if (scope.isActive && owns) {
                                     val waiters = takeReadyWaiters(index)
                                     if (waiters.isNotEmpty()) {
                                         waiters.forEach { addReadyWaiter(index, it) }
-                                        scope.launch(Dispatchers.IO) {
-                                            ensureExtract(index, interactive = true)
-                                        }
+                                        extractJobs.release(index, runningJob)
+                                        ensureExtract(index, interactive = true)
                                     }
                                 }
                                 throw e
                             } catch (e: Throwable) {
-                                if (extractJobs[index] === coroutineContext[Job]) {
+                                if (extractJobs.owns(index, coroutineContext[Job])) {
                                     logcat(e)
                                     val waiters = takeReadyWaiters(index)
                                     if (waiters.isNotEmpty() || interactive) {
@@ -466,23 +463,10 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                     }
                                 }
                             } finally {
-                                extractJobs.remove(index, coroutineContext[Job])
+                                extractJobs.release(index, coroutineContext[Job])
                             }
                         }
-                        var ownsSlot = false
-                        while (true) {
-                            val owner = extractJobs.putIfAbsent(index, job)
-                            if (owner == null) {
-                                ownsSlot = true
-                                break
-                            }
-                            // Lazy jobs are New (not active) between registration and start.
-                            if (!owner.isCompleted) break
-                            if (extractJobs.replace(index, owner, job)) {
-                                ownsSlot = true
-                                break
-                            }
-                        }
+                        val ownsSlot = extractJobs.register(index, job)
                         if (ownsSlot) job.start() else job.cancel()
                     }
 
@@ -558,10 +542,8 @@ suspend inline fun <T> useStreamArchivePageLoader(
                 // AutoCloseScope calls closeArchive after this block. Cancellation alone is
                 // not enough: a JNI extract may still be unwinding on Dispatchers.IO.
                 val indexJob = tarIndexJob.getAndSet(null)
-                val jobs = extractJobs.values.toSet().toList()
+                val jobs = extractJobs.cancelAll()
                 indexJob?.cancel()
-                jobs.forEach { it.cancel() }
-                extractJobs.clear()
                 // Unblock SMB/WebDAV reads before waiting, even when this scope was preempted.
                 runCatching { source.close() }
                 withContext(NonCancellable) {

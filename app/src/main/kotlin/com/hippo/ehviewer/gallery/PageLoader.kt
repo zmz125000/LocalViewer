@@ -17,6 +17,7 @@ import com.hippo.ehviewer.image.hdr.DisplaySource
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
 import com.hippo.ehviewer.image.hdr.classify
 import com.hippo.ehviewer.image.hdr.classifyPath
+import com.hippo.ehviewer.image.hdr.isHeicImageExtension
 import com.hippo.ehviewer.image.hdr.needsLibDecode
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
@@ -146,12 +147,10 @@ abstract class PageLoader(
                     throw e
                 }
                 val runningJob = currentCoroutineContext()[Job]
-                if (!isDecodeDemanded(index) || !ownsDecodeSlot(index, runningJob)) {
-                    // Navigation changed in the narrow window after decode completed.
+                if (!commitDecodedImage(index, image, runningJob)) {
+                    // Navigation changed or this job was replaced before publication.
                     image.unpin()
-                    return@bracketCase
                 }
-                notifyPageSucceed(index, image)
             },
             { src, case -> if (case !is ExitCase.Completed) src.close() },
         )
@@ -325,7 +324,7 @@ abstract class PageLoader(
         }
     }
 
-    fun notifyPageSucceed(index: Int, image: Image, replaceCache: Boolean = true) {
+    private fun publishPageSucceed(index: Int, image: Image, replaceCache: Boolean) {
         if (replaceCache) {
             lock.write {
                 val existing = cache[index]
@@ -341,7 +340,22 @@ abstract class PageLoader(
             }
         }
         pages[index].statusFlow.update { if (image.hasQrCode) PageStatus.Blocked(image) else PageStatus.Ready(image) }
+    }
+
+    private fun notifyPageSucceed(index: Int, image: Image, replaceCache: Boolean = true) {
+        publishPageSucceed(index, image, replaceCache)
         releaseInflight(index)
+    }
+
+    /** Validate, publish, and release one decode owner in the same critical section. */
+    private fun commitDecodedImage(index: Int, image: Image, runningJob: Job?): Boolean = synchronized(jobs) {
+        val demanded = index in desiredDecodedPages || index in forcedDecode
+        if (!demanded || runningJob == null || jobs[index] !== runningJob) return@synchronized false
+        publishPageSucceed(index, image, replaceCache = true)
+        jobs.remove(index)
+        inflight.remove(index)
+        forcedDecode.remove(index)
+        true
     }
 
     fun notifyPageFailed(index: Int, error: String?) {
@@ -414,9 +428,16 @@ abstract class PageLoader(
     @Synchronized
     override fun navigate(navigation: ReaderNavigation) {
         if (size <= 0) return
+        val decodeAhead = if (
+            Settings.readerAutoDecodeAhead.value && isAutoDecodeAheadFormat(navigation.anchor)
+        ) {
+            2
+        } else {
+            Settings.readerDecodeAhead.value.coerceAtLeast(0)
+        }
         val policy = ReaderLoadPolicy(
             sourceAhead = Settings.preloadImage.value.coerceAtLeast(0),
-            decodeAhead = Settings.readerDecodeAhead.value.coerceAtLeast(0),
+            decodeAhead = decodeAhead,
         )
         val demand = demandPlanner.plan(navigation, size, policy)
         lastNavigation = demand.navigation
@@ -429,6 +450,15 @@ abstract class PageLoader(
         demand.visibleDecode.forEach(::requestDecode)
         demand.decodeAhead.forEach(::requestDecode)
         prefetchAbsent(demand.sourceOnly)
+    }
+
+    private fun isAutoDecodeAheadFormat(index: Int): Boolean {
+        val extension = getImageExtension(index)?.lowercase()?.removePrefix(".") ?: return false
+        // JXR uses the native conversion pipeline and is intentionally kept to one page.
+        if (extension == "jxr") return true
+        // ProXDR is an HEIC trailer format; only apply this to HEIC-family files when
+        // the existing ProXDR decoder is enabled.
+        return Settings.readerOppoProxdr.value && isHeicImageExtension(extension)
     }
 
     /** Recompute windows after policy/catalog changes without clearing decoded images. */

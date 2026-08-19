@@ -13,13 +13,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import com.hippo.ehviewer.gallery.NavigationKind
-import com.hippo.ehviewer.gallery.ReaderNavigation
 import com.hippo.ehviewer.gallery.ReaderSession
 import kotlin.math.abs
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 
 @Stable
@@ -29,18 +26,33 @@ class SliderPagerDoubleSync(
     private val pageLoader: ReaderSession,
 ) {
     private var sliderFollowPager by mutableStateOf(true)
+    private var pendingJumpIndex by mutableIntStateOf(-1)
+    private val interactionState = ReaderInteractionState(pageLoader.startPage)
     var sliderValue by mutableIntStateOf(pageLoader.startPage + 1)
         private set
+
+    /** Real zero-based target while a seek is in flight; null otherwise. */
+    val pendingJumpPage: Int?
+        get() = pendingJumpIndex.takeIf { it >= 0 }
 
     fun sliderScrollTo(index: Int) {
         sliderFollowPager = false
         // Always real page indices (1-based).
         sliderValue = index.coerceIn(1, pageLoader.size.coerceAtLeast(1))
+        val target = sliderValue - 1
+        pendingJumpIndex = target
+        interactionState.beginSeek(target)
     }
 
     fun reset() {
+        pendingJumpIndex = -1
+        interactionState.cancelSeek()
         sliderFollowPager = true
     }
+
+    fun beginSettingsChange() = interactionState.beginSettingsChange()
+
+    fun finishSettingsChange() = interactionState.finishSettingsChange()
 
     /**
      * @param webtoon continuous / webtoon list
@@ -72,8 +84,12 @@ class SliderPagerDoubleSync(
         // Drag on the list/pager reclaims follow (volume keys / fling after seek).
         val listDragged by lazyListState.interactionSource.collectIsDraggedAsState()
         val pagerDragged by pagerState.interactionSource.collectIsDraggedAsState()
-        if (listDragged || pagerDragged) {
-            sliderFollowPager = true
+        LaunchedEffect(listDragged, pagerDragged) {
+            if (listDragged || pagerDragged) {
+                pendingJumpIndex = -1
+                interactionState.cancelSeek()
+                sliderFollowPager = true
+            }
         }
 
         val currentIndexFlow = remember(webtoon, pagerDual, webtoonHorizontal, lazyListState, pagerState) {
@@ -81,32 +97,17 @@ class SliderPagerDoubleSync(
         }
         if (sliderFollowPager) {
             LaunchedEffect(currentIndexFlow, pageLoader) {
-                currentIndexFlow.distinctUntilChanged().drop(1).collect { index ->
+                currentIndexFlow.distinctUntilChanged().collect { index ->
                     // Always store real page index.
                     sliderValue = index + 1
                     pageLoader.startPage = index
-                    onPageSelected()
+                    if (interactionState.observePage(index)) onPageSelected()
                 }
             }
         } else {
             LaunchedEffect(webtoon, pagerDual, pageLoader) {
                 snapshotFlow { sliderValue - 1 }.collectLatest { index ->
                     val safe = index.coerceIn(0, (pageLoader.size - 1).coerceAtLeast(0))
-                    val visible = if (pagerDual) {
-                        val first = dualFirstPageIndex(dualSpreadIndex(safe))
-                        first..minOf(first + 1, pageLoader.size - 1)
-                    } else {
-                        safe..safe
-                    }
-                    // Every seekbar tick is a real latest-wins jump. Demand is published
-                    // before UI scrolling so source/decode work can preempt stale windows.
-                    pageLoader.navigate(
-                        ReaderNavigation(
-                            anchor = visible.first,
-                            visiblePages = visible,
-                            kind = NavigationKind.Jump,
-                        ),
-                    )
                     if (webtoon) {
                         lazyListState.scrollToItem(safe)
                     } else if (pagerDual) {
@@ -115,6 +116,8 @@ class SliderPagerDoubleSync(
                         pagerState.animateScrollToPage(safe)
                     }
                     pageLoader.startPage = safe
+                    interactionState.finishSeek(safe)
+                    pendingJumpIndex = -1
                     // Resume follow only after the jump lands. onValueChangeFinished
                     // runs in the same frame as a tap and would cancel this scroll.
                     sliderFollowPager = true

@@ -58,6 +58,8 @@ data class ReaderLoadPolicy(
 data class ReaderDemand(
     val navigation: ReaderNavigation,
     val direction: ReadingDirection,
+    /** Live source lookahead used for this plan, including progressive catalog discovery. */
+    val sourceAhead: Int,
     val visibleDecode: List<Int>,
     val decodeAhead: List<Int>,
     val sourceOnly: List<Int>,
@@ -101,6 +103,7 @@ class ReaderDemandPlanner(
             return ReaderDemand(
                 navigation = navigation,
                 direction = direction,
+                sourceAhead = policy.sourceAhead,
                 visibleDecode = emptyList(),
                 decodeAhead = emptyList(),
                 sourceOnly = emptyList(),
@@ -139,6 +142,7 @@ class ReaderDemandPlanner(
         return ReaderDemand(
             navigation = navigation.copy(anchor = anchor, visiblePages = visibleStart..visibleEnd),
             direction = direction,
+            sourceAhead = policy.sourceAhead,
             visibleDecode = visible,
             decodeAhead = decode,
             sourceOnly = sourceOnly,
