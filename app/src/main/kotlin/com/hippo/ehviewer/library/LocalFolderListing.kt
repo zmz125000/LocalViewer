@@ -212,10 +212,11 @@ object LocalFolderListing {
         children: List<RemoteChild>,
     ): List<BrowseEntryRemote> {
         val deepScanHidden = Settings.browseShowHiddenFiles.value
-        // Skip deep peek into hidden (dot / .nomedia) dirs unless Hidden files is on.
+        // Dot folders: always tag-only (never peek). `.nomedia` dirs peek only when Hidden on.
         val dirsToPeek = children.filter { c ->
             c.isDirectory &&
                 !isProtectedSystemName(c.name) &&
+                !isDotHiddenName(c.name) &&
                 (deepScanHidden || !c.hidden)
         }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
