@@ -131,6 +131,10 @@
     <string name="settings_advanced_unlimit_foreground_service">不限制前台服务</string>
     <string name="settings_advanced_unlimit_foreground_service_summary">默认：空闲 20 分钟后结束 HTTP 会话与前台服务。开启：保持回环与会话直到从最近任务划掉。不持唤醒锁。熄屏仅在正在播放时保持连接。</string>
     <string name="history_unavailable">此项目已不可用</string>
+    <string name="settings_network_folder_index_cache">网络文件夹索引缓存</string>
+    <string name="settings_network_folder_index_cache_summary">关闭时仅将文件夹索引保存在内存中；开启时也会保存到磁盘。</string>
+    <string name="settings_network_folder_index_quick_scan">文件夹缓存快速扫描</string>
+    <string name="settings_network_folder_index_quick_scan_summary">命中内存或磁盘缓存时，快速检查子文件夹是否有新增或删除。</string>
     <string name="settings_download_remote_thumbs">下载网络画廊封面</string>
     <string name="settings_download_remote_thumbs_summary">获取网络画廊缩略图。</string>
     <string name="settings_download_network_archive_thumbs">下载网络压缩包封面</string>
@@ -155,6 +159,10 @@
     <string name="settings_smb_async_transport_summary">用少量 NIO 线程池（列表 / 浏览 / 视频）代替每条 TCP 一个 Packet Reader。若某台服务器异常可关闭。会重置浏览、列表和视频连接。</string>
     <string name="settings_reader_preload_image">阅读器预载</string>
     <string name="settings_reader_preload_image_summary">预取后续 %s 页（SMB 会提前下载；本地按需打开）</string>
+    <string name="settings_reader_decode_ahead">预先解码</string>
+    <string name="settings_reader_decode_ahead_summary">保持阅读方向上后续 %s 页处于已解码状态</string>
+    <string name="settings_advanced_auto_decode_ahead">限制预先解码</string>
+    <string name="settings_advanced_auto_decode_ahead_summary">OPPO ProXDR HEIC 和 JXR 文件只预先解码 2 页</string>
     <string name="settings_advanced_read_cache_size_summary">SMB 页面缓存（及旧版在线图片缓存）的最大容量</string>
     <!-- Theme -->
     <string name="homepage">主页</string>

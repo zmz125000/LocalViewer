@@ -131,6 +131,10 @@
     <string name="back_to_library">ライブラリに戻る</string>
     <string name="go_to_first_page">最初のページへ</string>
     <string name="go_to_next_gallery">次のギャラリー</string>
+    <string name="settings_network_folder_index_cache">ネットワークフォルダーのインデックスキャッシュ</string>
+    <string name="settings_network_folder_index_cache_summary">オフの場合、フォルダーのインデックスは RAM のみに保持します。オンの場合、ディスクにも保存します。</string>
+    <string name="settings_network_folder_index_quick_scan">フォルダーキャッシュのクイックスキャン</string>
+    <string name="settings_network_folder_index_quick_scan_summary">RAM またはディスクのキャッシュにヒットしたとき、サブフォルダーの追加・削除をすばやく確認します。</string>
     <string name="settings_download_remote_thumbs">ネットワークギャラリーの表紙を取得</string>
     <string name="settings_download_remote_thumbs_summary">ネットワークギャラリーのサムネイルを取得します。</string>
     <string name="settings_download_network_archive_thumbs">ネットワークアーカイブの表紙を取得</string>
@@ -161,6 +165,10 @@
     <string name="settings_smb_async_transport_summary">TCP ごとに Packet Reader を立てず、list / browse / video の小さな NIO プールを使います。不具合時はオフ。参照・一覧・動画接続をリセットします。</string>
     <string name="settings_reader_preload_image">リーダー先読み</string>
     <string name="settings_reader_preload_image_summary">次の %s ページを先読み（SMB は先行ダウンロード、ローカルは必要時に開く）</string>
+    <string name="settings_reader_decode_ahead">先行デコード</string>
+    <string name="settings_reader_decode_ahead_summary">読み進める方向の次の %s ページをデコード済みに保つ</string>
+    <string name="settings_advanced_auto_decode_ahead">先行デコードを制限</string>
+    <string name="settings_advanced_auto_decode_ahead_summary">OPPO ProXDR HEIC と JXR ファイルでは 2 ページだけ先行デコードします</string>
     <string name="settings_advanced_read_cache_size_summary">SMB ページキャッシュ（および旧オンライン画像キャッシュ）の最大サイズ</string>
     <string name="insufficient_gp">オリジナル画像をダウンロードする GP が不足しています</string>
     <string name="settings_privacy_save_history">履歴を保存</string>

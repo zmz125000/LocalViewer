@@ -141,6 +141,10 @@
     <string name="back_to_library">返回圖庫</string>
     <string name="go_to_first_page">回到第一頁</string>
     <string name="go_to_next_gallery">下一本</string>
+    <string name="settings_network_folder_index_cache">網路資料夾索引快取</string>
+    <string name="settings_network_folder_index_cache_summary">關閉時只將資料夾索引保存在 RAM；開啟時也會儲存到磁碟。</string>
+    <string name="settings_network_folder_index_quick_scan">資料夾快取快速掃描</string>
+    <string name="settings_network_folder_index_quick_scan_summary">命中 RAM 或磁碟快取時，快速檢查子資料夾是否新增或刪除。</string>
     <string name="settings_download_remote_thumbs">下載網路圖庫封面</string>
     <string name="settings_download_remote_thumbs_summary">取得網路圖庫縮圖。</string>
     <string name="settings_download_network_archive_thumbs">下載網路壓縮檔封面</string>
@@ -171,6 +175,10 @@
     <string name="settings_smb_async_transport_summary">用少量 NIO 執行緒池（列表 / 瀏覽 / 影片）代替每條 TCP 一個 Packet Reader。若某台伺服器異常可關閉。會重設瀏覽、列表和影片連線。</string>
     <string name="settings_reader_preload_image">閱讀器預載</string>
     <string name="settings_reader_preload_image_summary">預取後續 %s 頁（SMB 會提前下載；本機按需開啟）</string>
+    <string name="settings_reader_decode_ahead">預先解碼</string>
+    <string name="settings_reader_decode_ahead_summary">保持閱讀方向上後續 %s 頁處於已解碼狀態</string>
+    <string name="settings_advanced_auto_decode_ahead">限制預先解碼</string>
+    <string name="settings_advanced_auto_decode_ahead_summary">OPPO ProXDR HEIC 和 JXR 檔案只預先解碼 2 頁</string>
     <string name="settings_advanced_read_cache_size_summary">SMB 頁面快取（及舊版線上圖片快取）的最大容量</string>
     <string name="insufficient_gp">GP 不足，無法下載原圖</string>
     <string name="settings_privacy_save_history">儲存歷史</string>
