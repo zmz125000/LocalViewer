@@ -508,19 +508,20 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             pageLoader.size.coerceAtLeast(1)
         }
     }
-    // Remap pager slot when dual mode toggles or orientation flips (always from real page).
-    LaunchedEffect(pagerDual) {
-        val real = pageLoader.startPage.coerceAtLeast(0)
-        val target = if (pagerDual) dualSpreadIndex(real) else real
-        val max = (pagerState.pageCount - 1).coerceAtLeast(0)
-        if (pagerState.currentPage != target.coerceIn(0, max)) {
-            pagerState.scrollToPage(target.coerceIn(0, max))
-        }
-    }
     val syncState = rememberSliderPagerDoubleSyncState(lazyListState, pagerState, pageLoader)
     var appbarVisible by remember { mutableStateOf(false) }
     val isWebtoon by rememberUpdatedState(ReadingModeType.isWebtoon(readingMode))
     val focusRequester = remember { FocusRequester() }
+
+    // Both viewport states are remembered across recomposition. Re-align the newly active
+    // axis from the real-page anchor whenever mode/orientation/dual layout changes, before
+    // its page collector can publish a stale index back into [pageLoader.startPage].
+    LaunchedEffect(readingMode, pagerDual, webtoonHorizontal, isLandscape) {
+        syncState.alignToPage(
+            webtoon = ReadingModeType.isWebtoon(readingMode),
+            pagerDual = pagerDual,
+        )
+    }
 
     // Single source of loading truth. Pager cache items and individual PagerItems never
     // request work; only real pages intersecting the viewport are interactive demand.

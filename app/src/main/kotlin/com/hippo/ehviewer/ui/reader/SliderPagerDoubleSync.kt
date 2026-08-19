@@ -54,6 +54,19 @@ class SliderPagerDoubleSync(
 
     fun finishSettingsChange() = interactionState.finishSettingsChange()
 
+    /** Align the newly active viewport with the last real page anchor. */
+    suspend fun alignToPage(webtoon: Boolean, pagerDual: Boolean) {
+        val page = pageLoader.startPage.coerceIn(0, (pageLoader.size - 1).coerceAtLeast(0))
+        if (webtoon) {
+            lazyListState.scrollToItem(page)
+        } else {
+            val target = if (pagerDual) dualSpreadIndex(page) else page
+            pagerState.scrollToPage(
+                target.coerceIn(0, (pagerState.pageCount - 1).coerceAtLeast(0)),
+            )
+        }
+    }
+
     /**
      * @param webtoon continuous / webtoon list
      * @param pagerDual true when pager uses spread indices (LTR/RTL/Vertical dual)
