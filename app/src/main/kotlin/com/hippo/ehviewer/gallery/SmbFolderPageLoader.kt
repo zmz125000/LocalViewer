@@ -58,7 +58,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
         // HdrConvertCache.fullConvertSlots). Direct-Bitmap uses normal prefetchSlots.
         val libHdrPrefetchSlots = Semaphore(2)
         // In-flight downloads by page index — join small-jump overlap, cancel large jumps.
-        val downloadJobs = ConcurrentHashMap<Int, Job>()
+        val downloadJobs = KeyedJobRegistry<Int>()
 
         /** UI/decode callbacks waiting for [index] to land in [SmbCache]. */
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
@@ -127,9 +127,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     // ConcurrentHashMap.forEach (BiConsumer) — never entries/keys iterator.
                     // Android EntryIterator.next can throw NoSuchElementException under concurrent
                     // put/remove; dual-page fires two onRequest close together.
-                    downloadJobs.forEach { idx, job ->
-                        if (idx !in sourcePages) job.cancel()
-                    }
+                    downloadJobs.cancelOutside(sourcePages)
                 }
 
                 private fun addReadyWaiter(index: Int, onReady: () -> Unit) {
@@ -165,7 +163,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     if (onReady != null) {
                         addReadyWaiter(index, onReady)
                     }
-                    val existing = downloadJobs[index]
+                    val existing = downloadJobs.owner(index)
                     if (existing != null && !existing.isCompleted) {
                         // Waiters already registered; in-flight job will dispatch or retry.
                         return
@@ -201,19 +199,20 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             }
                         } catch (_: kotlinx.coroutines.CancellationException) {
                             // Lost putIfAbsent must not steal waiters from the in-flight owner.
-                            val owns = downloadJobs[index] == coroutineContext[Job]
+                            val runningJob = coroutineContext[Job]
+                            val owns = downloadJobs.owns(index, runningJob)
                             if (owns) {
                                 val waiters = takeReadyWaiters(index)
                                 if (waiters.isNotEmpty()) {
                                     waiters.forEach { addReadyWaiter(index, it) }
-                                    scope.launch(Dispatchers.IO) {
-                                        ensureDownload(index, interactive = true)
-                                    }
+                                    // Release the cancelled owner before registering its retry.
+                                    downloadJobs.release(index, runningJob)
+                                    ensureDownload(index, interactive = true)
                                 }
                             }
                         } catch (e: Throwable) {
                             // Never rethrow: a failed child would cancel the whole reader scope.
-                            if (downloadJobs[index] === coroutineContext[Job]) {
+                            if (downloadJobs.owns(index, coroutineContext[Job])) {
                                 val waiters = takeReadyWaiters(index)
                                 if (waiters.isNotEmpty() || needsInteractive) {
                                     notifyPageFailed(index, e.message)
@@ -221,23 +220,10 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             }
                         } finally {
                             // Only remove *this* job — a replacement may already be registered.
-                            downloadJobs.remove(index, coroutineContext[Job])
+                            downloadJobs.release(index, coroutineContext[Job])
                         }
                     }
-                    var ownsSlot = false
-                    while (true) {
-                        val owner = downloadJobs.putIfAbsent(index, job)
-                        if (owner == null) {
-                            ownsSlot = true
-                            break
-                        }
-                        // Lazy jobs are New (not active) between registration and start.
-                        if (!owner.isCompleted) break
-                        if (downloadJobs.replace(index, owner, job)) {
-                            ownsSlot = true
-                            break
-                        }
-                    }
+                    val ownsSlot = downloadJobs.register(index, job)
                     if (ownsSlot) {
                         job.start()
                     } else {

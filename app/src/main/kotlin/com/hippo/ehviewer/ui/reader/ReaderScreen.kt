@@ -527,6 +527,20 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             val count = pageLoader.size
             if (count <= 0) return@snapshotFlow null
             val last = count - 1
+            syncState.pendingJumpPage?.let { pending ->
+                val target = pending.coerceIn(0, last)
+                val visible = if (pagerDual) {
+                    val first = dualFirstPageIndex(dualSpreadIndex(target))
+                    first..minOf(first + 1, last)
+                } else {
+                    target..target
+                }
+                return@snapshotFlow ReaderNavigation(
+                    anchor = visible.first,
+                    visiblePages = visible,
+                    kind = NavigationKind.Jump,
+                )
+            }
             if (isWebtoon) {
                 val visibleItems = lazyListState.layoutInfo.visibleItemsInfo
                 val fallback = (syncState.sliderValue - 1).coerceIn(0, last)
@@ -1029,23 +1043,28 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             onSliderValueChange = syncState::sliderScrollTo,
             onClickSettings = {
                 launch {
-                    dialog { cont ->
-                        // Sheet dismiss can fire onDismissRequest more than once (animation /
-                        // back / mode change under a transparent scrim). Guard the resume.
-                        fun dispose() {
-                            if (cont.isActive) cont.resume(Unit)
+                    syncState.beginSettingsChange()
+                    try {
+                        dialog { cont ->
+                            // Sheet dismiss can fire onDismissRequest more than once (animation /
+                            // back / mode change under a transparent scrim). Guard the resume.
+                            fun dispose() {
+                                if (cont.isActive) cont.resume(Unit)
+                            }
+                            // No dim overlay while settings are open (was BottomSheetDefaults.ScrimColor
+                            // with color-filter tab force-undim). Keep reader fully visible underneath.
+                            ModalBottomSheet(
+                                onDismissRequest = { dispose() },
+                                modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+                                scrimColor = Color.Transparent,
+                                dragHandle = null,
+                                contentWindowInsets = { WindowInsets() },
+                            ) {
+                                SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize())
+                            }
                         }
-                        // No dim overlay while settings are open (was BottomSheetDefaults.ScrimColor
-                        // with color-filter tab force-undim). Keep reader fully visible underneath.
-                        ModalBottomSheet(
-                            onDismissRequest = { dispose() },
-                            modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
-                            scrimColor = Color.Transparent,
-                            dragHandle = null,
-                            contentWindowInsets = { WindowInsets() },
-                        ) {
-                            SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize())
-                        }
+                    } finally {
+                        syncState.finishSettingsChange()
                     }
                 }
             },

@@ -45,7 +45,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         val prefetchSlots = Semaphore(3)
         // Cap concurrent lib downloads; full UHDR convert is serial in HdrConvertCache.
         val libHdrPrefetchSlots = Semaphore(2)
-        val downloadJobs = ConcurrentHashMap<Int, Job>()
+        val downloadJobs = KeyedJobRegistry<Int>()
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
 
         val loader = install(
@@ -101,9 +101,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 private fun cancelStaleDownloads(sourcePages: Set<Int>, decodedPages: Set<Int>) {
                     readyWaiters.forEach { idx, _ -> if (idx !in decodedPages) readyWaiters.remove(idx) }
                     // ConcurrentHashMap.forEach — avoid entries.toList() iterator race on Android.
-                    downloadJobs.forEach { idx, job ->
-                        if (idx !in sourcePages) job.cancel()
-                    }
+                    downloadJobs.cancelOutside(sourcePages)
                 }
 
                 private fun addReadyWaiter(index: Int, onReady: () -> Unit) {
@@ -130,7 +128,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     }
                     if (onReady != null) addReadyWaiter(index, onReady)
 
-                    val existing = downloadJobs[index]
+                    val existing = downloadJobs.owner(index)
                     if (existing != null && !existing.isCompleted) return
 
                     val job = launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
@@ -162,40 +160,29 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                 }
                             }
                         } catch (e: kotlinx.coroutines.CancellationException) {
-                            val owns = downloadJobs[index] == coroutineContext[Job]
+                            val runningJob = coroutineContext[Job]
+                            val owns = downloadJobs.owns(index, runningJob)
                             if (owns) {
                                 val waiters = takeReadyWaiters(index)
                                 if (waiters.isNotEmpty()) {
                                     waiters.forEach { addReadyWaiter(index, it) }
+                                    downloadJobs.release(index, runningJob)
                                     ensureDownload(index, interactive = true)
                                 }
                             }
                             throw e
                         } catch (e: Throwable) {
-                            if (downloadJobs[index] === coroutineContext[Job]) {
+                            if (downloadJobs.owns(index, coroutineContext[Job])) {
                                 val waiters = takeReadyWaiters(index)
                                 if (waiters.isNotEmpty()) {
                                     notifyPageFailed(index, e.message)
                                 }
                             }
                         } finally {
-                            downloadJobs.remove(index, coroutineContext[Job])
+                            downloadJobs.release(index, coroutineContext[Job])
                         }
                     }
-                    var ownsSlot = false
-                    while (true) {
-                        val owner = downloadJobs.putIfAbsent(index, job)
-                        if (owner == null) {
-                            ownsSlot = true
-                            break
-                        }
-                        // Lazy jobs are New (not active) between registration and start.
-                        if (!owner.isCompleted) break
-                        if (downloadJobs.replace(index, owner, job)) {
-                            ownsSlot = true
-                            break
-                        }
-                    }
+                    val ownsSlot = downloadJobs.register(index, job)
                     if (ownsSlot) job.start() else job.cancel()
                 }
             },

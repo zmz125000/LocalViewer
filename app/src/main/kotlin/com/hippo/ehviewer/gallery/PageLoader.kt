@@ -146,12 +146,10 @@ abstract class PageLoader(
                     throw e
                 }
                 val runningJob = currentCoroutineContext()[Job]
-                if (!isDecodeDemanded(index) || !ownsDecodeSlot(index, runningJob)) {
-                    // Navigation changed in the narrow window after decode completed.
+                if (!commitDecodedImage(index, image, runningJob)) {
+                    // Navigation changed or this job was replaced before publication.
                     image.unpin()
-                    return@bracketCase
                 }
-                notifyPageSucceed(index, image)
             },
             { src, case -> if (case !is ExitCase.Completed) src.close() },
         )
@@ -325,7 +323,7 @@ abstract class PageLoader(
         }
     }
 
-    fun notifyPageSucceed(index: Int, image: Image, replaceCache: Boolean = true) {
+    private fun publishPageSucceed(index: Int, image: Image, replaceCache: Boolean) {
         if (replaceCache) {
             lock.write {
                 val existing = cache[index]
@@ -341,7 +339,22 @@ abstract class PageLoader(
             }
         }
         pages[index].statusFlow.update { if (image.hasQrCode) PageStatus.Blocked(image) else PageStatus.Ready(image) }
+    }
+
+    private fun notifyPageSucceed(index: Int, image: Image, replaceCache: Boolean = true) {
+        publishPageSucceed(index, image, replaceCache)
         releaseInflight(index)
+    }
+
+    /** Validate, publish, and release one decode owner in the same critical section. */
+    private fun commitDecodedImage(index: Int, image: Image, runningJob: Job?): Boolean = synchronized(jobs) {
+        val demanded = index in desiredDecodedPages || index in forcedDecode
+        if (!demanded || runningJob == null || jobs[index] !== runningJob) return@synchronized false
+        publishPageSucceed(index, image, replaceCache = true)
+        jobs.remove(index)
+        inflight.remove(index)
+        forcedDecode.remove(index)
+        true
     }
 
     fun notifyPageFailed(index: Int, error: String?) {

@@ -195,7 +195,7 @@ suspend inline fun <T> useTarChunkPageLoader(
                 }
 
                 override fun onNavigation(demand: ReaderDemand) {
-                    val target = demand.progressiveDiscoveryTarget(prefetchN)
+                    val target = demand.progressiveDiscoveryTarget(demand.sourceAhead)
                     extractTarget.updateAndGet { cur -> maxOf(cur, target) }
                 }
 
