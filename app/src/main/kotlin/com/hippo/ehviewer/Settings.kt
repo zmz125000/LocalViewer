@@ -311,6 +311,8 @@ object Settings : DataStorePreferences(null) {
 
     /** Decoded images to keep ahead independently of [preloadImage]. */
     val readerDecodeAhead = intPref("pref_reader_decode_ahead", 2)
+    /** Use one decoded page of lookahead for formats with expensive decode pipelines. */
+    val readerAutoDecodeAhead = boolPref("pref_reader_auto_decode_ahead", true)
     val downloadOriginImage = boolPref("download_origin_image", false)
     val saveAsCbz = boolPref("save_as_cbz", false)
     val archiveMetadata = boolPref("archive_metadata", true)

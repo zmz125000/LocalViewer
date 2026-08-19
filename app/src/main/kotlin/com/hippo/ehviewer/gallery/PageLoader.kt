@@ -17,6 +17,7 @@ import com.hippo.ehviewer.image.hdr.DisplaySource
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
 import com.hippo.ehviewer.image.hdr.classify
 import com.hippo.ehviewer.image.hdr.classifyPath
+import com.hippo.ehviewer.image.hdr.isHeicImageExtension
 import com.hippo.ehviewer.image.hdr.needsLibDecode
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
@@ -427,9 +428,16 @@ abstract class PageLoader(
     @Synchronized
     override fun navigate(navigation: ReaderNavigation) {
         if (size <= 0) return
+        val decodeAhead = if (
+            Settings.readerAutoDecodeAhead.value && isAutoDecodeAheadFormat(navigation.anchor)
+        ) {
+            1
+        } else {
+            Settings.readerDecodeAhead.value.coerceAtLeast(0)
+        }
         val policy = ReaderLoadPolicy(
             sourceAhead = Settings.preloadImage.value.coerceAtLeast(0),
-            decodeAhead = Settings.readerDecodeAhead.value.coerceAtLeast(0),
+            decodeAhead = decodeAhead,
         )
         val demand = demandPlanner.plan(navigation, size, policy)
         lastNavigation = demand.navigation
@@ -442,6 +450,15 @@ abstract class PageLoader(
         demand.visibleDecode.forEach(::requestDecode)
         demand.decodeAhead.forEach(::requestDecode)
         prefetchAbsent(demand.sourceOnly)
+    }
+
+    private fun isAutoDecodeAheadFormat(index: Int): Boolean {
+        val extension = getImageExtension(index)?.lowercase()?.removePrefix(".") ?: return false
+        // JXR uses the native conversion pipeline and is intentionally kept to one page.
+        if (extension == "jxr") return true
+        // ProXDR is an HEIC trailer format; only apply this to HEIC-family files when
+        // the existing ProXDR decoder is enabled.
+        return Settings.readerOppoProxdr.value && isHeicImageExtension(extension)
     }
 
     /** Recompute windows after policy/catalog changes without clearing decoded images. */
