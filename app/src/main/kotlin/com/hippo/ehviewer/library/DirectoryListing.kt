@@ -46,6 +46,13 @@ sealed interface BrowseEntry {
     /** Dot name / `.nomedia` dir / SMB HIDDEN — UI filters via [Settings.browseShowHiddenFiles]. */
     val hidden: Boolean
 
+    /**
+     * Lazy-scanner promotion (`@S` galleries / video leaves / promoted video files).
+     * UI filters via [Settings.browseShowVirtualGalleries]. Real FS names that happen to
+     * start with `@` stay [virtual]=false.
+     */
+    val virtual: Boolean
+
     data class Directory(
         override val name: String,
         val path: Path,
@@ -58,6 +65,7 @@ sealed interface BrowseEntry {
          */
         val coverPath: Path? = null,
         override val hidden: Boolean = false,
+        override val virtual: Boolean = false,
     ) : BrowseEntry
 
     data class FolderGallery(
@@ -67,12 +75,14 @@ sealed interface BrowseEntry {
         val pageCountCapped: Boolean = false,
         val coverPath: Path?,
         override val hidden: Boolean = false,
+        override val virtual: Boolean = false,
     ) : BrowseEntry
 
     data class ArchiveGallery(
         override val name: String,
         val path: Path,
         override val hidden: Boolean = false,
+        override val virtual: Boolean = false,
     ) : BrowseEntry
 
     /**
@@ -84,6 +94,7 @@ sealed interface BrowseEntry {
         override val name: String,
         val path: Path,
         override val hidden: Boolean = false,
+        override val virtual: Boolean = false,
     ) : BrowseEntry
 
     /**
@@ -94,6 +105,7 @@ sealed interface BrowseEntry {
         override val name: String,
         val path: Path,
         override val hidden: Boolean = false,
+        override val virtual: Boolean = false,
     ) : BrowseEntry
 }
 
@@ -191,6 +203,13 @@ sealed interface BrowseEntryRemote {
     /** Dot name / `.nomedia` dir / SMB HIDDEN — UI filters via [Settings.browseShowHiddenFiles]. */
     val hidden: Boolean
 
+    /**
+     * Lazy-scanner promotion (`@S` galleries / video leaves / promoted video files).
+     * UI filters via [Settings.browseShowVirtualGalleries]. Real FS names that happen to
+     * start with `@` stay [virtual]=false.
+     */
+    val virtual: Boolean
+
     data class Directory(
         override val name: String,
         /**
@@ -207,6 +226,7 @@ sealed interface BrowseEntryRemote {
          */
         val coverFileName: String? = null,
         override val hidden: Boolean = false,
+        override val virtual: Boolean = false,
     ) : BrowseEntryRemote
 
     data class FolderGallery(
@@ -217,6 +237,7 @@ sealed interface BrowseEntryRemote {
         val coverFileName: String?,
         val imageFileNames: List<String>,
         override val hidden: Boolean = false,
+        override val virtual: Boolean = false,
     ) : BrowseEntryRemote
 
     data class ArchiveGallery(
@@ -224,6 +245,7 @@ sealed interface BrowseEntryRemote {
         val fileName: String,
         val parentRelativeName: String = "",
         override val hidden: Boolean = false,
+        override val virtual: Boolean = false,
     ) : BrowseEntryRemote
 
     /**
@@ -234,12 +256,14 @@ sealed interface BrowseEntryRemote {
         override val name: String,
         val fileName: String = name,
         override val hidden: Boolean = false,
+        override val virtual: Boolean = false,
     ) : BrowseEntryRemote
 
     data class RegularFile(
         override val name: String,
         val fileName: String = name,
         override val hidden: Boolean = false,
+        override val virtual: Boolean = false,
     ) : BrowseEntryRemote
 }
 
@@ -554,6 +578,7 @@ fun classifyRemoteListingWithPeeks(
                                 coverFileName = g.kind.coverFileName,
                                 imageFileNames = g.kind.imageFileNames,
                                 hidden = entryHidden,
+                                virtual = true,
                             )
                         }
                         // Dual gallery for images directly in S (from first peek of S — not re-scanned).
@@ -563,6 +588,8 @@ fun classifyRemoteListingWithPeeks(
                                 relativeName = e.name,
                                 peek = peek,
                                 displayName = promotedSubGalleryName(e.name),
+                                hidden = entryHidden,
+                                virtual = true,
                             )?.let { leafGalleries += it }
                         } else if (sHasImages && galleryLeaves.isEmpty()) {
                             // Video-only promote under S that also has direct images: list dual gallery
@@ -571,6 +598,7 @@ fun classifyRemoteListingWithPeeks(
                                 relativeName = e.name,
                                 peek = peek,
                                 displayName = e.name,
+                                hidden = entryHidden,
                             )?.let { leafGalleries += it }
                         }
 
@@ -593,6 +621,7 @@ fun classifyRemoteListingWithPeeks(
                                 hasGallery = false,
                                 presence = DirPresence.PromotedVideoLeaf,
                                 hidden = entryHidden,
+                                virtual = true,
                             )
                         }
                         // Single-video leaves → parent Videos section (file open), not a dir row.
@@ -606,6 +635,7 @@ fun classifyRemoteListingWithPeeks(
                                 name = display,
                                 fileName = v.relativeFile,
                                 hidden = entryHidden,
+                                virtual = true,
                             )
                         }
 
@@ -636,6 +666,7 @@ fun classifyRemoteListingWithPeeks(
                                 relativeName = e.name,
                                 peek = peek,
                                 displayName = e.name,
+                                hidden = entryHidden,
                             )?.let { leafGalleries += it }
                             dirs += BrowseEntryRemote.Directory(
                                 name = e.name,
@@ -679,6 +710,7 @@ fun classifyRemoteListingWithPeeks(
                             relativeName = e.name,
                             peek = peek,
                             displayName = e.name,
+                            hidden = entryHidden,
                         )?.let { leafGalleries += it }
                     }
                     dirs += BrowseEntryRemote.Directory(
@@ -727,6 +759,7 @@ fun classifyRemoteListingWithPeeks(
                                 name = promotedSubGalleryName(e.name),
                                 fileName = "${e.name}/$singleVideo",
                                 hidden = entryHidden,
+                                virtual = true,
                             )
                         }
                         dirs += BrowseEntryRemote.Directory(
@@ -764,6 +797,7 @@ fun classifyRemoteListingWithPeeks(
                                     name = promotedSubGalleryName(e.name),
                                     fileName = "${e.name}/$single",
                                     hidden = entryHidden,
+                                    virtual = true,
                                 )
                                 dirs += BrowseEntryRemote.Directory(
                                     name = e.name,
@@ -861,6 +895,8 @@ private fun imagesInPeekAsGallery(
     relativeName: String,
     peek: List<RemoteChild>,
     displayName: String,
+    hidden: Boolean = false,
+    virtual: Boolean = false,
 ): BrowseEntryRemote.FolderGallery? {
     val images = ArrayList<String>()
     for (c in peek) {
@@ -877,6 +913,8 @@ private fun imagesInPeekAsGallery(
         pageCountCapped = false,
         coverFileName = images.first(),
         imageFileNames = images,
+        hidden = hidden,
+        virtual = virtual,
     )
 }
 
