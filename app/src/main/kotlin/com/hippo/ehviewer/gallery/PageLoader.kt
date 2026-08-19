@@ -431,7 +431,7 @@ abstract class PageLoader(
         val decodeAhead = if (
             Settings.readerAutoDecodeAhead.value && isAutoDecodeAheadFormat(navigation.anchor)
         ) {
-            1
+            2
         } else {
             Settings.readerDecodeAhead.value.coerceAtLeast(0)
         }
