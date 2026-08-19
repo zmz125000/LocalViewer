@@ -553,8 +553,8 @@ fun classifyRemoteListingWithPeeks(
                                 pageCountCapped = false,
                                 coverFileName = g.kind.coverFileName,
                                 imageFileNames = g.kind.imageFileNames,
-                            hidden = entryHidden,
-                    )
+                                hidden = entryHidden,
+                            )
                         }
                         // Dual gallery for images directly in S (from first peek of S — not re-scanned).
                         // Named @S so it sorts to the top of the gallery list with promotions.
@@ -592,8 +592,8 @@ fun classifyRemoteListingWithPeeks(
                                 hasVideo = true,
                                 hasGallery = false,
                                 presence = DirPresence.PromotedVideoLeaf,
-                            hidden = entryHidden,
-                    )
+                                hidden = entryHidden,
+                            )
                         }
                         // Single-video leaves → parent Videos section (file open), not a dir row.
                         for (v in videoFiles) {
@@ -605,8 +605,8 @@ fun classifyRemoteListingWithPeeks(
                             videos += BrowseEntryRemote.VideoFile(
                                 name = display,
                                 fileName = v.relativeFile,
-                            hidden = entryHidden,
-                    )
+                                hidden = entryHidden,
+                            )
                         }
 
                         // Always keep S in the full list: Navigable when still needed for enter;
@@ -623,8 +623,8 @@ fun classifyRemoteListingWithPeeks(
                             hasGallery = sHasGalleryFlag,
                             presence = presence,
                             coverFileName = sCoverFileName,
-                        hidden = entryHidden,
-                    )
+                            hidden = entryHidden,
+                        )
                         continue
                     }
 
@@ -644,8 +644,8 @@ fun classifyRemoteListingWithPeeks(
                                 hasGallery = true,
                                 presence = DirPresence.LeafImages,
                                 coverFileName = sCoverFileName,
-                            hidden = entryHidden,
-                    )
+                                hidden = entryHidden,
+                            )
                         } else if (sHasVideoFlag) {
                             dirs += BrowseEntryRemote.Directory(
                                 name = e.name,
@@ -654,8 +654,8 @@ fun classifyRemoteListingWithPeeks(
                                 hasGallery = false,
                                 presence = DirPresence.VideoOnly,
                                 coverFileName = sCoverFileName,
-                            hidden = entryHidden,
-                    )
+                                hidden = entryHidden,
+                            )
                         } else {
                             dirs += BrowseEntryRemote.Directory(
                                 name = e.name,
@@ -664,8 +664,8 @@ fun classifyRemoteListingWithPeeks(
                                 hasGallery = false,
                                 presence = DirPresence.Empty,
                                 coverFileName = sCoverFileName,
-                            hidden = entryHidden,
-                    )
+                                hidden = entryHidden,
+                            )
                         }
                         continue
                     }
@@ -688,7 +688,7 @@ fun classifyRemoteListingWithPeeks(
                         hasGallery = sHasGalleryFlag,
                         presence = DirPresence.Navigable,
                         coverFileName = sCoverFileName,
-                    hidden = entryHidden,
+                        hidden = entryHidden,
                     )
                     continue
                 }
@@ -703,8 +703,8 @@ fun classifyRemoteListingWithPeeks(
                             hasGallery = kind.hasGallery,
                             presence = DirPresence.Navigable,
                             coverFileName = navCover,
-                        hidden = entryHidden,
-                    )
+                            hidden = entryHidden,
+                        )
                         // Mixed folder: also list as gallery for direct images.
                         kind.gallery?.let { g ->
                             leafGalleries += BrowseEntryRemote.FolderGallery(
@@ -714,8 +714,8 @@ fun classifyRemoteListingWithPeeks(
                                 pageCountCapped = false,
                                 coverFileName = g.coverFileName,
                                 imageFileNames = g.imageFileNames,
-                            hidden = entryHidden,
-                    )
+                                hidden = entryHidden,
+                            )
                         }
                     }
                     is RemoteChildKind.LeafGallery -> {
@@ -726,8 +726,8 @@ fun classifyRemoteListingWithPeeks(
                             videos += BrowseEntryRemote.VideoFile(
                                 name = promotedSubGalleryName(e.name),
                                 fileName = "${e.name}/$singleVideo",
-                            hidden = entryHidden,
-                    )
+                                hidden = entryHidden,
+                            )
                         }
                         dirs += BrowseEntryRemote.Directory(
                             name = e.name,
@@ -735,8 +735,8 @@ fun classifyRemoteListingWithPeeks(
                             hasGallery = true,
                             presence = DirPresence.LeafImages,
                             coverFileName = kind.coverFileName,
-                        hidden = entryHidden,
-                    )
+                            hidden = entryHidden,
+                        )
                         leafGalleries += BrowseEntryRemote.FolderGallery(
                             name = e.name,
                             relativeName = e.name,
@@ -744,8 +744,8 @@ fun classifyRemoteListingWithPeeks(
                             pageCountCapped = false,
                             coverFileName = kind.coverFileName,
                             imageFileNames = kind.imageFileNames,
-                        hidden = entryHidden,
-                    )
+                            hidden = entryHidden,
+                        )
                     }
                     is RemoteChildKind.VideoOnly -> {
                         val single = kind.videoFileNames.singleOrNull()
@@ -756,22 +756,22 @@ fun classifyRemoteListingWithPeeks(
                                     hasVideo = false,
                                     hasGallery = false,
                                     presence = DirPresence.Empty,
-                                hidden = entryHidden,
-                    )
+                                    hidden = entryHidden,
+                                )
                             single != null -> {
                                 // One video (+ nfo/srt/other non-video junk) → parent Videos.
                                 videos += BrowseEntryRemote.VideoFile(
                                     name = promotedSubGalleryName(e.name),
                                     fileName = "${e.name}/$single",
-                                hidden = entryHidden,
-                    )
+                                    hidden = entryHidden,
+                                )
                                 dirs += BrowseEntryRemote.Directory(
                                     name = e.name,
                                     hasVideo = false,
                                     hasGallery = false,
                                     presence = DirPresence.PromotedShell,
-                                hidden = entryHidden,
-                    )
+                                    hidden = entryHidden,
+                                )
                             }
                             else ->
                                 dirs += BrowseEntryRemote.Directory(
@@ -779,8 +779,8 @@ fun classifyRemoteListingWithPeeks(
                                     hasVideo = true,
                                     hasGallery = false,
                                     presence = DirPresence.VideoOnly,
-                                hidden = entryHidden,
-                    )
+                                    hidden = entryHidden,
+                                )
                         }
                     }
                     is RemoteChildKind.Empty ->
@@ -789,8 +789,8 @@ fun classifyRemoteListingWithPeeks(
                             hasVideo = false,
                             hasGallery = false,
                             presence = DirPresence.Empty,
-                        hidden = entryHidden,
-                    )
+                            hidden = entryHidden,
+                        )
                 }
             }
             isImageFileName(e.name) -> {

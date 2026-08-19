@@ -280,7 +280,7 @@ object LocalFolderListing {
 
     private fun rootConfigKey(rootPath: Path, preferMediaStore: Boolean): String {
         val effective = resolveBrowsePath(rootPath, preferMediaStore = preferMediaStore)
-        return "local|${effective}|ms=$preferMediaStore"
+        return "local|$effective|ms=$preferMediaStore"
     }
 }
 

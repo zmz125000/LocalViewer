@@ -75,5 +75,4 @@ fun List<RemoteChild>.withHiddenFlags(
 }
 
 /** True when a peek list shows this directory should be tagged hidden. */
-fun peekIndicatesHiddenDir(name: String, peek: List<RemoteChild>, protocolHidden: Boolean = false): Boolean =
-    protocolHidden || isDotHiddenName(name) || peek.any { !it.isDirectory && it.name == NOMEDIA_NAME }
+fun peekIndicatesHiddenDir(name: String, peek: List<RemoteChild>, protocolHidden: Boolean = false): Boolean = protocolHidden || isDotHiddenName(name) || peek.any { !it.isDirectory && it.name == NOMEDIA_NAME }

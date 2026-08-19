@@ -6,12 +6,12 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
+import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
+import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
-import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
-import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.withHiddenFlags

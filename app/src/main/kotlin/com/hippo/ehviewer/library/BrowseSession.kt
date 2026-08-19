@@ -138,8 +138,7 @@ object BrowseSession {
         return materializeLocalEntries(pathKey.toPath(), cached.entries)
     }
 
-    fun isLocalListingSessionCurrent(pathKey: String): Boolean =
-        localListings[pathKey]?.sessionCurrent == true
+    fun isLocalListingSessionCurrent(pathKey: String): Boolean = localListings[pathKey]?.sessionCurrent == true
 
     /**
      * @param sessionCurrent true after a successful full/slim list in this process for [pathKey].

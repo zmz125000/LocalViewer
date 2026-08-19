@@ -78,6 +78,7 @@ import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
+import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
@@ -87,7 +88,6 @@ import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
-import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.stableGalleryId
