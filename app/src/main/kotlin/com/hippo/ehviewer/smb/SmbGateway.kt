@@ -1690,9 +1690,11 @@ object SmbGateway {
         val loc = resolveLocation(source, relativeDir)
         val path = loc.pathInShare
         val deepScanHidden = com.hippo.ehviewer.Settings.browseShowHiddenFiles.value
+        // Dot folders: always tag-only (never peek). `.nomedia` dirs peek only when Hidden on.
         val dirsToPeek = children.filter { c ->
             c.isDirectory &&
                 !isProtectedSystemName(c.name) &&
+                !isDotHiddenName(c.name) &&
                 (deepScanHidden || !c.hidden)
         }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()

@@ -53,7 +53,9 @@ object LibraryScanner {
 
         for (child in visible) {
             when {
-                child.isDirectory -> subdirs += child
+                // Dot folders are never descended into (browse lazy-scan parity).
+                child.isDirectory && !isDotHiddenName(child.name) -> subdirs += child
+                child.isDirectory -> Unit
                 isImageFileName(child.name) -> images += child.path
                 isArchiveFileName(child.name) -> archives += child
             }

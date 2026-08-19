@@ -309,6 +309,8 @@ fun planRemoteDirectorySlimRefresh(
 /**
  * Hidden directories that were only shallow-tagged ([DirPresence.Empty] + [BrowseEntryRemote.hidden])
  * need a full classify pass when the user turns **Hidden files** on.
+ *
+ * Dot-named folders (`.Trash`, …) are never deep-scanned — tag only — so they are excluded.
  */
 fun hiddenDirectoriesNeedingDeepScan(
     cachedEntries: List<BrowseEntryRemote>,
@@ -319,13 +321,17 @@ fun hiddenDirectoriesNeedingDeepScan(
         .filter {
             it.hidden &&
                 it.presence == DirPresence.Empty &&
+                !isDotHiddenName(it.name) &&
                 '/' !in it.relativeName.replace('\\', '/')
         }
         .map { it.relativeName.substringAfterLast('/').ifEmpty { it.name } }
         .toSet()
     if (shallowHidden.isEmpty()) return emptyList()
     return liveChildren.filter {
-        it.isDirectory && !isProtectedSystemName(it.name) && it.name in shallowHidden
+        it.isDirectory &&
+            !isProtectedSystemName(it.name) &&
+            !isDotHiddenName(it.name) &&
+            it.name in shallowHidden
     }
 }
 

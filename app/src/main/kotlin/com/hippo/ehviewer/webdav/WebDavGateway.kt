@@ -10,6 +10,7 @@ import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
+import com.hippo.ehviewer.library.isDotHiddenName
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
@@ -188,9 +189,11 @@ object WebDavGateway {
         children: List<RemoteChild>,
     ): List<BrowseEntryRemote> {
         val deepScanHidden = com.hippo.ehviewer.Settings.browseShowHiddenFiles.value
+        // Dot folders: always tag-only (never peek). `.nomedia` dirs peek only when Hidden on.
         val dirsToPeek = children.filter { c ->
             c.isDirectory &&
                 !isProtectedSystemName(c.name) &&
+                !isDotHiddenName(c.name) &&
                 (deepScanHidden || !c.hidden)
         }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
