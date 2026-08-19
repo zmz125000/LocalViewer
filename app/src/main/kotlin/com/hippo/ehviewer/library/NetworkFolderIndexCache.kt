@@ -23,7 +23,8 @@ import splitties.init.appCtx
  * quick scan then skips current dirs and re-runs for every old dir (including subfolders).
  */
 object NetworkFolderIndexCache {
-    private const val VERSION = 1
+    /** Bump when on-disk entry shape changes — old JSON is ignored (no migration). */
+    private const val VERSION = 2
     private const val KIND_DIRECTORY = "directory"
     private const val KIND_FOLDER_GALLERY = "folder_gallery"
     private const val KIND_ARCHIVE = "archive"

@@ -538,7 +538,31 @@ private fun peekFirstImageCover(dir: Path, preferMediaStore: Boolean): Path? {
 // SMB / remote classification
 // ---------------------------------------------------------------------------
 
-data class RemoteChild(val name: String, val isDirectory: Boolean)
+/**
+ * One raw directory child from a lazy list/peek (before gallery/video classify).
+ *
+ * SMB fills size / date / hidden / readonly from [MS-FSCC FileAttributes](
+ * https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/ca28ec38-f155-4768-81d6-4bfeb8586fc9)
+ * via FileIdBothDirectoryInformation (same directory info family as MS-CIFS FIND).
+ * WebDAV: size + last-modified when PROPFIND returns them; hidden/readOnly stay false.
+ *
+ * [path] is the path segment relative to the listed directory (same as [name] for
+ * depth-1 children). Kept explicit for later UI / sort / filter use.
+ */
+data class RemoteChild(
+    val name: String,
+    val isDirectory: Boolean,
+    /** Relative path under the listed dir (basename for depth-1). */
+    val path: String = name,
+    /** End-of-file size in bytes; 0 for directories or unknown. */
+    val size: Long = 0L,
+    /** Last-write / last-modified epoch ms; 0 if unknown. */
+    val lastModifiedMs: Long = 0L,
+    /** SMB FILE_ATTRIBUTE_HIDDEN; false when the protocol has no flag. */
+    val hidden: Boolean = false,
+    /** SMB FILE_ATTRIBUTE_READONLY; false when unsupported. */
+    val readOnly: Boolean = false,
+)
 
 /**
  * Windows / NAS system junk that must not appear as browsable folders or count as
