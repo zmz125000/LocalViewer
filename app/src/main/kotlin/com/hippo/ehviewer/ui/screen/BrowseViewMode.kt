@@ -88,6 +88,8 @@ fun BrowseViewModeMenu(
     var showReadingProgress by Settings.showReadingProgress.asMutableState()
     var browseFolderThumbs by Settings.browseFolderThumbs.asMutableState()
     var showSmallGalleries by Settings.browseShowSmallGalleries.asMutableState()
+    var showHiddenFiles by Settings.browseShowHiddenFiles.asMutableState()
+    var showVirtualGalleries by Settings.browseShowVirtualGalleries.asMutableState()
     var favoritesOnTop by Settings.browseFavoritesOnTop.asMutableState()
     var photoGridMode by Settings.photoGridMode.asMutableState()
 
@@ -195,6 +197,16 @@ fun BrowseViewModeMenu(
                 label = stringResource(R.string.browse_menu_small_galleries),
                 checked = showSmallGalleries,
                 onClick = { showSmallGalleries = !showSmallGalleries },
+            )
+            ToggleMenuItem(
+                label = stringResource(R.string.browse_menu_hidden_files),
+                checked = showHiddenFiles,
+                onClick = { showHiddenFiles = !showHiddenFiles },
+            )
+            ToggleMenuItem(
+                label = stringResource(R.string.browse_menu_virtual_galleries),
+                checked = showVirtualGalleries,
+                onClick = { showVirtualGalleries = !showVirtualGalleries },
             )
         }
     }

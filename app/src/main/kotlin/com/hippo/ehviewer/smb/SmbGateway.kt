@@ -28,9 +28,13 @@ import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
+import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
+import com.hippo.ehviewer.library.isDotHiddenName
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.naturalCompare
+import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
+import com.hippo.ehviewer.library.withHiddenFlags
 import java.io.IOException
 import java.io.OutputStream
 import java.io.RandomAccessFile
@@ -1651,14 +1655,27 @@ object SmbGateway {
             listChildren(share, loc.pathInShare).filterNot { isProtectedSystemName(it.name) }
         }
         val plan = planRemoteDirectorySlimRefresh(cached, children)
-        if (plan.isUnchanged) return SlimDirectoryRefresh(cached, emptySet())
-        val addedEntries = if (plan.addedDirectories.isEmpty()) {
+        val deepHidden = if (com.hippo.ehviewer.Settings.browseShowHiddenFiles.value) {
+            hiddenDirectoriesNeedingDeepScan(cached, children)
+        } else {
+            emptyList()
+        }
+        val deepNames = deepHidden.mapTo(HashSet()) { it.name }
+        val toClassify = (plan.addedDirectories + deepHidden).distinctBy { it.name }
+        if (plan.isUnchanged && deepHidden.isEmpty()) {
+            return SlimDirectoryRefresh(cached, emptySet())
+        }
+        val effectivePlan = RemoteDirectorySlimPlan(
+            addedDirectories = toClassify,
+            removedDirectoryNames = plan.removedDirectoryNames + deepNames,
+        )
+        val addedEntries = if (toClassify.isEmpty()) {
             emptyList()
         } else {
-            classifyDirectoryChildren(source, password, relativeDir, plan.addedDirectories)
+            classifyDirectoryChildren(source, password, relativeDir, toClassify)
         }
         return SlimDirectoryRefresh(
-            entries = mergeRemoteDirectorySlimRefresh(cached, plan, addedEntries),
+            entries = mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
             removedDirectoryNames = plan.removedDirectoryNames,
         )
     }
@@ -1671,7 +1688,12 @@ object SmbGateway {
     ): List<BrowseEntryRemote> {
         val loc = resolveLocation(source, relativeDir)
         val path = loc.pathInShare
-        val dirsToPeek = children.filter { it.isDirectory && !it.name.startsWith('.') }
+        val deepScanHidden = com.hippo.ehviewer.Settings.browseShowHiddenFiles.value
+        val dirsToPeek = children.filter { c ->
+            c.isDirectory &&
+                !isProtectedSystemName(c.name) &&
+                (deepScanHidden || !c.hidden)
+        }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
         val parallelism = maxConcurrentOpsPerHost().coerceAtLeast(1)
         val gate = Semaphore(parallelism)
@@ -1729,7 +1751,8 @@ object SmbGateway {
 
         val dirName = relativeDir.substringAfterLast('/').substringAfterLast('\\')
             .ifEmpty { source.displayName }
-        return classifyRemoteListingWithPeeks(dirName, children, peeks, grandPeeks)
+        val tagged = children.withHiddenFlags(peeks)
+        return classifyRemoteListingWithPeeks(dirName, tagged, peeks, grandPeeks)
     }
 
     /**
@@ -1741,7 +1764,8 @@ object SmbGateway {
         if (name == "." || name == "..") return@mapNotNull null
         val attrs = info.fileAttributes
         val isDir = (attrs and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
-        val hidden = (attrs and FileAttributes.FILE_ATTRIBUTE_HIDDEN.value) != 0L
+        val hidden = (attrs and FileAttributes.FILE_ATTRIBUTE_HIDDEN.value) != 0L ||
+            isDotHiddenName(name)
         val readOnly = (attrs and FileAttributes.FILE_ATTRIBUTE_READONLY.value) != 0L
         val size = if (isDir) 0L else info.endOfFile.coerceAtLeast(0L)
         val lastModifiedMs = runCatching { info.lastWriteTime.toEpochMillis() }.getOrDefault(0L).coerceAtLeast(0L)

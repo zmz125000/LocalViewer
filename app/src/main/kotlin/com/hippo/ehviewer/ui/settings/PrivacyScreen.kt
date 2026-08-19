@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.withIOContext
@@ -32,6 +33,7 @@ import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.library.BrowseModePersist
+import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.isAuthenticationSupported
 import com.hippo.ehviewer.ui.main.NavigationIcon
@@ -119,6 +121,27 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                     }
                 }
                 previousSaveHistory = saveHistory.value
+            }
+            val scanHiddenFiles = Settings.scanHiddenFiles.asMutableState()
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_privacy_scan_hidden_files),
+                summary = stringResource(id = R.string.settings_privacy_scan_hidden_files_summary),
+                state = scanHiddenFiles,
+            )
+            // Rescan library roots when the hidden-files gate changes.
+            var previousScanHidden by remember { mutableStateOf(scanHiddenFiles.value) }
+            LaunchedEffect(scanHiddenFiles.value) {
+                val now = scanHiddenFiles.value
+                if (previousScanHidden != now) {
+                    previousScanHidden = now
+                    withIOContext {
+                        LocalLibrary.listRoots()
+                            .filter { it.role == LIBRARY_ROOT_ROLE_LIBRARY }
+                            .forEach { root ->
+                                runCatching { LocalLibrary.scanRoot(root.id) }
+                            }
+                    }
+                }
             }
             SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_library_recent_open),

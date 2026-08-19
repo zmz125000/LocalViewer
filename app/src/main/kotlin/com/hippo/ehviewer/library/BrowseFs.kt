@@ -14,6 +14,9 @@ import splitties.init.appCtx
  * [size] / [lastModifiedMs] / [hidden] / [readOnly] are best-effort:
  * physical FS fills them; SAF uses SIZE/LAST_MODIFIED/FLAGS when present;
  * MediaStore leaves flags false and size/date 0 unless the index supplies them.
+ *
+ * Dot-prefixed names are listed with [hidden]=true (DocumentsContract has no hidden
+ * flag). Callers that also honour `.nomedia` dirs should run [withHiddenFlags].
  */
 data class BrowseChild(
     val name: String,
@@ -30,6 +33,9 @@ data class BrowseChild(
  *
  * - Physical paths (`/`…): [File.listFiles] + [File.isDirectory] (local stat, cheap)
  * - SAF / content trees: one query for DISPLAY_NAME + MIME_TYPE, stream the cursor
+ *
+ * Dot-prefixed names are **included** with [BrowseChild.hidden] set. Library / folder
+ * scanners decide whether to skip or deep-scan them.
  *
  * [visitor] return `false` to stop early (e.g. found a subdirectory while peeking).
  */
@@ -52,7 +58,7 @@ internal inline fun Path.forEachMediaStoreChild(visitor: (BrowseChild) -> Boolea
                 path = child.path,
                 size = child.size,
                 lastModifiedMs = child.lastModifiedMs,
-                hidden = false,
+                hidden = isDotHiddenName(child.name),
                 readOnly = false,
             ),
         )
@@ -63,8 +69,21 @@ internal inline fun Path.forEachMediaStoreChild(visitor: (BrowseChild) -> Boolea
 /**
  * Collect all children (used for parent listing where we need every subdir).
  * Prefer [forEachBrowseChild] when early exit is possible.
+ *
+ * Applies [withHiddenFlags] so directories that contain `.nomedia` are tagged hidden.
  */
 fun Path.listBrowseChildren(): List<BrowseChild> = buildList {
+    forEachBrowseChild {
+        add(it)
+        true
+    }
+}.withHiddenFlags()
+
+/**
+ * Raw children without the `.nomedia` directory pass (caller will enrich, or only needs
+ * a streaming visit). Dot names are still included with [BrowseChild.hidden].
+ */
+fun Path.listBrowseChildrenRaw(): List<BrowseChild> = buildList {
     forEachBrowseChild {
         add(it)
         true
@@ -77,7 +96,6 @@ internal inline fun Path.forEachPhysicalChild(visitor: (BrowseChild) -> Boolean)
     val files = file.listFiles() ?: return
     for (child in files) {
         val name = child.name
-        if (name.startsWith('.')) continue
         val isDir = child.isDirectory
         val cont = visitor(
             BrowseChild(
@@ -86,7 +104,7 @@ internal inline fun Path.forEachPhysicalChild(visitor: (BrowseChild) -> Boolean)
                 path = this / name,
                 size = if (isDir) 0L else child.length().coerceAtLeast(0L),
                 lastModifiedMs = child.lastModified().coerceAtLeast(0L),
-                hidden = child.isHidden,
+                hidden = child.isHidden || isDotHiddenName(name),
                 readOnly = !child.canWrite(),
             ),
         )
@@ -117,7 +135,6 @@ internal inline fun Path.forEachSafChild(visitor: (BrowseChild) -> Boolean) {
         val flagsIdx = c.getColumnIndex(Document.COLUMN_FLAGS)
         while (c.moveToNext()) {
             val name = c.getString(nameIdx) ?: continue
-            if (name.startsWith('.')) continue
             val mime = c.getString(mimeIdx)
             val isDir = mime == Document.MIME_TYPE_DIR
             val size = if (isDir || sizeIdx < 0 || c.isNull(sizeIdx)) {
@@ -136,7 +153,8 @@ internal inline fun Path.forEachSafChild(visitor: (BrowseChild) -> Boolean) {
                     path = this / name,
                     size = size,
                     lastModifiedMs = lastMod,
-                    hidden = false,
+                    // DocumentsContract has no hidden column; dot names are the portable signal.
+                    hidden = isDotHiddenName(name),
                     readOnly = readOnly,
                 ),
             )

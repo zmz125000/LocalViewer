@@ -334,7 +334,6 @@ object MediaStoreFs {
                     val modIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
                     while (c.moveToNext()) {
                         val displayName = c.getString(nameIdx) ?: continue
-                        if (displayName.startsWith('.')) continue
                         val relPath = (c.getString(pathIdx) ?: "").trim('/').trimEnd('/')
                         val size = if (sizeIdx < 0 || c.isNull(sizeIdx)) 0L else c.getLong(sizeIdx).coerceAtLeast(0L)
                         // DATE_MODIFIED is seconds; convert to epoch ms.

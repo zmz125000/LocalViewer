@@ -816,8 +816,8 @@ object WebDavClient {
                 path = remainder,
                 size = if (isCollection) 0L else contentLength.coerceAtLeast(0L),
                 lastModifiedMs = lastModifiedMs.coerceAtLeast(0L),
-                // WebDAV has no portable hidden/readonly props we always get.
-                hidden = false,
+                // WebDAV has no portable hidden prop; dot names are the signal.
+                hidden = remainder.startsWith('.'),
                 readOnly = false,
             )
             resetResponse()

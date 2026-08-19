@@ -136,16 +136,27 @@ object LocalFolderListing {
         val children = listChildrenRemote(dir, preferMediaStore)
             .filterNot { isProtectedSystemName(it.name) }
         val plan = planRemoteDirectorySlimRefresh(cached, children)
-        if (plan.isUnchanged) return SlimRefresh(cached, emptySet())
-        // Slim only peeks new folders — also re-classify when the parent file set changed
-        // (added/removed non-dir children). Network slim keeps cached files; for local we
-        // still merge folder rows the same way, then replace direct files from live list.
-        val addedEntries = if (plan.addedDirectories.isEmpty()) {
+        val deepHidden = if (Settings.browseShowHiddenFiles.value) {
+            hiddenDirectoriesNeedingDeepScan(cached, children)
+        } else {
+            emptyList()
+        }
+        val deepNames = deepHidden.mapTo(HashSet()) { it.name }
+        val toClassify = (plan.addedDirectories + deepHidden).distinctBy { it.name }
+        if (plan.isUnchanged && deepHidden.isEmpty()) {
+            return SlimRefresh(cached, emptySet())
+        }
+        // Drop shallow hidden shells (via removedDirectoryNames) then re-add full classify.
+        val effectivePlan = RemoteDirectorySlimPlan(
+            addedDirectories = toClassify,
+            removedDirectoryNames = plan.removedDirectoryNames + deepNames,
+        )
+        val addedEntries = if (toClassify.isEmpty()) {
             emptyList()
         } else {
-            classifyDirectoryChildren(dir, preferMediaStore, plan.addedDirectories)
+            classifyDirectoryChildren(dir, preferMediaStore, toClassify)
         }
-        var merged = mergeRemoteDirectorySlimRefresh(cached, plan, addedEntries)
+        var merged = mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries)
         merged = replaceDirectFilesFromLive(merged, children, dir.name)
         return SlimRefresh(
             entries = merged,
@@ -200,7 +211,13 @@ object LocalFolderListing {
         preferMediaStore: Boolean,
         children: List<RemoteChild>,
     ): List<BrowseEntryRemote> {
-        val dirsToPeek = children.filter { it.isDirectory && !it.name.startsWith('.') }
+        val deepScanHidden = Settings.browseShowHiddenFiles.value
+        // Skip deep peek into hidden (dot / .nomedia) dirs unless Hidden files is on.
+        val dirsToPeek = children.filter { c ->
+            c.isDirectory &&
+                !isProtectedSystemName(c.name) &&
+                (deepScanHidden || !c.hidden)
+        }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
         if (dirsToPeek.isNotEmpty()) {
             runParallel(dirsToPeek) { c ->
@@ -228,7 +245,9 @@ object LocalFolderListing {
         }
 
         val dirName = humanizePathName(dir.name).ifEmpty { "Gallery" }
-        return classifyRemoteListingWithPeeks(dirName, children, peeks, grandPeeks)
+        // Re-tag with peek-based .nomedia detection after child peeks exist.
+        val tagged = children.withHiddenFlags(peeks)
+        return classifyRemoteListingWithPeeks(dirName, tagged, peeks, grandPeeks)
     }
 
     private fun <T> runParallel(items: List<T>, block: (T) -> Unit) {
@@ -245,9 +264,9 @@ object LocalFolderListing {
 
     private fun listChildrenRemote(dir: Path, preferMediaStore: Boolean): List<RemoteChild> {
         val path = resolveBrowsePath(dir, preferMediaStore = preferMediaStore)
-        val out = ArrayList<RemoteChild>()
-        path.forEachBrowseChild { child ->
-            out += RemoteChild(
+        // listBrowseChildren applies .nomedia directory tagging.
+        return path.listBrowseChildren().map { child ->
+            RemoteChild(
                 name = child.name,
                 isDirectory = child.isDirectory,
                 path = child.name,
@@ -256,9 +275,7 @@ object LocalFolderListing {
                 hidden = child.hidden,
                 readOnly = child.readOnly,
             )
-            true
         }
-        return out
     }
 
     private fun rootConfigKey(rootPath: Path, preferMediaStore: Boolean): String {
@@ -298,6 +315,7 @@ fun materializeLocalEntries(
                 hasGallery = entry.hasGallery,
                 presence = entry.presence,
                 coverPath = cover,
+                hidden = entry.hidden,
             )
         }
         is BrowseEntryRemote.FolderGallery -> {
@@ -313,6 +331,7 @@ fun materializeLocalEntries(
                 pageCount = entry.pageCount,
                 pageCountCapped = entry.pageCountCapped,
                 coverPath = cover,
+                hidden = entry.hidden,
             )
         }
         is BrowseEntryRemote.ArchiveGallery -> {
@@ -323,20 +342,22 @@ fun materializeLocalEntries(
             }
             val path = parent / entry.fileName
             if (EmptyArchiveRegistry.isMarked(path.toString())) {
-                BrowseEntry.RegularFile(name = entry.name, path = path)
+                BrowseEntry.RegularFile(name = entry.name, path = path, hidden = entry.hidden)
             } else {
-                BrowseEntry.ArchiveGallery(name = entry.name, path = path)
+                BrowseEntry.ArchiveGallery(name = entry.name, path = path, hidden = entry.hidden)
             }
         }
         is BrowseEntryRemote.VideoFile ->
             BrowseEntry.VideoFile(
                 name = entry.name,
                 path = baseDir.resolveRelative(entry.fileName),
+                hidden = entry.hidden,
             )
         is BrowseEntryRemote.RegularFile ->
             BrowseEntry.RegularFile(
                 name = entry.name,
                 path = baseDir.resolveRelative(entry.fileName),
+                hidden = entry.hidden,
             )
     }
 }

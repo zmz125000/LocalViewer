@@ -250,12 +250,16 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val focusManager = LocalFocusManager.current
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
     val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
+    val showHiddenFiles by Settings.browseShowHiddenFiles.collectAsState()
+    val showVirtualGalleries by Settings.browseShowVirtualGalleries.collectAsState()
     val filteredEntries = remember(
         displayEntries,
         search.keyword,
         contentMode,
         showSmallGalleries,
         smallGalleryMinPages,
+        showHiddenFiles,
+        showVirtualGalleries,
         virtual,
     ) {
         val base = when (virtual) {
@@ -266,7 +270,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     .sortedWith { a, b -> naturalCompare(a.name, b.name) }
             else ->
                 displayEntries
-                    .filterRemoteByContentMode(contentMode)
+                    .filterRemoteByContentMode(contentMode, showHiddenFiles, showVirtualGalleries)
                     .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
         }
         base.filterByBrowseSearch(search.keyword) { it.name }

@@ -158,6 +158,24 @@ object Settings : DataStorePreferences(null) {
     val browseShowSmallGalleries = boolPref("browse_show_small_galleries", false)
 
     /**
+     * Folder top-bar: show rows tagged [BrowseEntry.hidden] (dot names / `.nomedia` dirs).
+     * Default off — UI hides them; lazy scan still tags and skips deep-scan when off.
+     */
+    val browseShowHiddenFiles = boolPref("browse_show_hidden_files", false)
+
+    /**
+     * Folder top-bar: show lazy-scan promoted `@…` galleries/videos/dirs.
+     * Default on. When off, hide promotions and show [DirPresence.PromotedShell] real dirs.
+     */
+    val browseShowVirtualGalleries = boolPref("browse_show_virtual_galleries", true)
+
+    /**
+     * Privacy: include hidden (dot / `.nomedia`) trees in the **library** SAF/FS scanner.
+     * Default off. Toggling triggers a library rescan.
+     */
+    val scanHiddenFiles = boolPref("scan_hidden_files", false)
+
+    /**
      * When true (default), favourited directories are listed first in the Directories section
      * of folder browsers (order within each group is unchanged). Top-bar view menu toggle.
      */

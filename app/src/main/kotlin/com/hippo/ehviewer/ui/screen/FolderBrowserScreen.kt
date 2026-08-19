@@ -159,6 +159,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val contentMode = rememberEffectiveBrowseContentMode(folderId)
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
     val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
+    val showHiddenFiles by Settings.browseShowHiddenFiles.collectAsState()
+    val showVirtualGalleries by Settings.browseShowVirtualGalleries.collectAsState()
     // Same virtual-layer rules as SMB RPC root / photo grid (not regular folder-view mode).
     val virtual = if (stack.lastOrNull()?.photoGrid == true) {
         BrowseVirtualKind.PhotoGrid
@@ -173,6 +175,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         contentMode,
         showSmallGalleries,
         smallGalleryMinPages,
+        showHiddenFiles,
+        showVirtualGalleries,
         virtual,
     ) {
         val base = when (virtual) {
@@ -183,7 +187,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     .sortedWith { a, b -> naturalCompare(a.name, b.name) }
             else ->
                 displayEntries
-                    .filterByContentMode(contentMode)
+                    .filterByContentMode(contentMode, showHiddenFiles, showVirtualGalleries)
                     .filterSmallGalleries(showSmallGalleries, smallGalleryMinPages)
         }
         base.filterByBrowseSearch(search.keyword) { it.name }
@@ -309,6 +313,23 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     LaunchedEffect(stack) { reload(force = false) }
+
+    // Turning Hidden files on: mark listing non-current so slim quick-scan deep-scans
+    // shallow-tagged `.nomedia` / dot directories.
+    var prevShowHidden by remember { mutableStateOf(showHiddenFiles) }
+    LaunchedEffect(showHiddenFiles, stack) {
+        if (showHiddenFiles && !prevShowHidden) {
+            val frame = stack.lastOrNull()
+            if (frame != null) {
+                val key = BrowseSession.pathKey(frame.path.toPath())
+                BrowseSession.getLocalCachedListing(key)?.let { cached ->
+                    BrowseSession.putLocalListing(key, cached.entries, sessionCurrent = false)
+                }
+                reload(force = false)
+            }
+        }
+        prevShowHidden = showHiddenFiles
+    }
 
     fun enterRoot(root: LibraryRootEntity) {
         val path = LocalLibrary.rootPath(root) ?: return
