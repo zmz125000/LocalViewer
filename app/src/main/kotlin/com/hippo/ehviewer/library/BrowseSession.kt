@@ -2,11 +2,12 @@ package com.hippo.ehviewer.library
 
 import java.util.concurrent.ConcurrentHashMap
 import okio.Path
+import okio.Path.Companion.toPath
 
 /**
- * Cap for SAF browse-time image counting / leaf peek (reader still loads all pages).
- * Aligned with [PEEK_MAX_ENTRIES] so we use the same cursor budget with better counts.
- * MediaStore paths are **uncapped** (index is cheap).
+ * Legacy cap constant (kept for call sites / docs). Local folder browse now uses the
+ * same full-peek [classifyRemoteListingWithPeeks] path as SMB/WebDAV (exact page counts,
+ * leaf promote) via [LocalFolderListing] — this value is no longer an early-exit budget.
  */
 const val BROWSE_IMAGE_SCAN_CAP = 128
 
@@ -107,7 +108,7 @@ object BrowseSession {
     fun isSmbPhotoGrid(sourceId: Long, relativeDir: String): Boolean = smbPhotoGridState[sourceId]?.dir == relativeDir
 
     // --- Listing cache (session) ---
-    private val localListings = ConcurrentHashMap<String, List<BrowseEntry>>()
+    private val localListings = ConcurrentHashMap<String, CachedLocalListing>()
     private val smbListings = ConcurrentHashMap<String, CachedRemoteListing>()
 
     /**
@@ -124,10 +125,32 @@ object BrowseSession {
         val sessionCurrent: Boolean,
     )
 
-    fun getLocalListing(pathKey: String): List<BrowseEntry>? = localListings[pathKey]
+    /** Same generation flag as [CachedRemoteListing], for local SAF/FS folder browse. */
+    data class CachedLocalListing(
+        val entries: List<BrowseEntryRemote>,
+        val sessionCurrent: Boolean,
+    )
 
-    fun putLocalListing(pathKey: String, entries: List<BrowseEntry>) {
-        localListings[pathKey] = entries
+    fun getLocalCachedListing(pathKey: String): CachedLocalListing? = localListings[pathKey]
+
+    fun getLocalListing(pathKey: String): List<BrowseEntry>? {
+        val cached = localListings[pathKey] ?: return null
+        return materializeLocalEntries(pathKey.toPath(), cached.entries)
+    }
+
+    fun isLocalListingSessionCurrent(pathKey: String): Boolean =
+        localListings[pathKey]?.sessionCurrent == true
+
+    /**
+     * @param sessionCurrent true after a successful full/slim list in this process for [pathKey].
+     *   Disk-hydrated listings must use false.
+     */
+    fun putLocalListing(
+        pathKey: String,
+        entries: List<BrowseEntryRemote>,
+        sessionCurrent: Boolean,
+    ) {
+        localListings[pathKey] = CachedLocalListing(entries = entries, sessionCurrent = sessionCurrent)
     }
 
     fun invalidateLocalListing(pathKey: String? = null) {
@@ -142,17 +165,31 @@ object BrowseSession {
      */
     fun demoteArchiveInListings(archiveKey: String) {
         if (archiveKey.isEmpty()) return
-        for ((k, list) in localListings) {
-            var changed = false
-            val next = list.map { e ->
-                if (e is BrowseEntry.ArchiveGallery && e.path.toString() == archiveKey) {
-                    changed = true
-                    BrowseEntry.RegularFile(name = e.name, path = e.path)
-                } else {
-                    e
+        if (!archiveKey.startsWith("smb:") && !archiveKey.startsWith("webdav:")) {
+            for ((k, cached) in localListings) {
+                val base = k.toPath()
+                var changed = false
+                val next = cached.entries.map { e ->
+                    if (e is BrowseEntryRemote.ArchiveGallery) {
+                        val parent = if (e.parentRelativeName.isEmpty()) {
+                            base
+                        } else {
+                            base.resolveRelative(e.parentRelativeName)
+                        }
+                        val path = parent / e.fileName
+                        if (path.toString() == archiveKey) {
+                            changed = true
+                            BrowseEntryRemote.RegularFile(name = e.name, fileName = e.fileName)
+                        } else {
+                            e
+                        }
+                    } else {
+                        e
+                    }
                 }
+                if (changed) localListings[k] = cached.copy(entries = next)
             }
-            if (changed) localListings[k] = next
+            return
         }
         val remoteRel = when {
             archiveKey.startsWith("smb:") ->

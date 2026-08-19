@@ -90,14 +90,15 @@ object Settings : DataStorePreferences(null) {
     val browseFolderThumbs = boolPref("browse_folder_thumbs", true)
 
     /**
-     * Persist completed SMB/WebDAV lazy-scan listings, one JSON index per network source.
+     * Persist completed SMB/WebDAV/local-folder lazy-scan listings, one JSON index per source.
      * Off keeps listings in RAM only; on also restores them from disk across app restarts.
      */
     val networkFolderIndexCache = boolPref("network_folder_index_cache", true)
 
     /**
      * On any RAM or disk listing-cache hit, run the fast current-directory scan that detects
-     * added and deleted child folders. Off returns the cached listing without network work.
+     * added and deleted child folders. Off returns the cached listing without re-list work.
+     * Applies to network and local folder browse.
      */
     val networkFolderIndexQuickScan = boolPref("network_folder_index_quick_scan", true)
 

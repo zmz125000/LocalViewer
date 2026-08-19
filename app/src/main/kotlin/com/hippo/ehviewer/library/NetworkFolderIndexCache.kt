@@ -12,15 +12,17 @@ import org.json.JSONObject
 import splitties.init.appCtx
 
 /**
- * Persistent mirror of the process-scoped SMB/WebDAV browse listings.
+ * Persistent mirror of process-scoped browse listings (SMB / WebDAV / local folder roots).
  *
- * Each configured network source owns one JSON file containing every folder that has
+ * Each configured source owns one JSON file containing every folder that has
  * completed the existing lazy scanner. A cache hit returns the scanner's final
  * [BrowseEntryRemote] values; it never runs or changes classification itself.
  *
  * Disk loads are hydrated into [BrowseSession] as **non-current** (old for this process).
  * Only a successful full/slim list for that exact directory marks the RAM entry current;
  * quick scan then skips current dirs and re-runs for every old dir (including subfolders).
+ *
+ * Local folder roots use protocol `local` with [LibraryRootEntity.id] as [sourceId].
  */
 object NetworkFolderIndexCache {
     /** Bump when on-disk entry shape changes — old JSON is ignored (no migration). */
@@ -62,6 +64,20 @@ object NetworkFolderIndexCache {
         entries: List<BrowseEntryRemote>,
         removedChildDirs: Set<String> = emptySet(),
     ) = save("webdav", sourceId, configKey, relativeDir, entries, removedChildDirs)
+
+    suspend fun loadLocal(
+        rootId: Long,
+        configKey: String,
+        relativeDir: String,
+    ): List<BrowseEntryRemote>? = load("local", rootId, configKey, relativeDir)
+
+    suspend fun saveLocal(
+        rootId: Long,
+        configKey: String,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+        removedChildDirs: Set<String> = emptySet(),
+    ) = save("local", rootId, configKey, relativeDir, entries, removedChildDirs)
 
     private suspend fun load(
         protocol: String,

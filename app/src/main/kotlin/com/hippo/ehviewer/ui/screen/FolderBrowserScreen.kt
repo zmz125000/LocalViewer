@@ -87,7 +87,7 @@ import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
-import com.hippo.ehviewer.library.listLocalDirectory
+import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.stableGalleryId
@@ -264,14 +264,32 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             entries = emptyList()
         }
         try {
-            val result = withIOContext {
-                if (force) BrowseSession.invalidateLocalListing(frame.path)
-                listLocalDirectory(
-                    frame.path.toPath(),
-                    useCache = !force,
-                    preferMediaStore = frame.preferMediaStore,
-                )
+            val rootPath = LocalLibrary.rootPath(
+                // Prefer stack root frame so relativeDir matches disk index keys.
+                LocalLibrary.loadRoot(frame.rootId) ?: return,
+            ) ?: run {
+                error = "Missing library root"
+                entries = emptyList()
+                listedPath = targetPath
+                return
             }
+            val result = LocalFolderListing.listDirectory(
+                rootId = frame.rootId,
+                rootPath = rootPath,
+                relativeDir = frame.relativePath,
+                listedPath = frame.path.toPath(),
+                preferMediaStore = frame.preferMediaStore,
+                useCache = !force,
+                onCached = { cached ->
+                    if (stack.lastOrNull()?.path == targetPath) {
+                        entries = cached
+                        listedPath = targetPath
+                        error = null
+                        loading = false
+                        refreshing = false
+                    }
+                },
+            )
             if (stack.lastOrNull()?.path != targetPath) return
             entries = result
             listedPath = targetPath
