@@ -125,7 +125,6 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
             val scanHiddenFiles = Settings.scanHiddenFiles.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_scan_hidden_files),
-                summary = stringResource(id = R.string.settings_privacy_scan_hidden_files_summary),
                 state = scanHiddenFiles,
             )
             // Rescan library roots when the hidden-files gate changes.
