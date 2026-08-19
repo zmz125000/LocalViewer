@@ -733,6 +733,10 @@
     <string name="pref_decode_size_origin">原图</string>
     <string name="pref_reader_original_size">始终加载原图像素</string>
     <string name="pref_reader_original_size_summary">按文件完整分辨率解码（更占内存）。关闭时缩放到屏幕大小。也可在页面菜单中单次“查看原图”。</string>
+    <string name="settings_privacy_scan_hidden_files">扫描隐藏文件</string>
+    <string name="settings_privacy_scan_hidden_files_summary">在本地图库扫描中包含以点开头的名称以及含 .nomedia 的文件夹。关闭时跳过这些目录。更改后会重新扫描图库根目录。</string>
+    <string name="browse_menu_hidden_files">隐藏文件</string>
+    <string name="browse_menu_virtual_galleries">虚拟图库</string>
     <string name="pref_smb_reader_safe_concurrency">限制 SMB 并发（原图更稳）</string>
     <string name="pref_smb_reader_safe_concurrency_summary">强制 3 条连接、每连接 1 个传输。降低原图/大图阅读时的 OOM 风险。</string>
     <string name="pref_reader_hardware_bitmap">硬件位图解码</string>

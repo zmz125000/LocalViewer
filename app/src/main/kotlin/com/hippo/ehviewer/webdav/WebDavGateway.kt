@@ -6,12 +6,15 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
+import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
+import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
+import com.hippo.ehviewer.library.withHiddenFlags
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -119,7 +122,7 @@ object WebDavGateway {
         relativeDir: String,
     ): List<BrowseEntryRemote> {
         val children = WebDavClient.listChildren(source, password, relativeDir)
-            .filterNot { it.name.startsWith('.') || isProtectedSystemName(it.name) }
+            .filterNot { isProtectedSystemName(it.name) }
         return classifyDirectoryChildren(source, password, relativeDir, children)
     }
 
@@ -150,16 +153,29 @@ object WebDavGateway {
         cached: List<BrowseEntryRemote>,
     ): SlimDirectoryRefresh {
         val children = WebDavClient.listChildren(source, password, relativeDir)
-            .filterNot { it.name.startsWith('.') || isProtectedSystemName(it.name) }
+            .filterNot { isProtectedSystemName(it.name) }
         val plan = planRemoteDirectorySlimRefresh(cached, children)
-        if (plan.isUnchanged) return SlimDirectoryRefresh(cached, emptySet())
-        val addedEntries = if (plan.addedDirectories.isEmpty()) {
+        val deepHidden = if (com.hippo.ehviewer.Settings.browseShowHiddenFiles.value) {
+            hiddenDirectoriesNeedingDeepScan(cached, children)
+        } else {
+            emptyList()
+        }
+        val deepNames = deepHidden.mapTo(HashSet()) { it.name }
+        val toClassify = (plan.addedDirectories + deepHidden).distinctBy { it.name }
+        if (plan.isUnchanged && deepHidden.isEmpty()) {
+            return SlimDirectoryRefresh(cached, emptySet())
+        }
+        val effectivePlan = RemoteDirectorySlimPlan(
+            addedDirectories = toClassify,
+            removedDirectoryNames = plan.removedDirectoryNames + deepNames,
+        )
+        val addedEntries = if (toClassify.isEmpty()) {
             emptyList()
         } else {
-            classifyDirectoryChildren(source, password, relativeDir, plan.addedDirectories)
+            classifyDirectoryChildren(source, password, relativeDir, toClassify)
         }
         return SlimDirectoryRefresh(
-            entries = mergeRemoteDirectorySlimRefresh(cached, plan, addedEntries),
+            entries = mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
             removedDirectoryNames = plan.removedDirectoryNames,
         )
     }
@@ -170,7 +186,12 @@ object WebDavGateway {
         relativeDir: String,
         children: List<RemoteChild>,
     ): List<BrowseEntryRemote> {
-        val dirsToPeek = children.filter { it.isDirectory }
+        val deepScanHidden = com.hippo.ehviewer.Settings.browseShowHiddenFiles.value
+        val dirsToPeek = children.filter { c ->
+            c.isDirectory &&
+                !isProtectedSystemName(c.name) &&
+                (deepScanHidden || !c.hidden)
+        }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
         if (dirsToPeek.isNotEmpty()) {
             coroutineScope {
@@ -219,7 +240,8 @@ object WebDavGateway {
         }
 
         val dirName = relativeDir.substringAfterLast('/').ifEmpty { source.displayName }
-        return classifyRemoteListingWithPeeks(dirName, children, peeks, grandPeeks)
+        val tagged = children.withHiddenFlags(peeks)
+        return classifyRemoteListingWithPeeks(dirName, tagged, peeks, grandPeeks)
     }
 
     suspend fun listImageFileNames(

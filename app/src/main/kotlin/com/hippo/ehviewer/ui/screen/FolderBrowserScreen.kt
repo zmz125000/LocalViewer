@@ -78,6 +78,7 @@ import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
+import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
@@ -87,7 +88,6 @@ import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
-import com.hippo.ehviewer.library.listLocalDirectory
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.stableGalleryId
@@ -159,6 +159,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val contentMode = rememberEffectiveBrowseContentMode(folderId)
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
     val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
+    val showHiddenFiles by Settings.browseShowHiddenFiles.collectAsState()
+    val showVirtualGalleries by Settings.browseShowVirtualGalleries.collectAsState()
     // Same virtual-layer rules as SMB RPC root / photo grid (not regular folder-view mode).
     val virtual = if (stack.lastOrNull()?.photoGrid == true) {
         BrowseVirtualKind.PhotoGrid
@@ -173,6 +175,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         contentMode,
         showSmallGalleries,
         smallGalleryMinPages,
+        showHiddenFiles,
+        showVirtualGalleries,
         virtual,
     ) {
         val base = when (virtual) {
@@ -183,7 +187,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     .sortedWith { a, b -> naturalCompare(a.name, b.name) }
             else ->
                 displayEntries
-                    .filterByContentMode(contentMode)
+                    .filterByContentMode(contentMode, showHiddenFiles, showVirtualGalleries)
                     .filterSmallGalleries(showSmallGalleries, smallGalleryMinPages)
         }
         base.filterByBrowseSearch(search.keyword) { it.name }
@@ -264,14 +268,32 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             entries = emptyList()
         }
         try {
-            val result = withIOContext {
-                if (force) BrowseSession.invalidateLocalListing(frame.path)
-                listLocalDirectory(
-                    frame.path.toPath(),
-                    useCache = !force,
-                    preferMediaStore = frame.preferMediaStore,
-                )
+            val rootPath = LocalLibrary.rootPath(
+                // Prefer stack root frame so relativeDir matches disk index keys.
+                LocalLibrary.loadRoot(frame.rootId) ?: return,
+            ) ?: run {
+                error = "Missing library root"
+                entries = emptyList()
+                listedPath = targetPath
+                return
             }
+            val result = LocalFolderListing.listDirectory(
+                rootId = frame.rootId,
+                rootPath = rootPath,
+                relativeDir = frame.relativePath,
+                listedPath = frame.path.toPath(),
+                preferMediaStore = frame.preferMediaStore,
+                useCache = !force,
+                onCached = { cached ->
+                    if (stack.lastOrNull()?.path == targetPath) {
+                        entries = cached
+                        listedPath = targetPath
+                        error = null
+                        loading = false
+                        refreshing = false
+                    }
+                },
+            )
             if (stack.lastOrNull()?.path != targetPath) return
             entries = result
             listedPath = targetPath
@@ -291,6 +313,23 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     LaunchedEffect(stack) { reload(force = false) }
+
+    // Turning Hidden files on: mark listing non-current so slim quick-scan deep-scans
+    // shallow-tagged `.nomedia` / dot directories.
+    var prevShowHidden by remember { mutableStateOf(showHiddenFiles) }
+    LaunchedEffect(showHiddenFiles, stack) {
+        if (showHiddenFiles && !prevShowHidden) {
+            val frame = stack.lastOrNull()
+            if (frame != null) {
+                val key = BrowseSession.pathKey(frame.path.toPath())
+                BrowseSession.getLocalCachedListing(key)?.let { cached ->
+                    BrowseSession.putLocalListing(key, cached.entries, sessionCurrent = false)
+                }
+                reload(force = false)
+            }
+        }
+        prevShowHidden = showHiddenFiles
+    }
 
     fun enterRoot(root: LibraryRootEntity) {
         val path = LocalLibrary.rootPath(root) ?: return

@@ -12,18 +12,21 @@ import org.json.JSONObject
 import splitties.init.appCtx
 
 /**
- * Persistent mirror of the process-scoped SMB/WebDAV browse listings.
+ * Persistent mirror of process-scoped browse listings (SMB / WebDAV / local folder roots).
  *
- * Each configured network source owns one JSON file containing every folder that has
+ * Each configured source owns one JSON file containing every folder that has
  * completed the existing lazy scanner. A cache hit returns the scanner's final
  * [BrowseEntryRemote] values; it never runs or changes classification itself.
  *
  * Disk loads are hydrated into [BrowseSession] as **non-current** (old for this process).
  * Only a successful full/slim list for that exact directory marks the RAM entry current;
  * quick scan then skips current dirs and re-runs for every old dir (including subfolders).
+ *
+ * Local folder roots use protocol `local` with [LibraryRootEntity.id] as [sourceId].
  */
 object NetworkFolderIndexCache {
-    private const val VERSION = 1
+    /** Bump when on-disk entry shape changes — old JSON is ignored (no migration). */
+    private const val VERSION = 3
     private const val KIND_DIRECTORY = "directory"
     private const val KIND_FOLDER_GALLERY = "folder_gallery"
     private const val KIND_ARCHIVE = "archive"
@@ -61,6 +64,20 @@ object NetworkFolderIndexCache {
         entries: List<BrowseEntryRemote>,
         removedChildDirs: Set<String> = emptySet(),
     ) = save("webdav", sourceId, configKey, relativeDir, entries, removedChildDirs)
+
+    suspend fun loadLocal(
+        rootId: Long,
+        configKey: String,
+        relativeDir: String,
+    ): List<BrowseEntryRemote>? = load("local", rootId, configKey, relativeDir)
+
+    suspend fun saveLocal(
+        rootId: Long,
+        configKey: String,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+        removedChildDirs: Set<String> = emptySet(),
+    ) = save("local", rootId, configKey, relativeDir, entries, removedChildDirs)
 
     private suspend fun load(
         protocol: String,
@@ -154,6 +171,7 @@ object NetworkFolderIndexCache {
             put(
                 JSONObject().apply {
                     put("name", entry.name)
+                    put("hidden", entry.hidden)
                     when (entry) {
                         is BrowseEntryRemote.Directory -> {
                             put("kind", KIND_DIRECTORY)
@@ -194,6 +212,7 @@ object NetworkFolderIndexCache {
         for (i in 0 until array.length()) {
             val item = array.getJSONObject(i)
             val name = item.getString("name")
+            val hidden = item.optBoolean("hidden")
             add(
                 when (item.getString("kind")) {
                     KIND_DIRECTORY -> BrowseEntryRemote.Directory(
@@ -203,6 +222,7 @@ object NetworkFolderIndexCache {
                         hasGallery = item.optBoolean("hasGallery"),
                         presence = DirPresence.valueOf(item.getString("presence")),
                         coverFileName = item.optNullableString("coverFileName"),
+                        hidden = hidden,
                     )
                     KIND_FOLDER_GALLERY -> BrowseEntryRemote.FolderGallery(
                         name = name,
@@ -211,19 +231,23 @@ object NetworkFolderIndexCache {
                         pageCountCapped = item.optBoolean("pageCountCapped"),
                         coverFileName = item.optNullableString("coverFileName"),
                         imageFileNames = item.optJSONArray("imageFileNames").toStringList(),
+                        hidden = hidden,
                     )
                     KIND_ARCHIVE -> BrowseEntryRemote.ArchiveGallery(
                         name = name,
                         fileName = item.getString("fileName"),
                         parentRelativeName = item.optString("parentRelativeName"),
+                        hidden = hidden,
                     )
                     KIND_VIDEO -> BrowseEntryRemote.VideoFile(
                         name = name,
                         fileName = item.optString("fileName", name),
+                        hidden = hidden,
                     )
                     KIND_FILE -> BrowseEntryRemote.RegularFile(
                         name = name,
                         fileName = item.optString("fileName", name),
+                        hidden = hidden,
                     )
                     else -> error("Unknown network folder index entry")
                 },

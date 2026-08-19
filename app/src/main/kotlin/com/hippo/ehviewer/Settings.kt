@@ -90,14 +90,15 @@ object Settings : DataStorePreferences(null) {
     val browseFolderThumbs = boolPref("browse_folder_thumbs", true)
 
     /**
-     * Persist completed SMB/WebDAV lazy-scan listings, one JSON index per network source.
+     * Persist completed SMB/WebDAV/local-folder lazy-scan listings, one JSON index per source.
      * Off keeps listings in RAM only; on also restores them from disk across app restarts.
      */
     val networkFolderIndexCache = boolPref("network_folder_index_cache", true)
 
     /**
      * On any RAM or disk listing-cache hit, run the fast current-directory scan that detects
-     * added and deleted child folders. Off returns the cached listing without network work.
+     * added and deleted child folders. Off returns the cached listing without re-list work.
+     * Applies to network and local folder browse.
      */
     val networkFolderIndexQuickScan = boolPref("network_folder_index_quick_scan", true)
 
@@ -155,6 +156,24 @@ object Settings : DataStorePreferences(null) {
      * Default false: UI hides those rows (scanner listing is unchanged).
      */
     val browseShowSmallGalleries = boolPref("browse_show_small_galleries", false)
+
+    /**
+     * Folder top-bar: show rows tagged [BrowseEntry.hidden] (dot names / `.nomedia` dirs).
+     * Default off — UI hides them; lazy scan still tags and skips deep-scan when off.
+     */
+    val browseShowHiddenFiles = boolPref("browse_show_hidden_files", false)
+
+    /**
+     * Folder top-bar: show lazy-scan promoted `@…` galleries/videos/dirs.
+     * Default on. When off, hide promotions and show [DirPresence.PromotedShell] real dirs.
+     */
+    val browseShowVirtualGalleries = boolPref("browse_show_virtual_galleries", true)
+
+    /**
+     * Privacy: include hidden (dot / `.nomedia`) trees in the **library** SAF/FS scanner.
+     * Default off. Toggling triggers a library rescan.
+     */
+    val scanHiddenFiles = boolPref("scan_hidden_files", false)
 
     /**
      * When true (default), favourited directories are listed first in the Directories section

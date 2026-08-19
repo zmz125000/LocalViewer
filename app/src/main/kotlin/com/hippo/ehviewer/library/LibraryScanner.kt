@@ -5,6 +5,7 @@ import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_FOLDER
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.Settings
 import okio.Path
 
 object LibraryScanner {
@@ -37,11 +38,19 @@ object LibraryScanner {
             logcat(it)
             return
         }
+        val scanHidden = Settings.scanHiddenFiles.value
+        // Privacy off: skip dot / `.nomedia` children (same tags as folder browse).
+        val visible = if (scanHidden) children else children.filterNot { it.hidden }
+        // Classic media-scanner rule: if this dir itself has `.nomedia` and scan-hidden is
+        // off, do not index it (caller may still have entered via a non-hidden path).
+        if (!scanHidden && visible.any { !it.isDirectory && it.name == NOMEDIA_NAME }) {
+            return
+        }
         val images = ArrayList<Path>()
         val subdirs = ArrayList<BrowseChild>()
         val archives = ArrayList<BrowseChild>()
 
-        for (child in children) {
+        for (child in visible) {
             when {
                 child.isDirectory -> subdirs += child
                 isImageFileName(child.name) -> images += child.path
