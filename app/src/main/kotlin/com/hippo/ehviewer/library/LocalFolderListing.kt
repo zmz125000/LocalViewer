@@ -228,6 +228,9 @@ object LocalFolderListing {
         val grandPeeks = ConcurrentHashMap<String, List<RemoteChild>>()
         val leavesToPeek = ArrayList<Pair<String, String>>()
         for ((subName, peek) in peeks) {
+            // First peek already ran (needed for `.nomedia` detection). Skip grandchild
+            // scans into hidden dirs when Hidden files is off.
+            if (!deepScanHidden && peekIndicatesHiddenDir(subName, peek)) continue
             val leaves = peek.filter { it.isDirectory && isPromotableLeafDirName(it.name) }
             if (leaves.size in 1..SMB_PROMOTE_MAX_LEAVES) {
                 for (leaf in leaves) {
@@ -316,6 +319,7 @@ fun materializeLocalEntries(
                 presence = entry.presence,
                 coverPath = cover,
                 hidden = entry.hidden,
+                virtual = entry.virtual,
             )
         }
         is BrowseEntryRemote.FolderGallery -> {
@@ -332,6 +336,7 @@ fun materializeLocalEntries(
                 pageCountCapped = entry.pageCountCapped,
                 coverPath = cover,
                 hidden = entry.hidden,
+                virtual = entry.virtual,
             )
         }
         is BrowseEntryRemote.ArchiveGallery -> {
@@ -342,9 +347,19 @@ fun materializeLocalEntries(
             }
             val path = parent / entry.fileName
             if (EmptyArchiveRegistry.isMarked(path.toString())) {
-                BrowseEntry.RegularFile(name = entry.name, path = path, hidden = entry.hidden)
+                BrowseEntry.RegularFile(
+                    name = entry.name,
+                    path = path,
+                    hidden = entry.hidden,
+                    virtual = entry.virtual,
+                )
             } else {
-                BrowseEntry.ArchiveGallery(name = entry.name, path = path, hidden = entry.hidden)
+                BrowseEntry.ArchiveGallery(
+                    name = entry.name,
+                    path = path,
+                    hidden = entry.hidden,
+                    virtual = entry.virtual,
+                )
             }
         }
         is BrowseEntryRemote.VideoFile ->
@@ -352,12 +367,14 @@ fun materializeLocalEntries(
                 name = entry.name,
                 path = baseDir.resolveRelative(entry.fileName),
                 hidden = entry.hidden,
+                virtual = entry.virtual,
             )
         is BrowseEntryRemote.RegularFile ->
             BrowseEntry.RegularFile(
                 name = entry.name,
                 path = baseDir.resolveRelative(entry.fileName),
                 hidden = entry.hidden,
+                virtual = entry.virtual,
             )
     }
 }

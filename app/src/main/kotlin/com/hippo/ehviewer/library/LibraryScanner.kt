@@ -39,13 +39,14 @@ object LibraryScanner {
             return
         }
         val scanHidden = Settings.scanHiddenFiles.value
-        // Privacy off: skip dot / `.nomedia` children (same tags as folder browse).
-        val visible = if (scanHidden) children else children.filterNot { it.hidden }
         // Classic media-scanner rule: if this dir itself has `.nomedia` and scan-hidden is
-        // off, do not index it (caller may still have entered via a non-hidden path).
-        if (!scanHidden && visible.any { !it.isDirectory && it.name == NOMEDIA_NAME }) {
+        // off, do not index it. Check unfiltered children — `.nomedia` is itself hidden
+        // (dot name), so filtering first would make this condition unreachable.
+        if (!scanHidden && children.any { !it.isDirectory && it.name == NOMEDIA_NAME }) {
             return
         }
+        // Privacy off: skip dot / `.nomedia`-marked children (same tags as folder browse).
+        val visible = if (scanHidden) children else children.filterNot { it.hidden }
         val images = ArrayList<Path>()
         val subdirs = ArrayList<BrowseChild>()
         val archives = ArrayList<BrowseChild>()

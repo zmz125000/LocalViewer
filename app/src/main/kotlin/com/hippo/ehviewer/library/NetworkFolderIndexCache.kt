@@ -26,7 +26,7 @@ import splitties.init.appCtx
  */
 object NetworkFolderIndexCache {
     /** Bump when on-disk entry shape changes — old JSON is ignored (no migration). */
-    private const val VERSION = 3
+    private const val VERSION = 4
     private const val KIND_DIRECTORY = "directory"
     private const val KIND_FOLDER_GALLERY = "folder_gallery"
     private const val KIND_ARCHIVE = "archive"
@@ -172,6 +172,7 @@ object NetworkFolderIndexCache {
                 JSONObject().apply {
                     put("name", entry.name)
                     put("hidden", entry.hidden)
+                    put("virtual", entry.virtual)
                     when (entry) {
                         is BrowseEntryRemote.Directory -> {
                             put("kind", KIND_DIRECTORY)
@@ -213,6 +214,7 @@ object NetworkFolderIndexCache {
             val item = array.getJSONObject(i)
             val name = item.getString("name")
             val hidden = item.optBoolean("hidden")
+            val virtual = item.optBoolean("virtual")
             add(
                 when (item.getString("kind")) {
                     KIND_DIRECTORY -> BrowseEntryRemote.Directory(
@@ -223,6 +225,7 @@ object NetworkFolderIndexCache {
                         presence = DirPresence.valueOf(item.getString("presence")),
                         coverFileName = item.optNullableString("coverFileName"),
                         hidden = hidden,
+                        virtual = virtual,
                     )
                     KIND_FOLDER_GALLERY -> BrowseEntryRemote.FolderGallery(
                         name = name,
@@ -232,22 +235,26 @@ object NetworkFolderIndexCache {
                         coverFileName = item.optNullableString("coverFileName"),
                         imageFileNames = item.optJSONArray("imageFileNames").toStringList(),
                         hidden = hidden,
+                        virtual = virtual,
                     )
                     KIND_ARCHIVE -> BrowseEntryRemote.ArchiveGallery(
                         name = name,
                         fileName = item.getString("fileName"),
                         parentRelativeName = item.optString("parentRelativeName"),
                         hidden = hidden,
+                        virtual = virtual,
                     )
                     KIND_VIDEO -> BrowseEntryRemote.VideoFile(
                         name = name,
                         fileName = item.optString("fileName", name),
                         hidden = hidden,
+                        virtual = virtual,
                     )
                     KIND_FILE -> BrowseEntryRemote.RegularFile(
                         name = name,
                         fileName = item.optString("fileName", name),
                         hidden = hidden,
+                        virtual = virtual,
                     )
                     else -> error("Unknown network folder index entry")
                 },

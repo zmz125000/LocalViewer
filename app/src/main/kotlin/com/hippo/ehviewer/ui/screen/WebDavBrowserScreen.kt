@@ -332,6 +332,24 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         refreshToken++
     }
 
+    // Turning Hidden files on: mark listing non-current so slim quick-scan deep-scans
+    // shallow-tagged `.nomedia` / dot directories (parity with FolderBrowserScreen).
+    var prevShowHidden by remember { mutableStateOf(showHiddenFiles) }
+    LaunchedEffect(showHiddenFiles, sourceId, relativeDir) {
+        if (showHiddenFiles && !prevShowHidden) {
+            BrowseSession.getWebDavCachedListing(sourceId, relativeDir)?.let { cached ->
+                BrowseSession.putWebDavListing(
+                    sourceId,
+                    relativeDir,
+                    cached.entries,
+                    sessionCurrent = false,
+                )
+            }
+            refreshToken++
+        }
+        prevShowHidden = showHiddenFiles
+    }
+
     // Single loader for the current path. When [relativeDir] changes, Compose cancels this
     // effect and starts a new one — that is the only concurrency control we need.
     // Previous epoch/ON_RESUME races could ++epoch, early-return without clearing loading,

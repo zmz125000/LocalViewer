@@ -59,13 +59,13 @@ fun DirPresence.visibleIn(
  * Single-video leaf promote uses a virtual display name (`@S` / `@S-leaf`) while
  * [BrowseEntry.VideoFile.path] points at the real file. Folder mode hides these.
  */
-fun BrowseEntry.VideoFile.isPromotedVirtual(): Boolean = name != path.name
+fun BrowseEntry.VideoFile.isPromotedVirtual(): Boolean = virtual || name != path.name
 
 /**
  * Same promote as local: [BrowseEntryRemote.VideoFile.name] is the `@…` label;
  * [BrowseEntryRemote.VideoFile.fileName] is the real relative path (often multi-segment).
  */
-fun BrowseEntryRemote.VideoFile.isPromotedVirtual(): Boolean = name != fileName
+fun BrowseEntryRemote.VideoFile.isPromotedVirtual(): Boolean = virtual || name != fileName
 
 fun List<BrowseEntry>.filterByContentMode(
     mode: BrowseContentMode,
@@ -73,51 +73,39 @@ fun List<BrowseEntry>.filterByContentMode(
     showVirtualGalleries: Boolean = true,
 ): List<BrowseEntry> = filter { e ->
     if (!showHiddenFiles && e.hidden) return@filter false
+    if (!showVirtualGalleries && e.virtual) return@filter false
     when (mode) {
         BrowseContentMode.Galleries -> when (e) {
             is BrowseEntry.Directory -> {
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedVideoLeaf) return@filter false
-                if (!showVirtualGalleries && e.name.startsWith('@')) return@filter false
                 // When virtuals off, PromotedShell is the enterable real folder.
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             }
-            is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery ->
-                showVirtualGalleries || !e.name.startsWith('@')
+            is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery -> true
             is BrowseEntry.VideoFile, is BrowseEntry.RegularFile -> false
         }
         BrowseContentMode.Media -> when (e) {
             is BrowseEntry.Directory -> {
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedVideoLeaf) return@filter false
-                if (!showVirtualGalleries && e.name.startsWith('@')) return@filter false
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             }
-            is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery ->
-                showVirtualGalleries || !e.name.startsWith('@')
-            is BrowseEntry.VideoFile -> showVirtualGalleries || !e.isPromotedVirtual()
+            is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery -> true
+            is BrowseEntry.VideoFile -> true
             is BrowseEntry.RegularFile -> false
         }
         BrowseContentMode.Video -> when (e) {
             is BrowseEntry.Directory -> {
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedVideoLeaf) return@filter false
-                if (!showVirtualGalleries && e.name.startsWith('@')) return@filter false
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             }
-            is BrowseEntry.VideoFile -> showVirtualGalleries || !e.isPromotedVirtual()
+            is BrowseEntry.VideoFile -> true
             is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> false
         }
         BrowseContentMode.Folder -> when (e) {
-            is BrowseEntry.Directory -> {
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedVideoLeaf) return@filter false
-                if (!showVirtualGalleries && e.name.startsWith('@')) return@filter false
-                // Folder mode already keeps PromotedShell; virtual off still shows it.
-                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
-            }
+            is BrowseEntry.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             is BrowseEntry.ArchiveGallery, is BrowseEntry.RegularFile -> true
-            // Real videos only — hide `@S` promoted rows (enter real dir instead).
-            is BrowseEntry.VideoFile -> !e.isPromotedVirtual()
+            // Real videos only — hide promoted rows (enter real dir instead).
+            is BrowseEntry.VideoFile -> !e.virtual
             is BrowseEntry.FolderGallery -> false // synthetic / dual galleries
         }
     }
@@ -167,53 +155,42 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
     showVirtualGalleries: Boolean = true,
 ): List<BrowseEntryRemote> = filter { e ->
     if (!showHiddenFiles && e.hidden) return@filter false
+    if (!showVirtualGalleries && e.virtual) return@filter false
     when (mode) {
         BrowseContentMode.Galleries -> when (e) {
             is BrowseEntryRemote.Directory -> {
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedVideoLeaf) return@filter false
-                if (!showVirtualGalleries && e.name.startsWith('@')) return@filter false
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             }
-            is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery ->
-                showVirtualGalleries || !e.name.startsWith('@')
+            is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery -> true
             is BrowseEntryRemote.VideoFile, is BrowseEntryRemote.RegularFile -> false
         }
         BrowseContentMode.Media -> when (e) {
             is BrowseEntryRemote.Directory -> {
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedVideoLeaf) return@filter false
-                if (!showVirtualGalleries && e.name.startsWith('@')) return@filter false
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             }
-            is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery ->
-                showVirtualGalleries || !e.name.startsWith('@')
-            is BrowseEntryRemote.VideoFile -> showVirtualGalleries || !e.isPromotedVirtual()
+            is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery -> true
+            is BrowseEntryRemote.VideoFile -> true
             is BrowseEntryRemote.RegularFile -> false
         }
         BrowseContentMode.Video -> when (e) {
             is BrowseEntryRemote.Directory -> {
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedVideoLeaf) return@filter false
-                if (!showVirtualGalleries && e.name.startsWith('@')) return@filter false
                 if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
                 e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             }
-            is BrowseEntryRemote.VideoFile -> showVirtualGalleries || !e.isPromotedVirtual()
+            is BrowseEntryRemote.VideoFile -> true
             is BrowseEntryRemote.FolderGallery,
             is BrowseEntryRemote.ArchiveGallery,
             is BrowseEntryRemote.RegularFile,
             -> false
         }
         BrowseContentMode.Folder -> when (e) {
-            is BrowseEntryRemote.Directory -> {
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedVideoLeaf) return@filter false
-                if (!showVirtualGalleries && e.name.startsWith('@')) return@filter false
-                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
-            }
+            is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
             is BrowseEntryRemote.ArchiveGallery,
             is BrowseEntryRemote.RegularFile,
             -> true
-            is BrowseEntryRemote.VideoFile -> !e.isPromotedVirtual()
+            is BrowseEntryRemote.VideoFile -> !e.virtual
             is BrowseEntryRemote.FolderGallery -> false
         }
     }

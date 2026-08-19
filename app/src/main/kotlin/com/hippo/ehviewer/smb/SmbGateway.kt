@@ -33,6 +33,7 @@ import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.naturalCompare
+import com.hippo.ehviewer.library.peekIndicatesHiddenDir
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.withHiddenFlags
 import java.io.IOException
@@ -1719,6 +1720,9 @@ object SmbGateway {
         val grandPeeks = ConcurrentHashMap<String, List<RemoteChild>>()
         val leavesToPeek = ArrayList<Pair<String, String>>() // (subName, leafName)
         for ((subName, peek) in peeks) {
+            // First peek already ran (needed for `.nomedia` detection). Skip grandchild
+            // scans into hidden dirs when Hidden files is off.
+            if (!deepScanHidden && peekIndicatesHiddenDir(subName, peek)) continue
             // sample/ does not count toward the 1..3 leaf budget or grand-peek work.
             val leaves = peek.filter { it.isDirectory && isPromotableLeafDirName(it.name) }
             if (leaves.size in 1..SMB_PROMOTE_MAX_LEAVES) {
