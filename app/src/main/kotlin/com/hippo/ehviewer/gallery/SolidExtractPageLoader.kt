@@ -208,10 +208,14 @@ suspend inline fun <T> useSolidExtractPageLoader(
 
                     override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
                         pages.forEach { ensureExtract(it, interactive = false) }
-                        pages.maxOrNull()?.let { bumpTarget(it) }
+                        pages.maxOrNull()?.let { bumpTarget(it + prefetchN) }
                     }
 
                     override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
+                        // Same high-water as pre-rewrite: each demanded page advances sequential
+                        // extract/listing by preload. [onNavigation] alone stops at the published
+                        // lookahead and never snowballs as [growTo] reveals more members.
+                        bumpTarget(index + prefetchN)
                         ensureExtract(index, interactive = true) {
                             notifySourceReady(index, orgImg)
                         }
