@@ -123,8 +123,7 @@ object WebDavGateway {
         password: String,
         relativeDir: String,
     ): List<BrowseEntryRemote> {
-        val children = WebDavClient.listChildren(source, password, relativeDir)
-            .filterNot { isProtectedSystemName(it.name) }
+        val children = listChildrenForRelativeDir(source, password, relativeDir)
         return classifyDirectoryChildren(source, password, relativeDir, children)
     }
 
@@ -154,8 +153,7 @@ object WebDavGateway {
         relativeDir: String,
         cached: List<BrowseEntryRemote>,
     ): SlimDirectoryRefresh {
-        val children = WebDavClient.listChildren(source, password, relativeDir)
-            .filterNot { isProtectedSystemName(it.name) }
+        val children = listChildrenForRelativeDir(source, password, relativeDir)
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         val deepHidden = if (com.hippo.ehviewer.Settings.browseShowHiddenFiles.value) {
             hiddenDirectoriesNeedingDeepScan(cached, children)
@@ -179,7 +177,11 @@ object WebDavGateway {
         return SlimDirectoryRefresh(
             entries = mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
             removedDirectoryNames = plan.removedDirectoryNames,
-        )
+        ).also {
+            plan.removedDirectoryNames.forEach { name ->
+                BrowseSession.invalidateWebDavRawChildren(source.id, joinRelative(relativeDir, name))
+            }
+        }
     }
 
     private suspend fun classifyDirectoryChildren(
@@ -204,8 +206,7 @@ object WebDavGateway {
                         peekSlots.withPermit {
                             val childRel = joinRelative(relativeDir, c.name)
                             peeks[c.name] = runCatching {
-                                WebDavClient.listChildren(source, password, childRel)
-                                    .filterNot { isProtectedSystemName(it.name) }
+                                listChildrenForRelativeDir(source, password, childRel)
                             }.getOrDefault(emptyList())
                         }
                     }
@@ -237,8 +238,7 @@ object WebDavGateway {
                         peekSlots.withPermit {
                             val leafRel = joinRelative(joinRelative(relativeDir, subName), leafName)
                             grandPeeks["$subName/$leafName"] = runCatching {
-                                WebDavClient.listChildren(source, password, leafRel)
-                                    .filterNot { isProtectedSystemName(it.name) }
+                                listChildrenForRelativeDir(source, password, leafRel)
                             }.getOrDefault(emptyList())
                         }
                     }
@@ -249,6 +249,15 @@ object WebDavGateway {
         val dirName = relativeDir.substringAfterLast('/').ifEmpty { source.displayName }
         val tagged = children.withHiddenFlags(peeks)
         return classifyRemoteListingWithPeeks(dirName, tagged, peeks, grandPeeks)
+    }
+
+    /** One PROPFIND, reused when a parent peek already listed this relative path. */
+    private suspend fun listChildrenForRelativeDir(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeDir: String,
+    ): List<RemoteChild> = BrowseSession.rememberWebDavRawChildren(source.id, relativeDir) {
+        WebDavClient.listChildren(source, password, relativeDir)
     }
 
     suspend fun listImageFileNames(

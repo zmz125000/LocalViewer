@@ -1622,10 +1622,7 @@ object SmbGateway {
         if (isServerRootSource(source) && relativeDir.isBlank()) {
             return listShareRootEntries(source, password)
         }
-        val loc = resolveLocation(source, relativeDir)
-        val children = withShare(source, password, ShareOp.List, loc.share) { share ->
-            listChildren(share, loc.pathInShare).filterNot { isProtectedSystemName(it.name) }
-        }
+        val children = listChildrenForRelativeDir(source, password, relativeDir)
         return classifyDirectoryChildren(source, password, relativeDir, children)
     }
 
@@ -1651,10 +1648,7 @@ object SmbGateway {
                 removedDirectoryNames = plan.removedDirectoryNames,
             )
         }
-        val loc = resolveLocation(source, relativeDir)
-        val children = withShare(source, password, ShareOp.List, loc.share) { share ->
-            listChildren(share, loc.pathInShare).filterNot { isProtectedSystemName(it.name) }
-        }
+        val children = listChildrenForRelativeDir(source, password, relativeDir)
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         val deepHidden = if (com.hippo.ehviewer.Settings.browseShowHiddenFiles.value) {
             hiddenDirectoriesNeedingDeepScan(cached, children)
@@ -1678,7 +1672,11 @@ object SmbGateway {
         return SlimDirectoryRefresh(
             entries = mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
             removedDirectoryNames = plan.removedDirectoryNames,
-        )
+        ).also {
+            plan.removedDirectoryNames.forEach { name ->
+                BrowseSession.invalidateSmbRawChildren(source.id, joinRelative(relativeDir, name))
+            }
+        }
     }
 
     private suspend fun classifyDirectoryChildren(
@@ -1687,8 +1685,6 @@ object SmbGateway {
         relativeDir: String,
         children: List<RemoteChild>,
     ): List<BrowseEntryRemote> {
-        val loc = resolveLocation(source, relativeDir)
-        val path = loc.pathInShare
         val deepScanHidden = com.hippo.ehviewer.Settings.browseShowHiddenFiles.value
         // Dot folders: always tag-only (never peek). `.nomedia` dirs peek only when Hidden on.
         val dirsToPeek = children.filter { c ->
@@ -1706,10 +1702,11 @@ object SmbGateway {
                 dirsToPeek.map { c ->
                     async {
                         gate.withPermit {
-                            val childPath = if (path.isEmpty()) c.name else "$path\\${c.name}"
-                            peeks[c.name] = withShare(source, password, ShareOp.List, loc.share) { share ->
-                                listChildrenLenient(share, childPath)
-                            }
+                            peeks[c.name] = listChildrenForRelativeDir(
+                                source,
+                                password,
+                                joinRelative(relativeDir, c.name),
+                            )
                         }
                     }
                 }.awaitAll()
@@ -1742,13 +1739,11 @@ object SmbGateway {
                     async {
                         gate.withPermit {
                             val leafRel = "$subName/$leafName"
-                            val leafPath = when {
-                                path.isEmpty() -> "$subName\\$leafName"
-                                else -> "$path\\$subName\\$leafName"
-                            }
-                            grandPeeks[leafRel] = withShare(source, password, ShareOp.List, loc.share) { share ->
-                                listChildrenLenient(share, leafPath)
-                            }
+                            grandPeeks[leafRel] = listChildrenForRelativeDir(
+                                source,
+                                password,
+                                joinRelative(joinRelative(relativeDir, subName), leafName),
+                            )
                         }
                     }
                 }.awaitAll()
@@ -1759,6 +1754,20 @@ object SmbGateway {
             .ifEmpty { source.displayName }
         val tagged = children.withHiddenFlags(peeks)
         return classifyRemoteListingWithPeeks(dirName, tagged, peeks, grandPeeks)
+    }
+
+    /**
+     * One QUERY_DIRECTORY, reused when a parent peek already listed this relative path.
+     */
+    private suspend fun listChildrenForRelativeDir(
+        source: SmbSourceEntity,
+        password: String,
+        relativeDir: String,
+    ): List<RemoteChild> = BrowseSession.rememberSmbRawChildren(source.id, relativeDir) {
+        val loc = resolveLocation(source, relativeDir)
+        withShare(source, password, ShareOp.List, loc.share) { share ->
+            listChildrenLenient(share, loc.pathInShare)
+        }
     }
 
     /**

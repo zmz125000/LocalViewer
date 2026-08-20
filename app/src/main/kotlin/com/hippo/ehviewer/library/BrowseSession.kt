@@ -110,6 +110,10 @@ object BrowseSession {
     // --- Listing cache (session) ---
     private val localListings = ConcurrentHashMap<String, CachedLocalListing>()
     private val smbListings = ConcurrentHashMap<String, CachedRemoteListing>()
+    /** Raw child rows from a list/peek of that exact directory (process lifetime). */
+    private val localRawChildren = ConcurrentHashMap<String, List<RemoteChild>>()
+    private val smbRawChildren = ConcurrentHashMap<String, List<RemoteChild>>()
+    private val webDavRawChildren = ConcurrentHashMap<String, List<RemoteChild>>()
 
     /**
      * Process-scoped remote folder listing with a generation flag.
@@ -153,7 +157,13 @@ object BrowseSession {
     }
 
     fun invalidateLocalListing(pathKey: String? = null) {
-        if (pathKey == null) localListings.clear() else localListings.remove(pathKey)
+        if (pathKey == null) {
+            localListings.clear()
+            localRawChildren.clear()
+        } else {
+            localListings.remove(pathKey)
+            invalidatePrefixed(localRawChildren, pathKey, "$pathKey/")
+        }
     }
 
     /**
@@ -245,8 +255,10 @@ object BrowseSession {
         if (relativeDir == null) {
             val prefix = "$sourceId|"
             smbListings.keys.filter { it.startsWith(prefix) }.forEach { smbListings.remove(it) }
+            smbRawChildren.keys.filter { it.startsWith(prefix) }.forEach { smbRawChildren.remove(it) }
         } else {
             smbListings.remove(smbListingKey(sourceId, relativeDir))
+            invalidateSmbRawChildren(sourceId, relativeDir)
         }
     }
 
@@ -319,17 +331,84 @@ object BrowseSession {
         if (relativeDir == null) {
             val prefix = "dav:$sourceId|"
             webDavListings.keys.filter { it.startsWith(prefix) }.forEach { webDavListings.remove(it) }
+            webDavRawChildren.keys.filter { it.startsWith(prefix) }.forEach { webDavRawChildren.remove(it) }
         } else {
             webDavListings.remove(webDavListingKey(sourceId, relativeDir))
+            invalidateWebDavRawChildren(sourceId, relativeDir)
         }
     }
 
     /** Drop all WebDAV listing cache (network path change / app background). */
     fun invalidateAllWebDavListings() {
         webDavListings.keys.filter { it.startsWith("dav:") }.forEach { webDavListings.remove(it) }
+        webDavRawChildren.keys.filter { it.startsWith("dav:") }.forEach { webDavRawChildren.remove(it) }
     }
 
     fun pathKey(path: Path): String = path.toString()
+
+    fun normalizeBrowseRelativeDir(relativeDir: String): String = relativeDir.replace('\\', '/').trim('/')
+
+    /**
+     * Reuse a parent-folder peek when entering that child. [load] runs only on miss.
+     * Protected system names are stripped so peek and enter-dir listings match.
+     */
+    fun rememberLocalRawChildren(pathKey: String, load: () -> List<RemoteChild>): List<RemoteChild> {
+        localRawChildren[pathKey]?.let { return it }
+        val children = load().withoutProtectedSystemNames()
+        return localRawChildren.putIfAbsent(pathKey, children) ?: children
+    }
+
+    suspend fun rememberSmbRawChildren(
+        sourceId: Long,
+        relativeDir: String,
+        load: suspend () -> List<RemoteChild>,
+    ): List<RemoteChild> {
+        val key = smbListingKey(sourceId, normalizeBrowseRelativeDir(relativeDir))
+        smbRawChildren[key]?.let { return it }
+        val children = load().withoutProtectedSystemNames()
+        return smbRawChildren.putIfAbsent(key, children) ?: children
+    }
+
+    suspend fun rememberWebDavRawChildren(
+        sourceId: Long,
+        relativeDir: String,
+        load: suspend () -> List<RemoteChild>,
+    ): List<RemoteChild> {
+        val key = webDavListingKey(sourceId, normalizeBrowseRelativeDir(relativeDir))
+        webDavRawChildren[key]?.let { return it }
+        val children = load().withoutProtectedSystemNames()
+        return webDavRawChildren.putIfAbsent(key, children) ?: children
+    }
+
+    fun invalidateSmbRawChildren(sourceId: Long, relativeDir: String) {
+        val dir = normalizeBrowseRelativeDir(relativeDir)
+        val exact = smbListingKey(sourceId, dir)
+        val descendantPrefix = if (dir.isEmpty()) "$sourceId|" else "$exact/"
+        invalidatePrefixed(smbRawChildren, exact, descendantPrefix)
+    }
+
+    fun invalidateWebDavRawChildren(sourceId: Long, relativeDir: String) {
+        val dir = normalizeBrowseRelativeDir(relativeDir)
+        val exact = webDavListingKey(sourceId, dir)
+        val descendantPrefix = if (dir.isEmpty()) "dav:$sourceId|" else "$exact/"
+        invalidatePrefixed(webDavRawChildren, exact, descendantPrefix)
+    }
+
+    fun invalidateLocalRawChildren(pathKey: String) {
+        invalidatePrefixed(localRawChildren, pathKey, "$pathKey/")
+    }
+
+    private fun invalidatePrefixed(
+        map: ConcurrentHashMap<String, *>,
+        exact: String,
+        descendantPrefix: String,
+    ) {
+        val stale = buildList {
+            if (map.containsKey(exact)) add(exact)
+            map.keys.forEach { key -> if (key.startsWith(descendantPrefix)) add(key) }
+        }
+        stale.forEach { map.remove(it) }
+    }
 
     // --- Folder search filter (per directory; process lifetime) ---
     // Survives reader navigation and restores when climbing back to a parent folder.

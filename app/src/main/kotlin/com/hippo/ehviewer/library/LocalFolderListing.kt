@@ -124,7 +124,6 @@ object LocalFolderListing {
         preferMediaStore: Boolean,
     ): List<BrowseEntryRemote> {
         val children = listChildrenRemote(dir, preferMediaStore)
-            .filterNot { isProtectedSystemName(it.name) }
         return classifyDirectoryChildren(dir, preferMediaStore, children)
     }
 
@@ -134,7 +133,6 @@ object LocalFolderListing {
         cached: List<BrowseEntryRemote>,
     ): SlimRefresh {
         val children = listChildrenRemote(dir, preferMediaStore)
-            .filterNot { isProtectedSystemName(it.name) }
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         val deepHidden = if (Settings.browseShowHiddenFiles.value) {
             hiddenDirectoriesNeedingDeepScan(cached, children)
@@ -158,6 +156,9 @@ object LocalFolderListing {
         }
         var merged = mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries)
         merged = replaceDirectFilesFromLive(merged, children, dir.name)
+        plan.removedDirectoryNames.forEach { name ->
+            BrowseSession.invalidateLocalRawChildren(BrowseSession.pathKey(dir / name))
+        }
         return SlimRefresh(
             entries = merged,
             removedDirectoryNames = plan.removedDirectoryNames,
@@ -268,17 +269,19 @@ object LocalFolderListing {
 
     private fun listChildrenRemote(dir: Path, preferMediaStore: Boolean): List<RemoteChild> {
         val path = resolveBrowsePath(dir, preferMediaStore = preferMediaStore)
-        // listBrowseChildren applies .nomedia directory tagging.
-        return path.listBrowseChildren().map { child ->
-            RemoteChild(
-                name = child.name,
-                isDirectory = child.isDirectory,
-                path = child.name,
-                size = child.size,
-                lastModifiedMs = child.lastModifiedMs,
-                hidden = child.hidden,
-                readOnly = child.readOnly,
-            )
+        return BrowseSession.rememberLocalRawChildren(BrowseSession.pathKey(path)) {
+            // listBrowseChildren applies .nomedia directory tagging.
+            path.listBrowseChildren().map { child ->
+                RemoteChild(
+                    name = child.name,
+                    isDirectory = child.isDirectory,
+                    path = child.name,
+                    size = child.size,
+                    lastModifiedMs = child.lastModifiedMs,
+                    hidden = child.hidden,
+                    readOnly = child.readOnly,
+                )
+            }
         }
     }
 
