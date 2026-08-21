@@ -266,13 +266,8 @@ object WebDavGateway {
         password: String,
         relativeDir: String,
     ): List<String> {
-        // Same cache-first path as SMB: complete index opens without PROPFIND.
+        // Complete index → no PROPFIND. Miss → live list like before (stateless HTTP).
         FolderGalleryIndex.loadWebDav(source.id, sourceConfigKey(source), relativeDir)?.let { return it }
-        return runCatching {
-            WebDavClient.listImageFileNames(source, password, relativeDir)
-        }.getOrElse { error ->
-            if (error is kotlinx.coroutines.CancellationException) throw error
-            emptyList()
-        }
+        return WebDavClient.listImageFileNames(source, password, relativeDir)
     }
 }
