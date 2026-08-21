@@ -1830,11 +1830,11 @@ object SmbGateway {
         password: String,
         relativeDir: String,
     ): List<String> {
-        // History opens with empty names. Prefer a complete folder index so a
-        // connect timeout cannot block the reader; uncached pages fail per-page.
+        // History / capped folder opens with empty names. Complete index → no network.
+        // Cache miss → live list like before (isSourceConnected is a pool signal, not
+        // reachability; gating on it skipped connect after restart / dropped session and
+        // surfaced "No images in SMB folder").
         FolderGalleryIndex.loadSmb(source.id, sourceConfigKey(source), relativeDir)?.let { return it }
-        // Offline: never live-list. Missing index is "no images", not a connect timeout.
-        if (!isSourceConnected(source)) return emptyList()
         return withIOContext {
             val loc = resolveLocation(source, relativeDir)
             withShare(source, password, ShareOp.List, loc.share) { share ->
