@@ -197,6 +197,8 @@ fun isProtectedSystemName(name: String): Boolean {
     }
 }
 
+fun List<RemoteChild>.withoutProtectedSystemNames(): List<RemoteChild> = filterNot { isProtectedSystemName(it.name) }
+
 sealed interface BrowseEntryRemote {
     val name: String
 
@@ -419,6 +421,8 @@ fun isPromotableLeafDirName(name: String): Boolean = !name.startsWith('.') &&
  *
  * Scan order (by design): **S is listed first** (to discover leaves), then each leaf.
  * Dual gallery for images **in S** reuses the first peek of S — no third scan of S.
+ * Peeks are stored on [BrowseSession] under the child path so entering S does not
+ * list S (or its already-peeked leaves) again.
  */
 fun classifyRemoteListingWithPeeks(
     currentDirName: String,

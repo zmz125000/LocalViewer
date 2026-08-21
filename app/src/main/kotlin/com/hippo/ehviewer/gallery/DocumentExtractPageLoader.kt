@@ -236,6 +236,10 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     ensureExtract(index, interactive = true) {
                         notifySourceReady(index, orgImg)
                     }
+                    // Interactive extract cancels [discoveryJob] so the mutex can be snatched.
+                    // Restart here: [onNavigation] used to start discovery, then [requestDecode]
+                    // cancelled it and never resumed, so the PDF page list froze at the open prefix.
+                    requestDiscoveryThrough(index + prefetchN)
                 }
 
                 override fun onNavigation(demand: ReaderDemand) {
@@ -308,21 +312,21 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     onReady: (() -> Unit)? = null,
                 ) {
                     if (index !in 0 until engine.pageCount) return
-                    if (interactive) {
-                        interactivePending.add(index)
-                        // Stop index walk between pages so the mutex frees for this extract.
-                        discoveryJob.get()?.cancel()
-                    }
                     if (onReady != null) {
                         readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
                         if (isPageMapped(index)) {
-                            interactivePending.remove(index)
                             markReady(index)
                             return
                         }
                     } else if (isPageMapped(index)) {
-                        if (interactive) interactivePending.remove(index)
                         return
+                    }
+                    if (interactive) {
+                        interactivePending.add(index)
+                        // Stop index walk so the mutex frees for this extract. Mapped pages
+                        // return above and must not cancel: growTo → replan re-requests the
+                        // current page and used to kill a live page-tree walk.
+                        discoveryJob.get()?.cancel()
                     }
                     val existing = extractJobs[index]
                     if (existing != null && existing.isActive) {

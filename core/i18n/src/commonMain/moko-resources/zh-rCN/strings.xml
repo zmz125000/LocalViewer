@@ -131,7 +131,7 @@
     <string name="settings_advanced_unlimit_foreground_service">不限制前台服务</string>
     <string name="settings_advanced_unlimit_foreground_service_summary">默认：空闲 20 分钟后结束 HTTP 会话与前台服务。开启：保持回环与会话直到从最近任务划掉。不持唤醒锁。熄屏仅在正在播放时保持连接。</string>
     <string name="history_unavailable">此项目已不可用</string>
-    <string name="settings_network_folder_index_cache">网络文件夹索引缓存</string>
+    <string name="settings_network_folder_index_cache">文件夹索引缓存</string>
     <string name="settings_network_folder_index_cache_summary">关闭时仅将文件夹索引保存在内存中；开启时也会保存到磁盘。</string>
     <string name="settings_network_folder_index_quick_scan">文件夹缓存快速扫描</string>
     <string name="settings_network_folder_index_quick_scan_summary">命中内存或磁盘缓存时，快速检查子文件夹是否有新增或删除。</string>

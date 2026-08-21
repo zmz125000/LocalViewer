@@ -20,11 +20,71 @@ object LibraryScanner {
      * Directory vs file uses the same listing as browse ([listBrowseChildren] / SAF MIME),
      * not Okio [isFile]/[isDirectory] metadata — providers often mislabel folders whose
      * names end in `.7z` / `.zip` as regular files by extension.
+     *
+     * SAF roots with media permission list folder galleries from MediaStore first
+     * (including nested dirs), then walk SAF only for archives and unindexed files.
      */
     fun scan(rootId: Long, rootPath: Path, rootDisplayName: String = ""): List<LocalGalleryEntity> {
         val results = ArrayList<LocalGalleryEntity>()
-        scanDir(rootId, rootPath, relativePath = "", rootDisplayName = rootDisplayName, out = results)
+        val indexedFolders = LinkedHashSet<String>()
+        val msRoot = tryConvertSafPathToMediaStore(rootPath)
+        if (msRoot != null && MediaPermissions.hasMediaAccess()) {
+            scanMediaStoreFolderGalleries(
+                rootId = rootId,
+                safRoot = rootPath,
+                msRoot = msRoot,
+                rootDisplayName = rootDisplayName,
+                indexedFolders = indexedFolders,
+                out = results,
+            )
+        }
+        scanDir(
+            rootId = rootId,
+            dir = rootPath,
+            relativePath = "",
+            rootDisplayName = rootDisplayName,
+            indexedFolders = indexedFolders,
+            out = results,
+        )
         return results
+    }
+
+    private fun scanMediaStoreFolderGalleries(
+        rootId: Long,
+        safRoot: Path,
+        msRoot: Path,
+        rootDisplayName: String,
+        indexedFolders: MutableSet<String>,
+        out: MutableList<LocalGalleryEntity>,
+    ) {
+        val folders = SafMediaStoreListing.imageFoldersUnderRoot(
+            rootRelativeDir = msRoot.mediaStoreRelativeDir(),
+            files = MediaStoreFs.listDescendantImageFiles(msRoot.mediaStoreRelativeDir()),
+        )
+        for ((rel, names) in folders) {
+            if (names.isEmpty()) continue
+            val key = rel.ifEmpty { "." }
+            if (!indexedFolders.add(key)) continue
+            val dir = if (rel.isEmpty()) safRoot else safRoot.resolveRelative(rel)
+            val cover = dir / names.first()
+            val title = when {
+                rel.isEmpty() ->
+                    rootDisplayName.ifBlank { humanizePathName(safRoot.name) }.ifBlank { "Library" }
+                else ->
+                    humanizePathName(rel.substringAfterLast('/')).ifEmpty { rel.substringAfterLast('/') }
+            }
+            out += LocalGalleryEntity(
+                id = stableGalleryId(rootId, key),
+                rootId = rootId,
+                relativePath = key,
+                title = title,
+                kind = LOCAL_GALLERY_KIND_FOLDER,
+                pageCount = names.size,
+                coverPath = cover.toString(),
+                contentPath = dir.toString(),
+                mtime = 0L,
+            )
+        }
     }
 
     private fun scanDir(
@@ -32,9 +92,10 @@ object LibraryScanner {
         dir: Path,
         relativePath: String,
         rootDisplayName: String,
+        indexedFolders: MutableSet<String>,
         out: MutableList<LocalGalleryEntity>,
     ) {
-        val children = runCatching { dir.listBrowseChildren() }.getOrElse {
+        val children = runCatching { dir.listBrowseChildrenRaw() }.getOrElse {
             logcat(it)
             return
         }
@@ -62,27 +123,29 @@ object LibraryScanner {
         }
 
         if (images.isNotEmpty()) {
-            images.sortWith { a, b -> naturalCompare(a.name, b.name) }
-            val cover = images.first()
-            // Root path .name is often a SAF document id (primary%3APictures); prefer stored display name.
-            val title = when {
-                relativePath.isEmpty() ->
-                    rootDisplayName.ifBlank { humanizePathName(dir.name) }.ifBlank { "Library" }
-                else ->
-                    humanizePathName(dir.name).ifEmpty { relativePath.substringAfterLast('/') }
+            val folderKey = relativePath.ifEmpty { "." }
+            if (indexedFolders.add(folderKey)) {
+                images.sortWith { a, b -> naturalCompare(a.name, b.name) }
+                val cover = images.first()
+                val title = when {
+                    relativePath.isEmpty() ->
+                        rootDisplayName.ifBlank { humanizePathName(dir.name) }.ifBlank { "Library" }
+                    else ->
+                        humanizePathName(dir.name).ifEmpty { relativePath.substringAfterLast('/') }
+                }
+                val mtime = dir.metadataOrNull()?.lastModifiedAtMillis ?: 0L
+                out += LocalGalleryEntity(
+                    id = stableGalleryId(rootId, folderKey),
+                    rootId = rootId,
+                    relativePath = folderKey,
+                    title = title,
+                    kind = LOCAL_GALLERY_KIND_FOLDER,
+                    pageCount = images.size,
+                    coverPath = cover.toString(),
+                    contentPath = dir.toString(),
+                    mtime = mtime,
+                )
             }
-            val mtime = dir.metadataOrNull()?.lastModifiedAtMillis ?: 0L
-            out += LocalGalleryEntity(
-                id = stableGalleryId(rootId, relativePath.ifEmpty { "." }),
-                rootId = rootId,
-                relativePath = relativePath.ifEmpty { "." },
-                title = title,
-                kind = LOCAL_GALLERY_KIND_FOLDER,
-                pageCount = images.size,
-                coverPath = cover.toString(),
-                contentPath = dir.toString(),
-                mtime = mtime,
-            )
         }
 
         for (archive in archives.sortedWith { a, b -> naturalCompare(a.name, b.name) }) {
@@ -115,7 +178,7 @@ object LibraryScanner {
             } else {
                 "$relativePath/${sub.name}"
             }
-            scanDir(rootId, sub.path, rel, rootDisplayName, out)
+            scanDir(rootId, sub.path, rel, rootDisplayName, indexedFolders, out)
         }
     }
 }

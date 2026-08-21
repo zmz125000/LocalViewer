@@ -504,7 +504,7 @@
     <string name="rotation_reverse_portrait">顛倒直向</string>
     <string name="disabled_nav">停用</string>
     <!-- Tachiyomi Reader End-->
-    <string name="settings_network_folder_index_cache">網絡資料夾索引快取</string>
+    <string name="settings_network_folder_index_cache">資料夾索引快取</string>
     <string name="settings_network_folder_index_cache_summary">關閉時只將資料夾索引保存在 RAM；開啟時也會儲存到磁碟。</string>
     <string name="settings_network_folder_index_quick_scan">資料夾快取快速掃描</string>
     <string name="settings_network_folder_index_quick_scan_summary">命中 RAM 或磁碟快取時，快速檢查子資料夾是否新增或刪除。</string>

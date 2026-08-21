@@ -199,14 +199,14 @@ fun BrowseViewModeMenu(
                 onClick = { showSmallGalleries = !showSmallGalleries },
             )
             ToggleMenuItem(
-                label = stringResource(R.string.browse_menu_hidden_files),
-                checked = showHiddenFiles,
-                onClick = { showHiddenFiles = !showHiddenFiles },
-            )
-            ToggleMenuItem(
                 label = stringResource(R.string.browse_menu_virtual_galleries),
                 checked = showVirtualGalleries,
                 onClick = { showVirtualGalleries = !showVirtualGalleries },
+            )
+            ToggleMenuItem(
+                label = stringResource(R.string.browse_menu_hidden_files),
+                checked = showHiddenFiles,
+                onClick = { showHiddenFiles = !showHiddenFiles },
             )
         }
     }
@@ -253,7 +253,7 @@ private fun ContentModeItem(
         Text(
             text = label,
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.labelLarge,
         )
         MenuMarkSlot(mark)
     }

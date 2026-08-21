@@ -67,6 +67,7 @@ import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LocalHistory
@@ -82,6 +83,7 @@ import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.parentRelativeOfFile
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toBaseGalleryInfo
+import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.OpenFileExternally
@@ -104,6 +106,7 @@ import com.hippo.ehviewer.ui.openSmbFolderPhotoGrid
 import com.hippo.ehviewer.ui.openWebDavBrowseDir
 import com.hippo.ehviewer.ui.openWebDavFolderPhotoGrid
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
+import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -372,6 +375,11 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         uploader = "${source.id}\u0000$remote",
                         category = 2,
                     )
+                    val names = FolderGalleryIndex.loadSmb(
+                        source.id,
+                        SmbGateway.sourceConfigKey(source),
+                        remote,
+                    ).orEmpty()
                     openFromHistoryWithBackStack(
                         pushParentDir = {
                             openSmbBrowseDir(
@@ -380,8 +388,8 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                                 fromHistory = true,
                             )
                         },
-                        // Empty names → reader re-lists full image set.
-                        openContent = { navToSmbFolderReader(source.id, remote, emptyList(), gi) },
+                        // Same names the folder view would pass; empty → reader uses index again.
+                        openContent = { navToSmbFolderReader(source.id, remote, names, gi) },
                     )
                 }
                 is LocalHistoryTarget.WebDavFolderGallery -> {
@@ -412,6 +420,11 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         uploader = "${source.id}\u0000$remote",
                         category = 3,
                     )
+                    val names = FolderGalleryIndex.loadWebDav(
+                        source.id,
+                        WebDavGateway.sourceConfigKey(source),
+                        remote,
+                    ).orEmpty()
                     openFromHistoryWithBackStack(
                         pushParentDir = {
                             openWebDavBrowseDir(
@@ -420,7 +433,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                                 fromHistory = true,
                             )
                         },
-                        openContent = { navToWebDavFolderReader(source.id, remote, emptyList(), gi) },
+                        openContent = { navToWebDavFolderReader(source.id, remote, names, gi) },
                     )
                 }
                 is LocalHistoryTarget.LocalArchive -> {

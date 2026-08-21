@@ -4,6 +4,7 @@ import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
@@ -123,8 +124,7 @@ object WebDavGateway {
         password: String,
         relativeDir: String,
     ): List<BrowseEntryRemote> {
-        val children = WebDavClient.listChildren(source, password, relativeDir)
-            .filterNot { isProtectedSystemName(it.name) }
+        val children = listChildrenForRelativeDir(source, password, relativeDir)
         return classifyDirectoryChildren(source, password, relativeDir, children)
     }
 
@@ -154,8 +154,7 @@ object WebDavGateway {
         relativeDir: String,
         cached: List<BrowseEntryRemote>,
     ): SlimDirectoryRefresh {
-        val children = WebDavClient.listChildren(source, password, relativeDir)
-            .filterNot { isProtectedSystemName(it.name) }
+        val children = listChildrenForRelativeDir(source, password, relativeDir)
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         val deepHidden = if (com.hippo.ehviewer.Settings.browseShowHiddenFiles.value) {
             hiddenDirectoriesNeedingDeepScan(cached, children)
@@ -179,7 +178,11 @@ object WebDavGateway {
         return SlimDirectoryRefresh(
             entries = mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
             removedDirectoryNames = plan.removedDirectoryNames,
-        )
+        ).also {
+            plan.removedDirectoryNames.forEach { name ->
+                BrowseSession.invalidateWebDavRawChildren(source.id, joinRelative(relativeDir, name))
+            }
+        }
     }
 
     private suspend fun classifyDirectoryChildren(
@@ -204,8 +207,7 @@ object WebDavGateway {
                         peekSlots.withPermit {
                             val childRel = joinRelative(relativeDir, c.name)
                             peeks[c.name] = runCatching {
-                                WebDavClient.listChildren(source, password, childRel)
-                                    .filterNot { isProtectedSystemName(it.name) }
+                                listChildrenForRelativeDir(source, password, childRel)
                             }.getOrDefault(emptyList())
                         }
                     }
@@ -237,8 +239,7 @@ object WebDavGateway {
                         peekSlots.withPermit {
                             val leafRel = joinRelative(joinRelative(relativeDir, subName), leafName)
                             grandPeeks["$subName/$leafName"] = runCatching {
-                                WebDavClient.listChildren(source, password, leafRel)
-                                    .filterNot { isProtectedSystemName(it.name) }
+                                listChildrenForRelativeDir(source, password, leafRel)
                             }.getOrDefault(emptyList())
                         }
                     }
@@ -251,9 +252,27 @@ object WebDavGateway {
         return classifyRemoteListingWithPeeks(dirName, tagged, peeks, grandPeeks)
     }
 
+    /** One PROPFIND, reused when a parent peek already listed this relative path. */
+    private suspend fun listChildrenForRelativeDir(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeDir: String,
+    ): List<RemoteChild> = BrowseSession.rememberWebDavRawChildren(source.id, relativeDir) {
+        WebDavClient.listChildren(source, password, relativeDir)
+    }
+
     suspend fun listImageFileNames(
         source: WebDavSourceEntity,
         password: String,
         relativeDir: String,
-    ) = WebDavClient.listImageFileNames(source, password, relativeDir)
+    ): List<String> {
+        // Same cache-first path as SMB: complete index opens without PROPFIND.
+        FolderGalleryIndex.loadWebDav(source.id, sourceConfigKey(source), relativeDir)?.let { return it }
+        return runCatching {
+            WebDavClient.listImageFileNames(source, password, relativeDir)
+        }.getOrElse { error ->
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            emptyList()
+        }
+    }
 }

@@ -191,6 +191,7 @@ suspend inline fun <T> useTarChunkPageLoader(
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
+                    extractTarget.updateAndGet { cur -> maxOf(cur, index + prefetchN) }
                     ensureExtract(index) { notifySourceReady(index, orgImg) }
                 }
 
