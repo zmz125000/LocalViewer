@@ -1,0 +1,106 @@
+package com.hippo.ehviewer.library
+
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class FolderGalleryIndexTest {
+    @Test
+    fun `self listing with empty relativeName is complete`() {
+        val names = listOf("01.jpg", "02.jpg")
+        val listing = listOf(gallery(relativeName = "", names = names))
+        assertEquals(
+            names,
+            FolderGalleryIndex.namesFromListing("share/gal", listing, "share/gal"),
+        )
+    }
+
+    @Test
+    fun `parent listing matches child gallery`() {
+        val names = listOf("a.png", "b.png")
+        val listing = listOf(gallery(relativeName = "gal", names = names))
+        assertEquals(
+            names,
+            FolderGalleryIndex.namesFromListing("share", listing, "share/gal"),
+        )
+    }
+
+    @Test
+    fun `promoted leaf is resolved from grandparent listing`() {
+        val names = listOf("leaf-1.jpg")
+        val listings = mapOf(
+            "share" to listOf(gallery(relativeName = "S/leaf", names = names)),
+        )
+        val found = runBlocking {
+            FolderGalleryIndex.namesWalkingParents("share/S/leaf") { listings[it] }
+        }
+        assertEquals(names, found)
+    }
+
+    @Test
+    fun `capped or empty index is ignored so live list can run`() {
+        val capped = gallery(relativeName = "gal", names = listOf("01.jpg"), capped = true)
+        val empty = gallery(relativeName = "gal", names = emptyList())
+        assertNull(FolderGalleryIndex.namesFromListing("share", listOf(capped), "share/gal"))
+        assertNull(FolderGalleryIndex.namesFromListing("share", listOf(empty), "share/gal"))
+    }
+
+    @Test
+    fun `walks to parent when self listing has no gallery row`() {
+        val names = listOf("page.webp")
+        val listings = mapOf(
+            "share/gal" to listOf(BrowseEntryRemote.RegularFile("note.txt")),
+            "share" to listOf(gallery(relativeName = "gal", names = names)),
+        )
+        val found = runBlocking {
+            FolderGalleryIndex.namesWalkingParents("share/gal") { listings[it] }
+        }
+        assertEquals(names, found)
+    }
+
+    @Test
+    fun `self listing image files are a complete index`() {
+        val listing = listOf(
+            BrowseEntryRemote.RegularFile("02.png"),
+            BrowseEntryRemote.RegularFile("01.png"),
+            BrowseEntryRemote.RegularFile("book.cbz"),
+        )
+        assertEquals(
+            listOf("01.png", "02.png"),
+            FolderGalleryIndex.namesFromListing("share/gal", listing, "share/gal"),
+        )
+    }
+
+    @Test
+    fun `sibling listing walks to grandparent for promoted leaf`() {
+        val listing = listOf(gallery(relativeName = "S/leaf", names = listOf("a.jpg")))
+        val found = runBlocking {
+            FolderGalleryIndex.siblingListingWalkingParents("share/S/leaf") { dir ->
+                if (dir == "share") listing else null
+            }
+        }
+        assertEquals("share", found?.first)
+        assertEquals(listing, found?.second)
+    }
+
+    @Test
+    fun `root gallery matches empty listed dir`() {
+        val names = listOf("cover.jpg")
+        val listing = listOf(gallery(relativeName = "gal", names = names))
+        assertEquals(names, FolderGalleryIndex.namesFromListing("", listing, "gal"))
+    }
+
+    private fun gallery(
+        relativeName: String,
+        names: List<String>,
+        capped: Boolean = false,
+    ) = BrowseEntryRemote.FolderGallery(
+        name = "Gal",
+        relativeName = relativeName,
+        pageCount = names.size,
+        pageCountCapped = capped,
+        coverFileName = names.firstOrNull(),
+        imageFileNames = names,
+    )
+}

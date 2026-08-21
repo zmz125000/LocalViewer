@@ -4,6 +4,7 @@ import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
@@ -264,5 +265,14 @@ object WebDavGateway {
         source: WebDavSourceEntity,
         password: String,
         relativeDir: String,
-    ) = WebDavClient.listImageFileNames(source, password, relativeDir)
+    ): List<String> {
+        // Same cache-first path as SMB: complete index opens without PROPFIND.
+        FolderGalleryIndex.loadWebDav(source.id, sourceConfigKey(source), relativeDir)?.let { return it }
+        return runCatching {
+            WebDavClient.listImageFileNames(source, password, relativeDir)
+        }.getOrElse { error ->
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            emptyList()
+        }
+    }
 }

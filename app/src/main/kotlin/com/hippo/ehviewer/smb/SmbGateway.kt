@@ -21,6 +21,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.DirPresence
+import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
@@ -1513,7 +1514,9 @@ object SmbGateway {
                 onCached?.invoke(cached.entries)
                 // Quick scan only for old (non-current) listings — every directory independently,
                 // including subfolders hydrated from disk later in the same process.
-                val shouldQuickScan = Settings.networkFolderIndexQuickScan.value && !cached.sessionCurrent
+                val shouldQuickScan = Settings.networkFolderIndexQuickScan.value &&
+                    !cached.sessionCurrent &&
+                    isSourceConnected(source)
                 if (!shouldQuickScan) return cached.entries
                 return try {
                     awaitListJob(cacheKey) {
@@ -1826,13 +1829,20 @@ object SmbGateway {
         source: SmbSourceEntity,
         password: String,
         relativeDir: String,
-    ): List<String> = withIOContext {
-        val loc = resolveLocation(source, relativeDir)
-        withShare(source, password, ShareOp.List, loc.share) { share ->
-            share.list(loc.pathInShare.ifEmpty { "" })
-                .map { it.fileName }
-                .filter { isImageFileName(it) }
-                .sortedWith { a, b -> naturalCompare(a, b) }
+    ): List<String> {
+        // History opens with empty names. Prefer a complete folder index so a
+        // connect timeout cannot block the reader; uncached pages fail per-page.
+        FolderGalleryIndex.loadSmb(source.id, sourceConfigKey(source), relativeDir)?.let { return it }
+        // Offline: never live-list. Missing index is "no images", not a connect timeout.
+        if (!isSourceConnected(source)) return emptyList()
+        return withIOContext {
+            val loc = resolveLocation(source, relativeDir)
+            withShare(source, password, ShareOp.List, loc.share) { share ->
+                share.list(loc.pathInShare.ifEmpty { "" })
+                    .map { it.fileName }
+                    .filter { isImageFileName(it) }
+                    .sortedWith { a, b -> naturalCompare(a, b) }
+            }
         }
     }
 

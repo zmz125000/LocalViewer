@@ -3,11 +3,9 @@ package com.hippo.ehviewer.library
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.hippo.ehviewer.smb.SmbGateway
-import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.webdav.WebDavGateway
-import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import okio.Path.Companion.toPath
 
@@ -114,10 +112,12 @@ object GallerySiblingNavigator {
         next: Boolean,
     ): ReaderScreenArgs? {
         val source = SmbRepository.load(sourceId) ?: return null
-        val password = SmbPasswordStore.get(source.id)
         val galleryPath = currentRemote.trim('/')
-        val parentRel = galleryPath.substringBeforeLast('/', missingDelimiterValue = "")
-        val listing = SmbGateway.listDirectory(source, password, parentRel, useCache = true)
+        val (parentRel, listing) = FolderGalleryIndex.siblingListingSmb(
+            source.id,
+            SmbGateway.sourceConfigKey(source),
+            galleryPath,
+        ) ?: return null
         val openable = listing.mapNotNull { e ->
             when (e) {
                 is BrowseEntryRemote.FolderGallery -> e
@@ -198,10 +198,12 @@ object GallerySiblingNavigator {
         next: Boolean,
     ): ReaderScreenArgs? {
         val source = WebDavRepository.load(sourceId) ?: return null
-        val password = WebDavPasswordStore.get(source.id)
         val galleryPath = currentRemote.trim('/')
-        val parentRel = galleryPath.substringBeforeLast('/', missingDelimiterValue = "")
-        val listing = WebDavGateway.listDirectory(source, password, parentRel, useCache = true)
+        val (parentRel, listing) = FolderGalleryIndex.siblingListingWebDav(
+            source.id,
+            WebDavGateway.sourceConfigKey(source),
+            galleryPath,
+        ) ?: return null
         val openable = listing.mapNotNull { e ->
             when (e) {
                 is BrowseEntryRemote.FolderGallery -> e

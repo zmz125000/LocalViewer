@@ -784,7 +784,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             launch {
                 try {
                     val sibling = withIOContext {
-                        GallerySiblingNavigator.sibling(args, next)
+                        runCatching { GallerySiblingNavigator.sibling(args, next) }.getOrNull()
                     } ?: return@launch
                     // Progress FK for sibling gallery + bump History (library gallery or browse path).
                     sibling.let { s ->
@@ -957,7 +957,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         var peakPageSinceScrollDown by remember { mutableIntStateOf(syncState.sliderValue) }
         LaunchedEffect(args) {
             hasNextGallery = withIOContext {
-                GallerySiblingNavigator.sibling(args, next = true) != null
+                runCatching { GallerySiblingNavigator.sibling(args, next = true) }.getOrNull() != null
             }
         }
         LaunchedEffect(Unit) {
@@ -1095,6 +1095,7 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             else -> 0
         }
         val names = args.imageNames.ifEmpty {
+            // Complete folder index first (same as offline folder open); live list only if missing.
             com.hippo.ehviewer.smb.SmbGateway.listImageFileNames(
                 source,
                 com.hippo.ehviewer.smb.SmbPasswordStore.get(source.id),
