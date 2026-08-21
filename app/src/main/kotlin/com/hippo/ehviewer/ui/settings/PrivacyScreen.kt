@@ -24,7 +24,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
-import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.withIOContext
@@ -127,19 +126,14 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 title = stringResource(id = R.string.settings_privacy_scan_hidden_files),
                 state = scanHiddenFiles,
             )
-            // Rescan library roots when the hidden-files gate changes.
+            // Rescan when the hidden-files gate changes. rescanAll is NonCancellable so
+            // leaving this screen does not drop the write after the walk finishes.
             var previousScanHidden by remember { mutableStateOf(scanHiddenFiles.value) }
             LaunchedEffect(scanHiddenFiles.value) {
                 val now = scanHiddenFiles.value
                 if (previousScanHidden != now) {
                     previousScanHidden = now
-                    withIOContext {
-                        LocalLibrary.listRoots()
-                            .filter { it.role == LIBRARY_ROOT_ROLE_LIBRARY }
-                            .forEach { root ->
-                                runCatching { LocalLibrary.scanRoot(root.id) }
-                            }
-                    }
+                    runCatching { LocalLibrary.rescanAll() }
                 }
             }
             SwitchPreference(

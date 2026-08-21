@@ -181,22 +181,26 @@ object LocalLibrary {
      * Device-media roots stay [LIBRARY_ROOT_ACCESS_MEDIA] (no archives).
      * Rescans library-role roots so gallery set matches the new backend.
      */
-    suspend fun setRootAccessMode(rootId: Long, accessMode: Int) = withIOContext {
-        val root = db.libraryRootDao().load(rootId) ?: return@withIOContext
-        val mode = when {
-            isMediaStoreRootUri(root.treeUri) -> LIBRARY_ROOT_ACCESS_MEDIA
-            accessMode == LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE -> LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE
-            else -> LIBRARY_ROOT_ACCESS_MEDIA
-        }
-        if (root.accessMode == mode) return@withIOContext
-        db.libraryRootDao().updateAccessMode(rootId, mode)
-        BrowseSession.invalidateLocalListing()
-        // Drop in-memory stack if this root is open — paths may switch SAF ↔ MediaStore.
-        if (BrowseSession.localStack.any { it.rootId == rootId }) {
-            BrowseSession.localStack = emptyList()
-        }
-        if (root.role == LIBRARY_ROOT_ROLE_LIBRARY) {
-            scanRoot(rootId)
+    suspend fun setRootAccessMode(rootId: Long, accessMode: Int) = withNonCancellableContext {
+        // Same as addRoot: Manage Sources' launchIO is cancelled on back, which used to
+        // finish the walk then skip replaceForRoot (Room suspend after a blocking scan).
+        withIOContext {
+            val root = db.libraryRootDao().load(rootId) ?: return@withIOContext
+            val mode = when {
+                isMediaStoreRootUri(root.treeUri) -> LIBRARY_ROOT_ACCESS_MEDIA
+                accessMode == LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE -> LIBRARY_ROOT_ACCESS_MEDIA_ARCHIVE
+                else -> LIBRARY_ROOT_ACCESS_MEDIA
+            }
+            if (root.accessMode == mode) return@withIOContext
+            db.libraryRootDao().updateAccessMode(rootId, mode)
+            BrowseSession.invalidateLocalListing()
+            // Drop in-memory stack if this root is open — paths may switch SAF ↔ MediaStore.
+            if (BrowseSession.localStack.any { it.rootId == rootId }) {
+                BrowseSession.localStack = emptyList()
+            }
+            if (root.role == LIBRARY_ROOT_ROLE_LIBRARY) {
+                scanRoot(rootId)
+            }
         }
     }
 
@@ -225,18 +229,20 @@ object LocalLibrary {
         }
     }
 
-    suspend fun rescanAll() = withIOContext {
-        scanMutex.withLock {
-            _scanning.value = true
-            try {
-                val roots = db.libraryRootDao().listByRole(LIBRARY_ROOT_ROLE_LIBRARY)
-                for (root in roots) {
-                    // Root may have been deleted while we scanned an earlier root.
-                    if (db.libraryRootDao().load(root.id) == null) continue
-                    scanRootLocked(root)
+    suspend fun rescanAll() = withNonCancellableContext {
+        withIOContext {
+            scanMutex.withLock {
+                _scanning.value = true
+                try {
+                    val roots = db.libraryRootDao().listByRole(LIBRARY_ROOT_ROLE_LIBRARY)
+                    for (root in roots) {
+                        // Root may have been deleted while we scanned an earlier root.
+                        if (db.libraryRootDao().load(root.id) == null) continue
+                        scanRootLocked(root)
+                    }
+                } finally {
+                    _scanning.value = false
                 }
-            } finally {
-                _scanning.value = false
             }
         }
     }
@@ -359,19 +365,24 @@ object LocalLibrary {
         }
     }.getOrDefault(false)
 
-    suspend fun scanRoot(rootId: Long) = withIOContext {
-        scanMutex.withLock {
-            _scanning.value = true
-            try {
-                val root = db.libraryRootDao().load(rootId) ?: return@withLock
-                if (root.role != LIBRARY_ROOT_ROLE_LIBRARY) {
-                    // Folder-only roots must never contribute library galleries.
-                    db.localGalleryDao().deleteByRootId(root.id)
-                    return@withLock
+    suspend fun scanRoot(rootId: Long) = withNonCancellableContext {
+        // NonCancellable: Privacy / Library / Manage Sources jobs die on back. The tree
+        // walk is blocking so it still finishes, but the following Room write is suspend
+        // and used to be skipped — library unchanged unless you stayed until the scan ended.
+        withIOContext {
+            scanMutex.withLock {
+                _scanning.value = true
+                try {
+                    val root = db.libraryRootDao().load(rootId) ?: return@withLock
+                    if (root.role != LIBRARY_ROOT_ROLE_LIBRARY) {
+                        // Folder-only roots must never contribute library galleries.
+                        db.localGalleryDao().deleteByRootId(root.id)
+                        return@withLock
+                    }
+                    scanRootLocked(root)
+                } finally {
+                    _scanning.value = false
                 }
-                scanRootLocked(root)
-            } finally {
-                _scanning.value = false
             }
         }
     }
