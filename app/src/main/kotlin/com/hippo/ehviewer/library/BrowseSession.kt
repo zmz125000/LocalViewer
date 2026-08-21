@@ -110,6 +110,7 @@ object BrowseSession {
     // --- Listing cache (session) ---
     private val localListings = ConcurrentHashMap<String, CachedLocalListing>()
     private val smbListings = ConcurrentHashMap<String, CachedRemoteListing>()
+
     /** Raw child rows from a list/peek of that exact directory (process lifetime). */
     private val localRawChildren = ConcurrentHashMap<String, List<RemoteChild>>()
     private val smbRawChildren = ConcurrentHashMap<String, List<RemoteChild>>()

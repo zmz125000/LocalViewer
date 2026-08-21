@@ -197,8 +197,7 @@ fun isProtectedSystemName(name: String): Boolean {
     }
 }
 
-fun List<RemoteChild>.withoutProtectedSystemNames(): List<RemoteChild> =
-    filterNot { isProtectedSystemName(it.name) }
+fun List<RemoteChild>.withoutProtectedSystemNames(): List<RemoteChild> = filterNot { isProtectedSystemName(it.name) }
 
 sealed interface BrowseEntryRemote {
     val name: String
