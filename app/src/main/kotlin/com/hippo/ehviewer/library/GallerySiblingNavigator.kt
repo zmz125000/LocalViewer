@@ -3,10 +3,13 @@ package com.hippo.ehviewer.library
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
 import com.hippo.ehviewer.smb.SmbGateway
+import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.webdav.WebDavGateway
+import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
+import kotlinx.coroutines.CancellationException
 import okio.Path.Companion.toPath
 
 /**
@@ -112,12 +115,20 @@ object GallerySiblingNavigator {
         next: Boolean,
     ): ReaderScreenArgs? {
         val source = SmbRepository.load(sourceId) ?: return null
+        val password = SmbPasswordStore.get(source.id)
         val galleryPath = currentRemote.trim('/')
-        val (parentRel, listing) = FolderGalleryIndex.siblingListingSmb(
+        val cached = FolderGalleryIndex.siblingListingSmb(
             source.id,
             SmbGateway.sourceConfigKey(source),
             galleryPath,
-        ) ?: return null
+        )
+        val (parentRel, listing) = networkSiblingListing(
+            remote = galleryPath,
+            cached = cached,
+            liveList = { dir ->
+                SmbGateway.listDirectory(source, password, dir, useCache = true)
+            },
+        )
         val openable = listing.mapNotNull { e ->
             when (e) {
                 is BrowseEntryRemote.FolderGallery -> e
@@ -198,12 +209,20 @@ object GallerySiblingNavigator {
         next: Boolean,
     ): ReaderScreenArgs? {
         val source = WebDavRepository.load(sourceId) ?: return null
+        val password = WebDavPasswordStore.get(source.id)
         val galleryPath = currentRemote.trim('/')
-        val (parentRel, listing) = FolderGalleryIndex.siblingListingWebDav(
+        val cached = FolderGalleryIndex.siblingListingWebDav(
             source.id,
             WebDavGateway.sourceConfigKey(source),
             galleryPath,
-        ) ?: return null
+        )
+        val (parentRel, listing) = networkSiblingListing(
+            remote = galleryPath,
+            cached = cached,
+            liveList = { dir ->
+                WebDavGateway.listDirectory(source, password, dir, useCache = true)
+            },
+        )
         val openable = listing.mapNotNull { e ->
             when (e) {
                 is BrowseEntryRemote.FolderGallery -> e
@@ -275,5 +294,30 @@ object GallerySiblingNavigator {
             }
             else -> null
         }
+    }
+
+    /**
+     * History prev/next: RAM/disk index first (including promoted `S/leaf` on a grandparent
+     * listing). Then [liveList] — same [SmbGateway.listDirectory] / [WebDavGateway.listDirectory]
+     * path as before cache-only sibling lookup (`useCache = true` quick-scans when a session
+     * exists, and live-lists the immediate parent when nothing is cached).
+     */
+    private suspend fun networkSiblingListing(
+        remote: String,
+        cached: Pair<String, List<BrowseEntryRemote>>?,
+        liveList: suspend (listedDir: String) -> List<BrowseEntryRemote>,
+    ): Pair<String, List<BrowseEntryRemote>> {
+        if (cached != null) {
+            val live = runCatching { liveList(cached.first) }.getOrElse { error ->
+                if (error is CancellationException) throw error
+                null
+            }
+            if (live != null && FolderGalleryIndex.containsRemote(cached.first, live, remote)) {
+                return cached.first to live
+            }
+            return cached
+        }
+        val parentRel = parentRelativeOfFile(remote)
+        return parentRel to liveList(parentRel)
     }
 }
