@@ -227,6 +227,50 @@ object MediaStoreFs {
         .map { it.path }
 
     /**
+     * Direct image files under [relativeDir] and every descendant folder.
+     * Each pair is `(parentRelativePath, displayName)` with trailing slashes stripped.
+     */
+    fun listDescendantImageFiles(relativeDir: String): List<Pair<String, String>> {
+        if (!MediaPermissions.hasImagePermission()) return emptyList()
+        val root = relativeDir.replace('\\', '/').trim('/')
+        val out = ArrayList<Pair<String, String>>()
+        val selection: String?
+        val selectionArgs: Array<String>?
+        if (root.isEmpty()) {
+            selection = null
+            selectionArgs = null
+        } else {
+            selection =
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
+            selectionArgs = arrayOf("$root/", root, "$root/%")
+        }
+        val projection = arrayOf(
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.RELATIVE_PATH,
+        )
+        runCatching {
+            appCtx.contentResolver.query(
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+                projection,
+                selection,
+                selectionArgs,
+                null,
+            )?.use { c ->
+                val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+                while (c.moveToNext()) {
+                    val name = c.getString(nameIdx) ?: continue
+                    val relPath = (c.getString(pathIdx) ?: "").trim('/').trimEnd('/')
+                    out += relPath to name
+                }
+            }
+        }
+        return out
+    }
+
+    /**
      * Resolve a virtual file path to a MediaStore content URI for open/decode.
      */
     fun resolveContentUri(path: Path): Uri? {

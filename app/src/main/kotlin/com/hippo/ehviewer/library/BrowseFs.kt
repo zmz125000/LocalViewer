@@ -26,6 +26,11 @@ data class BrowseChild(
     val lastModifiedMs: Long = 0L,
     val hidden: Boolean = false,
     val readOnly: Boolean = false,
+    /**
+     * Listed from MediaStore overlay on a SAF path. Skip DocumentsContract for this
+     * name (attributes already known) and skip `.nomedia` probes on overlay dirs.
+     */
+    val fromMediaStore: Boolean = false,
 )
 
 /**
@@ -38,13 +43,21 @@ data class BrowseChild(
  * scanners decide whether to skip or deep-scan them.
  *
  * [visitor] return `false` to stop early (e.g. found a subdirectory while peeking).
+ *
+ * [includeSafRemainder] is for SAF trees only. When media permission maps the folder
+ * onto MediaStore, children are emitted from the index first (including subdirs).
+ * SAF then skips names already listed — files and dirs — so archives / unindexed
+ * folders remain. Peeks of MediaStore-known children pass false to skip SAF entirely.
  */
-inline fun Path.forEachBrowseChild(visitor: (BrowseChild) -> Boolean) {
+inline fun Path.forEachBrowseChild(
+    includeSafRemainder: Boolean = true,
+    visitor: (BrowseChild) -> Boolean,
+) {
     val str = toString()
     when {
         str.startsWith('/') -> forEachPhysicalChild(visitor)
         isMediaStorePath() -> forEachMediaStoreChild(visitor)
-        else -> forEachSafChild(visitor)
+        else -> forEachSafChild(includeSafRemainder, visitor)
     }
 }
 
@@ -60,6 +73,7 @@ internal inline fun Path.forEachMediaStoreChild(visitor: (BrowseChild) -> Boolea
                 lastModifiedMs = child.lastModifiedMs,
                 hidden = isDotHiddenName(child.name),
                 readOnly = false,
+                fromMediaStore = true,
             ),
         )
         if (!cont) return
@@ -72,8 +86,8 @@ internal inline fun Path.forEachMediaStoreChild(visitor: (BrowseChild) -> Boolea
  *
  * Applies [withHiddenFlags] so directories that contain `.nomedia` are tagged hidden.
  */
-fun Path.listBrowseChildren(): List<BrowseChild> = buildList {
-    forEachBrowseChild {
+fun Path.listBrowseChildren(includeSafRemainder: Boolean = true): List<BrowseChild> = buildList {
+    forEachBrowseChild(includeSafRemainder) {
         add(it)
         true
     }
@@ -83,8 +97,8 @@ fun Path.listBrowseChildren(): List<BrowseChild> = buildList {
  * Raw children without the `.nomedia` directory pass (caller will enrich, or only needs
  * a streaming visit). Dot names are still included with [BrowseChild.hidden].
  */
-fun Path.listBrowseChildrenRaw(): List<BrowseChild> = buildList {
-    forEachBrowseChild {
+fun Path.listBrowseChildrenRaw(includeSafRemainder: Boolean = true): List<BrowseChild> = buildList {
+    forEachBrowseChild(includeSafRemainder) {
         add(it)
         true
     }
@@ -113,20 +127,72 @@ internal inline fun Path.forEachPhysicalChild(visitor: (BrowseChild) -> Boolean)
 }
 
 @PublishedApi
-internal inline fun Path.forEachSafChild(visitor: (BrowseChild) -> Boolean) {
+internal inline fun Path.forEachSafChild(
+    includeSafRemainder: Boolean = true,
+    visitor: (BrowseChild) -> Boolean,
+) {
+    val overlay = mediaStoreOverlayChildren()
+    val skipNames = HashSet<String>()
+    if (overlay != null) {
+        for (child in overlay) {
+            skipNames += child.name
+            if (!visitor(child)) return
+        }
+        if (!includeSafRemainder) return
+    }
+    val lightMeta = !overlay.isNullOrEmpty()
+    forEachSafDocumentChild(skipNames, lightMeta, visitor)
+}
+
+/**
+ * MediaStore children remapped onto this SAF directory, or null when the folder
+ * cannot use the index (no permission, non-external provider).
+ */
+fun Path.mediaStoreOverlayChildren(): List<BrowseChild>? {
+    val ms = tryConvertSafPathToMediaStore(this) ?: return null
+    return MediaStoreFs.listChildren(ms).map { child ->
+        BrowseChild(
+            name = child.name,
+            isDirectory = child.isDirectory,
+            path = this / child.name,
+            size = child.size,
+            lastModifiedMs = child.lastModifiedMs,
+            hidden = isDotHiddenName(child.name),
+            readOnly = false,
+            fromMediaStore = true,
+        )
+    }
+}
+
+/** True when MediaStore already listed this SAF folder (peek can skip DocumentsContract). */
+fun Path.mediaStoreOverlayNonEmpty(): Boolean {
+    val ms = tryConvertSafPathToMediaStore(this) ?: return false
+    return MediaStoreFs.listChildren(ms).isNotEmpty()
+}
+
+@PublishedApi
+internal inline fun Path.forEachSafDocumentChild(
+    skipNames: Set<String>,
+    lightMeta: Boolean,
+    visitor: (BrowseChild) -> Boolean,
+) {
     val uri = toUri()
     var documentId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull() ?: return
     if (uri.authority == "com.wa2c.android.cifsdocumentsprovider.documents") {
         documentId += '/'
     }
     val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(uri, documentId)
-    val projection = arrayOf(
-        Document.COLUMN_DISPLAY_NAME,
-        Document.COLUMN_MIME_TYPE,
-        Document.COLUMN_SIZE,
-        Document.COLUMN_LAST_MODIFIED,
-        Document.COLUMN_FLAGS,
-    )
+    val projection = if (lightMeta) {
+        arrayOf(Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE)
+    } else {
+        arrayOf(
+            Document.COLUMN_DISPLAY_NAME,
+            Document.COLUMN_MIME_TYPE,
+            Document.COLUMN_SIZE,
+            Document.COLUMN_LAST_MODIFIED,
+            Document.COLUMN_FLAGS,
+        )
+    }
     appCtx.contentResolver.query(childrenUri, projection, null, null, null)?.use { c ->
         val nameIdx = c.getColumnIndexOrThrow(Document.COLUMN_DISPLAY_NAME)
         val mimeIdx = c.getColumnIndexOrThrow(Document.COLUMN_MIME_TYPE)
@@ -135,17 +201,21 @@ internal inline fun Path.forEachSafChild(visitor: (BrowseChild) -> Boolean) {
         val flagsIdx = c.getColumnIndex(Document.COLUMN_FLAGS)
         while (c.moveToNext()) {
             val name = c.getString(nameIdx) ?: continue
+            if (name in skipNames) continue
             val mime = c.getString(mimeIdx)
             val isDir = mime == Document.MIME_TYPE_DIR
-            val size = if (isDir || sizeIdx < 0 || c.isNull(sizeIdx)) {
+            val size = if (lightMeta || isDir || sizeIdx < 0 || c.isNull(sizeIdx)) {
                 0L
             } else {
                 c.getLong(sizeIdx).coerceAtLeast(0L)
             }
-            val lastMod = if (modIdx < 0 || c.isNull(modIdx)) 0L else c.getLong(modIdx).coerceAtLeast(0L)
-            val flags = if (flagsIdx < 0 || c.isNull(flagsIdx)) 0 else c.getInt(flagsIdx)
-            // DocumentsContract has no hidden flag; write support ≈ not read-only.
-            val readOnly = flags and Document.FLAG_SUPPORTS_WRITE == 0
+            val lastMod = if (lightMeta || modIdx < 0 || c.isNull(modIdx)) {
+                0L
+            } else {
+                c.getLong(modIdx).coerceAtLeast(0L)
+            }
+            val flags = if (lightMeta || flagsIdx < 0 || c.isNull(flagsIdx)) 0 else c.getInt(flagsIdx)
+            val readOnly = !lightMeta && flags and Document.FLAG_SUPPORTS_WRITE == 0
             val cont = visitor(
                 BrowseChild(
                     name = name,
@@ -153,7 +223,6 @@ internal inline fun Path.forEachSafChild(visitor: (BrowseChild) -> Boolean) {
                     path = this / name,
                     size = size,
                     lastModifiedMs = lastMod,
-                    // DocumentsContract has no hidden column; dot names are the portable signal.
                     hidden = isDotHiddenName(name),
                     readOnly = readOnly,
                 ),

@@ -223,7 +223,11 @@ object LocalFolderListing {
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
         if (dirsToPeek.isNotEmpty()) {
             runParallel(dirsToPeek) { c ->
-                peeks[c.name] = listChildrenRemote(dir / c.name, preferMediaStore)
+                peeks[c.name] = listChildrenRemote(
+                    dir / c.name,
+                    preferMediaStore,
+                    includeSafRemainder = !shouldSkipSafPeek(dir / c.name, preferMediaStore),
+                )
             }
         }
 
@@ -245,7 +249,12 @@ object LocalFolderListing {
         if (leavesToPeek.isNotEmpty()) {
             runParallel(leavesToPeek) { (subName, leafName) ->
                 val leafRel = "$subName/$leafName"
-                grandPeeks[leafRel] = listChildrenRemote(dir / subName / leafName, preferMediaStore)
+                val leafDir = dir / subName / leafName
+                grandPeeks[leafRel] = listChildrenRemote(
+                    leafDir,
+                    preferMediaStore,
+                    includeSafRemainder = !shouldSkipSafPeek(leafDir, preferMediaStore),
+                )
             }
         }
 
@@ -267,23 +276,59 @@ object LocalFolderListing {
         futures.forEach { it.get() }
     }
 
-    private fun listChildrenRemote(dir: Path, preferMediaStore: Boolean): List<RemoteChild> {
+    private fun listChildrenRemote(
+        dir: Path,
+        preferMediaStore: Boolean,
+        includeSafRemainder: Boolean = true,
+    ): List<RemoteChild> {
         val path = resolveBrowsePath(dir, preferMediaStore = preferMediaStore)
+        if (!includeSafRemainder) {
+            return mediaStoreRemoteChildren(path)
+        }
         return BrowseSession.rememberLocalRawChildren(BrowseSession.pathKey(path)) {
-            // listBrowseChildren applies .nomedia directory tagging.
-            path.listBrowseChildren().map { child ->
-                RemoteChild(
-                    name = child.name,
-                    isDirectory = child.isDirectory,
-                    path = child.name,
-                    size = child.size,
-                    lastModifiedMs = child.lastModifiedMs,
-                    hidden = child.hidden,
-                    readOnly = child.readOnly,
-                )
-            }
+            // Raw list: `.nomedia` dirs are tagged after child peeks (same as SMB),
+            // so we do not SAF-list every subdirectory twice.
+            path.listBrowseChildrenRaw().map { it.toRemoteChild() }
         }
     }
+
+    /**
+     * MediaStore-only peek for a SAF child that the index already listed. Not written
+     * to [BrowseSession] raw-children cache — entering the folder still SAF-lists
+     * archives.
+     */
+    private fun mediaStoreRemoteChildren(path: Path): List<RemoteChild> {
+        val ms = when {
+            path.isMediaStorePath() -> path
+            else -> tryConvertSafPathToMediaStore(path) ?: return emptyList()
+        }
+        return MediaStoreFs.listChildren(ms).map { child ->
+            RemoteChild(
+                name = child.name,
+                isDirectory = child.isDirectory,
+                path = child.name,
+                size = child.size,
+                lastModifiedMs = child.lastModifiedMs,
+                hidden = isDotHiddenName(child.name),
+                readOnly = false,
+            )
+        }
+    }
+
+    private fun shouldSkipSafPeek(dir: Path, preferMediaStore: Boolean): Boolean {
+        if (preferMediaStore) return false
+        return dir.mediaStoreOverlayNonEmpty()
+    }
+
+    private fun BrowseChild.toRemoteChild() = RemoteChild(
+        name = name,
+        isDirectory = isDirectory,
+        path = name,
+        size = size,
+        lastModifiedMs = lastModifiedMs,
+        hidden = hidden,
+        readOnly = readOnly,
+    )
 
     private fun rootConfigKey(rootPath: Path, preferMediaStore: Boolean): String {
         val effective = resolveBrowsePath(rootPath, preferMediaStore = preferMediaStore)

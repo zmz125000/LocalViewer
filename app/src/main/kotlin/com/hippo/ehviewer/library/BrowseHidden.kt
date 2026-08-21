@@ -45,7 +45,7 @@ fun List<BrowseChild>.withHiddenFlags(): List<BrowseChild> {
         if (!child.isDirectory) {
             if (dot == child.hidden) child else child.copy(hidden = dot || child.hidden)
         } else {
-            val nomedia = !dot && child.path.hasNomediaMarker()
+            val nomedia = !dot && !child.fromMediaStore && child.path.hasNomediaMarker()
             val hidden = child.hidden || dot || nomedia
             if (hidden == child.hidden) child else child.copy(hidden = hidden)
         }
