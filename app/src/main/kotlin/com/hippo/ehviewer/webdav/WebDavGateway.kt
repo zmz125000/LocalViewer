@@ -17,6 +17,7 @@ import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.peekIndicatesHiddenDir
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
+import com.hippo.ehviewer.library.preferCompleteFolderGalleries
 import com.hippo.ehviewer.library.withHiddenFlags
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.async
@@ -73,13 +74,7 @@ object WebDavGateway {
                     val refresh = withIOContext {
                         listDirectorySlim(source, password, relativeDir, cached.entries)
                     }
-                    BrowseSession.putWebDavListing(
-                        source.id,
-                        relativeDir,
-                        refresh.entries,
-                        sessionCurrent = true,
-                    )
-                    if (refresh.entries != cached.entries ||
+                    val toKeep = if (refresh.entries != cached.entries ||
                         refresh.removedDirectoryNames.isNotEmpty()
                     ) {
                         NetworkFolderIndexCache.saveWebDav(
@@ -89,8 +84,16 @@ object WebDavGateway {
                             refresh.entries,
                             refresh.removedDirectoryNames,
                         )
+                    } else {
+                        refresh.entries
                     }
-                    refresh.entries
+                    BrowseSession.putWebDavListing(
+                        source.id,
+                        relativeDir,
+                        toKeep,
+                        sessionCurrent = true,
+                    )
+                    toKeep
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (_: Throwable) {
@@ -101,17 +104,28 @@ object WebDavGateway {
         } else {
             BrowseSession.invalidateWebDavListing(source.id, relativeDir)
         }
+        val previous = BrowseSession.getWebDavListing(source.id, relativeDir)
         val result = withIOContext {
             listDirectoryUncached(source, password, relativeDir)
         }
+        val fromRam = if (previous != null) {
+            preferCompleteFolderGalleries(previous, result)
+        } else {
+            result
+        }
+        val stored = NetworkFolderIndexCache.saveWebDav(
+            source.id,
+            configKey,
+            relativeDir,
+            fromRam,
+        )
         BrowseSession.putWebDavListing(
             source.id,
             relativeDir,
-            result,
+            stored,
             sessionCurrent = true,
         )
-        NetworkFolderIndexCache.saveWebDav(source.id, configKey, relativeDir, result)
-        return result
+        return stored
     }
 
     private data class SlimDirectoryRefresh(

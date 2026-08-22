@@ -42,7 +42,9 @@ object LocalFolderListing {
             BrowseSession.getLocalListing(key)?.let { return it }
         }
         val remote = listDirectoryUncachedRemote(effective, preferMediaStore)
-        BrowseSession.putLocalListing(key, remote, sessionCurrent = true)
+        // Not session-current: sync path does not persist to NetworkFolderIndexCache.
+        // Leaving current=false lets folder UI listDirectory hydrate/save + quick-scan.
+        BrowseSession.putLocalListing(key, remote, sessionCurrent = false)
         return materializeLocalEntries(effective, remote)
     }
 
@@ -81,12 +83,7 @@ object LocalFolderListing {
                 if (!shouldQuickScan) return@withContext materialized
                 return@withContext try {
                     val refresh = listDirectorySlim(effective, preferMediaStore, cached.entries)
-                    BrowseSession.putLocalListing(
-                        pathKey,
-                        refresh.entries,
-                        sessionCurrent = true,
-                    )
-                    if (refresh.entries != cached.entries ||
+                    val toKeep = if (refresh.entries != cached.entries ||
                         refresh.removedDirectoryNames.isNotEmpty()
                     ) {
                         NetworkFolderIndexCache.saveLocal(
@@ -96,8 +93,15 @@ object LocalFolderListing {
                             refresh.entries,
                             refresh.removedDirectoryNames,
                         )
+                    } else {
+                        refresh.entries
                     }
-                    materializeLocalEntries(effective, refresh.entries)
+                    BrowseSession.putLocalListing(
+                        pathKey,
+                        toKeep,
+                        sessionCurrent = true,
+                    )
+                    materializeLocalEntries(effective, toKeep)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Throwable) {
@@ -113,10 +117,12 @@ object LocalFolderListing {
         }
 
         BrowseSession.getLocalListing(pathKey)?.let { return@withContext it }
+        val previous = BrowseSession.getLocalCachedListing(pathKey)?.entries
         val remote = listDirectoryUncachedRemote(effective, preferMediaStore)
-        BrowseSession.putLocalListing(pathKey, remote, sessionCurrent = true)
-        NetworkFolderIndexCache.saveLocal(rootId, configKey, relativeDir, remote)
-        materializeLocalEntries(effective, remote)
+        val fromRam = if (previous != null) preferCompleteFolderGalleries(previous, remote) else remote
+        val stored = NetworkFolderIndexCache.saveLocal(rootId, configKey, relativeDir, fromRam)
+        BrowseSession.putLocalListing(pathKey, stored, sessionCurrent = true)
+        materializeLocalEntries(effective, stored)
     }
 
     fun listDirectoryUncachedRemote(

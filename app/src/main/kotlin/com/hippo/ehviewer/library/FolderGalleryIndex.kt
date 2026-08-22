@@ -3,6 +3,10 @@ package com.hippo.ehviewer.library
 /**
  * Resolve a complete folder-gallery page list from RAM / disk index without network.
  *
+ * **Read-only** — does not write. Page names live inside [NetworkFolderIndexCache] /
+ * [BrowseSession] folder listings as [BrowseEntryRemote.FolderGallery.imageFileNames]
+ * (same store as the folder index; no separate gallery disk cache).
+ *
  * Opening from an offline browse folder already passes [BrowseEntryRemote.FolderGallery.imageFileNames].
  * History opens with an empty name list, so the reader used to live-list the directory
  * (and the parent for next-gallery) and fail on [java.util.concurrent.TimeoutException].
