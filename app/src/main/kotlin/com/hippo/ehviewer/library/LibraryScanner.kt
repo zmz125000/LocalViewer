@@ -61,12 +61,12 @@ object LibraryScanner {
             rootRelativeDir = msRoot.mediaStoreRelativeDir(),
             files = MediaStoreFs.listDescendantImageFiles(msRoot.mediaStoreRelativeDir()),
         )
-        for ((rel, names) in folders) {
-            if (names.isEmpty()) continue
+        for ((rel, folder) in folders) {
+            if (folder.names.isEmpty()) continue
             val key = rel.ifEmpty { "." }
             if (!indexedFolders.add(key)) continue
             val dir = if (rel.isEmpty()) safRoot else safRoot.resolveRelative(rel)
-            val cover = dir / names.first()
+            val cover = dir / folder.names.first()
             val title = when {
                 rel.isEmpty() ->
                     rootDisplayName.ifBlank { humanizePathName(safRoot.name) }.ifBlank { "Library" }
@@ -79,10 +79,11 @@ object LibraryScanner {
                 relativePath = key,
                 title = title,
                 kind = LOCAL_GALLERY_KIND_FOLDER,
-                pageCount = names.size,
+                pageCount = folder.names.size,
                 coverPath = cover.toString(),
                 contentPath = dir.toString(),
-                mtime = 0L,
+                // Date sort: latest direct image DATE_MODIFIED from MediaStore.
+                mtime = folder.latestImageMs,
             )
         }
     }
@@ -108,7 +109,7 @@ object LibraryScanner {
         }
         // Privacy off: skip dot / `.nomedia`-marked children (same tags as folder browse).
         val visible = if (scanHidden) children else children.filterNot { it.hidden }
-        val images = ArrayList<Path>()
+        val images = ArrayList<BrowseChild>()
         val subdirs = ArrayList<BrowseChild>()
         val archives = ArrayList<BrowseChild>()
 
@@ -117,7 +118,7 @@ object LibraryScanner {
                 // Dot folders are never descended into (browse lazy-scan parity).
                 child.isDirectory && !isDotHiddenName(child.name) -> subdirs += child
                 child.isDirectory -> Unit
-                isImageFileName(child.name) -> images += child.path
+                isImageFileName(child.name) -> images += child
                 isArchiveFileName(child.name) -> archives += child
             }
         }
@@ -126,14 +127,15 @@ object LibraryScanner {
             val folderKey = relativePath.ifEmpty { "." }
             if (indexedFolders.add(folderKey)) {
                 images.sortWith { a, b -> naturalCompare(a.name, b.name) }
-                val cover = images.first()
+                val cover = images.first().path
                 val title = when {
                     relativePath.isEmpty() ->
                         rootDisplayName.ifBlank { humanizePathName(dir.name) }.ifBlank { "Library" }
                     else ->
                         humanizePathName(dir.name).ifEmpty { relativePath.substringAfterLast('/') }
                 }
-                val mtime = dir.metadataOrNull()?.lastModifiedAtMillis ?: 0L
+                // Date sort: latest direct image (listing LAST_MODIFIED / DATE_MODIFIED).
+                val mtime = latestChildMtime(images)
                 out += LocalGalleryEntity(
                     id = stableGalleryId(rootId, folderKey),
                     rootId = rootId,
@@ -157,7 +159,8 @@ object LibraryScanner {
             } else {
                 "$relativePath/${archive.name}"
             }
-            val mtime = archive.path.metadataOrNull()?.lastModifiedAtMillis ?: 0L
+            // Date sort: archive file date (listing meta, else Okio metadata).
+            val mtime = childMtime(archive)
             out += LocalGalleryEntity(
                 id = stableGalleryId(rootId, rel),
                 rootId = rootId,
@@ -180,5 +183,20 @@ object LibraryScanner {
             }
             scanDir(rootId, sub.path, rel, rootDisplayName, indexedFolders, out)
         }
+    }
+
+    /** Prefer listing [BrowseChild.lastModifiedMs]; fall back to path metadata (SAF/physical). */
+    private fun childMtime(child: BrowseChild): Long {
+        if (child.lastModifiedMs > 0L) return child.lastModifiedMs
+        return child.path.metadataOrNull()?.lastModifiedAtMillis ?: 0L
+    }
+
+    private fun latestChildMtime(children: List<BrowseChild>): Long {
+        var max = 0L
+        for (child in children) {
+            val t = childMtime(child)
+            if (t > max) max = t
+        }
+        return max
     }
 }

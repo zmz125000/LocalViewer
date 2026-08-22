@@ -228,12 +228,12 @@ object MediaStoreFs {
 
     /**
      * Direct image files under [relativeDir] and every descendant folder.
-     * Each pair is `(parentRelativePath, displayName)` with trailing slashes stripped.
+     * Includes [SafMediaStoreListing.ImageFile.lastModifiedMs] from DATE_MODIFIED.
      */
-    fun listDescendantImageFiles(relativeDir: String): List<Pair<String, String>> {
+    fun listDescendantImageFiles(relativeDir: String): List<SafMediaStoreListing.ImageFile> {
         if (!MediaPermissions.hasImagePermission()) return emptyList()
         val root = relativeDir.replace('\\', '/').trim('/')
-        val out = ArrayList<Pair<String, String>>()
+        val out = ArrayList<SafMediaStoreListing.ImageFile>()
         val selection: String?
         val selectionArgs: Array<String>?
         if (root.isEmpty()) {
@@ -249,6 +249,7 @@ object MediaStoreFs {
         val projection = arrayOf(
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.RELATIVE_PATH,
+            MediaStore.MediaColumns.DATE_MODIFIED,
         )
         runCatching {
             appCtx.contentResolver.query(
@@ -260,10 +261,21 @@ object MediaStoreFs {
             )?.use { c ->
                 val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                 val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+                val modIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
                 while (c.moveToNext()) {
                     val name = c.getString(nameIdx) ?: continue
                     val relPath = (c.getString(pathIdx) ?: "").trim('/').trimEnd('/')
-                    out += relPath to name
+                    // DATE_MODIFIED is seconds; convert to epoch ms.
+                    val lastMod = if (modIdx < 0 || c.isNull(modIdx)) {
+                        0L
+                    } else {
+                        c.getLong(modIdx).coerceAtLeast(0L) * 1000L
+                    }
+                    out += SafMediaStoreListing.ImageFile(
+                        parentRelativePath = relPath,
+                        name = name,
+                        lastModifiedMs = lastMod,
+                    )
                 }
             }
         }

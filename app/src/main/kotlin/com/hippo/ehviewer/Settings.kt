@@ -378,16 +378,17 @@ object Settings : DataStorePreferences(null) {
     val historyDirBackToUpper = boolPref("history_dir_back_to_upper", true)
 
     /**
-     * Library list: when true (default), the **Last open** sort mode may use HISTORY
-     * recency. When false, Last open falls back to name order (privacy).
+     * Library list pin: when true (default), recently opened galleries (HISTORY time)
+     * float above the Name/Date secondary sort. Toggle lives in the Library view menu.
      */
     val libraryRecentOpen = boolPref("library_recent_open", true)
 
     /**
-     * Library gallery sort: 0 = name, 1 = date (scan [LocalGalleryEntity.mtime]),
-     * 2 = last open (HISTORY time; requires [libraryRecentOpen]). Default last open.
+     * Library gallery secondary sort: 0 = name, 1 = date (latest image / archive file
+     * mtime from scan). Combined with [libraryRecentOpen] pin. Default name.
+     * (Legacy pref value 2 = old exclusive Last-open sort → treated as name.)
      */
-    val librarySortMode = intPref("library_sort_mode", 2)
+    val librarySortMode = intPref("library_sort_mode", 0)
 
     /**
      * Per-file skip / failure notes (video thumb `.failed` and similar sidecars).

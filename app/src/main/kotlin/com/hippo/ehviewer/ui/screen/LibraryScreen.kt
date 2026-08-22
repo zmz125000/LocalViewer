@@ -172,7 +172,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val libraryRecentOpen by Settings.libraryRecentOpen.collectAsState()
     val librarySortModePref by Settings.librarySortMode.collectAsState()
     val librarySortMode = LibrarySortMode.fromPref(librarySortModePref)
-    // HISTORY.TIME by gallery gid — used by Last open sort when privacy allows.
+    // HISTORY.TIME by gallery gid — Last open pin floats recently opened above Name/Date.
     val historyTimeByGid by rememberInVM {
         mutableStateOf(emptyMap<Long, Long>()).also { state ->
             viewModelScope.launch {
@@ -182,7 +182,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
     }
-    // Live in-list filter (no re-query / submit). Sort: name / date(mtime) / last open.
+    // Live in-list filter. Secondary sort Name/Date; optional recent-open pin (HISTORY).
     val galleries = remember(
         allVisibleGalleries,
         keyword,
@@ -196,24 +196,21 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         } else {
             allVisibleGalleries.filter { it.title.contains(q, ignoreCase = true) }
         }
-        when (librarySortMode) {
+        val bySecondary: Comparator<LocalGalleryEntity> = when (librarySortMode) {
             LibrarySortMode.Name ->
-                filtered.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+                compareBy(String.CASE_INSENSITIVE_ORDER) { it.title }
             LibrarySortMode.Date ->
-                filtered.sortedWith(
-                    compareByDescending<LocalGalleryEntity> { it.mtime }
-                        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
-                )
-            LibrarySortMode.LastOpen ->
-                if (libraryRecentOpen) {
-                    filtered.sortedWith(
-                        compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
-                            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
-                    )
-                } else {
-                    // Privacy off: Last open falls back to name.
-                    filtered.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
-                }
+                compareByDescending<LocalGalleryEntity> { it.mtime }
+                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+        }
+        if (libraryRecentOpen) {
+            // Same as the old privacy toggle: history time first, then Name/Date.
+            filtered.sortedWith(
+                compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
+                    .then(bySecondary),
+            )
+        } else {
+            filtered.sortedWith(bySecondary)
         }
     }
 

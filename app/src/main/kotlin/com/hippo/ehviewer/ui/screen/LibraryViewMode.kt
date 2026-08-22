@@ -34,22 +34,23 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.collectAsState
 
-/** Library gallery sort modes ([Settings.librarySortMode]). */
+/** Library gallery secondary sort ([Settings.librarySortMode]). */
 enum class LibrarySortMode(val prefValue: Int) {
     Name(0),
     Date(1),
-    LastOpen(2),
     ;
 
     companion object {
-        fun fromPref(value: Int): LibrarySortMode =
-            entries.firstOrNull { it.prefValue == value } ?: LastOpen
+        fun fromPref(value: Int): LibrarySortMode = when (value) {
+            Date.prefValue -> Date
+            else -> Name // includes legacy exclusive Last-open (=2)
+        }
     }
 }
 
 /**
  * Library search-bar view menu (standalone from folder [BrowseViewModeMenu]):
- * - Top: sort — Name / Date (scan mtime) / Last open (HISTORY; privacy [Settings.libraryRecentOpen])
+ * - Top: Name / Date sort + Last open pin (HISTORY-first, then Name/Date)
  * - Mid: List / Grid layout
  * - Bottom: Photo grid, page count, reading progress, startup scan
  *
@@ -61,6 +62,7 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
     val listMode by Settings.listMode.collectAsState()
     var sortModePref by Settings.librarySortMode.asMutableState()
     val sortMode = LibrarySortMode.fromPref(sortModePref)
+    var libraryRecentOpen by Settings.libraryRecentOpen.asMutableState()
     val useGrid = listMode == 1
     var photoGridMode by Settings.photoGridMode.asMutableState()
     var showGalleryPages by Settings.showGalleryPages.asMutableState()
@@ -107,13 +109,10 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                     expanded = false
                 },
             )
-            LibraryMenuSelectItem(
+            LibraryMenuToggleItem(
                 label = stringResource(R.string.library_sort_last_open),
-                selected = sortMode == LibrarySortMode.LastOpen,
-                onClick = {
-                    sortModePref = LibrarySortMode.LastOpen.prefValue
-                    expanded = false
-                },
+                checked = libraryRecentOpen,
+                onClick = { libraryRecentOpen = !libraryRecentOpen },
             )
             HorizontalDivider()
             LibraryMenuSelectItem(

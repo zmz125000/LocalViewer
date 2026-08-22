@@ -33,17 +33,20 @@ class SafMediaStoreListingTest {
         val folders = SafMediaStoreListing.imageFoldersUnderRoot(
             rootRelativeDir = "Pictures/Comics",
             files = listOf(
-                "Pictures/Comics" to "cover.jpg",
-                "Pictures/Comics/Series1" to "02.png",
-                "Pictures/Comics/Series1" to "01.png",
-                "Pictures/Comics/S/leaf" to "a.webp",
-                "Pictures/Other" to "skip.jpg",
-                "Pictures/Comics/Series1" to "note.txt",
+                img("Pictures/Comics", "cover.jpg", 1000L),
+                img("Pictures/Comics/Series1", "02.png", 3000L),
+                img("Pictures/Comics/Series1", "01.png", 2000L),
+                img("Pictures/Comics/S/leaf", "a.webp", 500L),
+                img("Pictures/Other", "skip.jpg", 9000L),
+                img("Pictures/Comics/Series1", "note.txt", 8000L),
             ),
         )
-        assertEquals(listOf("cover.jpg"), folders[""])
-        assertEquals(listOf("01.png", "02.png"), folders["Series1"])
-        assertEquals(listOf("a.webp"), folders["S/leaf"])
+        assertEquals(listOf("cover.jpg"), folders[""]?.names)
+        assertEquals(1000L, folders[""]?.latestImageMs)
+        assertEquals(listOf("01.png", "02.png"), folders["Series1"]?.names)
+        assertEquals(3000L, folders["Series1"]?.latestImageMs)
+        assertEquals(listOf("a.webp"), folders["S/leaf"]?.names)
+        assertEquals(500L, folders["S/leaf"]?.latestImageMs)
         assertEquals(setOf("", "Series1", "S/leaf"), folders.keys)
     }
 
@@ -54,6 +57,9 @@ class SafMediaStoreListingTest {
         assertNull(SafMediaStoreListing.relativeUnderRoot("Pictures", "Download"))
         assertEquals("a/b", SafMediaStoreListing.relativeUnderRoot("", "a/b"))
     }
+
+    private fun img(parent: String, name: String, lastModifiedMs: Long = 0L) =
+        SafMediaStoreListing.ImageFile(parent, name, lastModifiedMs)
 
     private fun child(
         name: String,
