@@ -137,6 +137,11 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 }
             }
             SwitchPreference(
+                title = stringResource(id = R.string.settings_privacy_library_recent_open),
+                summary = stringResource(id = R.string.settings_privacy_library_recent_open_summary),
+                state = Settings.libraryRecentOpen.asMutableState(),
+            )
+            SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_save_file_markers),
                 state = Settings.saveFileMarkers.asMutableState(),
             )

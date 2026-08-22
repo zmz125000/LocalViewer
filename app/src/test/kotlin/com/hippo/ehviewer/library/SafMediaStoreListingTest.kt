@@ -58,8 +58,7 @@ class SafMediaStoreListingTest {
         assertEquals("a/b", SafMediaStoreListing.relativeUnderRoot("", "a/b"))
     }
 
-    private fun img(parent: String, name: String, lastModifiedMs: Long = 0L) =
-        SafMediaStoreListing.ImageFile(parent, name, lastModifiedMs)
+    private fun img(parent: String, name: String, lastModifiedMs: Long = 0L) = SafMediaStoreListing.ImageFile(parent, name, lastModifiedMs)
 
     private fun child(
         name: String,
