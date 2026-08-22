@@ -49,6 +49,10 @@
     <string name="settings_library_startup_scan_summary">On launch, remove inaccessible galleries and rescan MediaStore sources. File/archive sources only prune missing entries (no full tree walk).</string>
     <string name="library_gallery_folder">Folder</string>
     <string name="library_gallery_archive">Archive</string>
+    <string name="library_sort_name">Name</string>
+    <string name="library_sort_date">Date</string>
+    <string name="library_sort_last_open">Last open</string>
+    <string name="library_view_mode">Library view</string>
     <string name="browse_directory">Directory</string>
     <string name="browse_folder_gallery_pages">%d pages</string>
     <string name="browse_folder_gallery_pages_many">∞ pages</string>

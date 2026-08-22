@@ -45,6 +45,10 @@
     <string name="settings_library_startup_scan_summary">启动时清理不可访问的图库，并对媒体库来源重新扫描。文件/归档模式来源仅做缺失条目清理（不做完整目录遍历）。</string>
     <string name="library_gallery_folder">文件夹</string>
     <string name="library_gallery_archive">压缩包</string>
+    <string name="library_sort_name">名称</string>
+    <string name="library_sort_date">日期</string>
+    <string name="library_sort_last_open">最近打开</string>
+    <string name="library_view_mode">图库视图</string>
     <string name="browse_directory">目录</string>
     <string name="browse_folder_gallery_pages">%d 页</string>
     <string name="browse_folder_gallery_pages_many">∞ 页</string>

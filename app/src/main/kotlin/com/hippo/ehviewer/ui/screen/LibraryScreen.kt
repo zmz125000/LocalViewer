@@ -170,7 +170,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         rawGalleries.hideDuplicateGalleriesPreferMediaStore()
     }
     val libraryRecentOpen by Settings.libraryRecentOpen.collectAsState()
-    // HISTORY.TIME by gallery gid — opened library rows rise to the top when privacy allows.
+    val librarySortModePref by Settings.librarySortMode.collectAsState()
+    val librarySortMode = LibrarySortMode.fromPref(librarySortModePref)
+    // HISTORY.TIME by gallery gid — used by Last open sort when privacy allows.
     val historyTimeByGid by rememberInVM {
         mutableStateOf(emptyMap<Long, Long>()).also { state ->
             viewModelScope.launch {
@@ -180,21 +182,38 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
     }
-    // Live in-list filter (no re-query / submit). Optional recency sort via Privacy.
-    val galleries = remember(allVisibleGalleries, keyword, historyTimeByGid, libraryRecentOpen) {
+    // Live in-list filter (no re-query / submit). Sort: name / date(mtime) / last open.
+    val galleries = remember(
+        allVisibleGalleries,
+        keyword,
+        historyTimeByGid,
+        libraryRecentOpen,
+        librarySortMode,
+    ) {
         val q = keyword.trim()
         val filtered = if (q.isEmpty()) {
             allVisibleGalleries
         } else {
             allVisibleGalleries.filter { it.title.contains(q, ignoreCase = true) }
         }
-        if (!libraryRecentOpen) {
-            filtered
-        } else {
-            filtered.sortedWith(
-                compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
-                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
-            )
+        when (librarySortMode) {
+            LibrarySortMode.Name ->
+                filtered.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+            LibrarySortMode.Date ->
+                filtered.sortedWith(
+                    compareByDescending<LocalGalleryEntity> { it.mtime }
+                        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+                )
+            LibrarySortMode.LastOpen ->
+                if (libraryRecentOpen) {
+                    filtered.sortedWith(
+                        compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
+                            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+                    )
+                } else {
+                    // Privacy off: Last open falls back to name.
+                    filtered.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+                }
         }
     }
 
@@ -346,8 +365,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         searchFieldHint = hint,
         searchBarOffsetY = { searchBarOffsetY },
         leadingIcon = {
-            // Same view-mode menu as folder browse (tap = menu, long-press = list↔grid).
-            BrowseViewModeMenu()
+            // Standalone library menu: sort / layout / display + startup scan.
+            LibraryViewModeMenu()
         },
         trailingIcon = {
             IconButton(
