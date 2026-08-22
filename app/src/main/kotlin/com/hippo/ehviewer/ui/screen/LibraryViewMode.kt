@@ -50,7 +50,9 @@ enum class LibrarySortMode(val prefValue: Int) {
 
 /**
  * Library search-bar view menu (standalone from folder [BrowseViewModeMenu]):
- * - Top: Name / Date sort + Last open pin (HISTORY-first, then Name/Date)
+ * - Top: Name / Date sort + Last open
+ *   - Name + Last open: HISTORY pin, then title
+ *   - Date + Last open: blend max(last-open, scan mtime), then title
  * - Mid: List / Grid layout
  * - Bottom: Photo grid, page count, reading progress, startup scan
  *

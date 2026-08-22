@@ -182,7 +182,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
     }
-    // Live in-list filter. Secondary sort Name/Date; optional recent-open pin (HISTORY).
+    // Live in-list filter.
+    // Name + Last open: HISTORY pin then title (old recent-open toggle).
+    // Date + Last open: blend max(last-open time, scan mtime), then title.
     val galleries = remember(
         allVisibleGalleries,
         keyword,
@@ -196,21 +198,25 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         } else {
             allVisibleGalleries.filter { it.title.contains(q, ignoreCase = true) }
         }
-        val bySecondary: Comparator<LocalGalleryEntity> = when (librarySortMode) {
-            LibrarySortMode.Name ->
-                compareBy(String.CASE_INSENSITIVE_ORDER) { it.title }
-            LibrarySortMode.Date ->
-                compareByDescending<LocalGalleryEntity> { it.mtime }
-                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
-        }
-        if (libraryRecentOpen) {
-            // Same as the old privacy toggle: history time first, then Name/Date.
-            filtered.sortedWith(
-                compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
-                    .then(bySecondary),
-            )
-        } else {
-            filtered.sortedWith(bySecondary)
+        when {
+            librarySortMode == LibrarySortMode.Date && libraryRecentOpen ->
+                filtered.sortedWith(
+                    compareByDescending<LocalGalleryEntity> {
+                        maxOf(historyTimeByGid[it.id] ?: 0L, it.mtime)
+                    }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+                )
+            librarySortMode == LibrarySortMode.Date ->
+                filtered.sortedWith(
+                    compareByDescending<LocalGalleryEntity> { it.mtime }
+                        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+                )
+            libraryRecentOpen ->
+                filtered.sortedWith(
+                    compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
+                        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+                )
+            else ->
+                filtered.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
         }
     }
 
