@@ -16,8 +16,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
@@ -60,10 +58,15 @@ fun rememberEffectiveBrowseContentMode(
 }
 
 /**
- * Top-bar menu for folder browsers: content filter, list/grid layout, and
- * general display toggles (photo grid, page count, progress, folder thumbs, small galleries).
+ * View-mode control for folder browsers, Library, and History: content filter,
+ * list/grid layout, and display toggles (photo grid, page count, progress,
+ * folder thumbs, small galleries, hidden/virtual).
  *
- * [folder] is the current directory identity. Null (root picker) disables persist.
+ * - **Tap** the icon → open this menu.
+ * - **Long-press** the icon → toggle list ↔ grid ([Settings.listMode]).
+ *
+ * [folder] is the current directory identity. Null (root picker / Library / History)
+ * disables per-folder persist for content modes (global pref still applies).
  * [hideContentModes] hides Media/Galleries/Video/Folder for [BrowseVirtualKind] layers
  * (RPC share list, photo grid) — virtual listings, not regular folder-view mode.
  */
@@ -92,11 +95,21 @@ fun BrowseViewModeMenu(
     var showVirtualGalleries by Settings.browseShowVirtualGalleries.asMutableState()
     var favoritesOnTop by Settings.browseFavoritesOnTop.asMutableState()
     var photoGridMode by Settings.photoGridMode.asMutableState()
+    val haptic = LocalHapticFeedback.current
 
     Box(modifier) {
-        IconButton(
-            onClick = { expanded = true },
-            shapes = IconButtonDefaults.shapes(),
+        // IconButton has no onLongClick; match its 48dp target with combinedClickable.
+        Box(
+            modifier = Modifier
+                .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                .combinedClickable(
+                    onClick = { expanded = true },
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        Settings.listMode.value = if (listMode == 0) 1 else 0
+                    },
+                ),
+            contentAlignment = Alignment.Center,
         ) {
             val icon = if (useGrid) Icons.Default.GridView else Icons.AutoMirrored.Filled.ViewList
             Icon(

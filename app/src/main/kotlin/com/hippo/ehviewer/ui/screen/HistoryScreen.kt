@@ -19,9 +19,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ClearAll
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -695,19 +693,8 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
         searchFieldHint = hint,
         searchBarOffsetY = { searchBarOffsetY },
         leadingIcon = {
-            // Same pref as Library / Settings → General → List mode (0 = detail, 1 = thumb).
-            IconButton(
-                onClick = { Settings.listMode.value = if (listMode == 0) 1 else 0 },
-                shapes = IconButtonDefaults.shapes(),
-            ) {
-                val icon = if (listMode == 0) Icons.AutoMirrored.Default.ViewList else Icons.Default.GridView
-                val desc = if (listMode == 0) {
-                    stringResource(R.string.settings_eh_list_mode_thumb)
-                } else {
-                    stringResource(R.string.settings_eh_list_mode_detail)
-                }
-                Icon(imageVector = icon, contentDescription = desc)
-            }
+            // Same view-mode menu as folder browse (tap = menu, long-press = list↔grid).
+            BrowseViewModeMenu()
         },
         trailingIcon = {
             IconButton(
