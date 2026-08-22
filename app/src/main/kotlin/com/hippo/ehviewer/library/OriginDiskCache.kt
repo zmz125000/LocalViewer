@@ -26,7 +26,9 @@ import splitties.init.appCtx
  *
  * 1. **Origin pics** (reader pages + remote folder/archive files): one shared cap =
  *    [Settings.readCacheSize] (Advanced “image disk cache”). No per-store pool.
- *    Oldest files first. Never protects “complete” archive caches. **Never deletes
+ *    Oldest **page-file** mtime first (folder readers [SmbCache.isPageCachedOnDisk] /
+ *    [WebDavCache.isPageCachedOnDisk] and extract [touch]/includePages=true)] bump
+ *    on access). Never protects “complete” archive caches. **Never deletes
  *    `index.json`** under extract dirs.
  * 2. **Thumbs** (SMB/WebDAV/archive/video covers): long edge [THUMB_EDGE], fixed
  *    [THUMB_BUDGET_BYTES] — separate from origin budget and settings.
