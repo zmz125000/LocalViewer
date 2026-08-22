@@ -283,9 +283,23 @@ object WebDavCache {
     /** Prefer Ultra HDR sibling when present (disk probe — not for main). */
     fun resolveReaderPath(path: Path): Path = HdrConvertCache.resolvePagePath(path)
 
+    /**
+     * True if [path] or its Ultra HDR sibling is on disk.
+     * Cache hits bump mtime so [OriginDiskCache] LRU prefers colder pages.
+     */
     fun isPageCachedOnDisk(path: Path): Boolean {
         val uhdr = HdrConvertCache.uhdrSiblingOf(path)
-        return (uhdr.toString() != path.toString() && isCachedOnDisk(uhdr)) || isCachedOnDisk(path)
+        return when {
+            uhdr.toString() != path.toString() && isCachedOnDisk(uhdr) -> {
+                touch(uhdr)
+                true
+            }
+            isCachedOnDisk(path) -> {
+                touch(path)
+                true
+            }
+            else -> false
+        }
     }
 
     /**

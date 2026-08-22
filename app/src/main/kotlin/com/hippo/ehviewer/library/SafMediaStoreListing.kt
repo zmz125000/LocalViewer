@@ -31,29 +31,46 @@ object SafMediaStoreListing {
         }
     }
 
+    /** One MediaStore image row used when grouping folder galleries. */
+    data class ImageFile(
+        val parentRelativePath: String,
+        val name: String,
+        /** Epoch ms ([MediaStore.MediaColumns.DATE_MODIFIED] × 1000). */
+        val lastModifiedMs: Long = 0L,
+    )
+
+    /** Folder-gallery payload: natural-sorted names + latest image mtime for Date sort. */
+    data class ImageFolder(
+        val names: List<String>,
+        val latestImageMs: Long,
+    )
+
     /**
      * Map MediaStore image rows under [rootRelativeDir] to folder-gallery keys
      * relative to that root (`""` = images directly in the root).
      *
-     * [parentRelativePath] is the file's MediaStore folder (`Pictures/Comics/S`),
-     * not including the display name.
+     * [ImageFile.parentRelativePath] is the file's MediaStore folder
+     * (`Pictures/Comics/S`), not including the display name.
      */
     fun imageFoldersUnderRoot(
         rootRelativeDir: String,
-        files: List<Pair<String, String>>,
-    ): Map<String, List<String>> {
+        files: List<ImageFile>,
+    ): Map<String, ImageFolder> {
         val root = rootRelativeDir.replace('\\', '/').trim('/')
-        val grouped = LinkedHashMap<String, ArrayList<String>>()
-        for ((parentRel, name) in files) {
-            if (!isImageFileName(name)) continue
-            val parent = parentRel.replace('\\', '/').trim('/')
+        val namesByRel = LinkedHashMap<String, ArrayList<String>>()
+        val latestByRel = HashMap<String, Long>()
+        for (file in files) {
+            if (!isImageFileName(file.name)) continue
+            val parent = file.parentRelativePath.replace('\\', '/').trim('/')
             val rel = relativeUnderRoot(root, parent) ?: continue
-            grouped.getOrPut(rel) { ArrayList() }.add(name)
+            namesByRel.getOrPut(rel) { ArrayList() }.add(file.name)
+            val prev = latestByRel[rel] ?: 0L
+            if (file.lastModifiedMs > prev) latestByRel[rel] = file.lastModifiedMs
         }
-        grouped.values.forEach { names ->
+        return namesByRel.mapValues { (rel, names) ->
             names.sortWith { a, b -> naturalCompare(a, b) }
+            ImageFolder(names = names, latestImageMs = latestByRel[rel] ?: 0L)
         }
-        return grouped
     }
 
     /**

@@ -37,6 +37,7 @@ import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.peekIndicatesHiddenDir
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
+import com.hippo.ehviewer.library.preferCompleteFolderGalleries
 import com.hippo.ehviewer.library.withHiddenFlags
 import java.io.IOException
 import java.io.OutputStream
@@ -1528,13 +1529,7 @@ object SmbGateway {
                                 cached.entries,
                             )
                             // Successful slim marks this exact directory current (even if unchanged).
-                            BrowseSession.putSmbListing(
-                                source.id,
-                                relativeDir,
-                                refresh.entries,
-                                sessionCurrent = true,
-                            )
-                            if (refresh.entries != cached.entries ||
+                            val toKeep = if (refresh.entries != cached.entries ||
                                 refresh.removedDirectoryNames.isNotEmpty()
                             ) {
                                 NetworkFolderIndexCache.saveSmb(
@@ -1544,8 +1539,16 @@ object SmbGateway {
                                     refresh.entries,
                                     refresh.removedDirectoryNames,
                                 )
+                            } else {
+                                refresh.entries
                             }
-                            refresh.entries
+                            BrowseSession.putSmbListing(
+                                source.id,
+                                relativeDir,
+                                toKeep,
+                                sessionCurrent = true,
+                            )
+                            toKeep
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
                         } catch (e: Throwable) {
@@ -1573,15 +1576,26 @@ object SmbGateway {
         BrowseSession.getSmbListing(source.id, relativeDir)?.let { return it }
         ensureHostNotCoolingDown(endpointHost(source), source.port)
         return awaitListJob(cacheKey) {
+            val previous = BrowseSession.getSmbListing(source.id, relativeDir)
             val result = listDirectoryUncached(source, password, relativeDir)
+            val fromRam = if (previous != null) {
+                preferCompleteFolderGalleries(previous, result)
+            } else {
+                result
+            }
+            val stored = NetworkFolderIndexCache.saveSmb(
+                source.id,
+                configKey,
+                relativeDir,
+                fromRam,
+            )
             BrowseSession.putSmbListing(
                 source.id,
                 relativeDir,
-                result,
+                stored,
                 sessionCurrent = true,
             )
-            NetworkFolderIndexCache.saveSmb(source.id, configKey, relativeDir, result)
-            result
+            stored
         }
     }
 

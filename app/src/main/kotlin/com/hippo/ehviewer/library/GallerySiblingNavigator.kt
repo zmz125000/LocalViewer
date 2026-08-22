@@ -301,6 +301,9 @@ object GallerySiblingNavigator {
      * listing). Then [liveList] — same [SmbGateway.listDirectory] / [WebDavGateway.listDirectory]
      * path as before cache-only sibling lookup (`useCache = true` quick-scans when a session
      * exists, and live-lists the immediate parent when nothing is cached).
+     *
+     * Live listings are merged with [preferCompleteFolderGalleries] so a refresh cannot
+     * drop complete page-name lists the reader needs for sibling opens.
      */
     private suspend fun networkSiblingListing(
         remote: String,
@@ -313,7 +316,7 @@ object GallerySiblingNavigator {
                 null
             }
             if (live != null && FolderGalleryIndex.containsRemote(cached.first, live, remote)) {
-                return cached.first to live
+                return cached.first to preferCompleteFolderGalleries(cached.second, live)
             }
             return cached
         }

@@ -22,10 +22,8 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
-import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Refresh
@@ -175,7 +173,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         rawGalleries.hideDuplicateGalleriesPreferMediaStore()
     }
     val libraryRecentOpen by Settings.libraryRecentOpen.collectAsState()
-    // HISTORY.TIME by gallery gid — opened library rows rise to the top when privacy allows.
+    val librarySortModePref by Settings.librarySortMode.collectAsState()
+    val librarySortMode = LibrarySortMode.fromPref(librarySortModePref)
+    // HISTORY.TIME by gallery gid — Last open pin floats recently opened above Name/Date.
     val historyTimeByGid by rememberInVM {
         mutableStateOf(emptyMap<Long, Long>()).also { state ->
             viewModelScope.launch {
@@ -185,21 +185,41 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
     }
-    // Live in-list filter (no re-query / submit). Optional recency sort via Privacy.
-    val galleries = remember(allVisibleGalleries, keyword, historyTimeByGid, libraryRecentOpen) {
+    // Live in-list filter.
+    // Name + Last open: HISTORY pin then title (old recent-open toggle).
+    // Date + Last open: blend max(last-open time, scan mtime), then title.
+    val galleries = remember(
+        allVisibleGalleries,
+        keyword,
+        historyTimeByGid,
+        libraryRecentOpen,
+        librarySortMode,
+    ) {
         val q = keyword.trim()
         val filtered = if (q.isEmpty()) {
             allVisibleGalleries
         } else {
             allVisibleGalleries.filter { it.title.contains(q, ignoreCase = true) }
         }
-        if (!libraryRecentOpen) {
-            filtered
-        } else {
-            filtered.sortedWith(
-                compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
-                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
-            )
+        when {
+            librarySortMode == LibrarySortMode.Date && libraryRecentOpen ->
+                filtered.sortedWith(
+                    compareByDescending<LocalGalleryEntity> {
+                        maxOf(historyTimeByGid[it.id] ?: 0L, it.mtime)
+                    }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+                )
+            librarySortMode == LibrarySortMode.Date ->
+                filtered.sortedWith(
+                    compareByDescending<LocalGalleryEntity> { it.mtime }
+                        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+                )
+            libraryRecentOpen ->
+                filtered.sortedWith(
+                    compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
+                        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+                )
+            else ->
+                filtered.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
         }
     }
 
@@ -351,19 +371,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         searchFieldHint = hint,
         searchBarOffsetY = { searchBarOffsetY },
         leadingIcon = {
-            // Same pref as Settings → General → List mode (0 = detail, 1 = thumb).
-            IconButton(
-                onClick = { Settings.listMode.value = if (listMode == 0) 1 else 0 },
-                shapes = IconButtonDefaults.shapes(),
-            ) {
-                val icon = if (listMode == 0) Icons.AutoMirrored.Default.ViewList else Icons.Default.GridView
-                val desc = if (listMode == 0) {
-                    stringResource(R.string.settings_eh_list_mode_thumb)
-                } else {
-                    stringResource(R.string.settings_eh_list_mode_detail)
-                }
-                Icon(imageVector = icon, contentDescription = desc)
-            }
+            // Standalone library menu: sort / layout / display + startup scan.
+            LibraryViewModeMenu()
         },
         trailingIcon = {
             IconButton(

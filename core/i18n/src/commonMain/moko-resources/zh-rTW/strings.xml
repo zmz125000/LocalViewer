@@ -49,6 +49,10 @@
     <string name="settings_library_startup_scan_summary">啟動時清理無法存取的圖庫，並對媒體庫來源重新掃描。檔案/封存模式來源僅清理缺失項目（不做完整目錄走訪）。</string>
     <string name="library_gallery_folder">資料夾</string>
     <string name="library_gallery_archive">壓縮檔</string>
+    <string name="library_sort_name">名稱</string>
+    <string name="library_sort_date">日期</string>
+    <string name="library_sort_last_open">最近開啟</string>
+    <string name="library_view_mode">圖庫檢視</string>
     <string name="browse_directory">目錄</string>
     <string name="browse_folder_gallery_pages">%d 頁</string>
     <string name="browse_folder_gallery_pages_many">∞ 頁</string>

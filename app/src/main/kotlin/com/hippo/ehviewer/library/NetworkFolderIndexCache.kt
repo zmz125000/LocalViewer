@@ -14,15 +14,22 @@ import splitties.init.appCtx
 /**
  * Persistent mirror of process-scoped browse listings (SMB / WebDAV / local folder roots).
  *
- * Each configured source owns one JSON file containing every folder that has
- * completed the existing lazy scanner. A cache hit returns the scanner's final
- * [BrowseEntryRemote] values; it never runs or changes classification itself.
+ * **Single store for folder + gallery page indexes:** each source owns one JSON file;
+ * `folders[relativeDir]` holds the lazy scanner’s [BrowseEntryRemote] rows, including
+ * embedded [BrowseEntryRemote.FolderGallery.imageFileNames]. [FolderGalleryIndex] only
+ * *reads* these listings (and RAM) — it does not write a separate gallery cache.
  *
- * Disk loads are hydrated into [BrowseSession] as **non-current** (old for this process).
- * Only a successful full/slim list for that exact directory marks the RAM entry current;
- * quick scan then skips current dirs and re-runs for every old dir (including subfolders).
+ * A cache hit returns the scanner's final values; this layer never re-classifies.
+ * Saves for a key run through [preferCompleteFolderGalleries] against any prior value
+ * so a poorer re-list cannot wipe complete page names.
+ *
+ * Disk loads hydrate into [BrowseSession] as **non-current**. Only a successful full/slim
+ * list for that exact directory marks the RAM entry current; quick scan then skips
+ * current dirs and re-runs for every old dir (including subfolders).
  *
  * Local folder roots use protocol `local` with [LibraryRootEntity.id] as [sourceId].
+ * Not trimmed by [OriginDiskCache] (lives under [appCtx.cacheDir]; system cache GC may
+ * still clear it).
  */
 object NetworkFolderIndexCache {
     /** Bump when on-disk entry shape changes — old JSON is ignored (no migration). */
@@ -43,13 +50,14 @@ object NetworkFolderIndexCache {
         relativeDir: String,
     ): List<BrowseEntryRemote>? = load("smb", sourceId, configKey, relativeDir)
 
+    /** @return entries actually stored (may retain prior complete gallery page lists). */
     suspend fun saveSmb(
         sourceId: Long,
         configKey: String,
         relativeDir: String,
         entries: List<BrowseEntryRemote>,
         removedChildDirs: Set<String> = emptySet(),
-    ) = save("smb", sourceId, configKey, relativeDir, entries, removedChildDirs)
+    ): List<BrowseEntryRemote> = save("smb", sourceId, configKey, relativeDir, entries, removedChildDirs)
 
     suspend fun loadWebDav(
         sourceId: Long,
@@ -57,13 +65,14 @@ object NetworkFolderIndexCache {
         relativeDir: String,
     ): List<BrowseEntryRemote>? = load("webdav", sourceId, configKey, relativeDir)
 
+    /** @return entries actually stored (may retain prior complete gallery page lists). */
     suspend fun saveWebDav(
         sourceId: Long,
         configKey: String,
         relativeDir: String,
         entries: List<BrowseEntryRemote>,
         removedChildDirs: Set<String> = emptySet(),
-    ) = save("webdav", sourceId, configKey, relativeDir, entries, removedChildDirs)
+    ): List<BrowseEntryRemote> = save("webdav", sourceId, configKey, relativeDir, entries, removedChildDirs)
 
     suspend fun loadLocal(
         rootId: Long,
@@ -71,13 +80,14 @@ object NetworkFolderIndexCache {
         relativeDir: String,
     ): List<BrowseEntryRemote>? = load("local", rootId, configKey, relativeDir)
 
+    /** @return entries actually stored (may retain prior complete gallery page lists). */
     suspend fun saveLocal(
         rootId: Long,
         configKey: String,
         relativeDir: String,
         entries: List<BrowseEntryRemote>,
         removedChildDirs: Set<String> = emptySet(),
-    ) = save("local", rootId, configKey, relativeDir, entries, removedChildDirs)
+    ): List<BrowseEntryRemote> = save("local", rootId, configKey, relativeDir, entries, removedChildDirs)
 
     private suspend fun load(
         protocol: String,
@@ -109,8 +119,8 @@ object NetworkFolderIndexCache {
         relativeDir: String,
         entries: List<BrowseEntryRemote>,
         removedChildDirs: Set<String>,
-    ) = withContext(Dispatchers.IO) {
-        if (!Settings.networkFolderIndexCache.value) return@withContext
+    ): List<BrowseEntryRemote> = withContext(Dispatchers.IO) {
+        if (!Settings.networkFolderIndexCache.value) return@withContext entries
         lock.withLock {
             val file = fileFor(protocol, sourceId)
             val existing = readRoot(file)?.takeIf { matches(it, configKey) }
@@ -136,7 +146,16 @@ object NetworkFolderIndexCache {
                 }
                 staleKeys.forEach { folders.remove(it) }
             }
-            folders.put(normalizeDir(relativeDir), encodeEntries(entries))
+            val key = normalizeDir(relativeDir)
+            val previous = folders.optJSONArray(key)?.let { array ->
+                runCatching { decodeEntries(array) }.getOrNull()
+            }
+            val toStore = if (previous != null) {
+                preferCompleteFolderGalleries(previous, entries)
+            } else {
+                entries
+            }
+            folders.put(key, encodeEntries(toStore))
             cacheDir.mkdirs()
             val tmp = File(cacheDir, "${file.name}.tmp.${System.nanoTime()}")
             try {
@@ -150,6 +169,7 @@ object NetworkFolderIndexCache {
             } finally {
                 tmp.delete()
             }
+            toStore
         }
     }
 

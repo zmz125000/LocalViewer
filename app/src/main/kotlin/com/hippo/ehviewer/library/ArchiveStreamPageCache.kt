@@ -297,7 +297,9 @@ object ArchiveStreamPageCache {
 
     fun pin(cacheKey: String) {
         pinnedKeys.add(cacheKey)
-        touch(cacheKey)
+        // Pages are excluded from trim while pinned; bump page mtimes async so after
+        // unpin [OriginDiskCache] still prefers this gallery over colder ones.
+        touchAsync(cacheKey)
     }
 
     fun unpin(cacheKey: String) {
@@ -305,16 +307,37 @@ object ArchiveStreamPageCache {
         scheduleTrim()
     }
 
-    fun touch(cacheKey: String) {
+    /**
+     * Bump dir / index mtime. When [includePages], also bump every page file —
+     * [OriginDiskCache] sorts by page-file mtime, not the gallery dir.
+     */
+    fun touch(cacheKey: String, includePages: Boolean = false) {
         val now = System.currentTimeMillis()
         val dir = File(dirFor(cacheKey).toString())
-        if (dir.isDirectory) dir.setLastModified(now)
+        if (dir.isDirectory) {
+            dir.setLastModified(now)
+            if (includePages) touchPageFiles(dir, now)
+        }
         val idx = File(indexPath(cacheKey).toString())
         if (idx.isFile) idx.setLastModified(now)
     }
 
     fun touchAsync(cacheKey: String) {
-        trimScope.launch { touch(cacheKey) }
+        trimScope.launch { touch(cacheKey, includePages = true) }
+    }
+
+    private fun touchPageFiles(dir: File, now: Long) {
+        val files = dir.listFiles() ?: return
+        for (f in files) {
+            if (!f.isFile) continue
+            val name = f.name
+            if (name == "index.json" || name.startsWith("index.json.") ||
+                name.contains(".tmp.") || name.contains(".pub.")
+            ) {
+                continue
+            }
+            f.setLastModified(now)
+        }
     }
 
     fun extensionFor(cacheKey: String, index: Int): String? {

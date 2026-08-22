@@ -109,18 +109,15 @@ fun BrowseDirectoryRow(
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = { Text(stringResource(R.string.browse_directory)) },
+        // Same 56dp leading slot as [BrowseFolderGalleryRow] (icon placeholder when no thumb).
         leadingContent = {
-            if (showFolderThumb && cover != null) {
-                BrowseCoverThumb(
-                    cover = cover,
-                    decodeSizePx = CoverThumb.listDecodePx(),
-                    retryKey = thumbRetryKey,
-                    allowRemoteFetch = allowRemoteFetch,
-                    placeholderIcon = Icons.Default.Folder,
-                )
-            } else {
-                Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            }
+            BrowseCoverThumb(
+                cover = cover.takeIf { showFolderThumb },
+                decodeSizePx = CoverThumb.listDecodePx(),
+                retryKey = thumbRetryKey,
+                allowRemoteFetch = allowRemoteFetch,
+                placeholderIcon = Icons.Default.Folder,
+            )
         },
         modifier = modifier
             .fillMaxWidth()
@@ -215,10 +212,6 @@ fun BrowseArchiveGalleryRow(
         leadingContent = {
             BrowseCoverThumb(
                 cover = cover,
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(ShapeDefaults.Medium),
-                placeholderSize = 32.dp,
                 decodeSizePx = CoverThumb.listDecodePx(),
                 retryKey = thumbRetryKey,
                 allowRemoteFetch = allowRemoteFetch,
@@ -261,10 +254,11 @@ fun BrowseVideoRow(
         headlineContent = { Text(name) },
         supportingContent = { Text(stringResource(R.string.browse_video)) },
         leadingContent = {
+            // Same 56dp / 24dp icon metrics as [BrowseCoverThumb] list default.
             BrowseVideoThumbnail(
                 source = thumbnailSource,
                 modifier = Modifier.size(56.dp).clip(ShapeDefaults.Medium),
-                iconSize = 32.dp,
+                iconSize = 24.dp,
                 allowRemoteFetch = allowRemoteFetch,
             )
         },
@@ -308,23 +302,16 @@ fun BrowseFileRow(
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = { Text(stringResource(R.string.browse_file)) },
+        // Same 56dp leading slot as [BrowseFolderGalleryRow] (file icon when no photo thumb).
         leadingContent = {
-            if (usePhotoThumb) {
-                BrowseCoverThumb(
-                    cover = cover,
-                    decodeSizePx = CoverThumb.listDecodePx(),
-                    retryKey = thumbRetryKey,
-                    allowRemoteFetch = allowRemoteFetch,
-                    photoGridThumb = true,
-                    placeholderIcon = Icons.Default.PhotoLibrary,
-                )
-            } else {
-                Icon(
-                    Icons.AutoMirrored.Filled.InsertDriveFile,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            BrowseCoverThumb(
+                cover = cover.takeIf { usePhotoThumb },
+                decodeSizePx = CoverThumb.listDecodePx(),
+                retryKey = thumbRetryKey,
+                allowRemoteFetch = allowRemoteFetch,
+                photoGridThumb = usePhotoThumb,
+                placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
+            )
         },
         modifier = modifier
             .fillMaxWidth()
@@ -650,7 +637,8 @@ private fun BrowseVideoThumbnail(
             Icons.Default.Movie,
             contentDescription = null,
             modifier = Modifier.size(iconSize),
-            tint = MaterialTheme.colorScheme.primary,
+            // Match [BrowseCoverThumb] list placeholder tint.
+            tint = MaterialTheme.colorScheme.secondary,
         )
         thumbnail?.let {
             AsyncImage(
@@ -744,7 +732,9 @@ private fun BrowseGridCell(
 @Composable
 fun BrowseCoverThumb(
     cover: BrowseCover?,
-    modifier: Modifier = Modifier.size(56.dp),
+    modifier: Modifier = Modifier
+        .size(56.dp)
+        .clip(ShapeDefaults.Medium),
     placeholderSize: Dp = 24.dp,
     decodeSizePx: Int? = null,
     /**

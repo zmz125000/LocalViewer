@@ -338,6 +338,38 @@ fun hiddenDirectoriesNeedingDeepScan(
 }
 
 /**
+ * Keep complete folder-gallery page lists when a newer listing regresses them
+ * (empty / [BrowseEntryRemote.FolderGallery.pageCountCapped]). Identity is
+ * normalized [BrowseEntryRemote.FolderGallery.relativeName].
+ *
+ * Protects History sibling / full re-list / slim reclassify from wiping names that
+ * [FolderGalleryIndex] and the reader already relied on.
+ */
+fun preferCompleteFolderGalleries(
+    previous: List<BrowseEntryRemote>,
+    next: List<BrowseEntryRemote>,
+): List<BrowseEntryRemote> {
+    fun norm(path: String) = path.replace('\\', '/').trim('/')
+    val prevComplete = previous.asSequence()
+        .filterIsInstance<BrowseEntryRemote.FolderGallery>()
+        .filter { !it.pageCountCapped && it.imageFileNames.isNotEmpty() }
+        .associateBy { norm(it.relativeName) }
+    if (prevComplete.isEmpty()) return next
+    return next.map { entry ->
+        if (entry !is BrowseEntryRemote.FolderGallery) return@map entry
+        val old = prevComplete[norm(entry.relativeName)] ?: return@map entry
+        val newPoor = entry.pageCountCapped || entry.imageFileNames.isEmpty()
+        if (!newPoor) return@map entry
+        entry.copy(
+            pageCount = old.pageCount,
+            pageCountCapped = false,
+            coverFileName = entry.coverFileName ?: old.coverFileName,
+            imageFileNames = old.imageFileNames,
+        )
+    }
+}
+
+/**
  * Drop every cached row derived from a deleted direct folder, then add fully classified
  * rows for new folders. Existing folders and direct files keep their cached metadata.
  */
@@ -381,13 +413,15 @@ fun mergeRemoteDirectorySlimRefresh(
         }
         addAll(addedEntries)
     }
-    return buildList(merged.size) {
+    val sorted = buildList(merged.size) {
         addAll(merged.filterIsInstance<BrowseEntryRemote.Directory>().sortedWith { a, b -> naturalCompare(a.name, b.name) })
         addAll(merged.filterIsInstance<BrowseEntryRemote.FolderGallery>().sortedWith { a, b -> naturalCompare(a.name, b.name) })
         addAll(merged.filterIsInstance<BrowseEntryRemote.ArchiveGallery>().sortedWith { a, b -> naturalCompare(a.name, b.name) })
         addAll(merged.filterIsInstance<BrowseEntryRemote.VideoFile>().sortedWith { a, b -> naturalCompare(a.name, b.name) })
         addAll(merged.filterIsInstance<BrowseEntryRemote.RegularFile>().sortedWith { a, b -> naturalCompare(a.name, b.name) })
     }
+    // Reclassified dirs may return capped/empty galleries; keep prior complete page lists.
+    return preferCompleteFolderGalleries(cachedEntries, sorted)
 }
 
 /**

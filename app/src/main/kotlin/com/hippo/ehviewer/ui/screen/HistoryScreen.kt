@@ -695,7 +695,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
         searchFieldHint = hint,
         searchBarOffsetY = { searchBarOffsetY },
         leadingIcon = {
-            // Same pref as Library / Settings → General → List mode (0 = detail, 1 = thumb).
+            // Simple list ↔ grid toggle (Library has its own sort/view menu).
             IconButton(
                 onClick = { Settings.listMode.value = if (listMode == 0) 1 else 0 },
                 shapes = IconButtonDefaults.shapes(),

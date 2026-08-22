@@ -50,6 +50,14 @@
     <string name="settings_library_startup_scan_summary">起動時にアクセスできないギャラリーを整理し、MediaStore ソースは再スキャンします。ファイル／アーカイブモードのソースは欠落項目のみ削除します（フルツリー走査なし）。</string>
     <string name="library_gallery_folder">フォルダ</string>
     <string name="library_gallery_archive">アーカイブ</string>
+    <string name="library_sort_name">名前</string>
+    <string name="library_sort_date">日付</string>
+    <string name="library_sort_last_open">最近開いた順</string>
+    <string name="library_view_mode">ライブラリ表示</string>
+    <string name="library_sort_name">名前</string>
+    <string name="library_sort_date">日付</string>
+    <string name="library_sort_last_open">最近開いた順</string>
+    <string name="library_view_mode">ライブラリ表示</string>
     <string name="browse_directory">ディレクトリ</string>
     <string name="browse_folder_gallery_pages">%d ページ</string>
     <string name="browse_folder_gallery_pages_many">∞ ページ</string>
