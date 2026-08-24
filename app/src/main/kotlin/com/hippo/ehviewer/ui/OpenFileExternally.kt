@@ -38,6 +38,7 @@ import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
+import com.hippo.ehviewer.util.PrivacyLog
 import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
@@ -333,7 +334,8 @@ object OpenFileExternally {
         }
         val videoUri = ExternalHttpStreamServer.uriFor(session.id, displayName)
         logcat("OpenFileExternally") {
-            "HTTP local video $videoUri files=${session.files.size} accessDir=$accessDir reused=$reused"
+            "HTTP local video session=${session.id} file=${PrivacyLog.file(displayName)} " +
+                "files=${session.files.size} accessDir=$accessDir reused=$reused"
         }
         try {
             launchHttpView(context, videoUri, displayName, mimeType, session, accessDir)
@@ -397,12 +399,12 @@ object OpenFileExternally {
                 logcat("OpenFileExternally") {
                     "HTTP SMB session ${session.id} files=${session.files.size} " +
                         "accessDir=$accessDir reused=$wasReused skipLive=$skipLiveList " +
-                        "dirKey=$dirKey extras=${extras.size}"
+                        "dirKey=${PrivacyLog.dirKey(dirKey)} extras=${extras.size}"
                 }
             }
         }
         val videoUri = ExternalHttpStreamServer.uriFor(session.id, displayName)
-        SmbGateway.beginVideoPlay("http-open:$displayName")
+        SmbGateway.beginVideoPlay("http-open:${PrivacyLog.file(displayName)}")
         try {
             launchHttpView(context, videoUri, displayName, mimeType, session, accessDir)
         } catch (e: Throwable) {
@@ -463,7 +465,7 @@ object OpenFileExternally {
                 logcat("OpenFileExternally") {
                     "HTTP WebDAV session ${session.id} files=${session.files.size} " +
                         "accessDir=$accessDir reused=$wasReused skipLive=$skipLiveList " +
-                        "dirKey=$dirKey extras=${extras.size}"
+                        "dirKey=${PrivacyLog.dirKey(dirKey)} extras=${extras.size}"
                 }
             }
         }

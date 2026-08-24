@@ -38,6 +38,7 @@ import com.hippo.ehviewer.library.peekIndicatesHiddenDir
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.preferCompleteFolderGalleries
 import com.hippo.ehviewer.library.withHiddenFlags
+import com.hippo.ehviewer.util.PrivacyLog
 import java.io.IOException
 import java.io.OutputStream
 import java.io.RandomAccessFile
@@ -2087,7 +2088,9 @@ object SmbGateway {
             if (reused != null) {
                 try {
                     adoptVideoEpoch(reused.connection, videoPlayEpoch)
-                    logcat { "SmbGateway: sticky reuse ${reused.key} file=$path" }
+                    logcat {
+                        "SmbGateway: sticky reuse ${reused.key} file=${PrivacyLog.file(path)}"
+                    }
                     return openFileOnShare(reused.share, path, block)
                 } catch (e: Throwable) {
                     if (!isShareClosedError(e) && !isTransportError(e)) throw e
