@@ -11,6 +11,7 @@ import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.smb.SmbGateway
+import com.hippo.ehviewer.util.PrivacyLog
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -239,7 +240,7 @@ object ExternalHttpStreamServer {
             // New video file: evict other SMB videos *before* opening lanes so a stale
             // HTTP GET cannot occupy the video NIO group. Same-file Range hits return above.
             if (entry.evictOnSmbPoolPressure) {
-                SmbGateway.beginVideoPlay("http:$id/$key")
+                SmbGateway.beginVideoPlay("http:$id/${PrivacyLog.file(key)}")
             }
             // Make room under the global warm-file cap before opening a new window.
             trimWarmCacheTo(MAX_WARM_CACHE_FILES - 1, protectSessionId = id, protectKey = key)
@@ -289,7 +290,7 @@ object ExternalHttpStreamServer {
             bodyCache.remove(key)
             runCatching { cached.body.close() }
             logcat("ExtHttp") {
-                "evict ${if (active) "active" else "idle"} warm body ($reason) session=$id file=$key"
+                "evict ${if (active) "active" else "idle"} warm body ($reason) session=$id file=${PrivacyLog.file(key)}"
             }
             true
         }
@@ -352,7 +353,9 @@ object ExternalHttpStreamServer {
                     cancelBodyIdleJob(k)
                     bodyCache.remove(k)
                     runCatching { c.body.close() }
-                    logcat("ExtHttp") { "evict idle warm body (SMB pool pressure) session=$id file=$k" }
+                    logcat("ExtHttp") {
+                        "evict idle warm body (SMB pool pressure) session=$id file=${PrivacyLog.file(k)}"
+                    }
                 }
                 return doomed.size
             }
@@ -750,12 +753,15 @@ object ExternalHttpStreamServer {
         }
         if (result.second) {
             logcat("ExtHttp") {
-                "reuse dir session ${result.first.id} dirKey=$key files=${result.first.files.size}"
+                "reuse dir session ${result.first.id} dirKey=${PrivacyLog.dirKey(key)} " +
+                    "files=${result.first.files.size}"
             }
         } else {
             // Soft cap: drop oldest idle sessions (no live sockets) when over limit.
             pruneStale(protectedSessionId = result.first.id)
-            logcat("ExtHttp") { "new dir session ${result.first.id} dirKey=$key" }
+            logcat("ExtHttp") {
+                "new dir session ${result.first.id} dirKey=${PrivacyLog.dirKey(key)}"
+            }
         }
         schedulePrune()
         return result
@@ -1183,7 +1189,8 @@ object ExternalHttpStreamServer {
                         val idle = SystemClock.elapsedRealtime() - lastProgressMs.get()
                         if (idle >= BODY_STALL_MS) {
                             logcat("ExtHttp") {
-                                "body stall ${idle}ms session=${session.id} name=${entry.displayName} — " +
+                                "body stall ${idle}ms session=${session.id} " +
+                                    "name=${PrivacyLog.file(entry.displayName)} — " +
                                     "close socket (lane stays for 60s inactive)"
                             }
                             runCatching { socket.close() }
