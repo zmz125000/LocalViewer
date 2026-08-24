@@ -17,6 +17,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.SidecarSubtitles
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.library.isBrowseVideoFileName
@@ -307,12 +308,12 @@ object OpenFileExternally {
         val dirKey = httpSessionKey(localDirKey(pathStr), accessDir, displayName)
         val (session, reused) = withIOContext {
             withDirHttpSession(network = false, dirKey = dirKey) { session, _ ->
-                // Skip re-list when this folder session already has entries; unknown
-                // names 404 on GET instead of QUERY_DIRECTORY every open.
-                val skipDirList = accessDir && session.files.isNotEmpty()
+                // Skip live dir list only when session already has a folder playlist (≥2
+                // media). A single-file session must re-list or next/prev stays broken.
+                val skipLiveList = accessDir && sessionHasFolderPlaylist(session)
                 session.put(localFileEntry(pathStr, displayName, mimeType))
                 val extras = if (accessDir) {
-                    if (skipDirList) {
+                    if (skipLiveList) {
                         emptyList()
                     } else {
                         listLocalDirMediaNames(pathStr)
@@ -359,18 +360,23 @@ object OpenFileExternally {
             val parentDir = parentRelative(remoteRelativeFile)
             val dirKey = httpSessionKey(smbDirKey(sourceId, parentDir), accessDir, displayName)
             withDirHttpSession(network = true, dirKey = dirKey) { session, wasReused ->
-                // Skip SMB re-list when folder session already populated; missing names 404.
-                val skipDirList = accessDir && session.files.isNotEmpty()
+                // Skip live SMB list only when session already looks like a folder playlist.
+                // Always merge BrowseSession / folder-index names so a 1-file failed list
+                // cannot freeze next/prev after reuse (90056f / 6b204af regression).
+                val skipLiveList = accessDir && sessionHasFolderPlaylist(session)
                 session.put(
                     smbFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes = -1L),
                 )
                 val extras = if (accessDir) {
-                    if (skipDirList) {
+                    val cached = siblingMediaNamesFromCacheSmb(sourceId, source, parentDir)
+                        .filterNot { it.equals(displayName, ignoreCase = true) }
+                    val live = if (skipLiveList) {
                         emptyList()
                     } else {
                         listSmbDirMediaNames(sourceId, source, password, parentDir)
                             .filterNot { it.equals(displayName, ignoreCase = true) }
                     }
+                    (cached + live).distinct()
                 } else {
                     findSmbSidecarNames(sourceId, source, password, remoteRelativeFile, displayName)
                 }
@@ -390,7 +396,7 @@ object OpenFileExternally {
                 }
                 logcat("OpenFileExternally") {
                     "HTTP SMB session ${session.id} files=${session.files.size} " +
-                        "accessDir=$accessDir reused=$wasReused skipList=$skipDirList " +
+                        "accessDir=$accessDir reused=$wasReused skipLive=$skipLiveList " +
                         "dirKey=$dirKey extras=${extras.size}"
                 }
             }
@@ -423,18 +429,20 @@ object OpenFileExternally {
             val parentDir = parentRelative(remoteRelativeFile)
             val dirKey = httpSessionKey(webDavDirKey(sourceId, parentDir), accessDir, displayName)
             withDirHttpSession(network = true, dirKey = dirKey) { session, wasReused ->
-                // Skip re-list when folder session already populated; missing names 404.
-                val skipDirList = accessDir && session.files.isNotEmpty()
+                val skipLiveList = accessDir && sessionHasFolderPlaylist(session)
                 session.put(
                     webDavFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes),
                 )
                 val extras = if (accessDir) {
-                    if (skipDirList) {
+                    val cached = siblingMediaNamesFromCacheWebDav(sourceId, source, parentDir)
+                        .filterNot { it.equals(displayName, ignoreCase = true) }
+                    val live = if (skipLiveList) {
                         emptyList()
                     } else {
                         listWebDavDirMediaNames(sourceId, source, password, parentDir)
                             .filterNot { it.equals(displayName, ignoreCase = true) }
                     }
+                    (cached + live).distinct()
                 } else {
                     findWebDavSidecarNames(sourceId, source, password, remoteRelativeFile, displayName)
                 }
@@ -454,7 +462,7 @@ object OpenFileExternally {
                 }
                 logcat("OpenFileExternally") {
                     "HTTP WebDAV session ${session.id} files=${session.files.size} " +
-                        "accessDir=$accessDir reused=$wasReused skipList=$skipDirList " +
+                        "accessDir=$accessDir reused=$wasReused skipLive=$skipLiveList " +
                         "dirKey=$dirKey extras=${extras.size}"
                 }
             }
@@ -645,8 +653,9 @@ object OpenFileExternally {
     }
 
     /**
-     * Full media basenames for HTTP access-dir. Uses a raw share.list (not classified
-     * BrowseSession) so 300-video folders are not truncated to a partial UI cache.
+     * Full media basenames for HTTP access-dir.
+     * Prefer BrowseSession / folder-index cache first (works when browse pool was closed
+     * by app background / video sticky). Union with a best-effort live share.list.
      */
     private suspend fun listSmbDirMediaNames(
         sourceId: Long,
@@ -654,12 +663,17 @@ object OpenFileExternally {
         password: String,
         parentDir: String,
     ): List<String> {
-        val names = runCatching {
+        val cached = siblingMediaNamesFromCacheSmb(sourceId, source, parentDir)
+        val live = runCatching {
             SmbGateway.listChildFileNames(source, password, parentDir)
         }.onFailure {
             logcat("OpenFileExternally", it)
-        }.getOrElse {
-            listSmbDirChildNames(sourceId, source, password, parentDir)
+        }.getOrDefault(emptyList())
+        val names = when {
+            live.isNotEmpty() && cached.isNotEmpty() -> (cached + live)
+            live.isNotEmpty() -> live
+            cached.isNotEmpty() -> cached
+            else -> listSmbDirChildNames(sourceId, source, password, parentDir)
         }
         return names
             .filter { ExternalHttpStreamServer.isSafeFileName(it) && isHttpExposedMediaName(it) }
@@ -674,13 +688,15 @@ object OpenFileExternally {
         password: String,
         parentDir: String,
     ): List<String> {
-        // Prefer raw names; classified cache can omit files or only hold a partial set.
+        val cached = siblingNamesFromListing(
+            BrowseSession.getSmbListing(sourceId, parentDir)
+                ?: NetworkFolderIndexCache.loadSmb(sourceId, SmbGateway.sourceConfigKey(source), parentDir),
+        )
+        if (cached.isNotEmpty()) return cached
         val live = runCatching {
             SmbGateway.listChildFileNames(source, password, parentDir)
         }.getOrDefault(emptyList())
         if (live.isNotEmpty()) return live
-        val cached = siblingNamesFromCache(sourceId, parentDir, smb = true)
-        if (cached.isNotEmpty()) return cached
         return runCatching {
             SmbGateway.listDirectory(source, password, parentDir, useCache = true)
                 .mapNotNull { e ->
@@ -711,12 +727,15 @@ object OpenFileExternally {
         password: String,
         parentDir: String,
     ): List<String> {
+        val cached = siblingNamesFromListing(
+            BrowseSession.getWebDavListing(sourceId, parentDir)
+                ?: NetworkFolderIndexCache.loadWebDav(sourceId, WebDavGateway.sourceConfigKey(source), parentDir),
+        )
+        if (cached.isNotEmpty()) return cached
         val live = runCatching {
             WebDavGateway.listChildFileNames(source, password, parentDir)
         }.getOrDefault(emptyList())
         if (live.isNotEmpty()) return live
-        val cached = siblingNamesFromCache(sourceId, parentDir, smb = false)
-        if (cached.isNotEmpty()) return cached
         return runCatching {
             WebDavGateway.listDirectory(source, password, parentDir)
                 .mapNotNull { e ->
@@ -735,12 +754,17 @@ object OpenFileExternally {
         password: String,
         parentDir: String,
     ): List<String> {
-        val names = runCatching {
+        val cached = siblingMediaNamesFromCacheWebDav(sourceId, source, parentDir)
+        val live = runCatching {
             WebDavGateway.listChildFileNames(source, password, parentDir)
         }.onFailure {
             logcat("OpenFileExternally", it)
-        }.getOrElse {
-            listWebDavDirChildNames(sourceId, source, password, parentDir)
+        }.getOrDefault(emptyList())
+        val names = when {
+            live.isNotEmpty() && cached.isNotEmpty() -> (cached + live)
+            live.isNotEmpty() -> live
+            cached.isNotEmpty() -> cached
+            else -> listWebDavDirChildNames(sourceId, source, password, parentDir)
         }
         return names
             .filter { ExternalHttpStreamServer.isSafeFileName(it) && isHttpExposedMediaName(it) }
@@ -1027,12 +1051,37 @@ object OpenFileExternally {
         }.getOrNull()
     }
 
-    private fun siblingNamesFromCache(sourceId: Long, parentDir: String, smb: Boolean): List<String> {
-        val listing = if (smb) {
-            BrowseSession.getSmbListing(sourceId, parentDir)
-        } else {
-            BrowseSession.getWebDavListing(sourceId, parentDir)
-        } ?: return emptyList()
+    /** True when the HTTP session already has a usable folder playlist (not a lone current file). */
+    private fun sessionHasFolderPlaylist(session: ExternalHttpStreamServer.Session): Boolean {
+        var media = 0
+        for (entry in session.files.values) {
+            if (!isHttpExposedMediaName(entry.displayName)) continue
+            media++
+            if (media >= 2) return true
+        }
+        return false
+    }
+
+    private suspend fun siblingMediaNamesFromCacheSmb(
+        sourceId: Long,
+        source: SmbSourceEntity,
+        parentDir: String,
+    ): List<String> = siblingNamesFromListing(
+        BrowseSession.getSmbListing(sourceId, parentDir)
+            ?: NetworkFolderIndexCache.loadSmb(sourceId, SmbGateway.sourceConfigKey(source), parentDir),
+    ).filter { isHttpExposedMediaName(it) }
+
+    private suspend fun siblingMediaNamesFromCacheWebDav(
+        sourceId: Long,
+        source: WebDavSourceEntity,
+        parentDir: String,
+    ): List<String> = siblingNamesFromListing(
+        BrowseSession.getWebDavListing(sourceId, parentDir)
+            ?: NetworkFolderIndexCache.loadWebDav(sourceId, WebDavGateway.sourceConfigKey(source), parentDir),
+    ).filter { isHttpExposedMediaName(it) }
+
+    private fun siblingNamesFromListing(listing: List<BrowseEntryRemote>?): List<String> {
+        if (listing.isNullOrEmpty()) return emptyList()
         return listing.mapNotNull { entry ->
             when (entry) {
                 is BrowseEntryRemote.RegularFile -> directChildName(entry.fileName)

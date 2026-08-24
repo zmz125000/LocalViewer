@@ -771,6 +771,9 @@ object SmbGateway {
             if ((dropped > 0 || released > 0) && size.get() == 0) {
                 setHostConnected(hostPortKey, false)
                 stopKeepAlive()
+                // Drop empty pool so the next list/reader op gets a clean HostPool
+                // (lazy recreate after idle release / NAT drop while cache-browsing).
+                hostPools.remove(hostPortKey, this)
             }
             if (dropped > 0 || released > 0 || kept > 0) {
                 logcat {
@@ -1074,7 +1077,14 @@ object SmbGateway {
             }
         }
 
-        fun closeAll() {
+        fun isClosed(): Boolean = closed.get()
+
+        /**
+         * Reject new borrows and detach sessions **synchronously**. Socket teardown is
+         * [closeSockets] (often async) so [dropAllSessionsAsync] never leaves a live
+         * map-removed pool that still accepts ops until close runs.
+         */
+        fun markClosed(): List<PooledSession> {
             closed.set(true)
             setHostConnected(hostPortKey, false)
             stopKeepAlive()
@@ -1084,12 +1094,19 @@ object SmbGateway {
                 copy
             }
             size.set(0)
+            snapshot.forEach { it.retired.set(true) }
             signalFree()
-            // Prefer caller's IO context; if still invoked from UI, each close is guarded.
-            snapshot.forEach { ps ->
-                ps.retired.set(true)
+            return snapshot
+        }
+
+        fun closeSockets(sessions: List<PooledSession>) {
+            sessions.forEach { ps ->
                 runCatching { ps.closeQuietly() }
             }
+        }
+
+        fun closeAll() {
+            closeSockets(markClosed())
         }
 
         /**
@@ -1326,7 +1343,8 @@ object SmbGateway {
                 setHostConnected(key, false)
                 val pool = hostPools.remove(key)
                 if (pool != null) {
-                    gatewayScope.launch { runCatching { pool.closeAll() } }
+                    val sessions = pool.markClosed()
+                    gatewayScope.launch { runCatching { pool.closeSockets(sessions) } }
                 }
             }
             // If other sources remain on this host, leave the host pool (shared sessions).
@@ -1344,10 +1362,15 @@ object SmbGateway {
         sourceIdToHostKey.values.toSet().forEach { setHostConnected(it, false) }
         sourceIdToHostKey.clear()
         hostKeyToSourceIds.clear()
-        val pools = hostPools.keys.toList().mapNotNull { k -> hostPools.remove(k) }
-        if (pools.isNotEmpty()) {
+        val doomed = hostPools.keys.toList().mapNotNull { k ->
+            val pool = hostPools.remove(k) ?: return@mapNotNull null
+            pool to pool.markClosed()
+        }
+        if (doomed.isNotEmpty()) {
             gatewayScope.launch {
-                pools.forEach { runCatching { it.closeAll() } }
+                doomed.forEach { (pool, sessions) ->
+                    runCatching { pool.closeSockets(sessions) }
+                }
             }
         }
     }
@@ -1363,8 +1386,9 @@ object SmbGateway {
             }
         }
         if (pool != null) {
+            val sessions = pool.markClosed()
             gatewayScope.launch {
-                runCatching { pool.closeAll() }
+                runCatching { pool.closeSockets(sessions) }
             }
         }
     }
@@ -1400,6 +1424,10 @@ object SmbGateway {
     /**
      * Detach pools / cancel lists **synchronously** so new ops open fresh sessions, then
      * close TCP sockets on [gatewayScope] (never block the caller).
+     *
+     * [HostPool.markClosed] runs before map removal completes so in-flight holders fail
+     * fast with "pool closed" and [withShare] retries on a new pool — not on a half-detached
+     * instance that still accepted borrows until async [closeAll].
      */
     private fun dropAllSessionsAsync(cancelLists: Boolean, clearCircuits: Boolean) {
         if (cancelLists) {
@@ -1407,14 +1435,18 @@ object SmbGateway {
         }
         val poolKeys = hostPools.keys.toList()
         poolKeys.forEach { setHostConnected(it, false) }
-        val pools = poolKeys.mapNotNull { k -> hostPools.remove(k) }
+        val doomed = ArrayList<Pair<HostPool, List<PooledSession>>>(poolKeys.size)
+        poolKeys.forEach { k ->
+            val pool = hostPools.remove(k) ?: return@forEach
+            doomed += pool to pool.markClosed()
+        }
         hostKeyToSourceIds.clear()
         sourceIdToHostKey.clear()
         if (clearCircuits) hostCircuits.clear()
-        if (pools.isEmpty()) return
+        if (doomed.isEmpty()) return
         gatewayScope.launch {
-            pools.forEach { pool ->
-                runCatching { pool.closeAll() }
+            doomed.forEach { (pool, sessions) ->
+                runCatching { pool.closeSockets(sessions) }
             }
         }
     }
@@ -2379,9 +2411,26 @@ object SmbGateway {
             if (first is IOException && first.message?.contains("busy:") == true) throw first
             logcat(first)
 
+            // App background / video ON_STOP closed this pool under us — never circuit;
+            // lazy-recreate on a fresh HostPool.
+            if (isPoolClosedFailure(first)) {
+                logcat { "SmbGateway: pool closed mid-op — retry on fresh pool ($host:$share)" }
+                trackSource(source)
+                val result = hostPoolFor(host, source.port).borrowForShare(
+                    credKey = ck,
+                    shareName = share,
+                    kind = kind,
+                    openSession = open,
+                    block = block,
+                )
+                clearHostCircuit(host, source.port)
+                setHostConnected(hostKey(host, source.port), true)
+                return@withContext result
+            }
+
             if (isHostCapacityError(first)) {
                 logcat { "SmbGateway: capacity reject — retry borrow without wiping host pool" }
-                return@withContext pool.borrowForShare(
+                return@withContext hostPoolFor(host, source.port).borrowForShare(
                     credKey = ck,
                     shareName = share,
                     kind = kind,
@@ -2414,6 +2463,17 @@ object SmbGateway {
                 if (second is kotlinx.coroutines.CancellationException) throw second
                 ensureActive()
                 logcat(second)
+                if (isPoolClosedFailure(second)) {
+                    // Second closed-pool race: one more fresh attempt, still no circuit.
+                    trackSource(source)
+                    return@withContext hostPoolFor(host, source.port).borrowForShare(
+                        credKey = ck,
+                        shareName = share,
+                        kind = kind,
+                        openSession = open,
+                        block = block,
+                    )
+                }
                 if (isHostCapacityError(second)) throw second
                 if (isNetworkUnreachable(second)) {
                     disconnectHost(host, source.port)
@@ -2424,11 +2484,18 @@ object SmbGateway {
         }
     }
 
+    private fun isPoolClosedFailure(error: Throwable): Boolean {
+        val msg = error.message ?: return false
+        return error is IllegalStateException && msg.contains("pool closed")
+    }
+
     private suspend fun hostPoolFor(host: String, port: Int): HostPool {
         val key = hostKey(host, port)
-        hostPools[key]?.let { return it }
+        hostPools[key]?.takeUnless { it.isClosed() }?.let { return it }
         return poolCreateLock.withLock {
-            hostPools.getOrPut(key) { HostPool(key) }
+            hostPools[key]?.takeUnless { it.isClosed() }?.let { return@withLock it }
+            hostPools.remove(key)
+            HostPool(key).also { hostPools[key] = it }
         }
     }
 
