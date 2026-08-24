@@ -33,12 +33,12 @@ import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.player.InternalVideoPlaylistRegistry
 import com.hippo.ehviewer.ui.player.InternalVideoSource
 import com.hippo.ehviewer.ui.player.PreparedInternalVideo
+import com.hippo.ehviewer.util.PrivacyLog
 import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
 import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
-import com.hippo.ehviewer.util.PrivacyLog
 import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope

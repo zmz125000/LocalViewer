@@ -22,8 +22,7 @@ object PrivacyLog {
     }
 
     /** Path or remote relative path → `#` + short hash (optional kept prefix). */
-    fun path(path: String, prefix: String = ""): String =
-        if (prefix.isEmpty()) "#${sha8(path)}" else "$prefix#${sha8(path)}"
+    fun path(path: String, prefix: String = ""): String = if (prefix.isEmpty()) "#${sha8(path)}" else "$prefix#${sha8(path)}"
 
     /**
      * Mask [ExternalHttpStreamServer] / [OpenFileExternally] dir keys while keeping
