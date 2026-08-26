@@ -7,7 +7,12 @@ import java.util.LinkedHashMap
  * Player-style sparse [MediaDataSource] over [ArchiveByteSource]: MMR seeks only pull
  * the pages they need into an in-RAM LRU (no contiguous “download 30s of video”).
  *
- * Lifetime is one thumb attempt; [close] drops pages and does **not** close [source]
+ * **Not used for browse thumbs while app background closes SMB pools** — live
+ * [MediaDataSource] under [android.media.MediaMetadataRetriever] + pool teardown
+ * stuck `media.extractor` at 100% CPU. Kept for tests / a future foreground-only
+ * deep path. Thumbs use offline head+tail snapshots instead.
+ *
+ * Lifetime is one attempt; [close] drops pages and does **not** close [source]
  * (caller owns the remote handle).
  */
 class CachingRangeMediaDataSource(

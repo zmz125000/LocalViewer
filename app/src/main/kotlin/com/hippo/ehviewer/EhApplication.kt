@@ -69,6 +69,7 @@ import com.hippo.ehviewer.ktor.configureClient
 import com.hippo.ehviewer.ktor.configureCommon
 import com.hippo.ehviewer.ktor.isCronetAvailable
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
@@ -118,9 +119,18 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         // SMB + WebDAV: drop half-open sockets when app is backgrounded (power / switch apps).
         lifecycle.addObserver(
             LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_STOP) {
-                    SmbGateway.onAppBackgrounded()
-                    WebDavClient.onAppBackgrounded()
+                when (event) {
+                    Lifecycle.Event.ON_STOP -> {
+                        // Pause network thumbs before pool teardown so MMR is never left
+                        // reading a live SMB/WebDAV handle (sticks media.extractor at 100%).
+                        VideoThumbnail.onAppBackgrounded()
+                        SmbGateway.onAppBackgrounded()
+                        WebDavClient.onAppBackgrounded()
+                    }
+                    Lifecycle.Event.ON_START -> {
+                        VideoThumbnail.onAppForegrounded()
+                    }
+                    else -> Unit
                 }
             },
         )

@@ -70,21 +70,18 @@ sealed interface VideoThumbnailSource {
  * Lazy video frame extraction for visible browse rows.
  *
  * **Pipeline:**
- * - **Local / non-TS network:** MMR over full file or [CachingRangeMediaDataSource]
- *   (on-demand `readAt` pages in RAM) with keyframe seeks **2s → 30s** (not a
- *   contiguous 30s download).
- * - **MPEG-TS:** contiguous head probe, then early keyframe seeks only.
- * - Probe/ranged I/O and decode stay under abandon-safe timeouts; waiter never
- *   [MediaMetadataRetriever.release]s (that left `media.extractor` at 100% CPU).
+ * - **Network:** fetch head+tail (or TS contiguous head) under I/O timeout, **close the
+ *   remote**, then MMR decode from the in-RAM / temp snapshot. Never leave
+ *   [MediaMetadataRetriever] reading a live SMB/WebDAV handle — app [ON_STOP] closes
+ *   browse pools and that used to stick `media.extractor` at 100% CPU.
+ * - **Local:** full-file MMR with keyframe seeks **2s → 30s**.
+ * - Seeks use only [MediaMetadataRetriever.OPTION_CLOSEST_SYNC].
  *
  * **Timeout / leave-folder safety:**
- * - [MediaMetadataRetriever] runs on [decodePool]. Waiter uses [withTimeout] only —
- *   **never** [MediaMetadataRetriever.release] from the waiter (that left
- *   `media.extractor` at 100% CPU until reboot). Worker releases after native returns.
- * - Probe I/O runs on [probePool] (not unbounded `Thread()`). Timeout **and**
- *   composition cancel both count as abandon so permits are not recycled under still-
- *   running workers (that stacked ~N stuck threads after scrolling ~30 cells).
- * - Abandoned probe/decode caps reject new work until workers finish.
+ * - MMR runs on [decodePool]. Waiter uses [withTimeout] only — **never**
+ *   [MediaMetadataRetriever.release] from the waiter. Worker releases after native returns.
+ * - Probe I/O on [probePool]; timeout/cancel closes [ArchiveByteSource] (safe: not under MMR).
+ * - [onAppBackgrounded] rejects new network thumbs so ON_STOP pool teardown cannot race decode.
  *
  * Disk: `cache/video_thumb_cache/` under [OriginDiskCache.THUMB_BUDGET_BYTES].
  */
@@ -99,11 +96,18 @@ object VideoThumbnail {
     /** Parallel remote head/tail probes (pipeline with decode). */
     private const val MAX_CONCURRENT_PROBES = 3
 
-    /** Extra abandoned native jobs allowed beyond the active decode slots. */
+    /**
+     * Extra stuck workers allowed beyond live waiters. Total in-flight probe/decode
+     * threads are capped at concurrent + abandoned so timeout cannot open a stampede
+     * (old [abandonedProbes] raced the semaphore and climbed to 5+ forever).
+     */
     private const val MAX_ABANDONED_WORKERS = 3
 
-    /** Extra abandoned probe jobs allowed beyond active probe slots. */
     private const val MAX_ABANDONED_PROBES = 3
+
+    private const val MAX_PROBE_IN_FLIGHT = MAX_CONCURRENT_PROBES + MAX_ABANDONED_PROBES
+
+    private const val MAX_DECODE_IN_FLIGHT = MAX_CONCURRENT_EXTRACTIONS + MAX_ABANDONED_WORKERS
 
     /** Fetch probe then close remote. Slightly higher for 8 MiB TS heads. */
     private const val PROBE_IO_TIMEOUT_MS = 4_000L
@@ -111,14 +115,11 @@ object VideoThumbnail {
     /** Native setDataSource + multi-seek keyframe grabs. Waiter abandons; no cross-thread release. */
     private const val DECODE_TIMEOUT_MS = 2_500L
 
-    /**
-     * Open remote + ranged MMR (prefetch + 2s/30s seeks). Longer than [DECODE_TIMEOUT_MS]
-     * because I/O and decode share one waiter.
-     */
-    private const val RANGED_NETWORK_TIMEOUT_MS = 6_000L
-
     /** Leave room for release after last seek inside the decode budget. */
     private const val SEEK_BUDGET_MS = 2_000L
+
+    /** When true, skip new network extract (app background / pool teardown). */
+    private val networkPaused = AtomicBoolean(false)
 
     private const val PROBE_HEAD_BYTES = 2 * 1024 * 1024
     private const val PROBE_TAIL_BYTES = 2 * 1024 * 1024
@@ -137,8 +138,10 @@ object VideoThumbnail {
     private val probeSemaphore = Semaphore(MAX_CONCURRENT_PROBES)
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
     private val leftoverMarkersCleared = AtomicBoolean(false)
-    private val abandonedWorkers = AtomicInteger(0)
-    private val abandonedProbes = AtomicInteger(0)
+    /** Probe pool tasks not yet finished (includes waiter-abandoned stuck I/O). */
+    private val probeInFlight = AtomicInteger(0)
+    /** Decode pool tasks not yet finished (includes waiter-abandoned stuck MMR). */
+    private val decodeInFlight = AtomicInteger(0)
 
     /**
      * Fixed pool: at most [MAX_CONCURRENT_EXTRACTIONS] + [MAX_ABANDONED_WORKERS] native
@@ -169,6 +172,23 @@ object VideoThumbnail {
     )
 
     fun cacheDirectory(): File = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache").apply { mkdirs() }
+
+    /**
+     * App [Lifecycle.Event.ON_STOP]: reject new network thumbs. In-flight probes still
+     * close their [ArchiveByteSource]; in-flight MMR only touches closed snapshots so
+     * browse-pool teardown cannot wedge `media.extractor`.
+     */
+    fun onAppBackgrounded() {
+        networkPaused.set(true)
+        logcat("VideoThumb") {
+            "app background — pause new network thumbs " +
+                "(probeInFlight=${probeInFlight.get()} decodeInFlight=${decodeInFlight.get()})"
+        }
+    }
+
+    fun onAppForegrounded() {
+        networkPaused.set(false)
+    }
 
     /**
      * Deletes per-file skip notes (`*.failed`) under the video-thumb data dir.
@@ -211,14 +231,21 @@ object VideoThumbnail {
             if (source.isNetwork && !Settings.downloadNetworkVideoThumbs.value) {
                 return@withLock null
             }
-            if (abandonedWorkers.get() >= MAX_ABANDONED_WORKERS) {
-                logcat("VideoThumb") { "skip decode: too many abandoned extractors" }
-                writeFailureMarker(failure)
+            if (decodeInFlight.get() >= MAX_DECODE_IN_FLIGHT) {
+                // Transient backpressure — do not write a 24h failure marker.
+                logcat("VideoThumb") {
+                    "skip decode: inFlight=${decodeInFlight.get()}/$MAX_DECODE_IN_FLIGHT"
+                }
                 return@withLock null
             }
-            if (source.isNetwork && abandonedProbes.get() >= MAX_ABANDONED_PROBES) {
-                logcat("VideoThumb") { "skip probe: too many abandoned probe workers" }
-                writeFailureMarker(failure)
+            if (source.isNetwork && networkPaused.get()) {
+                logcat("VideoThumb") { "skip network thumb: app background" }
+                return@withLock null
+            }
+            if (source.isNetwork && probeInFlight.get() >= MAX_PROBE_IN_FLIGHT) {
+                logcat("VideoThumb") {
+                    "skip probe: inFlight=${probeInFlight.get()}/$MAX_PROBE_IN_FLIGHT"
+                }
                 return@withLock null
             }
             val frame = try {
@@ -274,14 +301,16 @@ object VideoThumbnail {
     private fun isCachedJpeg(target: File): Boolean = target.isFile && target.length() > 0L
 
     /**
-     * Local: decode only. Network TS: probe head then decode. Network other: ranged
-     * RAM [CachingRangeMediaDataSource] while the remote stays open (player-like seeks).
+     * Local: decode only. Network: probe under [probeSemaphore] (closes remote), then
+     * decode the snapshot under [extractSemaphore] — never MMR over a live pool handle.
      */
     private suspend fun extractThumbnailFrame(source: VideoThumbnailSource): Bitmap? = when (source) {
         is VideoThumbnailSource.Local -> extractSemaphore.withPermit { extractLocalFrame(source) }
         is VideoThumbnailSource.Smb -> {
+            if (networkPaused.get()) return null
             val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
-            probeSemaphore.withPermit {
+            val snapshot = probeSemaphore.withPermit {
+                if (networkPaused.get()) return@withPermit null
                 SmbCache.withBrowseThumbFetchSlot {
                     val raw = SmbArchiveByteSource(
                         source = smb,
@@ -291,13 +320,16 @@ object VideoThumbnail {
                         readahead = false,
                         yieldable = true,
                     )
-                    extractNetworkFrame(raw, source)
+                    fetchProbeSnapshot(raw, source)
                 }
-            }
+            } ?: return null
+            extractSemaphore.withPermit { decodeSnapshot(snapshot, source) }
         }
         is VideoThumbnailSource.WebDav -> {
+            if (networkPaused.get()) return null
             val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
-            probeSemaphore.withPermit {
+            val snapshot = probeSemaphore.withPermit {
+                if (networkPaused.get()) return@withPermit null
                 WebDavCache.withBrowseThumbFetchSlot {
                     val raw = WebDavArchiveByteSource(
                         source = webDav,
@@ -306,30 +338,10 @@ object VideoThumbnail {
                         pipeline = false,
                         readahead = false,
                     )
-                    extractNetworkFrame(raw, source)
+                    fetchProbeSnapshot(raw, source)
                 }
-            }
-        }
-    }
-
-    /**
-     * Sniff TS → contiguous head path; else ranged open-during-decode.
-     * Always closes [raw] (success, fail, timeout, cancel).
-     */
-    private suspend fun extractNetworkFrame(
-        raw: ArchiveByteSource,
-        source: VideoThumbnailSource,
-    ): Bitmap? {
-        val fileName = source.fileName
-        val sniffLen = minOf(188 * 8, PROBE_HEAD_BYTES, raw.size.coerceAtLeast(0L).toInt())
-        val sniff = if (sniffLen > 0) readPrefix(raw, 0L, sniffLen) else ByteArray(0)
-        val ts = isMpegTsVideoName(fileName) || (sniff.isNotEmpty() && looksLikeMpegTs(sniff))
-        return if (ts) {
-            // fetchProbeSnapshot closes [raw] on the probe worker (timeout/cancel safe).
-            val snapshot = fetchProbeSnapshot(raw, source) ?: return null
+            } ?: return null
             extractSemaphore.withPermit { decodeSnapshot(snapshot, source) }
-        } else {
-            extractSemaphore.withPermit { decodeRangedNetwork(raw, source) }
         }
     }
 
@@ -343,31 +355,30 @@ object VideoThumbnail {
         raw: ArchiveByteSource,
         source: VideoThumbnailSource,
     ): ProbeSnapshot? {
-        if (abandonedProbes.get() >= MAX_ABANDONED_PROBES) {
+        if (!tryBeginProbeWorker()) {
             logcat("VideoThumb") {
-                "reject probe (${privacyLogLabel(source)}): abandonedProbes=${abandonedProbes.get()}"
+                "reject probe (${privacyLogLabel(source)}): " +
+                    "inFlight=${probeInFlight.get()}/$MAX_PROBE_IN_FLIGHT"
             }
             runCatching { raw.close() }
             return null
         }
         val fileName = source.fileName
         val done = CompletableDeferred<ProbeSnapshot?>()
-        val timedOut = AtomicBoolean(false)
         val task = Runnable {
             try {
-                done.complete(buildContiguousTsSnapshot(raw, fileName))
+                done.complete(buildProbeSnapshot(raw, fileName))
             } catch (_: Throwable) {
                 done.complete(null)
             } finally {
                 runCatching { raw.close() }
-                if (timedOut.get()) {
-                    abandonedProbes.updateAndGet { (it - 1).coerceAtLeast(0) }
-                }
+                probeInFlight.updateAndGet { (it - 1).coerceAtLeast(0) }
             }
         }
         try {
             probePool.execute(task)
         } catch (_: Throwable) {
+            probeInFlight.updateAndGet { (it - 1).coerceAtLeast(0) }
             logcat("VideoThumb") { "probe pool full (${privacyLogLabel(source)})" }
             runCatching { raw.close() }
             return null
@@ -375,49 +386,58 @@ object VideoThumbnail {
         return try {
             withTimeout(PROBE_IO_TIMEOUT_MS) { done.await() }
         } catch (e: TimeoutCancellationException) {
-            abandonProbeWaiter(timedOut, done, raw, source, "timeout")
+            // Close remote to unblock stuck read; inFlight stays until worker finally.
+            runCatching { raw.close() }
+            logcat("VideoThumb") {
+                "probe timeout ${PROBE_IO_TIMEOUT_MS}ms (${privacyLogLabel(source)}) — " +
+                    "abandon waiter (inFlight=${probeInFlight.get()})"
+            }
             null
         } catch (e: CancellationException) {
-            // Leave folder / scroll away — same as timeout: close + count abandon.
-            abandonProbeWaiter(timedOut, done, raw, source, "cancel")
+            runCatching { raw.close() }
+            logcat("VideoThumb") {
+                "probe cancel (${privacyLogLabel(source)}) — abandon waiter " +
+                    "(inFlight=${probeInFlight.get()})"
+            }
             throw e
         }
     }
 
-    private fun abandonProbeWaiter(
-        timedOut: AtomicBoolean,
-        done: CompletableDeferred<ProbeSnapshot?>,
-        raw: ArchiveByteSource,
-        source: VideoThumbnailSource,
-        reason: String,
-    ) {
-        timedOut.set(true)
-        abandonedProbes.incrementAndGet()
-        if (!done.complete(null)) {
-            // Worker already finished — drop abandon bookkeeping.
-            timedOut.set(false)
-            abandonedProbes.updateAndGet { (it - 1).coerceAtLeast(0) }
-        }
-        runCatching { raw.close() }
-        logcat("VideoThumb") {
-            "probe $reason ${PROBE_IO_TIMEOUT_MS}ms (${privacyLogLabel(source)}) — abandon " +
-                "(abandonedProbes=${abandonedProbes.get()})"
+    private fun tryBeginProbeWorker(): Boolean {
+        while (true) {
+            val n = probeInFlight.get()
+            if (n >= MAX_PROBE_IN_FLIGHT) return false
+            if (probeInFlight.compareAndSet(n, n + 1)) return true
         }
     }
 
-    /** MPEG-TS / tiny file: contiguous bytes only (no sparse mid-file). */
-    private fun buildContiguousTsSnapshot(raw: ArchiveByteSource, fileName: String): ProbeSnapshot? {
+    /**
+     * Build an offline snapshot then close [raw] (caller/worker).
+     * TS → contiguous head; else head+tail so trailing `moov` stays at its real offset.
+     */
+    private fun buildProbeSnapshot(raw: ArchiveByteSource, fileName: String): ProbeSnapshot? {
         val size = raw.size
         if (size <= 0L) return null
         val headCap = if (isMpegTsVideoName(fileName)) PROBE_TS_HEAD_BYTES else PROBE_HEAD_BYTES
         val headLen = minOf(headCap.toLong(), size).toInt()
         val head = readPrefix(raw, 0L, headLen)
         if (head.isEmpty()) return null
+        val ts = isMpegTsVideoName(fileName) || looksLikeMpegTs(head)
+        if (ts || size <= head.size) {
+            return ProbeSnapshot(
+                mode = ProbeMode.ContiguousHead,
+                fileSize = head.size.toLong(),
+                head = head,
+                tail = null,
+            )
+        }
+        val tailLen = minOf(PROBE_TAIL_BYTES.toLong(), size - head.size).toInt()
+        val tail = readPrefix(raw, size - tailLen, tailLen)
         return ProbeSnapshot(
-            mode = ProbeMode.ContiguousHead,
-            fileSize = head.size.toLong(),
+            mode = ProbeMode.HeadAndTail,
+            fileSize = size,
             head = head,
-            tail = null,
+            tail = tail.takeIf { it.isNotEmpty() },
         )
     }
 
@@ -437,63 +457,34 @@ object VideoThumbnail {
         source: VideoThumbnailSource,
     ): Bitmap? {
         val label = privacyLogLabel(source)
-        // TS contiguous head only (HeadAndTail path removed — ranged MDS replaces it).
-        val tmp = File(cacheDirectory(), "mmr-${System.nanoTime()}.bin")
-        return try {
-            tmp.outputStream().use { it.write(snapshot.head) }
-            decodeFrameWatchdog(
-                label = label,
-                timeoutMs = DECODE_TIMEOUT_MS,
-                setDataSource = { it.setDataSource(tmp.absolutePath) },
-                getFrame = { selectKeyframeFrame(preferEarlyOnly = true) },
-                cleanup = { tmp.delete() },
-            )
-        } catch (e: Throwable) {
-            tmp.delete()
-            throw e
-        }
-    }
-
-    /**
-     * Non-TS network: keep [raw] open, serve MMR via RAM-paged ranges (2s→30s keyframes).
-     * Prefetch small head+tail so trailing-`moov` MP4 can open without a full pull.
-     */
-    private suspend fun decodeRangedNetwork(
-        raw: ArchiveByteSource,
-        source: VideoThumbnailSource,
-    ): Bitmap? {
-        val label = privacyLogLabel(source)
-        val mds = CachingRangeMediaDataSource(raw)
-        val closed = AtomicBoolean(false)
-        val closeAll = {
-            if (closed.compareAndSet(false, true)) {
-                runCatching { mds.close() }
-                runCatching { raw.close() }
-            }
-        }
-        return try {
-            val size = raw.size
-            if (size > 0L) {
-                val headLen = minOf(PROBE_HEAD_BYTES.toLong(), size).toInt()
-                mds.prefetch(0L, headLen)
-                if (size > headLen + PROBE_TAIL_BYTES) {
-                    mds.prefetch(size - PROBE_TAIL_BYTES, PROBE_TAIL_BYTES)
+        return when (snapshot.mode) {
+            ProbeMode.ContiguousHead -> {
+                val tmp = File(cacheDirectory(), "mmr-${System.nanoTime()}.bin")
+                try {
+                    tmp.outputStream().use { it.write(snapshot.head) }
+                    decodeFrameWatchdog(
+                        label = label,
+                        timeoutMs = DECODE_TIMEOUT_MS,
+                        setDataSource = { it.setDataSource(tmp.absolutePath) },
+                        getFrame = { selectKeyframeFrame(preferEarlyOnly = true) },
+                        cleanup = { tmp.delete() },
+                    )
+                } catch (e: Throwable) {
+                    tmp.delete()
+                    throw e
                 }
             }
-            decodeFrameWatchdog(
-                label = label,
-                timeoutMs = RANGED_NETWORK_TIMEOUT_MS,
-                setDataSource = { it.setDataSource(mds) },
-                getFrame = { selectKeyframeFrame(preferEarlyOnly = false) },
-                cleanup = { closeAll() },
-                onAbandon = { closeAll() },
-            )
-        } catch (e: CancellationException) {
-            closeAll()
-            throw e
-        } catch (e: Throwable) {
-            closeAll()
-            throw e
+            ProbeMode.HeadAndTail -> {
+                // Offline MDS only — remote already closed. Mid-file holes are zeros;
+                // prefer early seeks (2s) so 30s does not spam getFrameAtTime NULL into holes.
+                val data = ProbeMediaDataSource(snapshot.fileSize, snapshot.head, snapshot.tail)
+                decodeFrameWatchdog(
+                    label = label,
+                    timeoutMs = DECODE_TIMEOUT_MS,
+                    setDataSource = { it.setDataSource(data) },
+                    getFrame = { selectKeyframeFrame(preferEarlyOnly = true) },
+                )
+            }
         }
     }
 
@@ -639,16 +630,17 @@ object VideoThumbnail {
         setDataSource: (MediaMetadataRetriever) -> Unit,
         getFrame: MediaMetadataRetriever.() -> Bitmap?,
         cleanup: () -> Unit = {},
-        /** Called immediately on waiter timeout/cancel (e.g. close SMB under blocked readAt). */
+        /** Called immediately on waiter timeout/cancel (must not release MMR). */
         onAbandon: () -> Unit = {},
     ): Bitmap? {
-        if (abandonedWorkers.get() >= MAX_ABANDONED_WORKERS) {
-            logcat("VideoThumb") { "reject decode ($label): abandonedWorkers=${abandonedWorkers.get()}" }
+        if (!tryBeginDecodeWorker()) {
+            logcat("VideoThumb") {
+                "reject decode ($label): inFlight=${decodeInFlight.get()}/$MAX_DECODE_IN_FLIGHT"
+            }
             return null
         }
         val retriever = MediaMetadataRetriever()
         val done = CompletableDeferred<Bitmap?>()
-        val timedOut = AtomicBoolean(false)
         val task = Runnable {
             try {
                 setDataSource(retriever)
@@ -663,14 +655,13 @@ object VideoThumbnail {
             } finally {
                 runCatching { retriever.release() }
                 runCatching { cleanup() }
-                if (timedOut.get()) {
-                    abandonedWorkers.updateAndGet { (it - 1).coerceAtLeast(0) }
-                }
+                decodeInFlight.updateAndGet { (it - 1).coerceAtLeast(0) }
             }
         }
         try {
             decodePool.execute(task)
         } catch (_: Throwable) {
+            decodeInFlight.updateAndGet { (it - 1).coerceAtLeast(0) }
             logcat("VideoThumb") { "decode pool full ($label)" }
             runCatching { retriever.release() }
             runCatching { cleanup() }
@@ -679,36 +670,26 @@ object VideoThumbnail {
         return try {
             withTimeout(timeoutMs) { done.await() }
         } catch (e: TimeoutCancellationException) {
-            abandonDecodeWaiter(timedOut, done, label, timeoutMs, "timeout", onAbandon)
+            runCatching { onAbandon() }
+            logcat("VideoThumb") {
+                "mmr timeout ${timeoutMs}ms ($label) — abandon waiter " +
+                    "(inFlight=${decodeInFlight.get()})"
+            }
             null
         } catch (e: CancellationException) {
-            // Composition dispose (leave folder) must count abandon too — otherwise
-            // extractSemaphore recycles under still-running MMR workers (70% sticky CPU).
-            abandonDecodeWaiter(timedOut, done, label, timeoutMs, "cancel", onAbandon)
+            runCatching { onAbandon() }
+            logcat("VideoThumb") {
+                "mmr cancel ($label) — abandon waiter (inFlight=${decodeInFlight.get()})"
+            }
             throw e
         }
     }
 
-    private fun abandonDecodeWaiter(
-        timedOut: AtomicBoolean,
-        done: CompletableDeferred<Bitmap?>,
-        label: String,
-        timeoutMs: Long,
-        reason: String,
-        onAbandon: () -> Unit,
-    ) {
-        timedOut.set(true)
-        abandonedWorkers.incrementAndGet()
-        runCatching { onAbandon() }
-        // Prefer worker recycle: if still running, complete(null) loses the race harmlessly.
-        if (!done.complete(null)) {
-            // Already completed with a late frame — drop abandoned bookkeeping.
-            timedOut.set(false)
-            abandonedWorkers.updateAndGet { (it - 1).coerceAtLeast(0) }
-        }
-        logcat("VideoThumb") {
-            "mmr $reason ${timeoutMs}ms ($label) — abandon native " +
-                "(abandoned=${abandonedWorkers.get()})"
+    private fun tryBeginDecodeWorker(): Boolean {
+        while (true) {
+            val n = decodeInFlight.get()
+            if (n >= MAX_DECODE_IN_FLIGHT) return false
+            if (decodeInFlight.compareAndSet(n, n + 1)) return true
         }
     }
 
@@ -733,6 +714,9 @@ object VideoThumbnail {
 private enum class ProbeMode {
     /** Truncated real bytes; [ProbeSnapshot.fileSize] == head size. For MPEG-TS. */
     ContiguousHead,
+
+    /** Head at 0 + tail at EOF; [ProbeSnapshot.fileSize] = full remote size (MP4 moov). */
+    HeadAndTail,
 }
 
 private class ProbeSnapshot(
@@ -742,7 +726,24 @@ private class ProbeSnapshot(
     val tail: ByteArray?,
 )
 
-/** Copy one [MediaDataSource.readAt] window from a head+tail probe (unit tests / legacy). */
+/**
+ * Head at 0, tail at EOF, [fileSize] so `moov`-at-end stays at its real offset.
+ * Mid-file holes are zeros. Used only after the remote is closed.
+ */
+private class ProbeMediaDataSource(
+    private val fileSize: Long,
+    private val head: ByteArray,
+    private val tail: ByteArray?,
+) : android.media.MediaDataSource() {
+    override fun getSize(): Long = fileSize
+
+    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int =
+        readVideoThumbProbe(fileSize, head, tail, position, buffer, offset, size)
+
+    override fun close() {}
+}
+
+/** Copy one [MediaDataSource.readAt] window from a head+tail probe (unit tests / offline MDS). */
 internal fun readVideoThumbProbe(
     fileSize: Long,
     head: ByteArray,
