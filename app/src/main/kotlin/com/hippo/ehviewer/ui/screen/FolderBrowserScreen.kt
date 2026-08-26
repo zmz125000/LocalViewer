@@ -82,6 +82,7 @@ import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterByContentMode
@@ -258,6 +259,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             error = null
             return
         }
+        // Leave→enter folder must not wait on previous path’s stuck MMR workers.
+        VideoThumbnail.onBrowseFolderChanged("local:${frame.rootId}:${frame.relativePath}")
         val targetPath = frame.path
         loading = true
         error = null
@@ -949,7 +952,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         BrowseVideoGridItem(
                                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                                             name = video.name,
-                                            thumbnailSource = VideoThumbnailSource.Local(video.path.toString()),
+                                            thumbnailSource = VideoThumbnailSource.Local(
+                                                path = video.path.toString(),
+                                                knownSizeBytes = video.size,
+                                            ),
                                             onClick = { openVideoPrimary(video.path) },
                                             onLongClick = { openVideoSecondary(video.path) },
                                         )
@@ -1069,7 +1075,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         BrowseVideoRow(
                                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                                             name = video.name,
-                                            thumbnailSource = VideoThumbnailSource.Local(video.path.toString()),
+                                            thumbnailSource = VideoThumbnailSource.Local(
+                                                path = video.path.toString(),
+                                                knownSizeBytes = video.size,
+                                            ),
                                             onClick = { openVideoPrimary(video.path) },
                                             onLongClick = { openVideoSecondary(video.path) },
                                         )
