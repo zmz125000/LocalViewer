@@ -17,8 +17,7 @@ class CachingRangeMediaDataSource(
 ) : MediaDataSource() {
     private val lock = Any()
     private val pages = object : LinkedHashMap<Long, ByteArray>(maxPages, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ByteArray>?): Boolean =
-            size > maxPages
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ByteArray>?): Boolean = size > maxPages
     }
 
     @Volatile
@@ -93,6 +92,7 @@ class CachingRangeMediaDataSource(
 
     companion object {
         const val PAGE_SIZE = 256 * 1024
+
         /** ~12 MiB hard cap for one thumb attempt. */
         const val MAX_PAGES = 48
     }
