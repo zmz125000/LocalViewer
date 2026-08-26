@@ -2,7 +2,6 @@ package com.hippo.ehviewer.library
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.media.MediaDataSource
 import android.media.MediaMetadataRetriever
 import com.ehviewer.core.files.openFileDescriptor
 import com.ehviewer.core.util.logcat
@@ -47,8 +46,8 @@ sealed interface VideoThumbnailSource {
         override val cacheIdentity: String
             get() {
                 val file = File(path)
-                // v5: multi-seek black + container-aware probes (invalidate black frame-0 JPEGs).
-                return "v5:local:$path:${file.length()}:${file.lastModified()}"
+                // v6: 2s→30s keyframe seek + ranged RAM network decode.
+                return "v6:local:$path:${file.length()}:${file.lastModified()}"
             }
     }
 
@@ -56,24 +55,27 @@ sealed interface VideoThumbnailSource {
         override val isNetwork: Boolean = true
         override val fileName: String
             get() = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity = "v5:smb:$sourceId:$remoteRelativeFile"
+        override val cacheIdentity = "v6:smb:$sourceId:$remoteRelativeFile"
     }
 
     data class WebDav(val sourceId: Long, val remoteRelativeFile: String) : VideoThumbnailSource {
         override val isNetwork: Boolean = true
         override val fileName: String
             get() = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity = "v5:webdav:$sourceId:$remoteRelativeFile"
+        override val cacheIdentity = "v6:webdav:$sourceId:$remoteRelativeFile"
     }
 }
 
 /**
  * Lazy video frame extraction for visible browse rows.
  *
- * **Pipeline:** network head/tail (or TS head) is fetched under an I/O timeout and the
- * remote handle is closed **before** decode. Probe work does not hold the decode
- * semaphore, so up to [MAX_CONCURRENT_PROBES] I/O jobs and [MAX_CONCURRENT_EXTRACTIONS]
- * MMR decodes can overlap.
+ * **Pipeline:**
+ * - **Local / non-TS network:** MMR over full file or [CachingRangeMediaDataSource]
+ *   (on-demand `readAt` pages in RAM) with keyframe seeks **2s → 30s** (not a
+ *   contiguous 30s download).
+ * - **MPEG-TS:** contiguous head probe, then early keyframe seeks only.
+ * - Probe/ranged I/O and decode stay under abandon-safe timeouts; waiter never
+ *   [MediaMetadataRetriever.release]s (that left `media.extractor` at 100% CPU).
  *
  * **Timeout / leave-folder safety:**
  * - [MediaMetadataRetriever] runs on [decodePool]. Waiter uses [withTimeout] only —
@@ -107,10 +109,16 @@ object VideoThumbnail {
     private const val PROBE_IO_TIMEOUT_MS = 4_000L
 
     /** Native setDataSource + multi-seek keyframe grabs. Waiter abandons; no cross-thread release. */
-    private const val DECODE_TIMEOUT_MS = 2_000L
+    private const val DECODE_TIMEOUT_MS = 2_500L
+
+    /**
+     * Open remote + ranged MMR (prefetch + 2s/30s seeks). Longer than [DECODE_TIMEOUT_MS]
+     * because I/O and decode share one waiter.
+     */
+    private const val RANGED_NETWORK_TIMEOUT_MS = 6_000L
 
     /** Leave room for release after last seek inside the decode budget. */
-    private const val SEEK_BUDGET_MS = 1_600L
+    private const val SEEK_BUDGET_MS = 2_000L
 
     private const val PROBE_HEAD_BYTES = 2 * 1024 * 1024
     private const val PROBE_TAIL_BYTES = 2 * 1024 * 1024
@@ -118,21 +126,12 @@ object VideoThumbnail {
     /** MPEG-TS is sequential — contiguous head only (no zero-filled mid-file). */
     private const val PROBE_TS_HEAD_BYTES = 8 * 1024 * 1024
 
+    private const val KEYFRAME_PRIMARY_US = 2_000_000L
+    private const val KEYFRAME_FALLBACK_US = 30_000_000L
+
     private const val SAMPLE_GRID = 12
     private const val BLACK_LUMA = 24
     private const val MIN_VISIBLE_SAMPLES = SAMPLE_GRID * SAMPLE_GRID * 15 / 100
-
-    /**
-     * Early sync frames still inside a network prefix / TS head.
-     * TV rips often open on black — t=0 alone is not enough.
-     */
-    private val NETWORK_SEEK_TIMES_US = longArrayOf(
-        0L,
-        1_000_000L,
-        2_000_000L,
-        3_000_000L,
-        5_000_000L,
-    )
 
     private val extractSemaphore = Semaphore(MAX_CONCURRENT_EXTRACTIONS)
     private val probeSemaphore = Semaphore(MAX_CONCURRENT_PROBES)
@@ -275,14 +274,14 @@ object VideoThumbnail {
     private fun isCachedJpeg(target: File): Boolean = target.isFile && target.length() > 0L
 
     /**
-     * Network: probe under [probeSemaphore] (I/O only), then decode under [extractSemaphore].
-     * Local: decode only. Overlap across files = pipeline download ‖ decode.
+     * Local: decode only. Network TS: probe head then decode. Network other: ranged
+     * RAM [CachingRangeMediaDataSource] while the remote stays open (player-like seeks).
      */
     private suspend fun extractThumbnailFrame(source: VideoThumbnailSource): Bitmap? = when (source) {
         is VideoThumbnailSource.Local -> extractSemaphore.withPermit { extractLocalFrame(source) }
         is VideoThumbnailSource.Smb -> {
             val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
-            val snapshot = probeSemaphore.withPermit {
+            probeSemaphore.withPermit {
                 SmbCache.withBrowseThumbFetchSlot {
                     val raw = SmbArchiveByteSource(
                         source = smb,
@@ -292,14 +291,13 @@ object VideoThumbnail {
                         readahead = false,
                         yieldable = true,
                     )
-                    fetchProbeSnapshot(raw, source)
+                    extractNetworkFrame(raw, source)
                 }
-            } ?: return null
-            extractSemaphore.withPermit { decodeSnapshot(snapshot, source) }
+            }
         }
         is VideoThumbnailSource.WebDav -> {
             val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
-            val snapshot = probeSemaphore.withPermit {
+            probeSemaphore.withPermit {
                 WebDavCache.withBrowseThumbFetchSlot {
                     val raw = WebDavArchiveByteSource(
                         source = webDav,
@@ -308,10 +306,30 @@ object VideoThumbnail {
                         pipeline = false,
                         readahead = false,
                     )
-                    fetchProbeSnapshot(raw, source)
+                    extractNetworkFrame(raw, source)
                 }
-            } ?: return null
+            }
+        }
+    }
+
+    /**
+     * Sniff TS → contiguous head path; else ranged open-during-decode.
+     * Always closes [raw] (success, fail, timeout, cancel).
+     */
+    private suspend fun extractNetworkFrame(
+        raw: ArchiveByteSource,
+        source: VideoThumbnailSource,
+    ): Bitmap? {
+        val fileName = source.fileName
+        val sniffLen = minOf(188 * 8, PROBE_HEAD_BYTES, raw.size.coerceAtLeast(0L).toInt())
+        val sniff = if (sniffLen > 0) readPrefix(raw, 0L, sniffLen) else ByteArray(0)
+        val ts = isMpegTsVideoName(fileName) || (sniff.isNotEmpty() && looksLikeMpegTs(sniff))
+        return if (ts) {
+            // fetchProbeSnapshot closes [raw] on the probe worker (timeout/cancel safe).
+            val snapshot = fetchProbeSnapshot(raw, source) ?: return null
             extractSemaphore.withPermit { decodeSnapshot(snapshot, source) }
+        } else {
+            extractSemaphore.withPermit { decodeRangedNetwork(raw, source) }
         }
     }
 
@@ -337,7 +355,7 @@ object VideoThumbnail {
         val timedOut = AtomicBoolean(false)
         val task = Runnable {
             try {
-                done.complete(buildProbeSnapshot(raw, fileName))
+                done.complete(buildContiguousTsSnapshot(raw, fileName))
             } catch (_: Throwable) {
                 done.complete(null)
             } finally {
@@ -387,31 +405,19 @@ object VideoThumbnail {
         }
     }
 
-    private fun buildProbeSnapshot(raw: ArchiveByteSource, fileName: String): ProbeSnapshot? {
+    /** MPEG-TS / tiny file: contiguous bytes only (no sparse mid-file). */
+    private fun buildContiguousTsSnapshot(raw: ArchiveByteSource, fileName: String): ProbeSnapshot? {
         val size = raw.size
         if (size <= 0L) return null
         val headCap = if (isMpegTsVideoName(fileName)) PROBE_TS_HEAD_BYTES else PROBE_HEAD_BYTES
         val headLen = minOf(headCap.toLong(), size).toInt()
         val head = readPrefix(raw, 0L, headLen)
         if (head.isEmpty()) return null
-        // Prefer TS by extension; also sniff 0x47 if extension wrong.
-        val ts = isMpegTsVideoName(fileName) || looksLikeMpegTs(head)
-        if (ts || size <= head.size) {
-            // Contiguous only — size = bytes we have (no zero mid-file).
-            return ProbeSnapshot(
-                mode = ProbeMode.ContiguousHead,
-                fileSize = head.size.toLong(),
-                head = head,
-                tail = null,
-            )
-        }
-        val tailLen = minOf(PROBE_TAIL_BYTES.toLong(), size - head.size).toInt()
-        val tail = readPrefix(raw, size - tailLen, tailLen)
         return ProbeSnapshot(
-            mode = ProbeMode.HeadAndTail,
-            fileSize = size,
+            mode = ProbeMode.ContiguousHead,
+            fileSize = head.size.toLong(),
             head = head,
-            tail = tail.takeIf { it.isNotEmpty() },
+            tail = null,
         )
     }
 
@@ -431,33 +437,63 @@ object VideoThumbnail {
         source: VideoThumbnailSource,
     ): Bitmap? {
         val label = privacyLogLabel(source)
-        return when (snapshot.mode) {
-            ProbeMode.ContiguousHead -> {
-                // Real truncated file — safer for MTS than sparse full-size MDS.
-                val tmp = File(cacheDirectory(), "mmr-${System.nanoTime()}.bin")
-                try {
-                    tmp.outputStream().use { it.write(snapshot.head) }
-                    decodeFrameWatchdog(
-                        label = label,
-                        timeoutMs = DECODE_TIMEOUT_MS,
-                        setDataSource = { it.setDataSource(tmp.absolutePath) },
-                        getFrame = { selectNetworkFrame() },
-                        cleanup = { tmp.delete() },
-                    )
-                } catch (e: Throwable) {
-                    tmp.delete()
-                    throw e
+        // TS contiguous head only (HeadAndTail path removed — ranged MDS replaces it).
+        val tmp = File(cacheDirectory(), "mmr-${System.nanoTime()}.bin")
+        return try {
+            tmp.outputStream().use { it.write(snapshot.head) }
+            decodeFrameWatchdog(
+                label = label,
+                timeoutMs = DECODE_TIMEOUT_MS,
+                setDataSource = { it.setDataSource(tmp.absolutePath) },
+                getFrame = { selectKeyframeFrame(preferEarlyOnly = true) },
+                cleanup = { tmp.delete() },
+            )
+        } catch (e: Throwable) {
+            tmp.delete()
+            throw e
+        }
+    }
+
+    /**
+     * Non-TS network: keep [raw] open, serve MMR via RAM-paged ranges (2s→30s keyframes).
+     * Prefetch small head+tail so trailing-`moov` MP4 can open without a full pull.
+     */
+    private suspend fun decodeRangedNetwork(
+        raw: ArchiveByteSource,
+        source: VideoThumbnailSource,
+    ): Bitmap? {
+        val label = privacyLogLabel(source)
+        val mds = CachingRangeMediaDataSource(raw)
+        val closed = AtomicBoolean(false)
+        val closeAll = {
+            if (closed.compareAndSet(false, true)) {
+                runCatching { mds.close() }
+                runCatching { raw.close() }
+            }
+        }
+        return try {
+            val size = raw.size
+            if (size > 0L) {
+                val headLen = minOf(PROBE_HEAD_BYTES.toLong(), size).toInt()
+                mds.prefetch(0L, headLen)
+                if (size > headLen + PROBE_TAIL_BYTES) {
+                    mds.prefetch(size - PROBE_TAIL_BYTES, PROBE_TAIL_BYTES)
                 }
             }
-            ProbeMode.HeadAndTail -> {
-                val data = ProbeMediaDataSource(snapshot.fileSize, snapshot.head, snapshot.tail)
-                decodeFrameWatchdog(
-                    label = label,
-                    timeoutMs = DECODE_TIMEOUT_MS,
-                    setDataSource = { it.setDataSource(data) },
-                    getFrame = { selectNetworkFrame() },
-                )
-            }
+            decodeFrameWatchdog(
+                label = label,
+                timeoutMs = RANGED_NETWORK_TIMEOUT_MS,
+                setDataSource = { it.setDataSource(mds) },
+                getFrame = { selectKeyframeFrame(preferEarlyOnly = false) },
+                cleanup = { closeAll() },
+                onAbandon = { closeAll() },
+            )
+        } catch (e: CancellationException) {
+            closeAll()
+            throw e
+        } catch (e: Throwable) {
+            closeAll()
+            throw e
         }
     }
 
@@ -470,7 +506,7 @@ object VideoThumbnail {
                 label = label,
                 timeoutMs = DECODE_TIMEOUT_MS,
                 setDataSource = { it.setDataSource(file.absolutePath) },
-                getFrame = { selectThumbnailFrame() },
+                getFrame = { selectKeyframeFrame(preferEarlyOnly = false) },
             )
         }
         val pfd = source.path.toPath().openFileDescriptor("r")
@@ -479,7 +515,7 @@ object VideoThumbnail {
             label = label,
             timeoutMs = DECODE_TIMEOUT_MS,
             setDataSource = { it.setDataSource(pfd.fileDescriptor, 0L, length) },
-            getFrame = { selectThumbnailFrame() },
+            getFrame = { selectKeyframeFrame(preferEarlyOnly = false) },
             cleanup = { runCatching { pfd.close() } },
         )
     }
@@ -501,10 +537,13 @@ object VideoThumbnail {
     private fun cacheKey(source: VideoThumbnailSource): String = sha256(source.cacheIdentity)
 
     /**
-     * Network / truncated probe: multi-seek within [SEEK_BUDGET_MS], prefer non-black.
-     * [OPTION_CLOSEST] (non-sync) can hang MediaExtractor — never use it.
+     * Keyframe seeks like a player: **2s** then **30s** (clamped to duration), then
+     * cheap last resorts. Only [MediaMetadataRetriever.OPTION_CLOSEST_SYNC] —
+     * [MediaMetadataRetriever.OPTION_CLOSEST] can hang MediaExtractor.
+     *
+     * @param preferEarlyOnly TS contiguous-head path: skip 30s when out of early range.
      */
-    private fun MediaMetadataRetriever.selectNetworkFrame(): Bitmap? {
+    private fun MediaMetadataRetriever.selectKeyframeFrame(preferEarlyOnly: Boolean): Bitmap? {
         val deadline = System.nanoTime() + SEEK_BUDGET_MS * 1_000_000L
         var best: Bitmap? = null
         var bestScore = -1
@@ -519,37 +558,14 @@ object VideoThumbnail {
                 candidate.recycle()
             }
         }
-        for (timeUs in NETWORK_SEEK_TIMES_US) {
-            if (System.nanoTime() >= deadline) break
+        fun syncAt(timeUs: Long) {
+            if (System.nanoTime() >= deadline) return
             consider(
                 runCatching {
                     getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 }.getOrNull(),
             )
-            if (bestScore >= MIN_VISIBLE_SAMPLES) return best
         }
-        return best
-    }
-
-    /**
-     * Local full file: representative frame first; extra seeks only if mostly black.
-     */
-    private fun MediaMetadataRetriever.selectThumbnailFrame(): Bitmap? {
-        val deadline = System.nanoTime() + SEEK_BUDGET_MS * 1_000_000L
-        var best: Bitmap? = null
-        var bestScore = -1
-
-        runCatching { getFrameAtTime() }.getOrNull()?.let { representative ->
-            val score = visibleSampleCount(representative)
-            if (score > bestScore) {
-                best?.recycle()
-                best = representative
-                bestScore = score
-            } else {
-                representative.recycle()
-            }
-        }
-        if (bestScore >= MIN_VISIBLE_SAMPLES) return best
 
         val durationUs = runCatching {
             extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
@@ -557,30 +573,36 @@ object VideoThumbnail {
                 ?.takeIf { it > 0L }
                 ?.times(1_000L)
         }.getOrNull()
-        val lastUs = durationUs?.minus(1L)?.coerceAtLeast(0L)
-        val candidateTimes = buildList {
-            if (durationUs != null) {
-                add(durationUs / 3L)
-                add(durationUs * 2L / 3L)
-            }
-            add(if (lastUs == null) 5_000_000L else minOf(5_000_000L, lastUs))
-            add(0L)
-        }.distinct()
+        val lastUs = durationUs?.minus(1_000L)?.coerceAtLeast(0L)
 
-        for (timeUs in candidateTimes) {
-            if (System.nanoTime() >= deadline) break
-            val candidate = runCatching {
-                getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-            }.getOrNull() ?: continue
-            val score = visibleSampleCount(candidate)
-            if (score > bestScore) {
-                best?.recycle()
-                best = candidate
-                bestScore = score
-            } else {
-                candidate.recycle()
+        fun clamp(targetUs: Long): Long {
+            if (lastUs == null) return targetUs
+            return minOf(targetUs, lastUs)
+        }
+
+        // Primary: ~2s keyframe.
+        syncAt(clamp(KEYFRAME_PRIMARY_US))
+        if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+
+        // Fallback: ~30s. TS contiguous-head path never seeks this far (out of probe).
+        if (!preferEarlyOnly) {
+            syncAt(clamp(KEYFRAME_FALLBACK_US))
+            if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+        }
+
+        // Last resorts.
+        if (durationUs != null && durationUs > KEYFRAME_PRIMARY_US) {
+            syncAt(clamp(durationUs / 10L))
+            if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+        }
+        if (preferEarlyOnly) {
+            // Early times still inside a TS head.
+            for (t in longArrayOf(1_000_000L, 3_000_000L, 5_000_000L, 0L)) {
+                syncAt(clamp(t))
+                if (bestScore >= MIN_VISIBLE_SAMPLES) return best
             }
-            if (bestScore >= MIN_VISIBLE_SAMPLES) break
+        } else {
+            syncAt(0L)
         }
         return best
     }
@@ -617,6 +639,8 @@ object VideoThumbnail {
         setDataSource: (MediaMetadataRetriever) -> Unit,
         getFrame: MediaMetadataRetriever.() -> Bitmap?,
         cleanup: () -> Unit = {},
+        /** Called immediately on waiter timeout/cancel (e.g. close SMB under blocked readAt). */
+        onAbandon: () -> Unit = {},
     ): Bitmap? {
         if (abandonedWorkers.get() >= MAX_ABANDONED_WORKERS) {
             logcat("VideoThumb") { "reject decode ($label): abandonedWorkers=${abandonedWorkers.get()}" }
@@ -655,12 +679,12 @@ object VideoThumbnail {
         return try {
             withTimeout(timeoutMs) { done.await() }
         } catch (e: TimeoutCancellationException) {
-            abandonDecodeWaiter(timedOut, done, label, timeoutMs, "timeout")
+            abandonDecodeWaiter(timedOut, done, label, timeoutMs, "timeout", onAbandon)
             null
         } catch (e: CancellationException) {
             // Composition dispose (leave folder) must count abandon too — otherwise
             // extractSemaphore recycles under still-running MMR workers (70% sticky CPU).
-            abandonDecodeWaiter(timedOut, done, label, timeoutMs, "cancel")
+            abandonDecodeWaiter(timedOut, done, label, timeoutMs, "cancel", onAbandon)
             throw e
         }
     }
@@ -671,9 +695,11 @@ object VideoThumbnail {
         label: String,
         timeoutMs: Long,
         reason: String,
+        onAbandon: () -> Unit,
     ) {
         timedOut.set(true)
         abandonedWorkers.incrementAndGet()
+        runCatching { onAbandon() }
         // Prefer worker recycle: if still running, complete(null) loses the race harmlessly.
         if (!done.complete(null)) {
             // Already completed with a late frame — drop abandoned bookkeeping.
@@ -707,9 +733,6 @@ object VideoThumbnail {
 private enum class ProbeMode {
     /** Truncated real bytes; [ProbeSnapshot.fileSize] == head size. For MPEG-TS. */
     ContiguousHead,
-
-    /** Head at 0 + tail at EOF; [ProbeSnapshot.fileSize] = full remote size (MP4 moov). */
-    HeadAndTail,
 }
 
 private class ProbeSnapshot(
@@ -719,24 +742,7 @@ private class ProbeSnapshot(
     val tail: ByteArray?,
 )
 
-/**
- * Head at 0, tail at EOF, [fileSize] so `moov`-at-end stays at its real offset.
- * Mid-file holes are zeros. [readAt] returns −1 only at true EOF.
- * **Not** for MPEG-TS (use [ProbeMode.ContiguousHead] temp file instead).
- */
-private class ProbeMediaDataSource(
-    private val fileSize: Long,
-    private val head: ByteArray,
-    private val tail: ByteArray?,
-) : MediaDataSource() {
-    override fun getSize(): Long = fileSize
-
-    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int = readVideoThumbProbe(fileSize, head, tail, position, buffer, offset, size)
-
-    override fun close() {}
-}
-
-/** Copy one [MediaDataSource.readAt] window from a head+tail probe. */
+/** Copy one [MediaDataSource.readAt] window from a head+tail probe (unit tests / legacy). */
 internal fun readVideoThumbProbe(
     fileSize: Long,
     head: ByteArray,
