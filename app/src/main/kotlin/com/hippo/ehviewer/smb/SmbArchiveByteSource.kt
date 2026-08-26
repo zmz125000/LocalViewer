@@ -332,6 +332,11 @@ private class KeepOpenSmbFileSource(
                     }
                 } catch (e: Throwable) {
                     if (closed.get() || !isActive) break
+                    // App ON_STOP / pool drop under an open drain — expected, not a fault.
+                    if (isShareClosedError(e)) {
+                        logcat("SmbArchive") { "share closed under drain: ${e.message}" }
+                        continue
+                    }
                     logcat("SmbArchive", e)
                 }
             }
@@ -376,6 +381,8 @@ private class KeepOpenSmbFileSource(
                 Thread.interrupted() // clear flag so pooled workers stay usable
                 return -1
             }
+            // App background closes the browse pool under mid-read; caller soft-fails.
+            if (isShareClosedError(e)) return -1
             logcat("SmbArchive", e)
             -1
         }

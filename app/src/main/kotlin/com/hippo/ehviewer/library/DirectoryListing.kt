@@ -53,6 +53,18 @@ sealed interface BrowseEntry {
      */
     val virtual: Boolean
 
+    /**
+     * End-of-file bytes from lazy list when known (0 = directory / unknown).
+     * Unified for folder grid/list meta; file rows override.
+     */
+    val size: Long get() = 0L
+
+    /**
+     * Last-write / last-modified epoch ms from lazy list (0 = unknown).
+     * Directories and file rows override when the listing supplied a stamp.
+     */
+    val lastModifiedMs: Long get() = 0L
+
     data class Directory(
         override val name: String,
         val path: Path,
@@ -64,6 +76,7 @@ sealed interface BrowseEntry {
          * from a single first-leaf peek (at most 10 entries). Null if none.
          */
         val coverPath: Path? = null,
+        override val lastModifiedMs: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntry
@@ -81,6 +94,8 @@ sealed interface BrowseEntry {
     data class ArchiveGallery(
         override val name: String,
         val path: Path,
+        override val size: Long = 0L,
+        override val lastModifiedMs: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntry
@@ -94,7 +109,8 @@ sealed interface BrowseEntry {
         override val name: String,
         val path: Path,
         /** End-of-file size in bytes when known (0 = unknown). */
-        val size: Long = 0L,
+        override val size: Long = 0L,
+        override val lastModifiedMs: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntry
@@ -106,6 +122,8 @@ sealed interface BrowseEntry {
     data class RegularFile(
         override val name: String,
         val path: Path,
+        override val size: Long = 0L,
+        override val lastModifiedMs: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntry
@@ -201,6 +219,12 @@ fun isProtectedSystemName(name: String): Boolean {
 
 fun List<RemoteChild>.withoutProtectedSystemNames(): List<RemoteChild> = filterNot { isProtectedSystemName(it.name) }
 
+/** Size + mtime for a non-directory child basename in a peek/list (0/0 if missing). */
+internal fun List<RemoteChild>.remoteFileAttrs(fileName: String): Pair<Long, Long> {
+    val child = firstOrNull { !it.isDirectory && it.name == fileName } ?: return 0L to 0L
+    return child.size to child.lastModifiedMs
+}
+
 sealed interface BrowseEntryRemote {
     val name: String
 
@@ -213,6 +237,18 @@ sealed interface BrowseEntryRemote {
      * start with `@` stay [virtual]=false.
      */
     val virtual: Boolean
+
+    /**
+     * End-of-file bytes from lazy list/PROPFIND when known (0 = directory / unknown).
+     * Unified for folder grid/list meta; file rows override.
+     */
+    val size: Long get() = 0L
+
+    /**
+     * Last-write / last-modified epoch ms from lazy list (0 = unknown).
+     * Directories and file rows override when the listing supplied a stamp.
+     */
+    val lastModifiedMs: Long get() = 0L
 
     data class Directory(
         override val name: String,
@@ -229,6 +265,7 @@ sealed interface BrowseEntryRemote {
          * direct child, or `leaf/file.jpg` when promoted from a ≤3-leaf grand peek.
          */
         val coverFileName: String? = null,
+        override val lastModifiedMs: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntryRemote
@@ -248,6 +285,8 @@ sealed interface BrowseEntryRemote {
         override val name: String,
         val fileName: String,
         val parentRelativeName: String = "",
+        override val size: Long = 0L,
+        override val lastModifiedMs: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntryRemote
@@ -260,7 +299,8 @@ sealed interface BrowseEntryRemote {
         override val name: String,
         val fileName: String = name,
         /** End-of-file size in bytes from lazy list/PROPFIND (0 = unknown). */
-        val size: Long = 0L,
+        override val size: Long = 0L,
+        override val lastModifiedMs: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntryRemote
@@ -268,6 +308,8 @@ sealed interface BrowseEntryRemote {
     data class RegularFile(
         override val name: String,
         val fileName: String = name,
+        override val size: Long = 0L,
+        override val lastModifiedMs: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntryRemote
@@ -489,6 +531,7 @@ fun classifyRemoteListingWithPeeks(
                         hasVideo = false,
                         hasGallery = false,
                         presence = DirPresence.Empty,
+                        lastModifiedMs = e.lastModifiedMs,
                         hidden = true,
                     )
                     continue
@@ -523,6 +566,7 @@ fun classifyRemoteListingWithPeeks(
                     data class PromotedVideoLeaf(
                         val leafName: String,
                         val relativeName: String,
+                        val lastModifiedMs: Long = 0L,
                     )
 
                     /** Single video file lifted to parent Videos section (`@S-leaf` display). */
@@ -530,6 +574,7 @@ fun classifyRemoteListingWithPeeks(
                         val leafName: String,
                         val relativeFile: String,
                         val size: Long = 0L,
+                        val lastModifiedMs: Long = 0L,
                     )
                     val galleryLeaves = ArrayList<PromotedGalleryLeaf>()
                     val videoLeaves = ArrayList<PromotedVideoLeaf>()
@@ -562,16 +607,19 @@ fun classifyRemoteListingWithPeeks(
                                 if (!sampleLeaf && leafKind.hasVideo) {
                                     val single = leafKind.videoFileNames.singleOrNull()
                                     if (single != null) {
-                                        val sz = leafPeek.firstOrNull {
-                                            !it.isDirectory && it.name == single
-                                        }?.size ?: 0L
+                                        val (sz, mod) = leafPeek.remoteFileAttrs(single)
                                         videoFiles += PromotedVideoFile(
                                             leafName = leaf.name,
                                             relativeFile = "$key/$single",
                                             size = sz,
+                                            lastModifiedMs = mod,
                                         )
                                     } else {
-                                        videoLeaves += PromotedVideoLeaf(leaf.name, key)
+                                        videoLeaves += PromotedVideoLeaf(
+                                            leafName = leaf.name,
+                                            relativeName = key,
+                                            lastModifiedMs = leaf.lastModifiedMs,
+                                        )
                                     }
                                     leafHasVideo = true
                                 }
@@ -588,17 +636,20 @@ fun classifyRemoteListingWithPeeks(
                                     // One video (+ any non-video junk) → file promote; else video dir.
                                     val single = leafKind.videoFileNames.singleOrNull()
                                     if (single != null) {
-                                        val sz = leafPeek.firstOrNull {
-                                            !it.isDirectory && it.name == single
-                                        }?.size ?: 0L
+                                        val (sz, mod) = leafPeek.remoteFileAttrs(single)
                                         videoFiles += PromotedVideoFile(
                                             leafName = leaf.name,
                                             relativeFile = "$key/$single",
                                             size = sz,
+                                            lastModifiedMs = mod,
                                         )
                                         leafHasVideo = true
                                     } else {
-                                        videoLeaves += PromotedVideoLeaf(leaf.name, key)
+                                        videoLeaves += PromotedVideoLeaf(
+                                            leafName = leaf.name,
+                                            relativeName = key,
+                                            lastModifiedMs = leaf.lastModifiedMs,
+                                        )
                                         leafHasVideo = true
                                     }
                                 }
@@ -677,6 +728,7 @@ fun classifyRemoteListingWithPeeks(
                                 hasVideo = true,
                                 hasGallery = false,
                                 presence = DirPresence.PromotedVideoLeaf,
+                                lastModifiedMs = v.lastModifiedMs,
                                 hidden = entryHidden,
                                 virtual = true,
                             )
@@ -692,6 +744,7 @@ fun classifyRemoteListingWithPeeks(
                                 name = display,
                                 fileName = v.relativeFile,
                                 size = v.size,
+                                lastModifiedMs = v.lastModifiedMs,
                                 hidden = entryHidden,
                                 virtual = true,
                             )
@@ -711,6 +764,7 @@ fun classifyRemoteListingWithPeeks(
                             hasGallery = sHasGalleryFlag,
                             presence = presence,
                             coverFileName = sCoverFileName,
+                            lastModifiedMs = e.lastModifiedMs,
                             hidden = entryHidden,
                         )
                         continue
@@ -733,6 +787,7 @@ fun classifyRemoteListingWithPeeks(
                                 hasGallery = true,
                                 presence = DirPresence.LeafImages,
                                 coverFileName = sCoverFileName,
+                                lastModifiedMs = e.lastModifiedMs,
                                 hidden = entryHidden,
                             )
                         } else if (sHasVideoFlag) {
@@ -743,6 +798,7 @@ fun classifyRemoteListingWithPeeks(
                                 hasGallery = false,
                                 presence = DirPresence.VideoOnly,
                                 coverFileName = sCoverFileName,
+                                lastModifiedMs = e.lastModifiedMs,
                                 hidden = entryHidden,
                             )
                         } else {
@@ -753,6 +809,7 @@ fun classifyRemoteListingWithPeeks(
                                 hasGallery = false,
                                 presence = DirPresence.Empty,
                                 coverFileName = sCoverFileName,
+                                lastModifiedMs = e.lastModifiedMs,
                                 hidden = entryHidden,
                             )
                         }
@@ -778,6 +835,7 @@ fun classifyRemoteListingWithPeeks(
                         hasGallery = sHasGalleryFlag,
                         presence = DirPresence.Navigable,
                         coverFileName = sCoverFileName,
+                        lastModifiedMs = e.lastModifiedMs,
                         hidden = entryHidden,
                     )
                     continue
@@ -793,6 +851,7 @@ fun classifyRemoteListingWithPeeks(
                             hasGallery = kind.hasGallery,
                             presence = DirPresence.Navigable,
                             coverFileName = navCover,
+                            lastModifiedMs = e.lastModifiedMs,
                             hidden = entryHidden,
                         )
                         // Mixed folder: also list as gallery for direct images.
@@ -813,13 +872,12 @@ fun classifyRemoteListingWithPeeks(
                         val singleVideo = kind.videoFileNames.singleOrNull()
                             ?.takeUnless { isSampleDirName(e.name) }
                         if (singleVideo != null) {
-                            val sz = peek.firstOrNull {
-                                !it.isDirectory && it.name == singleVideo
-                            }?.size ?: 0L
+                            val (sz, mod) = peek.remoteFileAttrs(singleVideo)
                             videos += BrowseEntryRemote.VideoFile(
                                 name = promotedSubGalleryName(e.name),
                                 fileName = "${e.name}/$singleVideo",
                                 size = sz,
+                                lastModifiedMs = mod,
                                 hidden = entryHidden,
                                 virtual = true,
                             )
@@ -830,6 +888,7 @@ fun classifyRemoteListingWithPeeks(
                             hasGallery = true,
                             presence = DirPresence.LeafImages,
                             coverFileName = kind.coverFileName,
+                            lastModifiedMs = e.lastModifiedMs,
                             hidden = entryHidden,
                         )
                         leafGalleries += BrowseEntryRemote.FolderGallery(
@@ -851,17 +910,17 @@ fun classifyRemoteListingWithPeeks(
                                     hasVideo = false,
                                     hasGallery = false,
                                     presence = DirPresence.Empty,
+                                    lastModifiedMs = e.lastModifiedMs,
                                     hidden = entryHidden,
                                 )
                             single != null -> {
                                 // One video (+ nfo/srt/other non-video junk) → parent Videos.
-                                val sz = peek.firstOrNull {
-                                    !it.isDirectory && it.name == single
-                                }?.size ?: 0L
+                                val (sz, mod) = peek.remoteFileAttrs(single)
                                 videos += BrowseEntryRemote.VideoFile(
                                     name = promotedSubGalleryName(e.name),
                                     fileName = "${e.name}/$single",
                                     size = sz,
+                                    lastModifiedMs = mod,
                                     hidden = entryHidden,
                                     virtual = true,
                                 )
@@ -870,6 +929,7 @@ fun classifyRemoteListingWithPeeks(
                                     hasVideo = false,
                                     hasGallery = false,
                                     presence = DirPresence.PromotedShell,
+                                    lastModifiedMs = e.lastModifiedMs,
                                     hidden = entryHidden,
                                 )
                             }
@@ -879,6 +939,7 @@ fun classifyRemoteListingWithPeeks(
                                     hasVideo = true,
                                     hasGallery = false,
                                     presence = DirPresence.VideoOnly,
+                                    lastModifiedMs = e.lastModifiedMs,
                                     hidden = entryHidden,
                                 )
                         }
@@ -889,6 +950,7 @@ fun classifyRemoteListingWithPeeks(
                             hasVideo = false,
                             hasGallery = false,
                             presence = DirPresence.Empty,
+                            lastModifiedMs = e.lastModifiedMs,
                             hidden = entryHidden,
                         )
                 }
@@ -899,29 +961,41 @@ fun classifyRemoteListingWithPeeks(
                     imageNames += e.name
                 }
                 // Loose images for Folder mode (hidden tagged when dot / protocol).
-                regularFiles += BrowseEntryRemote.RegularFile(e.name, hidden = fileHidden)
+                regularFiles += BrowseEntryRemote.RegularFile(
+                    name = e.name,
+                    size = e.size,
+                    lastModifiedMs = e.lastModifiedMs,
+                    hidden = fileHidden,
+                )
             }
             isArchiveFileName(e.name) ->
                 archives += BrowseEntryRemote.ArchiveGallery(
                     name = e.name,
                     fileName = e.name,
+                    size = e.size,
+                    lastModifiedMs = e.lastModifiedMs,
                     hidden = e.hidden || isDotHiddenName(e.name),
                 )
             isBrowseVideoFileName(e.name) ->
                 videos += BrowseEntryRemote.VideoFile(
                     name = e.name,
                     size = e.size,
+                    lastModifiedMs = e.lastModifiedMs,
                     hidden = e.hidden || isDotHiddenName(e.name),
                 )
             isVideoFileName(e.name) ->
                 // sample-* preview clips stay in Files, not Videos.
                 regularFiles += BrowseEntryRemote.RegularFile(
-                    e.name,
+                    name = e.name,
+                    size = e.size,
+                    lastModifiedMs = e.lastModifiedMs,
                     hidden = e.hidden || isDotHiddenName(e.name),
                 )
             else ->
                 regularFiles += BrowseEntryRemote.RegularFile(
-                    e.name,
+                    name = e.name,
+                    size = e.size,
+                    lastModifiedMs = e.lastModifiedMs,
                     hidden = e.hidden || isDotHiddenName(e.name),
                 )
         }

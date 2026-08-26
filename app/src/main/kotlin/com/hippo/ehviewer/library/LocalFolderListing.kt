@@ -373,6 +373,7 @@ fun materializeLocalEntries(
                 hasGallery = entry.hasGallery,
                 presence = entry.presence,
                 coverPath = cover,
+                lastModifiedMs = entry.lastModifiedMs,
                 hidden = entry.hidden,
                 virtual = entry.virtual,
             )
@@ -405,6 +406,8 @@ fun materializeLocalEntries(
                 BrowseEntry.RegularFile(
                     name = entry.name,
                     path = path,
+                    size = entry.size,
+                    lastModifiedMs = entry.lastModifiedMs,
                     hidden = entry.hidden,
                     virtual = entry.virtual,
                 )
@@ -412,6 +415,8 @@ fun materializeLocalEntries(
                 BrowseEntry.ArchiveGallery(
                     name = entry.name,
                     path = path,
+                    size = entry.size,
+                    lastModifiedMs = entry.lastModifiedMs,
                     hidden = entry.hidden,
                     virtual = entry.virtual,
                 )
@@ -422,6 +427,7 @@ fun materializeLocalEntries(
                 name = entry.name,
                 path = baseDir.resolveRelative(entry.fileName),
                 size = entry.size,
+                lastModifiedMs = entry.lastModifiedMs,
                 hidden = entry.hidden,
                 virtual = entry.virtual,
             )
@@ -429,6 +435,8 @@ fun materializeLocalEntries(
             BrowseEntry.RegularFile(
                 name = entry.name,
                 path = baseDir.resolveRelative(entry.fileName),
+                size = entry.size,
+                lastModifiedMs = entry.lastModifiedMs,
                 hidden = entry.hidden,
                 virtual = entry.virtual,
             )

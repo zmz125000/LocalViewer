@@ -44,7 +44,12 @@ object EmptyArchiveRegistry {
         val out = ArrayList<BrowseEntry>(entries.size)
         for (e in entries) {
             if (e is BrowseEntry.ArchiveGallery && isMarked(e.path.toString())) {
-                out += BrowseEntry.RegularFile(name = e.name, path = e.path)
+                out += BrowseEntry.RegularFile(
+                    name = e.name,
+                    path = e.path,
+                    size = e.size,
+                    lastModifiedMs = e.lastModifiedMs,
+                )
                 changed = true
             } else {
                 out += e
@@ -66,7 +71,12 @@ object EmptyArchiveRegistry {
         val out = ArrayList<BrowseEntryRemote>(entries.size)
         for (e in entries) {
             if (e is BrowseEntryRemote.ArchiveGallery && isMarked(cacheKeyOf(e))) {
-                out += BrowseEntryRemote.RegularFile(name = e.name, fileName = e.fileName)
+                out += BrowseEntryRemote.RegularFile(
+                    name = e.name,
+                    fileName = e.fileName,
+                    size = e.size,
+                    lastModifiedMs = e.lastModifiedMs,
+                )
                 changed = true
             } else {
                 out += e

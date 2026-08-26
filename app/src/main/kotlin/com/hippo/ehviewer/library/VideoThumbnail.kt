@@ -39,6 +39,7 @@ sealed interface VideoThumbnailSource {
     val cacheIdentity: String
     val isNetwork: Boolean
     val fileName: String
+
     /** Known size from lazy scan / stat; 0 if unknown. */
     val knownSizeBytes: Long
 
@@ -53,8 +54,8 @@ sealed interface VideoThumbnailSource {
             get() {
                 val file = File(path)
                 val size = knownSizeBytes.takeIf { it > 0L } ?: file.length()
-                // v7: size-aware 30s-first seek for files >100 MiB.
-                return "v7:local:$path:$size:${file.lastModified()}"
+                // v8: size-aware seek for files >100 MiB — 2:00 → 30s → 2s.
+                return "v8:local:$path:$size:${file.lastModified()}"
             }
     }
 
@@ -66,7 +67,7 @@ sealed interface VideoThumbnailSource {
         override val isNetwork: Boolean = true
         override val fileName: String
             get() = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity = "v7:smb:$sourceId:$remoteRelativeFile:$knownSizeBytes"
+        override val cacheIdentity = "v8:smb:$sourceId:$remoteRelativeFile:$knownSizeBytes"
     }
 
     data class WebDav(
@@ -77,7 +78,7 @@ sealed interface VideoThumbnailSource {
         override val isNetwork: Boolean = true
         override val fileName: String
             get() = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity = "v7:webdav:$sourceId:$remoteRelativeFile:$knownSizeBytes"
+        override val cacheIdentity = "v8:webdav:$sourceId:$remoteRelativeFile:$knownSizeBytes"
     }
 }
 
@@ -130,11 +131,11 @@ object VideoThumbnail {
     /** Native setDataSource + multi-seek keyframe grabs. Waiter abandons; no cross-thread release. */
     private const val DECODE_TIMEOUT_MS = 2_500L
 
-    /** Large-file ranged open + 30s seek (I/O + decode share one waiter). */
-    private const val RANGED_NETWORK_TIMEOUT_MS = 6_000L
+    /** Large-file ranged open + multi-seek (I/O + decode share one waiter). */
+    private const val RANGED_NETWORK_TIMEOUT_MS = 5_000L
 
     /** Leave room for release after last seek inside the decode budget. */
-    private const val SEEK_BUDGET_MS = 1_800L
+    private const val SEEK_BUDGET_MS = 2_400L
 
     /** When true, skip new network extract (app background / pool teardown). */
     private val networkPaused = AtomicBoolean(false)
@@ -145,10 +146,11 @@ object VideoThumbnail {
     /** MPEG-TS is sequential — contiguous head only (no zero-filled mid-file). */
     private const val PROBE_TS_HEAD_BYTES = 8 * 1024 * 1024
 
-    private const val KEYFRAME_PRIMARY_US = 2_000_000L
-    private const val KEYFRAME_FALLBACK_US = 30_000_000L
+    private const val KEYFRAME_2S_US = 2_000_000L
+    private const val KEYFRAME_30S_US = 30_000_000L
+    private const val KEYFRAME_2M_US = 120_000_000L
 
-    /** Lazy-scan size threshold: prefer a later keyframe for large files. */
+    /** Lazy-scan size threshold: large files try 2:00 → 30s → 2s. */
     private const val LARGE_FILE_BYTES = 100L * 1024L * 1024L
 
     private const val SAMPLE_GRID = 12
@@ -661,8 +663,7 @@ object VideoThumbnail {
         )
     }
 
-    private fun VideoThumbnailSource.Local.resolvedSizeBytes(): Long =
-        knownSizeBytes.takeIf { it > 0L } ?: File(path).length()
+    private fun VideoThumbnailSource.Local.resolvedSizeBytes(): Long = knownSizeBytes.takeIf { it > 0L } ?: File(path).length()
 
     /**
      * Logcat identity only: extension + short hash of [VideoThumbnailSource.cacheIdentity].
@@ -681,11 +682,11 @@ object VideoThumbnail {
     private fun cacheKey(source: VideoThumbnailSource): String = sha256(source.cacheIdentity)
 
     /**
-     * Keyframe seeks: by default **2s → 30s → 0**. When [knownSizeBytes] > 100 MiB,
-     * **30s → 2s → 0** (lazy-scan size). Only [MediaMetadataRetriever.OPTION_CLOSEST_SYNC].
+     * Keyframe seeks ([MediaMetadataRetriever.OPTION_CLOSEST_SYNC]):
+     * - Default / small files: **2s → 30s → 0**
+     * - [knownSizeBytes] > 100 MiB: **2:00 → 30s → 2s → 0**
      *
-     * @param preferEarlyOnly Snapshot / TS path: skip 30s (hits holes → NULL / hangs),
-     *   except when size is large **and** we have full random access (`preferEarlyOnly=false`).
+     * @param preferEarlyOnly Snapshot / TS path: only early seeks (sparse holes).
      * @param cancelled Waiter timeout/cancel — stop between seeks so the pool thread frees.
      */
     private fun MediaMetadataRetriever.selectKeyframeFrame(
@@ -731,25 +732,29 @@ object VideoThumbnail {
             return minOf(targetUs, lastUs)
         }
 
+        fun trySeek(timeUs: Long): Boolean {
+            if (!syncAt(clamp(timeUs))) return false
+            return bestScore < MIN_VISIBLE_SAMPLES
+        }
+
         val large = knownSizeBytes > LARGE_FILE_BYTES
-        val primaryUs = if (large) KEYFRAME_FALLBACK_US else KEYFRAME_PRIMARY_US
-        val secondaryUs = if (large) KEYFRAME_PRIMARY_US else KEYFRAME_FALLBACK_US
-
-        // Large files: 30s first. Small: 2s first.
-        // Snapshot/TS paths skip any 30s attempt (sparse holes).
-        val tryPrimary = !preferEarlyOnly || primaryUs != KEYFRAME_FALLBACK_US
-        if (tryPrimary) {
-            if (!syncAt(clamp(primaryUs))) return best
-            if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+        if (preferEarlyOnly) {
+            // Sparse snapshot / TS: only early times that may exist in the head.
+            if (!trySeek(KEYFRAME_2S_US)) return best
+            syncAt(0L)
+            return best
         }
 
-        val trySecondary = !preferEarlyOnly || secondaryUs != KEYFRAME_FALLBACK_US
-        if (trySecondary) {
-            if (!syncAt(clamp(secondaryUs))) return best
-            if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+        if (large) {
+            // >100 MiB: 2:00 → 30s → 2s → 0
+            if (!trySeek(KEYFRAME_2M_US)) return best
+            if (!trySeek(KEYFRAME_30S_US)) return best
+            if (!trySeek(KEYFRAME_2S_US)) return best
+        } else {
+            // Small: 2s → 30s → 0
+            if (!trySeek(KEYFRAME_2S_US)) return best
+            if (!trySeek(KEYFRAME_30S_US)) return best
         }
-
-        // Last resort: frame 0.
         syncAt(0L)
         return best
     }
@@ -892,8 +897,7 @@ private class ProbeMediaDataSource(
 ) : android.media.MediaDataSource() {
     override fun getSize(): Long = fileSize
 
-    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int =
-        readVideoThumbProbe(fileSize, head, tail, position, buffer, offset, size)
+    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int = readVideoThumbProbe(fileSize, head, tail, position, buffer, offset, size)
 
     override fun close() {}
 }
