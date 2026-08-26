@@ -39,6 +39,7 @@ sealed interface VideoThumbnailSource {
     val cacheIdentity: String
     val isNetwork: Boolean
     val fileName: String
+
     /** Known size from lazy scan / stat; 0 if unknown. */
     val knownSizeBytes: Long
 
@@ -662,8 +663,7 @@ object VideoThumbnail {
         )
     }
 
-    private fun VideoThumbnailSource.Local.resolvedSizeBytes(): Long =
-        knownSizeBytes.takeIf { it > 0L } ?: File(path).length()
+    private fun VideoThumbnailSource.Local.resolvedSizeBytes(): Long = knownSizeBytes.takeIf { it > 0L } ?: File(path).length()
 
     /**
      * Logcat identity only: extension + short hash of [VideoThumbnailSource.cacheIdentity].
@@ -897,8 +897,7 @@ private class ProbeMediaDataSource(
 ) : android.media.MediaDataSource() {
     override fun getSize(): Long = fileSize
 
-    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int =
-        readVideoThumbProbe(fileSize, head, tail, position, buffer, offset, size)
+    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int = readVideoThumbProbe(fileSize, head, tail, position, buffer, offset, size)
 
     override fun close() {}
 }
