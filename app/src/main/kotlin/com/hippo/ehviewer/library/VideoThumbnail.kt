@@ -55,7 +55,7 @@ sealed interface VideoThumbnailSource {
                 val file = File(path)
                 val size = knownSizeBytes.takeIf { it > 0L } ?: file.length()
                 // v8: size-aware seek for files >100 MiB — 2:00 → 30s → 2s.
-                return "v8:local:$path:$size:${file.lastModified()}"
+                return "v1:local:$path:$size:${file.lastModified()}"
             }
     }
 
@@ -67,7 +67,7 @@ sealed interface VideoThumbnailSource {
         override val isNetwork: Boolean = true
         override val fileName: String
             get() = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity = "v8:smb:$sourceId:$remoteRelativeFile:$knownSizeBytes"
+        override val cacheIdentity = "v1:smb:$sourceId:$remoteRelativeFile:$knownSizeBytes"
     }
 
     data class WebDav(
@@ -78,7 +78,7 @@ sealed interface VideoThumbnailSource {
         override val isNetwork: Boolean = true
         override val fileName: String
             get() = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity = "v8:webdav:$sourceId:$remoteRelativeFile:$knownSizeBytes"
+        override val cacheIdentity = "v1:webdav:$sourceId:$remoteRelativeFile:$knownSizeBytes"
     }
 }
 
