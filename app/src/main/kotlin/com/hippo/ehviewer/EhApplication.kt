@@ -134,7 +134,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                 }
             },
         )
-        // Screen off: drop idle sticky sockets; keep them only while a transfer is playing.
+        // Screen off: drop idle sticky + browse pools; sticky kept only while playing.
         registerScreenPowerReceiver()
         // Path change (Wi‑Fi, cell, VPN/EasyTier) can leave dead keep-alives — reset pools/clients.
         registerNetworkPathCallbacks()
