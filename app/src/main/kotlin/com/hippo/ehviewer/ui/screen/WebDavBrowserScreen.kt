@@ -78,6 +78,7 @@ import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
+import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
@@ -355,6 +356,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     // Previous epoch/ON_RESUME races could ++epoch, early-return without clearing loading,
     // and leave History→up→up stuck on an empty infinite spinner (manual refresh worked).
     LaunchedEffect(sourceId, relativeDir, refreshToken) {
+        VideoThumbnail.onBrowseFolderChanged("dav:$sourceId:$relativeDir")
         val targetDir = relativeDir
         val force = forceNextLoad
         forceNextLoad = false

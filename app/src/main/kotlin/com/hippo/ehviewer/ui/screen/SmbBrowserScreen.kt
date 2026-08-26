@@ -80,6 +80,7 @@ import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
+import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterRemoteByContentMode
@@ -448,6 +449,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     // Previous epoch/ON_RESUME races could ++epoch, early-return without clearing loading,
     // and leave History→up→up stuck on an empty infinite spinner (manual refresh worked).
     LaunchedEffect(sourceId, relativeDir, refreshToken) {
+        // New folder must not wait on previous folder's stuck MMR pool threads.
+        VideoThumbnail.onBrowseFolderChanged("smb:$sourceId:$relativeDir")
         val targetDir = relativeDir
         val force = forceNextLoad
         forceNextLoad = false

@@ -23,6 +23,7 @@ import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
@@ -138,12 +139,21 @@ object VideoThumbnail {
     private val probeSemaphore = Semaphore(MAX_CONCURRENT_PROBES)
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
     private val leftoverMarkersCleared = AtomicBoolean(false)
+    private val poolLock = Any()
+    private val browseFolderKey = AtomicReference<String?>(null)
 
     /**
-     * Hard-capped MMR threads. SynchronousQueue: never queue work behind cancelled
-     * zombies — [RejectedExecutionException] until a thread frees.
+     * Hard-capped MMR threads. SynchronousQueue: never queue behind cancelled zombies.
+     * Replaced on [onBrowseFolderChanged] so a new folder is not blocked by the previous
+     * folder’s stuck `getFrameAtTime` workers (old pool drains without interrupt).
      */
-    private val decodePool = ThreadPoolExecutor(
+    @Volatile
+    private var decodePool: ThreadPoolExecutor = newDecodePool()
+
+    @Volatile
+    private var probePool: ThreadPoolExecutor = newProbePool()
+
+    private fun newDecodePool() = ThreadPoolExecutor(
         MAX_CONCURRENT_EXTRACTIONS,
         MAX_DECODE_THREADS,
         30L,
@@ -151,10 +161,9 @@ object VideoThumbnail {
         SynchronousQueue(),
         { r -> Thread(r, "video-thumb-mmr").apply { isDaemon = true } },
         ThreadPoolExecutor.AbortPolicy(),
-    )
+    ).also { it.allowCoreThreadTimeOut(true) }
 
-    /** Hard-capped probe I/O threads (same SynchronousQueue policy as decode). */
-    private val probePool = ThreadPoolExecutor(
+    private fun newProbePool() = ThreadPoolExecutor(
         MAX_CONCURRENT_PROBES,
         MAX_PROBE_THREADS,
         30L,
@@ -162,9 +171,20 @@ object VideoThumbnail {
         SynchronousQueue(),
         { r -> Thread(r, "video-thumb-probe").apply { isDaemon = true } },
         ThreadPoolExecutor.AbortPolicy(),
-    )
+    ).also { it.allowCoreThreadTimeOut(true) }
 
     fun cacheDirectory(): File = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache").apply { mkdirs() }
+
+    /**
+     * Call when the visible browse folder changes (SMB/WebDAV/local path).
+     * Rotates thumb pools so leave→enter folder is not blocked by abandoned MMR threads.
+     */
+    fun onBrowseFolderChanged(folderKey: String) {
+        val prev = browseFolderKey.getAndSet(folderKey)
+        if (prev != null && prev != folderKey) {
+            rotatePools("browse $prev → $folderKey")
+        }
+    }
 
     /**
      * App [Lifecycle.Event.ON_STOP]: reject new network thumbs. In-flight probes still
@@ -173,14 +193,33 @@ object VideoThumbnail {
      */
     fun onAppBackgrounded() {
         networkPaused.set(true)
-        logcat("VideoThumb") {
-            "app background — pause new network thumbs " +
-                "(probeActive=${probePool.activeCount} decodeActive=${decodePool.activeCount})"
-        }
+        // Drop zombies from the previous foreground session before pool teardown races.
+        rotatePools("app-background")
+        logcat("VideoThumb") { "app background — pause new network thumbs" }
     }
 
     fun onAppForegrounded() {
         networkPaused.set(false)
+    }
+
+    private fun rotatePools(reason: String) {
+        val oldDecode: ThreadPoolExecutor
+        val oldProbe: ThreadPoolExecutor
+        synchronized(poolLock) {
+            oldDecode = decodePool
+            oldProbe = probePool
+            decodePool = newDecodePool()
+            probePool = newProbePool()
+        }
+        // Do not shutdownNow / interrupt — that path stuck media.extractor at 100% CPU.
+        oldDecode.allowCoreThreadTimeOut(true)
+        oldProbe.allowCoreThreadTimeOut(true)
+        oldDecode.shutdown()
+        oldProbe.shutdown()
+        logcat("VideoThumb") {
+            "rotate pools ($reason) retiring decodeActive=${oldDecode.activeCount} " +
+                "probeActive=${oldProbe.activeCount}"
+        }
     }
 
     /**
@@ -229,7 +268,7 @@ object VideoThumbnail {
                 return@withLock null
             }
             val frame = try {
-                extractThumbnailFrame(source)
+                extractThumbnailFrame(source, persistTarget = target)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
@@ -237,26 +276,37 @@ object VideoThumbnail {
                 return@withLock null
             }
             if (frame == null) {
+                // May still land later via abandoned-waiter persist; don't mark failed yet
+                // if a late write could succeed — only mark when extract returned null after
+                // the worker finished (no pending native work for this call).
                 writeFailureMarker(failure)
                 return@withLock null
             }
-            val scaled = scale(frame)
-            try {
-                val temporary = File(directory, target.name + ".tmp." + System.nanoTime())
-                val written = temporary.outputStream().buffered().use { output ->
-                    scaled.compress(Bitmap.CompressFormat.JPEG, 82, output)
-                }
-                if (!written || !temporary.renameTo(target)) {
-                    temporary.delete()
-                    return@withLock null
-                }
-                failure.delete()
-                OriginDiskCache.scheduleTrim()
-            } finally {
-                if (scaled !== frame) scaled.recycle()
-                frame.recycle()
+            if (!persistJpeg(target, frame)) {
+                return@withLock null
             }
+            failure.delete()
             target
+        }
+    }
+
+    private fun persistJpeg(target: File, frame: Bitmap): Boolean {
+        val scaled = scale(frame)
+        return try {
+            val temporary = File(target.path + ".tmp." + System.nanoTime())
+            val written = temporary.outputStream().buffered().use { output ->
+                scaled.compress(Bitmap.CompressFormat.JPEG, 82, output)
+            }
+            if (!written || !temporary.renameTo(target)) {
+                temporary.delete()
+                false
+            } else {
+                OriginDiskCache.scheduleTrim()
+                true
+            }
+        } finally {
+            if (scaled !== frame) scaled.recycle()
+            frame.recycle()
         }
     }
 
@@ -283,9 +333,17 @@ object VideoThumbnail {
     /**
      * Local: decode only. Network: probe under [probeSemaphore] (closes remote), then
      * decode the snapshot under [extractSemaphore] — never MMR over a live pool handle.
+     *
+     * @param persistTarget when the waiter is cancelled/timed out but native still returns
+     * a frame, write JPEG here so the next visit is a disk hit.
      */
-    private suspend fun extractThumbnailFrame(source: VideoThumbnailSource): Bitmap? = when (source) {
-        is VideoThumbnailSource.Local -> extractSemaphore.withPermit { extractLocalFrame(source) }
+    private suspend fun extractThumbnailFrame(
+        source: VideoThumbnailSource,
+        persistTarget: File,
+    ): Bitmap? = when (source) {
+        is VideoThumbnailSource.Local -> extractSemaphore.withPermit {
+            extractLocalFrame(source, persistTarget)
+        }
         is VideoThumbnailSource.Smb -> {
             if (networkPaused.get()) return null
             val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
@@ -303,7 +361,7 @@ object VideoThumbnail {
                     fetchProbeSnapshot(raw, source)
                 }
             } ?: return null
-            extractSemaphore.withPermit { decodeSnapshot(snapshot, source) }
+            extractSemaphore.withPermit { decodeSnapshot(snapshot, source, persistTarget) }
         }
         is VideoThumbnailSource.WebDav -> {
             if (networkPaused.get()) return null
@@ -321,7 +379,7 @@ object VideoThumbnail {
                     fetchProbeSnapshot(raw, source)
                 }
             } ?: return null
-            extractSemaphore.withPermit { decodeSnapshot(snapshot, source) }
+            extractSemaphore.withPermit { decodeSnapshot(snapshot, source, persistTarget) }
         }
     }
 
@@ -419,6 +477,7 @@ object VideoThumbnail {
     private suspend fun decodeSnapshot(
         snapshot: ProbeSnapshot,
         source: VideoThumbnailSource,
+        persistTarget: File,
     ): Bitmap? {
         val label = privacyLogLabel(source)
         return when (snapshot.mode) {
@@ -434,6 +493,7 @@ object VideoThumbnail {
                             selectKeyframeFrame(preferEarlyOnly = true, cancelled = cancelled)
                         },
                         cleanup = { tmp.delete() },
+                        persistTarget = persistTarget,
                     )
                 } catch (e: Throwable) {
                     tmp.delete()
@@ -451,13 +511,17 @@ object VideoThumbnail {
                     getFrame = { cancelled ->
                         selectKeyframeFrame(preferEarlyOnly = true, cancelled = cancelled)
                     },
+                    persistTarget = persistTarget,
                 )
             }
         }
     }
 
     /** Local files go through the platform path — full random access. */
-    private suspend fun extractLocalFrame(source: VideoThumbnailSource.Local): Bitmap? {
+    private suspend fun extractLocalFrame(
+        source: VideoThumbnailSource.Local,
+        persistTarget: File,
+    ): Bitmap? {
         val label = privacyLogLabel(source)
         val file = File(source.path)
         if (source.path.startsWith('/') && file.isFile) {
@@ -468,6 +532,7 @@ object VideoThumbnail {
                 getFrame = { cancelled ->
                     selectKeyframeFrame(preferEarlyOnly = false, cancelled = cancelled)
                 },
+                persistTarget = persistTarget,
             )
         }
         val pfd = source.path.toPath().openFileDescriptor("r")
@@ -480,6 +545,7 @@ object VideoThumbnail {
                 selectKeyframeFrame(preferEarlyOnly = false, cancelled = cancelled)
             },
             cleanup = { runCatching { pfd.close() } },
+            persistTarget = persistTarget,
         )
     }
 
@@ -597,6 +663,8 @@ object VideoThumbnail {
         cleanup: () -> Unit = {},
         /** Called immediately on waiter timeout/cancel (must not release MMR). */
         onAbandon: () -> Unit = {},
+        /** If the waiter is gone but native still returns a frame, write JPEG here. */
+        persistTarget: File? = null,
     ): Bitmap? {
         val cancelled = AtomicBoolean(false)
         val retriever = MediaMetadataRetriever()
@@ -606,7 +674,15 @@ object VideoThumbnail {
                 setDataSource(retriever)
                 val frame = getFrame(retriever, cancelled)
                 if (!done.complete(frame)) {
-                    frame?.recycle()
+                    // Waiter already timed out / cancelled — still cache a good frame.
+                    if (frame != null && persistTarget != null && visibleSampleCount(frame) > 0) {
+                        runCatching {
+                            persistJpeg(persistTarget, frame) // recycles [frame]
+                            logcat("VideoThumb") { "late persist ($label)" }
+                        }
+                    } else {
+                        frame?.recycle()
+                    }
                 }
             } catch (e: Throwable) {
                 if (!done.complete(null)) {
