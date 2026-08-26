@@ -25,7 +25,9 @@ import splitties.init.appCtx
  *
  * **Playing** (proxy FD or HTTP body): keep the process so the connection can work.
  * **Idle grants:** keep FGS so loopback + session survive freeze.
- * **Screen off:** drop sticky unless something is playing (background playback).
+ * **Screen off:** drop sticky unless something is playing (background playback);
+ * always drop **browse** SMB/WebDAV pools so keep-alive does not chatter through
+ * VPN/EasyTier while the display is off.
  *
  * Limited (default): idle grants age out after 20 minutes, then FGS stops.
  * Unlimited (Advanced): grants stay; FGS stays until Recents swipe.
@@ -128,11 +130,15 @@ object StreamKeepAlivePolicy {
     fun onScreenOff() {
         logcat("StreamKeepAlive") { "screen_off before: ${runtimeSnapshot()}" }
         if (isPlaying()) {
-            // Background playback: leave the live SMB/WebDAV handle alone.
+            // Background playback: leave the live sticky SMB/WebDAV handle alone.
             logcat("StreamKeepAlive") { "screen_off: playing — sticky kept" }
         } else {
             dropStickyNetwork("screen_off")
         }
+        // Browse keep-alive is for interactive listing/reader only. Drop it on screen-off
+        // even while playing so idle host pools do not ping through EasyTier/VPN.
+        runCatching { SmbGateway.onAppBackgrounded("screen_off") }
+        runCatching { WebDavClient.onAppBackgrounded("screen_off") }
         logcat("StreamKeepAlive") { "screen_off after: ${runtimeSnapshot()}" }
     }
 

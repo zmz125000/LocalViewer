@@ -237,11 +237,11 @@ object WebDavClient {
     }
 
     /**
-     * App background — drop browse/reader half-open sockets + listings.
+     * Drop browse/reader half-open sockets + listings (ON_STOP / screen-off).
      * Sticky FUSE client is left alone (external PDF viewers stay foreground).
      */
-    fun onAppBackgrounded() {
-        logcat { "WebDavClient: app background — reset browse client + listings (sticky kept)" }
+    fun onAppBackgrounded(reason: String = "app background") {
+        logcat { "WebDavClient: $reason — reset browse client + listings (sticky kept)" }
         resetClient()
         BrowseSession.invalidateAllWebDavListings()
     }

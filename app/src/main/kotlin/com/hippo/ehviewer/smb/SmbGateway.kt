@@ -1394,8 +1394,12 @@ object SmbGateway {
         }
     }
 
-    fun onAppBackgrounded() {
-        logcat { "SmbGateway: app background — closing all SMB sessions" }
+    /**
+     * Drop browse/reader host pools (not sticky FUSE/HTTP). Used on ProcessLifecycle
+     * ON_STOP and on screen-off so keep-alive does not chatter through VPN while idle.
+     */
+    fun onAppBackgrounded(reason: String = "app background") {
+        logcat { "SmbGateway: $reason — closing browse SMB sessions" }
         dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
 
