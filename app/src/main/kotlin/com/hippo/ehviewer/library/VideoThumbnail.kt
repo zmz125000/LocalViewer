@@ -18,11 +18,11 @@ import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
@@ -47,7 +47,7 @@ sealed interface VideoThumbnailSource {
             get() {
                 val file = File(path)
                 // v6: 2s→30s keyframe seek + ranged RAM network decode.
-                return "v6:local:$path:${file.length()}:${file.lastModified()}"
+                return "v1:local:$path:${file.length()}:${file.lastModified()}"
             }
     }
 
@@ -55,14 +55,14 @@ sealed interface VideoThumbnailSource {
         override val isNetwork: Boolean = true
         override val fileName: String
             get() = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity = "v6:smb:$sourceId:$remoteRelativeFile"
+        override val cacheIdentity = "v1:smb:$sourceId:$remoteRelativeFile"
     }
 
     data class WebDav(val sourceId: Long, val remoteRelativeFile: String) : VideoThumbnailSource {
         override val isNetwork: Boolean = true
         override val fileName: String
             get() = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity = "v6:webdav:$sourceId:$remoteRelativeFile"
+        override val cacheIdentity = "v1:webdav:$sourceId:$remoteRelativeFile"
     }
 }
 
@@ -97,17 +97,17 @@ object VideoThumbnail {
     private const val MAX_CONCURRENT_PROBES = 3
 
     /**
-     * Extra stuck workers allowed beyond live waiters. Total in-flight probe/decode
-     * threads are capped at concurrent + abandoned so timeout cannot open a stampede
-     * (old [abandonedProbes] raced the semaphore and climbed to 5+ forever).
+     * Extra pool threads for waiter-abandoned stuck native/I/O (scroll cancel).
+     * [SynchronousQueue] + AbortPolicy ⇒ hard cap, no queue behind zombies, no sticky
+     * inFlight counter that blocks forever when MMR hangs past cancel.
      */
-    private const val MAX_ABANDONED_WORKERS = 3
+    private const val MAX_ABANDONED_WORKERS = 2
 
-    private const val MAX_ABANDONED_PROBES = 3
+    private const val MAX_ABANDONED_PROBES = 2
 
-    private const val MAX_PROBE_IN_FLIGHT = MAX_CONCURRENT_PROBES + MAX_ABANDONED_PROBES
+    private const val MAX_DECODE_THREADS = MAX_CONCURRENT_EXTRACTIONS + MAX_ABANDONED_WORKERS
 
-    private const val MAX_DECODE_IN_FLIGHT = MAX_CONCURRENT_EXTRACTIONS + MAX_ABANDONED_WORKERS
+    private const val MAX_PROBE_THREADS = MAX_CONCURRENT_PROBES + MAX_ABANDONED_PROBES
 
     /** Fetch probe then close remote. Slightly higher for 8 MiB TS heads. */
     private const val PROBE_IO_TIMEOUT_MS = 4_000L
@@ -116,7 +116,7 @@ object VideoThumbnail {
     private const val DECODE_TIMEOUT_MS = 2_500L
 
     /** Leave room for release after last seek inside the decode budget. */
-    private const val SEEK_BUDGET_MS = 2_000L
+    private const val SEEK_BUDGET_MS = 1_800L
 
     /** When true, skip new network extract (app background / pool teardown). */
     private val networkPaused = AtomicBoolean(false)
@@ -138,35 +138,28 @@ object VideoThumbnail {
     private val probeSemaphore = Semaphore(MAX_CONCURRENT_PROBES)
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
     private val leftoverMarkersCleared = AtomicBoolean(false)
-    /** Probe pool tasks not yet finished (includes waiter-abandoned stuck I/O). */
-    private val probeInFlight = AtomicInteger(0)
-    /** Decode pool tasks not yet finished (includes waiter-abandoned stuck MMR). */
-    private val decodeInFlight = AtomicInteger(0)
 
     /**
-     * Fixed pool: at most [MAX_CONCURRENT_EXTRACTIONS] + [MAX_ABANDONED_WORKERS] native
-     * jobs. Full queue → reject new decode (fail thumb) instead of unbounded Thread spawn.
+     * Hard-capped MMR threads. SynchronousQueue: never queue work behind cancelled
+     * zombies — [RejectedExecutionException] until a thread frees.
      */
     private val decodePool = ThreadPoolExecutor(
         MAX_CONCURRENT_EXTRACTIONS,
-        MAX_CONCURRENT_EXTRACTIONS + MAX_ABANDONED_WORKERS,
+        MAX_DECODE_THREADS,
         30L,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(MAX_CONCURRENT_EXTRACTIONS + MAX_ABANDONED_WORKERS),
+        SynchronousQueue(),
         { r -> Thread(r, "video-thumb-mmr").apply { isDaemon = true } },
         ThreadPoolExecutor.AbortPolicy(),
     )
 
-    /**
-     * Bounded probe I/O (was unbounded `Thread` per cell — timeout/cancel released the
-     * probe semaphore while the old thread kept reading, stacking CPU after a grid scroll).
-     */
+    /** Hard-capped probe I/O threads (same SynchronousQueue policy as decode). */
     private val probePool = ThreadPoolExecutor(
         MAX_CONCURRENT_PROBES,
-        MAX_CONCURRENT_PROBES + MAX_ABANDONED_PROBES,
+        MAX_PROBE_THREADS,
         30L,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(MAX_CONCURRENT_PROBES + MAX_ABANDONED_PROBES),
+        SynchronousQueue(),
         { r -> Thread(r, "video-thumb-probe").apply { isDaemon = true } },
         ThreadPoolExecutor.AbortPolicy(),
     )
@@ -182,7 +175,7 @@ object VideoThumbnail {
         networkPaused.set(true)
         logcat("VideoThumb") {
             "app background — pause new network thumbs " +
-                "(probeInFlight=${probeInFlight.get()} decodeInFlight=${decodeInFlight.get()})"
+                "(probeActive=${probePool.activeCount} decodeActive=${decodePool.activeCount})"
         }
     }
 
@@ -231,21 +224,8 @@ object VideoThumbnail {
             if (source.isNetwork && !Settings.downloadNetworkVideoThumbs.value) {
                 return@withLock null
             }
-            if (decodeInFlight.get() >= MAX_DECODE_IN_FLIGHT) {
-                // Transient backpressure — do not write a 24h failure marker.
-                logcat("VideoThumb") {
-                    "skip decode: inFlight=${decodeInFlight.get()}/$MAX_DECODE_IN_FLIGHT"
-                }
-                return@withLock null
-            }
             if (source.isNetwork && networkPaused.get()) {
                 logcat("VideoThumb") { "skip network thumb: app background" }
-                return@withLock null
-            }
-            if (source.isNetwork && probeInFlight.get() >= MAX_PROBE_IN_FLIGHT) {
-                logcat("VideoThumb") {
-                    "skip probe: inFlight=${probeInFlight.get()}/$MAX_PROBE_IN_FLIGHT"
-                }
                 return@withLock null
             }
             val frame = try {
@@ -355,14 +335,6 @@ object VideoThumbnail {
         raw: ArchiveByteSource,
         source: VideoThumbnailSource,
     ): ProbeSnapshot? {
-        if (!tryBeginProbeWorker()) {
-            logcat("VideoThumb") {
-                "reject probe (${privacyLogLabel(source)}): " +
-                    "inFlight=${probeInFlight.get()}/$MAX_PROBE_IN_FLIGHT"
-            }
-            runCatching { raw.close() }
-            return null
-        }
         val fileName = source.fileName
         val done = CompletableDeferred<ProbeSnapshot?>()
         val task = Runnable {
@@ -372,42 +344,34 @@ object VideoThumbnail {
                 done.complete(null)
             } finally {
                 runCatching { raw.close() }
-                probeInFlight.updateAndGet { (it - 1).coerceAtLeast(0) }
             }
         }
         try {
             probePool.execute(task)
-        } catch (_: Throwable) {
-            probeInFlight.updateAndGet { (it - 1).coerceAtLeast(0) }
-            logcat("VideoThumb") { "probe pool full (${privacyLogLabel(source)})" }
+        } catch (_: RejectedExecutionException) {
+            logcat("VideoThumb") {
+                "probe pool full (${privacyLogLabel(source)}) active=${probePool.activeCount}"
+            }
             runCatching { raw.close() }
             return null
         }
         return try {
             withTimeout(PROBE_IO_TIMEOUT_MS) { done.await() }
         } catch (e: TimeoutCancellationException) {
-            // Close remote to unblock stuck read; inFlight stays until worker finally.
+            // Close remote to unblock stuck read; pool thread frees when worker finally runs.
             runCatching { raw.close() }
             logcat("VideoThumb") {
                 "probe timeout ${PROBE_IO_TIMEOUT_MS}ms (${privacyLogLabel(source)}) — " +
-                    "abandon waiter (inFlight=${probeInFlight.get()})"
+                    "abandon waiter (active=${probePool.activeCount})"
             }
             null
         } catch (e: CancellationException) {
             runCatching { raw.close() }
             logcat("VideoThumb") {
                 "probe cancel (${privacyLogLabel(source)}) — abandon waiter " +
-                    "(inFlight=${probeInFlight.get()})"
+                    "(active=${probePool.activeCount})"
             }
             throw e
-        }
-    }
-
-    private fun tryBeginProbeWorker(): Boolean {
-        while (true) {
-            val n = probeInFlight.get()
-            if (n >= MAX_PROBE_IN_FLIGHT) return false
-            if (probeInFlight.compareAndSet(n, n + 1)) return true
         }
     }
 
@@ -466,7 +430,9 @@ object VideoThumbnail {
                         label = label,
                         timeoutMs = DECODE_TIMEOUT_MS,
                         setDataSource = { it.setDataSource(tmp.absolutePath) },
-                        getFrame = { selectKeyframeFrame(preferEarlyOnly = true) },
+                        getFrame = { cancelled ->
+                            selectKeyframeFrame(preferEarlyOnly = true, cancelled = cancelled)
+                        },
                         cleanup = { tmp.delete() },
                     )
                 } catch (e: Throwable) {
@@ -482,7 +448,9 @@ object VideoThumbnail {
                     label = label,
                     timeoutMs = DECODE_TIMEOUT_MS,
                     setDataSource = { it.setDataSource(data) },
-                    getFrame = { selectKeyframeFrame(preferEarlyOnly = true) },
+                    getFrame = { cancelled ->
+                        selectKeyframeFrame(preferEarlyOnly = true, cancelled = cancelled)
+                    },
                 )
             }
         }
@@ -497,7 +465,9 @@ object VideoThumbnail {
                 label = label,
                 timeoutMs = DECODE_TIMEOUT_MS,
                 setDataSource = { it.setDataSource(file.absolutePath) },
-                getFrame = { selectKeyframeFrame(preferEarlyOnly = false) },
+                getFrame = { cancelled ->
+                    selectKeyframeFrame(preferEarlyOnly = false, cancelled = cancelled)
+                },
             )
         }
         val pfd = source.path.toPath().openFileDescriptor("r")
@@ -506,7 +476,9 @@ object VideoThumbnail {
             label = label,
             timeoutMs = DECODE_TIMEOUT_MS,
             setDataSource = { it.setDataSource(pfd.fileDescriptor, 0L, length) },
-            getFrame = { selectKeyframeFrame(preferEarlyOnly = false) },
+            getFrame = { cancelled ->
+                selectKeyframeFrame(preferEarlyOnly = false, cancelled = cancelled)
+            },
             cleanup = { runCatching { pfd.close() } },
         )
     }
@@ -528,13 +500,16 @@ object VideoThumbnail {
     private fun cacheKey(source: VideoThumbnailSource): String = sha256(source.cacheIdentity)
 
     /**
-     * Keyframe seeks like a player: **2s** then **30s** (clamped to duration), then
-     * cheap last resorts. Only [MediaMetadataRetriever.OPTION_CLOSEST_SYNC] —
-     * [MediaMetadataRetriever.OPTION_CLOSEST] can hang MediaExtractor.
+     * Keyframe seeks like a player: **2s** then **30s** (full file only), then `0`.
+     * Only [MediaMetadataRetriever.OPTION_CLOSEST_SYNC].
      *
-     * @param preferEarlyOnly TS contiguous-head path: skip 30s when out of early range.
+     * @param preferEarlyOnly Snapshot / TS path: skip 30s (hits holes → NULL / hangs).
+     * @param cancelled Waiter timeout/cancel — stop between seeks so the pool thread frees.
      */
-    private fun MediaMetadataRetriever.selectKeyframeFrame(preferEarlyOnly: Boolean): Bitmap? {
+    private fun MediaMetadataRetriever.selectKeyframeFrame(
+        preferEarlyOnly: Boolean,
+        cancelled: AtomicBoolean? = null,
+    ): Bitmap? {
         val deadline = System.nanoTime() + SEEK_BUDGET_MS * 1_000_000L
         var best: Bitmap? = null
         var bestScore = -1
@@ -549,13 +524,15 @@ object VideoThumbnail {
                 candidate.recycle()
             }
         }
-        fun syncAt(timeUs: Long) {
-            if (System.nanoTime() >= deadline) return
+        fun syncAt(timeUs: Long): Boolean {
+            if (cancelled?.get() == true) return false
+            if (System.nanoTime() >= deadline) return false
             consider(
                 runCatching {
                     getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 }.getOrNull(),
             )
+            return cancelled?.get() != true
         }
 
         val durationUs = runCatching {
@@ -572,29 +549,17 @@ object VideoThumbnail {
         }
 
         // Primary: ~2s keyframe.
-        syncAt(clamp(KEYFRAME_PRIMARY_US))
+        if (!syncAt(clamp(KEYFRAME_PRIMARY_US))) return best
         if (bestScore >= MIN_VISIBLE_SAMPLES) return best
 
-        // Fallback: ~30s. TS contiguous-head path never seeks this far (out of probe).
+        // Fallback: ~30s only with full random access (local).
         if (!preferEarlyOnly) {
-            syncAt(clamp(KEYFRAME_FALLBACK_US))
+            if (!syncAt(clamp(KEYFRAME_FALLBACK_US))) return best
             if (bestScore >= MIN_VISIBLE_SAMPLES) return best
         }
 
-        // Last resorts.
-        if (durationUs != null && durationUs > KEYFRAME_PRIMARY_US) {
-            syncAt(clamp(durationUs / 10L))
-            if (bestScore >= MIN_VISIBLE_SAMPLES) return best
-        }
-        if (preferEarlyOnly) {
-            // Early times still inside a TS head.
-            for (t in longArrayOf(1_000_000L, 3_000_000L, 5_000_000L, 0L)) {
-                syncAt(clamp(t))
-                if (bestScore >= MIN_VISIBLE_SAMPLES) return best
-            }
-        } else {
-            syncAt(0L)
-        }
+        // Last resort: frame 0 (avoid a long early-time ladder — held pool threads on cancel).
+        syncAt(0L)
         return best
     }
 
@@ -628,23 +593,18 @@ object VideoThumbnail {
         label: String,
         timeoutMs: Long,
         setDataSource: (MediaMetadataRetriever) -> Unit,
-        getFrame: MediaMetadataRetriever.() -> Bitmap?,
+        getFrame: MediaMetadataRetriever.(cancelled: AtomicBoolean) -> Bitmap?,
         cleanup: () -> Unit = {},
         /** Called immediately on waiter timeout/cancel (must not release MMR). */
         onAbandon: () -> Unit = {},
     ): Bitmap? {
-        if (!tryBeginDecodeWorker()) {
-            logcat("VideoThumb") {
-                "reject decode ($label): inFlight=${decodeInFlight.get()}/$MAX_DECODE_IN_FLIGHT"
-            }
-            return null
-        }
+        val cancelled = AtomicBoolean(false)
         val retriever = MediaMetadataRetriever()
         val done = CompletableDeferred<Bitmap?>()
         val task = Runnable {
             try {
                 setDataSource(retriever)
-                val frame = getFrame(retriever)
+                val frame = getFrame(retriever, cancelled)
                 if (!done.complete(frame)) {
                     frame?.recycle()
                 }
@@ -655,14 +615,14 @@ object VideoThumbnail {
             } finally {
                 runCatching { retriever.release() }
                 runCatching { cleanup() }
-                decodeInFlight.updateAndGet { (it - 1).coerceAtLeast(0) }
             }
         }
         try {
             decodePool.execute(task)
-        } catch (_: Throwable) {
-            decodeInFlight.updateAndGet { (it - 1).coerceAtLeast(0) }
-            logcat("VideoThumb") { "decode pool full ($label)" }
+        } catch (_: RejectedExecutionException) {
+            logcat("VideoThumb") {
+                "decode pool full ($label) active=${decodePool.activeCount}/$MAX_DECODE_THREADS"
+            }
             runCatching { retriever.release() }
             runCatching { cleanup() }
             return null
@@ -670,26 +630,20 @@ object VideoThumbnail {
         return try {
             withTimeout(timeoutMs) { done.await() }
         } catch (e: TimeoutCancellationException) {
+            cancelled.set(true)
             runCatching { onAbandon() }
             logcat("VideoThumb") {
                 "mmr timeout ${timeoutMs}ms ($label) — abandon waiter " +
-                    "(inFlight=${decodeInFlight.get()})"
+                    "(active=${decodePool.activeCount})"
             }
             null
         } catch (e: CancellationException) {
+            cancelled.set(true)
             runCatching { onAbandon() }
             logcat("VideoThumb") {
-                "mmr cancel ($label) — abandon waiter (inFlight=${decodeInFlight.get()})"
+                "mmr cancel ($label) — abandon waiter (active=${decodePool.activeCount})"
             }
             throw e
-        }
-    }
-
-    private fun tryBeginDecodeWorker(): Boolean {
-        while (true) {
-            val n = decodeInFlight.get()
-            if (n >= MAX_DECODE_IN_FLIGHT) return false
-            if (decodeInFlight.compareAndSet(n, n + 1)) return true
         }
     }
 
