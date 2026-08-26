@@ -1199,8 +1199,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                                             name = video.name,
                                             thumbnailSource = VideoThumbnailSource.WebDav(
-                                                sourceId,
-                                                joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                                sourceId = sourceId,
+                                                remoteRelativeFile = joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                                knownSizeBytes = video.size,
                                             ),
                                             allowRemoteFetch = allowRemoteThumbs,
                                             onClick = { openVideoPrimary(video.fileName) },
@@ -1325,8 +1326,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                                             name = video.name,
                                             thumbnailSource = VideoThumbnailSource.WebDav(
-                                                sourceId,
-                                                joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                                sourceId = sourceId,
+                                                remoteRelativeFile = joinRemoteArchivePath(relativeDir, "", video.fileName),
+                                                knownSizeBytes = video.size,
                                             ),
                                             allowRemoteFetch = allowRemoteThumbs,
                                             onClick = { openVideoPrimary(video.fileName) },

@@ -218,6 +218,7 @@ object NetworkFolderIndexCache {
                         is BrowseEntryRemote.VideoFile -> {
                             put("kind", KIND_VIDEO)
                             put("fileName", entry.fileName)
+                            if (entry.size > 0L) put("size", entry.size)
                         }
                         is BrowseEntryRemote.RegularFile -> {
                             put("kind", KIND_FILE)
@@ -267,6 +268,7 @@ object NetworkFolderIndexCache {
                     KIND_VIDEO -> BrowseEntryRemote.VideoFile(
                         name = name,
                         fileName = item.optString("fileName", name),
+                        size = item.optLong("size"),
                         hidden = hidden,
                         virtual = virtual,
                     )

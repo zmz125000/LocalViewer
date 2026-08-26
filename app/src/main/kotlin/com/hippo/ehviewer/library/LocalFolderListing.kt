@@ -421,6 +421,7 @@ fun materializeLocalEntries(
             BrowseEntry.VideoFile(
                 name = entry.name,
                 path = baseDir.resolveRelative(entry.fileName),
+                size = entry.size,
                 hidden = entry.hidden,
                 virtual = entry.virtual,
             )

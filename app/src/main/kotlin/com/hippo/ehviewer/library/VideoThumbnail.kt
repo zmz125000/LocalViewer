@@ -39,31 +39,45 @@ sealed interface VideoThumbnailSource {
     val cacheIdentity: String
     val isNetwork: Boolean
     val fileName: String
+    /** Known size from lazy scan / stat; 0 if unknown. */
+    val knownSizeBytes: Long
 
-    data class Local(val path: String) : VideoThumbnailSource {
+    data class Local(
+        val path: String,
+        override val knownSizeBytes: Long = 0L,
+    ) : VideoThumbnailSource {
         override val isNetwork: Boolean = false
         override val fileName: String
             get() = path.substringAfterLast('/').substringAfterLast('\\')
         override val cacheIdentity: String
             get() {
                 val file = File(path)
-                // v6: 2s→30s keyframe seek + ranged RAM network decode.
-                return "v1:local:$path:${file.length()}:${file.lastModified()}"
+                val size = knownSizeBytes.takeIf { it > 0L } ?: file.length()
+                // v7: size-aware 30s-first seek for files >100 MiB.
+                return "v7:local:$path:$size:${file.lastModified()}"
             }
     }
 
-    data class Smb(val sourceId: Long, val remoteRelativeFile: String) : VideoThumbnailSource {
+    data class Smb(
+        val sourceId: Long,
+        val remoteRelativeFile: String,
+        override val knownSizeBytes: Long = 0L,
+    ) : VideoThumbnailSource {
         override val isNetwork: Boolean = true
         override val fileName: String
             get() = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity = "v1:smb:$sourceId:$remoteRelativeFile"
+        override val cacheIdentity = "v7:smb:$sourceId:$remoteRelativeFile:$knownSizeBytes"
     }
 
-    data class WebDav(val sourceId: Long, val remoteRelativeFile: String) : VideoThumbnailSource {
+    data class WebDav(
+        val sourceId: Long,
+        val remoteRelativeFile: String,
+        override val knownSizeBytes: Long = 0L,
+    ) : VideoThumbnailSource {
         override val isNetwork: Boolean = true
         override val fileName: String
             get() = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity = "v1:webdav:$sourceId:$remoteRelativeFile"
+        override val cacheIdentity = "v7:webdav:$sourceId:$remoteRelativeFile:$knownSizeBytes"
     }
 }
 
@@ -116,6 +130,9 @@ object VideoThumbnail {
     /** Native setDataSource + multi-seek keyframe grabs. Waiter abandons; no cross-thread release. */
     private const val DECODE_TIMEOUT_MS = 2_500L
 
+    /** Large-file ranged open + 30s seek (I/O + decode share one waiter). */
+    private const val RANGED_NETWORK_TIMEOUT_MS = 6_000L
+
     /** Leave room for release after last seek inside the decode budget. */
     private const val SEEK_BUDGET_MS = 1_800L
 
@@ -130,6 +147,9 @@ object VideoThumbnail {
 
     private const val KEYFRAME_PRIMARY_US = 2_000_000L
     private const val KEYFRAME_FALLBACK_US = 30_000_000L
+
+    /** Lazy-scan size threshold: prefer a later keyframe for large files. */
+    private const val LARGE_FILE_BYTES = 100L * 1024L * 1024L
 
     private const val SAMPLE_GRID = 12
     private const val BLACK_LUMA = 24
@@ -347,7 +367,7 @@ object VideoThumbnail {
         is VideoThumbnailSource.Smb -> {
             if (networkPaused.get()) return null
             val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
-            val snapshot = probeSemaphore.withPermit {
+            probeSemaphore.withPermit {
                 if (networkPaused.get()) return@withPermit null
                 SmbCache.withBrowseThumbFetchSlot {
                     val raw = SmbArchiveByteSource(
@@ -358,15 +378,14 @@ object VideoThumbnail {
                         readahead = false,
                         yieldable = true,
                     )
-                    fetchProbeSnapshot(raw, source)
+                    extractNetworkFrame(raw, source, persistTarget)
                 }
-            } ?: return null
-            extractSemaphore.withPermit { decodeSnapshot(snapshot, source, persistTarget) }
+            }
         }
         is VideoThumbnailSource.WebDav -> {
             if (networkPaused.get()) return null
             val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
-            val snapshot = probeSemaphore.withPermit {
+            probeSemaphore.withPermit {
                 if (networkPaused.get()) return@withPermit null
                 WebDavCache.withBrowseThumbFetchSlot {
                     val raw = WebDavArchiveByteSource(
@@ -376,10 +395,84 @@ object VideoThumbnail {
                         pipeline = false,
                         readahead = false,
                     )
-                    fetchProbeSnapshot(raw, source)
+                    extractNetworkFrame(raw, source, persistTarget)
                 }
-            } ?: return null
+            }
+        }
+    }
+
+    /**
+     * Small / TS: offline head(+tail) snapshot then decode.
+     * Large (>100 MiB) non-TS: ranged RAM [CachingRangeMediaDataSource] so **30s**
+     * keyframe seek can hit real bytes (not sparse holes).
+     */
+    private suspend fun extractNetworkFrame(
+        raw: ArchiveByteSource,
+        source: VideoThumbnailSource,
+        persistTarget: File,
+    ): Bitmap? {
+        val sizeHint = source.knownSizeBytes.takeIf { it > 0L } ?: raw.size
+        val ts = isMpegTsVideoName(source.fileName)
+        return if (!ts && sizeHint > LARGE_FILE_BYTES) {
+            extractSemaphore.withPermit {
+                decodeRangedNetwork(raw, source, persistTarget, sizeHint)
+            }
+        } else {
+            val snapshot = fetchProbeSnapshot(raw, source) ?: return null
             extractSemaphore.withPermit { decodeSnapshot(snapshot, source, persistTarget) }
+        }
+    }
+
+    /**
+     * Large network file: keep [raw] open for sparse page reads; 30s-first seek.
+     * [onBrowseFolderChanged] / background rotates pools so abandoned workers do not
+     * block the next folder.
+     */
+    private suspend fun decodeRangedNetwork(
+        raw: ArchiveByteSource,
+        source: VideoThumbnailSource,
+        persistTarget: File,
+        knownSizeBytes: Long,
+    ): Bitmap? {
+        val label = privacyLogLabel(source)
+        val mds = CachingRangeMediaDataSource(raw)
+        val closed = AtomicBoolean(false)
+        val closeAll = {
+            if (closed.compareAndSet(false, true)) {
+                runCatching { mds.close() }
+                runCatching { raw.close() }
+            }
+        }
+        return try {
+            val size = knownSizeBytes.takeIf { it > 0L } ?: raw.size
+            if (size > 0L) {
+                val headLen = minOf(PROBE_HEAD_BYTES.toLong(), size).toInt()
+                mds.prefetch(0L, headLen)
+                if (size > headLen + PROBE_TAIL_BYTES) {
+                    mds.prefetch(size - PROBE_TAIL_BYTES, PROBE_TAIL_BYTES)
+                }
+            }
+            decodeFrameWatchdog(
+                label = label,
+                timeoutMs = RANGED_NETWORK_TIMEOUT_MS,
+                setDataSource = { it.setDataSource(mds) },
+                getFrame = { cancelled ->
+                    selectKeyframeFrame(
+                        preferEarlyOnly = false,
+                        cancelled = cancelled,
+                        knownSizeBytes = size,
+                    )
+                },
+                cleanup = { closeAll() },
+                onAbandon = { closeAll() },
+                persistTarget = persistTarget,
+            )
+        } catch (e: CancellationException) {
+            closeAll()
+            throw e
+        } catch (e: Throwable) {
+            closeAll()
+            throw e
         }
     }
 
@@ -490,7 +583,12 @@ object VideoThumbnail {
                         timeoutMs = DECODE_TIMEOUT_MS,
                         setDataSource = { it.setDataSource(tmp.absolutePath) },
                         getFrame = { cancelled ->
-                            selectKeyframeFrame(preferEarlyOnly = true, cancelled = cancelled)
+                            selectKeyframeFrame(
+                                preferEarlyOnly = true,
+                                cancelled = cancelled,
+                                knownSizeBytes = source.knownSizeBytes.takeIf { it > 0L }
+                                    ?: snapshot.fileSize,
+                            )
                         },
                         cleanup = { tmp.delete() },
                         persistTarget = persistTarget,
@@ -501,15 +599,21 @@ object VideoThumbnail {
                 }
             }
             ProbeMode.HeadAndTail -> {
-                // Offline MDS only — remote already closed. Mid-file holes are zeros;
-                // prefer early seeks (2s) so 30s does not spam getFrameAtTime NULL into holes.
+                // Offline MDS — mid-file holes are zeros. Still pass listing size so
+                // large files try 30s first when random access is available (local);
+                // network sparse MDS keeps early-only to avoid NULL/hangs into holes.
                 val data = ProbeMediaDataSource(snapshot.fileSize, snapshot.head, snapshot.tail)
+                val sizeHint = source.knownSizeBytes.takeIf { it > 0L } ?: snapshot.fileSize
                 decodeFrameWatchdog(
                     label = label,
                     timeoutMs = DECODE_TIMEOUT_MS,
                     setDataSource = { it.setDataSource(data) },
                     getFrame = { cancelled ->
-                        selectKeyframeFrame(preferEarlyOnly = true, cancelled = cancelled)
+                        selectKeyframeFrame(
+                            preferEarlyOnly = true,
+                            cancelled = cancelled,
+                            knownSizeBytes = sizeHint,
+                        )
                     },
                     persistTarget = persistTarget,
                 )
@@ -530,7 +634,11 @@ object VideoThumbnail {
                 timeoutMs = DECODE_TIMEOUT_MS,
                 setDataSource = { it.setDataSource(file.absolutePath) },
                 getFrame = { cancelled ->
-                    selectKeyframeFrame(preferEarlyOnly = false, cancelled = cancelled)
+                    selectKeyframeFrame(
+                        preferEarlyOnly = false,
+                        cancelled = cancelled,
+                        knownSizeBytes = source.resolvedSizeBytes(),
+                    )
                 },
                 persistTarget = persistTarget,
             )
@@ -542,12 +650,19 @@ object VideoThumbnail {
             timeoutMs = DECODE_TIMEOUT_MS,
             setDataSource = { it.setDataSource(pfd.fileDescriptor, 0L, length) },
             getFrame = { cancelled ->
-                selectKeyframeFrame(preferEarlyOnly = false, cancelled = cancelled)
+                selectKeyframeFrame(
+                    preferEarlyOnly = false,
+                    cancelled = cancelled,
+                    knownSizeBytes = source.knownSizeBytes.takeIf { it > 0L } ?: length,
+                )
             },
             cleanup = { runCatching { pfd.close() } },
             persistTarget = persistTarget,
         )
     }
+
+    private fun VideoThumbnailSource.Local.resolvedSizeBytes(): Long =
+        knownSizeBytes.takeIf { it > 0L } ?: File(path).length()
 
     /**
      * Logcat identity only: extension + short hash of [VideoThumbnailSource.cacheIdentity].
@@ -566,15 +681,17 @@ object VideoThumbnail {
     private fun cacheKey(source: VideoThumbnailSource): String = sha256(source.cacheIdentity)
 
     /**
-     * Keyframe seeks like a player: **2s** then **30s** (full file only), then `0`.
-     * Only [MediaMetadataRetriever.OPTION_CLOSEST_SYNC].
+     * Keyframe seeks: by default **2s → 30s → 0**. When [knownSizeBytes] > 100 MiB,
+     * **30s → 2s → 0** (lazy-scan size). Only [MediaMetadataRetriever.OPTION_CLOSEST_SYNC].
      *
-     * @param preferEarlyOnly Snapshot / TS path: skip 30s (hits holes → NULL / hangs).
+     * @param preferEarlyOnly Snapshot / TS path: skip 30s (hits holes → NULL / hangs),
+     *   except when size is large **and** we have full random access (`preferEarlyOnly=false`).
      * @param cancelled Waiter timeout/cancel — stop between seeks so the pool thread frees.
      */
     private fun MediaMetadataRetriever.selectKeyframeFrame(
         preferEarlyOnly: Boolean,
         cancelled: AtomicBoolean? = null,
+        knownSizeBytes: Long = 0L,
     ): Bitmap? {
         val deadline = System.nanoTime() + SEEK_BUDGET_MS * 1_000_000L
         var best: Bitmap? = null
@@ -614,17 +731,25 @@ object VideoThumbnail {
             return minOf(targetUs, lastUs)
         }
 
-        // Primary: ~2s keyframe.
-        if (!syncAt(clamp(KEYFRAME_PRIMARY_US))) return best
-        if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+        val large = knownSizeBytes > LARGE_FILE_BYTES
+        val primaryUs = if (large) KEYFRAME_FALLBACK_US else KEYFRAME_PRIMARY_US
+        val secondaryUs = if (large) KEYFRAME_PRIMARY_US else KEYFRAME_FALLBACK_US
 
-        // Fallback: ~30s only with full random access (local).
-        if (!preferEarlyOnly) {
-            if (!syncAt(clamp(KEYFRAME_FALLBACK_US))) return best
+        // Large files: 30s first. Small: 2s first.
+        // Snapshot/TS paths skip any 30s attempt (sparse holes).
+        val tryPrimary = !preferEarlyOnly || primaryUs != KEYFRAME_FALLBACK_US
+        if (tryPrimary) {
+            if (!syncAt(clamp(primaryUs))) return best
             if (bestScore >= MIN_VISIBLE_SAMPLES) return best
         }
 
-        // Last resort: frame 0 (avoid a long early-time ladder — held pool threads on cancel).
+        val trySecondary = !preferEarlyOnly || secondaryUs != KEYFRAME_FALLBACK_US
+        if (trySecondary) {
+            if (!syncAt(clamp(secondaryUs))) return best
+            if (bestScore >= MIN_VISIBLE_SAMPLES) return best
+        }
+
+        // Last resort: frame 0.
         syncAt(0L)
         return best
     }

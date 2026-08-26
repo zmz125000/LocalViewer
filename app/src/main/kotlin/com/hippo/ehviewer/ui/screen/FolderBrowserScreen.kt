@@ -952,7 +952,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         BrowseVideoGridItem(
                                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                                             name = video.name,
-                                            thumbnailSource = VideoThumbnailSource.Local(video.path.toString()),
+                                            thumbnailSource = VideoThumbnailSource.Local(
+                                                path = video.path.toString(),
+                                                knownSizeBytes = video.size,
+                                            ),
                                             onClick = { openVideoPrimary(video.path) },
                                             onLongClick = { openVideoSecondary(video.path) },
                                         )
@@ -1072,7 +1075,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         BrowseVideoRow(
                                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                                             name = video.name,
-                                            thumbnailSource = VideoThumbnailSource.Local(video.path.toString()),
+                                            thumbnailSource = VideoThumbnailSource.Local(
+                                                path = video.path.toString(),
+                                                knownSizeBytes = video.size,
+                                            ),
                                             onClick = { openVideoPrimary(video.path) },
                                             onLongClick = { openVideoSecondary(video.path) },
                                         )

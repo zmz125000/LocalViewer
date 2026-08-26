@@ -93,6 +93,8 @@ sealed interface BrowseEntry {
     data class VideoFile(
         override val name: String,
         val path: Path,
+        /** End-of-file size in bytes when known (0 = unknown). */
+        val size: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntry
@@ -257,6 +259,8 @@ sealed interface BrowseEntryRemote {
     data class VideoFile(
         override val name: String,
         val fileName: String = name,
+        /** End-of-file size in bytes from lazy list/PROPFIND (0 = unknown). */
+        val size: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntryRemote
@@ -525,6 +529,7 @@ fun classifyRemoteListingWithPeeks(
                     data class PromotedVideoFile(
                         val leafName: String,
                         val relativeFile: String,
+                        val size: Long = 0L,
                     )
                     val galleryLeaves = ArrayList<PromotedGalleryLeaf>()
                     val videoLeaves = ArrayList<PromotedVideoLeaf>()
@@ -557,9 +562,13 @@ fun classifyRemoteListingWithPeeks(
                                 if (!sampleLeaf && leafKind.hasVideo) {
                                     val single = leafKind.videoFileNames.singleOrNull()
                                     if (single != null) {
+                                        val sz = leafPeek.firstOrNull {
+                                            !it.isDirectory && it.name == single
+                                        }?.size ?: 0L
                                         videoFiles += PromotedVideoFile(
                                             leafName = leaf.name,
                                             relativeFile = "$key/$single",
+                                            size = sz,
                                         )
                                     } else {
                                         videoLeaves += PromotedVideoLeaf(leaf.name, key)
@@ -579,9 +588,13 @@ fun classifyRemoteListingWithPeeks(
                                     // One video (+ any non-video junk) → file promote; else video dir.
                                     val single = leafKind.videoFileNames.singleOrNull()
                                     if (single != null) {
+                                        val sz = leafPeek.firstOrNull {
+                                            !it.isDirectory && it.name == single
+                                        }?.size ?: 0L
                                         videoFiles += PromotedVideoFile(
                                             leafName = leaf.name,
                                             relativeFile = "$key/$single",
+                                            size = sz,
                                         )
                                         leafHasVideo = true
                                     } else {
@@ -678,6 +691,7 @@ fun classifyRemoteListingWithPeeks(
                             videos += BrowseEntryRemote.VideoFile(
                                 name = display,
                                 fileName = v.relativeFile,
+                                size = v.size,
                                 hidden = entryHidden,
                                 virtual = true,
                             )
@@ -799,9 +813,13 @@ fun classifyRemoteListingWithPeeks(
                         val singleVideo = kind.videoFileNames.singleOrNull()
                             ?.takeUnless { isSampleDirName(e.name) }
                         if (singleVideo != null) {
+                            val sz = peek.firstOrNull {
+                                !it.isDirectory && it.name == singleVideo
+                            }?.size ?: 0L
                             videos += BrowseEntryRemote.VideoFile(
                                 name = promotedSubGalleryName(e.name),
                                 fileName = "${e.name}/$singleVideo",
+                                size = sz,
                                 hidden = entryHidden,
                                 virtual = true,
                             )
@@ -837,9 +855,13 @@ fun classifyRemoteListingWithPeeks(
                                 )
                             single != null -> {
                                 // One video (+ nfo/srt/other non-video junk) → parent Videos.
+                                val sz = peek.firstOrNull {
+                                    !it.isDirectory && it.name == single
+                                }?.size ?: 0L
                                 videos += BrowseEntryRemote.VideoFile(
                                     name = promotedSubGalleryName(e.name),
                                     fileName = "${e.name}/$single",
+                                    size = sz,
                                     hidden = entryHidden,
                                     virtual = true,
                                 )
@@ -887,7 +909,8 @@ fun classifyRemoteListingWithPeeks(
                 )
             isBrowseVideoFileName(e.name) ->
                 videos += BrowseEntryRemote.VideoFile(
-                    e.name,
+                    name = e.name,
+                    size = e.size,
                     hidden = e.hidden || isDotHiddenName(e.name),
                 )
             isVideoFileName(e.name) ->
