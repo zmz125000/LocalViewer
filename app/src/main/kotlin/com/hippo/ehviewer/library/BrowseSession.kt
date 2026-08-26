@@ -189,7 +189,12 @@ object BrowseSession {
                         val path = parent / e.fileName
                         if (path.toString() == archiveKey) {
                             changed = true
-                            BrowseEntryRemote.RegularFile(name = e.name, fileName = e.fileName)
+                            BrowseEntryRemote.RegularFile(
+                                name = e.name,
+                                fileName = e.fileName,
+                                size = e.size,
+                                lastModifiedMs = e.lastModifiedMs,
+                            )
                         } else {
                             e
                         }
@@ -218,7 +223,12 @@ object BrowseSession {
                         joinRemoteArchivePath(dir, e.parentRelativeName, e.fileName) == remoteRel
                     ) {
                         changed = true
-                        BrowseEntryRemote.RegularFile(name = e.name, fileName = e.fileName)
+                        BrowseEntryRemote.RegularFile(
+                            name = e.name,
+                            fileName = e.fileName,
+                            size = e.size,
+                            lastModifiedMs = e.lastModifiedMs,
+                        )
                     } else {
                         e
                     }

@@ -33,7 +33,7 @@ import splitties.init.appCtx
  */
 object NetworkFolderIndexCache {
     /** Bump when on-disk entry shape changes — old JSON is ignored (no migration). */
-    private const val VERSION = 4
+    private const val VERSION = 5
     private const val KIND_DIRECTORY = "directory"
     private const val KIND_FOLDER_GALLERY = "folder_gallery"
     private const val KIND_ARCHIVE = "archive"
@@ -201,6 +201,7 @@ object NetworkFolderIndexCache {
                             put("hasGallery", entry.hasGallery)
                             put("presence", entry.presence.name)
                             entry.coverFileName?.let { put("coverFileName", it) }
+                            if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
                         }
                         is BrowseEntryRemote.FolderGallery -> {
                             put("kind", KIND_FOLDER_GALLERY)
@@ -214,15 +215,20 @@ object NetworkFolderIndexCache {
                             put("kind", KIND_ARCHIVE)
                             put("fileName", entry.fileName)
                             put("parentRelativeName", entry.parentRelativeName)
+                            if (entry.size > 0L) put("size", entry.size)
+                            if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
                         }
                         is BrowseEntryRemote.VideoFile -> {
                             put("kind", KIND_VIDEO)
                             put("fileName", entry.fileName)
                             if (entry.size > 0L) put("size", entry.size)
+                            if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
                         }
                         is BrowseEntryRemote.RegularFile -> {
                             put("kind", KIND_FILE)
                             put("fileName", entry.fileName)
+                            if (entry.size > 0L) put("size", entry.size)
+                            if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
                         }
                     }
                 },
@@ -245,6 +251,7 @@ object NetworkFolderIndexCache {
                         hasGallery = item.optBoolean("hasGallery"),
                         presence = DirPresence.valueOf(item.getString("presence")),
                         coverFileName = item.optNullableString("coverFileName"),
+                        lastModifiedMs = item.optLong("lastModifiedMs"),
                         hidden = hidden,
                         virtual = virtual,
                     )
@@ -262,6 +269,8 @@ object NetworkFolderIndexCache {
                         name = name,
                         fileName = item.getString("fileName"),
                         parentRelativeName = item.optString("parentRelativeName"),
+                        size = item.optLong("size"),
+                        lastModifiedMs = item.optLong("lastModifiedMs"),
                         hidden = hidden,
                         virtual = virtual,
                     )
@@ -269,12 +278,15 @@ object NetworkFolderIndexCache {
                         name = name,
                         fileName = item.optString("fileName", name),
                         size = item.optLong("size"),
+                        lastModifiedMs = item.optLong("lastModifiedMs"),
                         hidden = hidden,
                         virtual = virtual,
                     )
                     KIND_FILE -> BrowseEntryRemote.RegularFile(
                         name = name,
                         fileName = item.optString("fileName", name),
+                        size = item.optLong("size"),
+                        lastModifiedMs = item.optLong("lastModifiedMs"),
                         hidden = hidden,
                         virtual = virtual,
                     )
