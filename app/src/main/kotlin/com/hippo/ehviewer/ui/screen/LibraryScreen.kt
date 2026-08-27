@@ -96,6 +96,7 @@ import com.hippo.ehviewer.ui.main.CoverImage
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
+import com.hippo.ehviewer.ui.main.BrowseListSupportingContent
 import com.hippo.ehviewer.ui.main.browseListSupportingLine
 import com.hippo.ehviewer.ui.main.browseFileExtensionLabel
 import com.hippo.ehviewer.ui.navToLocalFolderReader
@@ -541,7 +542,13 @@ private fun FavoriteSourceListRow(
     val listDecodePx = CoverThumb.listDecodePx()
     ListItem(
         headlineContent = { Text(fav.displayName) },
-        supportingContent = { Text(favoriteMetaLine(fav)) },
+        supportingContent = {
+            // Same type icon idea as favourite grid caption (Lan/Cloud badge / source glyph).
+            BrowseListSupportingContent(
+                text = favoriteMetaLine(fav),
+                typeIcon = favoriteListTypeIcon(fav),
+            )
+        },
         leadingContent = {
             when {
                 fav is FavoriteBrowseSource.Gallery -> CoverImage(
@@ -729,7 +736,7 @@ private fun folderFavoriteThumbKey(fav: FavoriteBrowseSource): String? = when (f
     else -> null
 }
 
-/** Same meta tokens as library / folder list (`dir` / `smb` / `ZIP` · …). */
+/** Same meta tokens as library / folder list (`Dir` / `SMB` / `WebDAV` / `Folder` / `ZIP` · …). */
 @Composable
 private fun favoriteMetaLine(fav: FavoriteBrowseSource): String {
     val typeLabel = when (fav) {
@@ -775,6 +782,7 @@ private fun favoriteMetaLine(fav: FavoriteBrowseSource): String {
     }
 }
 
+/** Leading / center glyph for favourite grid icon layout (Folder for network folder pins). */
 private fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
     is FavoriteBrowseSource.Local ->
         if (fav.root.isLibraryRole) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.Folder
@@ -785,4 +793,22 @@ private fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
     // Network folders: Folder main glyph; grid cell adds Lan/Cloud badge.
     is FavoriteBrowseSource.SmbFolder -> Icons.Default.Folder
     is FavoriteBrowseSource.WebDavFolder -> Icons.Default.Folder
+}
+
+/**
+ * Distinctive type icon for favourite list meta row (matches grid caption badge /
+ * source glyph: Lan/Cloud for network, Inventory2 for archives, Folder otherwise).
+ */
+private fun favoriteListTypeIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
+    is FavoriteBrowseSource.Local ->
+        if (fav.root.isLibraryRole) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.Folder
+    is FavoriteBrowseSource.Smb, is FavoriteBrowseSource.SmbFolder -> Icons.Default.Lan
+    is FavoriteBrowseSource.WebDav, is FavoriteBrowseSource.WebDavFolder -> Icons.Default.Cloud
+    is FavoriteBrowseSource.LocalFolder -> Icons.Default.Folder
+    is FavoriteBrowseSource.Gallery ->
+        if (fav.gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+            Icons.Default.Inventory2
+        } else {
+            Icons.Default.Folder
+        }
 }

@@ -274,15 +274,16 @@ fun HistoryListItem(
             info.title.orEmpty()
         }
     }
-    val typeLabel = when (kind) {
-        LocalHistory.KindLabel.Archive,
-        LocalHistory.KindLabel.Video,
-        LocalHistory.KindLabel.File,
-        -> browseFileExtensionLabel(historyFileName)
-        LocalHistory.KindLabel.Folder, LocalHistory.KindLabel.Library -> "folder"
-        LocalHistory.KindLabel.Smb -> "smb"
-        LocalHistory.KindLabel.WebDav -> "webdav"
-        LocalHistory.KindLabel.Unknown -> "file"
+    val typeLabel = when {
+        LocalHistory.isBrowseDirectory(info) -> "Dir"
+        kind == LocalHistory.KindLabel.Archive ||
+            kind == LocalHistory.KindLabel.Video ||
+            kind == LocalHistory.KindLabel.File -> browseFileExtensionLabel(historyFileName)
+        kind == LocalHistory.KindLabel.Folder ||
+            kind == LocalHistory.KindLabel.Library -> "Folder"
+        kind == LocalHistory.KindLabel.Smb -> "SMB"
+        kind == LocalHistory.KindLabel.WebDav -> "WebDAV"
+        else -> "File"
     }
     val metaLine = browseListSupportingLine(
         typeLabel = typeLabel,
@@ -294,7 +295,10 @@ fun HistoryListItem(
     }
     ListItem(
         headlineContent = { Text(info.title.orEmpty()) },
-        supportingContent = { Text(metaLine) },
+        supportingContent = {
+            // Same type icon as [HistoryGridItem] caption row.
+            BrowseListSupportingContent(text = metaLine, typeIcon = placeholderIcon)
+        },
         leadingContent = {
             CoverImage(
                 coverPath = coverKey,

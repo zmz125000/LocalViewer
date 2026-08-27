@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,6 +41,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -146,7 +148,7 @@ fun browseListDateLabel(lastModifiedMs: Long): String {
 }
 
 /**
- * Folder list second line: `ext|dir|folder` · size|xxP · date
+ * Folder list second line: `ext|Dir|Folder|SMB|WebDAV` · size|xxP · date
  * (segments with empty values are omitted).
  */
 @Composable
@@ -168,6 +170,35 @@ fun browseListSupportingLine(
         if (mid.isNotEmpty()) add(mid)
         if (date.isNotEmpty()) add(date)
     }.joinToString(BROWSE_LIST_SEP)
+}
+
+/**
+ * List-row supporting content: optional type icon (same idea as favourite / history
+ * grid caption badges) then the [browseListSupportingLine] text.
+ */
+@Composable
+fun BrowseListSupportingContent(
+    text: String,
+    typeIcon: ImageVector? = null,
+) {
+    if (typeIcon == null) {
+        Text(text)
+        return
+    }
+    val iconSize = with(LocalDensity.current) {
+        MaterialTheme.typography.bodyMedium.fontSize.toDp()
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = typeIcon,
+            contentDescription = null,
+            modifier = Modifier
+                .padding(end = 4.dp)
+                .size(iconSize),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(text)
+    }
 }
 
 /** Cover source for browse list rows (local path or lazy remote download). */
