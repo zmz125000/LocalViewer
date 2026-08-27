@@ -163,10 +163,8 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     val listMode by Settings.listMode.collectAsState()
     val showPages by Settings.showGalleryPages.collectAsState()
     val showProgress by Settings.showReadingProgress.collectAsState()
-    val cardHeight by collectListThumbSizeAsState()
     val marginH = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
     val marginV = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_v)
-    val listInterval = dimensionResource(com.hippo.ehviewer.R.dimen.gallery_list_interval)
     val gridColumnCount = GalleryGridDefaults.columnCount()
     // Collapsed: list max 10 / grid max two rows. Expanded: full dir pin list.
     var directoriesExpanded by rememberSaveable { mutableStateOf(false) }
@@ -739,12 +737,15 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
 
         if (listMode == 0) {
             val listState = rememberLazyListState()
-            val listPadding = paddingValues + PaddingValues(marginH, marginV)
+            // Match browse folder list: no extra horizontal marginH (ListItem inset only).
+            val listPadding = PaddingValues(
+                top = paddingValues.calculateTopPadding() + marginV,
+                bottom = paddingValues.calculateBottomPadding() + marginV,
+            )
             FastScrollLazyColumn(
                 modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
                 state = listState,
                 contentPadding = listPadding,
-                verticalArrangement = Arrangement.spacedBy(listInterval),
             ) {
                 if (directoryItems.isNotEmpty()) {
                     items(directoryItems, key = { "dir-${it.gid}" }) { info ->
@@ -762,7 +763,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                                 info = info,
                                 showPages = showPages,
                                 showProgress = showProgress,
-                                modifier = Modifier.height(cardHeight).fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth(),
                             )
                         }
                     }
@@ -791,7 +792,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             info = info,
                             showPages = showPages,
                             showProgress = showProgress,
-                            modifier = Modifier.height(cardHeight).fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }

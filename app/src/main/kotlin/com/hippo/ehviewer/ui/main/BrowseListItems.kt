@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,6 +41,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -77,8 +79,127 @@ import com.hippo.ehviewer.webdav.WebDavCache
 import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
+import java.text.DateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import okio.Path
+
+private const val BROWSE_LIST_SEP = " · "
+
+/** Uppercase extension from a basename / relative path; `"FILE"` when missing. */
+fun browseFileExtensionLabel(fileName: String): String {
+    val base = fileName.substringAfterLast('/').substringAfterLast('\\')
+    val dot = base.lastIndexOf('.')
+    if (dot <= 0 || dot >= base.length - 1) return "FILE"
+    return base.substring(dot + 1).uppercase(Locale.US)
+}
+
+/** Compact size for list meta (`340 KB`, `1.2 MB`); empty when unknown. */
+fun browseListSizeLabel(sizeBytes: Long): String {
+    if (sizeBytes <= 0L) return ""
+    return when {
+        sizeBytes < 1024L -> "$sizeBytes B"
+        sizeBytes < 1024L * 1024L -> {
+            val kb = sizeBytes / 1024.0
+            if (kb < 10.0) "%.1f KB".format(Locale.US, kb) else "${kb.toInt()} KB"
+        }
+        else -> {
+            val mb = sizeBytes / (1024.0 * 1024.0)
+            if (mb < 10.0) "%.1f MB".format(Locale.US, mb) else "%.0f MB".format(Locale.US, mb)
+        }
+    }
+}
+
+/** `12P` / `∞P` for folder galleries; empty when unknown. */
+fun browseListPagesLabel(pageCount: Int, pageCountCapped: Boolean = false): String = when {
+    pageCountCapped -> "∞P"
+    pageCount > 0 -> "${pageCount}P"
+    else -> ""
+}
+
+/**
+ * List-row date: `Today 3:04 PM` / `Yesterday 3:04 PM` (localized day word + short time),
+ * or locale short **date** (no time) when older. Empty when [lastModifiedMs] ≤ 0.
+ */
+@Composable
+fun browseListDateLabel(lastModifiedMs: Long): String {
+    if (lastModifiedMs <= 0L) return ""
+    val time = remember(lastModifiedMs) {
+        DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(lastModifiedMs))
+    }
+    val dayStart = remember {
+        Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+    return when {
+        lastModifiedMs >= dayStart -> "${stringResource(R.string.today)} $time"
+        lastModifiedMs >= dayStart - 24L * 60L * 60L * 1000L ->
+            "${stringResource(R.string.yesterday)} $time"
+        else -> remember(lastModifiedMs) {
+            DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(lastModifiedMs))
+        }
+    }
+}
+
+/**
+ * Folder list second line: `ext|Dir|Folder|SMB|WebDAV` · size|xxP · date
+ * (segments with empty values are omitted).
+ */
+@Composable
+fun browseListSupportingLine(
+    typeLabel: String,
+    sizeBytes: Long = 0L,
+    pageCount: Int = 0,
+    pageCountCapped: Boolean = false,
+    lastModifiedMs: Long = 0L,
+): String {
+    val mid = if (pageCount > 0 || pageCountCapped) {
+        browseListPagesLabel(pageCount, pageCountCapped)
+    } else {
+        browseListSizeLabel(sizeBytes)
+    }
+    val date = browseListDateLabel(lastModifiedMs)
+    return buildList {
+        add(typeLabel)
+        if (mid.isNotEmpty()) add(mid)
+        if (date.isNotEmpty()) add(date)
+    }.joinToString(BROWSE_LIST_SEP)
+}
+
+/**
+ * List-row supporting content: optional type icon (same idea as favourite / history
+ * grid caption badges) then the [browseListSupportingLine] text.
+ */
+@Composable
+fun BrowseListSupportingContent(
+    text: String,
+    typeIcon: ImageVector? = null,
+) {
+    if (typeIcon == null) {
+        Text(text)
+        return
+    }
+    val iconSize = with(LocalDensity.current) {
+        MaterialTheme.typography.bodyMedium.fontSize.toDp()
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = typeIcon,
+            contentDescription = null,
+            modifier = Modifier
+                .padding(end = 4.dp)
+                .size(iconSize),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(text)
+    }
+}
 
 /** Cover source for browse list rows (local path or lazy remote download). */
 sealed class BrowseCover {
@@ -104,11 +225,19 @@ fun BrowseDirectoryRow(
     showFolderThumb: Boolean = false,
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
+    lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
         headlineContent = { Text(name) },
-        supportingContent = { Text(stringResource(R.string.browse_directory)) },
+        supportingContent = {
+            Text(
+                browseListSupportingLine(
+                    typeLabel = "Dir",
+                    lastModifiedMs = lastModifiedMs,
+                ),
+            )
+        },
         // Same 56dp leading slot as [BrowseFolderGalleryRow] (icon placeholder when no thumb).
         leadingContent = {
             BrowseCoverThumb(
@@ -153,6 +282,7 @@ fun BrowseFolderGalleryRow(
     showPages: Boolean = true,
     /** Long-press → photo-grid virtual folder; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
+    lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
@@ -160,12 +290,12 @@ fun BrowseFolderGalleryRow(
         headlineContent = { Text(name) },
         supportingContent = {
             Text(
-                when {
-                    !showPages -> stringResource(R.string.library_gallery_folder)
-                    pageCountCapped -> stringResource(R.string.browse_folder_gallery_pages_many)
-                    pageCount > 0 -> stringResource(R.string.browse_folder_gallery_pages, pageCount)
-                    else -> stringResource(R.string.library_gallery_folder)
-                },
+                browseListSupportingLine(
+                    typeLabel = "Folder",
+                    pageCount = if (showPages) pageCount else 0,
+                    pageCountCapped = showPages && pageCountCapped,
+                    lastModifiedMs = lastModifiedMs,
+                ),
             )
         },
         leadingContent = {
@@ -204,11 +334,23 @@ fun BrowseArchiveGalleryRow(
     allowRemoteFetch: Boolean = true,
     /** e.g. PDF long-press → open in external app; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
+    /** Real archive basename / relative path for extension meta (defaults to [name]). */
+    fileName: String = name,
+    sizeBytes: Long = 0L,
+    lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
         headlineContent = { Text(name) },
-        supportingContent = { Text(stringResource(R.string.library_gallery_archive)) },
+        supportingContent = {
+            Text(
+                browseListSupportingLine(
+                    typeLabel = browseFileExtensionLabel(fileName),
+                    sizeBytes = sizeBytes,
+                    lastModifiedMs = lastModifiedMs,
+                ),
+            )
+        },
         leadingContent = {
             BrowseCoverThumb(
                 cover = cover,
@@ -248,11 +390,23 @@ fun BrowseVideoRow(
     allowRemoteFetch: Boolean = true,
     /** Long-press → open in external app; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
+    /** Real video basename / relative path for extension meta (defaults to [name]). */
+    fileName: String = name,
+    sizeBytes: Long = 0L,
+    lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
         headlineContent = { Text(name) },
-        supportingContent = { Text(stringResource(R.string.browse_video)) },
+        supportingContent = {
+            Text(
+                browseListSupportingLine(
+                    typeLabel = browseFileExtensionLabel(fileName),
+                    sizeBytes = sizeBytes,
+                    lastModifiedMs = lastModifiedMs,
+                ),
+            )
+        },
         leadingContent = {
             // Same 56dp / 24dp icon metrics as [BrowseCoverThumb] list default.
             BrowseVideoThumbnail(
@@ -295,13 +449,25 @@ fun BrowseFileRow(
     showPhotoThumb: Boolean = false,
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
+    /** Real file basename / relative path for extension meta (defaults to [name]). */
+    fileName: String = name,
+    sizeBytes: Long = 0L,
+    lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
     val longClick = onLongClick ?: onClick
     val usePhotoThumb = showPhotoThumb && cover != null
     ListItem(
         headlineContent = { Text(name) },
-        supportingContent = { Text(stringResource(R.string.browse_file)) },
+        supportingContent = {
+            Text(
+                browseListSupportingLine(
+                    typeLabel = browseFileExtensionLabel(fileName),
+                    sizeBytes = sizeBytes,
+                    lastModifiedMs = lastModifiedMs,
+                ),
+            )
+        },
         // Same 56dp leading slot as [BrowseFolderGalleryRow] (file icon when no photo thumb).
         leadingContent = {
             BrowseCoverThumb(
@@ -1090,6 +1256,8 @@ fun BrowseCoverThumb(
 /**
  * Section label for folder browse lists (Directories / Galleries / …).
  * Optional [onClick] (e.g. collapse) uses **no ripple** (`indication = null`).
+ * When clickable, the hit target is the full header row (text + trailing space),
+ * same in list and grid — not only the label glyphs.
  */
 @Composable
 fun BrowseSectionHeader(
@@ -1104,11 +1272,14 @@ fun BrowseSectionHeader(
         modifier = modifier
             .then(
                 if (onClick != null) {
-                    Modifier.clickable(
-                        interactionSource = null,
-                        indication = null,
-                        onClick = onClick,
-                    )
+                    // fillMaxWidth so list matches grid: tap anywhere on the header band.
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(
+                            interactionSource = null,
+                            indication = null,
+                            onClick = onClick,
+                        )
                 } else {
                     Modifier
                 },

@@ -83,6 +83,19 @@ object Settings : DataStorePreferences(null) {
     val browseContentMode = intPref("browse_content_mode", 0)
 
     /**
+     * Folder-view UI listing sort field: 0 = Name, 1 = Date.
+     * Separate from [librarySortMode]. Does not change DirectoryListing / gallery scan /
+     * folder-thumb / open-gallery name order. Default Name.
+     */
+    val browseSortMode = intPref("browse_sort_mode", 0)
+
+    /**
+     * Folder-view UI listing direction for [browseSortMode].
+     * Default ascending (A→Z / oldest→newest).
+     */
+    val browseSortAscending = boolPref("browse_sort_ascending", true)
+
+    /**
      * When true, folder browser directory grid cells show a cover thumb from lazy-scan
      * metadata (direct image, else first image from ≤3 leaf peeks). Off = icon only.
      * Default on; also exposed under Settings → General.
@@ -329,7 +342,7 @@ object Settings : DataStorePreferences(null) {
     val preloadImage = intPref("preload_image_2", 5)
 
     /** Decoded images to keep ahead independently of [preloadImage]. */
-    val readerDecodeAhead = intPref("pref_reader_decode_ahead", 5)
+    val readerDecodeAhead = intPref("pref_reader_decode_ahead", 3)
 
     /** Use one decoded page of lookahead for formats with expensive decode pipelines. */
     val readerAutoDecodeAhead = boolPref("pref_reader_auto_decode_ahead", true)

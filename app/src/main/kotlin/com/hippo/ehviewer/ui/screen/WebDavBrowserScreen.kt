@@ -1005,17 +1005,47 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     val dirKey = listedDir ?: relativeDir
                     val allowRemoteThumbs = listingSessionCurrent
                     val favoritesOnTop by Settings.browseFavoritesOnTop.collectAsState()
+                    val browseSortModePref by Settings.browseSortMode.collectAsState()
+                    val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
+                    val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toRemoteBrowseSections()
-                    val dirsRaw = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
+                    // UI-only order; listing / folderImages / open-gallery stay name-sorted.
+                    val dirsRaw = sections.directories
+                        .filterIsInstance<BrowseEntryRemote.Directory>()
+                        .sortedForBrowseFolderUi(
+                            browseSortMode,
+                            browseSortAscending,
+                            nameOf = { it.name },
+                            dateOf = { it.lastModifiedMs },
+                        )
                     val dirs = if (favoritesOnTop) {
                         val (fav, rest) = dirsRaw.partition { isDirFavorite(it.relativeName) }
                         fav + rest
                     } else {
                         dirsRaw
                     }
-                    val galleries = sections.galleries
-                    val videos = sections.videos.filterIsInstance<BrowseEntryRemote.VideoFile>()
-                    val files = sections.files.filterIsInstance<BrowseEntryRemote.RegularFile>()
+                    val galleries = sections.galleries.sortedForBrowseFolderUi(
+                        browseSortMode,
+                        browseSortAscending,
+                        nameOf = { it.name },
+                        dateOf = { it.lastModifiedMs },
+                    )
+                    val videos = sections.videos
+                        .filterIsInstance<BrowseEntryRemote.VideoFile>()
+                        .sortedForBrowseFolderUi(
+                            browseSortMode,
+                            browseSortAscending,
+                            nameOf = { it.name },
+                            dateOf = { it.lastModifiedMs },
+                        )
+                    val files = sections.files
+                        .filterIsInstance<BrowseEntryRemote.RegularFile>()
+                        .sortedForBrowseFolderUi(
+                            browseSortMode,
+                            browseSortAscending,
+                            nameOf = { it.name },
+                            dateOf = { it.lastModifiedMs },
+                        )
                     // In-memory only; resets when dirKey changes. No prefs / no ripple on header.
                     val animateItems by Settings.animateItems.collectAsState()
                     val (collapsedSections, toggleSection) = rememberBrowseSectionCollapse(
@@ -1271,6 +1301,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             showFolderThumb = browseFolderThumbs,
                                             thumbRetryKey = refreshToken,
                                             allowRemoteFetch = allowRemoteThumbs,
+                                            lastModifiedMs = dir.lastModifiedMs,
                                         )
                                     }
                                 }
@@ -1297,6 +1328,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     showPages = showGalleryPages,
                                                     onClick = { openFolderGalleryPrimary(entry) },
                                                     onLongClick = { openFolderGallerySecondary(entry) },
+                                                    lastModifiedMs = entry.lastModifiedMs,
                                                 )
                                             is BrowseEntryRemote.ArchiveGallery ->
                                                 BrowseArchiveGalleryRow(
@@ -1307,6 +1339,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     allowRemoteFetch = allowRemoteThumbs,
                                                     onClick = { openArchive(entry) },
                                                     onLongClick = { openArchiveInOtherApp(entry) },
+                                                    fileName = entry.fileName,
+                                                    sizeBytes = entry.size,
+                                                    lastModifiedMs = entry.lastModifiedMs,
                                                 )
                                             else -> Unit
                                         }
@@ -1333,6 +1368,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             allowRemoteFetch = allowRemoteThumbs,
                                             onClick = { openVideoPrimary(video.fileName) },
                                             onLongClick = { openVideoSecondary(video.fileName) },
+                                            fileName = video.fileName,
+                                            sizeBytes = video.size,
+                                            lastModifiedMs = video.lastModifiedMs,
                                         )
                                     }
                                 }
@@ -1361,6 +1399,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 }
                                             },
                                             onLongClick = { openExternalFile(file.fileName) },
+                                            fileName = file.fileName,
+                                            sizeBytes = file.size,
+                                            lastModifiedMs = file.lastModifiedMs,
                                         )
                                     }
                                 }

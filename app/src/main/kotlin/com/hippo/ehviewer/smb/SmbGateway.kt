@@ -103,7 +103,12 @@ import kotlinx.coroutines.withTimeoutOrNull
  *   host-wide hard cap ([MAX_SAFE_HOST_OPS]) so 5 TCP sessions do not open 15
  *   concurrent large-page reads (OOM / close-under-read crash).
  * - **Session identity:** `host|port|user|domain|password`
- * - **Retire only** on transport / session death — never on access-denied / not-found
+ * - **Multi-user same host:** several sources may share `host:port` with different
+ *   usernames. List has one reserved TCP — a new user may idle-steal that slot (or
+ *   grow a data TCP and borrow it for listing). Data may idle-steal other-cred TCPs
+ *   when at [maxConnectionsPerHost].
+ * - **Retire only** on transport / session death / idle other-cred steal — never on
+ *   access-denied / not-found
  *
  * ## TCP vs smbj
  * We only set standard socket options ([KeepAliveSocketFactory]: SO_KEEPALIVE, TCP_NODELAY)
@@ -862,10 +867,15 @@ object SmbGateway {
             ps.closeQuietly()
         }
 
-        private fun retireOneOtherCred(credKey: String): Boolean = synchronized(sessionsLock) {
+        /**
+         * Free one idle TCP owned by a **different** credential so [credKey] can grow.
+         * [listOnly]=true targets the reserved list slot (needed when a second username
+         * lists the same host while async keep-alive holds the first user's list TCP).
+         */
+        private fun retireOneOtherCred(credKey: String, listOnly: Boolean = false): Boolean = synchronized(sessionsLock) {
             val victim = sessions.firstOrNull {
                 !it.retired.get() &&
-                    !it.reservedForList &&
+                    it.reservedForList == listOnly &&
                     it.credKey != credKey &&
                     it.outstanding.get() == 0 &&
                     it.isConnected
@@ -875,6 +885,10 @@ object SmbGateway {
             size.updateAndGet { (it - 1).coerceAtLeast(0) }
             victim.retired.set(true)
             victim.closeQuietly()
+            logcat {
+                "SmbGateway: host $hostPortKey idle-steal ${if (listOnly) "list" else "data"} " +
+                    "TCP for another username"
+            }
             true
         }
 
@@ -888,9 +902,7 @@ object SmbGateway {
             } else {
                 liveDataCount() >= maxConnectionsPerHost()
             }
-            if (atCap) {
-                if (forList || !retireOneOtherCred(credKey)) return null
-            }
+            if (atCap && !retireOneOtherCred(credKey, listOnly = forList)) return null
             return growLock.withLock {
                 if (closed.get()) return@withLock null
                 val stillAtCap = if (forList) {
@@ -899,8 +911,13 @@ object SmbGateway {
                     liveDataCount() >= maxConnectionsPerHost()
                 }
                 if (stillAtCap) {
-                    if (forList || !retireOneOtherCred(credKey)) return@withLock null
-                    if (liveDataCount() >= maxConnectionsPerHost()) return@withLock null
+                    if (!retireOneOtherCred(credKey, listOnly = forList)) return@withLock null
+                    val stillFull = if (forList) {
+                        liveListCount() >= LIST_RESERVED_SESSIONS
+                    } else {
+                        liveDataCount() >= maxConnectionsPerHost()
+                    }
+                    if (stillFull) return@withLock null
                 }
                 val opened = try {
                     openSession(forList)
@@ -974,6 +991,22 @@ object SmbGateway {
 
         private fun canBorrowDataForList(): Boolean = interactiveWaiters.get() == 0 && !isVideoPlayLive()
 
+        /** Prefer reserved list TCP; else borrow/grow a matching-cred data TCP for listing. */
+        private suspend fun tryBorrowDataForList(
+            credKey: String,
+            shareName: String,
+            openSession: suspend (reservedForList: Boolean) -> PooledSession,
+        ): Acquired? {
+            if (!canBorrowDataForList() || !hostOpSlots.tryAcquire()) return null
+            tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)
+                ?.let { return Acquired(it, heldHostSlot = true) }
+            // New username often has no data TCP yet — grow one (may idle-steal other cred).
+            tryGrow(credKey, forList = false, openSession)
+                ?.let { return Acquired(it, heldHostSlot = true) }
+            hostOpSlots.release()
+            return null
+        }
+
         private suspend fun acquireList(
             credKey: String,
             shareName: String,
@@ -983,11 +1016,7 @@ object SmbGateway {
                 ?.let { return Acquired(it, heldHostSlot = false) }
             tryGrow(credKey, forList = true, openSession)
                 ?.let { return Acquired(it, heldHostSlot = false) }
-            if (canBorrowDataForList() && hostOpSlots.tryAcquire()) {
-                tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)
-                    ?.let { return Acquired(it, heldHostSlot = true) }
-                hostOpSlots.release()
-            }
+            tryBorrowDataForList(credKey, shareName, openSession)?.let { return it }
 
             var waits = 0
             while (true) {
@@ -995,11 +1024,7 @@ object SmbGateway {
                     ?.let { return Acquired(it, heldHostSlot = false) }
                 tryGrow(credKey, forList = true, openSession)
                     ?.let { return Acquired(it, heldHostSlot = false) }
-                if (canBorrowDataForList() && hostOpSlots.tryAcquire()) {
-                    tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)
-                        ?.let { return Acquired(it, heldHostSlot = true) }
-                    hostOpSlots.release()
-                }
+                tryBorrowDataForList(credKey, shareName, openSession)?.let { return it }
                 val got = withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
                 if (got == null) {
                     waits++

@@ -93,11 +93,14 @@ import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.EasyTierScreenDestination
 import com.hippo.ehviewer.ui.easytier.EasyTierDialog
+import com.hippo.ehviewer.ui.main.BrowseListSupportingContent
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.CoverImage
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
+import com.hippo.ehviewer.ui.main.browseFileExtensionLabel
+import com.hippo.ehviewer.ui.main.browseListSupportingLine
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.openLocalBrowseDir
@@ -233,10 +236,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val listMode by Settings.listMode.collectAsState()
     val showPages by Settings.showGalleryPages.collectAsState()
     val showProgress by Settings.showReadingProgress.collectAsState()
-    val cardHeight by collectListThumbSizeAsState()
     val marginH = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
     val marginV = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_v)
-    val listInterval = dimensionResource(com.hippo.ehviewer.R.dimen.gallery_list_interval)
 
     fun notifyFavoriteToggle(nowFavorite: Boolean) {
         // launch {
@@ -400,19 +401,24 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             // Always keep the Lazy list/grid mounted so scroll state is not recreated when
             // empty ↔ non-empty briefly flips (e.g. re-subscribe after pop back).
             if (listMode == 0) {
-                // Match GalleryList: search-bar inset + list margins so top gap under the
-                // search field equals the horizontal card inset (marginH + search padding).
-                val listPadding = paddingValues + PaddingValues(marginH, marginV)
+                // Match browse folder list: no extra horizontal margin (ListItem has its own
+                // inset). Only top/bottom from scaffold so the search bar does not cover rows.
+                val listPadding = PaddingValues(
+                    top = paddingValues.calculateTopPadding() + marginV,
+                    bottom = paddingValues.calculateBottomPadding() + marginV,
+                )
                 FastScrollLazyColumn(
                     modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
                     state = listState,
                     contentPadding = listPadding,
-                    verticalArrangement = Arrangement.spacedBy(listInterval),
                 ) {
                     if (showFavorites) {
                         item(key = "fav-hdr") {
+                            // Extra list margin so section titles are not flush to the screen edge
+                            // (rows stay edge-aligned with folder ListItems).
                             BrowseSectionHeader(
                                 text = stringResource(R.string.favourite),
+                                modifier = Modifier.padding(horizontal = marginH),
                                 onClick = { showEasyTierDialog = true },
                             )
                         }
@@ -424,9 +430,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                     onLongClick = { toggleFavorite(fav) },
                                     showPages = showPages,
                                     showProgress = showProgress,
-                                    modifier = Modifier
-                                        .height(cardHeight)
-                                        .fillMaxWidth(),
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
                                 else -> FavoriteSourceListRow(
                                     fav = fav,
@@ -437,7 +441,10 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                         }
                         if (galleries.isNotEmpty()) {
                             item(key = "gal-hdr") {
-                                BrowseSectionHeader(stringResource(R.string.library))
+                                BrowseSectionHeader(
+                                    stringResource(R.string.library),
+                                    modifier = Modifier.padding(horizontal = marginH),
+                                )
                             }
                         }
                     }
@@ -448,9 +455,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             onLongClick = { toggleGalleryFavorite(gallery) },
                             showPages = showPages,
                             showProgress = showProgress,
-                            modifier = Modifier
-                                .height(cardHeight)
-                                .fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
@@ -551,12 +556,16 @@ private fun FavoriteSourceListRow(
         resolvedThumb = withIOContext { HistoryThumbKey.resolveReadablePath(folderThumbKey) }
     }
     val leadSize = 56.dp
-    val listDecodePx = CoverThumb.libraryListDecodePx(leadSize)
+    val listDecodePx = CoverThumb.listDecodePx()
     ListItem(
-        headlineContent = {
-            Text(fav.displayName)
+        headlineContent = { Text(fav.displayName) },
+        supportingContent = {
+            // Same type icon idea as favourite grid caption (Lan/Cloud badge / source glyph).
+            BrowseListSupportingContent(
+                text = favoriteMetaLine(fav),
+                typeIcon = favoriteListTypeIcon(fav),
+            )
         },
-        supportingContent = { Text(favoriteSubtitle(fav)) },
         leadingContent = {
             when {
                 fav is FavoriteBrowseSource.Gallery -> CoverImage(
@@ -582,11 +591,17 @@ private fun FavoriteSourceListRow(
                         .size(leadSize)
                         .clip(ShapeDefaults.Medium),
                 )
-                else -> Icon(
-                    favoriteIcon(fav),
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+                else -> Box(
+                    modifier = Modifier.size(leadSize),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        favoriteIcon(fav),
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
         },
         modifier = Modifier
@@ -738,19 +753,53 @@ private fun folderFavoriteThumbKey(fav: FavoriteBrowseSource): String? = when (f
     else -> null
 }
 
+/** Same meta tokens as library / folder list (`Dir` / `SMB` / `WebDAV` / `Folder` / `ZIP` · …). */
 @Composable
-private fun favoriteSubtitle(fav: FavoriteBrowseSource): String = when (fav) {
-    is FavoriteBrowseSource.Local -> stringResource(
-        if (fav.root.isLibraryRole) R.string.library else R.string.folder,
-    )
-    is FavoriteBrowseSource.Smb -> stringResource(R.string.network)
-    is FavoriteBrowseSource.WebDav -> stringResource(R.string.webdav)
-    is FavoriteBrowseSource.Gallery -> stringResource(R.string.library)
-    is FavoriteBrowseSource.LocalFolder -> stringResource(R.string.folder)
-    is FavoriteBrowseSource.SmbFolder -> stringResource(R.string.network)
-    is FavoriteBrowseSource.WebDavFolder -> stringResource(R.string.webdav)
+private fun favoriteMetaLine(fav: FavoriteBrowseSource): String {
+    val typeLabel = when (fav) {
+        is FavoriteBrowseSource.Local -> "Dir"
+        is FavoriteBrowseSource.Smb -> "SMB"
+        is FavoriteBrowseSource.WebDav -> "WebDAV"
+        is FavoriteBrowseSource.LocalFolder,
+        is FavoriteBrowseSource.SmbFolder,
+        is FavoriteBrowseSource.WebDavFolder,
+        -> "Dir"
+        is FavoriteBrowseSource.Gallery -> {
+            val g = fav.gallery
+            if (g.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                browseFileExtensionLabel(g.contentPath)
+            } else {
+                "Folder"
+            }
+        }
+    }
+    return when (fav) {
+        is FavoriteBrowseSource.Gallery -> {
+            val g = fav.gallery
+            val archiveSize = remember(g.contentPath, g.kind) {
+                if (g.kind != LOCAL_GALLERY_KIND_ARCHIVE) {
+                    0L
+                } else {
+                    runCatching {
+                        java.io.File(g.contentPath).takeIf { it.isFile }?.length() ?: 0L
+                    }.getOrDefault(0L)
+                }
+            }
+            browseListSupportingLine(
+                typeLabel = typeLabel,
+                sizeBytes = archiveSize,
+                pageCount = when {
+                    g.kind == LOCAL_GALLERY_KIND_ARCHIVE && archiveSize > 0L -> 0
+                    else -> g.pageCount
+                },
+                lastModifiedMs = g.mtime,
+            )
+        }
+        else -> browseListSupportingLine(typeLabel = typeLabel)
+    }
 }
 
+/** Leading / center glyph for favourite grid icon layout (Folder for network folder pins). */
 private fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
     is FavoriteBrowseSource.Local ->
         if (fav.root.isLibraryRole) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.Folder
@@ -761,4 +810,22 @@ private fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
     // Network folders: Folder main glyph; grid cell adds Lan/Cloud badge.
     is FavoriteBrowseSource.SmbFolder -> Icons.Default.Folder
     is FavoriteBrowseSource.WebDavFolder -> Icons.Default.Folder
+}
+
+/**
+ * Distinctive type icon for favourite list meta row (matches grid caption badge /
+ * source glyph: Lan/Cloud for network, Inventory2 for archives, Folder otherwise).
+ */
+private fun favoriteListTypeIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
+    is FavoriteBrowseSource.Local ->
+        if (fav.root.isLibraryRole) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.Folder
+    is FavoriteBrowseSource.Smb, is FavoriteBrowseSource.SmbFolder -> Icons.Default.Lan
+    is FavoriteBrowseSource.WebDav, is FavoriteBrowseSource.WebDavFolder -> Icons.Default.Cloud
+    is FavoriteBrowseSource.LocalFolder -> Icons.Default.Folder
+    is FavoriteBrowseSource.Gallery ->
+        if (fav.gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+            Icons.Default.Inventory2
+        } else {
+            Icons.Default.Folder
+        }
 }

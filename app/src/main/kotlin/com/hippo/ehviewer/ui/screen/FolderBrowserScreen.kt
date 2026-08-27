@@ -808,17 +808,47 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     // path+layout so parent/child never share one LazyList scroll index.
                     val pathKey = (listedPath ?: currentPath!!) + if (photoGrid) "#pg" else ""
                     val favoritesOnTop by Settings.browseFavoritesOnTop.collectAsState()
+                    val browseSortModePref by Settings.browseSortMode.collectAsState()
+                    val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
+                    val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toBrowseSections()
-                    val dirsRaw = sections.directories.filterIsInstance<BrowseEntry.Directory>()
+                    // UI-only order; DirectoryListing / folderImages / open-gallery stay name-sorted.
+                    val dirsRaw = sections.directories
+                        .filterIsInstance<BrowseEntry.Directory>()
+                        .sortedForBrowseFolderUi(
+                            browseSortMode,
+                            browseSortAscending,
+                            nameOf = { it.name },
+                            dateOf = { it.lastModifiedMs },
+                        )
                     val dirs = if (favoritesOnTop) {
                         val (fav, rest) = dirsRaw.partition { isDirFavorite(it) }
                         fav + rest
                     } else {
                         dirsRaw
                     }
-                    val galleries = sections.galleries
-                    val videos = sections.videos.filterIsInstance<BrowseEntry.VideoFile>()
-                    val files = sections.files.filterIsInstance<BrowseEntry.RegularFile>()
+                    val galleries = sections.galleries.sortedForBrowseFolderUi(
+                        browseSortMode,
+                        browseSortAscending,
+                        nameOf = { it.name },
+                        dateOf = { it.lastModifiedMs },
+                    )
+                    val videos = sections.videos
+                        .filterIsInstance<BrowseEntry.VideoFile>()
+                        .sortedForBrowseFolderUi(
+                            browseSortMode,
+                            browseSortAscending,
+                            nameOf = { it.name },
+                            dateOf = { it.lastModifiedMs },
+                        )
+                    val files = sections.files
+                        .filterIsInstance<BrowseEntry.RegularFile>()
+                        .sortedForBrowseFolderUi(
+                            browseSortMode,
+                            browseSortAscending,
+                            nameOf = { it.name },
+                            dateOf = { it.lastModifiedMs },
+                        )
                     // In-memory only; resets when path/layout key changes. No prefs.
                     val animateItems by Settings.animateItems.collectAsState()
                     val (collapsedSections, toggleSection) = rememberBrowseSectionCollapse(pathKey)
@@ -1018,6 +1048,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             onLongClick = { toggleDirFavorite(dir) },
                                             cover = dir.coverPath?.let { BrowseCover.Local(it) },
                                             showFolderThumb = browseFolderThumbs,
+                                            lastModifiedMs = dir.lastModifiedMs,
                                         )
                                     }
                                 }
@@ -1050,6 +1081,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 showPages = showGalleryPages,
                                                 onClick = { openFolderGalleryPrimary(entry) },
                                                 onLongClick = { openFolderGallerySecondary(entry) },
+                                                lastModifiedMs = entry.lastModifiedMs,
                                             )
                                             is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(
                                                 modifier = Modifier.thenIf(animateItems) { animateItem() },
@@ -1057,6 +1089,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 cover = BrowseCover.LocalArchive(entry.path),
                                                 onClick = { openArchive(entry) },
                                                 onLongClick = { openArchiveInOtherApp(entry) },
+                                                fileName = entry.path.name,
+                                                sizeBytes = entry.size,
+                                                lastModifiedMs = entry.lastModifiedMs,
                                             )
                                             else -> Unit
                                         }
@@ -1081,6 +1116,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             ),
                                             onClick = { openVideoPrimary(video.path) },
                                             onLongClick = { openVideoSecondary(video.path) },
+                                            fileName = video.path.name,
+                                            sizeBytes = video.size,
+                                            lastModifiedMs = video.lastModifiedMs,
                                         )
                                     }
                                 }
@@ -1108,6 +1146,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 }
                                             },
                                             onLongClick = { openExternalFile(file.path) },
+                                            fileName = file.path.name,
+                                            sizeBytes = file.size,
+                                            lastModifiedMs = file.lastModifiedMs,
                                         )
                                     }
                                 }
