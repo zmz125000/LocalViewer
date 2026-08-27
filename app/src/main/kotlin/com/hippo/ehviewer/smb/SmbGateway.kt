@@ -871,26 +871,25 @@ object SmbGateway {
          * [listOnly]=true targets the reserved list slot (needed when a second username
          * lists the same host while async keep-alive holds the first user's list TCP).
          */
-        private fun retireOneOtherCred(credKey: String, listOnly: Boolean = false): Boolean =
-            synchronized(sessionsLock) {
-                val victim = sessions.firstOrNull {
-                    !it.retired.get() &&
-                        it.reservedForList == listOnly &&
-                        it.credKey != credKey &&
-                        it.outstanding.get() == 0 &&
-                        it.isConnected
-                } ?: return false
-                // No outstanding — safe to close immediately.
-                sessions.remove(victim)
-                size.updateAndGet { (it - 1).coerceAtLeast(0) }
-                victim.retired.set(true)
-                victim.closeQuietly()
-                logcat {
-                    "SmbGateway: host $hostPortKey idle-steal ${if (listOnly) "list" else "data"} " +
-                        "TCP for another username"
-                }
-                true
+        private fun retireOneOtherCred(credKey: String, listOnly: Boolean = false): Boolean = synchronized(sessionsLock) {
+            val victim = sessions.firstOrNull {
+                !it.retired.get() &&
+                    it.reservedForList == listOnly &&
+                    it.credKey != credKey &&
+                    it.outstanding.get() == 0 &&
+                    it.isConnected
+            } ?: return false
+            // No outstanding — safe to close immediately.
+            sessions.remove(victim)
+            size.updateAndGet { (it - 1).coerceAtLeast(0) }
+            victim.retired.set(true)
+            victim.closeQuietly()
+            logcat {
+                "SmbGateway: host $hostPortKey idle-steal ${if (listOnly) "list" else "data"} " +
+                    "TCP for another username"
             }
+            true
+        }
 
         private suspend fun tryGrow(
             credKey: String,

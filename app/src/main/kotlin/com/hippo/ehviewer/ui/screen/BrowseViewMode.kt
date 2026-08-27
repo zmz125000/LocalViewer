@@ -49,8 +49,7 @@ enum class BrowseSortMode(val prefValue: Int) {
     ;
 
     companion object {
-        fun fromPref(value: Int): BrowseSortMode =
-            if (value == Date.prefValue) Date else Name
+        fun fromPref(value: Int): BrowseSortMode = if (value == Date.prefValue) Date else Name
     }
 }
 
