@@ -1059,6 +1059,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 cover = BrowseCover.LocalArchive(entry.path),
                                                 onClick = { openArchive(entry) },
                                                 onLongClick = { openArchiveInOtherApp(entry) },
+                                                fileName = entry.path.name,
+                                                sizeBytes = entry.size,
                                                 lastModifiedMs = entry.lastModifiedMs,
                                             )
                                             else -> Unit
@@ -1084,6 +1086,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             ),
                                             onClick = { openVideoPrimary(video.path) },
                                             onLongClick = { openVideoSecondary(video.path) },
+                                            fileName = video.path.name,
+                                            sizeBytes = video.size,
                                             lastModifiedMs = video.lastModifiedMs,
                                         )
                                     }
@@ -1112,6 +1116,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 }
                                             },
                                             onLongClick = { openExternalFile(file.path) },
+                                            fileName = file.path.name,
+                                            sizeBytes = file.size,
                                             lastModifiedMs = file.lastModifiedMs,
                                         )
                                     }

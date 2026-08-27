@@ -1309,6 +1309,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     allowRemoteFetch = allowRemoteThumbs,
                                                     onClick = { openArchive(entry) },
                                                     onLongClick = { openArchiveInOtherApp(entry) },
+                                                    fileName = entry.fileName,
+                                                    sizeBytes = entry.size,
                                                     lastModifiedMs = entry.lastModifiedMs,
                                                 )
                                             else -> Unit
@@ -1336,6 +1338,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             allowRemoteFetch = allowRemoteThumbs,
                                             onClick = { openVideoPrimary(video.fileName) },
                                             onLongClick = { openVideoSecondary(video.fileName) },
+                                            fileName = video.fileName,
+                                            sizeBytes = video.size,
                                             lastModifiedMs = video.lastModifiedMs,
                                         )
                                     }
@@ -1365,6 +1369,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 }
                                             },
                                             onLongClick = { openExternalFile(file.fileName) },
+                                            fileName = file.fileName,
+                                            sizeBytes = file.size,
                                             lastModifiedMs = file.lastModifiedMs,
                                         )
                                     }

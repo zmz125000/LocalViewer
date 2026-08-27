@@ -78,19 +78,96 @@ import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.text.DateFormat
+import java.util.Calendar
 import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import okio.Path
 
+private const val BROWSE_LIST_SEP = " · "
+
+/** Lowercase extension from a basename / relative path; `"file"` when missing. */
+fun browseFileExtensionLabel(fileName: String): String {
+    val base = fileName.substringAfterLast('/').substringAfterLast('\\')
+    val dot = base.lastIndexOf('.')
+    if (dot <= 0 || dot >= base.length - 1) return "file"
+    return base.substring(dot + 1).lowercase(Locale.US)
+}
+
+/** Compact size for list meta (`340 KB`, `1.2 MB`); empty when unknown. */
+fun browseListSizeLabel(sizeBytes: Long): String {
+    if (sizeBytes <= 0L) return ""
+    return when {
+        sizeBytes < 1024L -> "$sizeBytes B"
+        sizeBytes < 1024L * 1024L -> {
+            val kb = sizeBytes / 1024.0
+            if (kb < 10.0) "%.1f KB".format(Locale.US, kb) else "${kb.toInt()} KB"
+        }
+        else -> {
+            val mb = sizeBytes / (1024.0 * 1024.0)
+            if (mb < 10.0) "%.1f MB".format(Locale.US, mb) else "%.0f MB".format(Locale.US, mb)
+        }
+    }
+}
+
+/** `12P` / `∞P` for folder galleries; empty when unknown. */
+fun browseListPagesLabel(pageCount: Int, pageCountCapped: Boolean = false): String = when {
+    pageCountCapped -> "∞P"
+    pageCount > 0 -> "${pageCount}P"
+    else -> ""
+}
+
 /**
- * List-row second line: type label, optionally ` · ` + locale short date-time when
- * [lastModifiedMs] is known (> 0).
+ * List-row date: `Today 3:04 PM` / `Yesterday 3:04 PM` (localized day word + short time),
+ * or locale short **date** (no time) when older. Empty when [lastModifiedMs] ≤ 0.
  */
-fun browseListSupportingLine(typeLabel: String, lastModifiedMs: Long = 0L): String {
-    if (lastModifiedMs <= 0L) return typeLabel
-    val whenText = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-        .format(Date(lastModifiedMs))
-    return "$typeLabel · $whenText"
+@Composable
+fun browseListDateLabel(lastModifiedMs: Long): String {
+    if (lastModifiedMs <= 0L) return ""
+    val time = remember(lastModifiedMs) {
+        DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(lastModifiedMs))
+    }
+    val dayStart = remember {
+        Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+    return when {
+        lastModifiedMs >= dayStart -> "${stringResource(R.string.today)} $time"
+        lastModifiedMs >= dayStart - 24L * 60L * 60L * 1000L ->
+            "${stringResource(R.string.yesterday)} $time"
+        else -> remember(lastModifiedMs) {
+            DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(lastModifiedMs))
+        }
+    }
+}
+
+/**
+ * Folder list second line: `ext|dir|folder` · size|xxP · date
+ * (segments with empty values are omitted).
+ */
+@Composable
+fun browseListSupportingLine(
+    typeLabel: String,
+    sizeBytes: Long = 0L,
+    pageCount: Int = 0,
+    pageCountCapped: Boolean = false,
+    lastModifiedMs: Long = 0L,
+): String {
+    val mid = if (pageCount > 0 || pageCountCapped) {
+        browseListPagesLabel(pageCount, pageCountCapped)
+    } else {
+        browseListSizeLabel(sizeBytes)
+    }
+    val date = browseListDateLabel(lastModifiedMs)
+    return buildList {
+        add(typeLabel)
+        if (mid.isNotEmpty()) add(mid)
+        if (date.isNotEmpty()) add(date)
+    }.joinToString(BROWSE_LIST_SEP)
 }
 
 /** Cover source for browse list rows (local path or lazy remote download). */
@@ -125,8 +202,8 @@ fun BrowseDirectoryRow(
         supportingContent = {
             Text(
                 browseListSupportingLine(
-                    stringResource(R.string.browse_directory),
-                    lastModifiedMs,
+                    typeLabel = "dir",
+                    lastModifiedMs = lastModifiedMs,
                 ),
             )
         },
@@ -178,16 +255,17 @@ fun BrowseFolderGalleryRow(
 ) {
     val haptic = LocalHapticFeedback.current
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
-    val typeLabel = when {
-        !showPages -> stringResource(R.string.library_gallery_folder)
-        pageCountCapped -> stringResource(R.string.browse_folder_gallery_pages_many)
-        pageCount > 0 -> stringResource(R.string.browse_folder_gallery_pages, pageCount)
-        else -> stringResource(R.string.library_gallery_folder)
-    }
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = {
-            Text(browseListSupportingLine(typeLabel, lastModifiedMs))
+            Text(
+                browseListSupportingLine(
+                    typeLabel = "folder",
+                    pageCount = if (showPages) pageCount else 0,
+                    pageCountCapped = showPages && pageCountCapped,
+                    lastModifiedMs = lastModifiedMs,
+                ),
+            )
         },
         leadingContent = {
             BrowseCoverThumb(
@@ -225,6 +303,9 @@ fun BrowseArchiveGalleryRow(
     allowRemoteFetch: Boolean = true,
     /** e.g. PDF long-press → open in external app; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
+    /** Real archive basename / relative path for extension meta (defaults to [name]). */
+    fileName: String = name,
+    sizeBytes: Long = 0L,
     lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -233,8 +314,9 @@ fun BrowseArchiveGalleryRow(
         supportingContent = {
             Text(
                 browseListSupportingLine(
-                    stringResource(R.string.library_gallery_archive),
-                    lastModifiedMs,
+                    typeLabel = browseFileExtensionLabel(fileName),
+                    sizeBytes = sizeBytes,
+                    lastModifiedMs = lastModifiedMs,
                 ),
             )
         },
@@ -277,6 +359,9 @@ fun BrowseVideoRow(
     allowRemoteFetch: Boolean = true,
     /** Long-press → open in external app; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
+    /** Real video basename / relative path for extension meta (defaults to [name]). */
+    fileName: String = name,
+    sizeBytes: Long = 0L,
     lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -285,8 +370,9 @@ fun BrowseVideoRow(
         supportingContent = {
             Text(
                 browseListSupportingLine(
-                    stringResource(R.string.browse_video),
-                    lastModifiedMs,
+                    typeLabel = browseFileExtensionLabel(fileName),
+                    sizeBytes = sizeBytes,
+                    lastModifiedMs = lastModifiedMs,
                 ),
             )
         },
@@ -332,6 +418,9 @@ fun BrowseFileRow(
     showPhotoThumb: Boolean = false,
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
+    /** Real file basename / relative path for extension meta (defaults to [name]). */
+    fileName: String = name,
+    sizeBytes: Long = 0L,
     lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -342,8 +431,9 @@ fun BrowseFileRow(
         supportingContent = {
             Text(
                 browseListSupportingLine(
-                    stringResource(R.string.browse_file),
-                    lastModifiedMs,
+                    typeLabel = browseFileExtensionLabel(fileName),
+                    sizeBytes = sizeBytes,
+                    lastModifiedMs = lastModifiedMs,
                 ),
             )
         },
