@@ -1,6 +1,8 @@
 package com.hippo.ehviewer.ui.main
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +23,7 @@ import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
@@ -35,11 +38,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,7 +53,6 @@ import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.GalleryInfo
-import com.ehviewer.core.ui.component.CrystalCard
 import com.ehviewer.core.ui.component.ElevatedCard
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
@@ -64,7 +67,6 @@ import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.SMB_BROWSE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_BROWSE_TOKEN
 import com.hippo.ehviewer.library.isVideoFileName
-import com.hippo.ehviewer.ui.screen.collectListThumbSizeAsState
 import okio.Path.Companion.toPath
 
 /** Prefer stored [GalleryInfo.thumbKey]; for network archives / videos derive the logical cover key. */
@@ -85,22 +87,6 @@ private fun historyCoverKey(info: GalleryInfo): String? {
                 ?.let { HistoryThumbKey.videoWebdav(target.sourceId, it) }
         else -> null
     }
-}
-
-/** Kind / page-count chip — text on secondaryContainer, used on list cards. */
-@Composable
-private fun LocalGalleryMetaChip(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text = text,
-        modifier = modifier
-            .clip(ShapeDefaults.Small)
-            .background(MaterialTheme.colorScheme.secondaryContainer)
-            .padding(vertical = 2.dp, horizontal = 8.dp),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSecondaryContainer,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
 }
 
 @Composable
@@ -189,87 +175,77 @@ internal fun CoverImage(
     }
 }
 
+/** Same leading thumb size as browse folder [ListItem] rows. */
+private val LibraryListLeadSize = 56.dp
+
 @Composable
 fun LocalGalleryListItem(
     gallery: LocalGalleryEntity,
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
     showPages: Boolean,
-    showProgress: Boolean,
+    @Suppress("UNUSED_PARAMETER") showProgress: Boolean,
     modifier: Modifier = Modifier,
-) = CrystalCard(
-    modifier = modifier,
-    onClick = onClick,
-    onLongClick = onLongClick,
 ) {
-    val cardHeight by collectListThumbSizeAsState()
-    val listDecodePx = CoverThumb.libraryListDecodePx(cardHeight)
-    Row {
-        CoverImage(
-            coverPath = gallery.coverPath,
-            sizePx = listDecodePx,
-            placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                Icons.Default.Inventory2
-            } else {
-                Icons.Default.Folder
-            },
-            archiveContentPath = gallery.contentPath.takeIf {
-                gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
-            },
-            modifier = Modifier
-                .aspectRatio(1f, matchHeightConstraintsFirst = true)
-                .clip(ShapeDefaults.Medium),
-        )
-        Column(modifier = Modifier.padding(start = 8.dp, top = 2.dp, end = 4.dp, bottom = 4.dp)) {
-            Text(
-                text = gallery.title,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleSmall,
-            )
-            // Push kind + page chips to bottom-left of the card body.
-            Spacer(modifier = Modifier.weight(1f))
-            val kindLabel = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                stringResource(R.string.library_gallery_archive)
-            } else {
-                stringResource(R.string.library_gallery_folder)
-            }
-            val pageLabel = if (showPages && gallery.pageCount > 0) {
-                val readProgress = if (showProgress) {
-                    remember(gallery.id) { EhDB.getReadProgressFlow(gallery.id) }.collectAsState(0).value
-                } else {
-                    0
-                }
-                if (readProgress > 0) {
-                    "${readProgress + 1}/${gallery.pageCount}P"
-                } else {
-                    "${gallery.pageCount}P"
-                }
-            } else {
-                null
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                LocalGalleryMetaChip(text = kindLabel)
-                if (pageLabel != null) {
-                    Spacer(modifier = Modifier.weight(1f))
-                    Text(
-                        text = pageLabel,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
+    val haptic = LocalHapticFeedback.current
+    val listDecodePx = CoverThumb.listDecodePx()
+    val isArchive = gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
+    // Best-effort local size for archive rows (folder list uses listing size).
+    val archiveSizeBytes = remember(gallery.contentPath, isArchive) {
+        if (!isArchive) {
+            0L
+        } else {
+            runCatching {
+                java.io.File(gallery.contentPath).takeIf { it.isFile }?.length() ?: 0L
+            }.getOrDefault(0L)
         }
     }
+    val metaLine = browseListSupportingLine(
+        typeLabel = if (isArchive) {
+            browseFileExtensionLabel(gallery.contentPath)
+        } else {
+            "Folder"
+        },
+        sizeBytes = archiveSizeBytes,
+        pageCount = when {
+            !showPages -> 0
+            isArchive && archiveSizeBytes > 0L -> 0 // prefer byte size when known
+            else -> gallery.pageCount
+        },
+        lastModifiedMs = gallery.mtime,
+    )
+    ListItem(
+        headlineContent = { Text(gallery.title) },
+        supportingContent = { Text(metaLine) },
+        leadingContent = {
+            CoverImage(
+                coverPath = gallery.coverPath,
+                sizePx = listDecodePx,
+                placeholder = if (isArchive) {
+                    Icons.Default.Inventory2
+                } else {
+                    Icons.Default.Folder
+                },
+                archiveContentPath = gallery.contentPath.takeIf { isArchive },
+                modifier = Modifier
+                    .size(LibraryListLeadSize)
+                    .clip(ShapeDefaults.Medium),
+            )
+        },
+        modifier = modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                },
+            ),
+    )
 }
 
 /**
- * History list row for library galleries and browse folder path links.
+ * History list row — same [ListItem] + 56dp leading layout as browse folder list.
  * Does not use EH thumb CDN / shared-element transitions.
  */
 @Composable
@@ -278,24 +254,11 @@ fun HistoryListItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick,
     showPages: Boolean,
-    showProgress: Boolean,
+    @Suppress("UNUSED_PARAMETER") showProgress: Boolean,
     modifier: Modifier = Modifier,
-) = CrystalCard(
-    modifier = modifier,
-    onClick = onClick,
-    onLongClick = onLongClick,
 ) {
+    val haptic = LocalHapticFeedback.current
     val kind = LocalHistory.kindLabelKey(info)
-    val kindLabel = when (kind) {
-        LocalHistory.KindLabel.Library -> stringResource(R.string.library)
-        LocalHistory.KindLabel.Archive -> stringResource(R.string.library_gallery_archive)
-        LocalHistory.KindLabel.Folder -> stringResource(R.string.folder)
-        LocalHistory.KindLabel.Smb -> stringResource(R.string.network)
-        LocalHistory.KindLabel.WebDav -> stringResource(R.string.webdav)
-        LocalHistory.KindLabel.Video -> stringResource(R.string.browse_videos)
-        LocalHistory.KindLabel.File -> stringResource(R.string.browse_files)
-        LocalHistory.KindLabel.Unknown -> stringResource(R.string.history)
-    }
     val placeholderIcon: ImageVector = when (kind) {
         LocalHistory.KindLabel.Archive -> Icons.Default.Inventory2
         LocalHistory.KindLabel.Smb -> Icons.Default.Lan
@@ -305,60 +268,53 @@ fun HistoryListItem(
         LocalHistory.KindLabel.Video -> Icons.Default.Movie
         else -> Icons.Default.Folder
     }
-    val cardHeight by collectListThumbSizeAsState()
-    val listDecodePx = CoverThumb.libraryListDecodePx(cardHeight)
+    val historyFileName = remember(info.uploader, info.title) {
+        val path = info.uploader.orEmpty()
+        path.substringAfterLast('/').substringAfterLast('\\').ifEmpty {
+            info.title.orEmpty()
+        }
+    }
+    val typeLabel = when (kind) {
+        LocalHistory.KindLabel.Archive,
+        LocalHistory.KindLabel.Video,
+        LocalHistory.KindLabel.File,
+        -> browseFileExtensionLabel(historyFileName)
+        LocalHistory.KindLabel.Folder, LocalHistory.KindLabel.Library -> "folder"
+        LocalHistory.KindLabel.Smb -> "smb"
+        LocalHistory.KindLabel.WebDav -> "webdav"
+        LocalHistory.KindLabel.Unknown -> "file"
+    }
+    val metaLine = browseListSupportingLine(
+        typeLabel = typeLabel,
+        pageCount = if (showPages && LocalHistory.showsPageProgress(info)) info.pages else 0,
+    )
+    val listDecodePx = CoverThumb.listDecodePx()
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
-    Row {
-        CoverImage(
-            coverPath = coverKey,
-            sizePx = listDecodePx,
-            placeholder = placeholderIcon,
-            modifier = Modifier
-                .aspectRatio(1f, matchHeightConstraintsFirst = true)
-                .clip(ShapeDefaults.Medium),
-        )
-        Column(modifier = Modifier.padding(start = 8.dp, top = 2.dp, end = 4.dp, bottom = 4.dp)) {
-            Text(
-                text = info.title.orEmpty(),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleSmall,
+    ListItem(
+        headlineContent = { Text(info.title.orEmpty()) },
+        supportingContent = { Text(metaLine) },
+        leadingContent = {
+            CoverImage(
+                coverPath = coverKey,
+                sizePx = listDecodePx,
+                placeholder = placeholderIcon,
+                modifier = Modifier
+                    .size(LibraryListLeadSize)
+                    .clip(ShapeDefaults.Medium),
             )
-            Spacer(modifier = Modifier.weight(1f))
-            val pageLabel = if (showPages && LocalHistory.showsPageProgress(info)) {
-                val readProgress = if (showProgress) {
-                    remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
-                } else {
-                    0
-                }
-                if (readProgress > 0) {
-                    "${readProgress + 1}/${info.pages}P"
-                } else {
-                    "${info.pages}P"
-                }
-            } else {
-                null
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                LocalGalleryMetaChip(text = kindLabel)
-                if (pageLabel != null) {
-                    Spacer(modifier = Modifier.weight(1f))
-                    Text(
-                        text = pageLabel,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-    }
+        },
+        modifier = modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                },
+            ),
+    )
 }
 
 /** History grid cell — same layout as [LocalGalleryGridItem], covers library + browse path rows. */

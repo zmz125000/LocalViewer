@@ -230,10 +230,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val listMode by Settings.listMode.collectAsState()
     val showPages by Settings.showGalleryPages.collectAsState()
     val showProgress by Settings.showReadingProgress.collectAsState()
-    val cardHeight by collectListThumbSizeAsState()
     val marginH = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
     val marginV = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_v)
-    val listInterval = dimensionResource(com.hippo.ehviewer.R.dimen.gallery_list_interval)
 
     fun notifyFavoriteToggle(nowFavorite: Boolean) {
         // launch {
@@ -397,18 +395,25 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             // Always keep the Lazy list/grid mounted so scroll state is not recreated when
             // empty ↔ non-empty briefly flips (e.g. re-subscribe after pop back).
             if (listMode == 0) {
-                // Match GalleryList: search-bar inset + list margins so top gap under the
-                // search field equals the horizontal card inset (marginH + search padding).
-                val listPadding = paddingValues + PaddingValues(marginH, marginV)
+                // Match browse folder list: no extra horizontal margin (ListItem has its own
+                // inset). Only top/bottom from scaffold so the search bar does not cover rows.
+                val listPadding = PaddingValues(
+                    top = paddingValues.calculateTopPadding() + marginV,
+                    bottom = paddingValues.calculateBottomPadding() + marginV,
+                )
                 FastScrollLazyColumn(
                     modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
                     state = listState,
                     contentPadding = listPadding,
-                    verticalArrangement = Arrangement.spacedBy(listInterval),
                 ) {
                     if (showFavorites) {
                         item(key = "fav-hdr") {
-                            BrowseSectionHeader(stringResource(R.string.favourite))
+                            // Extra list margin so section titles are not flush to the screen edge
+                            // (rows stay edge-aligned with folder ListItems).
+                            BrowseSectionHeader(
+                                stringResource(R.string.favourite),
+                                modifier = Modifier.padding(horizontal = marginH),
+                            )
                         }
                         items(favorites, key = { "fav-${it.key}" }) { fav ->
                             when (fav) {
@@ -418,9 +423,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                     onLongClick = { toggleFavorite(fav) },
                                     showPages = showPages,
                                     showProgress = showProgress,
-                                    modifier = Modifier
-                                        .height(cardHeight)
-                                        .fillMaxWidth(),
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
                                 else -> FavoriteSourceListRow(
                                     fav = fav,
@@ -431,7 +434,10 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                         }
                         if (galleries.isNotEmpty()) {
                             item(key = "gal-hdr") {
-                                BrowseSectionHeader(stringResource(R.string.library))
+                                BrowseSectionHeader(
+                                    stringResource(R.string.library),
+                                    modifier = Modifier.padding(horizontal = marginH),
+                                )
                             }
                         }
                     }
@@ -442,9 +448,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             onLongClick = { toggleGalleryFavorite(gallery) },
                             showPages = showPages,
                             showProgress = showProgress,
-                            modifier = Modifier
-                                .height(cardHeight)
-                                .fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
