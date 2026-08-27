@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Lock
@@ -38,6 +40,39 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseModePersist
+import com.hippo.ehviewer.library.naturalCompare
+
+/** Folder-view UI sort field ([Settings.browseSortMode]). Separate from [LibrarySortMode]. */
+enum class BrowseSortMode(val prefValue: Int) {
+    Name(0),
+    Date(1),
+    ;
+
+    companion object {
+        fun fromPref(value: Int): BrowseSortMode =
+            if (value == Date.prefValue) Date else Name
+    }
+}
+
+/**
+ * UI-only folder listing order. Listing / scan / thumbs / open-gallery keep name order.
+ */
+fun <T> Iterable<T>.sortedForBrowseFolderUi(
+    mode: BrowseSortMode,
+    ascending: Boolean,
+    nameOf: (T) -> String,
+    dateOf: (T) -> Long,
+): List<T> {
+    val nameCmp = Comparator<T> { a, b -> naturalCompare(nameOf(a), nameOf(b)) }
+    val cmp = when (mode) {
+        BrowseSortMode.Name -> nameCmp
+        BrowseSortMode.Date -> Comparator { a, b ->
+            val byDate = dateOf(a).compareTo(dateOf(b))
+            if (byDate != 0) byDate else naturalCompare(nameOf(a), nameOf(b))
+        }
+    }
+    return sortedWith(if (ascending) cmp else cmp.reversed())
+}
 
 /**
  * Effective content filter for [folder]: own persist, inherited persist, RAM override,
@@ -58,9 +93,8 @@ fun rememberEffectiveBrowseContentMode(
 }
 
 /**
- * View-mode control for folder browsers, Library, and History: content filter,
- * list/grid layout, and display toggles (photo grid, page count, progress,
- * folder thumbs, small galleries, hidden/virtual).
+ * View-mode control for folder browsers: content filter, list/grid layout,
+ * Name/Date UI sort (separate from Library), and display toggles.
  *
  * - **Tap** the icon → open this menu.
  * - **Long-press** the icon → toggle list ↔ grid ([Settings.listMode]).
@@ -87,8 +121,9 @@ fun BrowseViewModeMenu(
     }
     val contentMode = match?.effective ?: BrowseContentMode.fromPref(contentModePref)
     val useGrid = listMode == 1
-    var showGalleryPages by Settings.showGalleryPages.asMutableState()
-    var showReadingProgress by Settings.showReadingProgress.asMutableState()
+    var browseSortModePref by Settings.browseSortMode.asMutableState()
+    var browseSortAscending by Settings.browseSortAscending.asMutableState()
+    val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
     var browseFolderThumbs by Settings.browseFolderThumbs.asMutableState()
     var showSmallGalleries by Settings.browseShowSmallGalleries.asMutableState()
     var showHiddenFiles by Settings.browseShowHiddenFiles.asMutableState()
@@ -96,6 +131,14 @@ fun BrowseViewModeMenu(
     var favoritesOnTop by Settings.browseFavoritesOnTop.asMutableState()
     var photoGridMode by Settings.photoGridMode.asMutableState()
     val haptic = LocalHapticFeedback.current
+
+    fun selectBrowseSort(mode: BrowseSortMode) {
+        if (browseSortMode == mode) {
+            browseSortAscending = !browseSortAscending
+        } else {
+            browseSortModePref = mode.prefValue
+        }
+    }
 
     Box(modifier) {
         // IconButton has no onLongClick; match its 48dp target with combinedClickable.
@@ -180,6 +223,19 @@ fun BrowseViewModeMenu(
                     expanded = false
                 },
             )
+            // Under List/Grid: Name / Date with ↑↓ (folder UI only; not Library sort).
+            SortMenuItem(
+                label = stringResource(R.string.library_sort_name),
+                selected = browseSortMode == BrowseSortMode.Name,
+                ascending = browseSortAscending,
+                onClick = { selectBrowseSort(BrowseSortMode.Name) },
+            )
+            SortMenuItem(
+                label = stringResource(R.string.library_sort_date),
+                selected = browseSortMode == BrowseSortMode.Date,
+                ascending = browseSortAscending,
+                onClick = { selectBrowseSort(BrowseSortMode.Date) },
+            )
             HorizontalDivider()
             ToggleMenuItem(
                 label = stringResource(R.string.browse_menu_photo_grid),
@@ -190,16 +246,6 @@ fun BrowseViewModeMenu(
                 label = stringResource(R.string.browse_menu_favorites_on_top),
                 checked = favoritesOnTop,
                 onClick = { favoritesOnTop = !favoritesOnTop },
-            )
-            ToggleMenuItem(
-                label = stringResource(R.string.browse_menu_page_count),
-                checked = showGalleryPages,
-                onClick = { showGalleryPages = !showGalleryPages },
-            )
-            ToggleMenuItem(
-                label = stringResource(R.string.browse_menu_reading_progress),
-                checked = showReadingProgress,
-                onClick = { showReadingProgress = !showReadingProgress },
             )
             ToggleMenuItem(
                 label = stringResource(R.string.browse_folder_thumbs),
@@ -269,6 +315,41 @@ private fun ContentModeItem(
             style = MaterialTheme.typography.labelLarge,
         )
         MenuMarkSlot(mark)
+    }
+}
+
+/** Name / Date row: selected shows ↑ (asc) or ↓ (desc); retap flips direction. */
+@Composable
+private fun SortMenuItem(
+    label: String,
+    selected: Boolean,
+    ascending: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .sizeIn(minWidth = 112.dp, minHeight = 48.dp)
+            .combinedClickable(onClick = onClick)
+            .padding(MenuDefaults.DropdownMenuItemContentPadding),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.labelLarge,
+        )
+        Box(
+            modifier = Modifier.size(24.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) {
+                Icon(
+                    imageVector = if (ascending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                    contentDescription = null,
+                )
+            }
+        }
     }
 }
 

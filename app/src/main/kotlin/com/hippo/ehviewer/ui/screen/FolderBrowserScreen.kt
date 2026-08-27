@@ -808,17 +808,47 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     // path+layout so parent/child never share one LazyList scroll index.
                     val pathKey = (listedPath ?: currentPath!!) + if (photoGrid) "#pg" else ""
                     val favoritesOnTop by Settings.browseFavoritesOnTop.collectAsState()
+                    val browseSortModePref by Settings.browseSortMode.collectAsState()
+                    val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
+                    val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toBrowseSections()
-                    val dirsRaw = sections.directories.filterIsInstance<BrowseEntry.Directory>()
+                    // UI-only order; DirectoryListing / folderImages / open-gallery stay name-sorted.
+                    val dirsRaw = sections.directories
+                        .filterIsInstance<BrowseEntry.Directory>()
+                        .sortedForBrowseFolderUi(
+                            browseSortMode,
+                            browseSortAscending,
+                            nameOf = { it.name },
+                            dateOf = { it.lastModifiedMs },
+                        )
                     val dirs = if (favoritesOnTop) {
                         val (fav, rest) = dirsRaw.partition { isDirFavorite(it) }
                         fav + rest
                     } else {
                         dirsRaw
                     }
-                    val galleries = sections.galleries
-                    val videos = sections.videos.filterIsInstance<BrowseEntry.VideoFile>()
-                    val files = sections.files.filterIsInstance<BrowseEntry.RegularFile>()
+                    val galleries = sections.galleries.sortedForBrowseFolderUi(
+                        browseSortMode,
+                        browseSortAscending,
+                        nameOf = { it.name },
+                        dateOf = { it.lastModifiedMs },
+                    )
+                    val videos = sections.videos
+                        .filterIsInstance<BrowseEntry.VideoFile>()
+                        .sortedForBrowseFolderUi(
+                            browseSortMode,
+                            browseSortAscending,
+                            nameOf = { it.name },
+                            dateOf = { it.lastModifiedMs },
+                        )
+                    val files = sections.files
+                        .filterIsInstance<BrowseEntry.RegularFile>()
+                        .sortedForBrowseFolderUi(
+                            browseSortMode,
+                            browseSortAscending,
+                            nameOf = { it.name },
+                            dateOf = { it.lastModifiedMs },
+                        )
                     // In-memory only; resets when path/layout key changes. No prefs.
                     val animateItems by Settings.animateItems.collectAsState()
                     val (collapsedSections, toggleSection) = rememberBrowseSectionCollapse(pathKey)

@@ -1121,17 +1121,47 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     // Old (disk-hydrated / unrefreshed) listings: disk thumbs OK, no network jobs.
                     val allowRemoteThumbs = listingSessionCurrent
                     val favoritesOnTop by Settings.browseFavoritesOnTop.collectAsState()
+                    val browseSortModePref by Settings.browseSortMode.collectAsState()
+                    val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
+                    val browseSortAscending by Settings.browseSortAscending.collectAsState()
                     val sections = filteredEntries.toRemoteBrowseSections()
-                    val dirsRaw = sections.directories.filterIsInstance<BrowseEntryRemote.Directory>()
+                    // UI-only order; listing / folderImages / open-gallery stay name-sorted.
+                    val dirsRaw = sections.directories
+                        .filterIsInstance<BrowseEntryRemote.Directory>()
+                        .sortedForBrowseFolderUi(
+                            browseSortMode,
+                            browseSortAscending,
+                            nameOf = { it.name },
+                            dateOf = { it.lastModifiedMs },
+                        )
                     val dirs = if (favoritesOnTop) {
                         val (fav, rest) = dirsRaw.partition { isDirFavorite(it.relativeName) }
                         fav + rest
                     } else {
                         dirsRaw
                     }
-                    val galleries = sections.galleries
-                    val videos = sections.videos.filterIsInstance<BrowseEntryRemote.VideoFile>()
-                    val files = sections.files.filterIsInstance<BrowseEntryRemote.RegularFile>()
+                    val galleries = sections.galleries.sortedForBrowseFolderUi(
+                        browseSortMode,
+                        browseSortAscending,
+                        nameOf = { it.name },
+                        dateOf = { it.lastModifiedMs },
+                    )
+                    val videos = sections.videos
+                        .filterIsInstance<BrowseEntryRemote.VideoFile>()
+                        .sortedForBrowseFolderUi(
+                            browseSortMode,
+                            browseSortAscending,
+                            nameOf = { it.name },
+                            dateOf = { it.lastModifiedMs },
+                        )
+                    val files = sections.files
+                        .filterIsInstance<BrowseEntryRemote.RegularFile>()
+                        .sortedForBrowseFolderUi(
+                            browseSortMode,
+                            browseSortAscending,
+                            nameOf = { it.name },
+                            dateOf = { it.lastModifiedMs },
+                        )
                     // In-memory only; resets when dirKey changes. No prefs / no ripple on header.
                     val animateItems by Settings.animateItems.collectAsState()
                     val (collapsedSections, toggleSection) = rememberBrowseSectionCollapse(
