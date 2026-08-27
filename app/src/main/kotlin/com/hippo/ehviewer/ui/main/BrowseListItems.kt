@@ -1256,6 +1256,8 @@ fun BrowseCoverThumb(
 /**
  * Section label for folder browse lists (Directories / Galleries / …).
  * Optional [onClick] (e.g. collapse) uses **no ripple** (`indication = null`).
+ * When clickable, the hit target is the full header row (text + trailing space),
+ * same in list and grid — not only the label glyphs.
  */
 @Composable
 fun BrowseSectionHeader(
@@ -1270,11 +1272,14 @@ fun BrowseSectionHeader(
         modifier = modifier
             .then(
                 if (onClick != null) {
-                    Modifier.clickable(
-                        interactionSource = null,
-                        indication = null,
-                        onClick = onClick,
-                    )
+                    // fillMaxWidth so list matches grid: tap anywhere on the header band.
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(
+                            interactionSource = null,
+                            indication = null,
+                            onClick = onClick,
+                        )
                 } else {
                     Modifier
                 },
