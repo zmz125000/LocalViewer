@@ -96,6 +96,8 @@ import com.hippo.ehviewer.ui.main.CoverImage
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
+import com.hippo.ehviewer.ui.main.browseListSupportingLine
+import com.hippo.ehviewer.ui.main.browseFileExtensionLabel
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.openLocalBrowseDir
@@ -536,12 +538,10 @@ private fun FavoriteSourceListRow(
         resolvedThumb = withIOContext { HistoryThumbKey.resolveReadablePath(folderThumbKey) }
     }
     val leadSize = 56.dp
-    val listDecodePx = CoverThumb.libraryListDecodePx(leadSize)
+    val listDecodePx = CoverThumb.listDecodePx()
     ListItem(
-        headlineContent = {
-            Text(fav.displayName)
-        },
-        supportingContent = { Text(favoriteSubtitle(fav)) },
+        headlineContent = { Text(fav.displayName) },
+        supportingContent = { Text(favoriteMetaLine(fav)) },
         leadingContent = {
             when {
                 fav is FavoriteBrowseSource.Gallery -> CoverImage(
@@ -567,11 +567,17 @@ private fun FavoriteSourceListRow(
                         .size(leadSize)
                         .clip(ShapeDefaults.Medium),
                 )
-                else -> Icon(
-                    favoriteIcon(fav),
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+                else -> Box(
+                    modifier = Modifier.size(leadSize),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        favoriteIcon(fav),
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
         },
         modifier = Modifier
@@ -723,17 +729,50 @@ private fun folderFavoriteThumbKey(fav: FavoriteBrowseSource): String? = when (f
     else -> null
 }
 
+/** Same meta tokens as library / folder list (`dir` / `smb` / `ZIP` · …). */
 @Composable
-private fun favoriteSubtitle(fav: FavoriteBrowseSource): String = when (fav) {
-    is FavoriteBrowseSource.Local -> stringResource(
-        if (fav.root.isLibraryRole) R.string.library else R.string.folder,
-    )
-    is FavoriteBrowseSource.Smb -> stringResource(R.string.network)
-    is FavoriteBrowseSource.WebDav -> stringResource(R.string.webdav)
-    is FavoriteBrowseSource.Gallery -> stringResource(R.string.library)
-    is FavoriteBrowseSource.LocalFolder -> stringResource(R.string.folder)
-    is FavoriteBrowseSource.SmbFolder -> stringResource(R.string.network)
-    is FavoriteBrowseSource.WebDavFolder -> stringResource(R.string.webdav)
+private fun favoriteMetaLine(fav: FavoriteBrowseSource): String {
+    val typeLabel = when (fav) {
+        is FavoriteBrowseSource.Local -> "Dir"
+        is FavoriteBrowseSource.Smb -> "SMB"
+        is FavoriteBrowseSource.WebDav -> "WebDAV"
+        is FavoriteBrowseSource.LocalFolder,
+        is FavoriteBrowseSource.SmbFolder,
+        is FavoriteBrowseSource.WebDavFolder,
+        -> "Dir"
+        is FavoriteBrowseSource.Gallery -> {
+            val g = fav.gallery
+            if (g.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                browseFileExtensionLabel(g.contentPath)
+            } else {
+                "Folder"
+            }
+        }
+    }
+    return when (fav) {
+        is FavoriteBrowseSource.Gallery -> {
+            val g = fav.gallery
+            val archiveSize = remember(g.contentPath, g.kind) {
+                if (g.kind != LOCAL_GALLERY_KIND_ARCHIVE) {
+                    0L
+                } else {
+                    runCatching {
+                        java.io.File(g.contentPath).takeIf { it.isFile }?.length() ?: 0L
+                    }.getOrDefault(0L)
+                }
+            }
+            browseListSupportingLine(
+                typeLabel = typeLabel,
+                sizeBytes = archiveSize,
+                pageCount = when {
+                    g.kind == LOCAL_GALLERY_KIND_ARCHIVE && archiveSize > 0L -> 0
+                    else -> g.pageCount
+                },
+                lastModifiedMs = g.mtime,
+            )
+        }
+        else -> browseListSupportingLine(typeLabel = typeLabel)
+    }
 }
 
 private fun favoriteIcon(fav: FavoriteBrowseSource): ImageVector = when (fav) {
