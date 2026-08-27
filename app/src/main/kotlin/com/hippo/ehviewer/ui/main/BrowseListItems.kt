@@ -86,12 +86,12 @@ import okio.Path
 
 private const val BROWSE_LIST_SEP = " · "
 
-/** Lowercase extension from a basename / relative path; `"file"` when missing. */
+/** Uppercase extension from a basename / relative path; `"FILE"` when missing. */
 fun browseFileExtensionLabel(fileName: String): String {
     val base = fileName.substringAfterLast('/').substringAfterLast('\\')
     val dot = base.lastIndexOf('.')
-    if (dot <= 0 || dot >= base.length - 1) return "file"
-    return base.substring(dot + 1).lowercase(Locale.US)
+    if (dot <= 0 || dot >= base.length - 1) return "FILE"
+    return base.substring(dot + 1).uppercase(Locale.US)
 }
 
 /** Compact size for list meta (`340 KB`, `1.2 MB`); empty when unknown. */
@@ -202,7 +202,7 @@ fun BrowseDirectoryRow(
         supportingContent = {
             Text(
                 browseListSupportingLine(
-                    typeLabel = "dir",
+                    typeLabel = "Dir",
                     lastModifiedMs = lastModifiedMs,
                 ),
             )
@@ -260,7 +260,7 @@ fun BrowseFolderGalleryRow(
         supportingContent = {
             Text(
                 browseListSupportingLine(
-                    typeLabel = "folder",
+                    typeLabel = "Folder",
                     pageCount = if (showPages) pageCount else 0,
                     pageCountCapped = showPages && pageCountCapped,
                     lastModifiedMs = lastModifiedMs,
