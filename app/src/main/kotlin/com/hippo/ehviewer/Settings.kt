@@ -342,7 +342,7 @@ object Settings : DataStorePreferences(null) {
     val preloadImage = intPref("preload_image_2", 5)
 
     /** Decoded images to keep ahead independently of [preloadImage]. */
-    val readerDecodeAhead = intPref("pref_reader_decode_ahead", 5)
+    val readerDecodeAhead = intPref("pref_reader_decode_ahead", 3)
 
     /** Use one decoded page of lookahead for formats with expensive decode pipelines. */
     val readerAutoDecodeAhead = boolPref("pref_reader_auto_decode_ahead", true)

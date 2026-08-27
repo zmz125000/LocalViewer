@@ -517,7 +517,7 @@
     <string name="settings_reader_decode_ahead">Decode ahead</string>
     <string name="settings_reader_decode_ahead_summary">Keep the next %s pages decoded in the reading direction</string>
     <string name="settings_advanced_auto_decode_ahead">Limit decode ahead</string>
-    <string name="settings_advanced_auto_decode_ahead_summary">Use two decoded pages ahead for OPPO ProXDR HEIC and JXR files</string>
+    <string name="settings_advanced_auto_decode_ahead_summary">Decode 2 pages ahead for OPPO ProXDR HEIC and JXR files</string>
     <string name="settings_download_download_delay">Download delay</string>
     <string name="settings_download_download_delay_summary">Delay %s ms per download</string>
     <string name="settings_download_timeout_speed">Minimum download speed (in KB/s)</string>
