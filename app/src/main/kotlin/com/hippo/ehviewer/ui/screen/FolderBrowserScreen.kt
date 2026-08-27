@@ -1018,6 +1018,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             onLongClick = { toggleDirFavorite(dir) },
                                             cover = dir.coverPath?.let { BrowseCover.Local(it) },
                                             showFolderThumb = browseFolderThumbs,
+                                            lastModifiedMs = dir.lastModifiedMs,
                                         )
                                     }
                                 }
@@ -1050,6 +1051,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 showPages = showGalleryPages,
                                                 onClick = { openFolderGalleryPrimary(entry) },
                                                 onLongClick = { openFolderGallerySecondary(entry) },
+                                                lastModifiedMs = entry.lastModifiedMs,
                                             )
                                             is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(
                                                 modifier = Modifier.thenIf(animateItems) { animateItem() },
@@ -1057,6 +1059,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 cover = BrowseCover.LocalArchive(entry.path),
                                                 onClick = { openArchive(entry) },
                                                 onLongClick = { openArchiveInOtherApp(entry) },
+                                                lastModifiedMs = entry.lastModifiedMs,
                                             )
                                             else -> Unit
                                         }
@@ -1081,6 +1084,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             ),
                                             onClick = { openVideoPrimary(video.path) },
                                             onLongClick = { openVideoSecondary(video.path) },
+                                            lastModifiedMs = video.lastModifiedMs,
                                         )
                                     }
                                 }
@@ -1108,6 +1112,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 }
                                             },
                                             onLongClick = { openExternalFile(file.path) },
+                                            lastModifiedMs = file.lastModifiedMs,
                                         )
                                     }
                                 }

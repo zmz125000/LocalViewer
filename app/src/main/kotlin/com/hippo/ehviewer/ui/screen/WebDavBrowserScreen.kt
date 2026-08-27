@@ -1271,6 +1271,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             showFolderThumb = browseFolderThumbs,
                                             thumbRetryKey = refreshToken,
                                             allowRemoteFetch = allowRemoteThumbs,
+                                            lastModifiedMs = dir.lastModifiedMs,
                                         )
                                     }
                                 }
@@ -1297,6 +1298,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     showPages = showGalleryPages,
                                                     onClick = { openFolderGalleryPrimary(entry) },
                                                     onLongClick = { openFolderGallerySecondary(entry) },
+                                                    lastModifiedMs = entry.lastModifiedMs,
                                                 )
                                             is BrowseEntryRemote.ArchiveGallery ->
                                                 BrowseArchiveGalleryRow(
@@ -1307,6 +1309,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     allowRemoteFetch = allowRemoteThumbs,
                                                     onClick = { openArchive(entry) },
                                                     onLongClick = { openArchiveInOtherApp(entry) },
+                                                    lastModifiedMs = entry.lastModifiedMs,
                                                 )
                                             else -> Unit
                                         }
@@ -1333,6 +1336,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             allowRemoteFetch = allowRemoteThumbs,
                                             onClick = { openVideoPrimary(video.fileName) },
                                             onLongClick = { openVideoSecondary(video.fileName) },
+                                            lastModifiedMs = video.lastModifiedMs,
                                         )
                                     }
                                 }
@@ -1361,6 +1365,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 }
                                             },
                                             onLongClick = { openExternalFile(file.fileName) },
+                                            lastModifiedMs = file.lastModifiedMs,
                                         )
                                     }
                                 }

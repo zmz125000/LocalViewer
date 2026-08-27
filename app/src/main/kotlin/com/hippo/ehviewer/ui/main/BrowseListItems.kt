@@ -77,8 +77,21 @@ import com.hippo.ehviewer.webdav.WebDavCache
 import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
+import java.text.DateFormat
+import java.util.Date
 import kotlinx.coroutines.CancellationException
 import okio.Path
+
+/**
+ * List-row second line: type label, optionally ` · ` + locale short date-time when
+ * [lastModifiedMs] is known (> 0).
+ */
+fun browseListSupportingLine(typeLabel: String, lastModifiedMs: Long = 0L): String {
+    if (lastModifiedMs <= 0L) return typeLabel
+    val whenText = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+        .format(Date(lastModifiedMs))
+    return "$typeLabel · $whenText"
+}
 
 /** Cover source for browse list rows (local path or lazy remote download). */
 sealed class BrowseCover {
@@ -104,11 +117,19 @@ fun BrowseDirectoryRow(
     showFolderThumb: Boolean = false,
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
+    lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
         headlineContent = { Text(name) },
-        supportingContent = { Text(stringResource(R.string.browse_directory)) },
+        supportingContent = {
+            Text(
+                browseListSupportingLine(
+                    stringResource(R.string.browse_directory),
+                    lastModifiedMs,
+                ),
+            )
+        },
         // Same 56dp leading slot as [BrowseFolderGalleryRow] (icon placeholder when no thumb).
         leadingContent = {
             BrowseCoverThumb(
@@ -153,20 +174,20 @@ fun BrowseFolderGalleryRow(
     showPages: Boolean = true,
     /** Long-press → photo-grid virtual folder; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
+    lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
+    val typeLabel = when {
+        !showPages -> stringResource(R.string.library_gallery_folder)
+        pageCountCapped -> stringResource(R.string.browse_folder_gallery_pages_many)
+        pageCount > 0 -> stringResource(R.string.browse_folder_gallery_pages, pageCount)
+        else -> stringResource(R.string.library_gallery_folder)
+    }
     ListItem(
         headlineContent = { Text(name) },
         supportingContent = {
-            Text(
-                when {
-                    !showPages -> stringResource(R.string.library_gallery_folder)
-                    pageCountCapped -> stringResource(R.string.browse_folder_gallery_pages_many)
-                    pageCount > 0 -> stringResource(R.string.browse_folder_gallery_pages, pageCount)
-                    else -> stringResource(R.string.library_gallery_folder)
-                },
-            )
+            Text(browseListSupportingLine(typeLabel, lastModifiedMs))
         },
         leadingContent = {
             BrowseCoverThumb(
@@ -204,11 +225,19 @@ fun BrowseArchiveGalleryRow(
     allowRemoteFetch: Boolean = true,
     /** e.g. PDF long-press → open in external app; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
+    lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
         headlineContent = { Text(name) },
-        supportingContent = { Text(stringResource(R.string.library_gallery_archive)) },
+        supportingContent = {
+            Text(
+                browseListSupportingLine(
+                    stringResource(R.string.library_gallery_archive),
+                    lastModifiedMs,
+                ),
+            )
+        },
         leadingContent = {
             BrowseCoverThumb(
                 cover = cover,
@@ -248,11 +277,19 @@ fun BrowseVideoRow(
     allowRemoteFetch: Boolean = true,
     /** Long-press → open in external app; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
+    lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
         headlineContent = { Text(name) },
-        supportingContent = { Text(stringResource(R.string.browse_video)) },
+        supportingContent = {
+            Text(
+                browseListSupportingLine(
+                    stringResource(R.string.browse_video),
+                    lastModifiedMs,
+                ),
+            )
+        },
         leadingContent = {
             // Same 56dp / 24dp icon metrics as [BrowseCoverThumb] list default.
             BrowseVideoThumbnail(
@@ -295,13 +332,21 @@ fun BrowseFileRow(
     showPhotoThumb: Boolean = false,
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
+    lastModifiedMs: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
     val longClick = onLongClick ?: onClick
     val usePhotoThumb = showPhotoThumb && cover != null
     ListItem(
         headlineContent = { Text(name) },
-        supportingContent = { Text(stringResource(R.string.browse_file)) },
+        supportingContent = {
+            Text(
+                browseListSupportingLine(
+                    stringResource(R.string.browse_file),
+                    lastModifiedMs,
+                ),
+            )
+        },
         // Same 56dp leading slot as [BrowseFolderGalleryRow] (file icon when no photo thumb).
         leadingContent = {
             BrowseCoverThumb(

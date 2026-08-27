@@ -1390,6 +1390,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                             showFolderThumb = browseFolderThumbs,
                                             thumbRetryKey = refreshToken,
                                             allowRemoteFetch = allowRemoteThumbs,
+                                            lastModifiedMs = dir.lastModifiedMs,
                                         )
                                     }
                                 }
@@ -1416,6 +1417,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                     showPages = showGalleryPages,
                                                     onClick = { openFolderGalleryPrimary(entry) },
                                                     onLongClick = { openFolderGallerySecondary(entry) },
+                                                    lastModifiedMs = entry.lastModifiedMs,
                                                 )
                                             is BrowseEntryRemote.ArchiveGallery ->
                                                 BrowseArchiveGalleryRow(
@@ -1426,6 +1428,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                     allowRemoteFetch = allowRemoteThumbs,
                                                     onClick = { openArchive(entry) },
                                                     onLongClick = { openArchiveInOtherApp(entry) },
+                                                    lastModifiedMs = entry.lastModifiedMs,
                                                 )
                                             else -> Unit
                                         }
@@ -1452,6 +1455,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                             allowRemoteFetch = allowRemoteThumbs,
                                             onClick = { openVideoPrimary(video.fileName) },
                                             onLongClick = { openVideoSecondary(video.fileName) },
+                                            lastModifiedMs = video.lastModifiedMs,
                                         )
                                     }
                                 }
@@ -1481,6 +1485,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 }
                                             },
                                             onLongClick = { openExternalFile(file.fileName) },
+                                            lastModifiedMs = file.lastModifiedMs,
                                         )
                                     }
                                 }

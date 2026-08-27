@@ -381,7 +381,8 @@ fun HistoryGridItem(
         LocalHistory.KindLabel.Video -> Icons.Default.Movie
         else -> Icons.Default.Folder
     }
-    val nameHeight = GalleryGridDefaults.nameHeight()
+    // Same square cell as browse folder-thumb / [HistoryDirectoryGridItem]:
+    // cover fills the cell; title (+ kind icon) on a translucent bottom scrim.
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     val gridDecodePx = CoverThumb.gridDecodePx(
@@ -393,81 +394,67 @@ fun HistoryGridItem(
     val coverKey = remember(info.gid, info.thumbKey, info.token, info.uploader) {
         historyCoverKey(info)
     }
+    val labelIconSize = with(LocalDensity.current) {
+        MaterialTheme.typography.labelMedium.fontSize.toDp()
+    }
     ElevatedCard(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().aspectRatio(1f),
         onClick = onClick,
         onLongClick = onLongClick,
     ) {
-        Column(Modifier.fillMaxWidth()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .clip(ShapeDefaults.Medium),
-            ) {
-                CoverImage(
-                    coverPath = coverKey,
-                    sizePx = gridDecodePx,
-                    placeholder = placeholderIcon,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                if (showPages && LocalHistory.showsPageProgress(info)) {
-                    Badge(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .widthIn(min = 32.dp)
-                            .height(24.dp),
-                    ) {
-                        val readProgress = if (showProgress) {
-                            remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
-                        } else {
-                            0
-                        }
-                        Text(
-                            text = if (readProgress > 0) {
-                                "${readProgress + 1}/${info.pages}"
-                            } else {
-                                "${info.pages}"
-                            },
-                        )
-                    }
-                }
-            }
-            // Fixed name band (same as before): caption sits on the bottom.
-            // Icon is CenterVertically with the text only — not the whole name box.
-            val labelIconSize = with(LocalDensity.current) {
-                MaterialTheme.typography.labelMedium.fontSize.toDp()
-            }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(nameHeight)
-                    .padding(horizontal = namePadH),
-                contentAlignment = Alignment.BottomStart,
-            ) {
-                Row(
+        Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
+            CoverImage(
+                coverPath = coverKey,
+                sizePx = gridDecodePx,
+                placeholder = placeholderIcon,
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (showPages && LocalHistory.showsPageProgress(info)) {
+                Badge(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = namePadBottom),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .align(Alignment.TopEnd)
+                        .widthIn(min = 32.dp)
+                        .height(24.dp),
                 ) {
-                    Icon(
-                        imageVector = placeholderIcon,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .padding(end = 4.dp)
-                            .size(labelIconSize),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    val readProgress = if (showProgress) {
+                        remember(info.gid) { EhDB.getReadProgressFlow(info.gid) }.collectAsState(0).value
+                    } else {
+                        0
+                    }
                     Text(
-                        text = info.title.orEmpty(),
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Start,
-                        modifier = Modifier.weight(1f),
+                        text = if (readProgress > 0) {
+                            "${readProgress + 1}/${info.pages}"
+                        } else {
+                            "${info.pages}"
+                        },
                     )
                 }
+            }
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                    .padding(horizontal = namePadH)
+                    .padding(top = 4.dp, bottom = namePadBottom),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = placeholderIcon,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .padding(end = 4.dp)
+                        .size(labelIconSize),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = info.title.orEmpty(),
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
@@ -589,7 +576,7 @@ fun LocalGalleryGridItem(
     showProgress: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val nameHeight = GalleryGridDefaults.nameHeight()
+    // Port browse folder-thumb style: square cell, cover fills, title on scrim.
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     val gridDecodePx = CoverThumb.gridDecodePx(
@@ -599,68 +586,58 @@ fun LocalGalleryGridItem(
         gutter = GalleryGridDefaults.gutter(),
     )
     ElevatedCard(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().aspectRatio(1f),
         onClick = onClick,
         onLongClick = onLongClick,
     ) {
-        Column(Modifier.fillMaxWidth()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .clip(ShapeDefaults.Medium),
-            ) {
-                CoverImage(
-                    coverPath = gallery.coverPath,
-                    sizePx = gridDecodePx,
-                    archiveContentPath = gallery.contentPath.takeIf {
-                        gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
-                    },
-                    placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                        Icons.Default.Inventory2
+        Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
+            CoverImage(
+                coverPath = gallery.coverPath,
+                sizePx = gridDecodePx,
+                archiveContentPath = gallery.contentPath.takeIf {
+                    gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
+                },
+                placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+                    Icons.Default.Inventory2
+                } else {
+                    Icons.Default.Folder
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (showPages && gallery.pageCount > 0) {
+                Badge(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .widthIn(min = 32.dp)
+                        .height(24.dp),
+                ) {
+                    val readProgress = if (showProgress) {
+                        remember(gallery.id) { EhDB.getReadProgressFlow(gallery.id) }.collectAsState(0).value
                     } else {
-                        Icons.Default.Folder
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
-                if (showPages && gallery.pageCount > 0) {
-                    Badge(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .widthIn(min = 32.dp)
-                            .height(24.dp),
-                    ) {
-                        val readProgress = if (showProgress) {
-                            remember(gallery.id) { EhDB.getReadProgressFlow(gallery.id) }.collectAsState(0).value
-                        } else {
-                            0
-                        }
-                        Text(
-                            text = if (readProgress > 0) {
-                                "${readProgress + 1}/${gallery.pageCount}"
-                            } else {
-                                "${gallery.pageCount}"
-                            },
-                        )
+                        0
                     }
+                    Text(
+                        text = if (readProgress > 0) {
+                            "${readProgress + 1}/${gallery.pageCount}"
+                        } else {
+                            "${gallery.pageCount}"
+                        },
+                    )
                 }
             }
-            Box(
+            Text(
+                text = gallery.title,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Start,
                 modifier = Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .height(nameHeight)
-                    .padding(horizontal = namePadH),
-                contentAlignment = Alignment.BottomStart,
-            ) {
-                Text(
-                    text = gallery.title,
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Start,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = namePadBottom),
-                )
-            }
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                    .padding(horizontal = namePadH)
+                    .padding(top = 4.dp, bottom = namePadBottom),
+            )
         }
     }
 }
