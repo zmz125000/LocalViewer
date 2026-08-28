@@ -73,7 +73,8 @@
 
 A High performance Android SMB/WebDAV image viewer/comic reader with network gallery folder support.
 
-Based on [EhViewer](https://github.com/FooIbar/EhViewer) With [Material Design 3](https://m3.material.io/)
+Based on [EhViewer](https://github.com/FooIbar/EhViewer)   
+With [Material Design 3](https://m3.material.io/)  
 and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) Support.  
 
 
