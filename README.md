@@ -73,9 +73,9 @@
 
 A High performance Android SMB/WebDAV image viewer/comic reader with network gallery folder support.
 
-With [Material Design 3](https://m3.material.io/)
+Based on [EhViewer](https://github.com/FooIbar/EhViewer) With [Material Design 3](https://m3.material.io/)
 and [Dynamic Color](https://m3.material.io/styles/color/dynamic-color/overview) Support.  
-Based on [EhViewer](https://github.com/FooIbar/EhViewer).
+
 
 Similar to Perfect Viewer and Kuro Reader but with Hi-Res images support (no downscaling), clean UI and way better performance.
 
