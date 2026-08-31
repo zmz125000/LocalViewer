@@ -26,12 +26,14 @@ import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
+import com.hippo.ehviewer.library.classifyRemoteListing
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
 import com.hippo.ehviewer.library.isDotHiddenName
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
+import com.hippo.ehviewer.library.isShallowIncompleteListing
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.peekIndicatesHiddenDir
@@ -65,6 +67,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
@@ -82,6 +85,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -159,6 +163,12 @@ object SmbGateway {
 
     /** Long enough for large comic page transfers on a busy LAN. */
     private const val SMB_IO_TIMEOUT_SEC = 120L
+
+    /** Outer await for a process-scoped list job (shallow+deep). */
+    private const val LIST_AWAIT_TIMEOUT_MS = 180_000L
+
+    /** Deep peek/classify budget after shallow paint; keep shallow on expiry. */
+    private const val DEEP_CLASSIFY_TIMEOUT_MS = 180_000L
 
     /**
      * Share-enum is a one-shot IPC$ client. Keep timeouts short so a hung LOGOFF/pipe
@@ -1581,6 +1591,19 @@ object SmbGateway {
                     !cached.sessionCurrent &&
                     isSourceConnected(source)
                 if (!shouldQuickScan) return cached.entries
+                // In-progress shallow stubs must not use slim (would skip peeks forever).
+                if (isShallowIncompleteListing(cached.entries)) {
+                    ensureHostNotCoolingDown(endpointHost(source), source.port)
+                    return awaitListJob(cacheKey) {
+                        listDirectoryShallowThenDeep(
+                            source = source,
+                            password = password,
+                            relativeDir = relativeDir,
+                            configKey = configKey,
+                            onCached = onCached,
+                        )
+                    }
+                }
                 return try {
                     awaitListJob(cacheKey) {
                         try {
@@ -1637,27 +1660,115 @@ object SmbGateway {
 
         BrowseSession.getSmbListing(source.id, relativeDir)?.let { return it }
         ensureHostNotCoolingDown(endpointHost(source), source.port)
+        // Cold miss: shallow-first (one QUERY_DIRECTORY → paint), then deferred peeks.
+        // Avoids OOM / endless spinner on huge comic trees (thousands of child dirs).
         return awaitListJob(cacheKey) {
-            val previous = BrowseSession.getSmbListing(source.id, relativeDir)
-            val result = listDirectoryUncached(source, password, relativeDir)
-            val fromRam = if (previous != null) {
-                preferCompleteFolderGalleries(previous, result)
+            listDirectoryShallowThenDeep(
+                source = source,
+                password = password,
+                relativeDir = relativeDir,
+                configKey = configKey,
+                onCached = onCached,
+            )
+        }
+    }
+
+    /**
+     * Cold list: publish name-only shallow rows immediately, then peek/classify.
+     * Deep failure / timeout / cancel keeps shallow in RAM+disk (`sessionCurrent=false`).
+     */
+    private suspend fun listDirectoryShallowThenDeep(
+        source: SmbSourceEntity,
+        password: String,
+        relativeDir: String,
+        configKey: String,
+        onCached: ((List<BrowseEntryRemote>) -> Unit)?,
+    ): List<BrowseEntryRemote> {
+        val previous = BrowseSession.getSmbListing(source.id, relativeDir)
+        if (isServerRootSource(source) && relativeDir.isBlank()) {
+            val shares = listShareRootEntries(source, password)
+            val merged = if (previous != null) {
+                preferCompleteFolderGalleries(previous, shares)
             } else {
-                result
+                shares
             }
-            val stored = NetworkFolderIndexCache.saveSmb(
-                source.id,
-                configKey,
-                relativeDir,
-                fromRam,
-            )
-            BrowseSession.putSmbListing(
-                source.id,
-                relativeDir,
-                stored,
-                sessionCurrent = true,
-            )
-            stored
+            val stored = NetworkFolderIndexCache.saveSmb(source.id, configKey, relativeDir, merged)
+            BrowseSession.putSmbListing(source.id, relativeDir, stored, sessionCurrent = true)
+            return stored
+        }
+
+        val t0 = System.nanoTime()
+        val children = listChildrenForRelativeDir(source, password, relativeDir)
+        val dirName = relativeDir.substringAfterLast('/').substringAfterLast('\\')
+            .ifEmpty { source.displayName }
+        // No peeks: dirs are Empty shells; files/archives/videos by basename; current-dir
+        // images still form a FolderGallery from this single listing.
+        val shallow = classifyRemoteListing(dirName, children.withHiddenFlags())
+        val shallowMerged = if (previous != null) {
+            preferCompleteFolderGalleries(previous, shallow)
+        } else {
+            shallow
+        }
+        // RAM-only until deep succeeds — disk-saving Empty shells would make slim
+        // quick-scan treat the folder as unchanged and never upgrade.
+        BrowseSession.putSmbListing(
+            source.id,
+            relativeDir,
+            shallowMerged,
+            sessionCurrent = false,
+        )
+        logcat("FolderIndex") {
+            "SMB shallow list source=${source.id} dir=$relativeDir " +
+                "children=${children.size} entries=${shallowMerged.size} " +
+                "ms=${(System.nanoTime() - t0) / 1_000_000}"
+        }
+        // Compose state must update on Main (loader runs on gatewayScope IO).
+        withContext(Dispatchers.Main.immediate) {
+            onCached?.invoke(shallowMerged)
+        }
+
+        // Another waiter may have finished deep classify while we painted shallow.
+        BrowseSession.getSmbCachedListing(source.id, relativeDir)?.let { cached ->
+            if (cached.sessionCurrent) return cached.entries
+        }
+
+        return try {
+            withTimeout(DEEP_CLASSIFY_TIMEOUT_MS) {
+                coroutineContext.ensureActive()
+                val t1 = System.nanoTime()
+                val deep = classifyDirectoryChildren(source, password, relativeDir, children)
+                val fromRam = preferCompleteFolderGalleries(shallowMerged, deep)
+                val stored = NetworkFolderIndexCache.saveSmb(
+                    source.id,
+                    configKey,
+                    relativeDir,
+                    fromRam,
+                )
+                BrowseSession.putSmbListing(
+                    source.id,
+                    relativeDir,
+                    stored,
+                    sessionCurrent = true,
+                )
+                logcat("FolderIndex") {
+                    "SMB deep classify source=${source.id} dir=$relativeDir " +
+                        "entries=${stored.size} ms=${(System.nanoTime() - t1) / 1_000_000}"
+                }
+                stored
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: TimeoutCancellationException) {
+            logcat("FolderIndex") {
+                "SMB deep classify timed out source=${source.id} dir=$relativeDir; keeping shallow"
+            }
+            shallowMerged
+        } catch (e: Throwable) {
+            logcat("FolderIndex") {
+                "SMB deep classify failed source=${source.id} dir=$relativeDir " +
+                    "(${e.message}); keeping shallow"
+            }
+            shallowMerged
         }
     }
 
@@ -1669,14 +1780,34 @@ object SmbGateway {
             if (existing != null && existing.isActive) {
                 existing
             } else {
+                // Drop completed/cancelled leftovers so a hung prior job cannot stick forever.
+                existing?.cancel()
                 gatewayScope.async { loader() }.also { job ->
                     job.invokeOnCompletion { listJobs.remove(cacheKey, job) }
                 }
             }
         }!!
         return try {
-            deferred.await()
-        } catch (e: kotlinx.coroutines.CancellationException) {
+            withTimeout(LIST_AWAIT_TIMEOUT_MS) {
+                deferred.await()
+            }
+        } catch (e: TimeoutCancellationException) {
+            if (listJobs.remove(cacheKey, deferred)) {
+                deferred.cancel()
+            }
+            val pipe = cacheKey.indexOf('|')
+            val cached = if (pipe > 0) {
+                val sid = cacheKey.substring(0, pipe).toLongOrNull()
+                val dir = cacheKey.substring(pipe + 1)
+                if (sid != null) BrowseSession.getSmbListing(sid, dir) else null
+            } else {
+                null
+            }
+            logcat("FolderIndex") {
+                "SMB list await timed out key=$cacheKey; returning cached=${cached?.size ?: 0}"
+            }
+            cached ?: throw IOException("SMB list timed out", e)
+        } catch (e: CancellationException) {
             // Leaving the folder only cancelled this await; drop the process-scoped
             // QUERY_DIRECTORY so it does not keep the list TCP / NIO group busy.
             if (!coroutineContext.isActive && listJobs.remove(cacheKey, deferred)) {

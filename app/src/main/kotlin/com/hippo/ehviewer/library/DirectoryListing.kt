@@ -1188,3 +1188,17 @@ fun classifyRemoteListing(
     currentDirName: String,
     entries: List<RemoteChild>,
 ): List<BrowseEntryRemote> = classifyRemoteListingWithPeeks(currentDirName, entries, emptyMap())
+
+/**
+ * True when [entries] look like a **shallow-first** stub (every directory still
+ * [DirPresence.Empty]) rather than a finished peek/classify. Used so quick-scan slim
+ * does not treat an in-progress cold list as complete and skip deep peeks.
+ *
+ * A tree that is genuinely all-empty will re-peek once — cheap compared to skipping
+ * classify on a huge comic library stuck as Empty shells.
+ */
+fun isShallowIncompleteListing(entries: List<BrowseEntryRemote>): Boolean {
+    val dirs = entries.filterIsInstance<BrowseEntryRemote.Directory>()
+    if (dirs.isEmpty()) return false
+    return dirs.all { it.presence == DirPresence.Empty }
+}

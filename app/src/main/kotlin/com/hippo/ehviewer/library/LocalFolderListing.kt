@@ -6,10 +6,15 @@ import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okio.Path
 import okio.Path.Companion.toPath
+import kotlin.coroutines.coroutineContext
 
 /**
  * Local folder browse listing aligned with SMB/WebDAV lazy scan:
@@ -21,6 +26,9 @@ object LocalFolderListing {
         Thread(r, "local-browse-peek-${peekThreadSeq.getAndIncrement()}").apply { isDaemon = true }
     }
     private val peekThreadSeq = AtomicInteger(0)
+
+    /** Deep peek/classify budget after shallow paint; keep shallow on expiry. */
+    private const val DEEP_CLASSIFY_TIMEOUT_MS = 180_000L
 
     data class SlimRefresh(
         val entries: List<BrowseEntryRemote>,
@@ -81,35 +89,42 @@ object LocalFolderListing {
                 val shouldQuickScan =
                     Settings.networkFolderIndexQuickScan.value && !cached.sessionCurrent
                 if (!shouldQuickScan) return@withContext materialized
-                return@withContext try {
-                    val refresh = listDirectorySlim(effective, preferMediaStore, cached.entries)
-                    val toKeep = if (refresh.entries != cached.entries ||
-                        refresh.removedDirectoryNames.isNotEmpty()
-                    ) {
-                        NetworkFolderIndexCache.saveLocal(
-                            rootId,
-                            configKey,
-                            relativeDir,
-                            refresh.entries,
-                            refresh.removedDirectoryNames,
+                // Shallow stubs must upgrade via full peeks, not slim.
+                if (isShallowIncompleteListing(cached.entries)) {
+                    // Fall through to cold shallow→deep path below (invalidate so we do not
+                    // re-hit this branch with the same stub).
+                    BrowseSession.invalidateLocalListing(pathKey)
+                } else {
+                    return@withContext try {
+                        val refresh = listDirectorySlim(effective, preferMediaStore, cached.entries)
+                        val toKeep = if (refresh.entries != cached.entries ||
+                            refresh.removedDirectoryNames.isNotEmpty()
+                        ) {
+                            NetworkFolderIndexCache.saveLocal(
+                                rootId,
+                                configKey,
+                                relativeDir,
+                                refresh.entries,
+                                refresh.removedDirectoryNames,
+                            )
+                        } else {
+                            refresh.entries
+                        }
+                        BrowseSession.putLocalListing(
+                            pathKey,
+                            toKeep,
+                            sessionCurrent = true,
                         )
-                    } else {
-                        refresh.entries
+                        materializeLocalEntries(effective, toKeep)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        logcat("FolderIndex") {
+                            "Local slim refresh failed for root=$rootId dir=$relativeDir " +
+                                "(${e.message}); keeping cache"
+                        }
+                        materialized
                     }
-                    BrowseSession.putLocalListing(
-                        pathKey,
-                        toKeep,
-                        sessionCurrent = true,
-                    )
-                    materializeLocalEntries(effective, toKeep)
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    logcat("FolderIndex") {
-                        "Local slim refresh failed for root=$rootId dir=$relativeDir " +
-                            "(${e.message}); keeping cache"
-                    }
-                    materialized
                 }
             }
         } else {
@@ -117,12 +132,59 @@ object LocalFolderListing {
         }
 
         BrowseSession.getLocalListing(pathKey)?.let { return@withContext it }
+        // Cold miss: shallow-first (one list → paint), then deferred peeks.
         val previous = BrowseSession.getLocalCachedListing(pathKey)?.entries
-        val remote = listDirectoryUncachedRemote(effective, preferMediaStore)
-        val fromRam = if (previous != null) preferCompleteFolderGalleries(previous, remote) else remote
-        val stored = NetworkFolderIndexCache.saveLocal(rootId, configKey, relativeDir, fromRam)
-        BrowseSession.putLocalListing(pathKey, stored, sessionCurrent = true)
-        materializeLocalEntries(effective, stored)
+        val t0 = System.nanoTime()
+        val children = listChildrenRemote(effective, preferMediaStore)
+        val dirName = effective.name.ifEmpty { "Gallery" }
+        val shallow = classifyRemoteListing(dirName, children.withHiddenFlags())
+        val shallowMerged =
+            if (previous != null) preferCompleteFolderGalleries(previous, shallow) else shallow
+        // RAM-only until deep succeeds (avoid slim treating Empty shells as final).
+        BrowseSession.putLocalListing(pathKey, shallowMerged, sessionCurrent = false)
+        val shallowMaterialized = materializeLocalEntries(effective, shallowMerged)
+        logcat("FolderIndex") {
+            "Local shallow list root=$rootId dir=$relativeDir " +
+                "children=${children.size} entries=${shallowMerged.size} " +
+                "ms=${(System.nanoTime() - t0) / 1_000_000}"
+        }
+        onCached?.invoke(shallowMaterialized)
+
+        BrowseSession.getLocalCachedListing(pathKey)?.let { cached ->
+            if (cached.sessionCurrent) {
+                return@withContext materializeLocalEntries(effective, cached.entries)
+            }
+        }
+
+        return@withContext try {
+            withTimeout(DEEP_CLASSIFY_TIMEOUT_MS) {
+                coroutineContext.ensureActive()
+                val t1 = System.nanoTime()
+                val deep = classifyDirectoryChildren(effective, preferMediaStore, children)
+                val fromRam = preferCompleteFolderGalleries(shallowMerged, deep)
+                val stored =
+                    NetworkFolderIndexCache.saveLocal(rootId, configKey, relativeDir, fromRam)
+                BrowseSession.putLocalListing(pathKey, stored, sessionCurrent = true)
+                logcat("FolderIndex") {
+                    "Local deep classify root=$rootId dir=$relativeDir " +
+                        "entries=${stored.size} ms=${(System.nanoTime() - t1) / 1_000_000}"
+                }
+                materializeLocalEntries(effective, stored)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: TimeoutCancellationException) {
+            logcat("FolderIndex") {
+                "Local deep classify timed out root=$rootId dir=$relativeDir; keeping shallow"
+            }
+            shallowMaterialized
+        } catch (e: Throwable) {
+            logcat("FolderIndex") {
+                "Local deep classify failed root=$rootId dir=$relativeDir " +
+                    "(${e.message}); keeping shallow"
+            }
+            shallowMaterialized
+        }
     }
 
     fun listDirectoryUncachedRemote(
