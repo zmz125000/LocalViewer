@@ -39,18 +39,23 @@ fun DirPresence.visibleIn(
     hasVideo: Boolean,
 ): Boolean = when (mode) {
     // Leaf image folders already have a FolderGallery row; only retain real navigation
-    // branches that may lead to gallery content.
-    BrowseContentMode.Galleries -> this == DirPresence.Navigable && hasGallery
+    // branches that may lead to gallery content. Pending = shallow stub (paint now).
+    BrowseContentMode.Galleries ->
+        this == DirPresence.Pending || (this == DirPresence.Navigable && hasGallery)
     BrowseContentMode.Media -> when (this) {
+        DirPresence.Pending -> true
         DirPresence.Navigable -> hasGallery || hasVideo
         DirPresence.LeafImages -> hasVideo // gallery row covers images; dir reaches videos
         DirPresence.VideoOnly, DirPresence.PromotedVideoLeaf -> true
         DirPresence.Empty, DirPresence.PromotedShell -> false
     }
     BrowseContentMode.Video ->
-        hasVideo &&
-            this != DirPresence.Empty &&
-            this != DirPresence.PromotedShell
+        this == DirPresence.Pending ||
+            (
+                hasVideo &&
+                    this != DirPresence.Empty &&
+                    this != DirPresence.PromotedShell
+                )
     // Folder = real FS: hide virtual promoted video dirs (PromotedShell parent stays).
     BrowseContentMode.Folder -> this != DirPresence.PromotedVideoLeaf
 }

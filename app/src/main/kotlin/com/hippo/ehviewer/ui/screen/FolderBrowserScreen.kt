@@ -271,13 +271,22 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             entries = emptyList()
         }
         try {
-            val rootPath = LocalLibrary.rootPath(
-                // Prefer stack root frame so relativeDir matches disk index keys.
-                LocalLibrary.loadRoot(frame.rootId) ?: return,
-            ) ?: run {
+            val root = LocalLibrary.loadRoot(frame.rootId)
+            if (root == null) {
                 error = "Missing library root"
                 entries = emptyList()
                 listedPath = targetPath
+                loading = false
+                refreshing = false
+                return
+            }
+            val rootPath = LocalLibrary.rootPath(root)
+            if (rootPath == null) {
+                error = "Missing library root"
+                entries = emptyList()
+                listedPath = targetPath
+                loading = false
+                refreshing = false
                 return
             }
             val result = LocalFolderListing.listDirectory(
@@ -292,26 +301,29 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         entries = cached
                         listedPath = targetPath
                         error = null
-                        // Rows visible; keep refresh indicator until listDirectory returns.
+                        // Rows visible; keep refresh indicator until listDirectory returns
+                        // (deferred deep / slim still running). Match SMB/WebDAV.
                         refreshing = true
                     }
                 },
             )
+            // Path changed mid-load — replacement reload owns spinner state.
             if (stack.lastOrNull()?.path != targetPath) return
             entries = result
             listedPath = targetPath
             error = null
+            loading = false
+            refreshing = false
         } catch (e: kotlinx.coroutines.CancellationException) {
+            // Path change / new reload owns loading — do not clear here (same as SMB).
             throw e
         } catch (e: Throwable) {
             if (stack.lastOrNull()?.path != targetPath) return
             error = e.message
             entries = emptyList()
             listedPath = targetPath
-        } finally {
-            if (stack.lastOrNull()?.path == targetPath) {
-                loading = false
-            }
+            loading = false
+            refreshing = false
         }
     }
 

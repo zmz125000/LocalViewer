@@ -21,6 +21,13 @@ enum class DirPresence {
     Empty,
 
     /**
+     * Shallow-first name-only stub: one list done, child peek not yet. Paint as an
+     * enterable folder alongside loose files; deep classify replaces with a real
+     * presence. Counts as incomplete for [isShallowIncompleteListing].
+     */
+    Pending,
+
+    /**
      * Remote: all promotable leaves were lifted to parent (`@S` galleries and/or video dirs).
      * Still enter-able in Folder mode; hidden in Galleries/Media/Video (promotions cover it).
      */
@@ -717,7 +724,22 @@ fun classifyRemoteListingWithPeeks(
         if (isProtectedSystemName(e.name)) continue
         when {
             e.isDirectory -> {
-                val peek = childPeeks[e.name].orEmpty()
+                // No peek key → either cold shallow (paint now) or intentionally skipped
+                // (dot / known-hidden when Hidden off). Only unknown dirs become Pending.
+                if (!childPeeks.containsKey(e.name)) {
+                    val dot = isDotHiddenName(e.name)
+                    val hidden = e.hidden || dot
+                    dirs += BrowseEntryRemote.Directory(
+                        name = e.name,
+                        hasVideo = false,
+                        hasGallery = false,
+                        presence = if (hidden) DirPresence.Empty else DirPresence.Pending,
+                        lastModifiedMs = e.lastModifiedMs,
+                        hidden = hidden,
+                    )
+                    continue
+                }
+                val peek = childPeeks.getValue(e.name)
                 val entryHidden = peekIndicatesHiddenDir(e.name, peek, e.hidden)
                 // Deep peek skipped (browse hidden off): keep a tagged Directory shell only.
                 if (entryHidden && peek.isEmpty()) {
@@ -1386,8 +1408,9 @@ fun classifyRemoteListing(
 
 /**
  * True when [entries] look like a **shallow-first** stub (every directory still
- * [DirPresence.Empty]) rather than a finished peek/classify. Used so quick-scan slim
- * does not treat an in-progress cold list as complete and skip deep peeks.
+ * [DirPresence.Pending] / [DirPresence.Empty]) rather than a finished peek/classify.
+ * Used so quick-scan slim does not treat an in-progress cold list as complete and
+ * skip deep peeks.
  *
  * A tree that is genuinely all-empty will re-peek once — cheap compared to skipping
  * classify on a huge comic library stuck as Empty shells.
@@ -1395,5 +1418,7 @@ fun classifyRemoteListing(
 fun isShallowIncompleteListing(entries: List<BrowseEntryRemote>): Boolean {
     val dirs = entries.filterIsInstance<BrowseEntryRemote.Directory>()
     if (dirs.isEmpty()) return false
-    return dirs.all { it.presence == DirPresence.Empty }
+    return dirs.all {
+        it.presence == DirPresence.Pending || it.presence == DirPresence.Empty
+    }
 }
