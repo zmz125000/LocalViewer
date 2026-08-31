@@ -356,15 +356,14 @@ fun planRemoteDirectorySlimRefresh(
 }
 
 /** Basename set of live non-directory children (skips protected / dot names). */
-fun liveDirectFileNames(liveChildren: List<RemoteChild>): Set<String> =
-    liveChildren.asSequence()
-        .filter {
-            !it.isDirectory &&
-                !isProtectedSystemName(it.name) &&
-                !it.name.startsWith('.')
-        }
-        .map { it.name }
-        .toSet()
+fun liveDirectFileNames(liveChildren: List<RemoteChild>): Set<String> = liveChildren.asSequence()
+    .filter {
+        !it.isDirectory &&
+            !isProtectedSystemName(it.name) &&
+            !it.name.startsWith('.')
+    }
+    .map { it.name }
+    .toSet()
 
 /**
  * Basename set of cached **direct** file rows (not promoted multi-segment paths).
