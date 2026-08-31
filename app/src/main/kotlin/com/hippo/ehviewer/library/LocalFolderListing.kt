@@ -209,13 +209,9 @@ object LocalFolderListing {
         }
         val deepNames = deepHidden.mapTo(HashSet()) { it.name }
         val toClassify = (plan.addedDirectories + deepHidden).distinctBy { it.name }
-        val filesUnchanged = slimDirectFilesUnchanged(cached, children)
-        if (plan.isUnchanged && deepHidden.isEmpty() && filesUnchanged) {
-            return SlimRefresh(cached, emptySet())
-        }
         val dirName = dir.name.ifEmpty { "Gallery" }
         if (plan.isUnchanged && deepHidden.isEmpty()) {
-            // Dirs same — only reconcile direct files / current-dir gallery.
+            // Dirs same — still patch surviving file size/mtime; add/drop direct files.
             return SlimRefresh(
                 entries = replaceSlimDirectFilesFromLive(cached, children, dirName),
                 removedDirectoryNames = emptySet(),
