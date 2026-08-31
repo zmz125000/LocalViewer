@@ -209,8 +209,17 @@ object LocalFolderListing {
         }
         val deepNames = deepHidden.mapTo(HashSet()) { it.name }
         val toClassify = (plan.addedDirectories + deepHidden).distinctBy { it.name }
-        if (plan.isUnchanged && deepHidden.isEmpty()) {
+        val filesUnchanged = slimDirectFilesUnchanged(cached, children)
+        if (plan.isUnchanged && deepHidden.isEmpty() && filesUnchanged) {
             return SlimRefresh(cached, emptySet())
+        }
+        val dirName = dir.name.ifEmpty { "Gallery" }
+        if (plan.isUnchanged && deepHidden.isEmpty()) {
+            // Dirs same — only reconcile direct files / current-dir gallery.
+            return SlimRefresh(
+                entries = replaceSlimDirectFilesFromLive(cached, children, dirName),
+                removedDirectoryNames = emptySet(),
+            )
         }
         // Drop shallow hidden shells (via removedDirectoryNames) then re-add full classify.
         val effectivePlan = RemoteDirectorySlimPlan(
@@ -222,8 +231,11 @@ object LocalFolderListing {
         } else {
             classifyDirectoryChildren(dir, preferMediaStore, toClassify)
         }
-        var merged = mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries)
-        merged = replaceDirectFilesFromLive(merged, children, dir.name)
+        val merged = replaceSlimDirectFilesFromLive(
+            mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
+            children,
+            dirName,
+        )
         plan.removedDirectoryNames.forEach { name ->
             BrowseSession.invalidateLocalRawChildren(BrowseSession.pathKey(dir / name))
         }
@@ -231,48 +243,6 @@ object LocalFolderListing {
             entries = merged,
             removedDirectoryNames = plan.removedDirectoryNames,
         )
-    }
-
-    /**
-     * After folder add/remove merge, refresh direct (non-promoted) files/galleries from the
-     * live parent listing so slim picks up new loose images/archives/videos without a full
-     * re-peek of existing folders.
-     */
-    private fun replaceDirectFilesFromLive(
-        merged: List<BrowseEntryRemote>,
-        liveChildren: List<RemoteChild>,
-        currentDirName: String,
-    ): List<BrowseEntryRemote> {
-        val liveDirect = classifyRemoteListingWithPeeks(
-            currentDirName = currentDirName.ifEmpty { "Gallery" },
-            entries = liveChildren.filter { !it.isDirectory },
-            childPeeks = emptyMap(),
-            grandPeeks = emptyMap(),
-        )
-        val keptFolders = merged.filter {
-            when (it) {
-                is BrowseEntryRemote.Directory -> true
-                is BrowseEntryRemote.FolderGallery -> {
-                    val rel = it.relativeName.replace('\\', '/').trim('/')
-                    // Keep promoted/child galleries; replace synthetic "" current-dir gallery.
-                    rel.isNotEmpty()
-                }
-                is BrowseEntryRemote.ArchiveGallery -> it.parentRelativeName.isNotEmpty()
-                is BrowseEntryRemote.VideoFile -> '/' in it.fileName.replace('\\', '/')
-                is BrowseEntryRemote.RegularFile -> '/' in it.fileName.replace('\\', '/')
-            }
-        }
-        return buildList(keptFolders.size + liveDirect.size) {
-            addAll(keptFolders.filterIsInstance<BrowseEntryRemote.Directory>())
-            addAll(keptFolders.filterIsInstance<BrowseEntryRemote.FolderGallery>())
-            addAll(liveDirect.filterIsInstance<BrowseEntryRemote.FolderGallery>())
-            addAll(keptFolders.filterIsInstance<BrowseEntryRemote.ArchiveGallery>())
-            addAll(liveDirect.filterIsInstance<BrowseEntryRemote.ArchiveGallery>())
-            addAll(keptFolders.filterIsInstance<BrowseEntryRemote.VideoFile>())
-            addAll(liveDirect.filterIsInstance<BrowseEntryRemote.VideoFile>())
-            addAll(keptFolders.filterIsInstance<BrowseEntryRemote.RegularFile>())
-            addAll(liveDirect.filterIsInstance<BrowseEntryRemote.RegularFile>())
-        }
     }
 
     private fun classifyDirectoryChildren(

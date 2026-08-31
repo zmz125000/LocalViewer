@@ -21,6 +21,8 @@ import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.peekIndicatesHiddenDir
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.preferCompleteFolderGalleries
+import com.hippo.ehviewer.library.replaceSlimDirectFilesFromLive
+import com.hippo.ehviewer.library.slimDirectFilesUnchanged
 import com.hippo.ehviewer.library.withHiddenFlags
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
@@ -245,7 +247,8 @@ object WebDavGateway {
 
     /**
      * Cache-hit refresh: one PROPFIND for the current directory. Only new child folders
-     * run the existing child/leaf peek classifier.
+     * run the existing child/leaf peek classifier. Direct files are reconciled
+     * (drop stale / add new) from the live listing.
      */
     private suspend fun listDirectorySlim(
         source: WebDavSourceEntity,
@@ -262,8 +265,16 @@ object WebDavGateway {
         }
         val deepNames = deepHidden.mapTo(HashSet()) { it.name }
         val toClassify = (plan.addedDirectories + deepHidden).distinctBy { it.name }
-        if (plan.isUnchanged && deepHidden.isEmpty()) {
+        val filesUnchanged = slimDirectFilesUnchanged(cached, children)
+        val dirName = relativeDir.substringAfterLast('/').ifEmpty { source.displayName }
+        if (plan.isUnchanged && deepHidden.isEmpty() && filesUnchanged) {
             return SlimDirectoryRefresh(cached, emptySet())
+        }
+        if (plan.isUnchanged && deepHidden.isEmpty()) {
+            return SlimDirectoryRefresh(
+                entries = replaceSlimDirectFilesFromLive(cached, children, dirName),
+                removedDirectoryNames = emptySet(),
+            )
         }
         val effectivePlan = RemoteDirectorySlimPlan(
             addedDirectories = toClassify,
@@ -274,8 +285,13 @@ object WebDavGateway {
         } else {
             classifyDirectoryChildren(source, password, relativeDir, toClassify)
         }
+        val merged = replaceSlimDirectFilesFromLive(
+            mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
+            children,
+            dirName,
+        )
         return SlimDirectoryRefresh(
-            entries = mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
+            entries = merged,
             removedDirectoryNames = plan.removedDirectoryNames,
         ).also {
             plan.removedDirectoryNames.forEach { name ->
