@@ -111,7 +111,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  * - **Multi-user same host:** several sources may share `host:port` with different
  *   usernames. List has one reserved TCP — a new user may idle-steal that slot (or
  *   grow a data TCP and borrow it for listing). Data may idle-steal other-cred TCPs
- *   when at [maxConnectionsPerHost].
+ *   when at [maxConnectionsPerHost]. Steal detaches under the pool lock then closes
+ *   sockets asynchronously — sync close over EasyTier blocked the host pool (release
+ *   hang on second username). Acquire waits use a wall-clock budget so freeSignal
+ *   chatter cannot spin forever.
  * - **Retire only** on transport / session death / idle other-cred steal — never on
  *   access-denied / not-found
  *
@@ -879,28 +882,47 @@ object SmbGateway {
         }
 
         /**
-         * Free one idle TCP owned by a **different** credential so [credKey] can grow.
+         * Free one TCP owned by a **different** credential so [credKey] can grow.
          * [listOnly]=true targets the reserved list slot (needed when a second username
          * lists the same host while async keep-alive holds the first user's list TCP).
+         *
+         * Detach under [sessionsLock], then tear down sockets **off this thread** —
+         * smbj close over EasyTier/VPN can block for soTimeout and used to freeze the
+         * whole host pool (release hang when opening a second username).
+         *
+         * [force]=true retires even with in-flight ops (marks dying; last releaser / async
+         * close finishes teardown). Used after the acquire wall-clock budget expires.
          */
-        private fun retireOneOtherCred(credKey: String, listOnly: Boolean = false): Boolean = synchronized(sessionsLock) {
-            val victim = sessions.firstOrNull {
-                !it.retired.get() &&
-                    it.reservedForList == listOnly &&
-                    it.credKey != credKey &&
-                    it.outstanding.get() == 0 &&
-                    it.isConnected
+        private fun retireOneOtherCred(
+            credKey: String,
+            listOnly: Boolean = false,
+            force: Boolean = false,
+        ): Boolean {
+            val victim = synchronized(sessionsLock) {
+                sessions.firstOrNull {
+                    !it.retired.get() &&
+                        it.reservedForList == listOnly &&
+                        it.credKey != credKey &&
+                        it.isConnected &&
+                        (force || it.outstanding.get() == 0)
+                }?.also {
+                    sessions.remove(it)
+                    size.updateAndGet { (it - 1).coerceAtLeast(0) }
+                    it.retired.set(true)
+                }
             } ?: return false
-            // No outstanding — safe to close immediately.
-            sessions.remove(victim)
-            size.updateAndGet { (it - 1).coerceAtLeast(0) }
-            victim.retired.set(true)
-            victim.closeQuietly()
             logcat {
                 "SmbGateway: host $hostPortKey idle-steal ${if (listOnly) "list" else "data"} " +
-                    "TCP for another username"
+                    "TCP for another username" + if (force) " (force)" else ""
             }
-            true
+            // Never close under sessionsLock / growLock — EasyTier path can stall.
+            // If ops are still in flight, last releaseOp closes; only async-close when idle
+            // (closing under concurrent smbj reads has crashed high multiplex).
+            if (victim.outstanding.get() <= 0) {
+                SmbAsyncClose.run { victim.closeQuietly() }
+            }
+            signalFree()
+            return true
         }
 
         private suspend fun tryGrow(
@@ -1029,23 +1051,39 @@ object SmbGateway {
                 ?.let { return Acquired(it, heldHostSlot = false) }
             tryBorrowDataForList(credKey, shareName, openSession)?.let { return it }
 
-            var waits = 0
+            // Wall-clock budget: freeSignal is conflated and keep-alive/other-user ops
+            // can keep waking us without ever freeing *this* cred's list slot — counting
+            // only receive timeouts spun forever (release + EasyTier second username).
+            val deadlineNs = System.nanoTime() + ACQUIRE_WAIT_MS * 3 * 1_000_000L
+            var forcedSteal = false
             while (true) {
                 tryReserveSession(credKey, shareName, reservedOnly = true, dataOnly = false)
                     ?.let { return Acquired(it, heldHostSlot = false) }
                 tryGrow(credKey, forList = true, openSession)
                     ?.let { return Acquired(it, heldHostSlot = false) }
                 tryBorrowDataForList(credKey, shareName, openSession)?.let { return it }
-                val got = withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
-                if (got == null) {
-                    waits++
-                    if (waits >= 3) {
-                        error(
-                            "SMB host $hostPortKey list busy: no free list slot " +
-                                "(data=${liveDataCount()}/${maxConnectionsPerHost()}, " +
-                                "list=${liveListCount()}/$LIST_RESERVED_SESSIONS)",
-                        )
+
+                val remainingMs = ((deadlineNs - System.nanoTime()) / 1_000_000L).coerceAtLeast(0L)
+                if (remainingMs == 0L) {
+                    if (!forcedSteal) {
+                        forcedSteal = true
+                        // Other user's list TCP still busy — detach anyway so we can grow.
+                        retireOneOtherCred(credKey, listOnly = true, force = true)
+                        tryGrow(credKey, forList = true, openSession)
+                            ?.let { return Acquired(it, heldHostSlot = false) }
+                        tryBorrowDataForList(credKey, shareName, openSession)?.let { return it }
+                        // One short grace after force-steal for openSession / freeSignal.
+                        withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
+                        continue
                     }
+                    error(
+                        "SMB host $hostPortKey list busy: no free list slot " +
+                            "(data=${liveDataCount()}/${maxConnectionsPerHost()}, " +
+                            "list=${liveListCount()}/$LIST_RESERVED_SESSIONS)",
+                    )
+                }
+                withTimeoutOrNull(remainingMs.coerceAtMost(ACQUIRE_WAIT_MS)) {
+                    freeSignal.receive()
                 }
             }
         }
@@ -1060,7 +1098,8 @@ object SmbGateway {
             tryGrow(credKey, forList = false, openSession)?.let { return it }
 
             var waiting = false
-            var waits = 0
+            val deadlineNs = System.nanoTime() + ACQUIRE_WAIT_MS * 3 * 1_000_000L
+            var forcedSteal = false
             try {
                 while (true) {
                     if (yieldThumbs && !waiting) {
@@ -1071,24 +1110,31 @@ object SmbGateway {
                     tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
                     tryGrow(credKey, forList = false, openSession)?.let { return it }
 
-                    val got = withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
+                    val remainingMs = ((deadlineNs - System.nanoTime()) / 1_000_000L).coerceAtLeast(0L)
+                    if (remainingMs == 0L) {
+                        if (!forcedSteal && liveDataCount() >= maxConnectionsPerHost()) {
+                            forcedSteal = true
+                            retireOneOtherCred(credKey, listOnly = false, force = true)
+                            tryGrow(credKey, forList = false, openSession)?.let { return it }
+                            withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
+                            continue
+                        }
+                        error(
+                            "SMB host $hostPortKey busy: no free op slot for this user " +
+                                "(sessions=${liveDataCount()}/${maxConnectionsPerHost()}, " +
+                                "ops/session=${opsPerSession()}, hostOps≤$MAX_SAFE_HOST_OPS)",
+                        )
+                    }
+                    withTimeoutOrNull(remainingMs.coerceAtMost(ACQUIRE_WAIT_MS)) {
+                        freeSignal.receive()
+                    }
                     tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
-                    if (got == null) {
-                        waits++
-                        if (liveDataCount() >= maxConnectionsPerHost()) {
-                            if (retireOneOtherCred(credKey)) {
-                                tryGrow(credKey, forList = false, openSession)?.let { return it }
-                            }
-                        } else {
+                    if (liveDataCount() >= maxConnectionsPerHost()) {
+                        if (retireOneOtherCred(credKey)) {
                             tryGrow(credKey, forList = false, openSession)?.let { return it }
                         }
-                        if (waits >= 3) {
-                            error(
-                                "SMB host $hostPortKey busy: no free op slot for this user " +
-                                    "(sessions=${liveDataCount()}/${maxConnectionsPerHost()}, " +
-                                    "ops/session=${opsPerSession()}, hostOps≤$MAX_SAFE_HOST_OPS)",
-                            )
-                        }
+                    } else {
+                        tryGrow(credKey, forList = false, openSession)?.let { return it }
                     }
                 }
             } finally {
