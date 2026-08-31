@@ -292,8 +292,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         entries = cached
                         listedPath = targetPath
                         error = null
-                        loading = false
-                        refreshing = false
+                        // Rows visible; keep refresh indicator until listDirectory returns.
+                        refreshing = true
                     }
                 },
             )

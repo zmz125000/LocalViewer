@@ -1772,10 +1772,28 @@ object SmbGateway {
         }
     }
 
+    /**
+     * Entering a subdir must not leave the parent’s deep peek storm running in parallel
+     * (that was the reason shallow rows used to stay hidden until classify finished).
+     */
+    private fun cancelSiblingListJobs(sourceId: Long, keepKey: String) {
+        val prefix = "$sourceId|"
+        listJobs.keys.forEach { key ->
+            if (key.startsWith(prefix) && key != keepKey) {
+                listJobs.remove(key)?.cancel()
+            }
+        }
+    }
+
     private suspend fun awaitListJob(
         cacheKey: String,
         loader: suspend () -> List<BrowseEntryRemote>,
     ): List<BrowseEntryRemote> {
+        val pipe = cacheKey.indexOf('|')
+        val sourceId = if (pipe > 0) cacheKey.substring(0, pipe).toLongOrNull() else null
+        if (sourceId != null) {
+            cancelSiblingListJobs(sourceId, keepKey = cacheKey)
+        }
         val deferred = listJobs.compute(cacheKey) { _, existing ->
             if (existing != null && existing.isActive) {
                 existing
@@ -1795,11 +1813,8 @@ object SmbGateway {
             if (listJobs.remove(cacheKey, deferred)) {
                 deferred.cancel()
             }
-            val pipe = cacheKey.indexOf('|')
-            val cached = if (pipe > 0) {
-                val sid = cacheKey.substring(0, pipe).toLongOrNull()
-                val dir = cacheKey.substring(pipe + 1)
-                if (sid != null) BrowseSession.getSmbListing(sid, dir) else null
+            val cached = if (sourceId != null && pipe > 0) {
+                BrowseSession.getSmbListing(sourceId, cacheKey.substring(pipe + 1))
             } else {
                 null
             }

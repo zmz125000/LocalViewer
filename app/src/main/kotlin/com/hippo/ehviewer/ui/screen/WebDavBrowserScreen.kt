@@ -443,8 +443,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     listingSessionCurrent =
                         BrowseSession.isWebDavListingSessionCurrent(sourceId, loadDir)
                     error = null
-                    loading = false
-                    refreshing = false
+                    // Rows visible; keep refresh indicator until listDirectory returns.
+                    refreshing = true
                 },
             )
             // Still the active effect for this path (not cancelled) → safe to commit.

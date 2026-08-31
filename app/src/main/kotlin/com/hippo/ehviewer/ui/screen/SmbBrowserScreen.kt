@@ -540,8 +540,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     listingSessionCurrent =
                         BrowseSession.isSmbListingSessionCurrent(sourceId, loadDir)
                     error = null
-                    loading = false
-                    refreshing = false
+                    // Paint rows now, but keep PullToRefresh indicator until
+                    // listDirectory returns (deferred deep / slim still running).
+                    // Full-screen spinner only when entries empty or path mismatch.
+                    refreshing = true
                 },
             )
             // Still the active effect for this path (not cancelled) → safe to commit.
