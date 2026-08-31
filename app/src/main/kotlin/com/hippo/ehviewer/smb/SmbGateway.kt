@@ -40,7 +40,6 @@ import com.hippo.ehviewer.library.peekIndicatesHiddenDir
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.preferCompleteFolderGalleries
 import com.hippo.ehviewer.library.replaceSlimDirectFilesFromLive
-import com.hippo.ehviewer.library.slimDirectFilesUnchanged
 import com.hippo.ehviewer.library.withHiddenFlags
 import com.hippo.ehviewer.util.PrivacyLog
 import java.io.IOException
@@ -1885,13 +1884,10 @@ object SmbGateway {
         }
         val deepNames = deepHidden.mapTo(HashSet()) { it.name }
         val toClassify = (plan.addedDirectories + deepHidden).distinctBy { it.name }
-        val filesUnchanged = slimDirectFilesUnchanged(cached, children)
         val dirName = relativeDir.substringAfterLast('/').substringAfterLast('\\')
             .ifEmpty { source.displayName }
-        if (plan.isUnchanged && deepHidden.isEmpty() && filesUnchanged) {
-            return SlimDirectoryRefresh(cached, emptySet())
-        }
         if (plan.isUnchanged && deepHidden.isEmpty()) {
+            // Dirs same — still patch surviving file size/mtime; add/drop direct files.
             return SlimDirectoryRefresh(
                 entries = replaceSlimDirectFilesFromLive(cached, children, dirName),
                 removedDirectoryNames = emptySet(),

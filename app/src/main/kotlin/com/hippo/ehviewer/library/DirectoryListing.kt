@@ -397,7 +397,7 @@ fun cachedDirectFileNames(cachedEntries: List<BrowseEntryRemote>): Set<String> {
     return names
 }
 
-/** True when direct file basenames match (no add/remove); size/mtime may still differ. */
+/** True when direct file basenames match (no add/remove). Metadata is patched separately. */
 fun slimDirectFilesUnchanged(
     cachedEntries: List<BrowseEntryRemote>,
     liveChildren: List<RemoteChild>,
@@ -521,44 +521,147 @@ fun mergeRemoteDirectorySlimRefresh(
 }
 
 /**
- * After folder add/remove merge, refresh **direct** (non-promoted) files / current-dir
- * gallery from the live parent listing: drop stale files, add new ones, refresh
- * size/mtime. Promoted multi-segment rows and child folder galleries are kept.
+ * Reconcile **direct** files against the live parent listing while keeping the composed
+ * cache shape:
+ * - surviving archive/video/regular rows: **patch size/mtime only** (no reclassify)
+ * - missing direct files: drop
+ * - new non-image files: classify only the delta
+ * - current-dir image gallery (`relativeName` ""): rebuild name list from live images
+ * - promoted multi-segment rows / child galleries: keep
  */
 fun replaceSlimDirectFilesFromLive(
     merged: List<BrowseEntryRemote>,
     liveChildren: List<RemoteChild>,
     currentDirName: String,
 ): List<BrowseEntryRemote> {
-    val liveDirect = classifyRemoteListingWithPeeks(
-        currentDirName = currentDirName.ifEmpty { "Gallery" },
-        entries = liveChildren.filter { !it.isDirectory },
-        childPeeks = emptyMap(),
-        grandPeeks = emptyMap(),
-    )
-    val keptFolders = merged.filter {
-        when (it) {
-            is BrowseEntryRemote.Directory -> true
+    fun norm(path: String) = path.replace('\\', '/').trim('/')
+
+    val liveFiles = liveChildren.filter {
+        !it.isDirectory &&
+            !isProtectedSystemName(it.name) &&
+            !it.name.startsWith('.')
+    }
+    val liveByName = liveFiles.associateBy { it.name }
+
+    val dirs = ArrayList<BrowseEntryRemote.Directory>()
+    val promotedGalleries = ArrayList<BrowseEntryRemote.FolderGallery>()
+    val archives = ArrayList<BrowseEntryRemote.ArchiveGallery>()
+    val videos = ArrayList<BrowseEntryRemote.VideoFile>()
+    val regularFiles = ArrayList<BrowseEntryRemote.RegularFile>()
+    val seenDirectNames = HashSet<String>()
+
+    for (entry in merged) {
+        when (entry) {
+            is BrowseEntryRemote.Directory -> dirs += entry
             is BrowseEntryRemote.FolderGallery -> {
-                val rel = it.relativeName.replace('\\', '/').trim('/')
-                // Keep promoted/child galleries; replace synthetic "" current-dir gallery.
-                rel.isNotEmpty()
+                val rel = norm(entry.relativeName)
+                if (rel.isNotEmpty()) {
+                    promotedGalleries += entry
+                }
+                // relativeName "" rebuilt from live images below.
             }
-            is BrowseEntryRemote.ArchiveGallery -> it.parentRelativeName.isNotEmpty()
-            is BrowseEntryRemote.VideoFile -> '/' in it.fileName.replace('\\', '/')
-            is BrowseEntryRemote.RegularFile -> '/' in it.fileName.replace('\\', '/')
+            is BrowseEntryRemote.ArchiveGallery -> {
+                if (entry.parentRelativeName.isNotEmpty()) {
+                    archives += entry
+                } else {
+                    val live = liveByName[entry.fileName]
+                    if (live != null) {
+                        seenDirectNames += entry.fileName
+                        archives += entry.copy(
+                            size = live.size,
+                            lastModifiedMs = live.lastModifiedMs,
+                        )
+                    }
+                }
+            }
+            is BrowseEntryRemote.VideoFile -> {
+                val path = norm(entry.fileName)
+                if ('/' in path) {
+                    videos += entry
+                } else {
+                    val live = liveByName[path]
+                    if (live != null) {
+                        seenDirectNames += path
+                        videos += entry.copy(
+                            size = live.size,
+                            lastModifiedMs = live.lastModifiedMs,
+                        )
+                    }
+                }
+            }
+            is BrowseEntryRemote.RegularFile -> {
+                val path = norm(entry.fileName)
+                if ('/' in path) {
+                    regularFiles += entry
+                } else {
+                    val live = liveByName[path]
+                    if (live != null) {
+                        seenDirectNames += path
+                        // Images belong in the current-dir FolderGallery, not as RegularFile.
+                        if (isImageFileName(path)) {
+                            // Drop stray image RegularFile; gallery rebuild covers it.
+                        } else {
+                            regularFiles += entry.copy(
+                                size = live.size,
+                                lastModifiedMs = live.lastModifiedMs,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
-    return buildList(keptFolders.size + liveDirect.size) {
-        addAll(keptFolders.filterIsInstance<BrowseEntryRemote.Directory>())
-        addAll(keptFolders.filterIsInstance<BrowseEntryRemote.FolderGallery>())
-        addAll(liveDirect.filterIsInstance<BrowseEntryRemote.FolderGallery>())
-        addAll(keptFolders.filterIsInstance<BrowseEntryRemote.ArchiveGallery>())
-        addAll(liveDirect.filterIsInstance<BrowseEntryRemote.ArchiveGallery>())
-        addAll(keptFolders.filterIsInstance<BrowseEntryRemote.VideoFile>())
-        addAll(liveDirect.filterIsInstance<BrowseEntryRemote.VideoFile>())
-        addAll(keptFolders.filterIsInstance<BrowseEntryRemote.RegularFile>())
-        addAll(liveDirect.filterIsInstance<BrowseEntryRemote.RegularFile>())
+
+    // Classify only brand-new non-image files (archives / videos / other).
+    val newNonImage = liveFiles.filter {
+        it.name !in seenDirectNames && !isImageFileName(it.name)
+    }
+    if (newNonImage.isNotEmpty()) {
+        val added = classifyRemoteListingWithPeeks(
+            currentDirName = currentDirName.ifEmpty { "Gallery" },
+            entries = newNonImage,
+            childPeeks = emptyMap(),
+            grandPeeks = emptyMap(),
+        )
+        for (entry in added) {
+            when (entry) {
+                is BrowseEntryRemote.ArchiveGallery -> archives += entry
+                is BrowseEntryRemote.VideoFile -> videos += entry
+                is BrowseEntryRemote.RegularFile -> regularFiles += entry
+                else -> Unit
+            }
+        }
+    }
+
+    // Current-dir gallery from live image basenames (no per-file reclassify).
+    val imageNames = liveFiles.asSequence()
+        .filter { isImageFileName(it.name) }
+        .map { it.name }
+        .sortedWith { a, b -> naturalCompare(a, b) }
+        .toList()
+    val currentDirGallery = if (imageNames.isNotEmpty()) {
+        BrowseEntryRemote.FolderGallery(
+            name = currentDirName.ifEmpty { "Gallery" },
+            relativeName = "",
+            pageCount = imageNames.size,
+            pageCountCapped = false,
+            coverFileName = imageNames.first(),
+            imageFileNames = imageNames,
+        )
+    } else {
+        null
+    }
+
+    return buildList(
+        dirs.size + promotedGalleries.size + (if (currentDirGallery != null) 1 else 0) +
+            archives.size + videos.size + regularFiles.size,
+    ) {
+        addAll(dirs)
+        addAll(promotedGalleries)
+        if (currentDirGallery != null) add(currentDirGallery)
+        addAll(archives)
+        addAll(videos)
+        addAll(regularFiles)
     }
 }
 

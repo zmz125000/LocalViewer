@@ -33,6 +33,36 @@ class SlimDirectFilesRefreshTest {
     }
 
     @Test
+    fun patchesSurvivingFileMetadata_withoutReclassifyKind() {
+        val cached = listOf(
+            BrowseEntryRemote.ArchiveGallery(
+                name = "book.cbz",
+                fileName = "book.cbz",
+                size = 10L,
+                lastModifiedMs = 100L,
+            ),
+            BrowseEntryRemote.RegularFile(
+                name = "note.txt",
+                fileName = "note.txt",
+                size = 1L,
+                lastModifiedMs = 50L,
+            ),
+        )
+        val live = listOf(
+            RemoteChild(name = "book.cbz", isDirectory = false, size = 99L, lastModifiedMs = 200L),
+            RemoteChild(name = "note.txt", isDirectory = false, size = 2L, lastModifiedMs = 60L),
+        )
+        assertTrue(slimDirectFilesUnchanged(cached, live))
+        val updated = replaceSlimDirectFilesFromLive(cached, live, "Parent")
+        val archive = updated.filterIsInstance<BrowseEntryRemote.ArchiveGallery>().single()
+        assertEquals(99L, archive.size)
+        assertEquals(200L, archive.lastModifiedMs)
+        val file = updated.filterIsInstance<BrowseEntryRemote.RegularFile>().single()
+        assertEquals(2L, file.size)
+        assertEquals(60L, file.lastModifiedMs)
+    }
+
+    @Test
     fun keepsPromotedMultiSegmentFiles() {
         val cached = listOf(
             BrowseEntryRemote.Directory(
@@ -54,25 +84,5 @@ class SlimDirectFilesRefreshTest {
             },
         )
         assertFalse(updated.any { it.name == "stale.txt" })
-    }
-
-    @Test
-    fun unchangedFileNames_reportsUnchanged() {
-        val cached = listOf(
-            BrowseEntryRemote.RegularFile(name = "a.txt", fileName = "a.txt"),
-            BrowseEntryRemote.Directory(
-                name = "D",
-                hasVideo = false,
-                hasGallery = false,
-                presence = DirPresence.Empty,
-            ),
-        )
-        val live = listOf(
-            RemoteChild(name = "D", isDirectory = true),
-            RemoteChild(name = "a.txt", isDirectory = false, size = 99L),
-        )
-        assertTrue(slimDirectFilesUnchanged(cached, live))
-        assertEquals(setOf("a.txt"), cachedDirectFileNames(cached))
-        assertEquals(setOf("a.txt"), liveDirectFileNames(live))
     }
 }
