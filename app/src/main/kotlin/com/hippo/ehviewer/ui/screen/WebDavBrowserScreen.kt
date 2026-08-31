@@ -76,6 +76,7 @@ import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.VideoThumbnail
@@ -328,6 +329,27 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         return true
     }
 
+    /** RAM miss → disk index hydrate so go-up / relaunch paints before network. */
+    suspend fun hydrateDiskListing(dir: String): Boolean {
+        if (BrowseSession.getWebDavCachedListing(sourceId, dir) != null) {
+            return applyCachedListing(dir)
+        }
+        val src = source ?: withIOContext { WebDavRepository.load(sourceId) }?.also { source = it }
+            ?: return false
+        val disk = NetworkFolderIndexCache.loadWebDav(
+            sourceId,
+            WebDavGateway.sourceConfigKey(src),
+            dir,
+        ) ?: return false
+        BrowseSession.putWebDavListing(sourceId, dir, disk, sessionCurrent = false)
+        entries = disk
+        listingSessionCurrent = false
+        listedDir = dir
+        loading = false
+        error = null
+        return true
+    }
+
     fun requestForceReload() {
         forceNextLoad = true
         refreshToken++
@@ -393,11 +415,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         if (needSpinner) {
             loading = true
             if (listedDir != loadDir) {
-                // Prefer instant cache paint before network (especially go-up from History).
-                if (!force && !configChanged && applyCachedListing(loadDir)) {
-                    loading = false
-                } else {
-                    entries = emptyList()
+                // Prefer instant RAM/disk paint before network (especially go-up from History).
+                when {
+                    !force && !configChanged && applyCachedListing(loadDir) -> loading = false
+                    !force && !configChanged && hydrateDiskListing(loadDir) -> loading = false
+                    else -> entries = emptyList()
                 }
             }
         }
@@ -421,8 +443,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     listingSessionCurrent =
                         BrowseSession.isWebDavListingSessionCurrent(sourceId, loadDir)
                     error = null
-                    loading = false
-                    refreshing = false
+                    // Rows visible; keep refresh indicator until listDirectory returns.
+                    refreshing = true
                 },
             )
             // Still the active effect for this path (not cancelled) → safe to commit.

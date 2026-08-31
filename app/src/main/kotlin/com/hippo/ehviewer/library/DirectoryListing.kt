@@ -318,6 +318,7 @@ sealed interface BrowseEntryRemote {
 /**
  * Difference between the cached folder roots and one live listing of the current
  * directory. Only [addedDirectories] need the normal child/leaf classification scan.
+ * Direct files are reconciled separately via [replaceSlimDirectFilesFromLive].
  */
 data class RemoteDirectorySlimPlan(
     val addedDirectories: List<RemoteChild>,
@@ -353,6 +354,54 @@ fun planRemoteDirectorySlimRefresh(
         removedDirectoryNames = cachedDirectoryNames - liveDirectories.keys,
     )
 }
+
+/** Basename set of live non-directory children (skips protected / dot names). */
+fun liveDirectFileNames(liveChildren: List<RemoteChild>): Set<String> = liveChildren.asSequence()
+    .filter {
+        !it.isDirectory &&
+            !isProtectedSystemName(it.name) &&
+            !it.name.startsWith('.')
+    }
+    .map { it.name }
+    .toSet()
+
+/**
+ * Basename set of cached **direct** file rows (not promoted multi-segment paths).
+ * Current-dir [BrowseEntryRemote.FolderGallery] (`relativeName` empty) contributes its
+ * [BrowseEntryRemote.FolderGallery.imageFileNames].
+ */
+fun cachedDirectFileNames(cachedEntries: List<BrowseEntryRemote>): Set<String> {
+    fun norm(path: String) = path.replace('\\', '/').trim('/')
+    val names = HashSet<String>()
+    for (entry in cachedEntries) {
+        when (entry) {
+            is BrowseEntryRemote.ArchiveGallery -> {
+                if (entry.parentRelativeName.isEmpty()) names += entry.fileName
+            }
+            is BrowseEntryRemote.VideoFile -> {
+                val path = norm(entry.fileName)
+                if (path.isNotEmpty() && '/' !in path) names += path
+            }
+            is BrowseEntryRemote.RegularFile -> {
+                val path = norm(entry.fileName)
+                if (path.isNotEmpty() && '/' !in path) names += path
+            }
+            is BrowseEntryRemote.FolderGallery -> {
+                if (norm(entry.relativeName).isEmpty()) {
+                    names.addAll(entry.imageFileNames)
+                }
+            }
+            is BrowseEntryRemote.Directory -> Unit
+        }
+    }
+    return names
+}
+
+/** True when direct file basenames match (no add/remove); size/mtime may still differ. */
+fun slimDirectFilesUnchanged(
+    cachedEntries: List<BrowseEntryRemote>,
+    liveChildren: List<RemoteChild>,
+): Boolean = cachedDirectFileNames(cachedEntries) == liveDirectFileNames(liveChildren)
 
 /**
  * Hidden directories that were only shallow-tagged ([DirPresence.Empty] + [BrowseEntryRemote.hidden])
@@ -417,7 +466,8 @@ fun preferCompleteFolderGalleries(
 
 /**
  * Drop every cached row derived from a deleted direct folder, then add fully classified
- * rows for new folders. Existing folders and direct files keep their cached metadata.
+ * rows for new folders. Existing folders keep their cached metadata; direct files are
+ * refreshed afterward by [replaceSlimDirectFilesFromLive].
  */
 fun mergeRemoteDirectorySlimRefresh(
     cachedEntries: List<BrowseEntryRemote>,
@@ -468,6 +518,48 @@ fun mergeRemoteDirectorySlimRefresh(
     }
     // Reclassified dirs may return capped/empty galleries; keep prior complete page lists.
     return preferCompleteFolderGalleries(cachedEntries, sorted)
+}
+
+/**
+ * After folder add/remove merge, refresh **direct** (non-promoted) files / current-dir
+ * gallery from the live parent listing: drop stale files, add new ones, refresh
+ * size/mtime. Promoted multi-segment rows and child folder galleries are kept.
+ */
+fun replaceSlimDirectFilesFromLive(
+    merged: List<BrowseEntryRemote>,
+    liveChildren: List<RemoteChild>,
+    currentDirName: String,
+): List<BrowseEntryRemote> {
+    val liveDirect = classifyRemoteListingWithPeeks(
+        currentDirName = currentDirName.ifEmpty { "Gallery" },
+        entries = liveChildren.filter { !it.isDirectory },
+        childPeeks = emptyMap(),
+        grandPeeks = emptyMap(),
+    )
+    val keptFolders = merged.filter {
+        when (it) {
+            is BrowseEntryRemote.Directory -> true
+            is BrowseEntryRemote.FolderGallery -> {
+                val rel = it.relativeName.replace('\\', '/').trim('/')
+                // Keep promoted/child galleries; replace synthetic "" current-dir gallery.
+                rel.isNotEmpty()
+            }
+            is BrowseEntryRemote.ArchiveGallery -> it.parentRelativeName.isNotEmpty()
+            is BrowseEntryRemote.VideoFile -> '/' in it.fileName.replace('\\', '/')
+            is BrowseEntryRemote.RegularFile -> '/' in it.fileName.replace('\\', '/')
+        }
+    }
+    return buildList(keptFolders.size + liveDirect.size) {
+        addAll(keptFolders.filterIsInstance<BrowseEntryRemote.Directory>())
+        addAll(keptFolders.filterIsInstance<BrowseEntryRemote.FolderGallery>())
+        addAll(liveDirect.filterIsInstance<BrowseEntryRemote.FolderGallery>())
+        addAll(keptFolders.filterIsInstance<BrowseEntryRemote.ArchiveGallery>())
+        addAll(liveDirect.filterIsInstance<BrowseEntryRemote.ArchiveGallery>())
+        addAll(keptFolders.filterIsInstance<BrowseEntryRemote.VideoFile>())
+        addAll(liveDirect.filterIsInstance<BrowseEntryRemote.VideoFile>())
+        addAll(keptFolders.filterIsInstance<BrowseEntryRemote.RegularFile>())
+        addAll(liveDirect.filterIsInstance<BrowseEntryRemote.RegularFile>())
+    }
 }
 
 /**
@@ -1188,3 +1280,17 @@ fun classifyRemoteListing(
     currentDirName: String,
     entries: List<RemoteChild>,
 ): List<BrowseEntryRemote> = classifyRemoteListingWithPeeks(currentDirName, entries, emptyMap())
+
+/**
+ * True when [entries] look like a **shallow-first** stub (every directory still
+ * [DirPresence.Empty]) rather than a finished peek/classify. Used so quick-scan slim
+ * does not treat an in-progress cold list as complete and skip deep peeks.
+ *
+ * A tree that is genuinely all-empty will re-peek once — cheap compared to skipping
+ * classify on a huge comic library stuck as Empty shells.
+ */
+fun isShallowIncompleteListing(entries: List<BrowseEntryRemote>): Boolean {
+    val dirs = entries.filterIsInstance<BrowseEntryRemote.Directory>()
+    if (dirs.isEmpty()) return false
+    return dirs.all { it.presence == DirPresence.Empty }
+}

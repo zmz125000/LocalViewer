@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.webdav
 
 import com.ehviewer.core.database.model.WebDavSourceEntity
+import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
@@ -9,22 +10,33 @@ import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
+import com.hippo.ehviewer.library.classifyRemoteListing
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
 import com.hippo.ehviewer.library.isDotHiddenName
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
+import com.hippo.ehviewer.library.isShallowIncompleteListing
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.peekIndicatesHiddenDir
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.preferCompleteFolderGalleries
+import com.hippo.ehviewer.library.replaceSlimDirectFilesFromLive
+import com.hippo.ehviewer.library.slimDirectFilesUnchanged
 import com.hippo.ehviewer.library.withHiddenFlags
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 /**
  * Browse listing for WebDAV: PROPFIND + parallel peeks + same remote classify as SMB.
@@ -32,6 +44,9 @@ import kotlinx.coroutines.sync.withPermit
  */
 object WebDavGateway {
     private val peekSlots = Semaphore(6)
+
+    /** Deep peek/classify budget after shallow paint; keep shallow on expiry. */
+    private const val DEEP_CLASSIFY_TIMEOUT_MS = 180_000L
 
     fun sourceConfigKey(source: WebDavSourceEntity): String = "${source.id}|${source.baseUrl}|${source.pathPrefix}|${source.username}"
 
@@ -70,6 +85,15 @@ object WebDavGateway {
                     com.hippo.ehviewer.Settings.networkFolderIndexQuickScan.value &&
                         !cached.sessionCurrent
                 if (!shouldQuickScan) return cached.entries
+                if (isShallowIncompleteListing(cached.entries)) {
+                    return listDirectoryShallowThenDeep(
+                        source,
+                        password,
+                        relativeDir,
+                        configKey,
+                        onCached,
+                    )
+                }
                 return try {
                     val refresh = withIOContext {
                         listDirectorySlim(source, password, relativeDir, cached.entries)
@@ -104,28 +128,91 @@ object WebDavGateway {
         } else {
             BrowseSession.invalidateWebDavListing(source.id, relativeDir)
         }
+        // Cold miss: shallow-first (one PROPFIND → paint), then deferred peeks.
+        return listDirectoryShallowThenDeep(source, password, relativeDir, configKey, onCached)
+    }
+
+    /**
+     * Cold list: publish name-only shallow rows immediately, then peek/classify.
+     * Deep failure / timeout / cancel keeps shallow (`sessionCurrent=false`).
+     */
+    private suspend fun listDirectoryShallowThenDeep(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeDir: String,
+        configKey: String,
+        onCached: ((List<BrowseEntryRemote>) -> Unit)?,
+    ): List<BrowseEntryRemote> {
         val previous = BrowseSession.getWebDavListing(source.id, relativeDir)
-        val result = withIOContext {
-            listDirectoryUncached(source, password, relativeDir)
+        val t0 = System.nanoTime()
+        val children = withIOContext {
+            listChildrenForRelativeDir(source, password, relativeDir)
         }
-        val fromRam = if (previous != null) {
-            preferCompleteFolderGalleries(previous, result)
+        val dirName = relativeDir.substringAfterLast('/').ifEmpty { source.displayName }
+        val shallow = classifyRemoteListing(dirName, children.withHiddenFlags())
+        val shallowMerged = if (previous != null) {
+            preferCompleteFolderGalleries(previous, shallow)
         } else {
-            result
+            shallow
         }
-        val stored = NetworkFolderIndexCache.saveWebDav(
-            source.id,
-            configKey,
-            relativeDir,
-            fromRam,
-        )
+        // RAM-only until deep succeeds (same reason as SMB — avoid slim false-complete).
         BrowseSession.putWebDavListing(
             source.id,
             relativeDir,
-            stored,
-            sessionCurrent = true,
+            shallowMerged,
+            sessionCurrent = false,
         )
-        return stored
+        logcat("FolderIndex") {
+            "WebDAV shallow list source=${source.id} dir=$relativeDir " +
+                "children=${children.size} entries=${shallowMerged.size} " +
+                "ms=${(System.nanoTime() - t0) / 1_000_000}"
+        }
+        onCached?.invoke(shallowMerged)
+
+        BrowseSession.getWebDavCachedListing(source.id, relativeDir)?.let { cached ->
+            if (cached.sessionCurrent) return cached.entries
+        }
+
+        return try {
+            withTimeout(DEEP_CLASSIFY_TIMEOUT_MS) {
+                coroutineContext.ensureActive()
+                val t1 = System.nanoTime()
+                val deep = withIOContext {
+                    classifyDirectoryChildren(source, password, relativeDir, children)
+                }
+                val fromRam = preferCompleteFolderGalleries(shallowMerged, deep)
+                val stored = NetworkFolderIndexCache.saveWebDav(
+                    source.id,
+                    configKey,
+                    relativeDir,
+                    fromRam,
+                )
+                BrowseSession.putWebDavListing(
+                    source.id,
+                    relativeDir,
+                    stored,
+                    sessionCurrent = true,
+                )
+                logcat("FolderIndex") {
+                    "WebDAV deep classify source=${source.id} dir=$relativeDir " +
+                        "entries=${stored.size} ms=${(System.nanoTime() - t1) / 1_000_000}"
+                }
+                stored
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: TimeoutCancellationException) {
+            logcat("FolderIndex") {
+                "WebDAV deep classify timed out source=${source.id} dir=$relativeDir; keeping shallow"
+            }
+            shallowMerged
+        } catch (e: Throwable) {
+            logcat("FolderIndex") {
+                "WebDAV deep classify failed source=${source.id} dir=$relativeDir " +
+                    "(${e.message}); keeping shallow"
+            }
+            shallowMerged
+        }
     }
 
     private data class SlimDirectoryRefresh(
@@ -160,7 +247,8 @@ object WebDavGateway {
 
     /**
      * Cache-hit refresh: one PROPFIND for the current directory. Only new child folders
-     * run the existing child/leaf peek classifier.
+     * run the existing child/leaf peek classifier. Direct files are reconciled
+     * (drop stale / add new) from the live listing.
      */
     private suspend fun listDirectorySlim(
         source: WebDavSourceEntity,
@@ -177,8 +265,16 @@ object WebDavGateway {
         }
         val deepNames = deepHidden.mapTo(HashSet()) { it.name }
         val toClassify = (plan.addedDirectories + deepHidden).distinctBy { it.name }
-        if (plan.isUnchanged && deepHidden.isEmpty()) {
+        val filesUnchanged = slimDirectFilesUnchanged(cached, children)
+        val dirName = relativeDir.substringAfterLast('/').ifEmpty { source.displayName }
+        if (plan.isUnchanged && deepHidden.isEmpty() && filesUnchanged) {
             return SlimDirectoryRefresh(cached, emptySet())
+        }
+        if (plan.isUnchanged && deepHidden.isEmpty()) {
+            return SlimDirectoryRefresh(
+                entries = replaceSlimDirectFilesFromLive(cached, children, dirName),
+                removedDirectoryNames = emptySet(),
+            )
         }
         val effectivePlan = RemoteDirectorySlimPlan(
             addedDirectories = toClassify,
@@ -189,8 +285,13 @@ object WebDavGateway {
         } else {
             classifyDirectoryChildren(source, password, relativeDir, toClassify)
         }
+        val merged = replaceSlimDirectFilesFromLive(
+            mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
+            children,
+            dirName,
+        )
         return SlimDirectoryRefresh(
-            entries = mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
+            entries = merged,
             removedDirectoryNames = plan.removedDirectoryNames,
         ).also {
             plan.removedDirectoryNames.forEach { name ->

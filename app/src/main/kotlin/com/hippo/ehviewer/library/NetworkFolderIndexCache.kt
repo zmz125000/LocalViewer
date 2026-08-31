@@ -14,7 +14,12 @@ import splitties.init.appCtx
 /**
  * Persistent mirror of process-scoped browse listings (SMB / WebDAV / local folder roots).
  *
- * **Single store for folder + gallery page indexes:** each source owns one JSON file;
+ * **Identity:** one JSON file per source — `{protocol}_{sourceId}.json`
+ * (e.g. `smb_7.json`). Editing host / share / user / URL on the **same** row keeps
+ * this file. Stored `configKey` is only a stamp (updated on save); it must **not**
+ * invalidate the whole index — slim quick scan drops stale dirs/files as the user
+ * re-enters folders.
+ *
  * `folders[relativeDir]` holds the lazy scanner’s [BrowseEntryRemote] rows, including
  * embedded [BrowseEntryRemote.FolderGallery.imageFileNames]. [FolderGalleryIndex] only
  * *reads* these listings (and RAM) — it does not write a separate gallery cache.
@@ -99,7 +104,15 @@ object NetworkFolderIndexCache {
         lock.withLock {
             val file = fileFor(protocol, sourceId)
             val root = readRoot(file) ?: return@withLock null
-            if (!matches(root, configKey)) return@withLock null
+            // File identity is protocol+sourceId only. configKey mismatch (edited host/
+            // share/user) must not discard the index — slim cleans stale paths later.
+            if (!matchesVersion(root)) return@withLock null
+            val storedKey = root.optString("configKey")
+            if (storedKey.isNotEmpty() && storedKey != configKey) {
+                logcat("FolderIndex") {
+                    "Keeping $protocol/$sourceId index after source edit (configKey stamp differs)"
+                }
+            }
             val array = root.optJSONObject("folders")
                 ?.optJSONArray(normalizeDir(relativeDir))
                 ?: return@withLock null
@@ -123,12 +136,15 @@ object NetworkFolderIndexCache {
         if (!Settings.networkFolderIndexCache.value) return@withContext entries
         lock.withLock {
             val file = fileFor(protocol, sourceId)
-            val existing = readRoot(file)?.takeIf { matches(it, configKey) }
+            // Reuse folders JSON across source edits (same id); only VERSION must match.
+            val existing = readRoot(file)?.takeIf { matchesVersion(it) }
             val root = existing ?: JSONObject().apply {
                 put("version", VERSION)
-                put("configKey", configKey)
                 put("folders", JSONObject())
             }
+            root.put("version", VERSION)
+            root.put("configKey", configKey) // stamp only — not a load gate
+            if (!root.has("folders")) root.put("folders", JSONObject())
             val folders = root.getJSONObject("folders")
             if (removedChildDirs.isNotEmpty()) {
                 val parent = normalizeDir(relativeDir)
@@ -184,7 +200,7 @@ object NetworkFolderIndexCache {
             .getOrNull()
     }
 
-    private fun matches(root: JSONObject, configKey: String): Boolean = root.optInt("version", -1) == VERSION && root.optString("configKey") == configKey
+    private fun matchesVersion(root: JSONObject): Boolean = root.optInt("version", -1) == VERSION
 
     private fun encodeEntries(entries: List<BrowseEntryRemote>) = JSONArray().apply {
         entries.forEach { entry ->
