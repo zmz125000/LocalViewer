@@ -23,6 +23,7 @@ import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.preferCompleteFolderGalleries
 import com.hippo.ehviewer.library.withHiddenFlags
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -34,7 +35,6 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlin.coroutines.coroutineContext
 
 /**
  * Browse listing for WebDAV: PROPFIND + parallel peeks + same remote classify as SMB.

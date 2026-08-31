@@ -6,6 +6,7 @@ import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -14,7 +15,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okio.Path
 import okio.Path.Companion.toPath
-import kotlin.coroutines.coroutineContext
 
 /**
  * Local folder browse listing aligned with SMB/WebDAV lazy scan:
