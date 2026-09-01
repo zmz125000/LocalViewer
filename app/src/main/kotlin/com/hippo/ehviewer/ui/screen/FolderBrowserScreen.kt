@@ -67,6 +67,7 @@ import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
+import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
@@ -98,7 +99,6 @@ import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toBrowseSections
-import java.io.File
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.OpenPdfExternally
@@ -126,10 +126,10 @@ import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToLocalZipFolderReader
 import com.hippo.ehviewer.ui.navToReader
-import com.ehviewer.core.util.withUIContext
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import java.io.File
 import kotlinx.coroutines.flow.first
 import moe.tarsin.snackbar
 import okio.Path.Companion.toPath
@@ -260,8 +260,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onPathChange = { scrollBehavior.state.heightOffset = 0f },
     )
 
-    fun frameListKey(frame: BrowseSession.LocalFrame): String =
-        if (frame.zipInnerRel != null) "${frame.path}|${frame.zipInnerRel}" else frame.path
+    fun frameListKey(frame: BrowseSession.LocalFrame): String = if (frame.zipInnerRel != null) "${frame.path}|${frame.zipInnerRel}" else frame.path
 
     suspend fun reload(force: Boolean = false) {
         val frame = stack.lastOrNull()
@@ -451,11 +450,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         )
     }
 
-    fun folderArchiveRelative(entry: BrowseEntry.ArchiveGallery, frame: BrowseSession.LocalFrame): String =
-        when {
-            frame.relativePath.isEmpty() -> entry.name
-            else -> "${frame.relativePath.trimEnd('/')}/${entry.name}"
-        }
+    fun folderArchiveRelative(entry: BrowseEntry.ArchiveGallery, frame: BrowseSession.LocalFrame): String = when {
+        frame.relativePath.isEmpty() -> entry.name
+        else -> "${frame.relativePath.trimEnd('/')}/${entry.name}"
+    }
 
     /** Push a ZIP/CBZ browse frame at archive root ([zipInnerRel] = ""). */
     fun enterZip(entry: BrowseEntry.ArchiveGallery) {

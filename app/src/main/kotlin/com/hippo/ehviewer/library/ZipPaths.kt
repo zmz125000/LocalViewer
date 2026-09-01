@@ -18,8 +18,7 @@ object ZipPaths {
         return "$SCHEME$zipAbsolutePath$SEP$member"
     }
 
-    fun encodePath(zipAbsolutePath: String, memberRel: String): Path =
-        encode(zipAbsolutePath, memberRel).toPath()
+    fun encodePath(zipAbsolutePath: String, memberRel: String): Path = encode(zipAbsolutePath, memberRel).toPath()
 
     fun parse(path: String): Pair<String, String>? {
         if (!path.startsWith(SCHEME)) return null

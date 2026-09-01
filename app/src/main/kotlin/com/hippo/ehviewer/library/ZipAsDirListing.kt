@@ -10,8 +10,7 @@ import okio.Path.Companion.toPath
  * same CD by prefix (no extra IO).
  */
 object ZipAsDirListing {
-    fun normalizePrefix(prefix: String): String =
-        prefix.replace('\\', '/').trim('/').let { if (it == "." || it.isEmpty()) "" else it }
+    fun normalizePrefix(prefix: String): String = prefix.replace('\\', '/').trim('/').let { if (it == "." || it.isEmpty()) "" else it }
 
     fun joinPrefix(parent: String, child: String): String {
         val p = normalizePrefix(parent)
@@ -125,13 +124,12 @@ object ZipAsDirListing {
     }
 
     /** Direct image basenames under [innerPrefix] (natural sort). */
-    fun directImageNames(cd: ZipCentralDirectory, innerPrefix: String = ""): List<String> =
-        listChildren(cd, innerPrefix)
-            .asSequence()
-            .filter { !it.isDirectory && isImageFileName(it.name) }
-            .map { it.name }
-            .sortedWith { a, b -> naturalCompare(a, b) }
-            .toList()
+    fun directImageNames(cd: ZipCentralDirectory, innerPrefix: String = ""): List<String> = listChildren(cd, innerPrefix)
+        .asSequence()
+        .filter { !it.isDirectory && isImageFileName(it.name) }
+        .map { it.name }
+        .sortedWith { a, b -> naturalCompare(a, b) }
+        .toList()
 
     /**
      * Every directory prefix (including `""` for zip root) that has at least one

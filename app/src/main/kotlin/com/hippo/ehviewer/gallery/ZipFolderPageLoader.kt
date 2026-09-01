@@ -50,8 +50,7 @@ suspend inline fun <T> useZipFolderPageLoader(
                         }
                 }
 
-                override fun getImageExtension(index: Int) =
-                    FileUtils.getExtensionFromFilename(imageNames[index])
+                override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(imageNames[index])
 
                 override fun save(index: Int, file: Path): Boolean = runCatching {
                     val src = ensureZipPage(
@@ -87,8 +86,7 @@ suspend inline fun <T> useZipFolderPageLoader(
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) = Unit
 
-                override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) =
-                    notifySourceReady(index, orgImg)
+                override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) = notifySourceReady(index, orgImg)
             },
         )
         block(loader)
