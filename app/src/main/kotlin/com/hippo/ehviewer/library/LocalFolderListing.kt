@@ -397,6 +397,7 @@ fun materializeLocalEntries(
             BrowseEntry.Directory(
                 name = entry.name,
                 path = path,
+                relativeName = entry.relativeName,
                 hasVideo = entry.hasVideo,
                 hasGallery = entry.hasGallery,
                 presence = entry.presence,
@@ -416,6 +417,7 @@ fun materializeLocalEntries(
             BrowseEntry.FolderGallery(
                 name = entry.name,
                 path = path,
+                relativeName = entry.relativeName,
                 pageCount = entry.pageCount,
                 pageCountCapped = entry.pageCountCapped,
                 coverPath = cover,
