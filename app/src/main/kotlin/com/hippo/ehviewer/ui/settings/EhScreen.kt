@@ -231,7 +231,6 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_browse_zip_as_dir),
-                summary = stringResource(id = R.string.settings_browse_zip_as_dir_summary),
                 state = Settings.browseZipAsDir.asMutableState(),
             )
             SwitchPreference(
