@@ -75,6 +75,11 @@ sealed interface BrowseEntry {
     data class Directory(
         override val name: String,
         val path: Path,
+        /**
+         * Path under the listed directory. Multi-segment for promoted video leaves (`S/leaf`).
+         * Not the virtual `@…` [name].
+         */
+        val relativeName: String = name,
         val hasVideo: Boolean,
         val hasGallery: Boolean,
         val presence: DirPresence,
@@ -91,6 +96,11 @@ sealed interface BrowseEntry {
     data class FolderGallery(
         override val name: String,
         val path: Path,
+        /**
+         * Path under the listed directory (empty = images in the current dir).
+         * Multi-segment for promoted leaves (`S/leaf`). Not the virtual `@…` [name].
+         */
+        val relativeName: String = "",
         val pageCount: Int,
         val pageCountCapped: Boolean = false,
         val coverPath: Path?,

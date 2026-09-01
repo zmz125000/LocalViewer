@@ -363,7 +363,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun enterDir(entry: BrowseEntry.Directory) {
         val frame = stack.lastOrNull() ?: return
-        val rel = if (frame.relativePath.isEmpty()) entry.name else "${frame.relativePath}/${entry.name}"
+        // Real path segments (not virtual @display name) — same join as folderGalleryRelative.
+        val child = entry.relativeName.replace('\\', '/').trim('/')
+        val parent = frame.relativePath.replace('\\', '/').trim('/')
+        val rel = when {
+            child.isEmpty() -> parent
+            parent.isEmpty() -> child
+            else -> "$parent/$child"
+        }
         updateStack(
             stack + BrowseSession.LocalFrame(
                 rootId = frame.rootId,
@@ -436,11 +443,19 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         )
     }
 
-    fun folderGalleryRelative(entry: BrowseEntry.FolderGallery, frame: BrowseSession.LocalFrame): String = when {
-        frame.relativePath.isEmpty() && entry.path.toString() == frame.path -> ""
-        frame.relativePath.isEmpty() -> entry.name
-        entry.path.toString() == frame.path -> frame.relativePath
-        else -> "${frame.relativePath}/${entry.name}"
+    /**
+     * History / reader relative path under the library root.
+     * Uses [BrowseEntry.FolderGallery.relativeName] (real segments), never virtual `@…` [name]
+     * — same join as SMB [SmbGateway.joinRelativePath] / WebDAV.
+     */
+    fun folderGalleryRelative(entry: BrowseEntry.FolderGallery, frame: BrowseSession.LocalFrame): String {
+        val child = entry.relativeName.replace('\\', '/').trim('/')
+        val parent = frame.relativePath.replace('\\', '/').trim('/')
+        return when {
+            child.isEmpty() -> parent
+            parent.isEmpty() -> child
+            else -> "$parent/$child"
+        }
     }
 
     fun openFolderGallery(entry: BrowseEntry.FolderGallery, page: Int = -1) {
