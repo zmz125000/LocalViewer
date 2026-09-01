@@ -15,7 +15,8 @@ import okio.Path.Companion.toPath
  * - SMB / WebDAV network archive: `smb-arch:{sourceId}:{remote}` /
  *   `dav-arch:…` → [ArchiveCoverCache] first-page JPEG (`archive_thumb/`, same key as
  *   browse `smb:` / `webdav:` stream covers).
- * - Videos: `vid-local:{path}` / `vid-smb:…` / `vid-dav:…` → [VideoThumbnail] cache hit only.
+ * - Videos: `vid-local:{path}` / `vid-smb:…` / `vid-dav:…` → [VideoThumbnail] cache hit
+ *   only. Disk identity is path/source only (not listing size); matches browse frames.
  *
  * Dir-only browse history (`*_browse` tokens) uses the **folder** thumb key
  * (local path / `smb-thumb:` / `dav-thumb:`), same as folder favourites — not archive keys.

@@ -36,11 +36,19 @@ import okio.Path.Companion.toPath
 import splitties.init.appCtx
 
 sealed interface VideoThumbnailSource {
+    /**
+     * Stable disk / mutex identity. Must **not** include [knownSizeBytes] or mtime —
+     * History resolves `vid-*` keys with size 0 while browse often passes listing size;
+     * both must hit the same `video_thumb_cache` JPEG.
+     */
     val cacheIdentity: String
     val isNetwork: Boolean
     val fileName: String
 
-    /** Known size from lazy scan / stat; 0 if unknown. */
+    /**
+     * Listing / stat size hint for extract seek only (`>100 MiB` → 2:00 → 30s → 2s).
+     * Not part of [cacheIdentity].
+     */
     val knownSizeBytes: Long
 
     data class Local(
@@ -50,13 +58,9 @@ sealed interface VideoThumbnailSource {
         override val isNetwork: Boolean = false
         override val fileName: String
             get() = path.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity: String
-            get() {
-                val file = File(path)
-                val size = knownSizeBytes.takeIf { it > 0L } ?: file.length()
-                // v8: size-aware seek for files >100 MiB — 2:00 → 30s → 2s.
-                return "v1:local:$path:$size:${file.lastModified()}"
-            }
+
+        // v2: path only (v1 baked size+mtime and broke History cache hits).
+        override val cacheIdentity: String get() = "v1:local:$path"
     }
 
     data class Smb(
@@ -67,7 +71,11 @@ sealed interface VideoThumbnailSource {
         override val isNetwork: Boolean = true
         override val fileName: String
             get() = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity = "v1:smb:$sourceId:$remoteRelativeFile:$knownSizeBytes"
+        override val cacheIdentity: String
+            get() {
+                val remote = remoteRelativeFile.replace('\\', '/').trimStart('/')
+                return "v1:smb:$sourceId:$remote"
+            }
     }
 
     data class WebDav(
@@ -78,7 +86,11 @@ sealed interface VideoThumbnailSource {
         override val isNetwork: Boolean = true
         override val fileName: String
             get() = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\')
-        override val cacheIdentity = "v1:webdav:$sourceId:$remoteRelativeFile:$knownSizeBytes"
+        override val cacheIdentity: String
+            get() {
+                val remote = remoteRelativeFile.replace('\\', '/').trimStart('/')
+                return "v1:webdav:$sourceId:$remote"
+            }
     }
 }
 
