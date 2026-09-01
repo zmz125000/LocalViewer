@@ -1,5 +1,8 @@
 package com.hippo.ehviewer.library
 
+import com.hippo.ehviewer.Settings
+import java.io.File
+import okio.Path
 import okio.Path.Companion.toPath
 
 /**
@@ -8,6 +11,10 @@ import okio.Path.Companion.toPath
  * Listing and classify are pure over an already-open [ZipCentralDirectory] (EOCD+CD
  * only — no member extract). Peeks for promote/dual-gallery come from filtering the
  * same CD by prefix (no extra IO).
+ *
+ * Parent-folder listings call [rewriteZipArchivesAsFolders] so zip/cbz are classified
+ * as [BrowseEntryRemote.FolderGallery] (flat images) or [BrowseEntryRemote.Directory]
+ * (has subdirs) instead of staying [BrowseEntryRemote.ArchiveGallery].
  */
 object ZipAsDirListing {
     fun normalizePrefix(prefix: String): String = prefix.replace('\\', '/').trim('/').let { if (it == "." || it.isEmpty()) "" else it }
@@ -111,18 +118,6 @@ object ZipAsDirListing {
         )
     }
 
-    /**
-     * Flat comic heuristic: no subdirectory children, and every file at this level is an image.
-     * Used when zip-as-dir is on so classic CBZ still opens the archive reader.
-     */
-    fun shouldOpenAsArchiveReader(cd: ZipCentralDirectory, innerPrefix: String = ""): Boolean {
-        val children = listChildren(cd, innerPrefix)
-        if (children.any { it.isDirectory }) return false
-        val files = children.filter { !it.isDirectory }
-        if (files.isEmpty()) return true
-        return files.all { isImageFileName(it.name) }
-    }
-
     /** Direct image basenames under [innerPrefix] (natural sort). */
     fun directImageNames(cd: ZipCentralDirectory, innerPrefix: String = ""): List<String> = listChildren(cd, innerPrefix)
         .asSequence()
@@ -130,6 +125,150 @@ object ZipAsDirListing {
         .map { it.name }
         .sortedWith { a, b -> naturalCompare(a, b) }
         .toList()
+
+    /**
+     * Apply [Settings.browseZipAsDir] to a classified listing (also when loading cache).
+     * On: zip/cbz ArchiveGallery → FolderGallery (flat) or Directory (tree).
+     * Off: reverse those rows back to ArchiveGallery.
+     */
+    fun applyZipAsDirPreference(
+        entries: List<BrowseEntryRemote>,
+        openCd: (fileName: String) -> ZipCentralDirectory?,
+    ): List<BrowseEntryRemote> {
+        return if (Settings.browseZipAsDir.value) {
+            rewriteZipArchivesAsFolders(entries, openCd)
+        } else {
+            demoteZipFoldersToArchives(entries)
+        }
+    }
+
+    /** Local FS helper for [applyZipAsDirPreference]. */
+    fun applyZipAsDirPreferenceLocal(
+        entries: List<BrowseEntryRemote>,
+        listedDir: Path,
+    ): List<BrowseEntryRemote> = applyZipAsDirPreference(entries) { fileName ->
+        val file = File((listedDir / fileName).toString())
+        if (!file.isFile) return@applyZipAsDirPreference null
+        ZipCentralDirectory.open(FileArchiveByteSource(file))
+    }
+
+    /**
+     * After [classifyRemoteListing] / peeks: replace zip/cbz [BrowseEntryRemote.ArchiveGallery]
+     * rows when [Settings.browseZipAsDir] is on.
+     *
+     * - Root has **no** subdirs and has images → [BrowseEntryRemote.FolderGallery]
+     *   (`relativeName` = zip file name under the listed dir).
+     * - Root has subdirs → [BrowseEntryRemote.Directory] (enter = zip-as-dir browse).
+     * - Unreadable / empty → leave as archive.
+     */
+    fun rewriteZipArchivesAsFolders(
+        entries: List<BrowseEntryRemote>,
+        openCd: (fileName: String) -> ZipCentralDirectory?,
+    ): List<BrowseEntryRemote> {
+        if (entries.none { it is BrowseEntryRemote.ArchiveGallery && isZipArchiveFileName(it.fileName) }) {
+            return entries
+        }
+        return entries.map { entry ->
+            if (entry !is BrowseEntryRemote.ArchiveGallery || !isZipArchiveFileName(entry.fileName)) {
+                return@map entry
+            }
+            val cd = openCd(entry.fileName) ?: return@map entry
+            classifyZipFileAsBrowseEntry(cd, entry)
+        }
+    }
+
+    /** Local FS helper: open CD for [fileName] under [listedDir]. */
+    fun rewriteZipArchivesAsFoldersLocal(
+        entries: List<BrowseEntryRemote>,
+        listedDir: Path,
+    ): List<BrowseEntryRemote> = rewriteZipArchivesAsFolders(entries) { fileName ->
+        val file = File((listedDir / fileName).toString())
+        if (!file.isFile) return@rewriteZipArchivesAsFolders null
+        ZipCentralDirectory.open(FileArchiveByteSource(file))
+    }
+
+    /** When zip-as-dir is off, restore zip FolderGallery / Directory rows to ArchiveGallery. */
+    fun demoteZipFoldersToArchives(entries: List<BrowseEntryRemote>): List<BrowseEntryRemote> =
+        entries.map { entry ->
+            when (entry) {
+                is BrowseEntryRemote.FolderGallery -> {
+                    val name = entry.relativeName.ifEmpty { entry.name }
+                    if (!isZipArchiveFileName(name)) return@map entry
+                    BrowseEntryRemote.ArchiveGallery(
+                        name = entry.name,
+                        fileName = name.substringAfterLast('/'),
+                        parentRelativeName = name.substringBeforeLast('/', missingDelimiterValue = ""),
+                        hidden = entry.hidden,
+                    )
+                }
+                is BrowseEntryRemote.Directory -> {
+                    val name = entry.relativeName.ifEmpty { entry.name }
+                    if (!isZipArchiveFileName(name)) return@map entry
+                    BrowseEntryRemote.ArchiveGallery(
+                        name = entry.name,
+                        fileName = name.substringAfterLast('/'),
+                        parentRelativeName = name.substringBeforeLast('/', missingDelimiterValue = ""),
+                        lastModifiedMs = entry.lastModifiedMs,
+                        hidden = entry.hidden,
+                    )
+                }
+                else -> entry
+            }
+        }
+
+    fun classifyZipFileAsBrowseEntry(
+        cd: ZipCentralDirectory,
+        archive: BrowseEntryRemote.ArchiveGallery,
+    ): BrowseEntryRemote {
+        val root = listChildren(cd, "")
+        val hasSubdir = root.any { it.isDirectory }
+        val images = directImageNames(cd, "")
+        return when {
+            !hasSubdir && images.isNotEmpty() -> BrowseEntryRemote.FolderGallery(
+                name = archive.name,
+                relativeName = archive.fileName,
+                pageCount = images.size,
+                pageCountCapped = false,
+                coverFileName = images.first(),
+                imageFileNames = images,
+                hidden = archive.hidden,
+                virtual = false,
+            )
+            hasSubdir -> {
+                val anyImage = imageBearingPrefixes(cd).isNotEmpty()
+                val anyVideo = cd.entries.any { e ->
+                    !e.isEncrypted && !e.isDirectory &&
+                        isBrowseVideoFileName(normalizeMember(e.name)?.substringAfterLast('/') ?: "")
+                }
+                // Cover: first image anywhere in the zip (member path relative to zip root).
+                val cover = firstImageMemberAnywhere(cd)
+                BrowseEntryRemote.Directory(
+                    name = archive.name,
+                    relativeName = archive.fileName,
+                    hasVideo = anyVideo,
+                    hasGallery = anyImage,
+                    presence = DirPresence.Navigable,
+                    coverFileName = cover,
+                    lastModifiedMs = archive.lastModifiedMs,
+                    hidden = archive.hidden,
+                    virtual = false,
+                )
+            }
+            else -> archive
+        }
+    }
+
+    /** First image member path under the zip root (may be nested `Album/a.jpg`). */
+    fun firstImageMemberAnywhere(cd: ZipCentralDirectory): String? {
+        var best: String? = null
+        for (entry in cd.entries) {
+            if (entry.isEncrypted || entry.isDirectory) continue
+            val name = normalizeMember(entry.name) ?: continue
+            if (!isImageFileName(name.substringAfterLast('/'))) continue
+            if (best == null || naturalCompare(name, best) < 0) best = name
+        }
+        return best
+    }
 
     /**
      * Every directory prefix (including `""` for zip root) that has at least one

@@ -137,7 +137,10 @@ object LocalFolderListing {
         val t0 = System.nanoTime()
         val children = listChildrenRemote(effective, preferMediaStore)
         val dirName = effective.name.ifEmpty { "Gallery" }
-        val shallow = classifyRemoteListing(dirName, children.withHiddenFlags())
+        val shallow = ZipAsDirListing.applyZipAsDirPreferenceLocal(
+            classifyRemoteListing(dirName, children.withHiddenFlags()),
+            effective,
+        )
         val shallowMerged =
             if (previous != null) preferCompleteFolderGalleries(previous, shallow) else shallow
         // RAM-only until deep succeeds (avoid slim treating Empty shells as final).
@@ -295,7 +298,9 @@ object LocalFolderListing {
         val dirName = humanizePathName(dir.name).ifEmpty { "Gallery" }
         // Re-tag with peek-based .nomedia detection after child peeks exist.
         val tagged = children.withHiddenFlags(peeks)
-        return classifyRemoteListingWithPeeks(dirName, tagged, peeks, grandPeeks)
+        val classified = classifyRemoteListingWithPeeks(dirName, tagged, peeks, grandPeeks)
+        // Zip-as-dir: zip/cbz → FolderGallery (flat) or Directory (tree), not ArchiveGallery.
+        return ZipAsDirListing.applyZipAsDirPreferenceLocal(classified, dir)
     }
 
     private fun <T> runParallel(items: List<T>, block: (T) -> Unit) {
@@ -385,7 +390,10 @@ fun Path.resolveRelative(relative: String): Path {
 fun materializeLocalEntries(
     baseDir: Path,
     remote: List<BrowseEntryRemote>,
-): List<BrowseEntry> = remote.map { entry ->
+): List<BrowseEntry> {
+    // Re-apply zip-as-dir preference so RAM/disk cache respects the current toggle.
+    val entries = ZipAsDirListing.applyZipAsDirPreferenceLocal(remote, baseDir)
+    return entries.map { entry ->
     when (entry) {
         is BrowseEntryRemote.Directory -> {
             val path = if (entry.relativeName.isEmpty()) {
@@ -393,7 +401,15 @@ fun materializeLocalEntries(
             } else {
                 baseDir.resolveRelative(entry.relativeName)
             }
-            val cover = entry.coverFileName?.let { path.resolveRelative(it) }
+            val zipAsDir = Settings.browseZipAsDir.value && isZipArchiveFileName(entry.relativeName.ifEmpty { entry.name })
+            val cover = entry.coverFileName?.let { coverRel ->
+                if (zipAsDir) {
+                    // coverRel is a member path inside the zip (may be nested).
+                    ZipPaths.encodePath(path.toString(), coverRel)
+                } else {
+                    path.resolveRelative(coverRel)
+                }
+            }
             BrowseEntry.Directory(
                 name = entry.name,
                 path = path,
@@ -413,7 +429,14 @@ fun materializeLocalEntries(
             } else {
                 baseDir.resolveRelative(entry.relativeName)
             }
-            val cover = entry.coverFileName?.let { path.resolveRelative(it) }
+            val zipAsDir = Settings.browseZipAsDir.value && isZipArchiveFileName(entry.relativeName.ifEmpty { entry.name })
+            val cover = entry.coverFileName?.let { coverRel ->
+                if (zipAsDir) {
+                    ZipPaths.encodePath(path.toString(), coverRel)
+                } else {
+                    path.resolveRelative(coverRel)
+                }
+            }
             BrowseEntry.FolderGallery(
                 name = entry.name,
                 path = path,
@@ -470,5 +493,6 @@ fun materializeLocalEntries(
                 hidden = entry.hidden,
                 virtual = entry.virtual,
             )
+    }
     }
 }

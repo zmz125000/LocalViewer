@@ -10,13 +10,49 @@ import org.junit.Test
 
 class ZipAsDirListingTest {
     @Test
-    fun flatImageOnlyOpensAsArchiveReader() {
+    fun flatImageOnlyClassifiesAsRootFolderGallery() {
         val cd = openZip(
             "001.jpg" to byteArrayOf(1),
             "002.png" to byteArrayOf(2),
         )
-        assertTrue(ZipAsDirListing.shouldOpenAsArchiveReader(cd))
         assertEquals(listOf("001.jpg", "002.png"), ZipAsDirListing.directImageNames(cd))
+        val root = ZipAsDirListing.classifyAt(cd, "", "flat.cbz")
+        val gal = root.filterIsInstance<BrowseEntryRemote.FolderGallery>()
+            .first { it.relativeName.isEmpty() }
+        assertEquals(2, gal.pageCount)
+        assertEquals("001.jpg", gal.coverFileName)
+        assertTrue(root.none { it is BrowseEntryRemote.Directory })
+    }
+
+    @Test
+    fun rewriteFlatZipArchiveBecomesFolderGallery() {
+        val file = writeZip(
+            "001.jpg" to byteArrayOf(1),
+            "002.jpg" to byteArrayOf(2),
+        )
+        val cd = ZipCentralDirectory.open(FileArchiveByteSource(file))!!
+        val archive = BrowseEntryRemote.ArchiveGallery(name = "flat.cbz", fileName = "flat.cbz")
+        val rewritten = ZipAsDirListing.classifyZipFileAsBrowseEntry(cd, archive)
+        assertTrue(rewritten is BrowseEntryRemote.FolderGallery)
+        val gal = rewritten as BrowseEntryRemote.FolderGallery
+        assertEquals("flat.cbz", gal.relativeName)
+        assertEquals(2, gal.pageCount)
+    }
+
+    @Test
+    fun rewriteTreeZipArchiveBecomesDirectory() {
+        val file = writeZip(
+            "Album/a.jpg" to byteArrayOf(1),
+            "Album/b.jpg" to byteArrayOf(2),
+        )
+        val cd = ZipCentralDirectory.open(FileArchiveByteSource(file))!!
+        val archive = BrowseEntryRemote.ArchiveGallery(name = "tree.zip", fileName = "tree.zip")
+        val rewritten = ZipAsDirListing.classifyZipFileAsBrowseEntry(cd, archive)
+        assertTrue(rewritten is BrowseEntryRemote.Directory)
+        val dir = rewritten as BrowseEntryRemote.Directory
+        assertEquals("tree.zip", dir.relativeName)
+        assertTrue(dir.hasGallery)
+        assertEquals(DirPresence.Navigable, dir.presence)
     }
 
     @Test
@@ -26,7 +62,6 @@ class ZipAsDirListingTest {
             "Album/b.jpg" to byteArrayOf(2),
             "readme.txt" to byteArrayOf(3),
         )
-        assertFalse(ZipAsDirListing.shouldOpenAsArchiveReader(cd))
         val root = ZipAsDirListing.classifyAt(cd, "", "comic.zip")
         assertTrue(root.any { it is BrowseEntryRemote.Directory && it.name == "Album" })
         assertTrue(root.any { it is BrowseEntryRemote.RegularFile && it.fileName == "readme.txt" })
@@ -39,12 +74,11 @@ class ZipAsDirListingTest {
 
     @Test
     fun promotedLeafGalleryFromNestedTree() {
-        // Parent S with one image leaf → @S gallery promote.
+        // Parent S with one image leaf → @S gallery promote (same DirectoryListing path).
         val cd = openZip(
             "S/leaf/01.jpg" to byteArrayOf(1),
             "S/leaf/02.jpg" to byteArrayOf(2),
         )
-        assertFalse(ZipAsDirListing.shouldOpenAsArchiveReader(cd))
         val root = ZipAsDirListing.classifyAt(cd, "", "pack.zip")
         assertTrue(
             root.any {
@@ -62,8 +96,6 @@ class ZipAsDirListingTest {
         val root = ZipAsDirListing.classifyAt(cd, "", "outer.zip")
         assertTrue(root.any { it is BrowseEntryRemote.ArchiveGallery && it.fileName == "inner.cbz" })
         assertTrue(root.any { it is BrowseEntryRemote.FolderGallery && it.relativeName.isEmpty() })
-        // Has non-image file → not flat comic reader shortcut.
-        assertFalse(ZipAsDirListing.shouldOpenAsArchiveReader(cd))
     }
 
     @Test
@@ -86,7 +118,7 @@ class ZipAsDirListingTest {
         assertEquals("Album/a.jpg", ZipAsDirListing.firstImageMember(cd, "Album"))
     }
 
-    private fun openZip(vararg members: Pair<String, ByteArray>): ZipCentralDirectory {
+    private fun writeZip(vararg members: Pair<String, ByteArray>): File {
         val file = File.createTempFile("zip-as-dir-", ".zip")
         file.deleteOnExit()
         ZipOutputStream(file.outputStream()).use { zos ->
@@ -96,7 +128,11 @@ class ZipAsDirListingTest {
                 zos.closeEntry()
             }
         }
-        val cd = ZipCentralDirectory.open(FileArchiveByteSource(file))
+        return file
+    }
+
+    private fun openZip(vararg members: Pair<String, ByteArray>): ZipCentralDirectory {
+        val cd = ZipCentralDirectory.open(FileArchiveByteSource(writeZip(*members)))
         requireNotNull(cd) { "failed to parse test zip" }
         return cd
     }

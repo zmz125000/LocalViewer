@@ -156,7 +156,7 @@
     <string name="settings_download_network_video_thumbs">下載網路影片封面</string>
     <string name="settings_download_network_video_thumbs_summary">為 SMB/WebDAV 影片擷取影格縮圖。關閉後仍顯示已快取的封面。</string>
     <string name="settings_browse_zip_as_dir">將 ZIP 當作資料夾開啟</string>
-    <string name="settings_browse_zip_as_dir_summary">像資料夾一樣瀏覽 ZIP/CBZ（列表、圖庫、照片牆）。僅根目錄有圖的扁平漫畫仍開啟閱讀器。關閉則一律開啟壓縮包閱讀器。</string>
+    <string name="settings_browse_zip_as_dir_summary">像資料夾一樣瀏覽 ZIP/CBZ（列表、圖庫、照片牆）。關閉則一律開啟壓縮包閱讀器。</string>
     <string name="browse_menu_zip_as_dir">將 ZIP 當作資料夾</string>
     <string name="zip_video_stub_unsupported">暫不支援在 ZIP 內播放影片</string>
     <string name="zip_nested_archive_stub">暫不支援開啟 ZIP 內的壓縮包</string>

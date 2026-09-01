@@ -243,9 +243,8 @@ object Settings : DataStorePreferences(null) {
     val downloadNetworkVideoThumbs = boolPref("download_network_video_thumbs", true)
 
     /**
-     * Browse ZIP/CBZ like folders (listing / photo-grid / classify). Flat image-only
-     * comics still open in the archive reader. Off = always open zip/cbz as archive.
-     * Default on. Settings → General / browse menu.
+     * Browse ZIP/CBZ like folders (listing / photo-grid / DirectoryListing classify).
+     * Off = always open zip/cbz as archive reader. Default on. Settings → General / browse menu.
      */
     val browseZipAsDir = boolPref("browse_zip_as_dir", true)
 
