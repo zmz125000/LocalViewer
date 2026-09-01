@@ -446,6 +446,11 @@
     <string name="settings_download_network_archive_thumbs_summary">Extract first-page thumbs for network ZIP/TAR/RAR/7z.</string>
     <string name="settings_download_network_video_thumbs">Download network video covers</string>
     <string name="settings_download_network_video_thumbs_summary">Extract frame thumbs for network (SMB/WebDAV) videos. Cached covers still show when off.</string>
+    <string name="settings_browse_zip_as_dir">Open ZIP as folder</string>
+    <string name="settings_browse_zip_as_dir_summary">Browse ZIP/CBZ like folders (listing, galleries, photo grid). Flat comics with only root images still open in the reader. Off always opens the archive reader.</string>
+    <string name="browse_menu_zip_as_dir">Open ZIP as folder</string>
+    <string name="zip_video_stub_unsupported">Video playback inside ZIP is not supported</string>
+    <string name="zip_nested_archive_stub">Opening archives inside a ZIP is not supported</string>
     <string name="settings_photo_grid_mode">Photo grid mode</string>
     <string name="settings_photo_grid_mode_summary">On: tap folder gallery opens photo grid, long-press opens reader. Off: tap opens reader, long-press opens photo grid.</string>
     <string name="settings_photo_grid_scroll_to_progress">Photo grid scroll to reading progress</string>

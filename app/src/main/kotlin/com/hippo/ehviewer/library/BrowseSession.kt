@@ -32,7 +32,15 @@ object BrowseSession {
          * direct image files; does not change global list/content mode.
          */
         val photoGrid: Boolean = false,
-    )
+        /**
+         * When non-null, [path] is a ZIP/CBZ file and this frame browses inside it.
+         * `""` = zip root; `"Album"` / `"S/leaf"` = prefix inside the archive.
+         * Null = normal filesystem folder.
+         */
+        val zipInnerRel: String? = null,
+    ) {
+        val isZipBrowse: Boolean get() = zipInnerRel != null
+    }
 
     @Volatile
     var localStack: List<LocalFrame> = emptyList()

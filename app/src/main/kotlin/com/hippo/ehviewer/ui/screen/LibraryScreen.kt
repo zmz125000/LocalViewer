@@ -75,16 +75,21 @@ import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
+import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.FavoriteBrowseSource
+import com.hippo.ehviewer.library.FileArchiveByteSource
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipCentralDirectory
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
 import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
 import com.hippo.ehviewer.library.toBaseGalleryInfo
@@ -98,6 +103,9 @@ import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.LocalGalleryGridItem
 import com.hippo.ehviewer.ui.main.LocalGalleryListItem
 import com.hippo.ehviewer.ui.main.browseFileExtensionLabel
+import com.hippo.ehviewer.ui.navToLocalZipFolderReader
+import moe.tarsin.snackbar
+import moe.tarsin.string
 import com.hippo.ehviewer.ui.main.browseListSupportingLine
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToReader
@@ -254,25 +262,50 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
             // Pass info so read progress uses library id (same as progress chip).
             navToReader(gallery.contentPath, info)
-        } else if (Settings.photoGridMode.value) {
-            // Tap → photo-grid virtual folder (same as browse primary when mode on).
-            val root = roots.firstOrNull { it.id == gallery.rootId }
-            val rootPath = root?.let { LocalLibrary.rootPath(it) }
-            if (root == null || rootPath == null) {
-                navToLocalFolderReader(gallery.contentPath, info)
-            } else {
-                openLocalFolderPhotoGrid(
-                    rootId = root.id,
-                    rootDisplayName = root.displayName,
-                    rootPath = rootPath,
-                    relativePath = gallery.relativePath,
-                    preferMediaStore = root.prefersMediaStore,
-                    title = gallery.title,
-                    fromLibrary = true,
-                )
-            }
         } else {
-            navToLocalFolderReader(gallery.contentPath, info)
+            val zip = ZipPaths.parse(gallery.contentPath)
+            if (zip != null) {
+                val (zipAbs, member) = zip
+                val inner = if (member == "." || member.isEmpty()) "" else member
+                launchIO {
+                    val names = runCatching {
+                        val cd = ZipCentralDirectory.open(FileArchiveByteSource(java.io.File(zipAbs)))
+                            ?: return@runCatching emptyList()
+                        ZipAsDirListing.directImageNames(cd, inner)
+                    }.getOrDefault(emptyList())
+                    if (names.isEmpty()) {
+                        snackbar(string(R.string.browse_open_failed))
+                        return@launchIO
+                    }
+                    withUIContext {
+                        navToLocalZipFolderReader(
+                            zipPath = zipAbs,
+                            innerRel = inner,
+                            imageNames = names,
+                            info = info,
+                        )
+                    }
+                }
+            } else if (Settings.photoGridMode.value) {
+                // Tap → photo-grid virtual folder (same as browse primary when mode on).
+                val root = roots.firstOrNull { it.id == gallery.rootId }
+                val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                if (root == null || rootPath == null) {
+                    navToLocalFolderReader(gallery.contentPath, info)
+                } else {
+                    openLocalFolderPhotoGrid(
+                        rootId = root.id,
+                        rootDisplayName = root.displayName,
+                        rootPath = rootPath,
+                        relativePath = gallery.relativePath,
+                        preferMediaStore = root.prefersMediaStore,
+                        title = gallery.title,
+                        fromLibrary = true,
+                    )
+                }
+            } else {
+                navToLocalFolderReader(gallery.contentPath, info)
+            }
         }
     }
 

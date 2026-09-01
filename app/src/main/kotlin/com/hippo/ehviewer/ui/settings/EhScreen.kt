@@ -230,6 +230,11 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 state = Settings.downloadNetworkVideoThumbs.asMutableState(),
             )
             SwitchPreference(
+                title = stringResource(id = R.string.settings_browse_zip_as_dir),
+                summary = stringResource(id = R.string.settings_browse_zip_as_dir_summary),
+                state = Settings.browseZipAsDir.asMutableState(),
+            )
+            SwitchPreference(
                 title = stringResource(id = R.string.settings_photo_grid_mode),
                 state = Settings.photoGridMode.asMutableState(),
             )

@@ -103,7 +103,9 @@ import com.hippo.ehviewer.gallery.useSolidExtractPageLoader
 import com.hippo.ehviewer.gallery.useStreamArchivePageLoader
 import com.hippo.ehviewer.gallery.useTarChunkPageLoader
 import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
+import com.hippo.ehviewer.gallery.useZipFolderPageLoader
 import com.hippo.ehviewer.library.BrowseSession
+import java.io.File
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
@@ -173,6 +175,19 @@ sealed interface ReaderScreenArgs {
     @Serializable
     data class LocalFolder(
         val path: String,
+        val page: Int = -1,
+        val info: BaseGalleryInfo? = null,
+    ) : ReaderScreenArgs
+
+    /**
+     * Image folder inside a local ZIP/CBZ ([innerRel] prefix). Pages are members
+     * listed in [imageNames] (basenames under that prefix).
+     */
+    @Serializable
+    data class LocalZipFolder(
+        val zipPath: String,
+        val innerRel: String,
+        val imageNames: List<String>,
         val page: Int = -1,
         val info: BaseGalleryInfo? = null,
     ) : ReaderScreenArgs
@@ -325,6 +340,7 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                 val loader = result.value
                 val info = when (args) {
                     is ReaderScreenArgs.LocalFolder -> args.info
+                    is ReaderScreenArgs.LocalZipFolder -> args.info
                     is ReaderScreenArgs.SmbFolder -> args.info
                     is ReaderScreenArgs.WebDavFolder -> args.info
                     is ReaderScreenArgs.SmbStreamArchive -> args.info
@@ -399,6 +415,21 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                             info = args.info,
                         )
                     }
+                }
+                is ReaderScreenArgs.LocalZipFolder -> {
+                    val frame = BrowseSession.localStack.lastOrNull() ?: return@withIOContext
+                    val zipRel = frame.relativePath
+                    val inner = args.innerRel.trim('/')
+                    val rel = if (inner.isEmpty()) zipRel else "$zipRel|$inner"
+                    LocalHistory.recordLocalFolderGallery(
+                        rootId = frame.rootId,
+                        relativePath = rel,
+                        title = args.info?.title
+                            ?: inner.substringAfterLast('/').ifEmpty { File(args.zipPath).name },
+                        thumbKey = args.info?.thumbKey,
+                        pages = args.imageNames.size,
+                        info = args.info,
+                    )
                 }
                 is ReaderScreenArgs.SmbFolder -> LocalHistory.recordSmbFolderGallery(
                     sourceId = args.sourceId,
@@ -859,6 +890,24 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                 is ReaderScreenArgs.Archive -> {
                                     LocalHistory.recordLocalArchive(s.path)
                                 }
+                                is ReaderScreenArgs.LocalZipFolder -> {
+                                    val frame = BrowseSession.localStack.lastOrNull()
+                                        ?: return@withIOContext
+                                    val zipRel = frame.relativePath
+                                    val inner = s.innerRel.trim('/')
+                                    val rel = if (inner.isEmpty()) zipRel else "$zipRel|$inner"
+                                    LocalHistory.recordLocalFolderGallery(
+                                        rootId = frame.rootId,
+                                        relativePath = rel,
+                                        title = s.info?.title
+                                            ?: inner.substringAfterLast('/').ifEmpty {
+                                                File(s.zipPath).name
+                                            },
+                                        thumbKey = s.info?.thumbKey,
+                                        pages = s.imageNames.size,
+                                        info = s.info,
+                                    )
+                                }
                             }
                         }
                     }
@@ -1085,6 +1134,22 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             else -> 0
         }
         useFolderPageLoader(args.path.toPath(), info, page, block)
+    }
+    is ReaderScreenArgs.LocalZipFolder -> {
+        val info = args.info
+        val page = when {
+            args.page != -1 -> args.page
+            info != null -> EhDB.getReadProgress(info.gid)
+            else -> 0
+        }
+        useZipFolderPageLoader(
+            zipPath = args.zipPath,
+            innerRel = args.innerRel,
+            imageNames = args.imageNames,
+            info = info,
+            startPage = page,
+            block = block,
+        )
     }
     is ReaderScreenArgs.SmbFolder -> {
         val source = requireNotNull(SmbRepository.load(args.sourceId)) { "SMB source not found" }

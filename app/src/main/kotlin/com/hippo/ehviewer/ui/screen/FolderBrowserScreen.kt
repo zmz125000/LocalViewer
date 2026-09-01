@@ -76,6 +76,7 @@ import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
+import com.hippo.ehviewer.library.FileArchiveByteSource
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalFolderListing
@@ -84,15 +85,20 @@ import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
+import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipCentralDirectory
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
+import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toBrowseSections
+import java.io.File
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.OpenPdfExternally
@@ -118,7 +124,9 @@ import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToLocalFolderReader
+import com.hippo.ehviewer.ui.navToLocalZipFolderReader
 import com.hippo.ehviewer.ui.navToReader
+import com.ehviewer.core.util.withUIContext
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -170,6 +178,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
     val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
     val photoGridMode by Settings.photoGridMode.collectAsState()
+    val browseZipAsDir by Settings.browseZipAsDir.collectAsState()
     val filteredEntries = remember(
         displayEntries,
         search.keyword,
@@ -251,6 +260,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onPathChange = { scrollBehavior.state.heightOffset = 0f },
     )
 
+    fun frameListKey(frame: BrowseSession.LocalFrame): String =
+        if (frame.zipInnerRel != null) "${frame.path}|${frame.zipInnerRel}" else frame.path
+
     suspend fun reload(force: Boolean = false) {
         val frame = stack.lastOrNull()
         if (frame == null) {
@@ -260,8 +272,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             return
         }
         // Leave→enter folder must not wait on previous path’s stuck MMR workers.
-        VideoThumbnail.onBrowseFolderChanged("local:${frame.rootId}:${frame.relativePath}")
-        val targetPath = frame.path
+        VideoThumbnail.onBrowseFolderChanged(
+            "local:${frame.rootId}:${frame.relativePath}:${frame.zipInnerRel.orEmpty()}",
+        )
+        val targetPath = frameListKey(frame)
         loading = true
         error = null
         // Drop stale rows so we never paint child content under a parent path (or vice versa).
@@ -271,6 +285,44 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             entries = emptyList()
         }
         try {
+            if (frame.isZipBrowse) {
+                val result = withIOContext {
+                    val file = File(frame.path)
+                    val cd = ZipCentralDirectory.open(FileArchiveByteSource(file))
+                        ?: error("Cannot read ZIP central directory")
+                    val inner = frame.zipInnerRel.orEmpty()
+                    // Photo-grid needs RegularFile image rows (classify puts images in FolderGallery).
+                    if (frame.photoGrid) {
+                        ZipAsDirListing.directImageNames(cd, inner).map { name ->
+                            BrowseEntry.RegularFile(
+                                name = name,
+                                path = ZipPaths.encodePath(
+                                    frame.path,
+                                    ZipAsDirListing.joinPrefix(inner, name),
+                                ),
+                            )
+                        }
+                    } else {
+                        val remote = ZipAsDirListing.classifyAt(
+                            cd = cd,
+                            innerPrefix = inner,
+                            currentDirName = frame.title,
+                        )
+                        ZipAsDirListing.materializeLocal(
+                            zipAbsolutePath = frame.path,
+                            innerPrefix = inner,
+                            remote = remote,
+                        )
+                    }
+                }
+                if (stack.lastOrNull()?.let { frameListKey(it) } != targetPath) return
+                entries = result
+                listedPath = targetPath
+                error = null
+                loading = false
+                refreshing = false
+                return
+            }
             val root = LocalLibrary.loadRoot(frame.rootId)
             if (root == null) {
                 error = "Missing library root"
@@ -297,7 +349,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 preferMediaStore = frame.preferMediaStore,
                 useCache = !force,
                 onCached = { cached ->
-                    if (stack.lastOrNull()?.path == targetPath) {
+                    if (stack.lastOrNull()?.let { frameListKey(it) } == targetPath) {
                         entries = cached
                         listedPath = targetPath
                         error = null
@@ -308,7 +360,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 },
             )
             // Path changed mid-load — replacement reload owns spinner state.
-            if (stack.lastOrNull()?.path != targetPath) return
+            if (stack.lastOrNull()?.let { frameListKey(it) } != targetPath) return
             entries = result
             listedPath = targetPath
             error = null
@@ -318,7 +370,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             // Path change / new reload owns loading — do not clear here (same as SMB).
             throw e
         } catch (e: Throwable) {
-            if (stack.lastOrNull()?.path != targetPath) return
+            if (stack.lastOrNull()?.let { frameListKey(it) } != targetPath) return
             error = e.message
             entries = emptyList()
             listedPath = targetPath
@@ -363,6 +415,23 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun enterDir(entry: BrowseEntry.Directory) {
         val frame = stack.lastOrNull() ?: return
+        if (frame.isZipBrowse) {
+            val childInner = ZipAsDirListing.joinPrefix(
+                frame.zipInnerRel.orEmpty(),
+                entry.relativeName.ifEmpty { entry.name },
+            )
+            updateStack(
+                stack + BrowseSession.LocalFrame(
+                    rootId = frame.rootId,
+                    path = frame.path,
+                    title = entry.name,
+                    relativePath = frame.relativePath,
+                    preferMediaStore = frame.preferMediaStore,
+                    zipInnerRel = childInner,
+                ),
+            )
+            return
+        }
         // Real path segments (not virtual @display name) — same join as folderGalleryRelative.
         val child = entry.relativeName.replace('\\', '/').trim('/')
         val parent = frame.relativePath.replace('\\', '/').trim('/')
@@ -378,6 +447,28 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 title = entry.name,
                 relativePath = rel,
                 preferMediaStore = frame.preferMediaStore,
+            ),
+        )
+    }
+
+    fun folderArchiveRelative(entry: BrowseEntry.ArchiveGallery, frame: BrowseSession.LocalFrame): String =
+        when {
+            frame.relativePath.isEmpty() -> entry.name
+            else -> "${frame.relativePath.trimEnd('/')}/${entry.name}"
+        }
+
+    /** Push a ZIP/CBZ browse frame at archive root ([zipInnerRel] = ""). */
+    fun enterZip(entry: BrowseEntry.ArchiveGallery) {
+        val frame = stack.lastOrNull() ?: return
+        val zipRel = folderArchiveRelative(entry, frame)
+        updateStack(
+            stack + BrowseSession.LocalFrame(
+                rootId = frame.rootId,
+                path = entry.path.toString(),
+                title = entry.name,
+                relativePath = zipRel,
+                preferMediaStore = frame.preferMediaStore,
+                zipInnerRel = "",
             ),
         )
     }
@@ -449,6 +540,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
      * — same join as SMB [SmbGateway.joinRelativePath] / WebDAV.
      */
     fun folderGalleryRelative(entry: BrowseEntry.FolderGallery, frame: BrowseSession.LocalFrame): String {
+        if (frame.isZipBrowse) {
+            // materializeLocal already stored gallery prefix under the zip in relativeName.
+            return entry.relativeName.replace('\\', '/').trim('/')
+        }
         val child = entry.relativeName.replace('\\', '/').trim('/')
         val parent = frame.relativePath.replace('\\', '/').trim('/')
         return when {
@@ -458,8 +553,67 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    fun openZipFolderGallery(
+        entry: BrowseEntry.FolderGallery,
+        frame: BrowseSession.LocalFrame,
+        page: Int = -1,
+    ) {
+        val inner = entry.relativeName.replace('\\', '/').trim('/')
+        val coverKey = entry.coverPath?.toString()
+        val histRel = if (inner.isEmpty()) {
+            frame.relativePath
+        } else {
+            "${frame.relativePath.trimEnd('/')}|$inner"
+        }
+        val gid = stableGalleryId(frame.rootId, "zip:$histRel")
+        launchIO {
+            val names = runCatching {
+                val cd = ZipCentralDirectory.open(FileArchiveByteSource(File(frame.path)))
+                    ?: return@runCatching emptyList()
+                ZipAsDirListing.directImageNames(cd, inner)
+            }.getOrDefault(emptyList())
+            if (names.isEmpty()) {
+                snackbar(context.getString(R.string.browse_open_failed))
+                return@launchIO
+            }
+            val info = BaseGalleryInfo(
+                gid = gid,
+                token = LOCAL_FOLDER_TOKEN,
+                title = entry.name,
+                pages = names.size,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = coverKey,
+                uploader = "${frame.rootId}\u0000$histRel",
+                category = 0,
+            )
+            recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFolderGallery(
+                rootId = frame.rootId,
+                relativePath = histRel,
+                title = entry.name,
+                thumbKey = coverKey,
+                pages = names.size,
+                info = info,
+            )
+            withUIContext {
+                navToLocalZipFolderReader(
+                    zipPath = frame.path,
+                    innerRel = inner,
+                    imageNames = names,
+                    info = info,
+                    page = page,
+                )
+            }
+        }
+    }
+
     fun openFolderGallery(entry: BrowseEntry.FolderGallery, page: Int = -1) {
         val frame = stack.lastOrNull() ?: return
+        if (frame.isZipBrowse) {
+            openZipFolderGallery(entry, frame, page)
+            return
+        }
         // Playlist = gallery/archive rows in this browse list (lazy galleries), not only
         // path-parent siblings. When already inside a photo-grid overlay, siblings are
         // parent-list galleries if we came from a leaf enter; playlist still uses current
@@ -506,6 +660,21 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
      */
     fun openFolderGalleryPhotoGrid(entry: BrowseEntry.FolderGallery) {
         val frame = stack.lastOrNull() ?: return
+        if (frame.isZipBrowse) {
+            val inner = entry.relativeName.replace('\\', '/').trim('/')
+            updateStack(
+                stack + BrowseSession.LocalFrame(
+                    rootId = frame.rootId,
+                    path = frame.path,
+                    title = entry.name,
+                    relativePath = frame.relativePath,
+                    preferMediaStore = frame.preferMediaStore,
+                    photoGrid = true,
+                    zipInnerRel = inner,
+                ),
+            )
+            return
+        }
         val rel = folderGalleryRelative(entry, frame)
         updateStack(
             stack + BrowseSession.LocalFrame(
@@ -538,6 +707,49 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val images = folderImages
         if (images.isEmpty()) return
         val page = images.indexOfFirst { it.path == file.path }.coerceAtLeast(0)
+        if (frame.isZipBrowse) {
+            val inner = frame.zipInnerRel.orEmpty()
+            val names = images.map { it.name }
+            val coverKey = images.firstOrNull()?.path?.toString()
+            val histRel = if (inner.isEmpty()) {
+                frame.relativePath
+            } else {
+                "${frame.relativePath.trimEnd('/')}|$inner"
+            }
+            val gid = stableGalleryId(frame.rootId, "zip:$histRel")
+            val info = BaseGalleryInfo(
+                gid = gid,
+                token = LOCAL_FOLDER_TOKEN,
+                title = frame.title,
+                pages = names.size,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = coverKey,
+                uploader = "${frame.rootId}\u0000$histRel",
+                category = 0,
+            )
+            launchIO {
+                recordCurrentBrowseFolderHistory()
+                LocalHistory.recordLocalFolderGallery(
+                    rootId = frame.rootId,
+                    relativePath = histRel,
+                    title = frame.title,
+                    thumbKey = coverKey,
+                    pages = names.size,
+                    info = info,
+                )
+                withUIContext {
+                    navToLocalZipFolderReader(
+                        zipPath = frame.path,
+                        innerRel = inner,
+                        imageNames = names,
+                        info = info,
+                        page = page,
+                    )
+                }
+            }
+            return
+        }
         val coverKey = images.firstOrNull()?.path?.toString()
         val gid = stableGalleryId(frame.rootId, frame.relativePath.ifEmpty { "." })
         val info = BaseGalleryInfo(
@@ -572,9 +784,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         navToLocalFolderReader(frame.path, info, page)
     }
 
-    fun openArchive(entry: BrowseEntry.ArchiveGallery) {
+    fun openArchiveReader(entry: BrowseEntry.ArchiveGallery) {
         val frame = stack.lastOrNull()
-        if (frame != null) {
+        if (frame != null && !frame.isZipBrowse) {
             ReaderGalleryPlaylist.setFromLocalBrowse(
                 rootId = frame.rootId,
                 parentPath = frame.path,
@@ -589,6 +801,31 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             LocalHistory.recordLocalArchive(path, title = entry.name)
         }
         navToReader(path)
+    }
+
+    fun openArchive(entry: BrowseEntry.ArchiveGallery) {
+        val frame = stack.lastOrNull()
+        // Nested archive inside a ZIP — stub in v1.
+        if (frame?.isZipBrowse == true || ZipPaths.isZipPath(entry.path.toString())) {
+            launchIO {
+                snackbar(context.getString(R.string.zip_nested_archive_stub))
+            }
+            return
+        }
+        if (browseZipAsDir && isZipArchiveFileName(entry.name)) {
+            launchIO {
+                val cd = runCatching {
+                    ZipCentralDirectory.open(FileArchiveByteSource(File(entry.path.toString())))
+                }.getOrNull()
+                if (cd != null && !ZipAsDirListing.shouldOpenAsArchiveReader(cd)) {
+                    withUIContext { enterZip(entry) }
+                    return@launchIO
+                }
+                withUIContext { openArchiveReader(entry) }
+            }
+            return
+        }
+        openArchiveReader(entry)
     }
 
     /** Long-press PDF → system / third-party reader (tap still uses in-app image PDF engine). */
@@ -697,11 +934,19 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     /** Primary action: Media3 when [Settings.useMedia3Player] is on, else external. */
     fun openVideoPrimary(path: okio.Path) {
+        if (ZipPaths.isZipPath(path.toString()) || stack.lastOrNull()?.isZipBrowse == true) {
+            launchIO { snackbar(context.getString(R.string.zip_video_stub_unsupported)) }
+            return
+        }
         if (Settings.useMedia3Player.value) playVideo(path) else openExternalFile(path)
     }
 
     /** Long-press: opposite of [openVideoPrimary]. */
     fun openVideoSecondary(path: okio.Path) {
+        if (ZipPaths.isZipPath(path.toString()) || stack.lastOrNull()?.isZipBrowse == true) {
+            launchIO { snackbar(context.getString(R.string.zip_video_stub_unsupported)) }
+            return
+        }
         if (Settings.useMedia3Player.value) openExternalFile(path) else playVideo(path)
     }
 

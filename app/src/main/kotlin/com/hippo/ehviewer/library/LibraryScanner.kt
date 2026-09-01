@@ -6,7 +6,10 @@ import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
+import java.io.File
 import okio.Path
+
+// isZipArchiveFileName / Zip* used by zip-as-dir scan path
 
 object LibraryScanner {
     /**
@@ -150,6 +153,7 @@ object LibraryScanner {
             }
         }
 
+        val zipAsDir = Settings.browseZipAsDir.value
         for (archive in archives.sortedWith { a, b -> naturalCompare(a.name, b.name) }) {
             val contentPath = archive.path.toString()
             // Skip archives already confirmed empty (lazy cover open / prior hide).
@@ -161,6 +165,20 @@ object LibraryScanner {
             }
             // Date sort: archive file date (listing meta, else Okio metadata).
             val mtime = childMtime(archive)
+            if (zipAsDir && isZipArchiveFileName(archive.name)) {
+                val indexed = runCatching {
+                    scanZipAsFolders(
+                        rootId = rootId,
+                        zipRel = rel,
+                        zipPath = archive.path,
+                        mtime = mtime,
+                        indexedFolders = indexedFolders,
+                        out = out,
+                    )
+                }.getOrDefault(false)
+                if (indexed) continue
+                // Fall through to ARCHIVE row if CD unreadable.
+            }
             out += LocalGalleryEntity(
                 id = stableGalleryId(rootId, rel),
                 rootId = rootId,
@@ -183,6 +201,52 @@ object LibraryScanner {
             }
             scanDir(rootId, sub.path, rel, rootDisplayName, indexedFolders, out)
         }
+    }
+
+    /**
+     * Index image-bearing prefixes inside a ZIP/CBZ as folder galleries.
+     * @return true if at least one gallery was added (caller skips ARCHIVE row).
+     */
+    private fun scanZipAsFolders(
+        rootId: Long,
+        zipRel: String,
+        zipPath: Path,
+        mtime: Long,
+        indexedFolders: MutableSet<String>,
+        out: MutableList<LocalGalleryEntity>,
+    ): Boolean {
+        val cd = ZipCentralDirectory.open(FileArchiveByteSource(File(zipPath.toString())))
+            ?: return false
+        val prefixes = ZipAsDirListing.imageBearingPrefixes(cd)
+        if (prefixes.isEmpty()) return false
+        val zipAbs = zipPath.toString()
+        var added = false
+        for (inner in prefixes) {
+            val names = ZipAsDirListing.directImageNames(cd, inner)
+            if (names.isEmpty()) continue
+            val folderKey = if (inner.isEmpty()) "zip:$zipRel" else "zip:$zipRel|$inner"
+            if (!indexedFolders.add(folderKey)) continue
+            val title = if (inner.isEmpty()) {
+                zipRel.substringAfterLast('/').ifEmpty { zipRel }
+            } else {
+                inner.substringAfterLast('/')
+            }
+            val coverMember = ZipAsDirListing.firstImageMember(cd, inner)
+            out += LocalGalleryEntity(
+                id = stableGalleryId(rootId, folderKey),
+                rootId = rootId,
+                relativePath = if (inner.isEmpty()) zipRel else "$zipRel|$inner",
+                title = title,
+                kind = LOCAL_GALLERY_KIND_FOLDER,
+                pageCount = names.size,
+                coverPath = coverMember?.let { ZipPaths.encode(zipAbs, it) },
+                // Encode zip + inner for Library open (not a real FS directory).
+                contentPath = ZipPaths.encode(zipAbs, inner.ifEmpty { "." }),
+                mtime = mtime,
+            )
+            added = true
+        }
+        return added
     }
 
     /** Prefer listing [BrowseChild.lastModifiedMs]; fall back to path metadata (SAF/physical). */
