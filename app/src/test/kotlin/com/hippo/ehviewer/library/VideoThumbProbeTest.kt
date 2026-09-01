@@ -70,6 +70,29 @@ class VideoThumbProbeTest {
         assertTrue(!looksLikeMpegTs(notTs))
     }
 
+    /** Browse passes listing size; History probes with size 0 — disk key must match. */
+    @Test
+    fun cacheIdentityIgnoresKnownSizeBytes() {
+        val path = "/storage/emulated/0/Movies/clip.mp4"
+        assertEquals(
+            VideoThumbnailSource.Local(path, knownSizeBytes = 0L).cacheIdentity,
+            VideoThumbnailSource.Local(path, knownSizeBytes = 9_000_000L).cacheIdentity,
+        )
+        assertEquals(
+            VideoThumbnailSource.Smb(7L, "share/a/b.mkv", knownSizeBytes = 0L).cacheIdentity,
+            VideoThumbnailSource.Smb(7L, "share/a/b.mkv", knownSizeBytes = 1_234_567L).cacheIdentity,
+        )
+        assertEquals(
+            VideoThumbnailSource.WebDav(3L, "dav/c.mp4", knownSizeBytes = 0L).cacheIdentity,
+            VideoThumbnailSource.WebDav(3L, "dav/c.mp4", knownSizeBytes = 99L).cacheIdentity,
+        )
+        // Slash normalization matches HistoryThumbKey remote encoding.
+        assertEquals(
+            VideoThumbnailSource.Smb(1L, "a/b.mp4").cacheIdentity,
+            VideoThumbnailSource.Smb(1L, "\\a\\b.mp4").cacheIdentity,
+        )
+    }
+
     private fun sampleMp4(): File {
         val name = "VID20260523162315.mp4"
         val cwd = File(System.getProperty("user.dir")!!)
