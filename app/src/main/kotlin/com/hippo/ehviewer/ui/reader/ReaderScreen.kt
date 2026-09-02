@@ -113,6 +113,7 @@ import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isTarArchiveFileName
+import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
@@ -1136,7 +1137,28 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             info != null -> EhDB.getReadProgress(info.gid)
             else -> 0
         }
-        useFolderPageLoader(args.path.toPath(), info, page, block)
+        val path = args.path.toPath()
+        // Playlist used to pass zip-as-dir galleries as LocalFolder(zip file).
+        if (Settings.browseZipAsDir.value && isZipArchiveFileName(path.name)) {
+            useArchivePageLoader(
+                path,
+                info = info,
+                startPage = page,
+                passwdProvider = { invalidator ->
+                    awaitInputText(
+                        title = string(R.string.archive_need_passwd),
+                        hint = string(R.string.archive_passwd),
+                        onUserDismiss = { nav.popBackStack() },
+                    ) { text ->
+                        ensure(text.isNotBlank()) { string(R.string.passwd_cannot_be_empty) }
+                        ensure(invalidator(text)) { string(R.string.passwd_wrong) }
+                    }
+                },
+                block = block,
+            )
+        } else {
+            useFolderPageLoader(path, info, page, block)
+        }
     }
     is ReaderScreenArgs.LocalZipFolder -> {
         val info = args.info

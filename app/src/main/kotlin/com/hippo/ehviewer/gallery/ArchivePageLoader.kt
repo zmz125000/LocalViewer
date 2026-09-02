@@ -38,6 +38,7 @@ import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.util.displayName
 import java.io.File
+import java.nio.ByteBuffer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -85,11 +86,12 @@ suspend inline fun <T> useArchivePageLoader(
             if (needPassword() && archivePasswds.none(::providePassword)) {
                 archivePasswds += passwdProvider(::providePassword)
             }
-            val indexMap = if (imageNames.isEmpty()) {
+            val indexMap = if (imageNames.isEmpty() && memberPrefix.isEmpty()) {
                 null
             } else {
                 val names = List(opened) { getArchiveFilename(it) }
                 nativeIndicesForZipFolder(memberPrefix, imageNames, names)
+                    .takeIf { it.isNotEmpty() }
             }
             val size = indexMap?.size ?: opened
             check(size > 0) { "Archive have no content!" }
@@ -125,12 +127,17 @@ suspend inline fun <T> useArchivePageLoader(
                     }
 
                     override fun openSource(index: Int): ImageSource {
-                        val buffer = synchronized(extractLock) {
+                        val native = synchronized(extractLock) {
                             extractToByteBuffer(nat(index))
                         }
-                        checkNotNull(buffer) { "Extract archive content $index failed!" }
-                        check(buffer.isDirect)
-                        return byteBufferSource(buffer) { releaseByteBuffer(buffer) }
+                        checkNotNull(native) { "Extract archive content $index failed!" }
+                        check(native.isDirect)
+                        // Heap copy so sibling closeArchive / cancel cannot UAF Coil on
+                        // DefaultDispatcher (mmap or native malloc still in flight).
+                        val bytes = ByteArray(native.remaining())
+                        native.duplicate().get(bytes)
+                        releaseByteBuffer(native)
+                        return byteBufferSource(ByteBuffer.wrap(bytes)) {}
                     }
 
                     override fun prefetchPages(pages: List<Int>, bounds: IntRange) = Unit
@@ -169,38 +176,41 @@ internal fun nativeIndicesForZipFolder(
     nativeNames: List<String>,
 ): IntArray {
     if (nativeNames.isEmpty()) return IntArray(0)
-    if (imageNames.isEmpty()) return IntArray(nativeNames.size) { it }
+    val prefix = innerRel.replace('\\', '/').trim('/')
+    if (imageNames.isEmpty() && prefix.isEmpty()) return IntArray(nativeNames.size) { it }
     val allow = LinkedHashSet(
         imageNames.map { it.replace('\\', '/').substringAfterLast('/') },
     )
-    val prefix = innerRel.replace('\\', '/').trim('/')
     val expectedSlashes = if (prefix.isEmpty()) 0 else prefix.count { it == '/' } + 1
     fun norm(n: String) = n.replace('\\', '/').trimStart('/')
     fun base(n: String) = norm(n).substringAfterLast('/')
     fun slashes(n: String) = norm(n).count { it == '/' }
 
+    fun allowed(n: String) = allow.isEmpty() || base(n) in allow || norm(n) in allow
     val exact = if (prefix.isEmpty()) {
         nativeNames.mapIndexedNotNull { i, n ->
             val path = norm(n)
-            if ('/' !in path && (path in allow || base(n) in allow)) i else null
+            if ('/' !in path && allowed(n)) i else null
         }
     } else {
         val p = "$prefix/"
         nativeNames.mapIndexedNotNull { i, n ->
             val path = norm(n)
-            if (path.startsWith(p) && '/' !in path.removePrefix(p) && base(n) in allow) i else null
+            if (path.startsWith(p) && '/' !in path.removePrefix(p) && allowed(n)) i else null
         }
     }
+    if (allow.isEmpty() && exact.isNotEmpty()) return exact.toIntArray()
     if (exact.size == imageNames.size) return exact.toIntArray()
 
     val atDepth = nativeNames.mapIndexedNotNull { i, n ->
-        if (slashes(n) == expectedSlashes && base(n) in allow) i else null
+        if (slashes(n) == expectedSlashes && allowed(n)) i else null
     }
+    if (allow.isEmpty() && atDepth.isNotEmpty()) return atDepth.toIntArray()
     if (atDepth.size == imageNames.size) return atDepth.toIntArray()
     if (exact.isNotEmpty()) return exact.toIntArray()
     if (atDepth.isNotEmpty()) return atDepth.toIntArray()
 
-    val byBase = nativeNames.mapIndexedNotNull { i, n -> if (base(n) in allow) i else null }
+    val byBase = nativeNames.mapIndexedNotNull { i, n -> if (allowed(n)) i else null }
     return if (byBase.isNotEmpty()) byBase.toIntArray() else IntArray(nativeNames.size) { it }
 }
 

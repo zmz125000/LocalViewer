@@ -2,6 +2,7 @@ package com.hippo.ehviewer.library
 
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
@@ -29,13 +30,44 @@ object GallerySiblingNavigator {
         ReaderGalleryPlaylist.sibling(args, next)?.let { return it }
         return when (args) {
             is ReaderScreenArgs.LocalFolder -> localPathSibling(args.path, next)
-            is ReaderScreenArgs.LocalZipFolder -> null
+            is ReaderScreenArgs.LocalZipFolder -> localPathSibling(args.zipPath, next)
             is ReaderScreenArgs.Archive -> localPathSibling(args.path, next)
             is ReaderScreenArgs.SmbFolder -> smbPathSibling(args.sourceId, args.remoteDir, next)
             is ReaderScreenArgs.SmbStreamArchive -> smbPathSibling(args.sourceId, args.remotePath, next)
             is ReaderScreenArgs.WebDavFolder -> webDavPathSibling(args.sourceId, args.remoteDir, next)
             is ReaderScreenArgs.WebDavStreamArchive -> webDavPathSibling(args.sourceId, args.remotePath, next)
         }
+    }
+
+    private fun zipAsDirSiblingArgs(
+        rootId: Long,
+        parentRel: String,
+        target: BrowseEntry.FolderGallery,
+    ): ReaderScreenArgs.LocalZipFolder? {
+        if (!Settings.browseZipAsDir.value || !isZipArchiveFileName(target.path.name)) return null
+        val zipSeg = ZipAsDirListing.zipFileSegment(target.relativeName, target.path.name)
+            ?: target.path.name
+        val inner = ZipAsDirListing.zipInnerPrefix(target.relativeName)
+        val zipRel = if (parentRel.isEmpty()) zipSeg else "$parentRel/$zipSeg"
+        val histRel = if (inner.isEmpty()) zipRel else "$zipRel|$inner"
+        val info = BaseGalleryInfo(
+            gid = stableGalleryId(rootId, "zip:$histRel"),
+            token = LOCAL_FOLDER_TOKEN,
+            title = target.name,
+            pages = if (target.pageCountCapped) 0 else target.pageCount,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            thumbKey = target.coverPath?.toString(),
+            uploader = "$rootId\u0000$histRel",
+            category = 0,
+        )
+        return ReaderScreenArgs.LocalZipFolder(
+            zipPath = target.path.toString(),
+            innerRel = inner,
+            imageNames = emptyList(),
+            page = -1,
+            info = info,
+        )
     }
 
     /** Local folder gallery or archive file in the same parent listing. */
@@ -82,25 +114,27 @@ object GallerySiblingNavigator {
                 // relativePath is already the gallery parent — do not peel another segment.
                 val rootId = frame?.rootId ?: 0L
                 val parentRel = frame?.relativePath.orEmpty().trim('/')
-                val rel = when {
-                    target.path.toString() == parent.toString() -> parentRel.ifEmpty { "." }
-                    parentRel.isEmpty() -> target.name
-                    else -> "$parentRel/${target.name}"
+                zipAsDirSiblingArgs(rootId, parentRel, target) ?: run {
+                    val rel = when {
+                        target.path.toString() == parent.toString() -> parentRel.ifEmpty { "." }
+                        parentRel.isEmpty() -> target.name
+                        else -> "$parentRel/${target.name}"
+                    }
+                    val normRel = rel.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
+                    val gid = stableGalleryId(rootId, rel.ifEmpty { "." })
+                    val info = BaseGalleryInfo(
+                        gid = gid,
+                        token = LOCAL_FOLDER_TOKEN,
+                        title = target.name,
+                        pages = if (target.pageCountCapped) 0 else target.pageCount,
+                        favoriteSlot = NOT_FAVORITED,
+                        rating = -1f,
+                        thumbKey = target.coverPath?.toString(),
+                        uploader = "$rootId\u0000$normRel",
+                        category = 0,
+                    )
+                    ReaderScreenArgs.LocalFolder(target.path.toString(), page = -1, info = info)
                 }
-                val normRel = rel.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
-                val gid = stableGalleryId(rootId, rel.ifEmpty { "." })
-                val info = BaseGalleryInfo(
-                    gid = gid,
-                    token = LOCAL_FOLDER_TOKEN,
-                    title = target.name,
-                    pages = if (target.pageCountCapped) 0 else target.pageCount,
-                    favoriteSlot = NOT_FAVORITED,
-                    rating = -1f,
-                    thumbKey = target.coverPath?.toString(),
-                    uploader = "$rootId\u0000$normRel",
-                    category = 0,
-                )
-                ReaderScreenArgs.LocalFolder(target.path.toString(), page = -1, info = info)
             }
             is BrowseEntry.Directory,
             is BrowseEntry.VideoFile,

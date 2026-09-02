@@ -639,6 +639,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 info = info,
             )
             withUIContext {
+                ReaderGalleryPlaylist.setFromLocalBrowse(
+                    rootId = frame.rootId,
+                    parentPath = frame.path,
+                    parentRelative = frame.relativePath,
+                    entries = entries,
+                )
                 navToLocalZipFolderReader(
                     zipPath = zipPath,
                     innerRel = inner,
