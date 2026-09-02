@@ -1238,7 +1238,7 @@ fun BrowseCoverThumb(
                 val extracted = withIOContext {
                     val source = SmbRepository.load(cover.sourceId) ?: return@withIOContext null
                     val password = SmbPasswordStore.get(cover.sourceId)
-                    ZipMemberCover.ensure(key, cover.memberRel) {
+                    ZipMemberCover.ensure(key, cover.memberRel, notifyTooLarge = false) {
                         SmbArchiveByteSource(
                             source,
                             password,
@@ -1271,7 +1271,7 @@ fun BrowseCoverThumb(
                 val extracted = withIOContext {
                     val source = WebDavRepository.load(cover.sourceId) ?: return@withIOContext null
                     val password = WebDavPasswordStore.get(cover.sourceId)
-                    ZipMemberCover.ensure(key, cover.memberRel) {
+                    ZipMemberCover.ensure(key, cover.memberRel, notifyTooLarge = false) {
                         WebDavArchiveByteSource(
                             source,
                             password,

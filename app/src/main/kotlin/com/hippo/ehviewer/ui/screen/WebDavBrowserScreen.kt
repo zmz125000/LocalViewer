@@ -93,6 +93,7 @@ import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
+import com.hippo.ehviewer.library.isZipMemberTooLarge
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
@@ -749,6 +750,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     displayName = entry.name,
                 )
             } catch (e: Throwable) {
+                if (e.isZipMemberTooLarge()) return@launchIO
                 snackbar(
                     context.getString(
                         R.string.open_pdf_external_failed,
@@ -782,6 +784,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     mimeType = mimeTypeForFileName(entry.name),
                 )
             } catch (e: Throwable) {
+                if (e.isZipMemberTooLarge()) return@launchIO
                 snackbar(
                     context.getString(R.string.browse_open_failed) +
                         " " + (e.message ?: e.toString()),
@@ -809,6 +812,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     mimeType = mimeTypeForFileName(actualName),
                 )
             } catch (e: Throwable) {
+                if (e.isZipMemberTooLarge()) return@launchIO
                 snackbar(
                     context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
                 )
@@ -836,6 +840,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         .map { WebDavGateway.joinRelative(relativeDir, it.fileName) },
                 )
             } catch (e: Throwable) {
+                if (e.isZipMemberTooLarge()) return@launchIO
                 snackbar(
                     context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
                 )
@@ -930,6 +935,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 }
             } catch (_: CancellationException) {
             } catch (e: Throwable) {
+                if (e.isZipMemberTooLarge()) return@launchIO
                 snackbar(string(R.string.archive_download_failed, e.message ?: e.toString()))
             }
         }

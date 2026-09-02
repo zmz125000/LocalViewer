@@ -160,6 +160,7 @@
     <string name="browse_menu_zip_as_dir">將 ZIP 當作資料夾</string>
     <string name="zip_video_stub_unsupported">暫不支援在 ZIP 內播放影片</string>
     <string name="zip_nested_archive_stub">暫不支援開啟 ZIP 內的壓縮包</string>
+    <string name="zip_member_cache_too_large">檔案約 %d MB（上限 100 MB），未寫入本機儲存。</string>
     <string name="settings_photo_grid_mode">照片牆模式</string>
     <string name="settings_photo_grid_mode_summary">開啟：點擊資料夾圖庫開啟照片牆，長按開啟閱讀器。關閉：點擊開啟閱讀器，長按開啟照片牆。</string>
     <string name="settings_photo_grid_scroll_to_progress">照片牆捲動到閱讀進度</string>

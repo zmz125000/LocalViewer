@@ -451,6 +451,7 @@
     <string name="browse_menu_zip_as_dir">Open ZIP as folder</string>
     <string name="zip_video_stub_unsupported">Video playback inside ZIP is not supported</string>
     <string name="zip_nested_archive_stub">Opening archives inside a ZIP is not supported</string>
+    <string name="zip_member_cache_too_large">File is %d MB (limit 100 MB). Not saved to device storage.</string>
     <string name="settings_photo_grid_mode">Photo grid mode</string>
     <string name="settings_photo_grid_mode_summary">On: tap folder gallery opens photo grid, long-press opens reader. Off: tap opens reader, long-press opens photo grid.</string>
     <string name="settings_photo_grid_scroll_to_progress">Photo grid scroll to reading progress</string>

@@ -41,7 +41,7 @@ class CoverPathFetcher(
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
         ZipPaths.parse(data.path)?.let { (zip, member) ->
-            val extracted = ZipMemberCover.ensureLocal(zip, member)
+            val extracted = ZipMemberCover.ensureLocal(zip, member, notifyTooLarge = false)
                 ?: throw FileNotFoundException("ZIP cover missing: ${data.path}")
             return openAsSource(extracted)
         }

@@ -109,6 +109,11 @@ internal fun ensureZipPage(
     val dest = ZipMemberCover.destFile(zipKey, member)
     if (dest.isFile && dest.length() > 0L) return dest.absolutePath.toPath()
     val entry = cd.find(member) ?: error("Missing ZIP member: $member")
-    check(cd.extractToFile(entry, dest)) { "Extract failed: $member" }
+    if (ZipMemberCover.rejectIfTooLarge(entry, notify = true)) {
+        error("ZIP member too large")
+    }
+    check(cd.extractToFile(entry, dest, maxBytes = ZipMemberCover.MAX_CACHE_BYTES)) {
+        "Extract failed: $member"
+    }
     return dest.absolutePath.toPath()
 }

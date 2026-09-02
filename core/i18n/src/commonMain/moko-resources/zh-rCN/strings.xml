@@ -150,6 +150,7 @@
     <string name="browse_menu_zip_as_dir">将 ZIP 当作文件夹</string>
     <string name="zip_video_stub_unsupported">暂不支持在 ZIP 内播放视频</string>
     <string name="zip_nested_archive_stub">暂不支持打开 ZIP 内的压缩包</string>
+    <string name="zip_member_cache_too_large">文件约 %d MB（上限 100 MB），未写入本机存储。</string>
     <string name="settings_photo_grid_mode">照片墙模式</string>
     <string name="settings_photo_grid_mode_summary">开启：点击文件夹画廊打开照片墙，长按打开阅读器。关闭：点击打开阅读器，长按打开照片墙。</string>
     <string name="settings_photo_grid_scroll_to_progress">照片墙滚动到阅读进度</string>

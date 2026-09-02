@@ -29,6 +29,7 @@ import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCentralDirectory
 import com.hippo.ehviewer.library.ZipMemberCover
+import com.hippo.ehviewer.library.ZipMemberTooLargeException
 import com.hippo.ehviewer.library.classifyRemoteListing
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
@@ -2287,7 +2288,10 @@ object SmbGateway {
                     )
                 } ?: return@runCatching null
                 java.io.File(local.toString()).length().takeIf { it > 0L }
-            }.getOrNull()
+            }.getOrElse { e ->
+                if (e is ZipMemberTooLargeException) throw e
+                null
+            }
         }
         runCatching {
             val loc = resolveLocation(source, relativeFilePath)
