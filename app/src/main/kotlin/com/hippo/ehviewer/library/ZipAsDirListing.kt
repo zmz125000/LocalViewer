@@ -404,17 +404,18 @@ object ZipAsDirListing {
         return if ('/' in rel) rel.substringAfter('/') else ""
     }
 
-    /** Direct zip-as-dir Directory / FolderGallery names already in a classified listing. */
+    /**
+     * Zip/cbz file names already represented as zip-as-dir rows in a classified listing.
+     * Includes wrapper galleries (`file.zip/Album`) so slim refresh does not re-add them.
+     */
     fun cachedDirectZipAsDirNames(entries: List<BrowseEntryRemote>): Set<String> {
-        fun direct(name: String): String? {
-            val rel = name.replace('\\', '/').trim('/')
-            return rel.takeIf { it.isNotEmpty() && '/' !in it && isZipArchiveFileName(it) }
-        }
         val names = HashSet<String>()
         for (entry in entries) {
             when (entry) {
-                is BrowseEntryRemote.Directory -> direct(entry.relativeName.ifEmpty { entry.name })?.let { names += it }
-                is BrowseEntryRemote.FolderGallery -> direct(entry.relativeName)?.let { names += it }
+                is BrowseEntryRemote.Directory ->
+                    zipFileSegment(entry.relativeName.ifEmpty { entry.name }, entry.name)?.let { names += it }
+                is BrowseEntryRemote.FolderGallery ->
+                    zipFileSegment(entry.relativeName, entry.name)?.let { names += it }
                 else -> Unit
             }
         }

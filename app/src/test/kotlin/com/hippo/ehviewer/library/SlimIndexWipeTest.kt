@@ -69,6 +69,20 @@ class SlimIndexWipeTest {
     }
 
     @Test
+    fun wrapperFolderGalleryCountsAsCachedZipAsDir() {
+        val gal = BrowseEntryRemote.FolderGallery(
+            name = "园区.zip",
+            relativeName = "园区.zip/园区",
+            pageCount = 2,
+            coverFileName = "01.jpg",
+            imageFileNames = listOf("01.jpg", "02.jpg"),
+        )
+        val live = listOf(RemoteChild(name = "园区.zip", isDirectory = false))
+        assertFalse(isUntrustedSlimLiveListing(listOf(gal), live))
+        assertEquals(setOf("园区.zip"), ZipAsDirListing.cachedDirectZipAsDirNames(listOf(gal)))
+    }
+
+    @Test
     fun liveZipFileOnly_againstCachedRealDirs_isUntrusted() {
         val live = listOf(RemoteChild(name = "album.zip", isDirectory = false))
         assertTrue(isUntrustedSlimLiveListing(cached, live))
