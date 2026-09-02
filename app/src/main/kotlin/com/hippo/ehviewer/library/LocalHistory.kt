@@ -249,7 +249,22 @@ object LocalHistory {
             is LocalHistoryTarget.LocalFile -> bumpLocalPathParent(target.path)
             is LocalHistoryTarget.LibraryGallery -> {
                 val gallery = LocalLibrary.loadGallery(target.galleryId) ?: return
-                bumpLocalPathParent(gallery.contentPath)
+                val zipParsed = ZipAsDirListing.parseZipGalleryRelative(gallery.relativePath)
+                if (zipParsed != null || ZipPaths.parseGallery(gallery.contentPath) != null) {
+                    val parentRel = ZipAsDirListing.parentBrowseRelative(gallery.relativePath)
+                    val title = if (parentRel.isEmpty()) {
+                        LocalLibrary.loadRoot(gallery.rootId)?.displayName ?: "Folder"
+                    } else {
+                        humanizePathName(parentRel.substringAfterLast('/'))
+                    }
+                    recordLocalBrowseFolder(
+                        rootId = gallery.rootId,
+                        relativePath = parentRel,
+                        title = title,
+                    )
+                } else {
+                    bumpLocalPathParent(gallery.contentPath)
+                }
             }
         }
     }
@@ -269,7 +284,7 @@ object LocalHistory {
     }
 
     private suspend fun bumpLocalBrowseParent(rootId: Long, contentRelativePath: String) {
-        val parentRel = parentRelativeOfFile(contentRelativePath)
+        val parentRel = ZipAsDirListing.parentBrowseRelative(contentRelativePath)
         val title = if (parentRel.isEmpty()) {
             LocalLibrary.loadRoot(rootId)?.displayName ?: "Folder"
         } else {
@@ -891,6 +906,10 @@ object LocalHistory {
 /**
  * Rebuild browse stack from root to [relativePath] without listing directories.
  * Intermediate frames are path joins only; the browser lists the final frame lazily.
+ *
+ * Zip-as-dir: `dir/file.zip` and `dir/file.zip/Album` become zip-browse frames
+ * ([BrowseSession.LocalFrame.zipInnerRel]) so listing uses the ZIP CD, not
+ * `file.zip/Album` as a real SAF folder.
  */
 fun buildLocalBrowseStack(
     rootId: Long,
@@ -898,6 +917,7 @@ fun buildLocalBrowseStack(
     rootPath: okio.Path,
     relativePath: String,
     preferMediaStore: Boolean = true,
+    zipAsDir: Boolean = Settings.browseZipAsDir.value,
 ): List<BrowseSession.LocalFrame> {
     val frames = ArrayList<BrowseSession.LocalFrame>()
     frames += BrowseSession.LocalFrame(
@@ -907,20 +927,48 @@ fun buildLocalBrowseStack(
         relativePath = "",
         preferMediaStore = preferMediaStore,
     )
-    val rel = relativePath.trim('/').let { if (it == ".") "" else it }
+    val rel = relativePath.replace('\\', '/').trim('/').let { if (it == ".") "" else it }
+        .replace('|', '/')
     if (rel.isEmpty()) return frames
     var abs = rootPath
     var acc = ""
+    var zipFileAbs: okio.Path? = null
+    var zipInner: String? = null
     for (seg in rel.split('/').filter { it.isNotEmpty() }) {
+        if (zipInner != null) {
+            zipInner = ZipAsDirListing.joinPrefix(zipInner, seg)
+            frames += BrowseSession.LocalFrame(
+                rootId = rootId,
+                path = zipFileAbs!!.toString(),
+                title = seg,
+                relativePath = acc,
+                preferMediaStore = preferMediaStore,
+                zipInnerRel = zipInner,
+            )
+            continue
+        }
         abs = abs / seg
         acc = if (acc.isEmpty()) seg else "$acc/$seg"
-        frames += BrowseSession.LocalFrame(
-            rootId = rootId,
-            path = abs.toString(),
-            title = seg,
-            relativePath = acc,
-            preferMediaStore = preferMediaStore,
-        )
+        if (zipAsDir && isZipArchiveFileName(seg)) {
+            zipFileAbs = abs
+            zipInner = ""
+            frames += BrowseSession.LocalFrame(
+                rootId = rootId,
+                path = abs.toString(),
+                title = seg,
+                relativePath = acc,
+                preferMediaStore = preferMediaStore,
+                zipInnerRel = "",
+            )
+        } else {
+            frames += BrowseSession.LocalFrame(
+                rootId = rootId,
+                path = abs.toString(),
+                title = seg,
+                relativePath = acc,
+                preferMediaStore = preferMediaStore,
+            )
+        }
     }
     return frames
 }

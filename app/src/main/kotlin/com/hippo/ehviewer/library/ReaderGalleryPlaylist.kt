@@ -4,6 +4,7 @@ import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 
 /**
@@ -37,6 +38,14 @@ object ReaderGalleryPlaylist {
 
         data class Archive(val path: String) : Item
 
+        /** On-device zip/cbz opened as a gallery (zip-as-dir). */
+        data class LocalZipFolder(
+            val zipPath: String,
+            val innerRel: String,
+            val imageNames: List<String>,
+            val info: BaseGalleryInfo? = null,
+        ) : Item
+
         /** SMB archive or document (ZIP/TAR stream, solid RAR/7z, PDF/EPUB). */
         data class SmbStreamArchive(
             val sourceId: Long,
@@ -68,7 +77,13 @@ object ReaderGalleryPlaylist {
             if (g.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
                 Item.Archive(g.contentPath)
             } else {
-                Item.LocalFolder(g.contentPath, g.toBaseGalleryInfo())
+                val zip = ZipPaths.parseGallery(g.contentPath)
+                if (zip != null) {
+                    val (zipAbs, inner) = zip
+                    Item.LocalZipFolder(zipAbs, inner, emptyList(), g.toBaseGalleryInfo())
+                } else {
+                    Item.LocalFolder(g.contentPath, g.toBaseGalleryInfo())
+                }
             }
         }
     }
@@ -82,26 +97,29 @@ object ReaderGalleryPlaylist {
         items = entries.mapNotNull { e ->
             when (e) {
                 is BrowseEntry.FolderGallery -> {
-                    val rel = when {
-                        parentRelative.isEmpty() && e.path.toString() == parentPath -> ""
-                        parentRelative.isEmpty() -> e.name
-                        e.path.toString() == parentPath -> parentRelative
-                        else -> "$parentRelative/${e.name}"
-                    }
-                    val normRel = rel.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
-                    // Same identity as FolderBrowser openFolderGallery / history record.
-                    val info = BaseGalleryInfo(
-                        gid = stableGalleryId(rootId, rel.ifEmpty { "." }),
-                        token = LOCAL_FOLDER_TOKEN,
-                        title = e.name,
-                        pages = if (e.pageCountCapped) 0 else e.pageCount,
-                        favoriteSlot = NOT_FAVORITED,
-                        rating = -1f,
-                        thumbKey = e.coverPath?.toString(),
-                        uploader = "$rootId\u0000$normRel",
-                        category = 0,
-                    )
-                    Item.LocalFolder(e.path.toString(), info)
+                    zipAsDirPlaylistItem(rootId, parentRelative, e)
+                        ?: run {
+                            val rel = when {
+                                parentRelative.isEmpty() && e.path.toString() == parentPath -> ""
+                                parentRelative.isEmpty() -> e.name
+                                e.path.toString() == parentPath -> parentRelative
+                                else -> "$parentRelative/${e.name}"
+                            }
+                            val normRel = rel.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
+                            // Same identity as FolderBrowser openFolderGallery / history record.
+                            val info = BaseGalleryInfo(
+                                gid = stableGalleryId(rootId, rel.ifEmpty { "." }),
+                                token = LOCAL_FOLDER_TOKEN,
+                                title = e.name,
+                                pages = if (e.pageCountCapped) 0 else e.pageCount,
+                                favoriteSlot = NOT_FAVORITED,
+                                rating = -1f,
+                                thumbKey = e.coverPath?.toString(),
+                                uploader = "$rootId\u0000$normRel",
+                                category = 0,
+                            )
+                            Item.LocalFolder(e.path.toString(), info)
+                        }
                 }
                 is BrowseEntry.ArchiveGallery -> Item.Archive(e.path.toString())
                 is BrowseEntry.Directory,
@@ -262,6 +280,7 @@ object ReaderGalleryPlaylist {
 
     private fun keyOf(item: Item): String = when (item) {
         is Item.LocalFolder -> "local:${item.path}"
+        is Item.LocalZipFolder -> "zip:${item.zipPath}|${item.innerRel.trim('/')}"
         is Item.SmbFolder -> "smb:${item.sourceId}:${item.remoteDir.trim('/')}"
         is Item.WebDavFolder -> "webdav:${item.sourceId}:${item.remoteDir.trim('/')}"
         is Item.Archive -> "archive:${item.path}"
@@ -271,11 +290,45 @@ object ReaderGalleryPlaylist {
 
     private fun Item.toArgs(): ReaderScreenArgs = when (this) {
         is Item.LocalFolder -> ReaderScreenArgs.LocalFolder(path, page = -1, info = info)
+        is Item.LocalZipFolder -> ReaderScreenArgs.LocalZipFolder(
+            zipPath,
+            innerRel,
+            imageNames,
+            page = -1,
+            info = info,
+        )
         is Item.SmbFolder -> ReaderScreenArgs.SmbFolder(sourceId, remoteDir, imageNames, page = -1, info = info)
         is Item.WebDavFolder -> ReaderScreenArgs.WebDavFolder(sourceId, remoteDir, imageNames, page = -1, info = info)
         is Item.Archive -> ReaderScreenArgs.Archive(path, page = -1, info = null)
         is Item.SmbStreamArchive -> ReaderScreenArgs.SmbStreamArchive(sourceId, remotePath, page = -1, info = info)
         is Item.WebDavStreamArchive -> ReaderScreenArgs.WebDavStreamArchive(sourceId, remotePath, page = -1, info = info)
+    }
+
+    private fun zipAsDirPlaylistItem(
+        rootId: Long,
+        parentRelative: String,
+        e: BrowseEntry.FolderGallery,
+    ): Item.LocalZipFolder? {
+        if (!Settings.browseZipAsDir.value || !isZipArchiveFileName(e.path.name)) return null
+        val zipSeg = ZipAsDirListing.zipFileSegment(e.relativeName, e.path.name) ?: e.path.name
+        val inner = ZipAsDirListing.zipInnerPrefix(e.relativeName)
+        val zipRel = when {
+            parentRelative.isEmpty() -> zipSeg
+            else -> "${parentRelative.trimEnd('/')}/$zipSeg"
+        }
+        val histRel = if (inner.isEmpty()) zipRel else "$zipRel|$inner"
+        val info = BaseGalleryInfo(
+            gid = stableGalleryId(rootId, "zip:$histRel"),
+            token = LOCAL_FOLDER_TOKEN,
+            title = e.name,
+            pages = if (e.pageCountCapped) 0 else e.pageCount,
+            favoriteSlot = NOT_FAVORITED,
+            rating = -1f,
+            thumbKey = e.coverPath?.toString(),
+            uploader = "$rootId\u0000$histRel",
+            category = 0,
+        )
+        return Item.LocalZipFolder(e.path.toString(), inner, emptyList(), info)
     }
 
     /**

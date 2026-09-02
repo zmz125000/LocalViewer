@@ -545,9 +545,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             entries = entries,
             parentPath = parentPath,
         )
+        val histRel = if (frame.isZipBrowse) {
+            ZipAsDirListing.virtualRelativeDir(frame.relativePath, frame.zipInnerRel.orEmpty())
+        } else {
+            frame.relativePath
+        }
         LocalHistory.recordLocalBrowseFolder(
             rootId = frame.rootId,
-            relativePath = frame.relativePath,
+            relativePath = histRel,
             title = frame.title,
             thumbKey = folderThumb,
         )
@@ -639,6 +644,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 info = info,
             )
             withUIContext {
+                ReaderGalleryPlaylist.setFromLocalBrowse(
+                    rootId = frame.rootId,
+                    parentPath = frame.path,
+                    parentRelative = frame.relativePath,
+                    entries = entries,
+                )
                 navToLocalZipFolderReader(
                     zipPath = zipPath,
                     innerRel = inner,

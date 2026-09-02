@@ -2019,42 +2019,42 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_extractToByteBuffer(JNIEnv *env, jclass th
     }
     entry *entry = &entries[index];
     ssize_t size = entry->size;
-    if (entry->addr) {
-        jobject result = (*env)->NewDirectByteBuffer(env, entry->addr, size);
+    if (size <= 0) {
         pthread_mutex_unlock(&stream_mutex);
-        return result;
+        return 0;
     }
-
-    jobject result = 0;
-    void *addr = acquire_decode_buffer();
-    if (!addr) {
-        LOGE("%s", "Decode buffer alloc failed");
+    // Java-owned copy. Do not hand mmap / decode-pool pointers to Coil — sibling
+    // closeArchive munmap/free races DefaultDispatcher decode (SIGSEGV MAPERR 0x0).
+    void *out = malloc((size_t) size);
+    if (!out) {
+        LOGE("%s", "extractToByteBuffer malloc failed");
         pthread_mutex_unlock(&stream_mutex);
         return 0;
     }
 
-    if (use_stream_io && use_zip_cd_index) {
-        // Direct range-read + inflate — one member only (no archive re-scan).
-        if (zip_stream_extract_entry(entry, addr, (size_t) size) == 0) {
-            result = (*env)->NewDirectByteBuffer(env, addr, size);
+    jobject result = 0;
+    if (entry->addr) {
+        memcpy(out, entry->addr, (size_t) size);
+        result = (*env)->NewDirectByteBuffer(env, out, size);
+    } else if (use_stream_io && use_zip_cd_index) {
+        if (zip_stream_extract_entry(entry, out, (size_t) size) == 0) {
+            result = (*env)->NewDirectByteBuffer(env, out, size);
         } else {
             LOGE("%s%d", "ZIP stream extract failed for index ", index);
-            release_decode_buffer(addr);
         }
     } else if (use_stream_io && use_tar_index) {
-        if (tar_stream_extract_entry(entry, addr, (size_t) size) == 0) {
-            result = (*env)->NewDirectByteBuffer(env, addr, size);
+        if (tar_stream_extract_entry(entry, out, (size_t) size) == 0) {
+            result = (*env)->NewDirectByteBuffer(env, out, size);
         } else {
             LOGE("%s%d", "TAR stream extract failed for index ", index);
-            release_decode_buffer(addr);
         }
     } else {
         archive_ctx *ctx = NULL;
         if (!archive_get_ctx(&ctx, entry->index)) {
-            ssize_t bytes = archive_read_data(ctx->arc, addr, size);
+            ssize_t bytes = archive_read_data(ctx->arc, out, size);
             if (bytes == size) {
                 ctx->using = 0;
-                result = (*env)->NewDirectByteBuffer(env, addr, size);
+                result = (*env)->NewDirectByteBuffer(env, out, size);
             } else {
                 if (bytes < 0) {
                     LOGE("%s%s", "Archive read failed: ", archive_error_string(ctx->arc));
@@ -2062,13 +2062,10 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_extractToByteBuffer(JNIEnv *env, jclass th
                     LOGE("%s", "No enough data read, WTF?");
                 }
                 archive_drop_ctx(ctx);
-                release_decode_buffer(addr);
             }
-        } else {
-            release_decode_buffer(addr);
         }
     }
-
+    if (!result) free(out);
     pthread_mutex_unlock(&stream_mutex);
     return result;
 }
@@ -2204,6 +2201,34 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_getExtension(JNIEnv *env, jclass thiz, jin
     return (*env)->NewStringUTF(env, ext);
 }
 
+/** NewStringUTF crashes on invalid modified UTF-8 (legacy ZIP names). Java UTF-8 ctor replaces. */
+static jstring new_string_lossy_utf8(JNIEnv *env, const char *s) {
+    if (!s || !s[0]) return (*env)->NewStringUTF(env, "");
+    jclass strCls = (*env)->FindClass(env, "java/lang/String");
+    jmethodID ctor = (*env)->GetMethodID(env, strCls, "<init>", "([BLjava/lang/String;)V");
+    if (!ctor) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        return (*env)->NewStringUTF(env, "");
+    }
+    int len = (int) strlen(s);
+    jbyteArray bytes = (*env)->NewByteArray(env, len);
+    if (!bytes) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        return (*env)->NewStringUTF(env, "");
+    }
+    (*env)->SetByteArrayRegion(env, bytes, 0, len, (const jbyte *) s);
+    jstring cs = (*env)->NewStringUTF(env, "UTF-8");
+    jstring result = (*env)->NewObject(env, strCls, ctor, bytes, cs);
+    (*env)->DeleteLocalRef(env, bytes);
+    (*env)->DeleteLocalRef(env, cs);
+    (*env)->DeleteLocalRef(env, strCls);
+    if (!result || (*env)->ExceptionCheck(env)) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        return (*env)->NewStringUTF(env, "");
+    }
+    return result;
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_getArchiveFilename(JNIEnv *env, jclass thiz, jint index) {
     EH_UNUSED(thiz);
@@ -2211,7 +2236,7 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_getArchiveFilename(JNIEnv *env, jclass thi
     if (entries && index >= 0 && (size_t) index < entryCount && entries[index].filename) {
         name = entries[index].filename;
     }
-    return (*env)->NewStringUTF(env, name);
+    return new_string_lossy_utf8(env, name);
 }
 
 /**
@@ -2460,12 +2485,9 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_extractToFd(JNIEnv *env, jclass thiz, jint
 JNIEXPORT void JNICALL
 Java_com_hippo_ehviewer_jni_ArchiveKt_releaseByteBuffer(JNIEnv *env, jclass thiz, jobject buffer) {
     EH_UNUSED(thiz);
-    pthread_mutex_lock(&stream_mutex);
     void *addr = (*env)->GetDirectBufferAddress(env, buffer);
-    if (!ADDR_IN_FILE_MAPPING(addr)) {
-        release_decode_buffer(addr);
-    }
-    pthread_mutex_unlock(&stream_mutex);
+    // extractToByteBuffer returns malloc copies; never mmap or the decode pool.
+    if (addr) free(addr);
 }
 
 JNIEXPORT void JNICALL

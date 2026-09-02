@@ -51,4 +51,13 @@ class ArchivePageLoaderTest {
             nativeIndicesForZipFolder("a/c", listOf("1.jpg"), native),
         )
     }
+
+    @Test
+    fun prefixOnlyKeepsDirectChildren() {
+        val native = listOf("Album/001.jpg", "Album/002.jpg", "other/001.jpg")
+        assertArrayEquals(
+            intArrayOf(0, 1),
+            nativeIndicesForZipFolder("Album", emptyList(), native),
+        )
+    }
 }

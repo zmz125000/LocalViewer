@@ -92,7 +92,7 @@ object LocalLibrary {
      * under any configured local browse root (e.g. downloaded solid cache).
      */
     suspend fun resolveArchiveBrowseParent(archivePath: String): ArchiveBrowseParent? {
-        val raw = archivePath.toPath()
+        val raw = (ZipPaths.parse(archivePath)?.first ?: archivePath).toPath()
         if (raw.toString().isEmpty()) return null
         var best: ArchiveBrowseParent? = null
         var bestRootLen = -1
@@ -337,6 +337,10 @@ object LocalLibrary {
      * (folder has ≥1 direct image, archive file still present).
      */
     private fun isGalleryAccessible(gallery: LocalGalleryEntity): Boolean = runCatching {
+        // Zip-as-dir interiors are `zipfile:{zip}!{member}` — not a real folder.
+        ZipPaths.parse(gallery.contentPath)?.let { (zipAbs, _) ->
+            return@runCatching zipAbs.toPath().exists()
+        }
         val path = gallery.contentPath.toPath()
         when {
             path.isMediaStorePath() -> {

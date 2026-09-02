@@ -79,6 +79,7 @@ import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.buildLocalBrowseStack
 import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.library.mimeTypeForFileName
@@ -205,24 +206,61 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     }
                     if (local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
                         navToReader(local.contentPath)
-                    } else if (Settings.photoGridMode.value) {
-                        val root = withIOContext { LocalLibrary.loadRoot(local.rootId) }
-                        val rootPath = root?.let { LocalLibrary.rootPath(it) }
-                        if (root == null || rootPath == null) {
-                            navToLocalFolderReader(local.contentPath, local.toBaseGalleryInfo())
-                        } else {
-                            openLocalFolderPhotoGrid(
-                                rootId = root.id,
-                                rootDisplayName = root.displayName,
-                                rootPath = rootPath,
-                                relativePath = local.relativePath,
-                                preferMediaStore = root.prefersMediaStore,
-                                title = local.title,
-                                fromHistory = true,
-                            )
-                        }
                     } else {
-                        navToLocalFolderReader(local.contentPath, local.toBaseGalleryInfo())
+                        val zipOpen = ZipPaths.parseGallery(local.contentPath)
+                        if (zipOpen != null) {
+                            val (zipAbs, inner) = zipOpen
+                            val names = withIOContext {
+                                withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
+                                    ZipAsDirListing.directImageNames(cd, inner)
+                                }.orEmpty()
+                            }
+                            if (names.isEmpty()) {
+                                snackbar(string(R.string.browse_open_failed))
+                                return@launch
+                            }
+                            val gi = local.toBaseGalleryInfo()
+                            val parentRel = ZipAsDirListing.parentBrowseRelative(local.relativePath)
+                            val root = withIOContext { LocalLibrary.loadRoot(local.rootId) }
+                            val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                            openFromHistoryWithBackStack(
+                                pushParentDir = {
+                                    if (root != null && rootPath != null) {
+                                        openLocalBrowseDir(
+                                            rootId = root.id,
+                                            rootDisplayName = root.displayName,
+                                            rootPath = rootPath,
+                                            relativePath = parentRel,
+                                            preferMediaStore = root.prefersMediaStore,
+                                            fromHistory = true,
+                                        )
+                                    }
+                                },
+                                openContent = {
+                                    navToLocalZipFolderReader(zipAbs, inner, names, gi)
+                                },
+                            )
+                            return@launch
+                        }
+                        if (Settings.photoGridMode.value) {
+                            val root = withIOContext { LocalLibrary.loadRoot(local.rootId) }
+                            val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                            if (root == null || rootPath == null) {
+                                navToLocalFolderReader(local.contentPath, local.toBaseGalleryInfo())
+                            } else {
+                                openLocalFolderPhotoGrid(
+                                    rootId = root.id,
+                                    rootDisplayName = root.displayName,
+                                    rootPath = rootPath,
+                                    relativePath = local.relativePath,
+                                    preferMediaStore = root.prefersMediaStore,
+                                    title = local.title,
+                                    fromHistory = true,
+                                )
+                            }
+                        } else {
+                            navToLocalFolderReader(local.contentPath, local.toBaseGalleryInfo())
+                        }
                     }
                 }
                 is LocalHistoryTarget.LocalBrowseFolder -> {
@@ -330,7 +368,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                             uploader = "${target.rootId}\u0000${target.relativePath.trim('/')}",
                             category = 0,
                         )
-                        val parentRel = parentRelativeOfFile(zipRel)
+                        val parentRel = ZipAsDirListing.parentBrowseRelative(target.relativePath)
                         openFromHistoryWithBackStack(
                             pushParentDir = {
                                 openLocalBrowseDir(

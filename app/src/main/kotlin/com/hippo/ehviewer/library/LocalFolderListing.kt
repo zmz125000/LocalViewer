@@ -144,6 +144,26 @@ object LocalFolderListing {
         useCache: Boolean = true,
         onCached: ((List<BrowseEntry>) -> Unit)? = null,
     ): List<BrowseEntry> = withContext(Dispatchers.IO) {
+        if (Settings.browseZipAsDir.value) {
+            val split = ZipAsDirListing.splitZipBrowsePath(relativeDir)
+            if (split != null) {
+                val (zipRel, inner) = split
+                val zipPath = rootPath.resolveRelative(zipRel)
+                return@withContext listZipVirtualDirectory(
+                    rootId = rootId,
+                    rootPath = rootPath,
+                    zipPath = zipPath,
+                    zipRel = zipRel,
+                    inner = inner,
+                    currentDirName = inner.substringAfterLast('/').ifEmpty {
+                        zipPath.name
+                    },
+                    preferMediaStore = preferMediaStore,
+                    useCache = useCache,
+                    onCached = onCached,
+                ).orEmpty()
+            }
+        }
         val effective = resolveBrowsePath(listedPath, preferMediaStore = preferMediaStore)
         val pathKey = BrowseSession.pathKey(effective)
         val configKey = rootConfigKey(rootPath, preferMediaStore)

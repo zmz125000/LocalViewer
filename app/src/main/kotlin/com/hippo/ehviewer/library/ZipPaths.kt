@@ -34,4 +34,14 @@ object ZipPaths {
     fun parse(path: Path): Pair<String, String>? = parse(path.toString())
 
     fun isZipPath(path: String): Boolean = path.startsWith(SCHEME)
+
+    /**
+     * Library/history [LocalGalleryEntity.contentPath] for a zip-as-dir gallery.
+     * Member `.` means images at the zip root.
+     */
+    fun parseGallery(contentPath: String): Pair<String, String>? {
+        val (zip, member) = parse(contentPath) ?: return null
+        val inner = if (member == "." || member.isEmpty()) "" else member
+        return zip to inner
+    }
 }
