@@ -251,6 +251,8 @@ object ReaderGalleryPlaylist {
 
     fun keyOf(args: ReaderScreenArgs): String? = when (args) {
         is ReaderScreenArgs.LocalFolder -> "local:${args.path}"
+        is ReaderScreenArgs.LocalZipFolder ->
+            "zip:${args.zipPath}|${args.innerRel.trim('/')}"
         is ReaderScreenArgs.SmbFolder -> "smb:${args.sourceId}:${args.remoteDir.trim('/')}"
         is ReaderScreenArgs.WebDavFolder -> "webdav:${args.sourceId}:${args.remoteDir.trim('/')}"
         is ReaderScreenArgs.Archive -> "archive:${args.path}"

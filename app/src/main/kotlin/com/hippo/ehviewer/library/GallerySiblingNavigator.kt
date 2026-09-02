@@ -29,6 +29,7 @@ object GallerySiblingNavigator {
         ReaderGalleryPlaylist.sibling(args, next)?.let { return it }
         return when (args) {
             is ReaderScreenArgs.LocalFolder -> localPathSibling(args.path, next)
+            is ReaderScreenArgs.LocalZipFolder -> null
             is ReaderScreenArgs.Archive -> localPathSibling(args.path, next)
             is ReaderScreenArgs.SmbFolder -> smbPathSibling(args.sourceId, args.remoteDir, next)
             is ReaderScreenArgs.SmbStreamArchive -> smbPathSibling(args.sourceId, args.remotePath, next)

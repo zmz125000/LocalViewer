@@ -3,9 +3,12 @@ package com.hippo.ehviewer.webdav
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.ArchiveByteSource
+import com.hippo.ehviewer.library.FileArchiveByteSource
 import com.hippo.ehviewer.library.ReadAheadArchiveByteSource
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.RemoteRangeNotSupportedException
+import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipMemberCover
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -46,22 +49,40 @@ class WebDavArchiveByteSource(
      */
     readahead: Boolean = true,
 ) : ArchiveByteSource {
-    private val raw = RawWebDavArchiveByteSource(
-        source,
-        password,
-        remoteRelativeFile,
-        stickySession,
-        knownSize,
-    )
-    private val inner: ArchiveByteSource = if (readahead) {
-        ReadAheadArchiveByteSource(
-            inner = raw,
-            sequentialWindow = sequentialWindow,
-            preferSequential = preferSequential,
-            pipeline = pipeline,
-        )
-    } else {
-        raw
+    private val inner: ArchiveByteSource = run {
+        val zipMember = ZipAsDirListing.zipMemberPath(remoteRelativeFile)
+        if (zipMember != null) {
+            val (zipRel, memberRel) = zipMember
+            val local = ZipMemberCover.ensure("webdav:${source.id}:$zipRel", memberRel) {
+                WebDavArchiveByteSource(
+                    source = source,
+                    password = password,
+                    remoteRelativeFile = zipRel,
+                    pipeline = false,
+                    stickySession = stickySession,
+                    readahead = true,
+                )
+            } ?: throw IOException("Cannot extract ZIP member $memberRel from $zipRel")
+            FileArchiveByteSource(java.io.File(local.toString()))
+        } else {
+            val raw = RawWebDavArchiveByteSource(
+                source,
+                password,
+                remoteRelativeFile,
+                stickySession,
+                knownSize,
+            )
+            if (readahead) {
+                ReadAheadArchiveByteSource(
+                    inner = raw,
+                    sequentialWindow = sequentialWindow,
+                    preferSequential = preferSequential,
+                    pipeline = pipeline,
+                )
+            } else {
+                raw
+            }
+        }
     }
 
     override val size: Long get() = inner.size

@@ -124,6 +124,7 @@ fun BrowseViewModeMenu(
     var browseSortAscending by Settings.browseSortAscending.asMutableState()
     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)
     var browseFolderThumbs by Settings.browseFolderThumbs.asMutableState()
+    var browseZipAsDir by Settings.browseZipAsDir.asMutableState()
     var showSmallGalleries by Settings.browseShowSmallGalleries.asMutableState()
     var showHiddenFiles by Settings.browseShowHiddenFiles.asMutableState()
     var showVirtualGalleries by Settings.browseShowVirtualGalleries.asMutableState()
@@ -240,6 +241,11 @@ fun BrowseViewModeMenu(
                 label = stringResource(R.string.browse_menu_photo_grid),
                 checked = photoGridMode,
                 onClick = { photoGridMode = !photoGridMode },
+            )
+            ToggleMenuItem(
+                label = stringResource(R.string.browse_menu_zip_as_dir),
+                checked = browseZipAsDir,
+                onClick = { browseZipAsDir = !browseZipAsDir },
             )
             ToggleMenuItem(
                 label = stringResource(R.string.browse_menu_favorites_on_top),

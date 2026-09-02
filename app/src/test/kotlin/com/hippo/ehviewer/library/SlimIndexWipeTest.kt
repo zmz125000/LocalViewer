@@ -55,6 +55,26 @@ class SlimIndexWipeTest {
     }
 
     @Test
+    fun liveZipFiles_againstCachedZipAsDirFolders_isTrusted() {
+        val zipDir = BrowseEntryRemote.Directory(
+            name = "album.zip",
+            relativeName = "album.zip",
+            hasVideo = false,
+            hasGallery = true,
+            presence = DirPresence.Navigable,
+        )
+        val cachedZips = listOf(zipDir)
+        val live = listOf(RemoteChild(name = "album.zip", isDirectory = false))
+        assertFalse(isUntrustedSlimLiveListing(cachedZips, live))
+    }
+
+    @Test
+    fun liveZipFileOnly_againstCachedRealDirs_isUntrusted() {
+        val live = listOf(RemoteChild(name = "album.zip", isDirectory = false))
+        assertTrue(isUntrustedSlimLiveListing(cached, live))
+    }
+
+    @Test
     fun keepPrevious_whenNextIsEmptyOrShallow() {
         val shallow = listOf(
             BrowseEntryRemote.Directory(

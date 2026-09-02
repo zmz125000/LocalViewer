@@ -58,6 +58,76 @@ object LocalFolderListing {
     }
 
     /**
+     * List a zip/cbz virtual directory (zip-as-dir). RAM + disk folder index keyed by
+     * [ZipAsDirListing.virtualRelativeDir] — same relativeDir as a normal folder.
+     *
+     * @return classified rows, or null if the zip CD cannot be read (cache miss).
+     */
+    suspend fun listZipVirtualDirectory(
+        rootId: Long,
+        rootPath: Path?,
+        zipPath: Path,
+        zipRel: String,
+        inner: String,
+        currentDirName: String,
+        preferMediaStore: Boolean = true,
+        useCache: Boolean = true,
+        photoGrid: Boolean = false,
+        onCached: ((List<BrowseEntry>) -> Unit)? = null,
+    ): List<BrowseEntry>? = withContext(Dispatchers.IO) {
+        val zipAbs = zipPath.toString()
+        val virtualDir = ZipAsDirListing.virtualRelativeDir(zipRel, inner)
+        val ramKey = BrowseSession.localZipListingKey(rootId, virtualDir)
+        val configKey = rootPath?.let { rootConfigKey(it, preferMediaStore) }
+
+        fun materialize(remote: List<BrowseEntryRemote>): List<BrowseEntry> {
+            if (photoGrid) {
+                val names = FolderGalleryIndex.namesFromListing("", remote, "") ?: emptyList()
+                return names.map { name ->
+                    BrowseEntry.RegularFile(
+                        name = name,
+                        path = ZipPaths.encodePath(
+                            zipAbs,
+                            ZipAsDirListing.joinPrefix(inner, name),
+                        ),
+                    )
+                }
+            }
+            return ZipAsDirListing.materializeLocal(zipAbs, inner, remote)
+        }
+
+        if (useCache) {
+            val cached = BrowseSession.getLocalCachedListing(ramKey)
+                ?: configKey?.let { key ->
+                    NetworkFolderIndexCache.loadLocal(rootId, key, virtualDir)?.let { entries ->
+                        BrowseSession.putLocalListing(ramKey, entries, sessionCurrent = false)
+                        BrowseSession.CachedLocalListing(entries = entries, sessionCurrent = false)
+                    }
+                }
+            if (cached != null) {
+                val materialized = materialize(cached.entries)
+                onCached?.invoke(materialized)
+                return@withContext materialized
+            }
+        } else {
+            BrowseSession.invalidateLocalListing(ramKey)
+        }
+
+        val remote = withLocalZipCentralDirectory(zipPath) { cd ->
+            ZipAsDirListing.classifyAt(cd, inner, currentDirName)
+        } ?: return@withContext null
+        val stored = if (configKey != null) {
+            NetworkFolderIndexCache.saveLocal(rootId, configKey, virtualDir, remote)
+        } else {
+            remote
+        }
+        BrowseSession.putLocalListing(ramKey, stored, sessionCurrent = true)
+        val materialized = materialize(stored)
+        onCached?.invoke(materialized)
+        materialized
+    }
+
+    /**
      * Folder-browser path: session + disk index, with optional slim quick scan on stale hits.
      *
      * @param rootId library/folder root id (disk index source id)
@@ -158,7 +228,10 @@ object LocalFolderListing {
         val t0 = System.nanoTime()
         val children = listChildrenRemote(effective, preferMediaStore)
         val dirName = effective.name.ifEmpty { "Gallery" }
-        val shallow = classifyRemoteListing(dirName, children.withHiddenFlags())
+        val shallow = ZipAsDirListing.applyZipAsDirPreferenceLocal(
+            classifyChildren(effective, dirName, children, emptyMap(), emptyMap()),
+            effective,
+        )
         val shallowMerged =
             if (previous != null) preferCompleteFolderGalleries(previous, shallow) else shallow
         // RAM-only until deep succeeds (avoid slim treating Empty shells as final).
@@ -181,11 +254,31 @@ object LocalFolderListing {
             withTimeout(DEEP_CLASSIFY_TIMEOUT_MS) {
                 coroutineContext.ensureActive()
                 val t1 = System.nanoTime()
-                val deep = classifyDirectoryChildren(effective, preferMediaStore, children)
+                val zipInteriors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
+                val deep = classifyDirectoryChildren(
+                    effective,
+                    preferMediaStore,
+                    children,
+                    zipInteriors,
+                )
                 val fromRam = preferCompleteFolderGalleries(shallowMerged, deep)
                 val stored =
                     NetworkFolderIndexCache.saveLocal(rootId, configKey, relativeDir, fromRam)
                 BrowseSession.putLocalListing(pathKey, stored, sessionCurrent = true)
+                ZipAsDirListing.persistFolderIndexes(
+                    parentRelativeDir = relativeDir,
+                    interiors = zipInteriors,
+                    save = { dir, entries ->
+                        NetworkFolderIndexCache.saveLocal(rootId, configKey, dir, entries)
+                    },
+                    putRam = { dir, entries ->
+                        BrowseSession.putLocalListing(
+                            BrowseSession.localZipListingKey(rootId, dir),
+                            entries,
+                            sessionCurrent = true,
+                        )
+                    },
+                )
                 logcat("FolderIndex") {
                     "Local deep classify root=$rootId dir=$relativeDir " +
                         "entries=${stored.size} ms=${(System.nanoTime() - t1) / 1_000_000}"
@@ -226,25 +319,49 @@ object LocalFolderListing {
             return SlimRefresh(cached, emptySet(), persist = false)
         }
         val plan = planRemoteDirectorySlimRefresh(cached, children)
+        val zipFileNames = if (Settings.browseZipAsDir.value) {
+            ZipAsDirListing.zipFileNames(children)
+        } else {
+            emptySet()
+        }
         val deepHidden = if (Settings.browseShowHiddenFiles.value) {
             hiddenDirectoriesNeedingDeepScan(cached, children)
         } else {
             emptyList()
         }
         val deepNames = deepHidden.mapTo(HashSet()) { it.name }
-        val toClassify = (plan.addedDirectories + deepHidden).distinctBy { it.name }
+        val cachedZipAsDir = if (zipFileNames.isEmpty()) {
+            emptySet()
+        } else {
+            ZipAsDirListing.cachedDirectZipAsDirNames(cached)
+        }
+        val newZips = if (zipFileNames.isEmpty()) {
+            emptyList()
+        } else {
+            children.filter { it.name in zipFileNames && it.name !in cachedZipAsDir }
+        }
+        val toClassify = (plan.addedDirectories + deepHidden + newZips).distinctBy { it.name }
         val dirName = dir.name.ifEmpty { "Gallery" }
-        if (plan.isUnchanged && deepHidden.isEmpty()) {
+        val liveForFiles = if (zipFileNames.isEmpty()) {
+            children
+        } else {
+            children.filterNot { it.name in zipFileNames }
+        }
+        val zipAdjustedRemoved = plan.removedDirectoryNames - zipFileNames
+        val dirsUnchanged = plan.addedDirectories.isEmpty() && zipAdjustedRemoved.isEmpty()
+        if (dirsUnchanged && deepHidden.isEmpty() && newZips.isEmpty()) {
             // Dirs same — still patch surviving file size/mtime; add/drop direct files.
+            // Zip-as-dir files are excluded so slim does not re-add ArchiveGallery rows.
             return SlimRefresh(
-                entries = replaceSlimDirectFilesFromLive(cached, children, dirName),
+                entries = replaceSlimDirectFilesFromLive(cached, liveForFiles, dirName),
                 removedDirectoryNames = emptySet(),
             )
         }
         // Drop shallow hidden shells (via removedDirectoryNames) then re-add full classify.
+        // Keep cached zip-as-dir Directory/FolderGallery rows: live listing still has the file.
         val effectivePlan = RemoteDirectorySlimPlan(
             addedDirectories = toClassify,
-            removedDirectoryNames = plan.removedDirectoryNames + deepNames,
+            removedDirectoryNames = zipAdjustedRemoved + deepNames,
         )
         val addedEntries = if (toClassify.isEmpty()) {
             emptyList()
@@ -253,15 +370,15 @@ object LocalFolderListing {
         }
         val merged = replaceSlimDirectFilesFromLive(
             mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
-            children,
+            liveForFiles,
             dirName,
         )
-        plan.removedDirectoryNames.forEach { name ->
+        zipAdjustedRemoved.forEach { name ->
             BrowseSession.invalidateLocalRawChildren(BrowseSession.pathKey(dir / name))
         }
         return SlimRefresh(
             entries = merged,
-            removedDirectoryNames = plan.removedDirectoryNames,
+            removedDirectoryNames = zipAdjustedRemoved,
         )
     }
 
@@ -269,6 +386,7 @@ object LocalFolderListing {
         dir: Path,
         preferMediaStore: Boolean,
         children: List<RemoteChild>,
+        zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
     ): List<BrowseEntryRemote> {
         val deepScanHidden = Settings.browseShowHiddenFiles.value
         // Dot folders: always tag-only (never peek). `.nomedia` dirs peek only when Hidden on.
@@ -317,9 +435,48 @@ object LocalFolderListing {
         }
 
         val dirName = humanizePathName(dir.name).ifEmpty { "Gallery" }
-        // Re-tag with peek-based .nomedia detection after child peeks exist.
-        val tagged = children.withHiddenFlags(peeks)
-        return classifyRemoteListingWithPeeks(dirName, tagged, peeks, grandPeeks)
+        val classified = classifyChildren(dir, dirName, children, peeks, grandPeeks, zipInteriors)
+        // Cache/toggle fallback: leftover zip ArchiveGallery rows (unreadable CD, old cache).
+        return ZipAsDirListing.applyZipAsDirPreferenceLocal(classified, dir)
+    }
+
+    /**
+     * Feed zip EOCD listings as fake folders into [classifyRemoteListingWithPeeks]
+     * **before** DirectoryListing sees zip files as archives.
+     */
+    private fun classifyChildren(
+        dir: Path,
+        dirName: String,
+        children: List<RemoteChild>,
+        childPeeks: Map<String, List<RemoteChild>>,
+        grandPeeks: Map<String, List<RemoteChild>>,
+        zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
+    ): List<BrowseEntryRemote> {
+        val zipListings = zipRootListings(dir, children, zipInteriors)
+        return ZipAsDirListing.classifyListingWithZipAsDirs(
+            currentDirName = dirName,
+            children = children,
+            childPeeks = childPeeks,
+            grandPeeks = grandPeeks,
+        ) { zipListings[it] }
+    }
+
+    private fun zipRootListings(
+        dir: Path,
+        children: List<RemoteChild>,
+        zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
+    ): Map<String, ZipAsDirListing.ZipRootListing> {
+        if (!Settings.browseZipAsDir.value) return emptyMap()
+        val zips = children.filter { !it.isDirectory && isZipArchiveFileName(it.name) }
+        if (zips.isEmpty()) return emptyMap()
+        val out = ConcurrentHashMap<String, ZipAsDirListing.ZipRootListing>()
+        runParallel(zips) { child ->
+            withLocalZipCentralDirectory(dir / child.name) { cd ->
+                out[child.name] = ZipAsDirListing.zipRootListingFromCd(cd)
+                zipInteriors?.put(child.name, ZipAsDirListing.classifyAt(cd, "", child.name))
+            }
+        }
+        return out
     }
 
     private fun <T> runParallel(items: List<T>, block: (T) -> Unit) {
@@ -388,7 +545,7 @@ object LocalFolderListing {
         readOnly = readOnly,
     )
 
-    private fun rootConfigKey(rootPath: Path, preferMediaStore: Boolean): String {
+    fun rootConfigKey(rootPath: Path, preferMediaStore: Boolean): String {
         val effective = resolveBrowsePath(rootPath, preferMediaStore = preferMediaStore)
         return "local|$effective|ms=$preferMediaStore"
     }
@@ -409,90 +566,124 @@ fun Path.resolveRelative(relative: String): Path {
 fun materializeLocalEntries(
     baseDir: Path,
     remote: List<BrowseEntryRemote>,
-): List<BrowseEntry> = remote.map { entry ->
-    when (entry) {
-        is BrowseEntryRemote.Directory -> {
-            val path = if (entry.relativeName.isEmpty()) {
-                baseDir
-            } else {
-                baseDir.resolveRelative(entry.relativeName)
+): List<BrowseEntry> {
+    // Re-apply zip-as-dir preference so RAM/disk cache respects the current toggle.
+    val entries = ZipAsDirListing.applyZipAsDirPreferenceLocal(remote, baseDir)
+    return entries.map { entry ->
+        when (entry) {
+            is BrowseEntryRemote.Directory -> {
+                val zipSeg = if (Settings.browseZipAsDir.value) {
+                    ZipAsDirListing.zipFileSegment(entry.relativeName, entry.name)
+                } else {
+                    null
+                }
+                val path = when {
+                    entry.relativeName.isEmpty() -> baseDir
+                    zipSeg != null -> baseDir.resolveRelative(zipSeg)
+                    else -> baseDir.resolveRelative(entry.relativeName)
+                }
+                val cover = entry.coverFileName?.let { coverRel ->
+                    if (zipSeg != null) {
+                        val inner = ZipAsDirListing.zipInnerPrefix(entry.relativeName)
+                        ZipPaths.encodePath(
+                            path.toString(),
+                            ZipAsDirListing.joinPrefix(inner, coverRel),
+                        )
+                    } else {
+                        path.resolveRelative(coverRel)
+                    }
+                }
+                BrowseEntry.Directory(
+                    name = entry.name,
+                    path = path,
+                    relativeName = entry.relativeName,
+                    hasVideo = entry.hasVideo,
+                    hasGallery = entry.hasGallery,
+                    presence = entry.presence,
+                    coverPath = cover,
+                    lastModifiedMs = entry.lastModifiedMs,
+                    hidden = entry.hidden,
+                    virtual = entry.virtual,
+                )
             }
-            val cover = entry.coverFileName?.let { path.resolveRelative(it) }
-            BrowseEntry.Directory(
-                name = entry.name,
-                path = path,
-                relativeName = entry.relativeName,
-                hasVideo = entry.hasVideo,
-                hasGallery = entry.hasGallery,
-                presence = entry.presence,
-                coverPath = cover,
-                lastModifiedMs = entry.lastModifiedMs,
-                hidden = entry.hidden,
-                virtual = entry.virtual,
-            )
-        }
-        is BrowseEntryRemote.FolderGallery -> {
-            val path = if (entry.relativeName.isEmpty()) {
-                baseDir
-            } else {
-                baseDir.resolveRelative(entry.relativeName)
+            is BrowseEntryRemote.FolderGallery -> {
+                val zipSeg = if (Settings.browseZipAsDir.value) {
+                    ZipAsDirListing.zipFileSegment(entry.relativeName, entry.name)
+                } else {
+                    null
+                }
+                val path = when {
+                    entry.relativeName.isEmpty() -> baseDir
+                    zipSeg != null -> baseDir.resolveRelative(zipSeg)
+                    else -> baseDir.resolveRelative(entry.relativeName)
+                }
+                val cover = entry.coverFileName?.let { coverRel ->
+                    if (zipSeg != null) {
+                        val inner = ZipAsDirListing.zipInnerPrefix(entry.relativeName)
+                        ZipPaths.encodePath(
+                            path.toString(),
+                            ZipAsDirListing.joinPrefix(inner, coverRel),
+                        )
+                    } else {
+                        path.resolveRelative(coverRel)
+                    }
+                }
+                BrowseEntry.FolderGallery(
+                    name = entry.name,
+                    path = path,
+                    relativeName = entry.relativeName,
+                    pageCount = entry.pageCount,
+                    pageCountCapped = entry.pageCountCapped,
+                    coverPath = cover,
+                    hidden = entry.hidden,
+                    virtual = entry.virtual,
+                )
             }
-            val cover = entry.coverFileName?.let { path.resolveRelative(it) }
-            BrowseEntry.FolderGallery(
-                name = entry.name,
-                path = path,
-                relativeName = entry.relativeName,
-                pageCount = entry.pageCount,
-                pageCountCapped = entry.pageCountCapped,
-                coverPath = cover,
-                hidden = entry.hidden,
-                virtual = entry.virtual,
-            )
-        }
-        is BrowseEntryRemote.ArchiveGallery -> {
-            val parent = if (entry.parentRelativeName.isEmpty()) {
-                baseDir
-            } else {
-                baseDir.resolveRelative(entry.parentRelativeName)
+            is BrowseEntryRemote.ArchiveGallery -> {
+                val parent = if (entry.parentRelativeName.isEmpty()) {
+                    baseDir
+                } else {
+                    baseDir.resolveRelative(entry.parentRelativeName)
+                }
+                val path = parent / entry.fileName
+                if (EmptyArchiveRegistry.isMarked(path.toString())) {
+                    BrowseEntry.RegularFile(
+                        name = entry.name,
+                        path = path,
+                        size = entry.size,
+                        lastModifiedMs = entry.lastModifiedMs,
+                        hidden = entry.hidden,
+                        virtual = entry.virtual,
+                    )
+                } else {
+                    BrowseEntry.ArchiveGallery(
+                        name = entry.name,
+                        path = path,
+                        size = entry.size,
+                        lastModifiedMs = entry.lastModifiedMs,
+                        hidden = entry.hidden,
+                        virtual = entry.virtual,
+                    )
+                }
             }
-            val path = parent / entry.fileName
-            if (EmptyArchiveRegistry.isMarked(path.toString())) {
+            is BrowseEntryRemote.VideoFile ->
+                BrowseEntry.VideoFile(
+                    name = entry.name,
+                    path = baseDir.resolveRelative(entry.fileName),
+                    size = entry.size,
+                    lastModifiedMs = entry.lastModifiedMs,
+                    hidden = entry.hidden,
+                    virtual = entry.virtual,
+                )
+            is BrowseEntryRemote.RegularFile ->
                 BrowseEntry.RegularFile(
                     name = entry.name,
-                    path = path,
+                    path = baseDir.resolveRelative(entry.fileName),
                     size = entry.size,
                     lastModifiedMs = entry.lastModifiedMs,
                     hidden = entry.hidden,
                     virtual = entry.virtual,
                 )
-            } else {
-                BrowseEntry.ArchiveGallery(
-                    name = entry.name,
-                    path = path,
-                    size = entry.size,
-                    lastModifiedMs = entry.lastModifiedMs,
-                    hidden = entry.hidden,
-                    virtual = entry.virtual,
-                )
-            }
         }
-        is BrowseEntryRemote.VideoFile ->
-            BrowseEntry.VideoFile(
-                name = entry.name,
-                path = baseDir.resolveRelative(entry.fileName),
-                size = entry.size,
-                lastModifiedMs = entry.lastModifiedMs,
-                hidden = entry.hidden,
-                virtual = entry.virtual,
-            )
-        is BrowseEntryRemote.RegularFile ->
-            BrowseEntry.RegularFile(
-                name = entry.name,
-                path = baseDir.resolveRelative(entry.fileName),
-                size = entry.size,
-                lastModifiedMs = entry.lastModifiedMs,
-                hidden = entry.hidden,
-                virtual = entry.virtual,
-            )
     }
 }

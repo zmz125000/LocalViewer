@@ -124,6 +124,18 @@ object FolderGalleryIndex {
         webDavListing(sourceId, configKey, dir)
     }
 
+    /**
+     * Local folder / zip-as-dir gallery names from RAM zip listings and the disk
+     * folder index (parent dirs and zip interiors share the same relativeDir keys).
+     */
+    suspend fun loadLocal(
+        rootId: Long,
+        configKey: String,
+        galleryDir: String,
+    ): List<String>? = namesWalkingParents(galleryDir) { dir ->
+        localListing(rootId, configKey, dir)
+    }
+
     suspend fun siblingListingSmb(
         sourceId: Long,
         configKey: String,
@@ -160,6 +172,18 @@ object FolderGalleryIndex {
         return BrowseSession.getWebDavListing(sourceId, normalized)
             ?: BrowseSession.getWebDavListing(sourceId, dir)
             ?: NetworkFolderIndexCache.loadWebDav(sourceId, configKey, normalized)
+    }
+
+    private suspend fun localListing(
+        rootId: Long,
+        configKey: String,
+        dir: String,
+    ): List<BrowseEntryRemote>? {
+        val normalized = BrowseSession.normalizeBrowseRelativeDir(dir)
+        return BrowseSession.getLocalCachedListing(
+            BrowseSession.localZipListingKey(rootId, normalized),
+        )?.entries
+            ?: NetworkFolderIndexCache.loadLocal(rootId, configKey, normalized)
     }
 
     private fun join(parent: String, child: String): String {

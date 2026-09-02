@@ -75,19 +75,25 @@ import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
+import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.FavoriteBrowseSource
+import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.HistoryThumbKey
+import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
 import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
 import com.hippo.ehviewer.library.toBaseGalleryInfo
+import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
@@ -100,6 +106,7 @@ import com.hippo.ehviewer.ui.main.LocalGalleryListItem
 import com.hippo.ehviewer.ui.main.browseFileExtensionLabel
 import com.hippo.ehviewer.ui.main.browseListSupportingLine
 import com.hippo.ehviewer.ui.navToLocalFolderReader
+import com.hippo.ehviewer.ui.navToLocalZipFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.openLocalBrowseDir
 import com.hippo.ehviewer.ui.openLocalFolderPhotoGrid
@@ -114,6 +121,7 @@ import kotlinx.coroutines.launch
 import moe.tarsin.navigate
 import moe.tarsin.snackbar
 import moe.tarsin.string
+import okio.Path.Companion.toPath
 
 @Destination<RootGraph>(start = true)
 @Composable
@@ -254,25 +262,69 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
             // Pass info so read progress uses library id (same as progress chip).
             navToReader(gallery.contentPath, info)
-        } else if (Settings.photoGridMode.value) {
-            // Tap → photo-grid virtual folder (same as browse primary when mode on).
-            val root = roots.firstOrNull { it.id == gallery.rootId }
-            val rootPath = root?.let { LocalLibrary.rootPath(it) }
-            if (root == null || rootPath == null) {
-                navToLocalFolderReader(gallery.contentPath, info)
-            } else {
-                openLocalFolderPhotoGrid(
-                    rootId = root.id,
-                    rootDisplayName = root.displayName,
-                    rootPath = rootPath,
-                    relativePath = gallery.relativePath,
-                    preferMediaStore = root.prefersMediaStore,
-                    title = gallery.title,
-                    fromLibrary = true,
-                )
-            }
         } else {
-            navToLocalFolderReader(gallery.contentPath, info)
+            val zip = ZipPaths.parse(gallery.contentPath)
+            if (zip != null) {
+                val (zipAbs, member) = zip
+                val inner = if (member == "." || member.isEmpty()) "" else member
+                launchIO {
+                    val galleryDir = ZipAsDirListing.parseZipGalleryRelative(gallery.relativePath)
+                        ?.let { ZipAsDirListing.virtualRelativeDir(it.first, it.second) }
+                    val root = roots.firstOrNull { it.id == gallery.rootId }
+                    val names = runCatching {
+                        if (galleryDir != null && root != null) {
+                            val rp = LocalLibrary.rootPath(root)
+                            if (rp != null) {
+                                FolderGalleryIndex.loadLocal(
+                                    gallery.rootId,
+                                    LocalFolderListing.rootConfigKey(
+                                        rp,
+                                        root.prefersMediaStore,
+                                    ),
+                                    galleryDir,
+                                )
+                            } else {
+                                null
+                            }
+                        } else {
+                            null
+                        } ?: withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
+                            ZipAsDirListing.directImageNames(cd, inner)
+                        }.orEmpty()
+                    }.getOrDefault(emptyList())
+                    if (names.isEmpty()) {
+                        snackbar(string(R.string.browse_open_failed))
+                        return@launchIO
+                    }
+                    withUIContext {
+                        navToLocalZipFolderReader(
+                            zipPath = zipAbs,
+                            innerRel = inner,
+                            imageNames = names,
+                            info = info,
+                        )
+                    }
+                }
+            } else if (Settings.photoGridMode.value) {
+                // Tap → photo-grid virtual folder (same as browse primary when mode on).
+                val root = roots.firstOrNull { it.id == gallery.rootId }
+                val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                if (root == null || rootPath == null) {
+                    navToLocalFolderReader(gallery.contentPath, info)
+                } else {
+                    openLocalFolderPhotoGrid(
+                        rootId = root.id,
+                        rootDisplayName = root.displayName,
+                        rootPath = rootPath,
+                        relativePath = gallery.relativePath,
+                        preferMediaStore = root.prefersMediaStore,
+                        title = gallery.title,
+                        fromLibrary = true,
+                    )
+                }
+            } else {
+                navToLocalFolderReader(gallery.contentPath, info)
+            }
         }
     }
 

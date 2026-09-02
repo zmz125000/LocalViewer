@@ -8,6 +8,9 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteRangeNotSupportedException
+import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipMemberCover
+import com.hippo.ehviewer.library.ZipMemberTooLargeException
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.naturalCompare
 import io.ktor.client.HttpClient
@@ -418,6 +421,13 @@ object WebDavClient {
         relativeFilePath: String,
         out: OutputStream,
     ) = withIOContext {
+        ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, member) ->
+            val local = ZipMemberCover.ensure("webdav:${source.id}:$zipRel", member) {
+                WebDavArchiveByteSource(source, password, zipRel, pipeline = false)
+            } ?: error("Cannot extract ZIP member $member from $zipRel")
+            java.io.File(local.toString()).inputStream().use { it.copyTo(out) }
+            return@withIOContext
+        }
         val downloadContext = coroutineContext
         downloadSlots.withPermit {
             withTransportRetry {
@@ -552,6 +562,23 @@ object WebDavClient {
         relativeFilePath: String,
         sticky: Boolean = false,
     ): Long? = withIOContext {
+        ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, member) ->
+            return@withIOContext runCatching {
+                val local = ZipMemberCover.ensure("webdav:${source.id}:$zipRel", member) {
+                    WebDavArchiveByteSource(
+                        source,
+                        password,
+                        zipRel,
+                        pipeline = false,
+                        stickySession = sticky,
+                    )
+                } ?: return@runCatching null
+                java.io.File(local.toString()).length().takeIf { it > 0L }
+            }.getOrElse { e ->
+                if (e is ZipMemberTooLargeException) throw e
+                null
+            }
+        }
         runCatching {
             downloadSlots.withPermit {
                 withTransportRetry(sticky) {

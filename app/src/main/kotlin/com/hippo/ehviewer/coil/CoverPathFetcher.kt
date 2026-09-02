@@ -14,6 +14,8 @@ import coil3.toUri as toCoilUri
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
+import com.hippo.ehviewer.library.ZipMemberCover
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.io.FileNotFoundException
@@ -38,6 +40,11 @@ class CoverPathFetcher(
     private val options: Options,
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
+        ZipPaths.parse(data.path)?.let { (zip, member) ->
+            val extracted = ZipMemberCover.ensureLocal(zip, member, notifyTooLarge = false)
+                ?: throw FileNotFoundException("ZIP cover missing: ${data.path}")
+            return openAsSource(extracted)
+        }
         val path = data.path.toPath()
         // Absolute FS covers (archive_thumb, origin files): fail before openAFD if gone
         // (cache trim / clear data) so we don't spam ParcelFileDescriptor ENOENT.
