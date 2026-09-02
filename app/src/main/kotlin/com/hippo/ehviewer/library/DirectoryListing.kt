@@ -345,19 +345,18 @@ data class RemoteDirectorySlimPlan(
         get() = addedDirectories.isEmpty() && removedDirectoryNames.isEmpty()
 }
 
+/** Direct (single-segment) child folder names from a classified listing. */
+fun cachedDirectDirectoryNames(cachedEntries: List<BrowseEntryRemote>): Set<String> = cachedEntries.asSequence()
+    .filterIsInstance<BrowseEntryRemote.Directory>()
+    .map { it.relativeName.replace('\\', '/').trim('/') }
+    .filter { it.isNotEmpty() && '/' !in it }
+    .toSet()
+
 /**
  * Compare direct child folders without peeking any of them. Every direct folder has
  * one real [BrowseEntryRemote.Directory] whose [BrowseEntryRemote.Directory.relativeName]
  * is a single segment; promoted virtual rows use multi-segment paths.
  */
-/** Direct (single-segment) child folder names from a classified listing. */
-fun cachedDirectDirectoryNames(cachedEntries: List<BrowseEntryRemote>): Set<String> =
-    cachedEntries.asSequence()
-        .filterIsInstance<BrowseEntryRemote.Directory>()
-        .map { it.relativeName.replace('\\', '/').trim('/') }
-        .filter { it.isNotEmpty() && '/' !in it }
-        .toSet()
-
 fun planRemoteDirectorySlimRefresh(
     cachedEntries: List<BrowseEntryRemote>,
     liveChildren: List<RemoteChild>,
