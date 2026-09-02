@@ -249,7 +249,22 @@ object LocalHistory {
             is LocalHistoryTarget.LocalFile -> bumpLocalPathParent(target.path)
             is LocalHistoryTarget.LibraryGallery -> {
                 val gallery = LocalLibrary.loadGallery(target.galleryId) ?: return
-                bumpLocalPathParent(gallery.contentPath)
+                val zipParsed = ZipAsDirListing.parseZipGalleryRelative(gallery.relativePath)
+                if (zipParsed != null || ZipPaths.parseGallery(gallery.contentPath) != null) {
+                    val parentRel = ZipAsDirListing.parentBrowseRelative(gallery.relativePath)
+                    val title = if (parentRel.isEmpty()) {
+                        LocalLibrary.loadRoot(gallery.rootId)?.displayName ?: "Folder"
+                    } else {
+                        humanizePathName(parentRel.substringAfterLast('/'))
+                    }
+                    recordLocalBrowseFolder(
+                        rootId = gallery.rootId,
+                        relativePath = parentRel,
+                        title = title,
+                    )
+                } else {
+                    bumpLocalPathParent(gallery.contentPath)
+                }
             }
         }
     }
@@ -269,7 +284,7 @@ object LocalHistory {
     }
 
     private suspend fun bumpLocalBrowseParent(rootId: Long, contentRelativePath: String) {
-        val parentRel = parentRelativeOfFile(contentRelativePath)
+        val parentRel = ZipAsDirListing.parentBrowseRelative(contentRelativePath)
         val title = if (parentRel.isEmpty()) {
             LocalLibrary.loadRoot(rootId)?.displayName ?: "Folder"
         } else {

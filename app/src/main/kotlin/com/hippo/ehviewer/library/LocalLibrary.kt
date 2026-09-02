@@ -92,7 +92,7 @@ object LocalLibrary {
      * under any configured local browse root (e.g. downloaded solid cache).
      */
     suspend fun resolveArchiveBrowseParent(archivePath: String): ArchiveBrowseParent? {
-        val raw = archivePath.toPath()
+        val raw = (ZipPaths.parse(archivePath)?.first ?: archivePath).toPath()
         if (raw.toString().isEmpty()) return null
         var best: ArchiveBrowseParent? = null
         var bestRootLen = -1

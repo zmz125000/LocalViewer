@@ -77,7 +77,13 @@ object ReaderGalleryPlaylist {
             if (g.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
                 Item.Archive(g.contentPath)
             } else {
-                Item.LocalFolder(g.contentPath, g.toBaseGalleryInfo())
+                val zip = ZipPaths.parseGallery(g.contentPath)
+                if (zip != null) {
+                    val (zipAbs, inner) = zip
+                    Item.LocalZipFolder(zipAbs, inner, emptyList(), g.toBaseGalleryInfo())
+                } else {
+                    Item.LocalFolder(g.contentPath, g.toBaseGalleryInfo())
+                }
             }
         }
     }

@@ -341,6 +341,19 @@ object ZipAsDirListing {
         return splitZipBrowsePath(n)
     }
 
+    /**
+     * Browse-directory pin for a zip-as-dir gallery relative path.
+     * Inner gallery → the zip folder (`dir/file.zip`); zip-root gallery → parent of the zip.
+     */
+    fun parentBrowseRelative(galleryRel: String): String {
+        val parsed = parseZipGalleryRelative(galleryRel)
+        if (parsed != null) {
+            val (zipRel, inner) = parsed
+            return if (inner.isEmpty()) parentRelativeOfFile(zipRel) else zipRel
+        }
+        return parentRelativeOfFile(galleryRel.replace('|', '/'))
+    }
+
     /** Split `dir/file.zip/Album` into zip relative path + inner prefix. */
     fun splitZipBrowsePath(relativeDir: String): Pair<String, String>? {
         val segs = relativeDir.replace('\\', '/').trim('/').split('/').filter { it.isNotEmpty() }

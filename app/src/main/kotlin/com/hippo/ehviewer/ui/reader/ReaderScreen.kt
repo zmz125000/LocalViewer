@@ -109,6 +109,7 @@ import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
@@ -1138,26 +1139,38 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             else -> 0
         }
         val path = args.path.toPath()
-        // Playlist used to pass zip-as-dir galleries as LocalFolder(zip file).
-        if (Settings.browseZipAsDir.value && isZipArchiveFileName(path.name)) {
-            useArchivePageLoader(
-                path,
-                info = info,
-                startPage = page,
-                passwdProvider = { invalidator ->
-                    awaitInputText(
-                        title = string(R.string.archive_need_passwd),
-                        hint = string(R.string.archive_passwd),
-                        onUserDismiss = { nav.popBackStack() },
-                    ) { text ->
-                        ensure(text.isNotBlank()) { string(R.string.passwd_cannot_be_empty) }
-                        ensure(invalidator(text)) { string(R.string.passwd_wrong) }
-                    }
-                },
-                block = block,
-            )
-        } else {
-            useFolderPageLoader(path, info, page, block)
+        val zipfile = ZipPaths.parseGallery(args.path)
+        val zipPasswd: PasswdProvider = { invalidator ->
+            awaitInputText(
+                title = string(R.string.archive_need_passwd),
+                hint = string(R.string.archive_passwd),
+                onUserDismiss = { nav.popBackStack() },
+            ) { text ->
+                ensure(text.isNotBlank()) { string(R.string.passwd_cannot_be_empty) }
+                ensure(invalidator(text)) { string(R.string.passwd_wrong) }
+            }
+        }
+        when {
+            zipfile != null -> {
+                val (zipAbs, inner) = zipfile
+                useArchivePageLoader(
+                    zipAbs.toPath(),
+                    info = info,
+                    startPage = page,
+                    memberPrefix = inner,
+                    passwdProvider = zipPasswd,
+                    block = block,
+                )
+            }
+            Settings.browseZipAsDir.value && isZipArchiveFileName(path.name) ->
+                useArchivePageLoader(
+                    path,
+                    info = info,
+                    startPage = page,
+                    passwdProvider = zipPasswd,
+                    block = block,
+                )
+            else -> useFolderPageLoader(path, info, page, block)
         }
     }
     is ReaderScreenArgs.LocalZipFolder -> {
