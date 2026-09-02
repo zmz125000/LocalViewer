@@ -655,6 +655,10 @@
     <string name="settings_privacy_clear_folder_browse_mode_summary">Remove locked Media / Photo / Video / Folder modes saved on folders</string>
     <string name="settings_privacy_clear_folder_browse_mode_confirm">Clear saved folder browse modes?</string>
     <string name="folder_browse_mode_cleared">Folder browse modes cleared</string>
+    <string name="settings_privacy_clear_folder_index_cache">Clear folder index cache</string>
+    <string name="settings_privacy_clear_folder_index_cache_summary">Remove saved folder listings for local and network sources. Folders will be scanned again when opened.</string>
+    <string name="settings_privacy_clear_folder_index_cache_confirm">Clear saved folder index cache?</string>
+    <string name="folder_index_cache_cleared">Folder index cache cleared</string>
     <string name="download_service">Download Service</string>
     <string name="favorite_name">Favorites</string>
     <string name="dark_theme">Dark theme</string>

@@ -2,6 +2,7 @@ package com.hippo.ehviewer.smb
 
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.localLibraryDb
 import kotlin.time.Clock
 import kotlinx.coroutines.flow.Flow
@@ -54,6 +55,7 @@ object SmbRepository {
     suspend fun delete(source: SmbSourceEntity) = withIOContext {
         SmbGateway.disconnect(source.id)
         SmbPasswordStore.remove(source.id)
+        NetworkFolderIndexCache.deleteSmb(source.id)
         dao.delete(source)
     }
 

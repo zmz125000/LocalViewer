@@ -508,6 +508,10 @@
     <string name="settings_network_folder_index_cache_summary">關閉時只將資料夾索引保存在 RAM；開啟時也會儲存到磁碟。</string>
     <string name="settings_network_folder_index_quick_scan">資料夾快取快速掃描</string>
     <string name="settings_network_folder_index_quick_scan_summary">命中 RAM 或磁碟快取時，快速檢查子資料夾是否新增或刪除。</string>
+    <string name="settings_privacy_clear_folder_index_cache">清除資料夾索引快取</string>
+    <string name="settings_privacy_clear_folder_index_cache_summary">刪除本機與網路來源已儲存的資料夾列表。下次開啟時將重新掃描。</string>
+    <string name="settings_privacy_clear_folder_index_cache_confirm">清除已儲存的資料夾索引快取？</string>
+    <string name="folder_index_cache_cleared">已清除資料夾索引快取</string>
     <string name="settings_reader_decode_ahead">預先解碼</string>
     <string name="settings_reader_decode_ahead_summary">保持閱讀方向上後續 %s 頁處於已解碼狀態</string>
     <string name="settings_advanced_auto_decode_ahead">限制預先解碼</string>

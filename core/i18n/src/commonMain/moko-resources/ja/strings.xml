@@ -639,6 +639,10 @@
     <string name="settings_privacy_clear_folder_browse_mode_summary">フォルダにロックしたメディア／画像／動画／フォルダモードを削除します</string>
     <string name="settings_privacy_clear_folder_browse_mode_confirm">保存したフォルダ閲覧モードを消去しますか？</string>
     <string name="folder_browse_mode_cleared">フォルダ閲覧モードを消去しました</string>
+    <string name="settings_privacy_clear_folder_index_cache">フォルダーのインデックスキャッシュを消去</string>
+    <string name="settings_privacy_clear_folder_index_cache_summary">ローカルおよびネットワークソースに保存したフォルダー一覧を削除します。次回開くときに再スキャンします。</string>
+    <string name="settings_privacy_clear_folder_index_cache_confirm">保存したフォルダーのインデックスキャッシュを消去しますか？</string>
+    <string name="folder_index_cache_cleared">フォルダーのインデックスキャッシュを消去しました</string>
     <string name="download_service">ダウンロードサービス</string>
     <string name="favorite_name">お気に入り</string>
     <string name="dark_theme">ダークテーマ</string>

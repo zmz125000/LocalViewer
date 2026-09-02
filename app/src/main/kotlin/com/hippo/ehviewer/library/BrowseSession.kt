@@ -273,6 +273,11 @@ object BrowseSession {
         }
     }
 
+    fun invalidateAllSmbListings() {
+        smbListings.clear()
+        smbRawChildren.clear()
+    }
+
     // --- WebDAV path segments / listings (mirror SMB session keys) ---
     private val webDavSegments = ConcurrentHashMap<Long, List<String>>()
     private val webDavListings = ConcurrentHashMap<String, CachedRemoteListing>()

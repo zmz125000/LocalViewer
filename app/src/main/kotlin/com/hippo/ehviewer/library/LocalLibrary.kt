@@ -226,6 +226,8 @@ object LocalLibrary {
             // CASCADE also clears galleries; explicit delete keeps behavior obvious if FK is off.
             db.localGalleryDao().deleteByRootId(root.id)
             db.libraryRootDao().delete(root)
+            BrowseSession.invalidateLocalListing()
+            NetworkFolderIndexCache.deleteLocal(root.id)
         }
     }
 

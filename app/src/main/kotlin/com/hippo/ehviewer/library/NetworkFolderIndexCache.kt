@@ -96,6 +96,23 @@ object NetworkFolderIndexCache {
         removedChildDirs: Set<String> = emptySet(),
     ): List<BrowseEntryRemote> = save("local", rootId, configKey, relativeDir, entries, removedChildDirs)
 
+    suspend fun deleteSmb(sourceId: Long) = delete("smb", sourceId)
+
+    suspend fun deleteWebDav(sourceId: Long) = delete("webdav", sourceId)
+
+    suspend fun deleteLocal(rootId: Long) = delete("local", rootId)
+
+    /** Drop every protocol file (current + legacy cacheDir) and process RAM listings. */
+    suspend fun clearAll() = withContext(Dispatchers.IO) {
+        lock.withLock {
+            deleteDirContents(cacheDir)
+            deleteDirContents(legacyCacheDir)
+        }
+        BrowseSession.invalidateLocalListing()
+        BrowseSession.invalidateAllSmbListings()
+        BrowseSession.invalidateAllWebDavListings()
+    }
+
     private suspend fun load(
         protocol: String,
         sourceId: Long,
@@ -198,6 +215,29 @@ object NetworkFolderIndexCache {
                 tmp.delete()
             }
             toStore
+        }
+    }
+
+    private suspend fun delete(protocol: String, sourceId: Long) = withContext(Dispatchers.IO) {
+        lock.withLock {
+            val name = "${protocol}_$sourceId.json"
+            File(cacheDir, name).delete()
+            File(legacyCacheDir, name).delete()
+            deleteTmpFiles(cacheDir, name)
+            deleteTmpFiles(legacyCacheDir, name)
+        }
+    }
+
+    private fun deleteDirContents(dir: File) {
+        if (!dir.isDirectory) return
+        dir.listFiles()?.forEach { it.delete() }
+    }
+
+    private fun deleteTmpFiles(dir: File, jsonName: String) {
+        if (!dir.isDirectory) return
+        val prefix = "$jsonName.tmp."
+        dir.listFiles()?.forEach { f ->
+            if (f.name.startsWith(prefix)) f.delete()
         }
     }
 

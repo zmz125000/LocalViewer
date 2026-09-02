@@ -3,6 +3,7 @@ package com.hippo.ehviewer.webdav
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.localLibraryDb
 import kotlin.time.Clock
 import kotlinx.coroutines.flow.Flow
@@ -54,6 +55,7 @@ object WebDavRepository {
         BrowseSession.invalidateWebDavListing(source.id)
         BrowseSession.clearWebDavSegments(source.id)
         WebDavPasswordStore.remove(source.id)
+        NetworkFolderIndexCache.deleteWebDav(source.id)
         dao.delete(source)
     }
 
