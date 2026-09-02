@@ -26,6 +26,7 @@ import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.jni.closeArchive
 import com.hippo.ehviewer.jni.extractToByteBuffer
 import com.hippo.ehviewer.jni.extractToFd
+import com.hippo.ehviewer.jni.getArchiveFilename
 import com.hippo.ehviewer.jni.getExtension
 import com.hippo.ehviewer.jni.needPassword
 import com.hippo.ehviewer.jni.openArchive
@@ -34,6 +35,7 @@ import com.hippo.ehviewer.jni.releaseByteBuffer
 import com.hippo.ehviewer.library.ArchiveAccess
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.util.displayName
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -58,6 +60,8 @@ suspend inline fun <T> useArchivePageLoader(
     info: GalleryInfo? = null,
     startPage: Int = 0,
     hasAds: Boolean = false,
+    memberPrefix: String = "",
+    imageNames: List<String> = emptyList(),
     crossinline passwdProvider: PasswdProvider,
     crossinline block: suspend (PageLoader) -> T,
 ) = ArchiveAccess.withArchive {
@@ -67,19 +71,29 @@ suspend inline fun <T> useArchivePageLoader(
             // sortEntries: EH downloads with real gallery info keep pack order; local / zip sort by name.
             // Must not key only on info==null — local archives now pass GalleryInfo for read progress.
             val sortEntries = info == null ||
-                file.name.endsWith(".zip", ignoreCase = true) ||
+                isZipArchiveFileName(file.name) ||
                 info.token == com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN ||
                 info.token == com.hippo.ehviewer.library.LOCAL_ARCHIVE_TOKEN ||
+                info.token == com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN ||
                 info.token == com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN ||
                 info.token == com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
-            val size = install(
+            val opened = install(
                 { openArchive(pfd.fd, pfd.statSize, sortEntries) },
                 { _, _ -> closeArchive() },
             )
-            check(size > 0) { "Archive have no content!" }
+            check(opened > 0) { "Archive have no content!" }
             if (needPassword() && archivePasswds.none(::providePassword)) {
                 archivePasswds += passwdProvider(::providePassword)
             }
+            val indexMap = if (imageNames.isEmpty()) {
+                null
+            } else {
+                val names = List(opened) { getArchiveFilename(it) }
+                nativeIndicesForZipFolder(memberPrefix, imageNames, names)
+            }
+            val size = indexMap?.size ?: opened
+            check(size > 0) { "Archive have no content!" }
+            val nat: (Int) -> Int = { index -> indexMap?.getOrNull(index) ?: index }
             // Serialize JNI extract; libarchive is process-global and not MT-safe.
             val extractLock = Any()
             val pathStr = file.toString()
@@ -97,12 +111,12 @@ suspend inline fun <T> useArchivePageLoader(
                         }
                     }
 
-                    override fun getImageExtension(index: Int) = getExtension(index)
+                    override fun getImageExtension(index: Int) = getExtension(nat(index))
 
                     override fun save(index: Int, file: Path) = runCatching {
                         file.openFileDescriptor("w").use {
                             synchronized(extractLock) {
-                                extractToFd(index, it.fd)
+                                extractToFd(nat(index), it.fd)
                             }
                         }
                     }.getOrElse {
@@ -112,7 +126,7 @@ suspend inline fun <T> useArchivePageLoader(
 
                     override fun openSource(index: Int): ImageSource {
                         val buffer = synchronized(extractLock) {
-                            extractToByteBuffer(index)
+                            extractToByteBuffer(nat(index))
                         }
                         checkNotNull(buffer) { "Extract archive content $index failed!" }
                         check(buffer.isDirect)
@@ -140,6 +154,54 @@ suspend inline fun <T> useArchivePageLoader(
             block(loader)
         }
     }
+}
+
+/**
+ * Map zip-as-dir gallery pages onto mmap archive indices.
+ * [imageNames] are basenames (or relative names) from the CD listing; [nativeNames]
+ * are libarchive paths. Prefer exact prefix, then same-depth basename (folder-name
+ * encoding may differ), then basename anywhere.
+ */
+@PublishedApi
+internal fun nativeIndicesForZipFolder(
+    innerRel: String,
+    imageNames: List<String>,
+    nativeNames: List<String>,
+): IntArray {
+    if (nativeNames.isEmpty()) return IntArray(0)
+    if (imageNames.isEmpty()) return IntArray(nativeNames.size) { it }
+    val allow = LinkedHashSet(
+        imageNames.map { it.replace('\\', '/').substringAfterLast('/') },
+    )
+    val prefix = innerRel.replace('\\', '/').trim('/')
+    val expectedSlashes = if (prefix.isEmpty()) 0 else prefix.count { it == '/' } + 1
+    fun norm(n: String) = n.replace('\\', '/').trimStart('/')
+    fun base(n: String) = norm(n).substringAfterLast('/')
+    fun slashes(n: String) = norm(n).count { it == '/' }
+
+    val exact = if (prefix.isEmpty()) {
+        nativeNames.mapIndexedNotNull { i, n ->
+            val path = norm(n)
+            if ('/' !in path && (path in allow || base(n) in allow)) i else null
+        }
+    } else {
+        val p = "$prefix/"
+        nativeNames.mapIndexedNotNull { i, n ->
+            val path = norm(n)
+            if (path.startsWith(p) && '/' !in path.removePrefix(p) && base(n) in allow) i else null
+        }
+    }
+    if (exact.size == imageNames.size) return exact.toIntArray()
+
+    val atDepth = nativeNames.mapIndexedNotNull { i, n ->
+        if (slashes(n) == expectedSlashes && base(n) in allow) i else null
+    }
+    if (atDepth.size == imageNames.size) return atDepth.toIntArray()
+    if (exact.isNotEmpty()) return exact.toIntArray()
+    if (atDepth.isNotEmpty()) return atDepth.toIntArray()
+
+    val byBase = nativeNames.mapIndexedNotNull { i, n -> if (base(n) in allow) i else null }
+    return if (byBase.isNotEmpty()) byBase.toIntArray() else IntArray(nativeNames.size) { it }
 }
 
 suspend fun updateLocalArchiveLibraryCover(

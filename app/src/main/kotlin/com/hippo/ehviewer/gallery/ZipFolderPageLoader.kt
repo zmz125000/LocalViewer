@@ -17,8 +17,10 @@ import okio.Path
 import okio.Path.Companion.toPath
 
 /**
- * Reader pages for an image prefix inside a ZIP/CBZ (local or zip-as-dir).
+ * Reader pages for an image prefix inside a **network** ZIP/CBZ (SMB/WebDAV zip-as-dir).
  * Extracts each member once into `cache/zip_folder_pages/` then presents as [PathSource].
+ *
+ * Local on-device zip galleries use mmap [useArchivePageLoader] instead (no page cache).
  *
  * Offline-first like SMB/WebDAV folder galleries: if the start page is already
  * extracted, do not open the ZIP (history must not fail with "Cannot read ZIP"

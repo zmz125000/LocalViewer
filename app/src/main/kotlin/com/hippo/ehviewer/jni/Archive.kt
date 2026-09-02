@@ -77,6 +77,9 @@ external fun extractToByteBuffer(index: Int): ByteBuffer?
 external fun extractToFd(index: Int, fd: Int): Boolean
 external fun getExtension(index: Int): String
 
+/** Member path inside the open mmap archive (`Album/001.jpg`). Empty if unknown. */
+external fun getArchiveFilename(index: Int): String
+
 /** Stream ZIP/TAR index: member local-header (ZIP) or data (TAR) offset; -1 if N/A. */
 external fun getStreamMemberOffset(index: Int): Long
 

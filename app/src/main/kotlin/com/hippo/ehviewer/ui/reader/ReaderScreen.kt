@@ -1145,12 +1145,24 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
             info != null -> EhDB.getReadProgress(info.gid)
             else -> 0
         }
-        useZipFolderPageLoader(
-            zipPath = args.zipPath,
-            innerRel = args.innerRel,
-            imageNames = args.imageNames,
+        // On-device zip: mmap + extractToByteBuffer (EhViewer direct access), not
+        // extract-to-cache. Network zip-as-dir still uses [useZipFolderPageLoader].
+        useArchivePageLoader(
+            args.zipPath.toPath(),
             info = info,
             startPage = page,
+            memberPrefix = args.innerRel,
+            imageNames = args.imageNames,
+            passwdProvider = { invalidator ->
+                awaitInputText(
+                    title = string(R.string.archive_need_passwd),
+                    hint = string(R.string.archive_passwd),
+                    onUserDismiss = { nav.popBackStack() },
+                ) { text ->
+                    ensure(text.isNotBlank()) { string(R.string.passwd_cannot_be_empty) }
+                    ensure(invalidator(text)) { string(R.string.passwd_wrong) }
+                }
+            },
             block = block,
         )
     }
