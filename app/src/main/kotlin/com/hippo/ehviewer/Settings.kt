@@ -168,7 +168,7 @@ object Settings : DataStorePreferences(null) {
      * When true, folder-view shows folder galleries below [browseSmallGalleryMinPages].
      * Default false: UI hides those rows (scanner listing is unchanged).
      */
-    val browseShowSmallGalleries = boolPref("browse_show_small_galleries", false)
+    val browseShowSmallGalleries = boolPref("browse_show_small_galleries", true)
 
     /**
      * Folder top-bar: show rows tagged [BrowseEntry.hidden] (dot names / `.nomedia` dirs).
@@ -268,7 +268,7 @@ object Settings : DataStorePreferences(null) {
      * also store the **original** full file in page cache (`smb_cache` / `webdav_cache`).
      * Thumbs always go to `*_thumb_cache` under the same path key. Default on.
      */
-    val savePhotoGridOriginalCache = boolPref("save_photo_grid_original_cache", true)
+    val savePhotoGridOriginalCache = boolPref("save_photo_grid_original_cache", false)
 
     val showGalleryPages = boolPref("show_gallery_pages", true)
     val showReadingProgress = boolPref("show_reading_progress", false)

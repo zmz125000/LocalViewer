@@ -17,11 +17,13 @@ import com.hippo.ehviewer.library.isDotHiddenName
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.isShallowIncompleteListing
+import com.hippo.ehviewer.library.isUntrustedSlimLiveListing
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.peekIndicatesHiddenDir
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.preferCompleteFolderGalleries
 import com.hippo.ehviewer.library.replaceSlimDirectFilesFromLive
+import com.hippo.ehviewer.library.selectCachedFolderListing
 import com.hippo.ehviewer.library.withHiddenFlags
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
@@ -68,16 +70,29 @@ object WebDavGateway {
     ): List<BrowseEntryRemote> {
         val configKey = sourceConfigKey(source)
         if (useCache) {
-            val cached = BrowseSession.getWebDavCachedListing(source.id, relativeDir)
-                ?: NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir)?.let { entries ->
+            val ram = BrowseSession.getWebDavCachedListing(source.id, relativeDir)
+            val needDisk = ram == null || isShallowIncompleteListing(ram.entries)
+            val disk = if (needDisk) {
+                NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir)
+            } else {
+                null
+            }
+            val selected = selectCachedFolderListing(
+                ramEntries = ram?.entries,
+                ramSessionCurrent = ram?.sessionCurrent == true,
+                diskEntries = disk,
+            )
+            val cached = selected?.let { (entries, sessionCurrent) ->
+                if (ram == null || ram.entries !== entries || ram.sessionCurrent != sessionCurrent) {
                     BrowseSession.putWebDavListing(
                         source.id,
                         relativeDir,
                         entries,
-                        sessionCurrent = false,
+                        sessionCurrent = sessionCurrent,
                     )
-                    BrowseSession.CachedRemoteListing(entries = entries, sessionCurrent = false)
                 }
+                BrowseSession.CachedRemoteListing(entries = entries, sessionCurrent = sessionCurrent)
+            }
             if (cached != null) {
                 onCached?.invoke(cached.entries)
                 val shouldQuickScan =
@@ -96,6 +111,13 @@ object WebDavGateway {
                 return try {
                     val refresh = withIOContext {
                         listDirectorySlim(source, password, relativeDir, cached.entries)
+                    }
+                    if (!refresh.persist) {
+                        logcat("FolderIndex") {
+                            "WebDAV slim ignored untrusted listing for source=${source.id} " +
+                                "dir=$relativeDir; keeping cache"
+                        }
+                        return cached.entries
                     }
                     val toKeep = if (refresh.entries != cached.entries ||
                         refresh.removedDirectoryNames.isNotEmpty()
@@ -217,6 +239,7 @@ object WebDavGateway {
     private data class SlimDirectoryRefresh(
         val entries: List<BrowseEntryRemote>,
         val removedDirectoryNames: Set<String>,
+        val persist: Boolean = true,
     )
 
     private suspend fun listDirectoryUncached(
@@ -256,6 +279,9 @@ object WebDavGateway {
         cached: List<BrowseEntryRemote>,
     ): SlimDirectoryRefresh {
         val children = listChildrenForRelativeDir(source, password, relativeDir)
+        if (isUntrustedSlimLiveListing(cached, children)) {
+            return SlimDirectoryRefresh(cached, emptySet(), persist = false)
+        }
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         val deepHidden = if (com.hippo.ehviewer.Settings.browseShowHiddenFiles.value) {
             hiddenDirectoriesNeedingDeepScan(cached, children)

@@ -35,12 +35,14 @@ import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.isShallowIncompleteListing
+import com.hippo.ehviewer.library.isUntrustedSlimLiveListing
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.peekIndicatesHiddenDir
 import com.hippo.ehviewer.library.planRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.preferCompleteFolderGalleries
 import com.hippo.ehviewer.library.replaceSlimDirectFilesFromLive
+import com.hippo.ehviewer.library.selectCachedFolderListing
 import com.hippo.ehviewer.library.withHiddenFlags
 import com.hippo.ehviewer.util.PrivacyLog
 import java.io.IOException
@@ -1619,17 +1621,30 @@ object SmbGateway {
         val cacheKey = BrowseSession.smbListingKey(source.id, relativeDir)
         val configKey = sourceConfigKey(source)
         if (useCache) {
-            // RAM hit keeps its generation; disk hydrate is always "old" for this process.
-            val cached = BrowseSession.getSmbCachedListing(source.id, relativeDir)
-                ?: NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)?.let { entries ->
+            // RAM hit keeps its generation unless it is a shallow stub hiding a complete disk index.
+            val ram = BrowseSession.getSmbCachedListing(source.id, relativeDir)
+            val needDisk = ram == null || isShallowIncompleteListing(ram.entries)
+            val disk = if (needDisk) {
+                NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)
+            } else {
+                null
+            }
+            val selected = selectCachedFolderListing(
+                ramEntries = ram?.entries,
+                ramSessionCurrent = ram?.sessionCurrent == true,
+                diskEntries = disk,
+            )
+            val cached = selected?.let { (entries, sessionCurrent) ->
+                if (ram == null || ram.entries !== entries || ram.sessionCurrent != sessionCurrent) {
                     BrowseSession.putSmbListing(
                         source.id,
                         relativeDir,
                         entries,
-                        sessionCurrent = false,
+                        sessionCurrent = sessionCurrent,
                     )
-                    BrowseSession.CachedRemoteListing(entries = entries, sessionCurrent = false)
                 }
+                BrowseSession.CachedRemoteListing(entries = entries, sessionCurrent = sessionCurrent)
+            }
             if (cached != null) {
                 onCached?.invoke(cached.entries)
                 // Quick scan only for old (non-current) listings — every directory independently,
@@ -1660,6 +1675,13 @@ object SmbGateway {
                                 relativeDir,
                                 cached.entries,
                             )
+                            if (!refresh.persist) {
+                                logcat("FolderIndex") {
+                                    "SMB slim ignored untrusted listing for source=${source.id} " +
+                                        "dir=$relativeDir; keeping cache"
+                                }
+                                return@awaitListJob cached.entries
+                            }
                             // Successful slim marks this exact directory current (even if unchanged).
                             val toKeep = if (refresh.entries != cached.entries ||
                                 refresh.removedDirectoryNames.isNotEmpty()
@@ -1883,6 +1905,8 @@ object SmbGateway {
     private data class SlimDirectoryRefresh(
         val entries: List<BrowseEntryRemote>,
         val removedDirectoryNames: Set<String>,
+        /** False: gap/empty live list — keep cache, do not mark session-current. */
+        val persist: Boolean = true,
     )
 
     private suspend fun listDirectoryUncached(
@@ -1913,6 +1937,9 @@ object SmbGateway {
             val children = listShareRootEntries(source, password).map {
                 RemoteChild(name = it.name, isDirectory = true)
             }
+            if (isUntrustedSlimLiveListing(cached, children)) {
+                return SlimDirectoryRefresh(cached, emptySet(), persist = false)
+            }
             val plan = planRemoteDirectorySlimRefresh(cached, children)
             if (plan.isUnchanged) return SlimDirectoryRefresh(cached, emptySet())
             val addedEntries = shareRootEntries(plan.addedDirectories.map { it.name })
@@ -1922,6 +1949,9 @@ object SmbGateway {
             )
         }
         val children = listChildrenForRelativeDir(source, password, relativeDir)
+        if (isUntrustedSlimLiveListing(cached, children)) {
+            return SlimDirectoryRefresh(cached, emptySet(), persist = false)
+        }
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         val deepHidden = if (com.hippo.ehviewer.Settings.browseShowHiddenFiles.value) {
             hiddenDirectoriesNeedingDeepScan(cached, children)
