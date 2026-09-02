@@ -392,7 +392,13 @@ fun isUntrustedSlimLiveListing(
     val cachedDirs = cachedDirectDirectoryNames(cachedEntries)
     if (cachedDirs.isEmpty()) return false
     val liveDirs = liveChildren.count { it.isDirectory && !isProtectedSystemName(it.name) }
-    return liveDirs == 0
+    if (liveDirs > 0) return false
+    // Zip-as-dir: cached fake folders are live zip/cbz *files*. That is not a wipe.
+    val liveZipNames = liveChildren.mapNotNull { child ->
+        child.name.takeIf { !child.isDirectory && isZipArchiveFileName(it) }
+    }.toSet()
+    if (liveZipNames.isNotEmpty() && cachedDirs.all { it in liveZipNames }) return false
+    return true
 }
 
 /**

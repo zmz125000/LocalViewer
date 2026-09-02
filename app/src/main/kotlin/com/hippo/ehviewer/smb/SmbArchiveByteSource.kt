@@ -4,8 +4,11 @@ import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.util.logcat
 import com.hierynomus.smbj.share.File
 import com.hippo.ehviewer.library.ArchiveByteSource
+import com.hippo.ehviewer.library.FileArchiveByteSource
 import com.hippo.ehviewer.library.ReadAheadArchiveByteSource
 import com.hippo.ehviewer.library.RemoteArchiveOpen
+import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipMemberCover
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -86,26 +89,53 @@ class SmbArchiveByteSource(
      */
     readahead: Boolean = true,
 ) : ArchiveByteSource {
-    private val raw = KeepOpenSmbFileSource(
-        source,
-        password,
-        remoteRelativeFile,
-        stickySession,
-        httpStickyPool,
-        httpStickyWait,
-        knownSize,
-        videoPlay,
-        yieldable,
-    )
-    private val inner: ArchiveByteSource = if (readahead) {
-        ReadAheadArchiveByteSource(
-            inner = raw,
-            sequentialWindow = sequentialWindow,
-            preferSequential = preferSequential,
-            pipeline = pipeline,
-        )
-    } else {
-        raw
+    private val raw: KeepOpenSmbFileSource?
+    private val inner: ArchiveByteSource
+
+    init {
+        val zipMember = ZipAsDirListing.zipMemberPath(remoteRelativeFile)
+        if (zipMember != null) {
+            val (zipRel, memberRel) = zipMember
+            val local = ZipMemberCover.ensure("smb:${source.id}:$zipRel", memberRel) {
+                SmbArchiveByteSource(
+                    source = source,
+                    password = password,
+                    remoteRelativeFile = zipRel,
+                    pipeline = false,
+                    yieldable = yieldable,
+                    stickySession = stickySession,
+                    httpStickyPool = httpStickyPool,
+                    httpStickyWait = httpStickyWait,
+                    videoPlay = false,
+                    readahead = true,
+                )
+            } ?: throw IOException("Cannot extract ZIP member $memberRel from $zipRel")
+            raw = null
+            inner = FileArchiveByteSource(java.io.File(local.toString()))
+        } else {
+            val smb = KeepOpenSmbFileSource(
+                source,
+                password,
+                remoteRelativeFile,
+                stickySession,
+                httpStickyPool,
+                httpStickyWait,
+                knownSize,
+                videoPlay,
+                yieldable,
+            )
+            raw = smb
+            inner = if (readahead) {
+                ReadAheadArchiveByteSource(
+                    inner = smb,
+                    sequentialWindow = sequentialWindow,
+                    preferSequential = preferSequential,
+                    pipeline = pipeline,
+                )
+            } else {
+                smb
+            }
+        }
     }
 
     override val size: Long get() = inner.size
@@ -114,7 +144,9 @@ class SmbArchiveByteSource(
 
     override fun warm(offset: Long, length: Int) = inner.warm(offset, length)
 
-    override fun dropQueuedReads() = raw.dropQueuedReads()
+    override fun dropQueuedReads() {
+        raw?.dropQueuedReads()
+    }
 
     override fun close() = inner.close()
 }

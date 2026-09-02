@@ -155,6 +155,12 @@
     <string name="settings_download_network_archive_thumbs_summary">擷取網路 ZIP/TAR/RAR/7z 的首頁縮圖。</string>
     <string name="settings_download_network_video_thumbs">下載網路影片封面</string>
     <string name="settings_download_network_video_thumbs_summary">為 SMB/WebDAV 影片擷取影格縮圖。關閉後仍顯示已快取的封面。</string>
+    <string name="settings_browse_zip_as_dir">將 ZIP 當作資料夾開啟</string>
+    <string name="settings_browse_zip_as_dir_summary">像資料夾一樣瀏覽 ZIP/CBZ（列表、圖庫、照片牆）。關閉則一律開啟壓縮包閱讀器。</string>
+    <string name="browse_menu_zip_as_dir">將 ZIP 當作資料夾</string>
+    <string name="zip_video_stub_unsupported">暫不支援在 ZIP 內播放影片</string>
+    <string name="zip_nested_archive_stub">暫不支援開啟 ZIP 內的壓縮包</string>
+    <string name="zip_member_cache_too_large">檔案約 %d MB（上限 100 MB），未寫入本機儲存。</string>
     <string name="settings_photo_grid_mode">照片牆模式</string>
     <string name="settings_photo_grid_mode_summary">開啟：點擊資料夾圖庫開啟照片牆，長按開啟閱讀器。關閉：點擊開啟閱讀器，長按開啟照片牆。</string>
     <string name="settings_photo_grid_scroll_to_progress">照片牆捲動到閱讀進度</string>

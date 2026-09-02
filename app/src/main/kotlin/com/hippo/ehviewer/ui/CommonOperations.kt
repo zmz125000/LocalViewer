@@ -59,6 +59,15 @@ context(_: DestinationsNavigator)
 fun navToLocalFolderReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1) = navToReader(ReaderScreenArgs.LocalFolder(path, page, info))
 
 context(_: DestinationsNavigator)
+fun navToLocalZipFolderReader(
+    zipPath: String,
+    innerRel: String,
+    imageNames: List<String>,
+    info: BaseGalleryInfo? = null,
+    page: Int = -1,
+) = navToReader(ReaderScreenArgs.LocalZipFolder(zipPath, innerRel, imageNames, page, info))
+
+context(_: DestinationsNavigator)
 fun navToSmbFolderReader(
     sourceId: Long,
     remoteDir: String,

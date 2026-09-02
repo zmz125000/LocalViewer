@@ -103,14 +103,17 @@ import com.hippo.ehviewer.gallery.useSolidExtractPageLoader
 import com.hippo.ehviewer.gallery.useStreamArchivePageLoader
 import com.hippo.ehviewer.gallery.useTarChunkPageLoader
 import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
+import com.hippo.ehviewer.gallery.useZipFolderPageLoader
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isTarArchiveFileName
+import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.MainActivity
@@ -124,6 +127,7 @@ import com.hippo.ehviewer.util.displayString
 import com.hippo.ehviewer.util.findActivity
 import com.hippo.ehviewer.util.hasAds
 import com.hippo.ehviewer.util.setReaderColorMode
+import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
@@ -135,6 +139,7 @@ import eu.kanade.tachiyomi.ui.reader.ReaderAppBars
 import eu.kanade.tachiyomi.ui.reader.ReaderContentOverlay
 import eu.kanade.tachiyomi.ui.reader.ReaderPageSheetMeta
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellationException
@@ -173,6 +178,19 @@ sealed interface ReaderScreenArgs {
     @Serializable
     data class LocalFolder(
         val path: String,
+        val page: Int = -1,
+        val info: BaseGalleryInfo? = null,
+    ) : ReaderScreenArgs
+
+    /**
+     * Image folder inside a local ZIP/CBZ ([innerRel] prefix). Pages are members
+     * listed in [imageNames] (basenames under that prefix).
+     */
+    @Serializable
+    data class LocalZipFolder(
+        val zipPath: String,
+        val innerRel: String,
+        val imageNames: List<String>,
         val page: Int = -1,
         val info: BaseGalleryInfo? = null,
     ) : ReaderScreenArgs
@@ -325,6 +343,7 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                 val loader = result.value
                 val info = when (args) {
                     is ReaderScreenArgs.LocalFolder -> args.info
+                    is ReaderScreenArgs.LocalZipFolder -> args.info
                     is ReaderScreenArgs.SmbFolder -> args.info
                     is ReaderScreenArgs.WebDavFolder -> args.info
                     is ReaderScreenArgs.SmbStreamArchive -> args.info
@@ -399,6 +418,21 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                             info = args.info,
                         )
                     }
+                }
+                is ReaderScreenArgs.LocalZipFolder -> {
+                    val frame = BrowseSession.localStack.lastOrNull() ?: return@withIOContext
+                    val zipRel = frame.relativePath
+                    val inner = args.innerRel.trim('/')
+                    val rel = if (inner.isEmpty()) zipRel else "$zipRel|$inner"
+                    LocalHistory.recordLocalFolderGallery(
+                        rootId = frame.rootId,
+                        relativePath = rel,
+                        title = args.info?.title
+                            ?: inner.substringAfterLast('/').ifEmpty { File(args.zipPath).name },
+                        thumbKey = args.info?.thumbKey,
+                        pages = args.imageNames.size,
+                        info = args.info,
+                    )
                 }
                 is ReaderScreenArgs.SmbFolder -> LocalHistory.recordSmbFolderGallery(
                     sourceId = args.sourceId,
@@ -859,6 +893,24 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                 is ReaderScreenArgs.Archive -> {
                                     LocalHistory.recordLocalArchive(s.path)
                                 }
+                                is ReaderScreenArgs.LocalZipFolder -> {
+                                    val frame = BrowseSession.localStack.lastOrNull()
+                                        ?: return@withIOContext
+                                    val zipRel = frame.relativePath
+                                    val inner = s.innerRel.trim('/')
+                                    val rel = if (inner.isEmpty()) zipRel else "$zipRel|$inner"
+                                    LocalHistory.recordLocalFolderGallery(
+                                        rootId = frame.rootId,
+                                        relativePath = rel,
+                                        title = s.info?.title
+                                            ?: inner.substringAfterLast('/').ifEmpty {
+                                                File(s.zipPath).name
+                                            },
+                                        thumbKey = s.info?.thumbKey,
+                                        pages = s.imageNames.size,
+                                        info = s.info,
+                                    )
+                                }
                             }
                         }
                     }
@@ -1086,6 +1138,22 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
         }
         useFolderPageLoader(args.path.toPath(), info, page, block)
     }
+    is ReaderScreenArgs.LocalZipFolder -> {
+        val info = args.info
+        val page = when {
+            args.page != -1 -> args.page
+            info != null -> EhDB.getReadProgress(info.gid)
+            else -> 0
+        }
+        useZipFolderPageLoader(
+            zipPath = args.zipPath,
+            innerRel = args.innerRel,
+            imageNames = args.imageNames,
+            info = info,
+            startPage = page,
+            block = block,
+        )
+    }
     is ReaderScreenArgs.SmbFolder -> {
         val source = requireNotNull(SmbRepository.load(args.sourceId)) { "SMB source not found" }
         val info = args.info
@@ -1102,7 +1170,33 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 args.remoteDir,
             )
         }
-        useSmbFolderPageLoader(source, args.remoteDir, names, info, page, block)
+        val zipSplit = if (Settings.browseZipAsDir.value) {
+            ZipAsDirListing.splitZipBrowsePath(args.remoteDir)
+        } else {
+            null
+        }
+        if (zipSplit != null) {
+            val (zipRel, inner) = zipSplit
+            useZipFolderPageLoader(
+                zipPath = "smb:${source.id}:$zipRel",
+                innerRel = inner,
+                imageNames = names,
+                info = info,
+                startPage = page,
+                openSource = {
+                    SmbArchiveByteSource(
+                        source,
+                        SmbPasswordStore.get(source.id),
+                        zipRel,
+                        pipeline = false,
+                        yieldable = true,
+                    )
+                },
+                block = block,
+            )
+        } else {
+            useSmbFolderPageLoader(source, args.remoteDir, names, info, page, block)
+        }
     }
     is ReaderScreenArgs.WebDavFolder -> {
         val source = requireNotNull(WebDavRepository.load(args.sourceId)) { "WebDAV source not found" }
@@ -1119,7 +1213,32 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 args.remoteDir,
             )
         }
-        useWebDavFolderPageLoader(source, args.remoteDir, names, info, page, block)
+        val zipSplit = if (Settings.browseZipAsDir.value) {
+            ZipAsDirListing.splitZipBrowsePath(args.remoteDir)
+        } else {
+            null
+        }
+        if (zipSplit != null) {
+            val (zipRel, inner) = zipSplit
+            useZipFolderPageLoader(
+                zipPath = "webdav:${source.id}:$zipRel",
+                innerRel = inner,
+                imageNames = names,
+                info = info,
+                startPage = page,
+                openSource = {
+                    WebDavArchiveByteSource(
+                        source,
+                        WebDavPasswordStore.get(source.id),
+                        zipRel,
+                        pipeline = false,
+                    )
+                },
+                block = block,
+            )
+        } else {
+            useWebDavFolderPageLoader(source, args.remoteDir, names, info, page, block)
+        }
     }
     is ReaderScreenArgs.Archive -> {
         val path = args.path.toPath()

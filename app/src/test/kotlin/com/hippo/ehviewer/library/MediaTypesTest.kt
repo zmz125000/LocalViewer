@@ -29,6 +29,19 @@ class MediaTypesTest {
     }
 
     @Test
+    fun zipAsDirExtensionsAreZipAndCbzOnly() {
+        assertTrue(isZipArchiveFileName("album.zip"))
+        assertTrue(isZipArchiveFileName("album.CBZ"))
+        assertFalse(isZipArchiveFileName("album.rar"))
+        assertFalse(isZipArchiveFileName("album.cbr"))
+        assertFalse(isZipArchiveFileName("album.7z"))
+        assertFalse(isZipArchiveFileName("album.tar"))
+        assertFalse(isZipArchiveFileName("album.cbt"))
+        assertFalse(isZipArchiveFileName("album.pdf"))
+        assertFalse(isZipArchiveFileName("album.epub"))
+    }
+
+    @Test
     fun unknownUsesGenericViewMime() {
         assertEquals(GENERIC_FILE_MIME, mimeTypeForFileName("noext"))
         assertEquals(GENERIC_FILE_MIME, mimeTypeForFileName("weird.unknownfmt"))

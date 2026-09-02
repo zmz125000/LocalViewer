@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.library
 
+import android.os.ParcelFileDescriptor
+import com.ehviewer.core.files.openFileDescriptor
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
@@ -10,7 +12,7 @@ import okio.Path
  * (e.g. full-downloaded 7z/RAR in smb_cache / webdav_cache hybrid fallback).
  *
  * Do **not** use for SAF `content://` / tree document paths — those need
- * [com.ehviewer.core.files.openFileDescriptor] (see [ArchiveCoverCache.ensureCover]).
+ * [openLocalArchiveByteSource] / [PfdArchiveByteSource].
  */
 class FileArchiveByteSource(private val file: File) : ArchiveByteSource {
     constructor(path: Path) : this(File(path.toString()))
@@ -51,5 +53,32 @@ class FileArchiveByteSource(private val file: File) : ArchiveByteSource {
     @Synchronized
     override fun close() {
         runCatching { raf.close() }
+    }
+}
+
+/**
+ * Local zip/archive byte source: real files via [FileArchiveByteSource], SAF /
+ * MediaStore via [Path.openFileDescriptor] + [PfdArchiveByteSource].
+ */
+fun openLocalArchiveByteSource(path: Path): ArchiveByteSource? = runCatching {
+    val file = File(path.toString())
+    if (file.isFile) {
+        FileArchiveByteSource(file)
+    } else {
+        val pfd = path.openFileDescriptor("r")
+        val owned = ParcelFileDescriptor.dup(pfd.fileDescriptor)
+        pfd.close()
+        PfdArchiveByteSource(owned, ownsPfd = true)
+    }
+}.getOrNull()
+
+/** Parse ZIP EOCD+CD then run [block]; always closes the underlying source. */
+fun <T> withLocalZipCentralDirectory(path: Path, block: (ZipCentralDirectory) -> T): T? {
+    val source = openLocalArchiveByteSource(path) ?: return null
+    return try {
+        val cd = ZipCentralDirectory.open(source) ?: return null
+        block(cd)
+    } finally {
+        runCatching { source.close() }
     }
 }

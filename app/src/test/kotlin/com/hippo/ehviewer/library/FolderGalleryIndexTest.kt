@@ -85,6 +85,28 @@ class FolderGalleryIndexTest {
     }
 
     @Test
+    fun `zip wrapper gallery is resolved from parent listing`() {
+        val names = listOf("a.jpg", "b.jpg")
+        val listing = listOf(gallery(relativeName = "pack.zip/Album", names = names))
+        assertEquals(
+            names,
+            FolderGalleryIndex.namesFromListing("share", listing, "share/pack.zip/Album"),
+        )
+    }
+
+    @Test
+    fun `zip interior listing matches child gallery`() {
+        val names = listOf("a.jpg")
+        val listings = mapOf(
+            "share/pack.zip" to listOf(gallery(relativeName = "Album", names = names)),
+        )
+        val found = runBlocking {
+            FolderGalleryIndex.namesWalkingParents("share/pack.zip/Album") { listings[it] }
+        }
+        assertEquals(names, found)
+    }
+
+    @Test
     fun `root gallery matches empty listed dir`() {
         val names = listOf("cover.jpg")
         val listing = listOf(gallery(relativeName = "gal", names = names))
