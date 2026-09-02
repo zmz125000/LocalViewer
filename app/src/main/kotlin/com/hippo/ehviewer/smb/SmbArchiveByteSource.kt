@@ -258,11 +258,11 @@ private class KeepOpenSmbFileSource(
                                         }
                                         if (stickySession) {
                                             while (isActive && !closed.get()) {
-                                                val op = withTimeoutOrNull(STICKY_IDLE_PING_MS) {
-                                                    ops.receiveCatching().getOrNull()
+                                                val received = withTimeoutOrNull(STICKY_IDLE_PING_MS) {
+                                                    ops.receiveCatching()
                                                 }
-                                                if (op == null) {
-                                                    if (ops.isClosedForReceive || closed.get()) break
+                                                if (received == null) {
+                                                    if (closed.get()) break
                                                     // Keepalive against NAS/NAT idle drop. Share may
                                                     // already be dead after dropStickySessions (screen
                                                     // off) — exit drain cleanly so the HTTP sticky
@@ -285,6 +285,7 @@ private class KeepOpenSmbFileSource(
                                                     }
                                                     continue
                                                 }
+                                                val op = received.getOrNull() ?: break
                                                 runBatch(op)
                                             }
                                         } else {
