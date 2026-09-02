@@ -17,8 +17,12 @@ import okio.Path
 import okio.Path.Companion.toPath
 
 /**
- * Reader pages for an image prefix inside a local ZIP/CBZ.
+ * Reader pages for an image prefix inside a ZIP/CBZ (local or zip-as-dir).
  * Extracts each member once into `cache/zip_folder_pages/` then presents as [PathSource].
+ *
+ * Offline-first like SMB/WebDAV folder galleries: if the start page is already
+ * extracted, do not open the ZIP (history must not fail with "Cannot read ZIP"
+ * when the share is unreachable).
  */
 suspend inline fun <T> useZipFolderPageLoader(
     zipPath: String,
@@ -26,7 +30,7 @@ suspend inline fun <T> useZipFolderPageLoader(
     imageNames: List<String>,
     info: GalleryInfo? = null,
     startPage: Int = 0,
-    crossinline openSource: () -> ArchiveByteSource = {
+    noinline openSource: () -> ArchiveByteSource = {
         openLocalArchiveByteSource(zipPath.toPath()) ?: error("Cannot open ZIP: $zipPath")
     },
     crossinline block: suspend (PageLoader) -> T,
@@ -36,15 +40,17 @@ suspend inline fun <T> useZipFolderPageLoader(
         val size = imageNames.size
         val zipKey = zipPath
         val prefix = ZipAsDirListing.normalizePrefix(innerRel)
-        val source = install(
-            { openSource() },
+        val start = startPage.coerceIn(0, size - 1)
+        val session = install(
+            { ZipFolderExtractSession { openSource() } },
             { s, _ -> s.close() },
         )
-        val cd = ZipCentralDirectory.open(source)
-            ?: error("Cannot read ZIP: $zipPath")
+        if (!zipFolderPageCached(zipKey, prefix, imageNames[start])) {
+            session.cd() ?: error("Cannot read ZIP: $zipPath")
+        }
 
         val loader = install(
-            object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
+            object : PageLoader(this, info, start, size) {
                 override val title by lazy {
                     info?.title
                         ?: prefix.substringAfterLast('/').ifEmpty {
@@ -55,25 +61,13 @@ suspend inline fun <T> useZipFolderPageLoader(
                 override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(imageNames[index])
 
                 override fun save(index: Int, file: Path): Boolean = runCatching {
-                    val src = ensureZipPage(
-                        cd = cd,
-                        zipKey = zipKey,
-                        prefix = prefix,
-                        imageNames = imageNames,
-                        index = index,
-                    )
+                    val src = session.ensurePage(zipKey, prefix, imageNames, index)
                     File(src.toString()).copyTo(File(file.toString()), overwrite = true)
                     true
                 }.getOrDefault(false)
 
                 override fun openSource(index: Int): ImageSource {
-                    val path = ensureZipPage(
-                        cd = cd,
-                        zipKey = zipKey,
-                        prefix = prefix,
-                        imageNames = imageNames,
-                        index = index,
-                    )
+                    val path = session.ensurePage(zipKey, prefix, imageNames, index)
                     return object : PathSource {
                         override val source = path
                         override val type by lazy {
@@ -94,26 +88,58 @@ suspend inline fun <T> useZipFolderPageLoader(
 }
 
 @PublishedApi
-internal fun zipFolderSha256(s: String): String = ZipMemberCover.sha256(s)
+internal fun zipFolderMember(prefix: String, fileName: String): String = if (prefix.isEmpty()) fileName else "$prefix/$fileName"
 
 @PublishedApi
-internal fun ensureZipPage(
-    cd: ZipCentralDirectory,
-    zipKey: String,
-    prefix: String,
-    imageNames: List<String>,
-    index: Int,
-): Path {
-    val base = imageNames[index]
-    val member = if (prefix.isEmpty()) base else "$prefix/$base"
-    val dest = ZipMemberCover.destFile(zipKey, member)
-    if (dest.isFile && dest.length() > 0L) return dest.absolutePath.toPath()
-    val entry = cd.find(member) ?: error("Missing ZIP member: $member")
-    if (ZipMemberCover.rejectIfTooLarge(entry, notify = true)) {
-        error("ZIP member too large")
+internal fun zipFolderPageCached(zipKey: String, prefix: String, fileName: String): Boolean {
+    val dest = ZipMemberCover.destFile(zipKey, zipFolderMember(prefix, fileName))
+    return dest.isFile && dest.length() > 0L
+}
+
+@PublishedApi
+internal class ZipFolderExtractSession(
+    private val openSource: () -> ArchiveByteSource,
+) : AutoCloseable {
+    private var source: ArchiveByteSource? = null
+    private var directory: ZipCentralDirectory? = null
+
+    fun cd(): ZipCentralDirectory? {
+        directory?.let { return it }
+        val src = runCatching { openSource() }.getOrNull() ?: return null
+        val opened = ZipCentralDirectory.open(src)
+        if (opened == null) {
+            runCatching { src.close() }
+            return null
+        }
+        source = src
+        directory = opened
+        return opened
     }
-    check(cd.extractToFile(entry, dest, maxBytes = ZipMemberCover.MAX_CACHE_BYTES)) {
-        "Extract failed: $member"
+
+    fun ensurePage(
+        zipKey: String,
+        prefix: String,
+        imageNames: List<String>,
+        index: Int,
+    ): Path {
+        val member = zipFolderMember(prefix, imageNames[index])
+        val dest = ZipMemberCover.destFile(zipKey, member)
+        if (dest.isFile && dest.length() > 0L) return dest.absolutePath.toPath()
+        val cd = cd() ?: error("Cannot read ZIP: $zipKey")
+        val entry = cd.find(member) ?: error("Missing ZIP member: $member")
+        if (ZipMemberCover.rejectIfTooLarge(entry, notify = true)) {
+            error("ZIP member too large")
+        }
+        check(cd.extractToFile(entry, dest, maxBytes = ZipMemberCover.MAX_CACHE_BYTES)) {
+            "Extract failed: $member"
+        }
+        return dest.absolutePath.toPath()
     }
-    return dest.absolutePath.toPath()
+
+    override fun close() {
+        directory = null
+        val src = source
+        source = null
+        if (src != null) runCatching { src.close() }
+    }
 }
