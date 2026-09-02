@@ -4,7 +4,6 @@ import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -106,6 +105,102 @@ class ZipAsDirListingTest {
         )
         val root = ZipAsDirListing.classifyAt(cd, "", "media.zip")
         assertTrue(root.any { it is BrowseEntryRemote.VideoFile && it.fileName == "clip.mp4" })
+    }
+
+    @Test
+    fun parentListingWithoutExpandClassifiesZipAsArchiveGallery() {
+        val children = listOf(
+            RemoteChild(name = "flat.cbz", isDirectory = false, size = 10L),
+            RemoteChild(name = "notes.txt", isDirectory = false, size = 1L),
+        )
+        val classified = classifyRemoteListing("Parent", children)
+        assertTrue(
+            classified.any { it is BrowseEntryRemote.ArchiveGallery && it.fileName == "flat.cbz" },
+        )
+    }
+
+    @Test
+    fun expandFeedsZipAsFakeFolderSoDirectoryListingDoesNotEmitArchiveGallery() {
+        val cd = openZip(
+            "001.jpg" to byteArrayOf(1),
+            "002.jpg" to byteArrayOf(2),
+        )
+        val children = listOf(
+            RemoteChild(name = "flat.cbz", isDirectory = false, size = 10L),
+            RemoteChild(name = "notes.txt", isDirectory = false, size = 1L),
+        )
+        val expansion = ZipAsDirListing.expandZipFilesAsFakeFolders(children) { name ->
+            if (name == "flat.cbz") ZipAsDirListing.zipRootListingFromCd(cd) else null
+        }
+        assertTrue(expansion.children.any { it.name == "flat.cbz" && it.isDirectory })
+        val classified = classifyRemoteListingWithPeeks(
+            currentDirName = "Parent",
+            entries = expansion.children,
+            childPeeks = expansion.peeks,
+            grandPeeks = expansion.grandPeeks,
+        )
+        assertTrue(
+            classified.none { it is BrowseEntryRemote.ArchiveGallery && it.fileName == "flat.cbz" },
+        )
+        assertTrue(
+            classified.any {
+                it is BrowseEntryRemote.FolderGallery && it.relativeName == "flat.cbz"
+            },
+        )
+        assertTrue(
+            classified.any {
+                it is BrowseEntryRemote.Directory &&
+                    it.name == "flat.cbz" &&
+                    it.presence == DirPresence.LeafImages
+            },
+        )
+        assertTrue(classified.any { it is BrowseEntryRemote.RegularFile && it.fileName == "notes.txt" })
+    }
+
+    @Test
+    fun expandTreeZipClassifiesAsDirectoryNotArchive() {
+        val cd = openZip(
+            "Album/a.jpg" to byteArrayOf(1),
+            "Album/b.jpg" to byteArrayOf(2),
+        )
+        val children = listOf(RemoteChild(name = "tree.zip", isDirectory = false))
+        val expansion = ZipAsDirListing.expandZipFilesAsFakeFolders(children) {
+            ZipAsDirListing.zipRootListingFromCd(cd)
+        }
+        val classified = classifyRemoteListingWithPeeks(
+            currentDirName = "Parent",
+            entries = expansion.children,
+            childPeeks = expansion.peeks,
+            grandPeeks = expansion.grandPeeks,
+        )
+        assertTrue(classified.none { it is BrowseEntryRemote.ArchiveGallery })
+        assertTrue(
+            classified.any { it is BrowseEntryRemote.Directory && it.name == "tree.zip" },
+        )
+        // Same DirectoryListing path as a real folder `tree.zip/Album/*.jpg`: promote @tree.zip.
+        assertTrue(
+            classified.any {
+                it is BrowseEntryRemote.FolderGallery &&
+                    it.virtual &&
+                    it.relativeName == "tree.zip/Album"
+            },
+        )
+    }
+
+    @Test
+    fun zipFileSegmentAndInnerPrefix() {
+        assertEquals("tree.zip", ZipAsDirListing.zipFileSegment("tree.zip/Album"))
+        assertEquals("Album", ZipAsDirListing.zipInnerPrefix("tree.zip/Album"))
+        assertEquals("", ZipAsDirListing.zipInnerPrefix("flat.cbz"))
+        assertEquals(null, ZipAsDirListing.zipFileSegment("@tree.zip"))
+    }
+
+    @Test
+    fun unreadableZipStaysFile() {
+        val children = listOf(RemoteChild(name = "broken.zip", isDirectory = false))
+        val expansion = ZipAsDirListing.expandZipFilesAsFakeFolders(children) { null }
+        assertTrue(expansion.children.single().let { !it.isDirectory && it.name == "broken.zip" })
+        assertTrue(expansion.peeks.isEmpty())
     }
 
     @Test

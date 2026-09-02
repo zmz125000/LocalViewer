@@ -85,4 +85,43 @@ class SlimDirectFilesRefreshTest {
         )
         assertFalse(updated.any { it.name == "stale.txt" })
     }
+
+    @Test
+    fun zipAsDirFileIsNotRemovedDirectoryAndNotReaddedAsArchive() {
+        val cached = listOf(
+            BrowseEntryRemote.Directory(
+                name = "tree.zip",
+                relativeName = "tree.zip",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.Navigable,
+            ),
+            BrowseEntryRemote.RegularFile(name = "notes.txt", fileName = "notes.txt", size = 1L),
+        )
+        val live = listOf(
+            RemoteChild(name = "tree.zip", isDirectory = false, size = 99L),
+            RemoteChild(name = "notes.txt", isDirectory = false, size = 2L),
+        )
+        val plan = planRemoteDirectorySlimRefresh(cached, live)
+        assertTrue("tree.zip" in plan.removedDirectoryNames)
+
+        val zipFiles = ZipAsDirListing.zipFileNames(live)
+        assertEquals(setOf("tree.zip"), zipFiles)
+        val keptRemoved = plan.removedDirectoryNames - zipFiles
+        assertTrue(keptRemoved.isEmpty())
+
+        val merged = mergeRemoteDirectorySlimRefresh(
+            cached,
+            RemoteDirectorySlimPlan(addedDirectories = emptyList(), removedDirectoryNames = keptRemoved),
+            emptyList(),
+        )
+        val liveForFiles = live.filterNot { it.name in zipFiles }
+        val updated = replaceSlimDirectFilesFromLive(merged, liveForFiles, "Parent")
+        assertTrue(
+            updated.any { it is BrowseEntryRemote.Directory && it.name == "tree.zip" },
+        )
+        assertTrue(updated.none { it is BrowseEntryRemote.ArchiveGallery })
+        val notes = updated.filterIsInstance<BrowseEntryRemote.RegularFile>().single()
+        assertEquals(2L, notes.size)
+    }
 }
