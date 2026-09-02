@@ -213,10 +213,18 @@ fun List<BrowseEntry>.toBrowseSections(): BrowseFolderSections<BrowseEntry> {
     val galleries = ArrayList<BrowseEntry>()
     val videos = ArrayList<BrowseEntry>()
     val files = ArrayList<BrowseEntry>()
+    val seenGallery = HashSet<String>()
     for (e in this) {
         when (e) {
             is BrowseEntry.Directory -> directories += e
-            is BrowseEntry.FolderGallery, is BrowseEntry.ArchiveGallery -> galleries += e
+            is BrowseEntry.FolderGallery -> {
+                val id = "g-${e.path}|${e.relativeName}"
+                if (seenGallery.add(id)) galleries += e
+            }
+            is BrowseEntry.ArchiveGallery -> {
+                val id = "a-${e.path}"
+                if (seenGallery.add(id)) galleries += e
+            }
             is BrowseEntry.VideoFile -> videos += e
             is BrowseEntry.RegularFile -> files += e
         }
@@ -229,10 +237,18 @@ fun List<BrowseEntryRemote>.toRemoteBrowseSections(): BrowseFolderSections<Brows
     val galleries = ArrayList<BrowseEntryRemote>()
     val videos = ArrayList<BrowseEntryRemote>()
     val files = ArrayList<BrowseEntryRemote>()
+    val seenGallery = HashSet<String>()
     for (e in this) {
         when (e) {
             is BrowseEntryRemote.Directory -> directories += e
-            is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery -> galleries += e
+            is BrowseEntryRemote.FolderGallery -> {
+                val id = "g-${e.relativeName}"
+                if (seenGallery.add(id)) galleries += e
+            }
+            is BrowseEntryRemote.ArchiveGallery -> {
+                val id = "a-${e.parentRelativeName}/${e.fileName}"
+                if (seenGallery.add(id)) galleries += e
+            }
             is BrowseEntryRemote.VideoFile -> videos += e
             is BrowseEntryRemote.RegularFile -> files += e
         }

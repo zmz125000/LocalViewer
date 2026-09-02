@@ -277,12 +277,10 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun applySystemOrientationForVideo(videoSize: VideoSize) {
         if (videoSize.width <= 0 || videoSize.height <= 0) return
-        val metadataRotated = videoSize.unappliedRotationDegrees % 180 != 0
-        val displayWidth = if (metadataRotated) videoSize.height else videoSize.width
-        val displayHeight = if (metadataRotated) videoSize.width else videoSize.height
+        // Media3 applies rotation internally; width/height are already display size.
         val target = when {
-            displayWidth > displayHeight -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            displayHeight > displayWidth -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            videoSize.width > videoSize.height -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            videoSize.height > videoSize.width -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
             else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
         if (requestedOrientation != target) requestedOrientation = target

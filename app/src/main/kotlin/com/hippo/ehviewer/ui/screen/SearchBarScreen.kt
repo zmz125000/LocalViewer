@@ -148,7 +148,7 @@ fun SearchBarScreen(
         }
     }
 
-    fun normalizeQuery(raw: CharSequence = searchFieldState.text): String = raw.trim().replace(WHITESPACE_REGEX, " ").toString()
+    fun normalizeQuery(raw: CharSequence = searchFieldState.text): String = raw.trim().replace(WHITESPACE_REGEX, " ")
 
     fun applyFilter(raw: CharSequence = searchFieldState.text) {
         onFilterChange(normalizeQuery(raw))

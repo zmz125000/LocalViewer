@@ -491,27 +491,18 @@ suspend inline fun <T> useStreamArchivePageLoader(
 
                     /** Single-flight extract → page image cache. */
                     private suspend fun extractToCache(index: Int): Path? {
-                        ensureActive()
-                        if (isPageCached(index)) {
+                        fun cachedPath(): Path {
                             val hit = pagePaths[index]
                                 ?: ArchiveStreamPageCache.pagePath(cacheKey, index, getExtension(index))
-                            if (hit != null) {
-                                pagePaths[index] = hit
-                                markCompleteIfReady()
-                            }
+                            pagePaths[index] = hit
+                            markCompleteIfReady()
                             return hit
                         }
+                        ensureActive()
+                        if (isPageCached(index)) return cachedPath()
                         return extractMutex.withLock {
                             ensureActive()
-                            if (isPageCached(index)) {
-                                val hit = pagePaths[index]
-                                    ?: ArchiveStreamPageCache.pagePath(cacheKey, index, getExtension(index))
-                                if (hit != null) {
-                                    pagePaths[index] = hit
-                                    markCompleteIfReady()
-                                }
-                                return@withLock hit
-                            }
+                            if (isPageCached(index)) return@withLock cachedPath()
                             val ext = getExtension(index).ifBlank { return@withLock null }
                             val buffer = bridge.checkedNative {
                                 extractToByteBuffer(index)

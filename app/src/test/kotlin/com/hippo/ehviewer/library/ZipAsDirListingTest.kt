@@ -254,6 +254,35 @@ class ZipAsDirListingTest {
     }
 
     @Test
+    fun cachedZipAsDirNamesIncludesWrapperFolderGallery() {
+        val wrapper = BrowseEntryRemote.FolderGallery(
+            name = "园区.zip",
+            relativeName = "园区.zip/园区",
+            pageCount = 2,
+            coverFileName = "01.jpg",
+            imageFileNames = listOf("01.jpg", "02.jpg"),
+        )
+        val flat = BrowseEntryRemote.FolderGallery(
+            name = "flat.cbz",
+            relativeName = "flat.cbz",
+            pageCount = 1,
+            coverFileName = "a.jpg",
+            imageFileNames = listOf("a.jpg"),
+        )
+        val dir = BrowseEntryRemote.Directory(
+            name = "tree.zip",
+            relativeName = "tree.zip",
+            hasVideo = false,
+            hasGallery = true,
+            presence = DirPresence.Navigable,
+        )
+        val names = ZipAsDirListing.cachedDirectZipAsDirNames(listOf(wrapper, flat, dir))
+        assertTrue("园区.zip" in names)
+        assertTrue("flat.cbz" in names)
+        assertTrue("tree.zip" in names)
+    }
+
+    @Test
     fun splitZipBrowsePathFindsFirstZipSegment() {
         assertEquals(
             "share/pack.zip" to "Album",
