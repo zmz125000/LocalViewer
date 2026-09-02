@@ -33,8 +33,8 @@ import splitties.init.appCtx
  * current dirs and re-runs for every old dir (including subfolders).
  *
  * Local folder roots use protocol `local` with [LibraryRootEntity.id] as [sourceId].
- * Not trimmed by [OriginDiskCache] (lives under [appCtx.cacheDir]; system cache GC may
- * still clear it).
+ * Lives under [appCtx.noBackupFilesDir] so Android cache GC / [OriginDiskCache] trim
+ * cannot delete it. Legacy files under [appCtx.cacheDir] are copied on first load/save.
  */
 object NetworkFolderIndexCache {
     /** Bump when on-disk entry shape changes — old JSON is ignored (no migration). */
@@ -47,6 +47,8 @@ object NetworkFolderIndexCache {
 
     private val lock = Mutex()
     private val cacheDir: File
+        get() = File(appCtx.noBackupFilesDir, "network_folder_index")
+    private val legacyCacheDir: File
         get() = File(appCtx.cacheDir, "network_folder_index")
 
     suspend fun loadSmb(
@@ -146,7 +148,12 @@ object NetworkFolderIndexCache {
             root.put("configKey", configKey) // stamp only — not a load gate
             if (!root.has("folders")) root.put("folders", JSONObject())
             val folders = root.getJSONObject("folders")
-            if (removedChildDirs.isNotEmpty()) {
+            val key = normalizeDir(relativeDir)
+            val previous = folders.optJSONArray(key)?.let { array ->
+                runCatching { decodeEntries(array) }.getOrNull()
+            }
+            val keepPrevious = previous != null && shouldKeepPreviousFolderIndex(previous, entries)
+            if (!keepPrevious && removedChildDirs.isNotEmpty()) {
                 val parent = normalizeDir(relativeDir)
                 val removedPrefixes = removedChildDirs.map { child ->
                     listOf(parent, normalizeDir(child)).filter { it.isNotEmpty() }.joinToString("/")
@@ -154,19 +161,24 @@ object NetworkFolderIndexCache {
                 val staleKeys = buildList {
                     val keys = folders.keys()
                     while (keys.hasNext()) {
-                        val key = keys.next()
-                        if (removedPrefixes.any { prefix -> key == prefix || key.startsWith("$prefix/") }) {
-                            add(key)
+                        val keyName = keys.next()
+                        if (removedPrefixes.any { prefix ->
+                                keyName == prefix || keyName.startsWith("$prefix/")
+                            }
+                        ) {
+                            add(keyName)
                         }
                     }
                 }
                 staleKeys.forEach { folders.remove(it) }
             }
-            val key = normalizeDir(relativeDir)
-            val previous = folders.optJSONArray(key)?.let { array ->
-                runCatching { decodeEntries(array) }.getOrNull()
-            }
-            val toStore = if (previous != null) {
+            val toStore = if (keepPrevious) {
+                logcat("FolderIndex") {
+                    "Keeping $protocol/$sourceId dir=$key index " +
+                        "(new listing empty/shallow or dropped every folder)"
+                }
+                checkNotNull(previous)
+            } else if (previous != null) {
                 preferCompleteFolderGalleries(previous, entries)
             } else {
                 entries
@@ -178,7 +190,7 @@ object NetworkFolderIndexCache {
                 tmp.writeText(root.toString())
                 if (CachePagePublish.atomicReplaceFile(tmp, file)) {
                     file.setLastModified(System.currentTimeMillis())
-                    OriginDiskCache.scheduleTrim()
+                    File(legacyCacheDir, file.name).delete()
                 }
             } catch (e: Throwable) {
                 logcat("FolderIndex", e)
@@ -189,7 +201,17 @@ object NetworkFolderIndexCache {
         }
     }
 
-    private fun fileFor(protocol: String, sourceId: Long) = File(cacheDir, "${protocol}_$sourceId.json")
+    private fun fileFor(protocol: String, sourceId: Long): File {
+        val dest = File(cacheDir, "${protocol}_$sourceId.json")
+        if (dest.isFile && dest.length() > 0L) return dest
+        val legacy = File(legacyCacheDir, "${protocol}_$sourceId.json")
+        if (legacy.isFile && legacy.length() > 0L) {
+            cacheDir.mkdirs()
+            runCatching { legacy.copyTo(dest, overwrite = false) }
+                .onFailure { logcat("FolderIndex", it) }
+        }
+        return dest
+    }
 
     private fun normalizeDir(relativeDir: String) = relativeDir.replace('\\', '/').trim('/')
 

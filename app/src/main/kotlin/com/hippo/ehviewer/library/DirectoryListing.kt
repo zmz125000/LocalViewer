@@ -350,15 +350,19 @@ data class RemoteDirectorySlimPlan(
  * one real [BrowseEntryRemote.Directory] whose [BrowseEntryRemote.Directory.relativeName]
  * is a single segment; promoted virtual rows use multi-segment paths.
  */
-fun planRemoteDirectorySlimRefresh(
-    cachedEntries: List<BrowseEntryRemote>,
-    liveChildren: List<RemoteChild>,
-): RemoteDirectorySlimPlan {
-    val cachedDirectoryNames = cachedEntries.asSequence()
+/** Direct (single-segment) child folder names from a classified listing. */
+fun cachedDirectDirectoryNames(cachedEntries: List<BrowseEntryRemote>): Set<String> =
+    cachedEntries.asSequence()
         .filterIsInstance<BrowseEntryRemote.Directory>()
         .map { it.relativeName.replace('\\', '/').trim('/') }
         .filter { it.isNotEmpty() && '/' !in it }
         .toSet()
+
+fun planRemoteDirectorySlimRefresh(
+    cachedEntries: List<BrowseEntryRemote>,
+    liveChildren: List<RemoteChild>,
+): RemoteDirectorySlimPlan {
+    val cachedDirectoryNames = cachedDirectDirectoryNames(cachedEntries)
     val liveDirectories = liveChildren.asSequence()
         .filter { it.isDirectory && !isProtectedSystemName(it.name) }
         .associateBy { it.name }
@@ -370,6 +374,62 @@ fun planRemoteDirectorySlimRefresh(
         addedDirectories = added,
         removedDirectoryNames = cachedDirectoryNames - liveDirectories.keys,
     )
+}
+
+/**
+ * True when a slim live listing is too sparse to treat as deletions.
+ *
+ * `listChildrenLenient` maps ACCESS_DENIED / PATH_NOT_FOUND to an empty list, and
+ * EasyTier/VPN reconnect can PROPFIND/QUERY_DIRECTORY a share that is not ready yet.
+ * Applying [RemoteDirectorySlimPlan.removedDirectoryNames] would then delete every
+ * descendant key from [NetworkFolderIndexCache].
+ */
+fun isUntrustedSlimLiveListing(
+    cachedEntries: List<BrowseEntryRemote>,
+    liveChildren: List<RemoteChild>,
+): Boolean {
+    if (cachedEntries.isEmpty()) return false
+    if (liveChildren.isEmpty()) return true
+    val cachedDirs = cachedDirectDirectoryNames(cachedEntries)
+    if (cachedDirs.isEmpty()) return false
+    val liveDirs = liveChildren.count { it.isDirectory && !isProtectedSystemName(it.name) }
+    return liveDirs == 0
+}
+
+/**
+ * Disk-save last line of defence: a poorer re-list must not replace a complete folder
+ * index (Empty/Pending shells, or a listing that dropped every child folder).
+ */
+fun shouldKeepPreviousFolderIndex(
+    previous: List<BrowseEntryRemote>,
+    next: List<BrowseEntryRemote>,
+): Boolean {
+    if (previous.isEmpty()) return false
+    if (next.isEmpty()) return true
+    if (isShallowIncompleteListing(next) && !isShallowIncompleteListing(previous)) return true
+    return cachedDirectDirectoryNames(previous).isNotEmpty() &&
+        cachedDirectDirectoryNames(next).isEmpty()
+}
+
+/**
+ * RAM shallow stubs (cancelled deep classify / force-refresh paint) must not hide a
+ * complete disk index — otherwise the next visit full-rescans and may persist Empty
+ * shells over the real tree.
+ */
+fun selectCachedFolderListing(
+    ramEntries: List<BrowseEntryRemote>?,
+    ramSessionCurrent: Boolean,
+    diskEntries: List<BrowseEntryRemote>?,
+): Pair<List<BrowseEntryRemote>, Boolean>? {
+    if (ramEntries != null && !isShallowIncompleteListing(ramEntries)) {
+        return ramEntries to ramSessionCurrent
+    }
+    if (diskEntries != null && (ramEntries == null || !isShallowIncompleteListing(diskEntries))) {
+        return diskEntries to false
+    }
+    if (ramEntries != null) return ramEntries to ramSessionCurrent
+    if (diskEntries != null) return diskEntries to false
+    return null
 }
 
 /** Basename set of live non-directory children (skips protected / dot names). */

@@ -33,6 +33,7 @@ object LocalFolderListing {
     data class SlimRefresh(
         val entries: List<BrowseEntryRemote>,
         val removedDirectoryNames: Set<String>,
+        val persist: Boolean = true,
     )
 
     /**
@@ -78,11 +79,24 @@ object LocalFolderListing {
         val configKey = rootConfigKey(rootPath, preferMediaStore)
 
         if (useCache) {
-            val cached = BrowseSession.getLocalCachedListing(pathKey)
-                ?: NetworkFolderIndexCache.loadLocal(rootId, configKey, relativeDir)?.let { entries ->
-                    BrowseSession.putLocalListing(pathKey, entries, sessionCurrent = false)
-                    BrowseSession.CachedLocalListing(entries = entries, sessionCurrent = false)
+            val ram = BrowseSession.getLocalCachedListing(pathKey)
+            val needDisk = ram == null || isShallowIncompleteListing(ram.entries)
+            val disk = if (needDisk) {
+                NetworkFolderIndexCache.loadLocal(rootId, configKey, relativeDir)
+            } else {
+                null
+            }
+            val selected = selectCachedFolderListing(
+                ramEntries = ram?.entries,
+                ramSessionCurrent = ram?.sessionCurrent == true,
+                diskEntries = disk,
+            )
+            val cached = selected?.let { (entries, sessionCurrent) ->
+                if (ram == null || ram.entries !== entries || ram.sessionCurrent != sessionCurrent) {
+                    BrowseSession.putLocalListing(pathKey, entries, sessionCurrent = sessionCurrent)
                 }
+                BrowseSession.CachedLocalListing(entries = entries, sessionCurrent = sessionCurrent)
+            }
             if (cached != null) {
                 val materialized = materializeLocalEntries(effective, cached.entries)
                 onCached?.invoke(materialized)
@@ -97,6 +111,13 @@ object LocalFolderListing {
                 } else {
                     return@withContext try {
                         val refresh = listDirectorySlim(effective, preferMediaStore, cached.entries)
+                        if (!refresh.persist) {
+                            logcat("FolderIndex") {
+                                "Local slim ignored untrusted listing for root=$rootId " +
+                                    "dir=$relativeDir; keeping cache"
+                            }
+                            return@withContext materialized
+                        }
                         val toKeep = if (refresh.entries != cached.entries ||
                             refresh.removedDirectoryNames.isNotEmpty()
                         ) {
@@ -201,6 +222,9 @@ object LocalFolderListing {
         cached: List<BrowseEntryRemote>,
     ): SlimRefresh {
         val children = listChildrenRemote(dir, preferMediaStore)
+        if (isUntrustedSlimLiveListing(cached, children)) {
+            return SlimRefresh(cached, emptySet(), persist = false)
+        }
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         val deepHidden = if (Settings.browseShowHiddenFiles.value) {
             hiddenDirectoriesNeedingDeepScan(cached, children)
