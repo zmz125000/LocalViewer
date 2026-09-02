@@ -82,17 +82,16 @@ import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.FavoriteBrowseSource
-import com.hippo.ehviewer.library.FileArchiveByteSource
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.ZipAsDirListing
-import com.hippo.ehviewer.library.ZipCentralDirectory
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
 import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
 import com.hippo.ehviewer.library.toBaseGalleryInfo
+import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
@@ -120,6 +119,7 @@ import kotlinx.coroutines.launch
 import moe.tarsin.navigate
 import moe.tarsin.snackbar
 import moe.tarsin.string
+import okio.Path.Companion.toPath
 
 @Destination<RootGraph>(start = true)
 @Composable
@@ -267,9 +267,9 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 val inner = if (member == "." || member.isEmpty()) "" else member
                 launchIO {
                     val names = runCatching {
-                        val cd = ZipCentralDirectory.open(FileArchiveByteSource(java.io.File(zipAbs)))
-                            ?: return@runCatching emptyList()
-                        ZipAsDirListing.directImageNames(cd, inner)
+                        withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
+                            ZipAsDirListing.directImageNames(cd, inner)
+                        }.orEmpty()
                     }.getOrDefault(emptyList())
                     if (names.isEmpty()) {
                         snackbar(string(R.string.browse_open_failed))

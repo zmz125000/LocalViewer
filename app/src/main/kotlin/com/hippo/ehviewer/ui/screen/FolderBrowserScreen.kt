@@ -1284,7 +1284,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     )
                                 }
                                 if (BrowseFolderSection.Directories !in collapsedSections) {
-                                    items(dirs, key = { "d-${it.path}" }) { dir ->
+                                    items(dirs, key = { "d-${it.path}|${it.relativeName}" }) { dir ->
                                         BrowseDirectoryGridItem(
                                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                                             name = dir.name,
@@ -1312,7 +1312,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         galleries,
                                         key = { entry ->
                                             when (entry) {
-                                                is BrowseEntry.FolderGallery -> "g-${entry.path}"
+                                                is BrowseEntry.FolderGallery -> "g-${entry.path}|${entry.relativeName}"
                                                 is BrowseEntry.ArchiveGallery -> "a-${entry.path}"
                                                 else -> "x-${entry.name}"
                                             }
@@ -1414,7 +1414,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     )
                                 }
                                 if (BrowseFolderSection.Directories !in collapsedSections) {
-                                    items(dirs, key = { "d-${it.path}" }) { dir ->
+                                    items(dirs, key = { "d-${it.path}|${it.relativeName}" }) { dir ->
                                         BrowseDirectoryRow(
                                             modifier = Modifier.thenIf(animateItems) { animateItem() },
                                             name = dir.name,
@@ -1439,7 +1439,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         galleries,
                                         key = { entry ->
                                             when (entry) {
-                                                is BrowseEntry.FolderGallery -> "g-${entry.path}"
+                                                is BrowseEntry.FolderGallery -> "g-${entry.path}|${entry.relativeName}"
                                                 is BrowseEntry.ArchiveGallery -> "a-${entry.path}"
                                                 else -> "x-${entry.name}"
                                             }

@@ -83,6 +83,7 @@ import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
+import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
@@ -91,6 +92,7 @@ import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
+import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
@@ -200,6 +202,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val photoGridDir = photoGridOverlay?.dir
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
+    val browseZipAsDir by Settings.browseZipAsDir.collectAsState()
     val photoGridMode by Settings.photoGridMode.collectAsState()
     val relativeDirForMode = segments.joinToString("/")
     val virtual = if (photoGridDir == relativeDirForMode) {
@@ -353,6 +356,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     fun requestForceReload() {
         forceNextLoad = true
         refreshToken++
+    }
+
+    var prevZipAsDir by remember { mutableStateOf(browseZipAsDir) }
+    LaunchedEffect(browseZipAsDir) {
+        if (browseZipAsDir != prevZipAsDir) {
+            prevZipAsDir = browseZipAsDir
+            requestForceReload()
+        }
     }
 
     // Turning Hidden files on: mark listing non-current so slim quick-scan deep-scans
@@ -844,6 +855,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery) {
         val src = source ?: return
+        if (browseZipAsDir && isZipArchiveFileName(entry.fileName)) {
+            enterDir(entry.fileName)
+            return
+        }
         // fileName is only the basename from the current listing — join with the folder we are in.
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
@@ -1087,7 +1102,18 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             "a-${it.parentRelativeName}/${it.fileName}"
                         else -> "x-${it.name}"
                     }
-                    fun coverFor(entry: BrowseEntryRemote.FolderGallery): BrowseCover.WebDav? = entry.coverFileName?.let { fileName ->
+                    fun zipMemberCover(relativeName: String, coverFileName: String?): BrowseCover? {
+                        if (!browseZipAsDir) return null
+                        val parts = ZipAsDirListing.zipAsDirCoverParts(
+                            relativeDir,
+                            relativeName,
+                            coverFileName,
+                        ) ?: return null
+                        return BrowseCover.WebDavZipMember(sourceId, parts.first, parts.second)
+                    }
+                    fun coverFor(entry: BrowseEntryRemote.FolderGallery): BrowseCover? {
+                        zipMemberCover(entry.relativeName, entry.coverFileName)?.let { return it }
+                        val fileName = entry.coverFileName ?: return null
                         val remote = if (entry.relativeName.isEmpty()) {
                             WebDavGateway.joinRelative(relativeDir, fileName)
                         } else {
@@ -1096,14 +1122,16 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 fileName,
                             )
                         }
-                        BrowseCover.WebDav(sourceId, remote)
+                        return BrowseCover.WebDav(sourceId, remote)
                     }
-                    fun dirCoverFor(dir: BrowseEntryRemote.Directory): BrowseCover.WebDav? = dir.coverFileName?.let { fileName ->
+                    fun dirCoverFor(dir: BrowseEntryRemote.Directory): BrowseCover? {
+                        zipMemberCover(dir.relativeName, dir.coverFileName)?.let { return it }
+                        val fileName = dir.coverFileName ?: return null
                         val remote = WebDavGateway.joinRelative(
                             WebDavGateway.joinRelative(relativeDir, dir.relativeName),
                             fileName,
                         )
-                        BrowseCover.WebDav(sourceId, remote)
+                        return BrowseCover.WebDav(sourceId, remote)
                     }
                     fun archiveCoverFor(entry: BrowseEntryRemote.ArchiveGallery): BrowseCover? {
                         // ZIP/TAR/EPUB stream + solid RAR/7z + documents.

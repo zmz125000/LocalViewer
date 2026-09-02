@@ -83,6 +83,7 @@ import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
+import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
@@ -91,6 +92,7 @@ import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
+import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
@@ -210,6 +212,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     val photoGridDir = photoGridOverlay?.dir
     val showGalleryPages by Settings.showGalleryPages.collectAsState()
     val browseFolderThumbs by Settings.browseFolderThumbs.collectAsState()
+    val browseZipAsDir by Settings.browseZipAsDir.collectAsState()
     val photoGridMode by Settings.photoGridMode.collectAsState()
     val networkFolderIndexCacheEnabled by Settings.networkFolderIndexCache.collectAsState()
     val networkFolderIndexQuickScanEnabled by Settings.networkFolderIndexQuickScan.collectAsState()
@@ -391,6 +394,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     fun requestForceReload() {
         forceNextLoad = true
         refreshToken++
+    }
+
+    var prevZipAsDir by remember { mutableStateOf(browseZipAsDir) }
+    LaunchedEffect(browseZipAsDir) {
+        if (browseZipAsDir != prevZipAsDir) {
+            prevZipAsDir = browseZipAsDir
+            requestForceReload()
+        }
     }
 
     /*
@@ -958,6 +969,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun openArchive(entry: BrowseEntryRemote.ArchiveGallery) {
         val src = source ?: return
+        if (browseZipAsDir && isZipArchiveFileName(entry.fileName)) {
+            enterDir(entry.fileName)
+            return
+        }
         // fileName is only the basename from the current listing — join with the folder we are in.
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
@@ -1208,7 +1223,18 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                             "a-${it.parentRelativeName}/${it.fileName}"
                         else -> "x-${it.name}"
                     }
-                    fun coverFor(entry: BrowseEntryRemote.FolderGallery): BrowseCover.Smb? = entry.coverFileName?.let { fileName ->
+                    fun zipMemberCover(relativeName: String, coverFileName: String?): BrowseCover? {
+                        if (!browseZipAsDir) return null
+                        val parts = ZipAsDirListing.zipAsDirCoverParts(
+                            relativeDir,
+                            relativeName,
+                            coverFileName,
+                        ) ?: return null
+                        return BrowseCover.SmbZipMember(sourceId, parts.first, parts.second)
+                    }
+                    fun coverFor(entry: BrowseEntryRemote.FolderGallery): BrowseCover? {
+                        zipMemberCover(entry.relativeName, entry.coverFileName)?.let { return it }
+                        val fileName = entry.coverFileName ?: return null
                         val remote = if (entry.relativeName.isEmpty()) {
                             SmbGateway.joinRelativePath(relativeDir, fileName)
                         } else {
@@ -1217,15 +1243,16 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                 fileName,
                             )
                         }
-                        BrowseCover.Smb(sourceId, remote)
+                        return BrowseCover.Smb(sourceId, remote)
                     }
-                    fun dirCoverFor(dir: BrowseEntryRemote.Directory): BrowseCover.Smb? = dir.coverFileName?.let { fileName ->
-                        // coverFileName is relative to the directory (basename or leaf/file.jpg).
+                    fun dirCoverFor(dir: BrowseEntryRemote.Directory): BrowseCover? {
+                        zipMemberCover(dir.relativeName, dir.coverFileName)?.let { return it }
+                        val fileName = dir.coverFileName ?: return null
                         val remote = SmbGateway.joinRelativePath(
                             SmbGateway.joinRelativePath(relativeDir, dir.relativeName),
                             fileName,
                         )
-                        BrowseCover.Smb(sourceId, remote)
+                        return BrowseCover.Smb(sourceId, remote)
                     }
                     fun archiveCoverFor(entry: BrowseEntryRemote.ArchiveGallery): BrowseCover? {
                         // ZIP/TAR/EPUB stream + solid RAR/7z + documents (lazy first-page extract).

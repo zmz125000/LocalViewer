@@ -108,10 +108,12 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isTarArchiveFileName
+import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.MainActivity
@@ -125,6 +127,7 @@ import com.hippo.ehviewer.util.displayString
 import com.hippo.ehviewer.util.findActivity
 import com.hippo.ehviewer.util.hasAds
 import com.hippo.ehviewer.util.setReaderColorMode
+import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
@@ -1167,7 +1170,33 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 args.remoteDir,
             )
         }
-        useSmbFolderPageLoader(source, args.remoteDir, names, info, page, block)
+        val zipSplit = if (Settings.browseZipAsDir.value) {
+            ZipAsDirListing.splitZipBrowsePath(args.remoteDir)
+        } else {
+            null
+        }
+        if (zipSplit != null) {
+            val (zipRel, inner) = zipSplit
+            useZipFolderPageLoader(
+                zipPath = "smb:${source.id}:$zipRel",
+                innerRel = inner,
+                imageNames = names,
+                info = info,
+                startPage = page,
+                openSource = {
+                    SmbArchiveByteSource(
+                        source,
+                        SmbPasswordStore.get(source.id),
+                        zipRel,
+                        pipeline = false,
+                        yieldable = true,
+                    )
+                },
+                block = block,
+            )
+        } else {
+            useSmbFolderPageLoader(source, args.remoteDir, names, info, page, block)
+        }
     }
     is ReaderScreenArgs.WebDavFolder -> {
         val source = requireNotNull(WebDavRepository.load(args.sourceId)) { "WebDAV source not found" }
@@ -1184,7 +1213,32 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 args.remoteDir,
             )
         }
-        useWebDavFolderPageLoader(source, args.remoteDir, names, info, page, block)
+        val zipSplit = if (Settings.browseZipAsDir.value) {
+            ZipAsDirListing.splitZipBrowsePath(args.remoteDir)
+        } else {
+            null
+        }
+        if (zipSplit != null) {
+            val (zipRel, inner) = zipSplit
+            useZipFolderPageLoader(
+                zipPath = "webdav:${source.id}:$zipRel",
+                innerRel = inner,
+                imageNames = names,
+                info = info,
+                startPage = page,
+                openSource = {
+                    WebDavArchiveByteSource(
+                        source,
+                        WebDavPasswordStore.get(source.id),
+                        zipRel,
+                        pipeline = false,
+                    )
+                },
+                block = block,
+            )
+        } else {
+            useWebDavFolderPageLoader(source, args.remoteDir, names, info, page, block)
+        }
     }
     is ReaderScreenArgs.Archive -> {
         val path = args.path.toPath()

@@ -189,6 +189,77 @@ object ZipAsDirListing {
         return ZipFakeFolderExpansion(out, peeks, grandPeeks)
     }
 
+    /**
+     * Classify a parent listing after injecting zip/cbz files as fake folders with CD peeks.
+     * [listZipRoot] returns null to leave that zip as a file (ArchiveGallery).
+     */
+    fun classifyListingWithZipAsDirs(
+        currentDirName: String,
+        children: List<RemoteChild>,
+        childPeeks: Map<String, List<RemoteChild>>,
+        grandPeeks: Map<String, List<RemoteChild>>,
+        listZipRoot: (fileName: String) -> ZipRootListing?,
+    ): List<BrowseEntryRemote> {
+        val expansion = expandZipFilesAsFakeFolders(children, listZipRoot)
+        val peeks = HashMap<String, List<RemoteChild>>(childPeeks.size + expansion.peeks.size)
+        peeks.putAll(childPeeks)
+        peeks.putAll(expansion.peeks)
+        val grands = HashMap<String, List<RemoteChild>>(grandPeeks.size + expansion.grandPeeks.size)
+        grands.putAll(grandPeeks)
+        grands.putAll(expansion.grandPeeks)
+        val tagged = expansion.children.withHiddenFlags(peeks)
+        return classifyRemoteListingWithPeeks(currentDirName, tagged, peeks, grands)
+    }
+
+    /** Shallow paint: zip/cbz files become Pending directories (no CD yet). */
+    fun zipFilesAsPendingDirectories(children: List<RemoteChild>): List<RemoteChild> {
+        if (children.none { !it.isDirectory && isZipArchiveFileName(it.name) }) return children
+        return children.map { child ->
+            if (!child.isDirectory && isZipArchiveFileName(child.name)) {
+                child.copy(isDirectory = true, size = 0L)
+            } else {
+                child
+            }
+        }
+    }
+
+    /**
+     * Split `dir/file.zip/Album` into zip relative path + inner prefix.
+     * First `.zip`/`.cbz` segment is the archive; remaining segments are inside it.
+     */
+    fun splitZipBrowsePath(relativeDir: String): Pair<String, String>? {
+        val segs = relativeDir.replace('\\', '/').trim('/').split('/').filter { it.isNotEmpty() }
+        val i = segs.indexOfFirst { isZipArchiveFileName(it) }
+        if (i < 0) return null
+        val zipRel = segs.take(i + 1).joinToString("/")
+        val inner = segs.drop(i + 1).joinToString("/")
+        return zipRel to inner
+    }
+
+    /**
+     * Cover member inside a zip for a classified row in [listedDir].
+     * @return zip relative path + member path, or null when this is not a zip-as-dir row.
+     */
+    fun zipAsDirCoverParts(
+        listedDir: String,
+        relativeName: String,
+        coverFileName: String?,
+    ): Pair<String, String>? {
+        if (coverFileName.isNullOrEmpty()) return null
+        val zipSeg = zipFileSegment(relativeName)
+        val listed = splitZipBrowsePath(listedDir)
+        val (zipRel, inner) = when {
+            zipSeg != null -> {
+                val parent = listedDir.replace('\\', '/').trim('/')
+                val zip = if (parent.isEmpty()) zipSeg else "$parent/$zipSeg"
+                zip to zipInnerPrefix(relativeName)
+            }
+            listed != null -> listed.first to joinPrefix(listed.second, relativeName)
+            else -> return null
+        }
+        return zipRel to joinPrefix(inner, coverFileName)
+    }
+
     /** Live zip/cbz **files** (not directories) in a parent listing. */
     fun zipFileNames(children: List<RemoteChild>): Set<String> = children.mapNotNull { child ->
         child.name.takeIf { !child.isDirectory && isZipArchiveFileName(child.name) }

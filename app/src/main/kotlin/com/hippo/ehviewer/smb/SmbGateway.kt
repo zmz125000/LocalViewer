@@ -26,6 +26,8 @@ import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
+import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipCentralDirectory
 import com.hippo.ehviewer.library.classifyRemoteListing
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
@@ -34,6 +36,7 @@ import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPromotableLeafDirName
 import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.isShallowIncompleteListing
+import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.mergeRemoteDirectorySlimRefresh
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.peekIndicatesHiddenDir
@@ -1616,6 +1619,19 @@ object SmbGateway {
         useCache: Boolean = true,
         onCached: ((List<BrowseEntryRemote>) -> Unit)? = null,
     ): List<BrowseEntryRemote> {
+        if (Settings.browseZipAsDir.value) {
+            ZipAsDirListing.splitZipBrowsePath(relativeDir)?.let { (zipRel, inner) ->
+                return listZipVirtualDirectory(
+                    source,
+                    password,
+                    relativeDir,
+                    zipRel,
+                    inner,
+                    useCache,
+                    onCached,
+                )
+            }
+        }
         val cacheKey = BrowseSession.smbListingKey(source.id, relativeDir)
         val configKey = sourceConfigKey(source)
         if (useCache) {
@@ -1750,7 +1766,13 @@ object SmbGateway {
             .ifEmpty { source.displayName }
         // No peeks: dirs are Empty shells; files/archives/videos by basename; current-dir
         // images still form a FolderGallery from this single listing.
-        val shallow = classifyRemoteListing(dirName, children.withHiddenFlags())
+        // Zip-as-dir: paint zip/cbz as Pending folders so folder view is not ArchiveGallery.
+        val shallowChildren = if (Settings.browseZipAsDir.value) {
+            ZipAsDirListing.zipFilesAsPendingDirectories(children)
+        } else {
+            children
+        }
+        val shallow = classifyRemoteListing(dirName, shallowChildren.withHiddenFlags())
         val shallowMerged = if (previous != null) {
             preferCompleteFolderGalleries(previous, shallow)
         } else {
@@ -1923,25 +1945,47 @@ object SmbGateway {
         }
         val children = listChildrenForRelativeDir(source, password, relativeDir)
         val plan = planRemoteDirectorySlimRefresh(cached, children)
+        val zipFileNames = if (Settings.browseZipAsDir.value) {
+            ZipAsDirListing.zipFileNames(children)
+        } else {
+            emptySet()
+        }
         val deepHidden = if (com.hippo.ehviewer.Settings.browseShowHiddenFiles.value) {
             hiddenDirectoriesNeedingDeepScan(cached, children)
         } else {
             emptyList()
         }
         val deepNames = deepHidden.mapTo(HashSet()) { it.name }
-        val toClassify = (plan.addedDirectories + deepHidden).distinctBy { it.name }
+        val cachedZipAsDir = if (zipFileNames.isEmpty()) {
+            emptySet()
+        } else {
+            ZipAsDirListing.cachedDirectZipAsDirNames(cached)
+        }
+        val newZips = if (zipFileNames.isEmpty()) {
+            emptyList()
+        } else {
+            children.filter { it.name in zipFileNames && it.name !in cachedZipAsDir }
+        }
+        val toClassify = (plan.addedDirectories + deepHidden + newZips).distinctBy { it.name }
         val dirName = relativeDir.substringAfterLast('/').substringAfterLast('\\')
             .ifEmpty { source.displayName }
-        if (plan.isUnchanged && deepHidden.isEmpty()) {
+        val liveForFiles = if (zipFileNames.isEmpty()) {
+            children
+        } else {
+            children.filterNot { it.name in zipFileNames }
+        }
+        val zipAdjustedRemoved = plan.removedDirectoryNames - zipFileNames
+        val dirsUnchanged = plan.addedDirectories.isEmpty() && zipAdjustedRemoved.isEmpty()
+        if (dirsUnchanged && deepHidden.isEmpty() && newZips.isEmpty()) {
             // Dirs same — still patch surviving file size/mtime; add/drop direct files.
             return SlimDirectoryRefresh(
-                entries = replaceSlimDirectFilesFromLive(cached, children, dirName),
+                entries = replaceSlimDirectFilesFromLive(cached, liveForFiles, dirName),
                 removedDirectoryNames = emptySet(),
             )
         }
         val effectivePlan = RemoteDirectorySlimPlan(
             addedDirectories = toClassify,
-            removedDirectoryNames = plan.removedDirectoryNames + deepNames,
+            removedDirectoryNames = zipAdjustedRemoved + deepNames,
         )
         val addedEntries = if (toClassify.isEmpty()) {
             emptyList()
@@ -1950,14 +1994,14 @@ object SmbGateway {
         }
         val merged = replaceSlimDirectFilesFromLive(
             mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
-            children,
+            liveForFiles,
             dirName,
         )
         return SlimDirectoryRefresh(
             entries = merged,
-            removedDirectoryNames = plan.removedDirectoryNames,
+            removedDirectoryNames = zipAdjustedRemoved,
         ).also {
-            plan.removedDirectoryNames.forEach { name ->
+            zipAdjustedRemoved.forEach { name ->
                 BrowseSession.invalidateSmbRawChildren(source.id, joinRelative(relativeDir, name))
             }
         }
@@ -2036,9 +2080,88 @@ object SmbGateway {
 
         val dirName = relativeDir.substringAfterLast('/').substringAfterLast('\\')
             .ifEmpty { source.displayName }
-        val tagged = children.withHiddenFlags(peeks)
-        return classifyRemoteListingWithPeeks(dirName, tagged, peeks, grandPeeks)
+        val zipListings = zipRootListings(source, password, relativeDir, children)
+        return ZipAsDirListing.classifyListingWithZipAsDirs(
+            currentDirName = dirName,
+            children = children,
+            childPeeks = peeks,
+            grandPeeks = grandPeeks,
+        ) { zipListings[it] }
     }
+
+    private suspend fun listZipVirtualDirectory(
+        source: SmbSourceEntity,
+        password: String,
+        relativeDir: String,
+        zipRel: String,
+        inner: String,
+        useCache: Boolean,
+        onCached: ((List<BrowseEntryRemote>) -> Unit)?,
+    ): List<BrowseEntryRemote> {
+        if (useCache) {
+            BrowseSession.getSmbListing(source.id, relativeDir)?.let {
+                onCached?.invoke(it)
+                return it
+            }
+        } else {
+            BrowseSession.invalidateSmbListing(source.id, relativeDir)
+        }
+        val title = inner.substringAfterLast('/').ifEmpty {
+            zipRel.substringAfterLast('/').substringAfterLast('\\').ifEmpty { source.displayName }
+        }
+        val entries = withIOContext {
+            runCatching {
+                SmbArchiveByteSource(
+                    source,
+                    password,
+                    zipRel,
+                    pipeline = false,
+                    yieldable = true,
+                ).use { src ->
+                    val cd = ZipCentralDirectory.open(src) ?: return@use emptyList()
+                    ZipAsDirListing.classifyAt(cd, inner, title)
+                }
+            }.getOrDefault(emptyList())
+        }
+        BrowseSession.putSmbListing(source.id, relativeDir, entries, sessionCurrent = true)
+        onCached?.invoke(entries)
+        return entries
+    }
+
+    private fun zipRootListings(
+        source: SmbSourceEntity,
+        password: String,
+        relativeDir: String,
+        children: List<RemoteChild>,
+    ): Map<String, ZipAsDirListing.ZipRootListing> {
+        if (!Settings.browseZipAsDir.value) return emptyMap()
+        val zips = children.filter { !it.isDirectory && isZipArchiveFileName(it.name) }
+        if (zips.isEmpty()) return emptyMap()
+        val out = ConcurrentHashMap<String, ZipAsDirListing.ZipRootListing>()
+        zips.forEach { child ->
+            val zipRel = joinRelative(relativeDir, child.name)
+            zipRootListingAt(source, password, zipRel, "")?.let { out[child.name] = it }
+        }
+        return out
+    }
+
+    private fun zipRootListingAt(
+        source: SmbSourceEntity,
+        password: String,
+        zipRel: String,
+        innerPrefix: String,
+    ): ZipAsDirListing.ZipRootListing? = runCatching {
+        SmbArchiveByteSource(
+            source,
+            password,
+            zipRel,
+            pipeline = false,
+            yieldable = true,
+        ).use { src ->
+            val cd = ZipCentralDirectory.open(src) ?: return@use null
+            ZipAsDirListing.zipRootListingFromCd(cd, innerPrefix)
+        }
+    }.getOrNull()
 
     /**
      * One QUERY_DIRECTORY, reused when a parent peek already listed this relative path.
@@ -2116,6 +2239,24 @@ object SmbGateway {
         // reachability; gating on it skipped connect after restart / dropped session and
         // surfaced "No images in SMB folder").
         FolderGalleryIndex.loadSmb(source.id, sourceConfigKey(source), relativeDir)?.let { return it }
+        if (Settings.browseZipAsDir.value) {
+            ZipAsDirListing.splitZipBrowsePath(relativeDir)?.let { (zipRel, inner) ->
+                return withIOContext {
+                    runCatching {
+                        SmbArchiveByteSource(
+                            source,
+                            password,
+                            zipRel,
+                            pipeline = false,
+                            yieldable = true,
+                        ).use { src ->
+                            val cd = ZipCentralDirectory.open(src) ?: return@use emptyList()
+                            ZipAsDirListing.directImageNames(cd, inner)
+                        }
+                    }.getOrDefault(emptyList())
+                }
+            }
+        }
         return withIOContext {
             val loc = resolveLocation(source, relativeDir)
             withShare(source, password, ShareOp.List, loc.share) { share ->

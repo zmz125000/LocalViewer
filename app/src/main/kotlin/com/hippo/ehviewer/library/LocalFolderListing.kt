@@ -337,19 +337,12 @@ object LocalFolderListing {
         grandPeeks: Map<String, List<RemoteChild>>,
     ): List<BrowseEntryRemote> {
         val zipListings = zipRootListings(dir, children)
-        val expansion = if (zipListings.isEmpty()) {
-            ZipAsDirListing.ZipFakeFolderExpansion(children, emptyMap(), emptyMap())
-        } else {
-            ZipAsDirListing.expandZipFilesAsFakeFolders(children) { zipListings[it] }
-        }
-        val peeks = HashMap<String, List<RemoteChild>>(childPeeks.size + expansion.peeks.size)
-        peeks.putAll(childPeeks)
-        peeks.putAll(expansion.peeks)
-        val grands = HashMap<String, List<RemoteChild>>(grandPeeks.size + expansion.grandPeeks.size)
-        grands.putAll(grandPeeks)
-        grands.putAll(expansion.grandPeeks)
-        val tagged = expansion.children.withHiddenFlags(peeks)
-        return classifyRemoteListingWithPeeks(dirName, tagged, peeks, grands)
+        return ZipAsDirListing.classifyListingWithZipAsDirs(
+            currentDirName = dirName,
+            children = children,
+            childPeeks = childPeeks,
+            grandPeeks = grandPeeks,
+        ) { zipListings[it] }
     }
 
     private fun zipRootListings(

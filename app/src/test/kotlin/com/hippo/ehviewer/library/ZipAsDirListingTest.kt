@@ -196,6 +196,29 @@ class ZipAsDirListingTest {
     }
 
     @Test
+    fun splitZipBrowsePathFindsFirstZipSegment() {
+        assertEquals(
+            "share/pack.zip" to "Album",
+            ZipAsDirListing.splitZipBrowsePath("share/pack.zip/Album"),
+        )
+        assertEquals(
+            "pack.cbz" to "",
+            ZipAsDirListing.splitZipBrowsePath("pack.cbz"),
+        )
+        assertEquals(null, ZipAsDirListing.splitZipBrowsePath("share/Album"))
+    }
+
+    @Test
+    fun zipAsDirCoverPartsFromParentListing() {
+        val parts = ZipAsDirListing.zipAsDirCoverParts(
+            listedDir = "share",
+            relativeName = "tree.zip/Album",
+            coverFileName = "a.jpg",
+        )
+        assertEquals("share/tree.zip" to "Album/a.jpg", parts)
+    }
+
+    @Test
     fun unreadableZipStaysFile() {
         val children = listOf(RemoteChild(name = "broken.zip", isDirectory = false))
         val expansion = ZipAsDirListing.expandZipFilesAsFakeFolders(children) { null }

@@ -67,6 +67,7 @@ import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
+import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
@@ -85,6 +86,7 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import okio.Path
+import okio.Path.Companion.toPath
 
 private const val BROWSE_LIST_SEP = " · "
 
@@ -213,6 +215,19 @@ sealed class BrowseCover {
     /** Remote archive/document cover (ZIP/TAR stream, solid sequential page 0, or PDF/EPUB extract). */
     data class SmbArchive(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
     data class WebDavArchive(val sourceId: Long, val remoteRelativeFile: String) : BrowseCover()
+
+    /** Named member inside a remote ZIP/CBZ (zip-as-dir folder thumb). */
+    data class SmbZipMember(
+        val sourceId: Long,
+        val zipRelativeFile: String,
+        val memberRel: String,
+    ) : BrowseCover()
+
+    data class WebDavZipMember(
+        val sourceId: Long,
+        val zipRelativeFile: String,
+        val memberRel: String,
+    ) : BrowseCover()
 }
 
 @Composable
@@ -936,6 +951,10 @@ fun BrowseCoverThumb(
         is BrowseCover.WebDav -> "dav\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
         is BrowseCover.SmbArchive -> "smba\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
         is BrowseCover.WebDavArchive -> "dava\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
+        is BrowseCover.SmbZipMember ->
+            "smbz\u0000${cover.sourceId}\u0000${cover.zipRelativeFile}\u0000${cover.memberRel}"
+        is BrowseCover.WebDavZipMember ->
+            "davz\u0000${cover.sourceId}\u0000${cover.zipRelativeFile}\u0000${cover.memberRel}"
         is BrowseCover.LocalArchive -> "arch\u0000${cover.archivePath}"
         is BrowseCover.Local -> "local\u0000${cover.path}"
         null -> null
@@ -949,6 +968,8 @@ fun BrowseCoverThumb(
                 is BrowseCover.LocalArchive,
                 is BrowseCover.SmbArchive,
                 is BrowseCover.WebDavArchive,
+                is BrowseCover.SmbZipMember,
+                is BrowseCover.WebDavZipMember,
                 is BrowseCover.Smb,
                 is BrowseCover.WebDav,
                 null,
@@ -963,7 +984,9 @@ fun BrowseCoverThumb(
     DisposableEffect(lifecycleOwner, remoteKey) {
         if (cover !is BrowseCover.Smb && cover !is BrowseCover.WebDav &&
             cover !is BrowseCover.LocalArchive && cover !is BrowseCover.SmbArchive &&
-            cover !is BrowseCover.WebDavArchive
+            cover !is BrowseCover.WebDavArchive &&
+            cover !is BrowseCover.SmbZipMember &&
+            cover !is BrowseCover.WebDavZipMember
         ) {
             return@DisposableEffect onDispose { }
         }
@@ -1199,6 +1222,71 @@ fun BrowseCoverThumb(
                 lastError?.let { logcat(it) }
                 fetchFailed = true
             }
+            is BrowseCover.SmbZipMember -> {
+                val key = "smb:${cover.sourceId}:${cover.zipRelativeFile}"
+                val disk = withIOContext {
+                    ZipMemberCover.destFile(key, cover.memberRel).let { f ->
+                        if (f.isFile && f.length() > 0L) f.absolutePath.toPath() else null
+                    }
+                }
+                if (disk != null) {
+                    localPath = disk
+                    fetchFailed = false
+                    return@LaunchedEffect
+                }
+                if (!allowRemoteFetch || !downloadNetworkArchiveThumbs) return@LaunchedEffect
+                val extracted = withIOContext {
+                    val source = SmbRepository.load(cover.sourceId) ?: return@withIOContext null
+                    val password = SmbPasswordStore.get(cover.sourceId)
+                    ZipMemberCover.ensure(key, cover.memberRel) {
+                        SmbArchiveByteSource(
+                            source,
+                            password,
+                            cover.zipRelativeFile,
+                            pipeline = false,
+                            yieldable = true,
+                        )
+                    }
+                }
+                if (extracted != null) {
+                    localPath = extracted
+                    fetchFailed = false
+                } else {
+                    fetchFailed = localPath == null
+                }
+            }
+            is BrowseCover.WebDavZipMember -> {
+                val key = "webdav:${cover.sourceId}:${cover.zipRelativeFile}"
+                val disk = withIOContext {
+                    ZipMemberCover.destFile(key, cover.memberRel).let { f ->
+                        if (f.isFile && f.length() > 0L) f.absolutePath.toPath() else null
+                    }
+                }
+                if (disk != null) {
+                    localPath = disk
+                    fetchFailed = false
+                    return@LaunchedEffect
+                }
+                if (!allowRemoteFetch || !downloadNetworkArchiveThumbs) return@LaunchedEffect
+                val extracted = withIOContext {
+                    val source = WebDavRepository.load(cover.sourceId) ?: return@withIOContext null
+                    val password = WebDavPasswordStore.get(cover.sourceId)
+                    ZipMemberCover.ensure(key, cover.memberRel) {
+                        WebDavArchiveByteSource(
+                            source,
+                            password,
+                            cover.zipRelativeFile,
+                            pipeline = false,
+                        )
+                    }
+                }
+                if (extracted != null) {
+                    localPath = extracted
+                    fetchFailed = false
+                } else {
+                    fetchFailed = localPath == null
+                }
+            }
             else -> return@LaunchedEffect
         }
     }
@@ -1217,6 +1305,10 @@ fun BrowseCoverThumb(
                     "dava-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${ArchiveCoverCache.THUMB_EDGE}"
                 is BrowseCover.LocalArchive ->
                     "arch-thumb:${cover.archivePath}@${ArchiveCoverCache.THUMB_EDGE}"
+                is BrowseCover.SmbZipMember ->
+                    "smbz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}"
+                is BrowseCover.WebDavZipMember ->
+                    "davz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}"
                 is BrowseCover.Local -> cover.path.toString()
                 null -> path.toString()
             }
