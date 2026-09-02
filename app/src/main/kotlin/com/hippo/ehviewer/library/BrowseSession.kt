@@ -365,6 +365,12 @@ object BrowseSession {
 
     fun pathKey(path: Path): String = path.toString()
 
+    /**
+     * RAM key for a local zip/cbz virtual directory listing. Not a filesystem path —
+     * use [getLocalCachedListing], never [getLocalListing] (that materializes via [Path]).
+     */
+    fun localZipListingKey(rootId: Long, relativeDir: String): String = "zipasdir:$rootId|${normalizeBrowseRelativeDir(relativeDir)}"
+
     fun normalizeBrowseRelativeDir(relativeDir: String): String = relativeDir.replace('\\', '/').trim('/')
 
     /**

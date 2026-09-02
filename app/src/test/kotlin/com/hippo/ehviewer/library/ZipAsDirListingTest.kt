@@ -3,6 +3,7 @@ package com.hippo.ehviewer.library
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -187,6 +188,60 @@ class ZipAsDirListingTest {
         assertTrue(classified.none { it is BrowseEntryRemote.ArchiveGallery })
         assertTrue(
             classified.any { it is BrowseEntryRemote.Directory && it.name == "tree.zip" },
+        )
+    }
+
+    @Test
+    fun rarTarAndSevenZipAreNotZipAsDir() {
+        val children = listOf(
+            RemoteChild(name = "comic.rar", isDirectory = false),
+            RemoteChild(name = "comic.cbr", isDirectory = false),
+            RemoteChild(name = "comic.7z", isDirectory = false),
+            RemoteChild(name = "comic.tar", isDirectory = false),
+            RemoteChild(name = "comic.cbt", isDirectory = false),
+            RemoteChild(name = "comic.pdf", isDirectory = false),
+            RemoteChild(name = "comic.cbz", isDirectory = false),
+        )
+        val expansion = ZipAsDirListing.expandZipFilesAsFakeFolders(children) { name ->
+            check(name == "comic.cbz") { "zip-as-dir must not open $name" }
+            ZipAsDirListing.ZipRootListing(
+                children = listOf(RemoteChild(name = "a.jpg", isDirectory = false)),
+                grandPeeks = emptyMap(),
+            )
+        }
+        assertTrue(expansion.children.filter { it.name != "comic.cbz" }.all { !it.isDirectory })
+        assertTrue(expansion.galleryListings.containsKey("comic.cbz"))
+        assertTrue(expansion.peeks.isEmpty())
+    }
+
+    @Test
+    fun persistFolderIndexesSkipsNonZipNames() = runBlocking {
+        val saved = ArrayList<String>()
+        ZipAsDirListing.persistFolderIndexes(
+            parentRelativeDir = "share",
+            interiors = mapOf(
+                "pack.zip" to listOf(BrowseEntryRemote.RegularFile("a.jpg")),
+                "pack.rar" to listOf(BrowseEntryRemote.RegularFile("b.jpg")),
+            ),
+            save = { dir, entries ->
+                saved += dir
+                entries
+            },
+            putRam = { _, _ -> },
+        )
+        assertEquals(listOf("share/pack.zip"), saved)
+    }
+
+    @Test
+    fun virtualRelativeDirJoinsZipAndInner() {
+        assertEquals("share/pack.zip", ZipAsDirListing.virtualRelativeDir("share/pack.zip", ""))
+        assertEquals(
+            "share/pack.zip/Album",
+            ZipAsDirListing.virtualRelativeDir("share/pack.zip", "Album"),
+        )
+        assertEquals(
+            "share/pack.zip" to "Album",
+            ZipAsDirListing.splitZipBrowsePath("share/pack.zip/Album"),
         )
     }
 

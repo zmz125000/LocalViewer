@@ -77,6 +77,7 @@ import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
+import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalFolderListing
@@ -130,6 +131,7 @@ import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.flow.first
 import moe.tarsin.snackbar
+import okio.Path
 import okio.Path.Companion.toPath
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -283,34 +285,27 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
         try {
             if (frame.isZipBrowse) {
-                val result = withIOContext {
-                    val inner = frame.zipInnerRel.orEmpty()
-                    withLocalZipCentralDirectory(frame.path.toPath()) { cd ->
-                        // Photo-grid needs RegularFile image rows (classify puts images in FolderGallery).
-                        if (frame.photoGrid) {
-                            ZipAsDirListing.directImageNames(cd, inner).map { name ->
-                                BrowseEntry.RegularFile(
-                                    name = name,
-                                    path = ZipPaths.encodePath(
-                                        frame.path,
-                                        ZipAsDirListing.joinPrefix(inner, name),
-                                    ),
-                                )
-                            }
-                        } else {
-                            val remote = ZipAsDirListing.classifyAt(
-                                cd = cd,
-                                innerPrefix = inner,
-                                currentDirName = frame.title,
-                            )
-                            ZipAsDirListing.materializeLocal(
-                                zipAbsolutePath = frame.path,
-                                innerPrefix = inner,
-                                remote = remote,
-                            )
+                val root = LocalLibrary.loadRoot(frame.rootId)
+                val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                val result = LocalFolderListing.listZipVirtualDirectory(
+                    rootId = frame.rootId,
+                    rootPath = rootPath,
+                    zipPath = frame.path.toPath(),
+                    zipRel = frame.relativePath,
+                    inner = frame.zipInnerRel.orEmpty(),
+                    currentDirName = frame.title,
+                    preferMediaStore = frame.preferMediaStore,
+                    useCache = !force,
+                    photoGrid = frame.photoGrid,
+                    onCached = { cached ->
+                        if (stack.lastOrNull()?.let { frameListKey(it) } == targetPath) {
+                            entries = cached
+                            listedPath = targetPath
+                            error = null
+                            refreshing = true
                         }
-                    } ?: error("Cannot read ZIP central directory")
-                }
+                    },
+                ) ?: error("Cannot read ZIP central directory")
                 if (stack.lastOrNull()?.let { frameListKey(it) } != targetPath) return
                 entries = result
                 listedPath = targetPath
@@ -577,6 +572,29 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    suspend fun localZipGalleryNames(
+        frame: BrowseSession.LocalFrame,
+        zipRel: String,
+        inner: String,
+        zipPath: Path,
+    ): List<String> {
+        val galleryDir = ZipAsDirListing.virtualRelativeDir(zipRel, inner)
+        val root = LocalLibrary.loadRoot(frame.rootId)
+        val rootPath = root?.let { LocalLibrary.rootPath(it) }
+        if (rootPath != null) {
+            FolderGalleryIndex.loadLocal(
+                frame.rootId,
+                LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
+                galleryDir,
+            )?.let { return it }
+        }
+        return runCatching {
+            withLocalZipCentralDirectory(zipPath) { cd ->
+                ZipAsDirListing.directImageNames(cd, inner)
+            }.orEmpty()
+        }.getOrDefault(emptyList())
+    }
+
     /** Open a zip/cbz FolderGallery from the parent FS listing (flat root or promoted inner). */
     fun openZipFileAsRootGallery(
         entry: BrowseEntry.FolderGallery,
@@ -595,11 +613,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val histRel = if (inner.isEmpty()) zipRel else "$zipRel|$inner"
         val gid = stableGalleryId(frame.rootId, "zip:$histRel")
         launchIO {
-            val names = runCatching {
-                withLocalZipCentralDirectory(entry.path) { cd ->
-                    ZipAsDirListing.directImageNames(cd, inner)
-                }.orEmpty()
-            }.getOrDefault(emptyList())
+            val names = localZipGalleryNames(frame, zipRel, inner, entry.path)
             if (names.isEmpty()) {
                 snackbar(context.getString(R.string.browse_open_failed))
                 return@launchIO
@@ -650,11 +664,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
         val gid = stableGalleryId(frame.rootId, "zip:$histRel")
         launchIO {
-            val names = runCatching {
-                withLocalZipCentralDirectory(frame.path.toPath()) { cd ->
-                    ZipAsDirListing.directImageNames(cd, inner)
-                }.orEmpty()
-            }.getOrDefault(emptyList())
+            val names = localZipGalleryNames(frame, frame.relativePath, inner, frame.path.toPath())
             if (names.isEmpty()) {
                 snackbar(context.getString(R.string.browse_open_failed))
                 return@launchIO

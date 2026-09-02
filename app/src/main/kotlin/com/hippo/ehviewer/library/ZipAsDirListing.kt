@@ -6,6 +6,7 @@ import okio.Path.Companion.toPath
 
 /**
  * Treat a ZIP/CBZ central directory as a virtual folder tree for browse / library.
+ * Other archives (RAR/CBR/7z/TAR/CBT/PDF/EPUB) stay [BrowseEntryRemote.ArchiveGallery].
  *
  * Listing and classify are pure over an already-open [ZipCentralDirectory] (EOCD+CD
  * only — no member extract). Peeks for promote/dual-gallery come from filtering the
@@ -25,6 +26,30 @@ object ZipAsDirListing {
         val c = child.replace('\\', '/').trim('/')
         if (c.isEmpty()) return p
         return if (p.isEmpty()) c else "$p/$c"
+    }
+
+    /**
+     * Folder-index key for a zip/cbz virtual directory (`dir/file.zip` or
+     * `dir/file.zip/Album`). Same relativeDir shape as a normal folder listing.
+     */
+    fun virtualRelativeDir(zipRel: String, inner: String = ""): String = joinPrefix(zipRel, inner)
+
+    /**
+     * Persist classified zip-root interiors under [parentRelativeDir]/zipName so
+     * entering the zip and [FolderGalleryIndex] hit the folder index without another CD.
+     * Zip/cbz only — callers already keyed [interiors] via [isZipArchiveFileName].
+     */
+    suspend fun persistFolderIndexes(
+        parentRelativeDir: String,
+        interiors: Map<String, List<BrowseEntryRemote>>,
+        save: suspend (relativeDir: String, entries: List<BrowseEntryRemote>) -> List<BrowseEntryRemote>,
+        putRam: (relativeDir: String, entries: List<BrowseEntryRemote>) -> Unit,
+    ) {
+        for ((zipName, entries) in interiors) {
+            if (entries.isEmpty() || !isZipArchiveFileName(zipName)) continue
+            val dir = joinPrefix(parentRelativeDir, zipName)
+            putRam(dir, save(dir, entries))
+        }
     }
 
     /**

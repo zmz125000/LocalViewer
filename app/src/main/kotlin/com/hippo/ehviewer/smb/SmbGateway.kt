@@ -1807,7 +1807,14 @@ object SmbGateway {
             withTimeout(DEEP_CLASSIFY_TIMEOUT_MS) {
                 coroutineContext.ensureActive()
                 val t1 = System.nanoTime()
-                val deep = classifyDirectoryChildren(source, password, relativeDir, children)
+                val zipInteriors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
+                val deep = classifyDirectoryChildren(
+                    source,
+                    password,
+                    relativeDir,
+                    children,
+                    zipInteriors,
+                )
                 val fromRam = preferCompleteFolderGalleries(shallowMerged, deep)
                 val stored = NetworkFolderIndexCache.saveSmb(
                     source.id,
@@ -1820,6 +1827,21 @@ object SmbGateway {
                     relativeDir,
                     stored,
                     sessionCurrent = true,
+                )
+                ZipAsDirListing.persistFolderIndexes(
+                    parentRelativeDir = relativeDir,
+                    interiors = zipInteriors,
+                    save = { dir, entries ->
+                        NetworkFolderIndexCache.saveSmb(source.id, configKey, dir, entries)
+                    },
+                    putRam = { dir, entries ->
+                        BrowseSession.putSmbListing(
+                            source.id,
+                            dir,
+                            entries,
+                            sessionCurrent = true,
+                        )
+                    },
                 )
                 logcat("FolderIndex") {
                     "SMB deep classify source=${source.id} dir=$relativeDir " +
@@ -2014,6 +2036,7 @@ object SmbGateway {
         password: String,
         relativeDir: String,
         children: List<RemoteChild>,
+        zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
     ): List<BrowseEntryRemote> {
         val deepScanHidden = com.hippo.ehviewer.Settings.browseShowHiddenFiles.value
         // Dot folders: always tag-only (never peek). `.nomedia` dirs peek only when Hidden on.
@@ -2082,7 +2105,7 @@ object SmbGateway {
 
         val dirName = relativeDir.substringAfterLast('/').substringAfterLast('\\')
             .ifEmpty { source.displayName }
-        val zipListings = zipRootListings(source, password, relativeDir, children)
+        val zipListings = zipRootListings(source, password, relativeDir, children, zipInteriors)
         return ZipAsDirListing.classifyListingWithZipAsDirs(
             currentDirName = dirName,
             children = children,
@@ -2141,6 +2164,7 @@ object SmbGateway {
         password: String,
         relativeDir: String,
         children: List<RemoteChild>,
+        zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
     ): Map<String, ZipAsDirListing.ZipRootListing> {
         if (!Settings.browseZipAsDir.value) return emptyMap()
         val zips = children.filter { !it.isDirectory && isZipArchiveFileName(it.name) }
@@ -2148,7 +2172,10 @@ object SmbGateway {
         val out = ConcurrentHashMap<String, ZipAsDirListing.ZipRootListing>()
         zips.forEach { child ->
             val zipRel = joinRelative(relativeDir, child.name)
-            zipRootListingAt(source, password, zipRel, "")?.let { out[child.name] = it }
+            zipRootListingAt(source, password, zipRel, "")?.let { (listing, interior) ->
+                out[child.name] = listing
+                zipInteriors?.put(child.name, interior)
+            }
         }
         return out
     }
@@ -2158,7 +2185,7 @@ object SmbGateway {
         password: String,
         zipRel: String,
         innerPrefix: String,
-    ): ZipAsDirListing.ZipRootListing? = runCatching {
+    ): Pair<ZipAsDirListing.ZipRootListing, List<BrowseEntryRemote>>? = runCatching {
         SmbArchiveByteSource(
             source,
             password,
@@ -2167,7 +2194,9 @@ object SmbGateway {
             yieldable = true,
         ).use { src ->
             val cd = ZipCentralDirectory.open(src) ?: return@use null
-            ZipAsDirListing.zipRootListingFromCd(cd, innerPrefix)
+            val listing = ZipAsDirListing.zipRootListingFromCd(cd, innerPrefix)
+            val title = zipRel.substringAfterLast('/').substringAfterLast('\\').ifEmpty { zipRel }
+            listing to ZipAsDirListing.classifyAt(cd, innerPrefix, title)
         }
     }.getOrNull()
 

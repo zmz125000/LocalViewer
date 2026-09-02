@@ -198,8 +198,15 @@ object WebDavGateway {
             withTimeout(DEEP_CLASSIFY_TIMEOUT_MS) {
                 coroutineContext.ensureActive()
                 val t1 = System.nanoTime()
+                val zipInteriors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
                 val deep = withIOContext {
-                    classifyDirectoryChildren(source, password, relativeDir, children)
+                    classifyDirectoryChildren(
+                        source,
+                        password,
+                        relativeDir,
+                        children,
+                        zipInteriors,
+                    )
                 }
                 val fromRam = preferCompleteFolderGalleries(shallowMerged, deep)
                 val stored = NetworkFolderIndexCache.saveWebDav(
@@ -213,6 +220,21 @@ object WebDavGateway {
                     relativeDir,
                     stored,
                     sessionCurrent = true,
+                )
+                ZipAsDirListing.persistFolderIndexes(
+                    parentRelativeDir = relativeDir,
+                    interiors = zipInteriors,
+                    save = { dir, entries ->
+                        NetworkFolderIndexCache.saveWebDav(source.id, configKey, dir, entries)
+                    },
+                    putRam = { dir, entries ->
+                        BrowseSession.putWebDavListing(
+                            source.id,
+                            dir,
+                            entries,
+                            sessionCurrent = true,
+                        )
+                    },
                 )
                 logcat("FolderIndex") {
                     "WebDAV deep classify source=${source.id} dir=$relativeDir " +
@@ -344,6 +366,7 @@ object WebDavGateway {
         password: String,
         relativeDir: String,
         children: List<RemoteChild>,
+        zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
     ): List<BrowseEntryRemote> {
         val deepScanHidden = com.hippo.ehviewer.Settings.browseShowHiddenFiles.value
         // Dot folders: always tag-only (never peek). `.nomedia` dirs peek only when Hidden on.
@@ -402,7 +425,7 @@ object WebDavGateway {
         }
 
         val dirName = relativeDir.substringAfterLast('/').ifEmpty { source.displayName }
-        val zipListings = zipRootListings(source, password, relativeDir, children)
+        val zipListings = zipRootListings(source, password, relativeDir, children, zipInteriors)
         return ZipAsDirListing.classifyListingWithZipAsDirs(
             currentDirName = dirName,
             children = children,
@@ -455,6 +478,7 @@ object WebDavGateway {
         password: String,
         relativeDir: String,
         children: List<RemoteChild>,
+        zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
     ): Map<String, ZipAsDirListing.ZipRootListing> {
         if (!Settings.browseZipAsDir.value) return emptyMap()
         val zips = children.filter { !it.isDirectory && isZipArchiveFileName(it.name) }
@@ -466,6 +490,10 @@ object WebDavGateway {
                 WebDavArchiveByteSource(source, password, zipRel, pipeline = false).use { src ->
                     val cd = ZipCentralDirectory.open(src) ?: return@use
                     out[child.name] = ZipAsDirListing.zipRootListingFromCd(cd)
+                    zipInteriors?.put(
+                        child.name,
+                        ZipAsDirListing.classifyAt(cd, "", child.name),
+                    )
                 }
             }
         }

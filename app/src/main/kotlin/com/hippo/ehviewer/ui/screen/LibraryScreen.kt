@@ -82,7 +82,9 @@ import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.FavoriteBrowseSource
+import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.HistoryThumbKey
+import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
@@ -266,8 +268,27 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 val (zipAbs, member) = zip
                 val inner = if (member == "." || member.isEmpty()) "" else member
                 launchIO {
+                    val galleryDir = ZipAsDirListing.parseZipGalleryRelative(gallery.relativePath)
+                        ?.let { ZipAsDirListing.virtualRelativeDir(it.first, it.second) }
+                    val root = roots.firstOrNull { it.id == gallery.rootId }
                     val names = runCatching {
-                        withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
+                        if (galleryDir != null && root != null) {
+                            val rp = LocalLibrary.rootPath(root)
+                            if (rp != null) {
+                                FolderGalleryIndex.loadLocal(
+                                    gallery.rootId,
+                                    LocalFolderListing.rootConfigKey(
+                                        rp,
+                                        root.prefersMediaStore,
+                                    ),
+                                    galleryDir,
+                                )
+                            } else {
+                                null
+                            }
+                        } else {
+                            null
+                        } ?: withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
                             ZipAsDirListing.directImageNames(cd, inner)
                         }.orEmpty()
                     }.getOrDefault(emptyList())

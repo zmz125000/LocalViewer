@@ -57,6 +57,76 @@ object LocalFolderListing {
     }
 
     /**
+     * List a zip/cbz virtual directory (zip-as-dir). RAM + disk folder index keyed by
+     * [ZipAsDirListing.virtualRelativeDir] — same relativeDir as a normal folder.
+     *
+     * @return classified rows, or null if the zip CD cannot be read (cache miss).
+     */
+    suspend fun listZipVirtualDirectory(
+        rootId: Long,
+        rootPath: Path?,
+        zipPath: Path,
+        zipRel: String,
+        inner: String,
+        currentDirName: String,
+        preferMediaStore: Boolean = true,
+        useCache: Boolean = true,
+        photoGrid: Boolean = false,
+        onCached: ((List<BrowseEntry>) -> Unit)? = null,
+    ): List<BrowseEntry>? = withContext(Dispatchers.IO) {
+        val zipAbs = zipPath.toString()
+        val virtualDir = ZipAsDirListing.virtualRelativeDir(zipRel, inner)
+        val ramKey = BrowseSession.localZipListingKey(rootId, virtualDir)
+        val configKey = rootPath?.let { rootConfigKey(it, preferMediaStore) }
+
+        fun materialize(remote: List<BrowseEntryRemote>): List<BrowseEntry> {
+            if (photoGrid) {
+                val names = FolderGalleryIndex.namesFromListing("", remote, "") ?: emptyList()
+                return names.map { name ->
+                    BrowseEntry.RegularFile(
+                        name = name,
+                        path = ZipPaths.encodePath(
+                            zipAbs,
+                            ZipAsDirListing.joinPrefix(inner, name),
+                        ),
+                    )
+                }
+            }
+            return ZipAsDirListing.materializeLocal(zipAbs, inner, remote)
+        }
+
+        if (useCache) {
+            val cached = BrowseSession.getLocalCachedListing(ramKey)
+                ?: configKey?.let { key ->
+                    NetworkFolderIndexCache.loadLocal(rootId, key, virtualDir)?.let { entries ->
+                        BrowseSession.putLocalListing(ramKey, entries, sessionCurrent = false)
+                        BrowseSession.CachedLocalListing(entries = entries, sessionCurrent = false)
+                    }
+                }
+            if (cached != null) {
+                val materialized = materialize(cached.entries)
+                onCached?.invoke(materialized)
+                return@withContext materialized
+            }
+        } else {
+            BrowseSession.invalidateLocalListing(ramKey)
+        }
+
+        val remote = withLocalZipCentralDirectory(zipPath) { cd ->
+            ZipAsDirListing.classifyAt(cd, inner, currentDirName)
+        } ?: return@withContext null
+        val stored = if (configKey != null) {
+            NetworkFolderIndexCache.saveLocal(rootId, configKey, virtualDir, remote)
+        } else {
+            remote
+        }
+        BrowseSession.putLocalListing(ramKey, stored, sessionCurrent = true)
+        val materialized = materialize(stored)
+        onCached?.invoke(materialized)
+        materialized
+    }
+
+    /**
      * Folder-browser path: session + disk index, with optional slim quick scan on stale hits.
      *
      * @param rootId library/folder root id (disk index source id)
@@ -163,11 +233,31 @@ object LocalFolderListing {
             withTimeout(DEEP_CLASSIFY_TIMEOUT_MS) {
                 coroutineContext.ensureActive()
                 val t1 = System.nanoTime()
-                val deep = classifyDirectoryChildren(effective, preferMediaStore, children)
+                val zipInteriors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
+                val deep = classifyDirectoryChildren(
+                    effective,
+                    preferMediaStore,
+                    children,
+                    zipInteriors,
+                )
                 val fromRam = preferCompleteFolderGalleries(shallowMerged, deep)
                 val stored =
                     NetworkFolderIndexCache.saveLocal(rootId, configKey, relativeDir, fromRam)
                 BrowseSession.putLocalListing(pathKey, stored, sessionCurrent = true)
+                ZipAsDirListing.persistFolderIndexes(
+                    parentRelativeDir = relativeDir,
+                    interiors = zipInteriors,
+                    save = { dir, entries ->
+                        NetworkFolderIndexCache.saveLocal(rootId, configKey, dir, entries)
+                    },
+                    putRam = { dir, entries ->
+                        BrowseSession.putLocalListing(
+                            BrowseSession.localZipListingKey(rootId, dir),
+                            entries,
+                            sessionCurrent = true,
+                        )
+                    },
+                )
                 logcat("FolderIndex") {
                     "Local deep classify root=$rootId dir=$relativeDir " +
                         "entries=${stored.size} ms=${(System.nanoTime() - t1) / 1_000_000}"
@@ -272,6 +362,7 @@ object LocalFolderListing {
         dir: Path,
         preferMediaStore: Boolean,
         children: List<RemoteChild>,
+        zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
     ): List<BrowseEntryRemote> {
         val deepScanHidden = Settings.browseShowHiddenFiles.value
         // Dot folders: always tag-only (never peek). `.nomedia` dirs peek only when Hidden on.
@@ -320,7 +411,7 @@ object LocalFolderListing {
         }
 
         val dirName = humanizePathName(dir.name).ifEmpty { "Gallery" }
-        val classified = classifyChildren(dir, dirName, children, peeks, grandPeeks)
+        val classified = classifyChildren(dir, dirName, children, peeks, grandPeeks, zipInteriors)
         // Cache/toggle fallback: leftover zip ArchiveGallery rows (unreadable CD, old cache).
         return ZipAsDirListing.applyZipAsDirPreferenceLocal(classified, dir)
     }
@@ -335,8 +426,9 @@ object LocalFolderListing {
         children: List<RemoteChild>,
         childPeeks: Map<String, List<RemoteChild>>,
         grandPeeks: Map<String, List<RemoteChild>>,
+        zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
     ): List<BrowseEntryRemote> {
-        val zipListings = zipRootListings(dir, children)
+        val zipListings = zipRootListings(dir, children, zipInteriors)
         return ZipAsDirListing.classifyListingWithZipAsDirs(
             currentDirName = dirName,
             children = children,
@@ -348,6 +440,7 @@ object LocalFolderListing {
     private fun zipRootListings(
         dir: Path,
         children: List<RemoteChild>,
+        zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
     ): Map<String, ZipAsDirListing.ZipRootListing> {
         if (!Settings.browseZipAsDir.value) return emptyMap()
         val zips = children.filter { !it.isDirectory && isZipArchiveFileName(it.name) }
@@ -356,6 +449,7 @@ object LocalFolderListing {
         runParallel(zips) { child ->
             withLocalZipCentralDirectory(dir / child.name) { cd ->
                 out[child.name] = ZipAsDirListing.zipRootListingFromCd(cd)
+                zipInteriors?.put(child.name, ZipAsDirListing.classifyAt(cd, "", child.name))
             }
         }
         return out
@@ -427,7 +521,7 @@ object LocalFolderListing {
         readOnly = readOnly,
     )
 
-    private fun rootConfigKey(rootPath: Path, preferMediaStore: Boolean): String {
+    fun rootConfigKey(rootPath: Path, preferMediaStore: Boolean): String {
         val effective = resolveBrowsePath(rootPath, preferMediaStore = preferMediaStore)
         return "local|$effective|ms=$preferMediaStore"
     }

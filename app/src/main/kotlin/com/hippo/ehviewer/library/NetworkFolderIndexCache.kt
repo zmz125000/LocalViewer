@@ -21,7 +21,8 @@ import splitties.init.appCtx
  * re-enters folders.
  *
  * `folders[relativeDir]` holds the lazy scanner’s [BrowseEntryRemote] rows, including
- * embedded [BrowseEntryRemote.FolderGallery.imageFileNames]. [FolderGalleryIndex] only
+ * embedded [BrowseEntryRemote.FolderGallery.imageFileNames]. Zip/cbz-as-dir interiors
+ * use the same keys (`dir/file.zip`, `dir/file.zip/Album`). [FolderGalleryIndex] only
  * *reads* these listings (and RAM) — it does not write a separate gallery cache.
  *
  * A cache hit returns the scanner's final values; this layer never re-classifies.

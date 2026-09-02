@@ -70,6 +70,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
+import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
@@ -305,8 +306,16 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (zipGallery != null) {
                         val (zipRel, inner) = zipGallery
                         val zipAbs = rootPath.resolveRelative(zipRel).toString()
+                        val galleryDir = ZipAsDirListing.virtualRelativeDir(zipRel, inner)
                         val names = withIOContext {
-                            withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
+                            FolderGalleryIndex.loadLocal(
+                                target.rootId,
+                                LocalFolderListing.rootConfigKey(
+                                    rootPath,
+                                    root.prefersMediaStore,
+                                ),
+                                galleryDir,
+                            ) ?: withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
                                 ZipAsDirListing.directImageNames(cd, inner)
                             }.orEmpty()
                         }
