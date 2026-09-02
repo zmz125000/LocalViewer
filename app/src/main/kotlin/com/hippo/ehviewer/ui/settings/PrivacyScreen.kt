@@ -33,6 +33,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.library.BrowseModePersist
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.isAuthenticationSupported
 import com.hippo.ehviewer.ui.main.NavigationIcon
@@ -168,6 +169,19 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                     )
                     withIOContext { BrowseModePersist.clearAll() }
                     launchSnackbar(folderBrowseModeCleared)
+                }
+            }
+            val folderIndexCacheCleared = stringResource(id = R.string.folder_index_cache_cleared)
+            Preference(
+                title = stringResource(id = R.string.settings_privacy_clear_folder_index_cache),
+            ) {
+                launch {
+                    awaitConfirmationOrCancel(
+                        confirmText = R.string.clear_all,
+                        title = R.string.settings_privacy_clear_folder_index_cache_confirm,
+                    )
+                    withIOContext { NetworkFolderIndexCache.clearAll() }
+                    launchSnackbar(folderIndexCacheCleared)
                 }
             }
         }
