@@ -8,7 +8,11 @@ import java.util.zip.InflaterInputStream
 
 /**
  * Lightweight ZIP central-directory index + store/deflate extract over [ArchiveByteSource].
- * Used by EPUB (named members + OPF); does not use libarchive / [ArchiveAccess].
+ * Used by EPUB (named members + OPF) and zip-as-dir listing; does not use libarchive /
+ * [ArchiveAccess].
+ *
+ * Filenames: Info-ZIP Unicode Path extra / UTF-8 flag, then archive-wide best-effort
+ * detect for legacy (non-UTF-8) code pages — see [ZipNameDecoder].
  */
 class ZipCentralDirectory private constructor(
     private val source: ArchiveByteSource,
@@ -140,7 +144,7 @@ class ZipCentralDirectory private constructor(
             val cd = ByteArray(cdSize.toInt())
             if (readFully(source, cdOff, cd) != cd.size) return null
 
-            val list = ArrayList<Entry>(64)
+            val parsed = ArrayList<Parsed>(64)
             var pos = 0
             while (pos + 46 <= cd.size) {
                 if (cd[pos] != 'P'.code.toByte() || cd[pos + 1] != 'K'.code.toByte() ||
@@ -161,9 +165,9 @@ class ZipCentralDirectory private constructor(
                 val next = extraOff + extraLen + commentLen
                 if (next > cd.size || nameOff + nameLen > cd.size) break
 
-                if ((comp == 0xFFFF_FFFFL || uncomp == 0xFFFF_FFFFL || local == 0xFFFF_FFFFL) &&
-                    extraLen >= 4
-                ) {
+                val nameBytes = cd.copyOfRange(nameOff, nameOff + nameLen)
+                var unicodeName: String? = null
+                if (extraLen >= 4) {
                     var ex = 0
                     while (ex + 4 <= extraLen) {
                         val tag = u16(cd, extraOff + ex)
@@ -182,27 +186,56 @@ class ZipCentralDirectory private constructor(
                             if (local == 0xFFFF_FFFFL && o + 8 <= ex + 4 + sz) {
                                 local = u64(cd, extraOff + o)
                             }
-                            break
+                        } else if (tag == ZipNameDecoder.EXTRA_UNICODE_PATH) {
+                            unicodeName = ZipNameDecoder.nameFromUnicodePath(
+                                cd,
+                                extraOff + ex + 4,
+                                sz,
+                            )
                         }
                         ex += 4 + sz
                     }
                 }
 
-                val nameBytes = cd.copyOfRange(nameOff, nameOff + nameLen)
-                val name = String(nameBytes, Charsets.UTF_8)
-                list += Entry(
-                    name = name,
+                parsed += Parsed(
+                    nameBytes = nameBytes,
+                    gpFlag = gp,
+                    unicodeName = unicodeName,
                     method = method,
                     compressedSize = comp,
                     uncompressedSize = uncomp,
                     localHeaderOffset = local,
-                    gpFlag = gp,
                 )
                 pos = next
             }
-            if (list.isEmpty()) return null
+            if (parsed.isEmpty()) return null
+            val names = ZipNameDecoder.decodeAll(
+                parsed.map { ZipNameDecoder.Source(it.nameBytes, it.gpFlag, it.unicodeName) },
+            )
+            val list = ArrayList<Entry>(parsed.size)
+            for (i in parsed.indices) {
+                val p = parsed[i]
+                list += Entry(
+                    name = names[i],
+                    method = p.method,
+                    compressedSize = p.compressedSize,
+                    uncompressedSize = p.uncompressedSize,
+                    localHeaderOffset = p.localHeaderOffset,
+                    gpFlag = p.gpFlag,
+                )
+            }
             return ZipCentralDirectory(source, list)
         }
+
+        private class Parsed(
+            val nameBytes: ByteArray,
+            val gpFlag: Int,
+            val unicodeName: String?,
+            val method: Int,
+            val compressedSize: Long,
+            val uncompressedSize: Long,
+            val localHeaderOffset: Long,
+        )
 
         private fun inflateRaw(comp: ByteArray, uncSize: Int): ByteArray? {
             val inflater = Inflater(true) // raw DEFLATE (ZIP)
