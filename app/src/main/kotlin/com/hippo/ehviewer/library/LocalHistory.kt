@@ -891,6 +891,10 @@ object LocalHistory {
 /**
  * Rebuild browse stack from root to [relativePath] without listing directories.
  * Intermediate frames are path joins only; the browser lists the final frame lazily.
+ *
+ * Zip-as-dir: `dir/file.zip` and `dir/file.zip/Album` become zip-browse frames
+ * ([BrowseSession.LocalFrame.zipInnerRel]) so listing uses the ZIP CD, not
+ * `file.zip/Album` as a real SAF folder.
  */
 fun buildLocalBrowseStack(
     rootId: Long,
@@ -898,6 +902,7 @@ fun buildLocalBrowseStack(
     rootPath: okio.Path,
     relativePath: String,
     preferMediaStore: Boolean = true,
+    zipAsDir: Boolean = Settings.browseZipAsDir.value,
 ): List<BrowseSession.LocalFrame> {
     val frames = ArrayList<BrowseSession.LocalFrame>()
     frames += BrowseSession.LocalFrame(
@@ -907,20 +912,48 @@ fun buildLocalBrowseStack(
         relativePath = "",
         preferMediaStore = preferMediaStore,
     )
-    val rel = relativePath.trim('/').let { if (it == ".") "" else it }
+    val rel = relativePath.replace('\\', '/').trim('/').let { if (it == ".") "" else it }
+        .replace('|', '/')
     if (rel.isEmpty()) return frames
     var abs = rootPath
     var acc = ""
+    var zipFileAbs: okio.Path? = null
+    var zipInner: String? = null
     for (seg in rel.split('/').filter { it.isNotEmpty() }) {
+        if (zipInner != null) {
+            zipInner = ZipAsDirListing.joinPrefix(zipInner, seg)
+            frames += BrowseSession.LocalFrame(
+                rootId = rootId,
+                path = zipFileAbs!!.toString(),
+                title = seg,
+                relativePath = acc,
+                preferMediaStore = preferMediaStore,
+                zipInnerRel = zipInner,
+            )
+            continue
+        }
         abs = abs / seg
         acc = if (acc.isEmpty()) seg else "$acc/$seg"
-        frames += BrowseSession.LocalFrame(
-            rootId = rootId,
-            path = abs.toString(),
-            title = seg,
-            relativePath = acc,
-            preferMediaStore = preferMediaStore,
-        )
+        if (zipAsDir && isZipArchiveFileName(seg)) {
+            zipFileAbs = abs
+            zipInner = ""
+            frames += BrowseSession.LocalFrame(
+                rootId = rootId,
+                path = abs.toString(),
+                title = seg,
+                relativePath = acc,
+                preferMediaStore = preferMediaStore,
+                zipInnerRel = "",
+            )
+        } else {
+            frames += BrowseSession.LocalFrame(
+                rootId = rootId,
+                path = abs.toString(),
+                title = seg,
+                relativePath = acc,
+                preferMediaStore = preferMediaStore,
+            )
+        }
     }
     return frames
 }

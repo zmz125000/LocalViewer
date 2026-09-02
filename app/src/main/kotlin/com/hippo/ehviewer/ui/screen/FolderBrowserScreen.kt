@@ -545,9 +545,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             entries = entries,
             parentPath = parentPath,
         )
+        val histRel = if (frame.isZipBrowse) {
+            ZipAsDirListing.virtualRelativeDir(frame.relativePath, frame.zipInnerRel.orEmpty())
+        } else {
+            frame.relativePath
+        }
         LocalHistory.recordLocalBrowseFolder(
             rootId = frame.rootId,
-            relativePath = frame.relativePath,
+            relativePath = histRel,
             title = frame.title,
             thumbKey = folderThumb,
         )

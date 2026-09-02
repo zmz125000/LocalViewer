@@ -298,6 +298,10 @@ class ZipAsDirListingTest {
             ZipAsDirListing.parseZipGalleryRelative("dir/file.zip|Album"),
         )
         assertEquals(
+            "Quick Share/pack.zip" to "农业设施实景照",
+            ZipAsDirListing.parseZipGalleryRelative("Quick Share/pack.zip/农业设施实景照"),
+        )
+        assertEquals(
             "PDFs.zip" to "PDFs/manual.pdf",
             ZipAsDirListing.splitZipBrowsePath("PDFs.zip/PDFs/manual.pdf"),
         )
