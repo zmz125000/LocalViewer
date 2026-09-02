@@ -420,10 +420,15 @@ object WebDavGateway {
         useCache: Boolean,
         onCached: ((List<BrowseEntryRemote>) -> Unit)?,
     ): List<BrowseEntryRemote> {
+        val configKey = sourceConfigKey(source)
         if (useCache) {
-            BrowseSession.getWebDavListing(source.id, relativeDir)?.let {
-                onCached?.invoke(it)
-                return it
+            val cached = BrowseSession.getWebDavListing(source.id, relativeDir)
+                ?: NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir)?.also { entries ->
+                    BrowseSession.putWebDavListing(source.id, relativeDir, entries, sessionCurrent = false)
+                }
+            if (cached != null) {
+                onCached?.invoke(cached)
+                return cached
             }
         } else {
             BrowseSession.invalidateWebDavListing(source.id, relativeDir)
@@ -439,9 +444,10 @@ object WebDavGateway {
                 }
             }.getOrDefault(emptyList())
         }
-        BrowseSession.putWebDavListing(source.id, relativeDir, entries, sessionCurrent = true)
-        onCached?.invoke(entries)
-        return entries
+        val stored = NetworkFolderIndexCache.saveWebDav(source.id, configKey, relativeDir, entries)
+        BrowseSession.putWebDavListing(source.id, relativeDir, stored, sessionCurrent = true)
+        onCached?.invoke(stored)
+        return stored
     }
 
     private fun zipRootListings(

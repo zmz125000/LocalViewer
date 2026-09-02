@@ -77,12 +77,15 @@ import com.hippo.ehviewer.library.SMB_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.SMB_FOLDER_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_ARCHIVE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
+import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.buildLocalBrowseStack
 import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.parentRelativeOfFile
+import com.hippo.ehviewer.library.resolveRelative
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toBaseGalleryInfo
+import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
@@ -93,6 +96,7 @@ import com.hippo.ehviewer.ui.main.HistoryDirectoryGridItem
 import com.hippo.ehviewer.ui.main.HistoryGridItem
 import com.hippo.ehviewer.ui.main.HistoryListItem
 import com.hippo.ehviewer.ui.navToLocalFolderReader
+import com.hippo.ehviewer.ui.navToLocalZipFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToSmbFolderReader
 import com.hippo.ehviewer.ui.navToSmbStreamArchiveReader
@@ -116,6 +120,7 @@ import kotlinx.coroutines.launch
 import moe.tarsin.navigate
 import moe.tarsin.snackbar
 import moe.tarsin.string
+import okio.Path.Companion.toPath
 
 @Destination<RootGraph>
 @Composable
@@ -294,6 +299,44 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (root == null || rootPath == null) {
                         snackbar(string(R.string.history_unavailable))
                         withIOContext { EhDB.deleteHistoryInfo(info) }
+                        return@launch
+                    }
+                    val zipGallery = ZipAsDirListing.parseZipGalleryRelative(target.relativePath)
+                    if (zipGallery != null) {
+                        val (zipRel, inner) = zipGallery
+                        val zipAbs = rootPath.resolveRelative(zipRel).toString()
+                        val names = withIOContext {
+                            withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
+                                ZipAsDirListing.directImageNames(cd, inner)
+                            }.orEmpty()
+                        }
+                        val gi = BaseGalleryInfo(
+                            gid = info.gid,
+                            token = LOCAL_FOLDER_TOKEN,
+                            title = info.title ?: zipRel.substringAfterLast('/'),
+                            pages = names.size,
+                            favoriteSlot = NOT_FAVORITED,
+                            rating = -1f,
+                            thumbKey = info.thumbKey,
+                            uploader = "${target.rootId}\u0000${target.relativePath.trim('/')}",
+                            category = 0,
+                        )
+                        val parentRel = parentRelativeOfFile(zipRel)
+                        openFromHistoryWithBackStack(
+                            pushParentDir = {
+                                openLocalBrowseDir(
+                                    rootId = root.id,
+                                    rootDisplayName = root.displayName,
+                                    rootPath = rootPath,
+                                    relativePath = parentRel,
+                                    preferMediaStore = root.prefersMediaStore,
+                                    fromHistory = true,
+                                )
+                            },
+                            openContent = {
+                                navToLocalZipFolderReader(zipAbs, inner, names, gi)
+                            },
+                        )
                         return@launch
                     }
                     val fullStack = buildLocalBrowseStack(

@@ -2100,10 +2100,15 @@ object SmbGateway {
         useCache: Boolean,
         onCached: ((List<BrowseEntryRemote>) -> Unit)?,
     ): List<BrowseEntryRemote> {
+        val configKey = sourceConfigKey(source)
         if (useCache) {
-            BrowseSession.getSmbListing(source.id, relativeDir)?.let {
-                onCached?.invoke(it)
-                return it
+            val cached = BrowseSession.getSmbListing(source.id, relativeDir)
+                ?: NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)?.also { entries ->
+                    BrowseSession.putSmbListing(source.id, relativeDir, entries, sessionCurrent = false)
+                }
+            if (cached != null) {
+                onCached?.invoke(cached)
+                return cached
             }
         } else {
             BrowseSession.invalidateSmbListing(source.id, relativeDir)
@@ -2125,9 +2130,10 @@ object SmbGateway {
                 }
             }.getOrDefault(emptyList())
         }
-        BrowseSession.putSmbListing(source.id, relativeDir, entries, sessionCurrent = true)
-        onCached?.invoke(entries)
-        return entries
+        val stored = NetworkFolderIndexCache.saveSmb(source.id, configKey, relativeDir, entries)
+        BrowseSession.putSmbListing(source.id, relativeDir, stored, sessionCurrent = true)
+        onCached?.invoke(stored)
+        return stored
     }
 
     private fun zipRootListings(

@@ -620,17 +620,13 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             WebDavGateway.joinRelative(relativeDir, entry.relativeName)
         }
         // Same remote cover path as browse [coverFor] → HistoryThumbKey → webdav_thumb_cache.
-        val coverKey = entry.coverFileName?.let { fileName ->
-            val coverRemote = if (entry.relativeName.isEmpty()) {
-                WebDavGateway.joinRelative(relativeDir, fileName)
-            } else {
-                WebDavGateway.joinRelative(
-                    WebDavGateway.joinRelative(relativeDir, entry.relativeName),
-                    fileName,
-                )
-            }
-            HistoryThumbKey.webdav(src.id, coverRemote)
-        }
+        val coverKey = LocalHistory.zipOrRemoteThumbKey(
+            sourceId = src.id,
+            listedDir = relativeDir,
+            relativeName = entry.relativeName,
+            coverFileName = entry.coverFileName,
+            smb = false,
+        )
         val gid = stableGalleryId(src.id, "webdav:$remote")
         val info = BaseGalleryInfo(
             gid = gid,
@@ -696,7 +692,13 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         val page = images.indexOfFirst { it.fileName == file.fileName }.coerceAtLeast(0)
         val names = images.map { it.fileName }
         val coverKey = names.firstOrNull()?.let { fileName ->
-            HistoryThumbKey.webdav(src.id, WebDavGateway.joinRelative(relativeDir, fileName))
+            LocalHistory.zipOrRemoteThumbKey(
+                sourceId = src.id,
+                listedDir = relativeDir,
+                relativeName = "",
+                coverFileName = fileName,
+                smb = false,
+            )
         }
         val gid = stableGalleryId(src.id, "webdav:$relativeDir")
         val info = BaseGalleryInfo(

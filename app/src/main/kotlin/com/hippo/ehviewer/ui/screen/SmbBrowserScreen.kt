@@ -728,17 +728,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             SmbGateway.joinRelativePath(relativeDir, entry.relativeName)
         }
         // Same remote cover path as browse [coverFor] → HistoryThumbKey → smb_thumb_cache.
-        val coverKey = entry.coverFileName?.let { fileName ->
-            val coverRemote = if (entry.relativeName.isEmpty()) {
-                SmbGateway.joinRelativePath(relativeDir, fileName)
-            } else {
-                SmbGateway.joinRelativePath(
-                    SmbGateway.joinRelativePath(relativeDir, entry.relativeName),
-                    fileName,
-                )
-            }
-            HistoryThumbKey.smb(src.id, coverRemote)
-        }
+        val coverKey = LocalHistory.zipOrRemoteThumbKey(
+            sourceId = src.id,
+            listedDir = relativeDir,
+            relativeName = entry.relativeName,
+            coverFileName = entry.coverFileName,
+            smb = true,
+        )
         val gid = stableGalleryId(src.id, "smb:$remote")
         val info = BaseGalleryInfo(
             gid = gid,
@@ -810,7 +806,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val page = images.indexOfFirst { it.fileName == file.fileName }.coerceAtLeast(0)
         val names = images.map { it.fileName }
         val coverKey = names.firstOrNull()?.let { fileName ->
-            HistoryThumbKey.smb(src.id, SmbGateway.joinRelativePath(relativeDir, fileName))
+            LocalHistory.zipOrRemoteThumbKey(
+                sourceId = src.id,
+                listedDir = relativeDir,
+                relativeName = "",
+                coverFileName = fileName,
+                smb = true,
+            )
         }
         val gid = stableGalleryId(src.id, "smb:$relativeDir")
         val info = BaseGalleryInfo(

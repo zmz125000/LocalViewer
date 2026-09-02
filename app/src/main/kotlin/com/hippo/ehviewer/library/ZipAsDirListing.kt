@@ -129,12 +129,42 @@ object ZipAsDirListing {
     /**
      * Parent listing after zip/cbz files were rewritten to directory children.
      * [peeks] / [grandPeeks] keys use the zip file name as the directory name.
+     * [galleryListings] are flat / single-folder zips left as files for gallery classify.
      */
     data class ZipFakeFolderExpansion(
         val children: List<RemoteChild>,
         val peeks: Map<String, List<RemoteChild>>,
         val grandPeeks: Map<String, List<RemoteChild>>,
+        val galleryListings: Map<String, ZipRootListing> = emptyMap(),
     )
+
+    /** Flat images, or exactly one wrapper folder of images — open as a gallery, not a dir. */
+    data class ZipSimpleGallery(
+        val innerPrefix: String,
+        val imageNames: List<String>,
+    )
+
+    fun simpleGalleryFromListing(listing: ZipRootListing): ZipSimpleGallery? {
+        val dirs = listing.children.filter { it.isDirectory && isPromotableLeafDirName(it.name) }
+        val files = listing.children.filter { !it.isDirectory }
+        val images = files.filter { isImageFileName(it.name) }
+        if (dirs.isEmpty() && images.isNotEmpty() &&
+            files.none { isArchiveFileName(it.name) || isBrowseVideoFileName(it.name) }
+        ) {
+            val names = images.map { it.name }.sortedWith { a, b -> naturalCompare(a, b) }
+            return ZipSimpleGallery("", names)
+        }
+        if (dirs.size == 1 && files.isEmpty()) {
+            val leaf = dirs.single().name
+            val peek = listing.grandPeeks[leaf] ?: return null
+            if (peek.any { it.isDirectory && isPromotableLeafDirName(it.name) }) return null
+            val leafImages = peek.filter { !it.isDirectory && isImageFileName(it.name) }
+            if (leafImages.isEmpty()) return null
+            val names = leafImages.map { it.name }.sortedWith { a, b -> naturalCompare(a, b) }
+            return ZipSimpleGallery(leaf, names)
+        }
+        return null
+    }
 
     fun zipRootListingFromCd(cd: ZipCentralDirectory, innerPrefix: String = ""): ZipRootListing {
         val peek = listChildren(cd, innerPrefix)
@@ -169,6 +199,7 @@ object ZipAsDirListing {
         }
         val peeks = LinkedHashMap<String, List<RemoteChild>>()
         val grandPeeks = LinkedHashMap<String, List<RemoteChild>>()
+        val galleryListings = LinkedHashMap<String, ZipRootListing>()
         val out = ArrayList<RemoteChild>(children.size)
         for (child in children) {
             if (child.isDirectory || !isZipArchiveFileName(child.name)) {
@@ -180,13 +211,18 @@ object ZipAsDirListing {
                 out += child
                 continue
             }
+            if (simpleGalleryFromListing(listing) != null) {
+                galleryListings[child.name] = listing
+                out += child
+                continue
+            }
             peeks[child.name] = listing.children
             for ((leaf, leafPeek) in listing.grandPeeks) {
                 grandPeeks["${child.name}/$leaf"] = leafPeek
             }
             out += child.copy(isDirectory = true, size = 0L)
         }
-        return ZipFakeFolderExpansion(out, peeks, grandPeeks)
+        return ZipFakeFolderExpansion(out, peeks, grandPeeks, galleryListings)
     }
 
     /**
@@ -208,7 +244,37 @@ object ZipAsDirListing {
         grands.putAll(grandPeeks)
         grands.putAll(expansion.grandPeeks)
         val tagged = expansion.children.withHiddenFlags(peeks)
-        return classifyRemoteListingWithPeeks(currentDirName, tagged, peeks, grands)
+        val classified = classifyRemoteListingWithPeeks(currentDirName, tagged, peeks, grands)
+        if (expansion.galleryListings.isEmpty()) return classified
+        return classified.map { entry ->
+            if (entry !is BrowseEntryRemote.ArchiveGallery || !isZipArchiveFileName(entry.fileName)) {
+                return@map entry
+            }
+            val listing = expansion.galleryListings[entry.fileName] ?: return@map entry
+            folderGalleryForZip(entry, listing)
+        }
+    }
+
+    fun folderGalleryForZip(
+        archive: BrowseEntryRemote.ArchiveGallery,
+        listing: ZipRootListing,
+    ): BrowseEntryRemote {
+        val simple = simpleGalleryFromListing(listing) ?: return archive
+        val rel = if (simple.innerPrefix.isEmpty()) {
+            archive.fileName
+        } else {
+            "${archive.fileName}/${simple.innerPrefix}"
+        }
+        return BrowseEntryRemote.FolderGallery(
+            name = archive.name,
+            relativeName = rel,
+            pageCount = simple.imageNames.size,
+            pageCountCapped = false,
+            coverFileName = simple.imageNames.first(),
+            imageFileNames = simple.imageNames,
+            hidden = archive.hidden,
+            virtual = false,
+        )
     }
 
     /** Shallow paint: zip/cbz files become Pending directories (no CD yet). */
@@ -235,9 +301,22 @@ object ZipAsDirListing {
     }
 
     /**
-     * Split `dir/file.zip/Album` into zip relative path + inner prefix.
-     * First `.zip`/`.cbz` segment is the archive; remaining segments are inside it.
+     * History / library relative path for a zip gallery: `dir/file.zip|Album` or
+     * `dir/file.zip/Album`.
      */
+    fun parseZipGalleryRelative(rel: String): Pair<String, String>? {
+        val n = rel.replace('\\', '/').trim('/')
+        if (n.isEmpty()) return null
+        val pipe = n.indexOf('|')
+        if (pipe >= 0) {
+            val zipRel = n.substring(0, pipe)
+            val inner = n.substring(pipe + 1)
+            if (isZipArchiveFileName(zipRel.substringAfterLast('/'))) return zipRel to inner
+        }
+        return splitZipBrowsePath(n)
+    }
+
+    /** Split `dir/file.zip/Album` into zip relative path + inner prefix. */
     fun splitZipBrowsePath(relativeDir: String): Pair<String, String>? {
         val segs = relativeDir.replace('\\', '/').trim('/').split('/').filter { it.isNotEmpty() }
         val i = segs.indexOfFirst { isZipArchiveFileName(it) }
@@ -384,22 +463,20 @@ object ZipAsDirListing {
     fun demoteZipFoldersToArchives(entries: List<BrowseEntryRemote>): List<BrowseEntryRemote> = entries.map { entry ->
         when (entry) {
             is BrowseEntryRemote.FolderGallery -> {
-                val name = entry.relativeName.ifEmpty { entry.name }
-                if (!isZipArchiveFileName(name)) return@map entry
+                val zipSeg = zipFileSegment(entry.relativeName, entry.name) ?: return@map entry
                 BrowseEntryRemote.ArchiveGallery(
                     name = entry.name,
-                    fileName = name.substringAfterLast('/'),
-                    parentRelativeName = name.substringBeforeLast('/', missingDelimiterValue = ""),
+                    fileName = zipSeg,
+                    parentRelativeName = "",
                     hidden = entry.hidden,
                 )
             }
             is BrowseEntryRemote.Directory -> {
-                val name = entry.relativeName.ifEmpty { entry.name }
-                if (!isZipArchiveFileName(name)) return@map entry
+                val zipSeg = zipFileSegment(entry.relativeName, entry.name) ?: return@map entry
                 BrowseEntryRemote.ArchiveGallery(
                     name = entry.name,
-                    fileName = name.substringAfterLast('/'),
-                    parentRelativeName = name.substringBeforeLast('/', missingDelimiterValue = ""),
+                    fileName = zipSeg,
+                    parentRelativeName = "",
                     lastModifiedMs = entry.lastModifiedMs,
                     hidden = entry.hidden,
                 )
@@ -412,20 +489,12 @@ object ZipAsDirListing {
         cd: ZipCentralDirectory,
         archive: BrowseEntryRemote.ArchiveGallery,
     ): BrowseEntryRemote {
-        val root = listChildren(cd, "")
+        val listing = zipRootListingFromCd(cd)
+        val asGallery = folderGalleryForZip(archive, listing)
+        if (asGallery is BrowseEntryRemote.FolderGallery) return asGallery
+        val root = listing.children
         val hasSubdir = root.any { it.isDirectory }
-        val images = directImageNames(cd, "")
         return when {
-            !hasSubdir && images.isNotEmpty() -> BrowseEntryRemote.FolderGallery(
-                name = archive.name,
-                relativeName = archive.fileName,
-                pageCount = images.size,
-                pageCountCapped = false,
-                coverFileName = images.first(),
-                imageFileNames = images,
-                hidden = archive.hidden,
-                virtual = false,
-            )
             hasSubdir -> {
                 val anyImage = imageBearingPrefixes(cd).isNotEmpty()
                 val anyVideo = cd.entries.any { e ->

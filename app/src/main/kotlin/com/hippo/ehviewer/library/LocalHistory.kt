@@ -476,7 +476,9 @@ object LocalHistory {
             .filterIsInstance<BrowseEntryRemote.FolderGallery>()
             .firstOrNull { it.relativeName.isEmpty() }
             ?.coverFileName?.takeIf { it.isNotBlank() }
-            ?.let { fileName -> return HistoryThumbKey.smb(sourceId, joinRemote(rel, fileName)) }
+            ?.let { fileName ->
+                return zipOrRemoteThumbKey(sourceId, rel, "", fileName, smb = true)
+            }
 
         if (rel.isNotEmpty()) {
             val parentRel = parentRelativeOfFile(rel)
@@ -485,7 +487,9 @@ object LocalHistory {
                 ?.filterIsInstance<BrowseEntryRemote.Directory>()
                 ?.firstOrNull { joinRemote(parentRel, it.relativeName) == rel }
                 ?.coverFileName?.takeIf { it.isNotBlank() }
-                ?.let { fileName -> return HistoryThumbKey.smb(sourceId, joinRemote(rel, fileName)) }
+                ?.let { fileName ->
+                    return zipOrRemoteThumbKey(sourceId, parentRel, rel.substringAfterLast('/'), fileName, smb = true)
+                }
         }
 
         return BrowseFavorites.thumbKeyFor(BrowseFavorites.smbFolderKey(sourceId, rel))
@@ -502,7 +506,9 @@ object LocalHistory {
             .filterIsInstance<BrowseEntryRemote.FolderGallery>()
             .firstOrNull { it.relativeName.isEmpty() }
             ?.coverFileName?.takeIf { it.isNotBlank() }
-            ?.let { fileName -> return HistoryThumbKey.webdav(sourceId, joinRemote(rel, fileName)) }
+            ?.let { fileName ->
+                return zipOrRemoteThumbKey(sourceId, rel, "", fileName, smb = false)
+            }
 
         if (rel.isNotEmpty()) {
             val parentRel = parentRelativeOfFile(rel)
@@ -511,7 +517,9 @@ object LocalHistory {
                 ?.filterIsInstance<BrowseEntryRemote.Directory>()
                 ?.firstOrNull { joinRemote(parentRel, it.relativeName) == rel }
                 ?.coverFileName?.takeIf { it.isNotBlank() }
-                ?.let { fileName -> return HistoryThumbKey.webdav(sourceId, joinRemote(rel, fileName)) }
+                ?.let { fileName ->
+                    return zipOrRemoteThumbKey(sourceId, parentRel, rel.substringAfterLast('/'), fileName, smb = false)
+                }
         }
 
         return BrowseFavorites.thumbKeyFor(BrowseFavorites.webDavFolderKey(sourceId, rel))
@@ -521,6 +529,29 @@ object LocalHistory {
         val d = dir.trim('/')
         val f = file.replace('\\', '/').trimStart('/')
         return if (d.isEmpty()) f else "$d/$f"
+    }
+
+    fun zipOrRemoteThumbKey(
+        sourceId: Long,
+        listedDir: String,
+        relativeName: String,
+        coverFileName: String?,
+        smb: Boolean,
+    ): String? {
+        if (coverFileName.isNullOrBlank()) return null
+        val parts = ZipAsDirListing.zipAsDirCoverParts(listedDir, relativeName, coverFileName)
+        if (parts != null) {
+            return if (smb) {
+                HistoryThumbKey.smbZip(sourceId, parts.first, parts.second)
+            } else {
+                HistoryThumbKey.webdavZip(sourceId, parts.first, parts.second)
+            }
+        }
+        val remote = joinRemote(
+            if (relativeName.isEmpty()) listedDir else joinRemote(listedDir, relativeName),
+            coverFileName,
+        )
+        return if (smb) HistoryThumbKey.smb(sourceId, remote) else HistoryThumbKey.webdav(sourceId, remote)
     }
 
     /**
