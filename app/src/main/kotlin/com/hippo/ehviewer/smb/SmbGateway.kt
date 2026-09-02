@@ -28,6 +28,7 @@ import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCentralDirectory
+import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.classifyRemoteListing
 import com.hippo.ehviewer.library.classifyRemoteListingWithPeeks
 import com.hippo.ehviewer.library.hiddenDirectoriesNeedingDeepScan
@@ -2274,6 +2275,20 @@ object SmbGateway {
         password: String,
         relativeFilePath: String,
     ): Long? = withIOContext {
+        ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, member) ->
+            return@withIOContext runCatching {
+                val local = ZipMemberCover.ensure("smb:${source.id}:$zipRel", member) {
+                    SmbArchiveByteSource(
+                        source,
+                        password,
+                        zipRel,
+                        pipeline = false,
+                        yieldable = true,
+                    )
+                } ?: return@runCatching null
+                java.io.File(local.toString()).length().takeIf { it > 0L }
+            }.getOrNull()
+        }
         runCatching {
             val loc = resolveLocation(source, relativeFilePath)
             withShare(source, password, shareName = loc.share) { share ->
@@ -2610,6 +2625,19 @@ object SmbGateway {
         out: OutputStream,
         yieldable: Boolean = false,
     ) = withIOContext {
+        ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, member) ->
+            val local = ZipMemberCover.ensure("smb:${source.id}:$zipRel", member) {
+                SmbArchiveByteSource(
+                    source,
+                    password,
+                    zipRel,
+                    pipeline = false,
+                    yieldable = yieldable,
+                )
+            } ?: error("Cannot extract ZIP member $member from $zipRel")
+            java.io.File(local.toString()).inputStream().use { it.copyTo(out) }
+            return@withIOContext
+        }
         val downloadContext = coroutineContext
         val kind = if (yieldable) ShareOp.Background else ShareOp.Data
         val copy = suspend {

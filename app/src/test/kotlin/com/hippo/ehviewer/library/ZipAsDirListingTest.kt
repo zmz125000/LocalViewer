@@ -206,6 +206,10 @@ class ZipAsDirListingTest {
             ZipAsDirListing.splitZipBrowsePath("pack.cbz"),
         )
         assertEquals(null, ZipAsDirListing.splitZipBrowsePath("share/Album"))
+        assertEquals(
+            "PDFs.zip" to "PDFs/manual.pdf",
+            ZipAsDirListing.splitZipBrowsePath("PDFs.zip/PDFs/manual.pdf"),
+        )
     }
 
     @Test

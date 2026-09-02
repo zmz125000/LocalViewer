@@ -224,6 +224,17 @@ object ZipAsDirListing {
     }
 
     /**
+     * When [relativeFilePath] is `file.zip/inner/member` under zip-as-dir, the zip file
+     * and the member path. Null for a bare zip file or a normal remote path.
+     */
+    fun zipMemberPath(relativeFilePath: String): Pair<String, String>? {
+        if (!Settings.browseZipAsDir.value) return null
+        val split = splitZipBrowsePath(relativeFilePath) ?: return null
+        if (split.second.isEmpty()) return null
+        return split
+    }
+
+    /**
      * Split `dir/file.zip/Album` into zip relative path + inner prefix.
      * First `.zip`/`.cbz` segment is the archive; remaining segments are inside it.
      */
