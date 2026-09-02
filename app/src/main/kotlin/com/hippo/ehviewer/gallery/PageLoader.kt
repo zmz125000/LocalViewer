@@ -128,15 +128,17 @@ abstract class PageLoader(
     }
 
     private suspend fun atomicallyDecodeAndUpdate(index: Int, forceOriginal: Boolean) {
-        // Default: prepare (lib → UHDR jpeg) then Coil-only decode.
+        // Local archives: ByteBuffer from mmap extract stays in memory (Coil data(buffer)).
+        // Lib stills (JXL/JXR/PQ-AVIF) convert to UHDR jpeg; folder/network PathSource as before.
         // Experimental [Settings.readerLibDirectBitmap]: lib → Bitmap, skip convert.
         bracketCase(
             { openSource(index) },
             { raw ->
                 val checkAds = hasAds && detectAds(index, size)
-                val image = tryDecodeLibDirect(raw, forceOriginal)
+                val hint = getImageExtension(index)?.let { "page.$it" } ?: "page.bin"
+                val image = tryDecodeLibDirect(raw, forceOriginal, hint)
                     ?: Image.decode(
-                        DisplaySource.ensureReady(raw),
+                        DisplaySource.ensureReady(raw, hint),
                         checkExtraneousAds = checkAds,
                         forceOriginal = forceOriginal,
                     )
@@ -160,19 +162,23 @@ abstract class PageLoader(
      * When [Settings.readerLibDirectBitmap] is on and the page is a lib still,
      * decode straight to Bitmap. Null → fall through to convert + Coil.
      */
-    private suspend fun tryDecodeLibDirect(raw: ImageSource, forceOriginal: Boolean): Image? {
+    private suspend fun tryDecodeLibDirect(
+        raw: ImageSource,
+        forceOriginal: Boolean,
+        hint: String,
+    ): Image? {
         if (!Settings.readerLibDirectBitmap.value) return null
-        val hint = when (raw) {
-            is PathSource -> raw.source.name
-            else -> "page.bin"
+        val nameHint = when (raw) {
+            is PathSource -> raw.source.name.ifBlank { hint }
+            else -> hint
         }
         val route = when (raw) {
-            is PathSource -> classifyPath(raw.source, hint)
-            is ByteBufferSource -> classify(raw.source, hint)
+            is PathSource -> classifyPath(raw.source, nameHint)
+            is ByteBufferSource -> classify(raw.source, nameHint)
         }
         if (!route.needsLibDecode) return null
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
-        val direct = LibDirectDecode.decode(raw, hint, maxEdge) ?: return null
+        val direct = LibDirectDecode.decode(raw, nameHint, maxEdge) ?: return null
         return Image.fromLibDirect(direct, raw)
     }
 

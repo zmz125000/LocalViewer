@@ -2204,6 +2204,16 @@ Java_com_hippo_ehviewer_jni_ArchiveKt_getExtension(JNIEnv *env, jclass thiz, jin
     return (*env)->NewStringUTF(env, ext);
 }
 
+JNIEXPORT jstring JNICALL
+Java_com_hippo_ehviewer_jni_ArchiveKt_getArchiveFilename(JNIEnv *env, jclass thiz, jint index) {
+    EH_UNUSED(thiz);
+    const char *name = "";
+    if (entries && index >= 0 && (size_t) index < entryCount && entries[index].filename) {
+        name = entries[index].filename;
+    }
+    return (*env)->NewStringUTF(env, name);
+}
+
 /**
  * Stream direct-index: ZIP local-header offset or TAR data offset for [index].
  * Used for next-page readahead warm. Returns -1 if unavailable.

@@ -7,19 +7,23 @@ import com.hippo.ehviewer.util.FileUtils
 import okio.Path
 
 /**
- * Reader chokepoint: turn any [ImageSource] into a **Coil / ImageDecoder-ready** [PathSource].
+ * Reader chokepoint: Coil / ImageDecoder-ready [ImageSource].
  *
  * Lib convert (JXR/JXL/PQ-AVIF → Ultra HDR JPEG) lives here and in network finalize —
  * not in [com.hippo.ehviewer.image.Image].
+ *
+ * Local archives pass a mmap [ByteBufferSource] ([extractToByteBuffer]). Platform
+ * JPEG/PNG/… stay in that buffer (EhViewer direct access). Only lib stills become a
+ * converted JPEG [PathSource].
  */
 object DisplaySource {
     /**
-     * @return A [PathSource] whose [PathSource.source] Coil can open (JPEG/PNG/… or UHDR jpg).
+     * @return Coil-ready source. Platform [ByteBufferSource] is unchanged (no disk).
      *         Caller must [ImageSource.close] the returned source (closes the original when wrapped).
      */
-    suspend fun ensureReady(src: ImageSource): PathSource = when (src) {
+    suspend fun ensureReady(src: ImageSource, fileNameHint: String = "page.bin"): ImageSource = when (src) {
         is PathSource -> ensureReadyPath(src)
-        is ByteBufferSource -> ensureReadyBuffer(src)
+        is ByteBufferSource -> ensureReadyBuffer(src, fileNameHint)
     }
 
     private suspend fun ensureReadyPath(src: PathSource): PathSource {
@@ -43,13 +47,15 @@ object DisplaySource {
         }
     }
 
-    private suspend fun ensureReadyBuffer(src: ByteBufferSource): PathSource {
+    private suspend fun ensureReadyBuffer(src: ByteBufferSource, fileNameHint: String): ImageSource {
+        val route = classify(src.source, fileNameHint)
+        if (!route.needsUhdr) return src
         val dup = src.source.asReadOnlyBuffer()
         val n = dup.remaining()
         check(n > 0) { "empty image buffer" }
         val bytes = ByteArray(n)
         dup.get(bytes)
-        val ready = HdrConvertCache.ensureCoilReadyFromBytes(bytes, "archive.bin")
+        val ready = HdrConvertCache.ensureCoilReadyFromBytes(bytes, fileNameHint)
         val outer = src
         return object : PathSource {
             override val source: Path = ready
