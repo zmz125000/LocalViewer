@@ -219,6 +219,7 @@ class AndroidFileSystem(context: Context) : FileSystem() {
         val projection = arrayOf(
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.RELATIVE_PATH,
+            MediaStore.MediaColumns.DATA,
         )
         val collections = listOf(
             MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
@@ -235,10 +236,14 @@ class AndroidFileSystem(context: Context) : FileSystem() {
                 )?.use { c ->
                     val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                     val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+                    val dataIdx = c.getColumnIndex(MediaStore.MediaColumns.DATA)
                     while (c.moveToNext()) {
                         val displayName = c.getString(nameIdx) ?: continue
                         if (displayName.startsWith('.')) continue
-                        val relPath = (c.getString(pathIdx) ?: "").trim('/').trimEnd('/')
+                        val relPath = mediaStoreParentRelativeDir(
+                            c.getString(pathIdx),
+                            if (dataIdx < 0) null else c.getString(dataIdx),
+                        )
                         if (relativeDir.isEmpty()) {
                             if (relPath.isEmpty()) {
                                 files.putIfAbsent(displayName, "mediastore:/$displayName".toPath())
@@ -323,7 +328,7 @@ class AndroidFileSystem(context: Context) : FileSystem() {
         if (s.isEmpty()) return null
         val fileName = s.substringAfterLast('/')
         val relativeDir = s.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
-        if (fileName.isEmpty() || !fileName.contains('.')) return null
+        if (fileName.isEmpty()) return null
         val projection = arrayOf(MediaStore.MediaColumns._ID)
         val relWithSlash = if (relativeDir.isEmpty()) "" else "$relativeDir/"
         val selection: String
@@ -336,13 +341,15 @@ class AndroidFileSystem(context: Context) : FileSystem() {
             args = arrayOf(fileName)
         } else {
             selection = "(${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ?) AND " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
+                "${MediaStore.MediaColumns.DATA} LIKE ?) AND " +
                 "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
-            args = arrayOf(relWithSlash, relativeDir, fileName)
+            args = arrayOf(relWithSlash, relativeDir, "%/$relativeDir/$fileName", fileName)
         }
         val collections = listOf(
             MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
             MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+            MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
         )
         for (collection in collections) {
             val found = runCatching {

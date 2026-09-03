@@ -200,6 +200,8 @@ data class RemoteChild(
     val hidden: Boolean = false,
     /** SMB FILE_ATTRIBUTE_READONLY; false when unsupported. */
     val readOnly: Boolean = false,
+    /** MediaStore MIME when known; browse video tags can use video MIME without an extension. */
+    val mimeType: String? = null,
 )
 
 /**
@@ -830,7 +832,7 @@ fun classifyRemoteListingWithPeeks(
                 }
                 val sHasVideo = peek.any {
                     !it.isDirectory && !it.name.startsWith('.') &&
-                        !isProtectedSystemName(it.name) && isBrowseVideoFileName(it.name)
+                        !isProtectedSystemName(it.name) && isBrowseVideoEntry(it.name, it.mimeType)
                 }
                 // Exclude sample/ so 1 real leaf + sample still promotes; sample never grand-peeked.
                 val leaves = peek.filter { it.isDirectory && isPromotableLeafDirName(it.name) }
@@ -1268,7 +1270,7 @@ fun classifyRemoteListingWithPeeks(
                     lastModifiedMs = e.lastModifiedMs,
                     hidden = e.hidden || isDotHiddenName(e.name),
                 )
-            isBrowseVideoFileName(e.name) ->
+            isBrowseVideoEntry(e.name, e.mimeType) ->
                 videos += BrowseEntryRemote.VideoFile(
                     name = e.name,
                     size = e.size,
@@ -1435,7 +1437,7 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
         when {
             isImageFileName(e.name) -> imageNames += e.name
             isArchiveFileName(e.name) -> sawArchive = true
-            isBrowseVideoFileName(e.name) -> videoFileNames += e.name
+            isBrowseVideoEntry(e.name, e.mimeType) -> videoFileNames += e.name
         }
     }
 

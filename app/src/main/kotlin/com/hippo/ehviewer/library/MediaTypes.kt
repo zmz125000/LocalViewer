@@ -167,6 +167,16 @@ fun isSampleVideoFileName(name: String): Boolean {
 fun isBrowseVideoFileName(name: String): Boolean = isVideoFileName(name) && !isSampleVideoFileName(name)
 
 /**
+ * Browse video from filename and/or MediaStore MIME. DISPLAY_NAME is sometimes
+ * a title without an extension; video MIME still counts (not sample-*).
+ */
+fun isBrowseVideoEntry(name: String, mimeType: String? = null): Boolean {
+    if (isBrowseVideoFileName(name)) return true
+    val mime = mimeType?.lowercase() ?: return false
+    return mime.startsWith("video/") && !isSampleVideoFileName(name)
+}
+
+/**
  * Unknown / no-extension files. `application/octet-stream` matches almost no
  * ACTION_VIEW filters, so the system picker shows the wrong category (or none).
  * Wildcard MIME ([GENERIC_FILE_MIME]) is what file managers use so any handler

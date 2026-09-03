@@ -58,7 +58,7 @@ private fun resolveMediaStorePathToContentUri(pathStr: String): Uri? {
     if (s.isEmpty()) return null
     val fileName = s.substringAfterLast('/')
     val relativeDir = s.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
-    if (fileName.isEmpty() || !fileName.contains('.')) return null
+    if (fileName.isEmpty()) return null
     val projection = arrayOf(MediaStore.MediaColumns._ID)
     val relWithSlash = if (relativeDir.isEmpty()) "" else "$relativeDir/"
     val selection: String
@@ -71,13 +71,15 @@ private fun resolveMediaStorePathToContentUri(pathStr: String): Uri? {
         args = arrayOf(fileName)
     } else {
         selection = "(${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-            "${MediaStore.MediaColumns.RELATIVE_PATH} = ?) AND " +
+            "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
+            "${MediaStore.MediaColumns.DATA} LIKE ?) AND " +
             "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
-        args = arrayOf(relWithSlash, relativeDir, fileName)
+        args = arrayOf(relWithSlash, relativeDir, "%/$relativeDir/$fileName", fileName)
     }
     val collections = listOf(
         MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
         MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+        MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
     )
     var resolved: Uri? = null
     for (collection in collections) {

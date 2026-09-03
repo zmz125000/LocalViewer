@@ -115,8 +115,8 @@ class ZipCentralDirectory private constructor(
             }
             if (eocd < 0) return null
 
-            var cdSize = u32(tail, eocd + 12).toLong()
-            var cdOff = u32(tail, eocd + 16).toLong()
+            var cdSize = u32(tail, eocd + 12)
+            var cdOff = u32(tail, eocd + 16)
             // ZIP64 locator immediately before EOCD when fields are maxed.
             if (cdOff == 0xFFFF_FFFFL || cdSize == 0xFFFF_FFFFL ||
                 u16(tail, eocd + 8) == 0xFFFF || u16(tail, eocd + 10) == 0xFFFF
@@ -154,12 +154,12 @@ class ZipCentralDirectory private constructor(
                 }
                 val gp = u16(cd, pos + 8)
                 val method = u16(cd, pos + 10)
-                var comp = u32(cd, pos + 20).toLong()
-                var uncomp = u32(cd, pos + 24).toLong()
+                var comp = u32(cd, pos + 20)
+                var uncomp = u32(cd, pos + 24)
                 val nameLen = u16(cd, pos + 28)
                 val extraLen = u16(cd, pos + 30)
                 val commentLen = u16(cd, pos + 32)
-                var local = u32(cd, pos + 42).toLong()
+                var local = u32(cd, pos + 42)
                 val nameOff = pos + 46
                 val extraOff = nameOff + nameLen
                 val next = extraOff + extraLen + commentLen
@@ -279,9 +279,10 @@ class ZipCentralDirectory private constructor(
 
         private fun u16(b: ByteArray, off: Int): Int = (b[off].toInt() and 0xff) or ((b[off + 1].toInt() and 0xff) shl 8)
 
-        private fun u32(b: ByteArray, off: Int): Int = u16(b, off) or (u16(b, off + 2) shl 16)
+        /** Unsigned little-endian u32. Signed Int would reject EOCD offsets at or above 2GiB. */
+        private fun u32(b: ByteArray, off: Int): Long =
+            u16(b, off).toLong() or (u16(b, off + 2).toLong() shl 16)
 
-        private fun u64(b: ByteArray, off: Int): Long = (u32(b, off).toLong() and 0xffff_ffffL) or
-            ((u32(b, off + 4).toLong() and 0xffff_ffffL) shl 32)
+        private fun u64(b: ByteArray, off: Int): Long = u32(b, off) or (u32(b, off + 4) shl 32)
     }
 }
