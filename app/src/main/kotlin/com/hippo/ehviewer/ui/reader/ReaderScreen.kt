@@ -59,6 +59,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.platform.LocalConfiguration
@@ -941,6 +943,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             } else {
                 WindowInsets.systemBars
             }
+            val chromeVisible by rememberUpdatedState(appbarVisible)
+            var suppressPageClick by remember { mutableStateOf(false) }
             GalleryPager(
                 type = readingMode,
                 pagerState = pagerState,
@@ -949,19 +953,36 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 showNavigationOverlay = showNavigationOverlay,
                 onNavigationModeChange = { showNavigationOverlay = true },
                 onSelectPage = onSelectPage,
-                onMenuRegionClick = { appbarVisible = !appbarVisible },
+                onMenuRegionClick = {
+                    if (!suppressPageClick) appbarVisible = !appbarVisible
+                },
                 onPrevFolder = { goFolder(next = false) },
                 onNextFolder = { goFolder(next = true) },
                 // Same path as edge-swipe / system back (OnBackPressedDispatcher callbacks).
                 onBack = { activity.onBackPressedDispatcher.onBackPressed() },
                 dualActive = dualActive,
-                modifier = Modifier.background(bgColor).pointerInput(syncState) {
-                    awaitEachGesture {
-                        waitForUpOrCancellation()
-                        syncState.reset()
-                        showNavigationOverlay = false
+                modifier = Modifier.background(bgColor)
+                    // Finger-down on the page hides chrome without consuming the stream,
+                    // so the same gesture can still scroll. Bars sit above this and keep hits.
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                if (event.changes.any { it.changedToDown() }) {
+                                    val hide = chromeVisible
+                                    suppressPageClick = hide
+                                    if (hide) appbarVisible = false
+                                }
+                            }
+                        }
                     }
-                }.fillMaxSize().windowInsetsPadding(insets),
+                    .pointerInput(syncState) {
+                        awaitEachGesture {
+                            waitForUpOrCancellation()
+                            syncState.reset()
+                            showNavigationOverlay = false
+                        }
+                    }.fillMaxSize().windowInsetsPadding(insets),
             )
         }
         val brightness by Settings.customBrightness.collectAsState()
@@ -1098,7 +1119,6 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             currentPage = syncState.sliderValue,
             totalPages = pageLoader.size,
             onSliderValueChange = syncState::sliderScrollTo,
-            onDismissRequest = { appbarVisible = false },
             onClickSettings = {
                 launch {
                     dialog { cont ->
