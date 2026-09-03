@@ -196,8 +196,10 @@ private fun DualPageContainer(
 ) {
     @Suppress("NAME_SHADOWING")
     val isRtl by rememberUpdatedState(isRtl)
+
     @Suppress("NAME_SHADOWING")
     val chromeVisible by rememberUpdatedState(chromeVisible)
+
     @Suppress("NAME_SHADOWING")
     val onMenuRegionClick by rememberUpdatedState(onMenuRegionClick)
     val zoomableState = rememberZoomableState(zoomSpec = PagerZoomSpec)
@@ -338,8 +340,10 @@ private fun PageContainer(
 ) {
     @Suppress("NAME_SHADOWING")
     val isRtl by rememberUpdatedState(isRtl)
+
     @Suppress("NAME_SHADOWING")
     val chromeVisible by rememberUpdatedState(chromeVisible)
+
     @Suppress("NAME_SHADOWING")
     val onMenuRegionClick by rememberUpdatedState(onMenuRegionClick)
     val zoomableState = rememberZoomableState(zoomSpec = PagerZoomSpec)
