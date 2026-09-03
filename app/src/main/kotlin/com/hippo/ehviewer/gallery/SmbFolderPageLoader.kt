@@ -7,11 +7,17 @@ import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipMemberCover
+import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.util.FileUtils
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CoroutineStart
@@ -63,6 +69,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
 
         /** UI/decode callbacks waiting for [index] to land in [SmbCache]. */
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
+        val ramPages = ConcurrentHashMap<Int, ByteArray>()
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
                 override val title by lazy {
@@ -74,6 +81,10 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(imageFileNames[index])
 
                 override fun save(index: Int, file: Path): Boolean = runCatching {
+                    ramPages[index]?.let {
+                        java.io.File(file.toString()).writeBytes(it)
+                        return@runCatching true
+                    }
                     val primary = SmbCache.cachePath(source.id, remoteDir, imageFileNames[index])
                     val cached = SmbCache.resolveReaderPath(primary)
                     check(SmbCache.isCachedOnDisk(cached)) { "Not cached" }
@@ -82,6 +93,9 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 }.getOrDefault(false)
 
                 override fun openSource(index: Int): ImageSource {
+                    ramPages[index]?.let { bytes ->
+                        return byteBufferSource(ByteBuffer.wrap(bytes)) {}
+                    }
                     val name = imageFileNames[index]
                     val primary = SmbCache.cachePath(source.id, remoteDir, name)
                     val path = SmbCache.resolveReaderPath(primary)
@@ -126,6 +140,9 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     // A waiter represents decode demand. Drop it before cancelling so the
                     // cancellation handler cannot resurrect an obsolete interactive transfer.
                     readyWaiters.forEach { idx, _ -> if (idx !in decodedPages) readyWaiters.remove(idx) }
+                    ramPages.keys.toList().forEach { idx ->
+                        if (idx !in sourcePages && idx !in decodedPages) ramPages.remove(idx)
+                    }
                     // ConcurrentHashMap.forEach (BiConsumer) — never entries/keys iterator.
                     // Android EntryIterator.next can throw NoSuchElementException under concurrent
                     // put/remove; dual-page fires two onRequest close together.
@@ -157,9 +174,13 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     if (index !in 0 until size) return
                     val name = imageFileNames[index]
                     val cache = SmbCache.cachePath(source.id, remoteDir, name)
+                    val skipDisk = Settings.disableReaderNetworkCache.value
                     // Never probe disk here — onRequest/retryPage run on main (lifecycle
                     // ON_RESUME). Memory-only skip for prefetch when known present.
-                    if (onReady == null && SmbCache.isPageCached(cache)) {
+                    if (onReady == null && !skipDisk && SmbCache.isPageCached(cache)) {
+                        return
+                    }
+                    if (onReady == null && skipDisk && ramPages.containsKey(index)) {
                         return
                     }
                     if (onReady != null) {
@@ -173,8 +194,18 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                         var needsInteractive = interactive
                         try {
+                            val skipDisk = Settings.disableReaderNetworkCache.value
+                            if (skipDisk && ramPages.containsKey(index)) {
+                                dispatchReady(index)
+                                return@launch
+                            }
                             // Authoritative disk check on IO (StrictMode + LRU correctness).
-                            if (SmbCache.isPageCachedOnDisk(cache)) {
+                            // Skip mtime touch when not writing cache.
+                            if (!skipDisk && SmbCache.isPageCachedOnDisk(cache)) {
+                                dispatchReady(index)
+                                return@launch
+                            }
+                            if (skipDisk && SmbCache.isCachedOnDisk(SmbCache.resolveReaderPath(cache))) {
                                 dispatchReady(index)
                                 return@launch
                             }
@@ -189,9 +220,19 @@ suspend inline fun <T> useSmbFolderPageLoader(
                                 else -> prefetchSlots
                             }
                             slots.withPermit {
-                                downloadToCache(index)
+                                if (skipDisk) {
+                                    downloadToRam(index)
+                                } else {
+                                    downloadToCache(index)
+                                }
                             }
-                            if (SmbCache.isPageCachedOnDisk(cache)) {
+                            val ready = if (skipDisk) {
+                                ramPages.containsKey(index) ||
+                                    SmbCache.isCachedOnDisk(SmbCache.resolveReaderPath(cache))
+                            } else {
+                                SmbCache.isPageCachedOnDisk(cache)
+                            }
+                            if (ready) {
                                 dispatchReady(index)
                             } else {
                                 val waiters = takeReadyWaiters(index)
@@ -232,6 +273,31 @@ suspend inline fun <T> useSmbFolderPageLoader(
                         // Lost the race — keep the owner; waiters are already registered.
                         job.cancel()
                     }
+                }
+
+                private suspend fun downloadToRam(index: Int) {
+                    if (ramPages.containsKey(index)) return
+                    val name = imageFileNames[index]
+                    val rel = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
+                    ZipAsDirListing.zipMemberPath(rel)?.let { (zipRel, member) ->
+                        val bytes = ZipMemberCover.extractBytes(
+                            "smb:${source.id}:$zipRel",
+                            member,
+                        ) {
+                            SmbArchiveByteSource(
+                                source,
+                                password,
+                                zipRel,
+                                pipeline = false,
+                                yieldable = false,
+                            )
+                        } ?: error("Cannot extract ZIP member $member from $zipRel")
+                        ramPages[index] = bytes
+                        return
+                    }
+                    val bos = ByteArrayOutputStream()
+                    SmbGateway.downloadFile(source, password, rel, bos)
+                    ramPages[index] = bos.toByteArray()
                 }
 
                 private suspend fun downloadToCache(index: Int) {

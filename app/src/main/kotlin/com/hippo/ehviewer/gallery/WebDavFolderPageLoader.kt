@@ -7,11 +7,17 @@ import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
+import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.util.FileUtils
+import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
 import com.hippo.ehviewer.webdav.WebDavCache
 import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CoroutineStart
@@ -48,6 +54,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         val libHdrPrefetchSlots = Semaphore(2)
         val downloadJobs = KeyedJobRegistry<Int>()
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
+        val ramPages = ConcurrentHashMap<Int, ByteArray>()
 
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
@@ -59,6 +66,10 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(imageFileNames[index])
 
                 override fun save(index: Int, file: Path): Boolean = runCatching {
+                    ramPages[index]?.let {
+                        java.io.File(file.toString()).writeBytes(it)
+                        return@runCatching true
+                    }
                     val primary = WebDavCache.cachePath(source.id, remoteDir, imageFileNames[index])
                     val cached = WebDavCache.resolveReaderPath(primary)
                     check(WebDavCache.isCachedOnDisk(cached)) { "Not cached" }
@@ -67,6 +78,9 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 }.getOrDefault(false)
 
                 override fun openSource(index: Int): ImageSource {
+                    ramPages[index]?.let { bytes ->
+                        return byteBufferSource(ByteBuffer.wrap(bytes)) {}
+                    }
                     val name = imageFileNames[index]
                     val primary = WebDavCache.cachePath(source.id, remoteDir, name)
                     val path = WebDavCache.resolveReaderPath(primary)
@@ -102,6 +116,9 @@ suspend inline fun <T> useWebDavFolderPageLoader(
 
                 private fun cancelStaleDownloads(sourcePages: Set<Int>, decodedPages: Set<Int>) {
                     readyWaiters.forEach { idx, _ -> if (idx !in decodedPages) readyWaiters.remove(idx) }
+                    ramPages.keys.toList().forEach { idx ->
+                        if (idx !in sourcePages && idx !in decodedPages) ramPages.remove(idx)
+                    }
                     // ConcurrentHashMap.forEach — avoid entries.toList() iterator race on Android.
                     downloadJobs.cancelOutside(sourcePages)
                 }
@@ -124,8 +141,12 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     if (index !in 0 until size) return
                     val name = imageFileNames[index]
                     val cache = WebDavCache.cachePath(source.id, remoteDir, name)
+                    val skipDisk = Settings.disableReaderNetworkCache.value
                     // Never probe disk here — onRequest/retryPage run on main (lifecycle).
-                    if (onReady == null && WebDavCache.isPageCached(cache)) {
+                    if (onReady == null && !skipDisk && WebDavCache.isPageCached(cache)) {
+                        return
+                    }
+                    if (onReady == null && skipDisk && ramPages.containsKey(index)) {
                         return
                     }
                     if (onReady != null) addReadyWaiter(index, onReady)
@@ -135,8 +156,17 @@ suspend inline fun <T> useWebDavFolderPageLoader(
 
                     val job = launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                         try {
+                            val skipDisk = Settings.disableReaderNetworkCache.value
+                            if (skipDisk && ramPages.containsKey(index)) {
+                                dispatchReady(index)
+                                return@launch
+                            }
                             // Authoritative disk check on IO (StrictMode + LRU correctness).
-                            if (WebDavCache.isPageCachedOnDisk(cache)) {
+                            if (!skipDisk && WebDavCache.isPageCachedOnDisk(cache)) {
+                                dispatchReady(index)
+                                return@launch
+                            }
+                            if (skipDisk && WebDavCache.isCachedOnDisk(WebDavCache.resolveReaderPath(cache))) {
                                 dispatchReady(index)
                                 return@launch
                             }
@@ -146,19 +176,37 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                 else -> prefetchSlots
                             }
                             slots.withPermit {
-                                if (WebDavCache.isPageCachedOnDisk(cache)) {
-                                    dispatchReady(index)
-                                    return@withPermit
-                                }
-                                val remote = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
-                                WebDavCache.downloadIfNeeded(cache, originalFileName = name) { out ->
-                                    WebDavClient.downloadFile(source, password, remote, out)
-                                }
-                                if (WebDavCache.isPageCachedOnDisk(cache)) {
-                                    dispatchReady(index)
-                                } else if (readyWaiters.containsKey(index)) {
-                                    notifyPageFailed(index, "WebDAV download incomplete")
-                                    takeReadyWaiters(index)
+                                if (skipDisk) {
+                                    if (ramPages.containsKey(index) ||
+                                        WebDavCache.isCachedOnDisk(WebDavCache.resolveReaderPath(cache))
+                                    ) {
+                                        dispatchReady(index)
+                                        return@withPermit
+                                    }
+                                    downloadToRam(index)
+                                    if (ramPages.containsKey(index) ||
+                                        WebDavCache.isCachedOnDisk(WebDavCache.resolveReaderPath(cache))
+                                    ) {
+                                        dispatchReady(index)
+                                    } else if (readyWaiters.containsKey(index)) {
+                                        notifyPageFailed(index, "WebDAV download incomplete")
+                                        takeReadyWaiters(index)
+                                    }
+                                } else {
+                                    if (WebDavCache.isPageCachedOnDisk(cache)) {
+                                        dispatchReady(index)
+                                        return@withPermit
+                                    }
+                                    val remote = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
+                                    WebDavCache.downloadIfNeeded(cache, originalFileName = name) { out ->
+                                        WebDavClient.downloadFile(source, password, remote, out)
+                                    }
+                                    if (WebDavCache.isPageCachedOnDisk(cache)) {
+                                        dispatchReady(index)
+                                    } else if (readyWaiters.containsKey(index)) {
+                                        notifyPageFailed(index, "WebDAV download incomplete")
+                                        takeReadyWaiters(index)
+                                    }
                                 }
                             }
                         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -186,6 +234,25 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     }
                     val ownsSlot = downloadJobs.register(index, job)
                     if (ownsSlot) job.start() else job.cancel()
+                }
+
+                private suspend fun downloadToRam(index: Int) {
+                    if (ramPages.containsKey(index)) return
+                    val name = imageFileNames[index]
+                    val remote = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
+                    ZipAsDirListing.zipMemberPath(remote)?.let { (zipRel, member) ->
+                        val bytes = ZipMemberCover.extractBytes(
+                            "webdav:${source.id}:$zipRel",
+                            member,
+                        ) {
+                            WebDavArchiveByteSource(source, password, zipRel, pipeline = false)
+                        } ?: error("Cannot extract ZIP member $member from $zipRel")
+                        ramPages[index] = bytes
+                        return
+                    }
+                    val bos = ByteArrayOutputStream()
+                    WebDavClient.downloadFile(source, password, remote, bos)
+                    ramPages[index] = bos.toByteArray()
                 }
             },
         )

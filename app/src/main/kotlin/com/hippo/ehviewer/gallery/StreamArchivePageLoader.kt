@@ -7,6 +7,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.Settings.archivePasswds
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.jni.closeArchive
 import com.hippo.ehviewer.jni.continueStreamTarIndex
 import com.hippo.ehviewer.jni.extractToByteBuffer
@@ -27,6 +28,7 @@ import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.ArchiveStreamBridge
 import com.hippo.ehviewer.library.ArchiveStreamPageCache
+import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
@@ -225,6 +227,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
             val extractJobs = KeyedJobRegistry<Int>()
             val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
             val pagePaths = ConcurrentHashMap<Int, Path>()
+            val ramPages = ConcurrentHashMap<Int, ByteArray>()
             val hostScope = this
             val tarIndexJob = AtomicReference<Job?>(null)
             val coverScheduled = AtomicBoolean(false)
@@ -260,7 +263,9 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                                 growTo(n)
                                                 // Persist offsets periodically so kill/resume skips re-walk.
                                                 if (n % 24 == 0 || isStreamIndexComplete()) {
-                                                    persistMembers(isStreamIndexComplete())
+                                                    if (!Settings.disableReaderNetworkCache.value) {
+                                                        persistMembers(isStreamIndexComplete())
+                                                    }
                                                 }
                                             } else if (isStreamIndexComplete()) {
                                                 streamMembersRef.set(
@@ -269,7 +274,9 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                                         prior = null,
                                                     ),
                                                 )
-                                                persistMembers(true)
+                                                if (!Settings.disableReaderNetworkCache.value) {
+                                                    persistMembers(true)
+                                                }
                                                 break
                                             } else if (n <= before) {
                                                 // Native walk stopped incomplete (I/O/corruption/abort).
@@ -294,6 +301,10 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     override fun getImageExtension(index: Int) = getExtension(index)
 
                     override fun save(index: Int, file: Path): Boolean = runCatching {
+                        ramPages[index]?.let {
+                            java.io.File(file.toString()).writeBytes(it)
+                            return@runCatching true
+                        }
                         val ext = getExtension(index).ifBlank { return@runCatching false }
                         val path = pagePaths[index]
                             ?.takeIf { ArchiveStreamPageCache.isCached(it) }
@@ -305,6 +316,9 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     }.getOrDefault(false)
 
                     override fun openSource(index: Int): ImageSource {
+                        ramPages[index]?.let { bytes ->
+                            return byteBufferSource(ByteBuffer.wrap(bytes)) {}
+                        }
                         val ext = getExtension(index)
                         val path = pagePaths[index]
                             ?.takeIf { ArchiveStreamPageCache.isCached(it) }
@@ -362,20 +376,22 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         val memoryComplete = n > 0 &&
                             indexDone &&
                             (0 until n).all { pagePaths.containsKey(it) }
-                        ArchiveStreamPageCache.saveIndexOnCloseAsync(
-                            index = ArchiveStreamPageCache.Index(
-                                v = ArchiveStreamPageCache.INDEX_VERSION,
-                                cacheKey = cacheKey,
-                                remoteSize = archiveSizeBytes,
-                                format = format,
-                                complete = memoryComplete,
-                                structureComplete = format == "zip" || indexDone,
-                                members = members,
-                            ),
-                            memoryComplete = memoryComplete,
-                            probeDiskForComplete = n > 0 && indexDone && !memoryComplete,
-                            expectedPageCount = n,
-                        )
+                        if (!Settings.disableReaderNetworkCache.value) {
+                            ArchiveStreamPageCache.saveIndexOnCloseAsync(
+                                index = ArchiveStreamPageCache.Index(
+                                    v = ArchiveStreamPageCache.INDEX_VERSION,
+                                    cacheKey = cacheKey,
+                                    remoteSize = archiveSizeBytes,
+                                    format = format,
+                                    complete = memoryComplete,
+                                    structureComplete = format == "zip" || indexDone,
+                                    members = members,
+                                ),
+                                memoryComplete = memoryComplete,
+                                probeDiskForComplete = n > 0 && indexDone && !memoryComplete,
+                                expectedPageCount = n,
+                            )
+                        }
                         // Unblock any JNI read waiting on the network source.
                         runCatching { source.close() }
                         super.close()
@@ -383,6 +399,9 @@ suspend inline fun <T> useStreamArchivePageLoader(
 
                     private fun cancelStaleExtracts(sourcePages: Set<Int>, decodedPages: Set<Int>) {
                         readyWaiters.forEach { idx, _ -> if (idx !in decodedPages) readyWaiters.remove(idx) }
+                        ramPages.keys.toList().forEach { idx ->
+                            if (idx !in sourcePages && idx !in decodedPages) ramPages.remove(idx)
+                        }
                         // ConcurrentHashMap.forEach — avoid entries.toList() iterator race on Android.
                         extractJobs.cancelOutside(sourcePages)
                     }
@@ -398,6 +417,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     }
 
                     private fun isPageCached(index: Int): Boolean {
+                        if (ramPages.containsKey(index)) return true
                         pagePaths[index]?.let { if (ArchiveStreamPageCache.isCached(it)) return true }
                         val ext = getExtension(index).ifBlank { return false }
                         val path = ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
@@ -433,13 +453,26 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                     dispatchReady(index)
                                     return@launch
                                 }
-                                val path = extractToCache(index)
-                                if (path != null && ArchiveStreamPageCache.isCached(path)) {
-                                    dispatchReady(index)
+                                val skipDisk = Settings.disableReaderNetworkCache.value
+                                if (skipDisk) {
+                                    extractToRam(index)
+                                    if (ramPages.containsKey(index) || isPageCached(index)) {
+                                        dispatchReady(index)
+                                    } else {
+                                        val waiters = takeReadyWaiters(index)
+                                        if (waiters.isNotEmpty()) {
+                                            notifyPageFailed(index, "Extract incomplete")
+                                        }
+                                    }
                                 } else {
-                                    val waiters = takeReadyWaiters(index)
-                                    if (waiters.isNotEmpty()) {
-                                        notifyPageFailed(index, "Extract incomplete")
+                                    val path = extractToCache(index)
+                                    if (path != null && ArchiveStreamPageCache.isCached(path)) {
+                                        dispatchReady(index)
+                                    } else {
+                                        val waiters = takeReadyWaiters(index)
+                                        if (waiters.isNotEmpty()) {
+                                            notifyPageFailed(index, "Extract incomplete")
+                                        }
                                     }
                                 }
                             } catch (e: CancellationException) {
@@ -473,6 +506,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     }
 
                     private fun markCompleteIfReady() {
+                        if (Settings.disableReaderNetworkCache.value) return
                         // Hot path: only session map (no readdir). Disk-complete repair is
                         // handled on next open via [ArchiveStreamPageCache.isCompleteAndReady].
                         // TAR progressive: only flip complete when index walk finished + all pages.
@@ -489,6 +523,26 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 members = streamMembersRef.get().toList(),
                             ),
                         )
+                    }
+
+                    /** Extract to RAM when reader network cache is disabled. */
+                    private suspend fun extractToRam(index: Int) {
+                        if (ramPages.containsKey(index) || isPageCached(index)) return
+                        extractMutex.withLock {
+                            if (ramPages.containsKey(index) || isPageCached(index)) return@withLock
+                            val buffer = bridge.checkedNative {
+                                extractToByteBuffer(index)
+                            } ?: return@withLock
+                            try {
+                                ensureActive()
+                                check(buffer.isDirect)
+                                val bytes = ByteArray(buffer.remaining())
+                                buffer.duplicate().get(bytes)
+                                ramPages[index] = bytes
+                            } finally {
+                                releaseByteBuffer(buffer)
+                            }
+                        }
                     }
 
                     /** Single-flight extract → page image cache. */
