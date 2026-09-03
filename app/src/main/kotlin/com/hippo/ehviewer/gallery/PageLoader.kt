@@ -2,11 +2,12 @@ package com.hippo.ehviewer.gallery
 
 import android.os.Handler
 import android.os.Looper
-import androidx.collection.SieveCache
+import android.util.LruCache
 import androidx.compose.runtime.mutableIntStateOf
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.bracketCase
 import com.ehviewer.core.model.GalleryInfo
+import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
@@ -103,27 +104,25 @@ abstract class PageLoader(
     private val semaphore = Semaphore(if (Settings.readerLibDirectBitmap.value) 2 else 4)
 
     /**
-     * Decoded-page budget. Each [sizeOf] entry **must be ≤ maxSize** — androidx
-     * [SieveCache.put] then [trimToSize] crashes with
-     * `ArrayIndexOutOfBoundsException: index=2147483647` (NodeInvalidLink) when a
-     * single bitmap is larger than maxSize (e.g. 7000×5000 original ≈ 133 MiB on a
-     * ~90 MiB cache). Clamp weight to [imageCacheMaxBytes].
+     * Decoded-page budget. Weight is clamped so one huge bitmap can occupy the
+     * cache instead of being inserted and immediately evicted.
+     *
+     * [LruCache], not androidx SieveCache: Sieve `put` trims before linking, and
+     * after ~255 unique pages that crashes with `length=255; index=2147483647`.
      */
     private val imageCacheMaxBytes = pageImageCacheMaxBytes()
 
-    private val cache = SieveCache<Int, Image>(
-        maxSize = imageCacheMaxBytes,
-        sizeOf = { _, v -> cacheWeightOf(v) },
-        // Only drop the cache ref. Do NOT notifyPageWait here — that forced Queued while a
-        // still-composed page might have no active decode job (forever spinner). Reload is
-        // driven by request() when the page is shown / pin fails.
-        onEntryRemoved = { _, o, _, _ -> o.unpin() },
-    )
+    private val cache = object : LruCache<Int, Image>(imageCacheMaxBytes) {
+        override fun sizeOf(key: Int, value: Image): Int = cacheWeightOf(value)
+
+        override fun entryRemoved(evicted: Boolean, key: Int, oldValue: Image, newValue: Image?) {
+            if (oldValue !== newValue) oldValue.unpin()
+        }
+    }
 
     private fun cacheWeightOf(image: Image): Int {
         val raw = image.allocationSize
         if (raw <= 0L) return 1
-        // Never report more than maxSize — SieveCache cannot evict a sole oversize entry.
         return raw.coerceAtMost(imageCacheMaxBytes.toLong()).toInt().coerceAtLeast(1)
     }
 
@@ -333,15 +332,16 @@ abstract class PageLoader(
     private fun publishPageSucceed(index: Int, image: Image, replaceCache: Boolean) {
         if (replaceCache) {
             lock.write {
-                val existing = cache[index]
-                if (existing === image) {
-                    // Same instance: remove() would unpin/recycle then put a dead image.
-                } else {
-                    // Replace any prior entry first so put() doesn't sum two huge weights.
-                    cache.remove(index)
-                    // sizeOf is clamped to maxSize — safe for SieveCache put/trim.
-                    // Construction refcnt=1 is the cache ownership; do not pin again.
-                    cache[index] = image
+                try {
+                    val existing = cache.get(index)
+                    if (existing !== image) {
+                        // Replace any prior entry first so put() doesn't sum two huge weights.
+                        if (existing != null) cache.remove(index)
+                        // Construction refcnt=1 is the cache ownership; do not pin again.
+                        cache.put(index, image)
+                    }
+                } catch (e: Throwable) {
+                    logcat(e)
                 }
             }
         }
@@ -404,7 +404,7 @@ abstract class PageLoader(
             else -> Unit
         }
 
-        val image = lock.read { cache[index] }
+        val image = lock.read { cache.get(index) }
         if (image != null && image.innerImage != null) {
             // Re-publish status; same-instance replace is a no-op in notifyPageSucceed.
             notifyPageSucceed(index, image, replaceCache = true)
