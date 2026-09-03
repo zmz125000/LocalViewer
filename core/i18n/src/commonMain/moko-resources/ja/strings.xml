@@ -155,8 +155,8 @@
     <string name="settings_photo_grid_scroll_to_progress_summary">フォトグリッドを開くとそのフォルダの最後に読んだページへ移動します。オフだと前回のグリッド位置を維持します。</string>
     <string name="settings_download_network_photo_grid_thumb">ネットワークの写真サムネイルを取得</string>
     <string name="settings_download_network_photo_grid_thumb_summary">フォトグリッドとフォルダ表示で SMB/WebDAV 画像を小さな JPEG にデコードします。オフでもキャッシュ済みは表示。両方で同じキャッシュパスキーを使います。</string>
-    <string name="settings_save_photo_grid_original_cache">写真の原画像をキャッシュに保存</string>
-    <string name="settings_save_photo_grid_original_cache_summary">サムネイルは常にサムネイルキャッシュへ保存。オン時はフォトグリッド／フォルダ表示の画像取得で原画像もページキャッシュへ保存。オフは小さな JPEG のみです。</string>
+    <string name="settings_save_photo_grid_original_cache">サムネイル原画像をキャッシュに保存</string>
+    <string name="settings_save_photo_grid_original_cache_summary">ネットワークギャラリーの表紙や写真サムネイル取得時、原画像もページキャッシュへ保存します（リーダーと同じパス）。オフは小さな JPEG のみです。</string>
     <string name="settings_persist_main_nav">フォルダ画面でメインナビを維持</string>
     <string name="settings_persist_main_nav_summary">フォルダ閲覧中も下部バーを表示し、「ブラウズ/履歴」の再タップで戻れます。オフ時はショートカット FAB（スマホ）。</string>
     <string name="settings_hide_back_to_fab">戻る FAB を隠す</string>
