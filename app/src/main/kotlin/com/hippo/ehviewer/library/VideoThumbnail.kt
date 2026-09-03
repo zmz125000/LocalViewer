@@ -375,8 +375,24 @@ object VideoThumbnail {
         source: VideoThumbnailSource,
         persistTarget: File,
     ): Bitmap? = when (source) {
-        is VideoThumbnailSource.Local -> extractSemaphore.withPermit {
-            extractLocalFrame(source, persistTarget)
+        is VideoThumbnailSource.Local -> {
+            val zipMember = ZipPaths.parse(source.path)
+            if (zipMember != null) {
+                probeSemaphore.withPermit {
+                    val (zipAbs, member) = zipMember
+                    val zip = openLocalArchiveByteSource(zipAbs.toPath()) ?: return@withPermit null
+                    val memberSrc = ZipMemberByteSource.open(zip, member, ownsZip = true)
+                        ?: run {
+                            runCatching { zip.close() }
+                            return@withPermit null
+                        }
+                    extractNetworkFrame(memberSrc, source, persistTarget)
+                }
+            } else {
+                extractSemaphore.withPermit {
+                    extractLocalFrame(source, persistTarget)
+                }
+            }
         }
         is VideoThumbnailSource.Smb -> {
             if (networkPaused.get()) return null
@@ -426,7 +442,7 @@ object VideoThumbnail {
         persistTarget: File,
     ): Bitmap? {
         val sizeHint = source.knownSizeBytes.takeIf { it > 0L } ?: raw.size
-        val ts = isMpegTsVideoName(source.fileName)
+        val ts = isMpegTsVideoName(source.fileName) || !raw.isRandomAccess
         return if (!ts && sizeHint > LARGE_FILE_BYTES) {
             extractSemaphore.withPermit {
                 decodeRangedNetwork(raw, source, persistTarget, sizeHint)
@@ -547,11 +563,12 @@ object VideoThumbnail {
     private fun buildProbeSnapshot(raw: ArchiveByteSource, fileName: String): ProbeSnapshot? {
         val size = raw.size
         if (size <= 0L) return null
-        val headCap = if (isMpegTsVideoName(fileName)) PROBE_TS_HEAD_BYTES else PROBE_HEAD_BYTES
+        val sequential = isMpegTsVideoName(fileName) || !raw.isRandomAccess
+        val headCap = if (sequential) PROBE_TS_HEAD_BYTES else PROBE_HEAD_BYTES
         val headLen = minOf(headCap.toLong(), size).toInt()
         val head = readPrefix(raw, 0L, headLen)
         if (head.isEmpty()) return null
-        val ts = isMpegTsVideoName(fileName) || looksLikeMpegTs(head)
+        val ts = sequential || looksLikeMpegTs(head)
         if (ts || size <= head.size) {
             return ProbeSnapshot(
                 mode = ProbeMode.ContiguousHead,

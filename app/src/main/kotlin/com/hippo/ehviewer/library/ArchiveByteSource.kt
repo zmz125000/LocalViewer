@@ -8,6 +8,12 @@ interface ArchiveByteSource : AutoCloseable {
     val size: Long
 
     /**
+     * True when [readAt] can seek without decompressing earlier bytes.
+     * Deflated ZIP members are sequential (prefix inflate only).
+     */
+    val isRandomAccess: Boolean get() = true
+
+    /**
      * Read up to [len] bytes at [offset] into [buf] starting at [off].
      * @return bytes read, 0 at EOF, or -1 on error.
      */

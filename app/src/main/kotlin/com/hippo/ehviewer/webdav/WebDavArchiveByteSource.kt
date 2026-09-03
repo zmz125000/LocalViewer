@@ -3,12 +3,11 @@ package com.hippo.ehviewer.webdav
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.ArchiveByteSource
-import com.hippo.ehviewer.library.FileArchiveByteSource
 import com.hippo.ehviewer.library.ReadAheadArchiveByteSource
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.RemoteRangeNotSupportedException
 import com.hippo.ehviewer.library.ZipAsDirListing
-import com.hippo.ehviewer.library.ZipMemberCover
+import com.hippo.ehviewer.library.openZipContainedFileSource
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -53,7 +52,7 @@ class WebDavArchiveByteSource(
         val zipMember = ZipAsDirListing.zipMemberPath(remoteRelativeFile)
         if (zipMember != null) {
             val (zipRel, memberRel) = zipMember
-            val local = ZipMemberCover.ensure("webdav:${source.id}:$zipRel", memberRel) {
+            openZipContainedFileSource("webdav:${source.id}:$zipRel", memberRel) {
                 WebDavArchiveByteSource(
                     source = source,
                     password = password,
@@ -62,8 +61,7 @@ class WebDavArchiveByteSource(
                     stickySession = stickySession,
                     readahead = true,
                 )
-            } ?: throw IOException("Cannot extract ZIP member $memberRel from $zipRel")
-            FileArchiveByteSource(java.io.File(local.toString()))
+            }
         } else {
             val raw = RawWebDavArchiveByteSource(
                 source,
@@ -86,6 +84,8 @@ class WebDavArchiveByteSource(
     }
 
     override val size: Long get() = inner.size
+
+    override val isRandomAccess: Boolean get() = inner.isRandomAccess
 
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = inner.readAt(offset, buf, off, len)
 

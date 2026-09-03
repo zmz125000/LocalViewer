@@ -36,6 +36,9 @@ class BlockCacheArchiveByteSource(
 
     override val size: Long = knownSize.takeIf { it > 0L } ?: inner.size
 
+    override val isRandomAccess: Boolean
+        get() = inner.isRandomAccess
+
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
         if (len <= 0) return 0
         if (closed) return -1

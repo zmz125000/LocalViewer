@@ -10,6 +10,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteRangeNotSupportedException
 import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.ZipMemberTooLargeException
 import com.hippo.ehviewer.library.isImageFileName
@@ -611,16 +612,16 @@ object WebDavClient {
     ): Long? = withIOContext {
         ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, member) ->
             return@withIOContext runCatching {
-                val local = ZipMemberCover.ensure("webdav:${source.id}:$zipRel", member) {
-                    WebDavArchiveByteSource(
-                        source,
-                        password,
-                        zipRel,
-                        pipeline = false,
-                        stickySession = sticky,
-                    )
-                } ?: return@runCatching null
-                java.io.File(local.toString()).length().takeIf { it > 0L }
+                WebDavArchiveByteSource(
+                    source,
+                    password,
+                    zipRel,
+                    pipeline = false,
+                    stickySession = sticky,
+                    readahead = false,
+                ).use { zip ->
+                    ZipMemberByteSource.uncompressedSize(zip, member)
+                }
             }.getOrElse { e ->
                 if (e is ZipMemberTooLargeException) throw e
                 null
