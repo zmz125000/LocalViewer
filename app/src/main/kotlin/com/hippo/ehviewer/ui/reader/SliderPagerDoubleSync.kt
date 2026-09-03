@@ -27,7 +27,6 @@ class SliderPagerDoubleSync(
 ) {
     private var sliderFollowPager by mutableStateOf(true)
     private var pendingJumpIndex by mutableIntStateOf(-1)
-    private val interactionState = ReaderInteractionState(pageLoader.startPage)
     var sliderValue by mutableIntStateOf(pageLoader.startPage + 1)
         private set
 
@@ -41,18 +40,12 @@ class SliderPagerDoubleSync(
         sliderValue = index.coerceIn(1, pageLoader.size.coerceAtLeast(1))
         val target = sliderValue - 1
         pendingJumpIndex = target
-        interactionState.beginSeek(target)
     }
 
     fun reset() {
         pendingJumpIndex = -1
-        interactionState.cancelSeek()
         sliderFollowPager = true
     }
-
-    fun beginSettingsChange() = interactionState.beginSettingsChange()
-
-    fun finishSettingsChange() = interactionState.finishSettingsChange()
 
     /** Align the newly active viewport with the last real page anchor. */
     suspend fun alignToPage(webtoon: Boolean, pagerDual: Boolean) {
@@ -92,7 +85,6 @@ class SliderPagerDoubleSync(
         webtoon: Boolean,
         pagerDual: Boolean = false,
         webtoonHorizontal: Boolean = false,
-        onPageSelected: () -> Unit,
     ) {
         // Drag on the list/pager reclaims follow (volume keys / fling after seek).
         val listDragged by lazyListState.interactionSource.collectIsDraggedAsState()
@@ -100,7 +92,6 @@ class SliderPagerDoubleSync(
         LaunchedEffect(listDragged, pagerDragged) {
             if (listDragged || pagerDragged) {
                 pendingJumpIndex = -1
-                interactionState.cancelSeek()
                 sliderFollowPager = true
             }
         }
@@ -114,7 +105,6 @@ class SliderPagerDoubleSync(
                     // Always store real page index.
                     sliderValue = index + 1
                     pageLoader.startPage = index
-                    if (interactionState.observePage(index)) onPageSelected()
                 }
             }
         } else {
@@ -129,7 +119,6 @@ class SliderPagerDoubleSync(
                         pagerState.animateScrollToPage(safe)
                     }
                     pageLoader.startPage = safe
-                    interactionState.finishSeek(safe)
                     pendingJumpIndex = -1
                     // Resume follow only after the jump lands. onValueChangeFinished
                     // runs in the same frame as a tap and would cancel this scroll.

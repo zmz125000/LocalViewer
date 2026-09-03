@@ -764,7 +764,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             webtoon = isWebtoon,
             pagerDual = pagerDual,
             webtoonHorizontal = webtoonHorizontal,
-        ) { appbarVisible = false }
+        )
         val bgColor by collectBackgroundColorAsState()
         LaunchedEffect(fullscreen) {
             snapshotFlow { appbarVisible }.collect { visible ->
@@ -1098,30 +1098,26 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             currentPage = syncState.sliderValue,
             totalPages = pageLoader.size,
             onSliderValueChange = syncState::sliderScrollTo,
+            onDismissRequest = { appbarVisible = false },
             onClickSettings = {
                 launch {
-                    syncState.beginSettingsChange()
-                    try {
-                        dialog { cont ->
-                            // Sheet dismiss can fire onDismissRequest more than once (animation /
-                            // back / mode change under a transparent scrim). Guard the resume.
-                            fun dispose() {
-                                if (cont.isActive) cont.resume(Unit)
-                            }
-                            // No dim overlay while settings are open (was BottomSheetDefaults.ScrimColor
-                            // with color-filter tab force-undim). Keep reader fully visible underneath.
-                            ModalBottomSheet(
-                                onDismissRequest = { dispose() },
-                                modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
-                                scrimColor = Color.Transparent,
-                                dragHandle = null,
-                                contentWindowInsets = { WindowInsets() },
-                            ) {
-                                SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize())
-                            }
+                    dialog { cont ->
+                        // Sheet dismiss can fire onDismissRequest more than once (animation /
+                        // back / mode change under a transparent scrim). Guard the resume.
+                        fun dispose() {
+                            if (cont.isActive) cont.resume(Unit)
                         }
-                    } finally {
-                        syncState.finishSettingsChange()
+                        // No dim overlay while settings are open (was BottomSheetDefaults.ScrimColor
+                        // with color-filter tab force-undim). Keep reader fully visible underneath.
+                        ModalBottomSheet(
+                            onDismissRequest = { dispose() },
+                            modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+                            scrimColor = Color.Transparent,
+                            dragHandle = null,
+                            contentWindowInsets = { WindowInsets() },
+                        ) {
+                            SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize())
+                        }
                     }
                 }
             },

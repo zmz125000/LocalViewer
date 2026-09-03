@@ -36,21 +36,77 @@ object ZipAsDirListing {
     fun virtualRelativeDir(zipRel: String, inner: String = ""): String = joinPrefix(zipRel, inner)
 
     /**
-     * Persist classified zip-root interiors under [parentRelativeDir]/zipName so
-     * entering the zip and [FolderGalleryIndex] hit the folder index without another CD.
-     * Zip/cbz only — callers already keyed [interiors] via [isZipArchiveFileName].
+     * Persist classified zip-as-dir folders under [parentRelativeDir].
+     *
+     * [interiors] keys are zip-relative (`pack.zip`, `pack.zip/Album`, …) so one EOCD
+     * parse can store the whole virtual tree. Entering the zip or a subdir then hits
+     * RAM/disk without another CD / quick scan. Zip/cbz only.
+     *
+     * @return saved listings keyed by full relativeDir (`parent/pack.zip/Album`).
      */
     suspend fun persistFolderIndexes(
         parentRelativeDir: String,
         interiors: Map<String, List<BrowseEntryRemote>>,
         save: suspend (relativeDir: String, entries: List<BrowseEntryRemote>) -> List<BrowseEntryRemote>,
         putRam: (relativeDir: String, entries: List<BrowseEntryRemote>) -> Unit,
-    ) {
-        for ((zipName, entries) in interiors) {
-            if (entries.isEmpty() || !isZipArchiveFileName(zipName)) continue
-            val dir = joinPrefix(parentRelativeDir, zipName)
-            putRam(dir, save(dir, entries))
+    ): Map<String, List<BrowseEntryRemote>> {
+        if (interiors.isEmpty()) return emptyMap()
+        val stored = LinkedHashMap<String, List<BrowseEntryRemote>>(interiors.size)
+        for ((rel, entries) in interiors) {
+            val zipName = rel.substringBefore('/')
+            if (!isZipArchiveFileName(zipName)) continue
+            val dir = joinPrefix(parentRelativeDir, rel)
+            val kept = save(dir, entries)
+            putRam(dir, kept)
+            stored[dir] = kept
         }
+        return stored
+    }
+
+    /** Parent of a zip-relative path (`share/pack.zip` → `share`, `pack.zip` → `""`). */
+    fun parentRelative(zipRel: String): String {
+        val n = zipRel.replace('\\', '/').trim('/')
+        val slash = n.lastIndexOf('/')
+        return if (slash <= 0) "" else n.substring(0, slash)
+    }
+
+    /**
+     * Every virtual folder in [cd] (zip root + nested dirs), keyed by zip-relative
+     * path (`pack.zip`, `pack.zip/Album`). Cheap: filters the already-parsed CD.
+     */
+    fun classifyAllVirtualFolders(
+        cd: ZipCentralDirectory,
+        zipFileName: String,
+    ): Map<String, List<BrowseEntryRemote>> {
+        val prefixes = allDirectoryPrefixes(cd)
+        val out = LinkedHashMap<String, List<BrowseEntryRemote>>(prefixes.size)
+        for (prefix in prefixes) {
+            val title = prefix.substringAfterLast('/').ifEmpty { zipFileName }
+            val key = if (prefix.isEmpty()) zipFileName else "$zipFileName/$prefix"
+            out[key] = classifyAt(cd, prefix, title)
+        }
+        return out
+    }
+
+    /** Zip-root `""` plus every nested directory prefix (skips encrypted / dot-hidden). */
+    fun allDirectoryPrefixes(cd: ZipCentralDirectory): List<String> {
+        val prefixes = LinkedHashSet<String>()
+        prefixes.add("")
+        for (entry in cd.entries) {
+            if (entry.isEncrypted) continue
+            val name = normalizeMember(entry.name) ?: continue
+            val parts = name.split('/').filter { it.isNotEmpty() }
+            if (parts.isEmpty()) continue
+            val isDir = entry.isDirectory || name.endsWith('/')
+            val dirParts = if (isDir) parts else parts.dropLast(1)
+            var acc = ""
+            for (seg in dirParts) {
+                if (seg.startsWith('.')) break
+                acc = if (acc.isEmpty()) seg else "$acc/$seg"
+                prefixes.add(acc)
+            }
+        }
+        return prefixes.toList()
     }
 
     /**

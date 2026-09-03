@@ -192,6 +192,9 @@ private fun DualPageContainer(
 ) {
     @Suppress("NAME_SHADOWING")
     val isRtl by rememberUpdatedState(isRtl)
+
+    @Suppress("NAME_SHADOWING")
+    val onMenuRegionClick by rememberUpdatedState(onMenuRegionClick)
     val zoomableState = rememberZoomableState(zoomSpec = PagerZoomSpec)
     val solo = leftPage != null && rightPage == null || leftPage == null && rightPage != null
     val halfSize = if (layoutSize == Size.Zero) {
@@ -325,6 +328,9 @@ private fun PageContainer(
 ) {
     @Suppress("NAME_SHADOWING")
     val isRtl by rememberUpdatedState(isRtl)
+
+    @Suppress("NAME_SHADOWING")
+    val onMenuRegionClick by rememberUpdatedState(onMenuRegionClick)
     val zoomableState = rememberZoomableState(zoomSpec = PagerZoomSpec)
     val status = page.statusObserved
     if (status is PageStatus.Ready && layoutSize != Size.Zero) {

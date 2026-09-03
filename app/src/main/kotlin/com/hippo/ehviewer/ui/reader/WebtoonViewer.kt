@@ -12,6 +12,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -57,6 +58,8 @@ fun WebtoonViewer(
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
+    @Suppress("NAME_SHADOWING")
+    val onMenuRegionClick by rememberUpdatedState(onMenuRegionClick)
     // Snapshot size drives item count; do not capture a stale pages list length.
     val pageCount = pageLoader.size
     val items = pageLoader.pages

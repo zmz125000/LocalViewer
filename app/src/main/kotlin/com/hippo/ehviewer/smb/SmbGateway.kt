@@ -1692,6 +1692,7 @@ object SmbGateway {
                                 password,
                                 relativeDir,
                                 cached.entries,
+                                configKey,
                             )
                             if (!refresh.persist) {
                                 logcat("FolderIndex") {
@@ -1978,6 +1979,7 @@ object SmbGateway {
         password: String,
         relativeDir: String,
         cached: List<BrowseEntryRemote>,
+        configKey: String,
     ): SlimDirectoryRefresh {
         if (isServerRootSource(source) && relativeDir.isBlank()) {
             val children = listShareRootEntries(source, password).map {
@@ -1998,6 +2000,7 @@ object SmbGateway {
         if (isUntrustedSlimLiveListing(cached, children)) {
             return SlimDirectoryRefresh(cached, emptySet(), persist = false)
         }
+        persistZipAsDirTreesFromListing(source, password, relativeDir, configKey, children)
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         val zipFileNames = if (Settings.browseZipAsDir.value) {
             ZipAsDirListing.zipFileNames(children)
@@ -2170,7 +2173,7 @@ object SmbGateway {
             zipRel.substringAfterLast('/').substringAfterLast('\\').ifEmpty { source.displayName }
         }
         val entries = withIOContext {
-            runCatching {
+            try {
                 SmbArchiveByteSource(
                     source,
                     password,
@@ -2179,14 +2182,18 @@ object SmbGateway {
                     yieldable = true,
                 ).use { src ->
                     val cd = ZipCentralDirectory.open(src) ?: return@use emptyList()
-                    ZipAsDirListing.classifyAt(cd, inner, title)
+                    persistZipVirtualFolderTree(source, configKey, zipRel, cd)
+                    BrowseSession.getSmbListing(source.id, relativeDir)
+                        ?: ZipAsDirListing.classifyAt(cd, inner, title)
                 }
-            }.getOrDefault(emptyList())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                emptyList()
+            }
         }
-        val stored = NetworkFolderIndexCache.saveSmb(source.id, configKey, relativeDir, entries)
-        BrowseSession.putSmbListing(source.id, relativeDir, stored, sessionCurrent = true)
-        onCached?.invoke(stored)
-        return stored
+        onCached?.invoke(entries)
+        return entries
     }
 
     private fun zipRootListings(
@@ -2202,33 +2209,64 @@ object SmbGateway {
         val out = ConcurrentHashMap<String, ZipAsDirListing.ZipRootListing>()
         zips.forEach { child ->
             val zipRel = joinRelative(relativeDir, child.name)
-            zipRootListingAt(source, password, zipRel, "")?.let { (listing, interior) ->
-                out[child.name] = listing
-                zipInteriors?.put(child.name, interior)
+            runCatching {
+                SmbArchiveByteSource(
+                    source,
+                    password,
+                    zipRel,
+                    pipeline = false,
+                    yieldable = true,
+                ).use { src ->
+                    val cd = ZipCentralDirectory.open(src) ?: return@use
+                    out[child.name] = ZipAsDirListing.zipRootListingFromCd(cd)
+                    zipInteriors?.putAll(ZipAsDirListing.classifyAllVirtualFolders(cd, child.name))
+                }
             }
         }
         return out
     }
 
-    private fun zipRootListingAt(
+    private suspend fun persistZipVirtualFolderTree(
+        source: SmbSourceEntity,
+        configKey: String,
+        zipRel: String,
+        cd: ZipCentralDirectory,
+    ) {
+        val zipName = zipRel.substringAfterLast('/').substringAfterLast('\\')
+        ZipAsDirListing.persistFolderIndexes(
+            parentRelativeDir = ZipAsDirListing.parentRelative(zipRel),
+            interiors = ZipAsDirListing.classifyAllVirtualFolders(cd, zipName),
+            save = { dir, entries ->
+                NetworkFolderIndexCache.saveSmb(source.id, configKey, dir, entries)
+            },
+            putRam = { dir, entries ->
+                BrowseSession.putSmbListing(source.id, dir, entries, sessionCurrent = true)
+            },
+        )
+    }
+
+    private suspend fun persistZipAsDirTreesFromListing(
         source: SmbSourceEntity,
         password: String,
-        zipRel: String,
-        innerPrefix: String,
-    ): Pair<ZipAsDirListing.ZipRootListing, List<BrowseEntryRemote>>? = runCatching {
-        SmbArchiveByteSource(
-            source,
-            password,
-            zipRel,
-            pipeline = false,
-            yieldable = true,
-        ).use { src ->
-            val cd = ZipCentralDirectory.open(src) ?: return@use null
-            val listing = ZipAsDirListing.zipRootListingFromCd(cd, innerPrefix)
-            val title = zipRel.substringAfterLast('/').substringAfterLast('\\').ifEmpty { zipRel }
-            listing to ZipAsDirListing.classifyAt(cd, innerPrefix, title)
-        }
-    }.getOrNull()
+        relativeDir: String,
+        configKey: String,
+        children: List<RemoteChild>,
+    ) {
+        if (!Settings.browseZipAsDir.value) return
+        val interiors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
+        zipRootListings(source, password, relativeDir, children, interiors)
+        if (interiors.isEmpty()) return
+        ZipAsDirListing.persistFolderIndexes(
+            parentRelativeDir = relativeDir,
+            interiors = interiors,
+            save = { dir, entries ->
+                NetworkFolderIndexCache.saveSmb(source.id, configKey, dir, entries)
+            },
+            putRam = { dir, entries ->
+                BrowseSession.putSmbListing(source.id, dir, entries, sessionCurrent = true)
+            },
+        )
+    }
 
     /**
      * One QUERY_DIRECTORY, reused when a parent peek already listed this relative path.
