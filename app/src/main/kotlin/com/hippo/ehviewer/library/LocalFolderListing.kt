@@ -609,6 +609,7 @@ object LocalFolderListing {
                 lastModifiedMs = child.lastModifiedMs,
                 hidden = isDotHiddenName(child.name),
                 readOnly = false,
+                mimeType = child.mimeType,
             )
         }
     }
@@ -626,6 +627,7 @@ object LocalFolderListing {
         lastModifiedMs = lastModifiedMs,
         hidden = hidden,
         readOnly = readOnly,
+        mimeType = mimeType,
     )
 
     fun rootConfigKey(rootPath: Path, preferMediaStore: Boolean): String {

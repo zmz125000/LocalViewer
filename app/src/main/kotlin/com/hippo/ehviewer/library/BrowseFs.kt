@@ -31,6 +31,8 @@ data class BrowseChild(
      * name (attributes already known) and skip `.nomedia` probes on overlay dirs.
      */
     val fromMediaStore: Boolean = false,
+    /** MediaStore MIME when known (`video/mp4`); used when DISPLAY_NAME has no extension. */
+    val mimeType: String? = null,
 )
 
 /**
@@ -74,6 +76,7 @@ internal inline fun Path.forEachMediaStoreChild(visitor: (BrowseChild) -> Boolea
                 hidden = isDotHiddenName(child.name),
                 readOnly = false,
                 fromMediaStore = true,
+                mimeType = child.mimeType,
             ),
         )
         if (!cont) return
@@ -160,6 +163,7 @@ fun Path.mediaStoreOverlayChildren(): List<BrowseChild>? {
             hidden = isDotHiddenName(child.name),
             readOnly = false,
             fromMediaStore = true,
+            mimeType = child.mimeType,
         )
     }
 }
