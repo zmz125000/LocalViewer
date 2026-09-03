@@ -348,6 +348,12 @@ object Settings : DataStorePreferences(null) {
     /** Source files/pages to download or extract ahead of the reader anchor. */
     val preloadImage = intPref("preload_image_2", 5)
 
+    /**
+     * Skip speculative SMB/WebDAV/stream-archive writes to flash. Visible pages still
+     * download on demand. Local folders already skip prefetch.
+     */
+    val disableReaderNetworkCache = boolPref("disable_reader_network_cache", false)
+
     /** Decoded images to keep ahead independently of [preloadImage]. */
     val readerDecodeAhead = intPref("pref_reader_decode_ahead", 3)
 

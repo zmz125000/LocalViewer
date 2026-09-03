@@ -169,6 +169,8 @@
     <string name="settings_smb_async_transport_summary">用少量 NIO 线程池（列表 / 浏览 / 视频）代替每条 TCP 一个 Packet Reader。若某台服务器异常可关闭。会重置浏览、列表和视频连接。</string>
     <string name="settings_reader_preload_image">阅读器预载</string>
     <string name="settings_reader_preload_image_summary">预取后续 %s 页（SMB 会提前下载；本地按需打开）</string>
+    <string name="settings_advanced_disable_reader_network_cache">禁用阅读器网络缓存</string>
+    <string name="settings_advanced_disable_reader_network_cache_summary">不把 SMB、WebDAV 或流式压缩包页预写入闪存。当前页仍会按需下载；本地文件本来就不会预载。</string>
     <string name="settings_reader_decode_ahead">预先解码</string>
     <string name="settings_reader_decode_ahead_summary">保持阅读方向上后续 %s 页处于已解码状态</string>
     <string name="settings_advanced_auto_decode_ahead">限制预先解码</string>

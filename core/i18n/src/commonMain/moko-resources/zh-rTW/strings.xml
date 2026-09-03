@@ -185,6 +185,8 @@
     <string name="settings_smb_async_transport_summary">用少量 NIO 執行緒池（列表 / 瀏覽 / 影片）代替每條 TCP 一個 Packet Reader。若某台伺服器異常可關閉。會重設瀏覽、列表和影片連線。</string>
     <string name="settings_reader_preload_image">閱讀器預載</string>
     <string name="settings_reader_preload_image_summary">預取後續 %s 頁（SMB 會提前下載；本機按需開啟）</string>
+    <string name="settings_advanced_disable_reader_network_cache">停用閱讀器網路快取</string>
+    <string name="settings_advanced_disable_reader_network_cache_summary">不要把 SMB、WebDAV 或串流壓縮包頁預寫入快閃記憶體。目前頁仍會隨選下載；本機檔案本來就不會預載。</string>
     <string name="settings_reader_decode_ahead">預先解碼</string>
     <string name="settings_reader_decode_ahead_summary">保持閱讀方向上後續 %s 頁處於已解碼狀態</string>
     <string name="settings_advanced_auto_decode_ahead">限制預先解碼</string>

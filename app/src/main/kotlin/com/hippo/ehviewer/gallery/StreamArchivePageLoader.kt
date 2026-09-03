@@ -3,6 +3,7 @@ package com.hippo.ehviewer.gallery
 import arrow.autoCloseScope
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.Settings.archivePasswds
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
@@ -319,6 +320,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     }
 
                     override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
+                        if (Settings.disableReaderNetworkCache.value) return
                         pages.forEach { index ->
                             ensureExtract(index, interactive = false)
                         }
