@@ -25,32 +25,35 @@ class ZipAsDirListingTest {
     }
 
     @Test
-    fun rewriteFlatZipArchiveBecomesFolderGallery() {
+    fun rewriteFlatZipArchiveBecomesDirectoryAndFolderGallery() {
         val file = writeZip(
             "001.jpg" to byteArrayOf(1),
             "002.jpg" to byteArrayOf(2),
         )
         val cd = ZipCentralDirectory.open(FileArchiveByteSource(file))!!
         val archive = BrowseEntryRemote.ArchiveGallery(name = "flat.cbz", fileName = "flat.cbz")
-        val rewritten = ZipAsDirListing.classifyZipFileAsBrowseEntry(cd, archive)
-        assertTrue(rewritten is BrowseEntryRemote.FolderGallery)
-        val gal = rewritten as BrowseEntryRemote.FolderGallery
+        val rows = ZipAsDirListing.classifyZipFileAsFolderRows(cd, archive)
+        val dir = rows.filterIsInstance<BrowseEntryRemote.Directory>().single()
+        assertEquals("flat.cbz", dir.name)
+        assertEquals(DirPresence.LeafImages, dir.presence)
+        val gal = rows.filterIsInstance<BrowseEntryRemote.FolderGallery>().single()
         assertEquals("flat.cbz", gal.relativeName)
         assertEquals(2, gal.pageCount)
     }
 
     @Test
-    fun rewriteTreeZipArchiveBecomesDirectory() {
+    fun rewriteWrapperZipArchiveBecomesDirectoryAndPromotedGallery() {
         val file = writeZip(
             "Album/a.jpg" to byteArrayOf(1),
             "Album/b.jpg" to byteArrayOf(2),
         )
         val cd = ZipCentralDirectory.open(FileArchiveByteSource(file))!!
         val archive = BrowseEntryRemote.ArchiveGallery(name = "tree.zip", fileName = "tree.zip")
-        val rewritten = ZipAsDirListing.classifyZipFileAsBrowseEntry(cd, archive)
-        assertTrue(rewritten is BrowseEntryRemote.FolderGallery)
-        val gal = rewritten as BrowseEntryRemote.FolderGallery
+        val rows = ZipAsDirListing.classifyZipFileAsFolderRows(cd, archive)
+        assertTrue(rows.any { it is BrowseEntryRemote.Directory && it.name == "tree.zip" })
+        val gal = rows.filterIsInstance<BrowseEntryRemote.FolderGallery>().single()
         assertEquals("tree.zip/Album", gal.relativeName)
+        assertTrue(gal.virtual)
         assertEquals(2, gal.pageCount)
     }
 
@@ -145,14 +148,24 @@ class ZipAsDirListingTest {
                 it is BrowseEntryRemote.FolderGallery && it.relativeName == "flat.cbz"
             },
         )
-        assertTrue(
-            classified.none { it is BrowseEntryRemote.Directory && it.name == "flat.cbz" },
-        )
+        val zipDir = classified.filterIsInstance<BrowseEntryRemote.Directory>()
+            .single { it.name == "flat.cbz" }
+        assertEquals(DirPresence.LeafImages, zipDir.presence)
         assertTrue(classified.any { it is BrowseEntryRemote.RegularFile && it.fileName == "notes.txt" })
+        val folderView = classified.filterRemoteByContentMode(BrowseContentMode.Folder)
+        assertTrue(folderView.any { it is BrowseEntryRemote.Directory && it.name == "flat.cbz" })
+        assertTrue(folderView.none { it is BrowseEntryRemote.FolderGallery })
+        val galleriesView = classified.filterRemoteByContentMode(BrowseContentMode.Galleries)
+        assertTrue(
+            galleriesView.any {
+                it is BrowseEntryRemote.FolderGallery && it.relativeName == "flat.cbz"
+            },
+        )
+        assertTrue(galleriesView.none { it is BrowseEntryRemote.Directory && it.name == "flat.cbz" })
     }
 
     @Test
-    fun singleWrapperFolderZipClassifiesAsGalleryNotDirectory() {
+    fun singleWrapperFolderZipClassifiesAsDirectoryAndPromotedGallery() {
         val cd = openZip(
             "Album/a.jpg" to byteArrayOf(1),
             "Album/b.jpg" to byteArrayOf(2),
@@ -165,11 +178,23 @@ class ZipAsDirListingTest {
             grandPeeks = emptyMap(),
         ) { ZipAsDirListing.zipRootListingFromCd(cd) }
         assertTrue(classified.none { it is BrowseEntryRemote.ArchiveGallery })
-        assertTrue(classified.none { it is BrowseEntryRemote.Directory && it.name == "tree.zip" })
+        val zipDir = classified.filterIsInstance<BrowseEntryRemote.Directory>()
+            .single { it.name == "tree.zip" }
+        assertEquals(DirPresence.PromotedShell, zipDir.presence)
         val gal = classified.filterIsInstance<BrowseEntryRemote.FolderGallery>().single()
         assertEquals("tree.zip/Album", gal.relativeName)
+        assertTrue(gal.virtual)
         assertEquals(2, gal.pageCount)
         assertEquals("a.jpg", gal.coverFileName)
+        val folderView = classified.filterRemoteByContentMode(BrowseContentMode.Folder)
+        assertTrue(folderView.any { it is BrowseEntryRemote.Directory && it.name == "tree.zip" })
+        assertTrue(folderView.none { it is BrowseEntryRemote.FolderGallery })
+        val galleriesView = classified.filterRemoteByContentMode(BrowseContentMode.Galleries)
+        assertTrue(
+            galleriesView.any {
+                it is BrowseEntryRemote.FolderGallery && it.relativeName == "tree.zip/Album"
+            },
+        )
     }
 
     @Test
@@ -210,8 +235,8 @@ class ZipAsDirListingTest {
             )
         }
         assertTrue(expansion.children.filter { it.name != "comic.cbz" }.all { !it.isDirectory })
-        assertTrue(expansion.galleryListings.containsKey("comic.cbz"))
-        assertTrue(expansion.peeks.isEmpty())
+        assertTrue(expansion.children.any { it.name == "comic.cbz" && it.isDirectory })
+        assertTrue(expansion.peeks.containsKey("comic.cbz"))
     }
 
     @Test
@@ -318,6 +343,18 @@ class ZipAsDirListingTest {
             ZipPaths.parseGallery("zipfile:/abs/pack.zip!."),
         )
         assertEquals(
+            "Quick Share/周朗轩ai.zip|周朗轩ai",
+            ZipAsDirListing.historyGalleryRelative("Quick Share/周朗轩ai.zip", "周朗轩ai"),
+        )
+        assertEquals(
+            "Quick Share/周朗轩ai.zip" to "周朗轩ai",
+            ZipAsDirListing.recoverZipGalleryRelative(
+                rootAbsolutePath = "/root",
+                relativePath = "Quick Share/周朗轩ai",
+                coverPath = "zipfile:/root/Quick Share/周朗轩ai.zip!周朗轩ai/01.jpg",
+            ),
+        )
+        assertEquals(
             "PDFs.zip" to "PDFs/manual.pdf",
             ZipAsDirListing.splitZipBrowsePath("PDFs.zip/PDFs/manual.pdf"),
         )
@@ -331,6 +368,26 @@ class ZipAsDirListingTest {
             coverFileName = "a.jpg",
         )
         assertEquals("share/tree.zip" to "Album/a.jpg", parts)
+    }
+
+    @Test
+    fun ensureZipAsDirDirectoryRowsAddsMissingZipDir() {
+        val gal = BrowseEntryRemote.FolderGallery(
+            name = "园区.zip",
+            relativeName = "园区.zip/园区",
+            pageCount = 2,
+            coverFileName = "01.jpg",
+            imageFileNames = listOf("01.jpg", "02.jpg"),
+        )
+        val upgraded = ZipAsDirListing.ensureZipAsDirDirectoryRows(listOf(gal))
+        assertTrue(
+            upgraded.any {
+                it is BrowseEntryRemote.Directory &&
+                    it.name == "园区.zip" &&
+                    it.presence == DirPresence.PromotedShell
+            },
+        )
+        assertTrue(upgraded.any { it is BrowseEntryRemote.FolderGallery })
     }
 
     @Test

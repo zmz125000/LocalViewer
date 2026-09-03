@@ -340,7 +340,11 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                         withIOContext { EhDB.deleteHistoryInfo(info) }
                         return@launch
                     }
-                    val zipGallery = ZipAsDirListing.parseZipGalleryRelative(target.relativePath)
+                    val zipGallery = ZipAsDirListing.recoverZipGalleryRelative(
+                        rootAbsolutePath = rootPath.toString(),
+                        relativePath = target.relativePath,
+                        coverPath = info.thumbKey,
+                    )
                     if (zipGallery != null) {
                         val (zipRel, inner) = zipGallery
                         val zipAbs = rootPath.resolveRelative(zipRel).toString()

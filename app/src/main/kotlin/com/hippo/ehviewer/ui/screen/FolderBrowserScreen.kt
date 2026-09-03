@@ -600,25 +600,43 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }.getOrDefault(emptyList())
     }
 
+    /**
+     * Zip-as-dir FolderGallery on a parent FS listing: [relativeName] is `file.zip` or
+     * `file.zip/Album` (promoted inner). Never join `parent/Album` as a real SAF folder.
+     */
+    fun isZipAsDirFolderGallery(entry: BrowseEntry.FolderGallery): Boolean {
+        if (ZipAsDirListing.zipFileSegment(entry.relativeName, entry.path.name) != null) return true
+        if (ZipPaths.isZipPath(entry.path.toString())) return true
+        val cover = entry.coverPath?.toString()
+        return !cover.isNullOrEmpty() && ZipPaths.isZipPath(cover)
+    }
+
     /** Open a zip/cbz FolderGallery from the parent FS listing (flat root or promoted inner). */
     fun openZipFileAsRootGallery(
         entry: BrowseEntry.FolderGallery,
         frame: BrowseSession.LocalFrame,
         page: Int = -1,
     ) {
-        val zipPath = entry.path.toString()
         val zipSeg = ZipAsDirListing.zipFileSegment(entry.relativeName, entry.path.name)
+            ?: ZipPaths.parse(entry.path.toString())?.first?.toPath()?.name
+            ?: ZipPaths.parse(entry.coverPath?.toString().orEmpty())?.first?.toPath()?.name
             ?: entry.path.name
         val inner = ZipAsDirListing.zipInnerPrefix(entry.relativeName)
         val zipRel = when {
             frame.relativePath.isEmpty() -> zipSeg
             else -> "${frame.relativePath.trimEnd('/')}/$zipSeg"
         }
+        val zipPath = when {
+            ZipPaths.parse(entry.path.toString()) != null ->
+                ZipPaths.parse(entry.path.toString())!!.first
+            isZipArchiveFileName(entry.path.name) -> entry.path.toString()
+            else -> (frame.path.toPath() / zipSeg).toString()
+        }
         val coverKey = entry.coverPath?.toString()
-        val histRel = if (inner.isEmpty()) zipRel else "$zipRel|$inner"
+        val histRel = ZipAsDirListing.historyGalleryRelative(zipRel, inner)
         val gid = stableGalleryId(frame.rootId, "zip:$histRel")
         launchIO {
-            val names = localZipGalleryNames(frame, zipRel, inner, entry.path)
+            val names = localZipGalleryNames(frame, zipRel, inner, zipPath.toPath())
             if (names.isEmpty()) {
                 snackbar(context.getString(R.string.browse_open_failed))
                 return@launchIO
@@ -668,11 +686,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     ) {
         val inner = entry.relativeName.replace('\\', '/').trim('/')
         val coverKey = entry.coverPath?.toString()
-        val histRel = if (inner.isEmpty()) {
-            frame.relativePath
-        } else {
-            "${frame.relativePath.trimEnd('/')}|$inner"
-        }
+        val histRel = ZipAsDirListing.historyGalleryRelative(frame.relativePath, inner)
         val gid = stableGalleryId(frame.rootId, "zip:$histRel")
         launchIO {
             val names = localZipGalleryNames(frame, frame.relativePath, inner, frame.path.toPath())
@@ -719,7 +733,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             return
         }
         // Zip-as-dir FolderGallery in the parent listing (flat zip or promoted inner).
-        if (browseZipAsDir && isZipArchiveFileName(entry.path.name)) {
+        // Detect via relativeName / zipfile cover, not only path basename — promoted
+        // `@Album` rows must not save `parent/Album` as a real SAF folder.
+        if (browseZipAsDir && isZipAsDirFolderGallery(entry)) {
             openZipFileAsRootGallery(entry, frame, page)
             return
         }
@@ -785,22 +801,31 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             return
         }
         // Zip-as-dir FolderGallery in parent listing → photo-grid inside the zip.
-        if (browseZipAsDir && isZipArchiveFileName(entry.path.name)) {
+        if (browseZipAsDir && isZipAsDirFolderGallery(entry)) {
             val zipSeg = ZipAsDirListing.zipFileSegment(entry.relativeName, entry.path.name)
+                ?: ZipPaths.parse(entry.path.toString())?.first?.toPath()?.name
+                ?: ZipPaths.parse(entry.coverPath?.toString().orEmpty())?.first?.toPath()?.name
                 ?: entry.path.name
             val zipRel = when {
                 frame.relativePath.isEmpty() -> zipSeg
                 else -> "${frame.relativePath.trimEnd('/')}/$zipSeg"
             }
+            val zipPath = when {
+                ZipPaths.parse(entry.path.toString()) != null ->
+                    ZipPaths.parse(entry.path.toString())!!.first
+                isZipArchiveFileName(entry.path.name) -> entry.path.toString()
+                else -> (frame.path.toPath() / zipSeg).toString()
+            }
+            val inner = ZipAsDirListing.zipInnerPrefix(entry.relativeName)
             updateStack(
                 stack + BrowseSession.LocalFrame(
                     rootId = frame.rootId,
-                    path = entry.path.toString(),
+                    path = zipPath,
                     title = entry.name,
                     relativePath = zipRel,
                     preferMediaStore = frame.preferMediaStore,
                     photoGrid = true,
-                    zipInnerRel = ZipAsDirListing.zipInnerPrefix(entry.relativeName),
+                    zipInnerRel = inner,
                 ),
             )
             return
@@ -841,11 +866,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             val inner = frame.zipInnerRel.orEmpty()
             val names = images.map { it.name }
             val coverKey = images.firstOrNull()?.path?.toString()
-            val histRel = if (inner.isEmpty()) {
-                frame.relativePath
-            } else {
-                "${frame.relativePath.trimEnd('/')}|$inner"
-            }
+            val histRel = ZipAsDirListing.historyGalleryRelative(frame.relativePath, inner)
             val gid = stableGalleryId(frame.rootId, "zip:$histRel")
             val info = BaseGalleryInfo(
                 gid = gid,
