@@ -16,6 +16,7 @@ import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.ZipPaths
+import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
 import java.io.FileNotFoundException
@@ -41,6 +42,9 @@ class CoverPathFetcher(
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
         ZipPaths.parse(data.path)?.let { (zip, member) ->
+            if (isVideoFileName(member)) {
+                throw FileNotFoundException("ZIP video is not a cover: ${data.path}")
+            }
             val extracted = ZipMemberCover.ensureLocal(zip, member, notifyTooLarge = false)
                 ?: throw FileNotFoundException("ZIP cover missing: ${data.path}")
             return openAsSource(extracted)

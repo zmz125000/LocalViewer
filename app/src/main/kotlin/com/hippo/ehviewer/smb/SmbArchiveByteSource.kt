@@ -4,11 +4,10 @@ import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.util.logcat
 import com.hierynomus.smbj.share.File
 import com.hippo.ehviewer.library.ArchiveByteSource
-import com.hippo.ehviewer.library.FileArchiveByteSource
 import com.hippo.ehviewer.library.ReadAheadArchiveByteSource
 import com.hippo.ehviewer.library.RemoteArchiveOpen
 import com.hippo.ehviewer.library.ZipAsDirListing
-import com.hippo.ehviewer.library.ZipMemberCover
+import com.hippo.ehviewer.library.openZipContainedFileSource
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -96,7 +95,8 @@ class SmbArchiveByteSource(
         val zipMember = ZipAsDirListing.zipMemberPath(remoteRelativeFile)
         if (zipMember != null) {
             val (zipRel, memberRel) = zipMember
-            val local = ZipMemberCover.ensure("smb:${source.id}:$zipRel", memberRel) {
+            raw = null
+            inner = openZipContainedFileSource("smb:${source.id}:$zipRel", memberRel) {
                 SmbArchiveByteSource(
                     source = source,
                     password = password,
@@ -109,9 +109,7 @@ class SmbArchiveByteSource(
                     videoPlay = false,
                     readahead = true,
                 )
-            } ?: throw IOException("Cannot extract ZIP member $memberRel from $zipRel")
-            raw = null
-            inner = FileArchiveByteSource(java.io.File(local.toString()))
+            }
         } else {
             val smb = KeepOpenSmbFileSource(
                 source,
@@ -139,6 +137,8 @@ class SmbArchiveByteSource(
     }
 
     override val size: Long get() = inner.size
+
+    override val isRandomAccess: Boolean get() = inner.isRandomAccess
 
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = inner.readAt(offset, buf, off, len)
 

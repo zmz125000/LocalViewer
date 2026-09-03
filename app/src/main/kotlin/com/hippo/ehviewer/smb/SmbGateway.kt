@@ -28,6 +28,7 @@ import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCentralDirectory
+import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.ZipMemberTooLargeException
 import com.hippo.ehviewer.library.classifyRemoteListing
@@ -2381,16 +2382,16 @@ object SmbGateway {
     ): Long? = withIOContext {
         ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, member) ->
             return@withIOContext runCatching {
-                val local = ZipMemberCover.ensure("smb:${source.id}:$zipRel", member) {
-                    SmbArchiveByteSource(
-                        source,
-                        password,
-                        zipRel,
-                        pipeline = false,
-                        yieldable = true,
-                    )
-                } ?: return@runCatching null
-                java.io.File(local.toString()).length().takeIf { it > 0L }
+                SmbArchiveByteSource(
+                    source,
+                    password,
+                    zipRel,
+                    pipeline = false,
+                    yieldable = true,
+                    readahead = false,
+                ).use { zip ->
+                    ZipMemberByteSource.uncompressedSize(zip, member)
+                }
             }.getOrElse { e ->
                 if (e is ZipMemberTooLargeException) throw e
                 null

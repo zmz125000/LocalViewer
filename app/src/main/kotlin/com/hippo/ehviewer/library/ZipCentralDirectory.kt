@@ -280,8 +280,7 @@ class ZipCentralDirectory private constructor(
         private fun u16(b: ByteArray, off: Int): Int = (b[off].toInt() and 0xff) or ((b[off + 1].toInt() and 0xff) shl 8)
 
         /** Unsigned little-endian u32. Signed Int would reject EOCD offsets at or above 2GiB. */
-        private fun u32(b: ByteArray, off: Int): Long =
-            u16(b, off).toLong() or (u16(b, off + 2).toLong() shl 16)
+        private fun u32(b: ByteArray, off: Int): Long = u16(b, off).toLong() or (u16(b, off + 2).toLong() shl 16)
 
         private fun u64(b: ByteArray, off: Int): Long = u32(b, off) or (u32(b, off + 4) shl 32)
     }

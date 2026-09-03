@@ -51,6 +51,9 @@ class ReadAheadArchiveByteSource(
     override val size: Long
         get() = runCatching { inner.size }.getOrDefault(-1L)
 
+    override val isRandomAccess: Boolean
+        get() = inner.isRandomAccess
+
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
         if (len <= 0) return 0
         return try {
