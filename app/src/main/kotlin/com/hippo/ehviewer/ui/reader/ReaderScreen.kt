@@ -950,7 +950,6 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 onNavigationModeChange = { showNavigationOverlay = true },
                 onSelectPage = onSelectPage,
                 onMenuRegionClick = { appbarVisible = !appbarVisible },
-                chromeVisible = appbarVisible,
                 onPrevFolder = { goFolder(next = false) },
                 onNextFolder = { goFolder(next = true) },
                 // Same path as edge-swipe / system back (OnBackPressedDispatcher callbacks).
@@ -1099,6 +1098,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             currentPage = syncState.sliderValue,
             totalPages = pageLoader.size,
             onSliderValueChange = syncState::sliderScrollTo,
+            onDismissRequest = { appbarVisible = false },
             onClickSettings = {
                 launch {
                     dialog { cont ->

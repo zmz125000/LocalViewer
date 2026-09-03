@@ -42,8 +42,6 @@ fun GalleryPager(
     onNavigationModeChange: () -> Unit,
     onSelectPage: (Page) -> Unit,
     onMenuRegionClick: () -> Unit,
-    /** When true, a tap on the page (outside chrome) dismisses chrome instead of navigating. */
-    chromeVisible: Boolean = false,
     onPrevFolder: () -> Unit = {},
     onNextFolder: () -> Unit = {},
     onBack: () -> Unit = {},
@@ -106,7 +104,6 @@ fun GalleryPager(
             onPrevFolder = onPrevFolder,
             onNextFolder = onNextFolder,
             onBack = onBack,
-            chromeVisible = chromeVisible,
             dualPage = pagerDual,
             modifier = modifier.pointerInput(channel) {
                 awaitPointerEventScope {
@@ -129,7 +126,6 @@ fun GalleryPager(
             onPrevFolder = onPrevFolder,
             onNextFolder = onNextFolder,
             onBack = onBack,
-            chromeVisible = chromeVisible,
             horizontal = webtoonHorizontal,
             modifier = modifier,
         )

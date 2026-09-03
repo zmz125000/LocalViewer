@@ -4,8 +4,11 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -20,6 +23,10 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -41,12 +48,33 @@ fun BoxScope.ReaderAppBars(
     totalPages: Int,
     onSliderValueChange: (Int) -> Unit,
     onClickSettings: () -> Unit,
+    /** Same as settings sheet: tap outside chrome dismisses immediately (no double-tap wait). */
+    onDismissRequest: () -> Unit,
 ) {
     // Dark already reads as translucent grey; light used near-opaque white (0.95).
     // Match the glass look so the page shows through in both themes.
     val backgroundColor = BottomAppBarDefaults.containerColor.copy(
         alpha = if (isSystemInDarkTheme()) 0.72f else 0.55f,
     )
+
+    // Transparent scrim like ModalBottomSheet(scrimColor = Transparent): detectTapGestures
+    // without onDoubleTap fires on the first up, so hide is not delayed by zoomable.
+    if (visible) {
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(Color.Transparent)
+                .pointerInput(onDismissRequest) {
+                    detectTapGestures { onDismissRequest() }
+                }
+                .semantics {
+                    onClick {
+                        onDismissRequest()
+                        true
+                    }
+                },
+        )
+    }
 
     // Same gate as settings color-filter tab (`appbarVisible = false`): only the top bar.
     AnimatedVisibility(
