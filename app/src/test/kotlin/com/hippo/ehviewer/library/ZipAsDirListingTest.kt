@@ -258,6 +258,54 @@ class ZipAsDirListingTest {
     }
 
     @Test
+    fun persistFolderIndexesSavesNestedVirtualDirs() = runBlocking {
+        val saved = ArrayList<String>()
+        ZipAsDirListing.persistFolderIndexes(
+            parentRelativeDir = "share/comics",
+            interiors = mapOf(
+                "pack.zip" to listOf(BrowseEntryRemote.RegularFile("Album")),
+                "pack.zip/Album" to listOf(BrowseEntryRemote.RegularFile("a.jpg")),
+                "notes.txt" to listOf(BrowseEntryRemote.RegularFile("x.txt")),
+            ),
+            save = { dir, entries ->
+                saved += dir
+                entries
+            },
+            putRam = { _, _ -> },
+        )
+        assertEquals(listOf("share/comics/pack.zip", "share/comics/pack.zip/Album"), saved)
+    }
+
+    @Test
+    fun classifyAllVirtualFoldersStoresRootAndNestedDirs() {
+        val cd = openZip(
+            "Album/ch1/01.jpg" to byteArrayOf(1),
+            "Album/ch1/02.jpg" to byteArrayOf(2),
+            "Album/cover.jpg" to byteArrayOf(3),
+            "readme.txt" to byteArrayOf(4),
+        )
+        val tree = ZipAsDirListing.classifyAllVirtualFolders(cd, "pack.zip")
+        assertEquals(
+            setOf("pack.zip", "pack.zip/Album", "pack.zip/Album/ch1"),
+            tree.keys,
+        )
+        assertTrue(tree.getValue("pack.zip").any { it is BrowseEntryRemote.Directory && it.name == "Album" })
+        assertTrue(
+            tree.getValue("pack.zip/Album").any { it is BrowseEntryRemote.Directory && it.name == "ch1" },
+        )
+        val ch1 = tree.getValue("pack.zip/Album/ch1").filterIsInstance<BrowseEntryRemote.FolderGallery>()
+            .first { it.relativeName.isEmpty() }
+        assertEquals(2, ch1.pageCount)
+    }
+
+    @Test
+    fun parentRelativeOfZipPath() {
+        assertEquals("", ZipAsDirListing.parentRelative("pack.zip"))
+        assertEquals("share", ZipAsDirListing.parentRelative("share/pack.zip"))
+        assertEquals("share/comics", ZipAsDirListing.parentRelative("share/comics/pack.zip"))
+    }
+
+    @Test
     fun virtualRelativeDirJoinsZipAndInner() {
         assertEquals("share/pack.zip", ZipAsDirListing.virtualRelativeDir("share/pack.zip", ""))
         assertEquals(
