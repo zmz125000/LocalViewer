@@ -71,4 +71,45 @@ class LocalBrowseStackTest {
         assertNull(leaf.zipInnerRel)
         assertFalse(leaf.isZipBrowse)
     }
+
+    @Test
+    fun zipAsDirHistoryRelJoinsZipNameFromParentFrame() {
+        val parent = BrowseSession.LocalFrame(
+            rootId = 7L,
+            path = "/sdcard/Comics",
+            title = "Comics",
+            relativePath = "Comics",
+        )
+        assertEquals(
+            7L to "Comics/pack.zip|Album",
+            LocalHistory.zipAsDirHistoryRel("/sdcard/Comics/pack.zip", "Album", parent),
+        )
+    }
+
+    @Test
+    fun zipAsDirHistoryRelKeepsZipFrameRelative() {
+        val zipFrame = BrowseSession.LocalFrame(
+            rootId = 7L,
+            path = "/sdcard/Comics/pack.zip",
+            title = "pack.zip",
+            relativePath = "Comics/pack.zip",
+            zipInnerRel = "",
+        )
+        assertEquals(
+            7L to "Comics/pack.zip|Album",
+            LocalHistory.zipAsDirHistoryRel("/sdcard/Comics/pack.zip", "Album", zipFrame),
+        )
+    }
+
+    @Test
+    fun folderGalleryGidUsesZipPrefix() {
+        assertEquals(
+            stableGalleryId(1L, "zip:a.zip|Album"),
+            LocalHistory.folderGalleryGid(1L, "a.zip|Album"),
+        )
+        assertEquals(
+            stableGalleryId(1L, "Album"),
+            LocalHistory.folderGalleryGid(1L, "Album"),
+        )
+    }
 }

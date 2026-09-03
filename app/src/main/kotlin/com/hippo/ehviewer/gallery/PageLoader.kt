@@ -33,17 +33,22 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock as mutexWithLock
 import kotlinx.coroutines.sync.withPermit
 import moe.tarsin.coroutines.NamedMutex
 import moe.tarsin.coroutines.withLock
 import okio.Path
 
 private val progressScope = CoroutineScope(Dispatchers.IO)
+
+private const val PERSIST_DEBOUNCE_MS = 1_000L
 
 /** Publish [PageLoader] size Snapshot updates onto the main looper. */
 private val pageLoaderMainHandler = Handler(Looper.getMainLooper())
@@ -84,6 +89,12 @@ abstract class PageLoader(
         get() = sizeState.intValue
 
     override var startPage = if (size <= 0) 0 else startPage.coerceIn(0, size - 1)
+        set(value) {
+            val next = if (size <= 0) 0 else value.coerceIn(0, (size - 1).coerceAtLeast(0))
+            if (field == next) return
+            field = next
+            schedulePersistProgress()
+        }
 
     private val jobs = HashMap<Int, Job>()
 
@@ -372,11 +383,38 @@ abstract class PageLoader(
     override fun close() {
         cancelDecodeJobs()
         lock.write { cache.evictAll() }
-        info?.let { gallery ->
-            progressScope.launch {
-                // Ensure GALLERIES row exists — Progress has FK to GALLERIES
-                runCatching { EhDB.putReadProgress(gallery, startPage) }
-            }
+        persistProgress()
+    }
+
+    override fun persistProgress() {
+        debouncePersistJob?.cancel()
+        debouncePersistJob = null
+        if (info == null) return
+        progressScope.launch { persistProgressNow() }
+    }
+
+    private var debouncePersistJob: Job? = null
+    private val persistMutex = Mutex()
+
+    @Volatile
+    private var lastPersistedPage = Int.MIN_VALUE
+
+    private fun schedulePersistProgress() {
+        if (info == null) return
+        debouncePersistJob?.cancel()
+        debouncePersistJob = progressScope.launch {
+            delay(PERSIST_DEBOUNCE_MS)
+            persistProgressNow()
+        }
+    }
+
+    private suspend fun persistProgressNow() {
+        val gallery = info ?: return
+        val page = startPage
+        persistMutex.mutexWithLock {
+            if (page == lastPersistedPage) return
+            runCatching { EhDB.putReadProgress(gallery, page) }
+                .onSuccess { lastPersistedPage = page }
         }
     }
 

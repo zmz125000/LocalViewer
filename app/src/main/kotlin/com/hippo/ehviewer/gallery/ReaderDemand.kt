@@ -15,6 +15,9 @@ interface ReaderSession : AutoCloseable {
     fun replan()
     fun restart()
     fun onForeground()
+
+    /** Flush [startPage] to DB. Safe to call often; no-op without [info]. */
+    fun persistProgress()
     fun retryPage(index: Int, orgImg: Boolean = false)
     fun getImageFilename(index: Int): String?
     fun save(index: Int, file: Path): Boolean
