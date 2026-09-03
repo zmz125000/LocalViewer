@@ -12,6 +12,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -49,6 +50,7 @@ fun WebtoonViewer(
     onPrevFolder: () -> Unit = {},
     onNextFolder: () -> Unit = {},
     onBack: () -> Unit = {},
+    chromeVisible: Boolean = false,
     /**
      * Landscape dual: continuous horizontal strip (no page pairing).
      * Always right-to-left (manga): page 0 on the right, next pages toward the left.
@@ -57,6 +59,10 @@ fun WebtoonViewer(
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
+    @Suppress("NAME_SHADOWING")
+    val chromeVisible by rememberUpdatedState(chromeVisible)
+    @Suppress("NAME_SHADOWING")
+    val onMenuRegionClick by rememberUpdatedState(onMenuRegionClick)
     // Snapshot size drives item count; do not capture a stale pages list length.
     val pageCount = pageLoader.size
     val items = pageLoader.pages
@@ -117,7 +123,11 @@ fun WebtoonViewer(
         .zoomable(
             state = zoomableState,
             gestures = gestures,
-            onClick = { offset ->
+            onClick = click@{ offset ->
+                if (chromeVisible) {
+                    onMenuRegionClick()
+                    return@click
+                }
                 scope.launch {
                     with(lazyListState) {
                         // Prefer stable size; fall back to layoutInfo only for the tap gesture.

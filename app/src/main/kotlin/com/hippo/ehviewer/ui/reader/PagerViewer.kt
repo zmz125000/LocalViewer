@@ -67,6 +67,7 @@ fun PagerViewer(
     onPrevFolder: () -> Unit = {},
     onNextFolder: () -> Unit = {},
     onBack: () -> Unit = {},
+    chromeVisible: Boolean = false,
     /**
      * Landscape dual: each pager slot is a two-page spread.
      * Used for LTR, RTL, and Vertical (same pairing; Vertical scrolls up/down between spreads).
@@ -124,6 +125,7 @@ fun PagerViewer(
                 onSelectPage = onSelectPage,
                 onMenuRegionClick = onMenuRegionClick,
                 onDoubleClick = doubleTap,
+                chromeVisible = chromeVisible,
                 scope = scope,
             )
         } else {
@@ -142,6 +144,7 @@ fun PagerViewer(
                 onSelectPage = onSelectPage,
                 onMenuRegionClick = onMenuRegionClick,
                 onDoubleClick = doubleTap,
+                chromeVisible = chromeVisible,
                 scope = scope,
             )
         }
@@ -188,10 +191,15 @@ private fun DualPageContainer(
     onSelectPage: (Page) -> Unit,
     onMenuRegionClick: () -> Unit,
     onDoubleClick: DoubleClickToZoomListener,
+    chromeVisible: Boolean,
     scope: CoroutineScope,
 ) {
     @Suppress("NAME_SHADOWING")
     val isRtl by rememberUpdatedState(isRtl)
+    @Suppress("NAME_SHADOWING")
+    val chromeVisible by rememberUpdatedState(chromeVisible)
+    @Suppress("NAME_SHADOWING")
+    val onMenuRegionClick by rememberUpdatedState(onMenuRegionClick)
     val zoomableState = rememberZoomableState(zoomSpec = PagerZoomSpec)
     val solo = leftPage != null && rightPage == null || leftPage == null && rightPage != null
     val halfSize = if (layoutSize == Size.Zero) {
@@ -219,7 +227,11 @@ private fun DualPageContainer(
         }
         if (page != null) onSelectPage(page)
     }
-    val onTap: ZoomableState?.(Offset) -> Unit = { offset ->
+    val onTap: ZoomableState?.(Offset) -> Unit = tap@{ offset ->
+        if (chromeVisible) {
+            onMenuRegionClick()
+            return@tap
+        }
         scope.launch {
             with(pagerState) {
                 val size = layoutInfo.viewportSize.toSize()
@@ -321,10 +333,15 @@ private fun PageContainer(
     onSelectPage: (Page) -> Unit,
     onMenuRegionClick: () -> Unit,
     onDoubleClick: DoubleClickToZoomListener,
+    chromeVisible: Boolean,
     scope: CoroutineScope,
 ) {
     @Suppress("NAME_SHADOWING")
     val isRtl by rememberUpdatedState(isRtl)
+    @Suppress("NAME_SHADOWING")
+    val chromeVisible by rememberUpdatedState(chromeVisible)
+    @Suppress("NAME_SHADOWING")
+    val onMenuRegionClick by rememberUpdatedState(onMenuRegionClick)
     val zoomableState = rememberZoomableState(zoomSpec = PagerZoomSpec)
     val status = page.statusObserved
     if (status is PageStatus.Ready && layoutSize != Size.Zero) {
@@ -374,7 +391,11 @@ private fun PageContainer(
         }
     }
     val onLongClick = { _: Offset -> onSelectPage(page) }
-    val onTap: ZoomableState?.(Offset) -> Unit = { offset ->
+    val onTap: ZoomableState?.(Offset) -> Unit = tap@{ offset ->
+        if (chromeVisible) {
+            onMenuRegionClick()
+            return@tap
+        }
         scope.launch {
             with(pagerState) {
                 // Don't use `layoutSize` as it may capture outdated value
