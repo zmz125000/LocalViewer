@@ -131,7 +131,7 @@
     <string name="settings_advanced_webdav_insecure_tls">WebDAV の安全でない TLS を許可</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">任意の証明書を信頼します（自己署名 HTTPS）。</string>
     <string name="settings_advanced_unlimit_foreground_service">フォアグラウンドサービスを無制限</string>
-    <string name="settings_advanced_unlimit_foreground_service_summary">既定: 20 分アイドルで HTTP セッションと FGS を停止。ON: アプリをスワイプするまでループバックとセッションを維持。ウェイクロックなし。画面オフ時は再生中のみ接続を維持。</string>
+    <string name="settings_advanced_unlimit_foreground_service_summary">オフ: 20 分アイドルで HTTP セッションと FGS を停止。</string>
     <string name="error_ip_banned">IP がバンされています</string>
     <string name="history_unavailable">この項目は利用できなくなりました</string>
     <string name="back_to_history">履歴に戻る</string>
@@ -170,7 +170,7 @@
     <string name="settings_smb_encrypt">SMB 3 暗号化</string>
     <string name="settings_smb_encrypt_summary">暗号化 SMB セッションを要求（サーバーが SMB 3 暗号化に対応している必要あり）。有効な接続をリセットします。</string>
     <string name="settings_smb_async_transport">SMB 非同期転送</string>
-    <string name="settings_smb_async_transport_summary">TCP ごとに Packet Reader を立てず、list / browse / video の小さな NIO プールを使います。不具合時はオフ。参照・一覧・動画接続をリセットします。</string>
+    <string name="settings_smb_async_transport_summary">TCP ごとに Packet Reader を立てず、小さな NIO プールを共有します。</string>
     <string name="settings_reader_preload_image">リーダー先読み</string>
     <string name="settings_reader_preload_image_summary">次の %s ページを先読み（SMB は先行ダウンロード、ローカルは必要時に開く）</string>
     <string name="settings_advanced_disable_reader_network_cache">リーダーのネットワークキャッシュを無効化</string>
