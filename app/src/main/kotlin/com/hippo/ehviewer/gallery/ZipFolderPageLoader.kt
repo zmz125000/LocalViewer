@@ -2,8 +2,10 @@ package com.hippo.ehviewer.gallery
 
 import arrow.autoCloseScope
 import com.ehviewer.core.model.GalleryInfo
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCentralDirectory
@@ -11,6 +13,7 @@ import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.util.FileUtils
 import java.io.File
+import java.nio.ByteBuffer
 import kotlinx.coroutines.coroutineScope
 import moe.tarsin.kt.install
 import okio.Path
@@ -63,12 +66,34 @@ suspend inline fun <T> useZipFolderPageLoader(
                 override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(imageNames[index])
 
                 override fun save(index: Int, file: Path): Boolean = runCatching {
-                    val src = session.ensurePage(zipKey, prefix, imageNames, index)
-                    File(src.toString()).copyTo(File(file.toString()), overwrite = true)
+                    if (Settings.disableReaderNetworkCache.value) {
+                        File(file.toString()).writeBytes(
+                            session.pageBytes(zipKey, prefix, imageNames, index),
+                        )
+                    } else {
+                        val src = session.ensurePage(zipKey, prefix, imageNames, index)
+                        File(src.toString()).copyTo(File(file.toString()), overwrite = true)
+                    }
                     true
                 }.getOrDefault(false)
 
                 override fun openSource(index: Int): ImageSource {
+                    if (Settings.disableReaderNetworkCache.value) {
+                        val member = zipFolderMember(prefix, imageNames[index])
+                        val dest = ZipMemberCover.destFile(zipKey, member)
+                        if (dest.isFile && dest.length() > 0L) {
+                            val path = dest.absolutePath.toPath()
+                            return object : PathSource {
+                                override val source = path
+                                override val type by lazy {
+                                    FileUtils.getExtensionFromFilename(imageNames[index])!!
+                                }
+                                override fun close() = Unit
+                            }
+                        }
+                        val bytes = session.pageBytes(zipKey, prefix, imageNames, index)
+                        return byteBufferSource(ByteBuffer.wrap(bytes)) {}
+                    }
                     val path = session.ensurePage(zipKey, prefix, imageNames, index)
                     return object : PathSource {
                         override val source = path
@@ -136,6 +161,24 @@ internal class ZipFolderExtractSession(
             "Extract failed: $member"
         }
         return dest.absolutePath.toPath()
+    }
+
+    fun pageBytes(
+        zipKey: String,
+        prefix: String,
+        imageNames: List<String>,
+        index: Int,
+    ): ByteArray {
+        val member = zipFolderMember(prefix, imageNames[index])
+        val dest = ZipMemberCover.destFile(zipKey, member)
+        if (dest.isFile && dest.length() > 0L) return dest.readBytes()
+        val cd = cd() ?: error("Cannot read ZIP: $zipKey")
+        val entry = cd.find(member) ?: error("Missing ZIP member: $member")
+        if (ZipMemberCover.rejectIfTooLarge(entry, notify = true)) {
+            error("ZIP member too large")
+        }
+        return cd.extract(entry, maxBytes = ZipMemberCover.MAX_CACHE_BYTES)
+            ?: error("Extract failed: $member")
     }
 
     override fun close() {

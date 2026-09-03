@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.image.hdr
 
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
@@ -36,7 +37,11 @@ object DisplaySource {
                 if (t.isNotEmpty()) "$name.$t" else name
             }
         }
-        val ready = HdrConvertCache.ensureCoilReady(src.source, hint)
+        val ready = if (Settings.disableReaderNetworkCache.value) {
+            src.source
+        } else {
+            HdrConvertCache.ensureCoilReady(src.source, hint)
+        }
         if (ready.toString() == src.source.toString()) return src
         val outer = src
         return object : PathSource {
@@ -48,6 +53,7 @@ object DisplaySource {
     }
 
     private suspend fun ensureReadyBuffer(src: ByteBufferSource, fileNameHint: String): ImageSource {
+        if (Settings.disableReaderNetworkCache.value) return src
         val route = classify(src.source, fileNameHint)
         if (!route.needsUhdr) return src
         val dup = src.source.asReadOnlyBuffer()

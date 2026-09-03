@@ -65,13 +65,36 @@ object ZipMemberCover {
     ): Path? {
         val dest = destFile(zipKey, memberRel)
         if (dest.isFile && dest.length() > 0L) return dest.absolutePath.toPath()
+        val bytes = extractBytes(zipKey, memberRel, notifyTooLarge, openSource) ?: return null
+        dest.parentFile?.mkdirs()
+        val tmp = File("${dest.path}.tmp.${System.nanoTime()}")
+        return try {
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(dest)) {
+                tmp.copyTo(dest, overwrite = true)
+                tmp.delete()
+            }
+            if (dest.isFile && dest.length() > 0L) dest.absolutePath.toPath() else null
+        } finally {
+            if (tmp.exists()) tmp.delete()
+        }
+    }
+
+    /** Same as [ensure] but keeps the member in RAM — no `zip_folder_pages` write. */
+    fun extractBytes(
+        zipKey: String,
+        memberRel: String,
+        notifyTooLarge: Boolean = true,
+        openSource: () -> ArchiveByteSource?,
+    ): ByteArray? {
+        val dest = destFile(zipKey, memberRel)
+        if (dest.isFile && dest.length() > 0L) return dest.readBytes()
         val source = openSource() ?: return null
         return try {
             val cd = ZipCentralDirectory.open(source) ?: return null
             val entry = cd.find(memberRel) ?: return null
             if (rejectIfTooLarge(entry, notifyTooLarge)) return null
-            if (!cd.extractToFile(entry, dest, maxBytes = MAX_CACHE_BYTES)) return null
-            dest.absolutePath.toPath()
+            cd.extract(entry, maxBytes = MAX_CACHE_BYTES)
         } finally {
             runCatching { source.close() }
         }

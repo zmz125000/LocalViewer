@@ -523,7 +523,7 @@
     <string name="settings_reader_preload_image">Source prefetch ahead</string>
     <string name="settings_reader_preload_image_summary">Download or extract the next %s pages in the reading direction</string>
     <string name="settings_advanced_disable_reader_network_cache">Disable reader network cache</string>
-    <string name="settings_advanced_disable_reader_network_cache_summary">Do not prefetch SMB, WebDAV, or stream-archive pages to flash. The current page still downloads; local files already skip prefetch.</string>
+    <string name="settings_advanced_disable_reader_network_cache_summary">Do not write SMB, WebDAV, or stream-archive pages to flash. Pages stay in RAM for this session; local files already skip a page cache.</string>
     <string name="settings_reader_decode_ahead">Decode ahead</string>
     <string name="settings_reader_decode_ahead_summary">Keep the next %s pages decoded in the reading direction</string>
     <string name="settings_advanced_auto_decode_ahead">Limit decode ahead</string>
