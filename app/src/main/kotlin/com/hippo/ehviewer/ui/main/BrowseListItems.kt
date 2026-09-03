@@ -458,7 +458,7 @@ fun BrowseFileRow(
     onLongClick: (() -> Unit)? = null,
     /**
      * Image file in Folder mode: same [BrowseCover] key as photo grid; fetch gated by
-     * [Settings.downloadNetworkPhotoGridThumb] / [Settings.savePhotoGridOriginalCache].
+     * [Settings.downloadNetworkPhotoGridThumb] / [Settings.saveThumbOriginalCache].
      */
     cover: BrowseCover? = null,
     showPhotoThumb: Boolean = false,
@@ -930,8 +930,8 @@ fun BrowseCoverThumb(
     allowRemoteFetch: Boolean = true,
     /**
      * Photo image cells (photo-grid virtual folder **or** Folder-mode image files):
-     * gate network fetch with [Settings.downloadNetworkPhotoGridThumb] and optional original
-     * page-cache write with [Settings.savePhotoGridOriginalCache].
+     * gate network fetch with [Settings.downloadNetworkPhotoGridThumb]. Original page-cache
+     * write uses [Settings.saveThumbOriginalCache] for these cells **and** gallery covers.
      * Thumbs always land in `*_thumb_cache` under the same path key as photo grid.
      */
     photoGridThumb: Boolean = false,
@@ -942,9 +942,9 @@ fun BrowseCoverThumb(
     val downloadRemoteThumbs by Settings.downloadRemoteThumbs.collectAsState()
     val downloadNetworkArchiveThumbs by Settings.downloadNetworkArchiveThumbs.collectAsState()
     val downloadNetworkPhotoGridThumb by Settings.downloadNetworkPhotoGridThumb.collectAsState()
-    val savePhotoGridOriginalCache by Settings.savePhotoGridOriginalCache.collectAsState()
+    val saveThumbOriginalCache by Settings.saveThumbOriginalCache.collectAsState()
     val allowNetworkImageDownload = if (photoGridThumb) downloadNetworkPhotoGridThumb else downloadRemoteThumbs
-    val cachePhotoGridOriginal = photoGridThumb && savePhotoGridOriginalCache
+    val cacheThumbOriginal = saveThumbOriginalCache
     // Stable keys: BrowseCover is a new instance per list paint; identity by fields.
     val remoteKey = when (cover) {
         is BrowseCover.Smb -> "smb\u0000${cover.sourceId}\u0000${cover.remoteRelativeFile}"
@@ -1004,13 +1004,14 @@ fun BrowseCoverThumb(
     // Lazy: only runs when this row is composed (in LazyColumn viewport).
     // Always probe disk on IO first so cached thumbs show even when download is off.
     // Folder image covers use [downloadRemoteThumbs] (or photo-grid prefs);
+    // original page-cache write uses [saveThumbOriginalCache] for gallery covers too;
     // archive first-page uses [downloadNetworkArchiveThumbs].
     LaunchedEffect(
         remoteKey,
         retryKey,
         resumeEpoch,
         allowNetworkImageDownload,
-        cachePhotoGridOriginal,
+        cacheThumbOriginal,
         downloadNetworkArchiveThumbs,
         allowRemoteFetch,
     ) {
@@ -1162,7 +1163,7 @@ fun BrowseCoverThumb(
                         localPath = SmbCache.ensureBrowseThumb(
                             cover.sourceId,
                             cover.remoteRelativeFile,
-                            cacheOriginal = cachePhotoGridOriginal,
+                            cacheOriginal = cacheThumbOriginal,
                         ) { out ->
                             SmbGateway.downloadFile(
                                 source,
@@ -1206,7 +1207,7 @@ fun BrowseCoverThumb(
                         localPath = WebDavCache.ensureBrowseThumb(
                             cover.sourceId,
                             cover.remoteRelativeFile,
-                            cacheOriginal = cachePhotoGridOriginal,
+                            cacheOriginal = cacheThumbOriginal,
                         ) { out ->
                             WebDavClient.downloadFile(source, password, cover.remoteRelativeFile, out)
                         }

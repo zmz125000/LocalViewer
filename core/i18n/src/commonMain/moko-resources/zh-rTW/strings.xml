@@ -167,8 +167,8 @@
     <string name="settings_photo_grid_scroll_to_progress_summary">開啟照片牆時跳轉到該資料夾上次閱讀的頁面。關閉則保持上次捲動位置。</string>
     <string name="settings_download_network_photo_grid_thumb">下載網路照片縮圖</string>
     <string name="settings_download_network_photo_grid_thumb_summary">在照片牆與資料夾檢視中為 SMB/WebDAV 圖片取得並解碼為小 JPEG。關閉後仍顯示已快取縮圖。兩處使用相同快取路徑鍵。</string>
-    <string name="settings_save_photo_grid_original_cache">將照片原圖儲存到快取</string>
-    <string name="settings_save_photo_grid_original_cache_summary">縮圖一律寫入縮圖快取。開啟後，下載照片牆或資料夾檢視圖片時也會把完整原圖寫入頁面快取。關閉則只保留小 JPEG 縮圖。</string>
+    <string name="settings_save_photo_grid_original_cache">將縮圖原圖儲存到快取</string>
+    <string name="settings_save_photo_grid_original_cache_summary">下載網路圖庫封面或照片縮圖時，同時把原圖寫入頁面快取（與閱讀器相同路徑）。關閉則只保留小 JPEG 縮圖。</string>
     <string name="settings_persist_main_nav">資料夾頁面保留主導覽</string>
     <string name="settings_persist_main_nav_summary">瀏覽資料夾時顯示底部導覽，再次點按「瀏覽/歷史」可返回。關閉則使用快捷懸浮按鈕（手機）。</string>
     <string name="settings_hide_back_to_fab">隱藏返回懸浮按鈕</string>

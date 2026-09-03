@@ -460,8 +460,8 @@
     <string name="settings_photo_grid_scroll_to_progress_summary">When opening a photo grid, jump to the last page you read in that folder. Off keeps the previous grid scroll position.</string>
     <string name="settings_download_network_photo_grid_thumb">Download network photo thumbs</string>
     <string name="settings_download_network_photo_grid_thumb_summary">Fetch and decode small JPEG thumbs for SMB/WebDAV images in photo grid and Folder view. Cached thumbs still show when off. Same cache path key in both places.</string>
-    <string name="settings_save_photo_grid_original_cache">Save photo originals to cache</string>
-    <string name="settings_save_photo_grid_original_cache_summary">Thumbs always save to thumb cache. On also stores the full original image in page cache when downloading for photo grid or Folder-view images. Off keeps only the small JPEG thumb.</string>
+    <string name="settings_save_photo_grid_original_cache">Save thumb orig to cache</string>
+    <string name="settings_save_photo_grid_original_cache_summary">When downloading a network gallery cover or photo thumb, also store the original image in page cache (same path the reader uses). Off keeps only the small JPEG thumb.</string>
     <string name="settings_persist_main_nav">Keep main navigation on folder screens</string>
     <string name="settings_persist_main_nav_summary">Show the bottom bar while browsing folders; re-tap Browse/History to jump back. Off uses a shortcut FAB instead (phones).</string>
     <string name="settings_hide_back_to_fab">Hide Back-to FAB</string>

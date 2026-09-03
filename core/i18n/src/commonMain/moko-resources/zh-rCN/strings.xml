@@ -157,8 +157,8 @@
     <string name="settings_photo_grid_scroll_to_progress_summary">打开照片墙时跳转到该文件夹上次阅读的页面。关闭则保持上次滚动位置。</string>
     <string name="settings_download_network_photo_grid_thumb">下载网络照片缩略图</string>
     <string name="settings_download_network_photo_grid_thumb_summary">在照片墙和文件夹视图中为 SMB/WebDAV 图片获取并解码为小 JPEG。关闭后仍显示已缓存缩略图。两处使用相同缓存路径键。</string>
-    <string name="settings_save_photo_grid_original_cache">将照片原图保存到缓存</string>
-    <string name="settings_save_photo_grid_original_cache_summary">缩略图始终写入缩略图缓存。开启后，下载照片墙或文件夹视图图片时也会把完整原图写入页面缓存。关闭则只保留小 JPEG 缩略图。</string>
+    <string name="settings_save_photo_grid_original_cache">将缩略图原图保存到缓存</string>
+    <string name="settings_save_photo_grid_original_cache_summary">下载网络画廊封面或照片缩略图时，同时把原图写入页面缓存（与阅读器相同路径）。关闭则只保留小 JPEG 缩略图。</string>
     <string name="settings_smb_concurrency">SMB 并发连接数</string>
     <string name="settings_smb_concurrency_summary">每个主机最多 %s 个会话（该服务器上所有共享共用；用于定位与预取）</string>
     <string name="settings_smb3_only">仅 SMB 3</string>
