@@ -303,8 +303,7 @@ object MediaStoreFs {
         val preferImage = isImageFileName(fileName)
         val preferVideo = isVideoFileName(fileName) || !preferImage
 
-        fun tryCollection(collection: Uri): Uri? =
-            queryMediaId(collection, relativeDir, fileName)?.let { contentUriFor(collection, it) }
+        fun tryCollection(collection: Uri): Uri? = queryMediaId(collection, relativeDir, fileName)?.let { contentUriFor(collection, it) }
 
         if (preferVideo && MediaPermissions.hasVideoPermission()) {
             tryCollection(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))?.let { return it }
