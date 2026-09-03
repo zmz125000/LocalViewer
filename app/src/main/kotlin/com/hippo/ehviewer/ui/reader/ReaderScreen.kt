@@ -424,19 +424,26 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     }
                 }
                 is ReaderScreenArgs.LocalZipFolder -> {
-                    val frame = BrowseSession.localStack.lastOrNull() ?: return@withIOContext
-                    val zipRel = frame.relativePath
-                    val inner = args.innerRel.trim('/')
-                    val rel = if (inner.isEmpty()) zipRel else "$zipRel|$inner"
-                    LocalHistory.recordLocalFolderGallery(
-                        rootId = frame.rootId,
-                        relativePath = rel,
-                        title = args.info?.title
-                            ?: inner.substringAfterLast('/').ifEmpty { File(args.zipPath).name },
-                        thumbKey = args.info?.thumbKey,
-                        pages = args.imageNames.size,
-                        info = args.info,
+                    val hist = LocalHistory.zipAsDirHistoryRel(
+                        args.zipPath,
+                        args.innerRel,
+                        BrowseSession.localStack.lastOrNull(),
                     )
+                    if (hist != null) {
+                        LocalHistory.recordLocalFolderGallery(
+                            rootId = hist.first,
+                            relativePath = hist.second,
+                            title = args.info?.title
+                                ?: args.innerRel.trim('/').substringAfterLast('/').ifEmpty {
+                                    File(args.zipPath).name
+                                },
+                            thumbKey = args.info?.thumbKey,
+                            pages = args.imageNames.size,
+                            info = args.info,
+                        )
+                    } else {
+                        args.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                    }
                 }
                 is ReaderScreenArgs.SmbFolder -> LocalHistory.recordSmbFolderGallery(
                     sourceId = args.sourceId,
@@ -724,13 +731,17 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val currentLoader by rememberUpdatedState(pageLoader)
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
-            val remote = currentArgs is ReaderScreenArgs.SmbFolder ||
-                currentArgs is ReaderScreenArgs.WebDavFolder ||
-                currentArgs is ReaderScreenArgs.SmbStreamArchive ||
-                currentArgs is ReaderScreenArgs.WebDavStreamArchive
-            if (!remote) return@LifecycleEventObserver
-            currentLoader.onForeground()
+            when (event) {
+                Lifecycle.Event.ON_STOP -> currentLoader.persistProgress()
+                Lifecycle.Event.ON_RESUME -> {
+                    val remote = currentArgs is ReaderScreenArgs.SmbFolder ||
+                        currentArgs is ReaderScreenArgs.WebDavFolder ||
+                        currentArgs is ReaderScreenArgs.SmbStreamArchive ||
+                        currentArgs is ReaderScreenArgs.WebDavStreamArchive
+                    if (remote) currentLoader.onForeground()
+                }
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -898,22 +909,26 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                     LocalHistory.recordLocalArchive(s.path)
                                 }
                                 is ReaderScreenArgs.LocalZipFolder -> {
-                                    val frame = BrowseSession.localStack.lastOrNull()
-                                        ?: return@withIOContext
-                                    val zipRel = frame.relativePath
-                                    val inner = s.innerRel.trim('/')
-                                    val rel = if (inner.isEmpty()) zipRel else "$zipRel|$inner"
-                                    LocalHistory.recordLocalFolderGallery(
-                                        rootId = frame.rootId,
-                                        relativePath = rel,
-                                        title = s.info?.title
-                                            ?: inner.substringAfterLast('/').ifEmpty {
-                                                File(s.zipPath).name
-                                            },
-                                        thumbKey = s.info?.thumbKey,
-                                        pages = s.imageNames.size,
-                                        info = s.info,
+                                    val hist = LocalHistory.zipAsDirHistoryRel(
+                                        s.zipPath,
+                                        s.innerRel,
+                                        BrowseSession.localStack.lastOrNull(),
                                     )
+                                    if (hist != null) {
+                                        LocalHistory.recordLocalFolderGallery(
+                                            rootId = hist.first,
+                                            relativePath = hist.second,
+                                            title = s.info?.title
+                                                ?: s.innerRel.trim('/').substringAfterLast('/').ifEmpty {
+                                                    File(s.zipPath).name
+                                                },
+                                            thumbKey = s.info?.thumbKey,
+                                            pages = s.imageNames.size,
+                                            info = s.info,
+                                        )
+                                    } else {
+                                        s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
+                                    }
                                 }
                             }
                         }
@@ -1191,6 +1206,7 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
     }
     is ReaderScreenArgs.LocalZipFolder -> {
         val info = args.info
+        if (info != null) LocalHistory.ensureGalleryForProgress(info)
         val page = when {
             args.page != -1 -> args.page
             info != null -> EhDB.getReadProgress(info.gid)

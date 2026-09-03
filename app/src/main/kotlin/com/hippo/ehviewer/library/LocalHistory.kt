@@ -25,7 +25,7 @@ const val WEBDAV_BROWSE_TOKEN = "webdav_browse"
 
 /**
  * Browse **folder gallery** (image dir). Click → reader; back → parent dir.
- * Same gid scheme as reader progress (`stableGalleryId(rootId, rel)`).
+ * Same gid scheme as reader progress (`stableGalleryId(rootId, rel)` or `zip:$histRel`).
  */
 const val LOCAL_FOLDER_TOKEN = "local_folder"
 
@@ -583,7 +583,7 @@ object LocalHistory {
         info: BaseGalleryInfo? = null,
     ) {
         val rel = normalizeRel(relativePath)
-        val gid = info?.gid ?: stableGalleryId(rootId, rel.ifEmpty { "." })
+        val gid = info?.gid ?: folderGalleryGid(rootId, rel)
         val hist = BaseGalleryInfo(
             gid = gid,
             token = LOCAL_FOLDER_TOKEN,
@@ -868,6 +868,37 @@ object LocalHistory {
     }
 
     private fun normalizeRel(relativePath: String): String = relativePath.trim('/').let { if (it == "." || it.isEmpty()) "" else it }
+
+    /**
+     * Folder-gallery gid. Zip-as-dir histRel (`file.zip` / `dir/file.zip|Album`) uses the
+     * `zip:` prefix so progress matches [openZipFileAsRootGallery].
+     */
+    fun folderGalleryGid(rootId: Long, histRel: String): Long {
+        val rel = normalizeRel(histRel)
+        val zipKey = ZipAsDirListing.parseZipGalleryRelative(rel) != null ||
+            isZipArchiveFileName(rel.substringAfterLast('/'))
+        return stableGalleryId(rootId, if (zipKey) "zip:$rel" else rel.ifEmpty { "." })
+    }
+
+    /**
+     * History relative path for a zip-as-dir reader. Prefer the zip browse frame;
+     * if the stack is still the parent listing (open-from-parent), join the zip file name.
+     */
+    fun zipAsDirHistoryRel(
+        zipAbsolutePath: String,
+        innerRel: String,
+        frame: BrowseSession.LocalFrame?,
+    ): Pair<Long, String>? {
+        if (frame == null) return null
+        val zipRel = if (frame.isZipBrowse) {
+            frame.relativePath
+        } else {
+            val zipName = zipAbsolutePath.replace('\\', '/').trimEnd('/').substringAfterLast('/')
+            if (!isZipArchiveFileName(zipName)) return null
+            ZipAsDirListing.joinPrefix(frame.relativePath, zipName)
+        }
+        return frame.rootId to ZipAsDirListing.historyGalleryRelative(zipRel, innerRel)
+    }
 
     private fun encodeLocalBrowse(rootId: Long, relativePath: String): String = "$rootId$PATH_SEP$relativePath"
 

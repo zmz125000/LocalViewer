@@ -1272,7 +1272,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         // Virtual image-only grid for a folder gallery (long-press).
                         val frame = stack.lastOrNull()
                         val progressGid = frame?.let {
-                            stableGalleryId(it.rootId, it.relativePath.ifEmpty { "." })
+                            if (it.isZipBrowse) {
+                                val histRel = ZipAsDirListing.historyGalleryRelative(
+                                    it.relativePath,
+                                    it.zipInnerRel.orEmpty(),
+                                )
+                                stableGalleryId(it.rootId, "zip:$histRel")
+                            } else {
+                                stableGalleryId(it.rootId, it.relativePath.ifEmpty { "." })
+                            }
                         } ?: 0L
                         val gridState = rememberLocalPhotoGridState(
                             pathKey = pathKey,
