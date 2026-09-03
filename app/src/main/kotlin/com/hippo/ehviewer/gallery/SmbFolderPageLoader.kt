@@ -4,6 +4,7 @@ import arrow.autoCloseScope
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.model.GalleryInfo
+import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
@@ -101,6 +102,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 }
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
+                    if (Settings.disableReaderNetworkCache.value) return
                     pages.forEach { index ->
                         ensureDownload(index, interactive = false)
                     }

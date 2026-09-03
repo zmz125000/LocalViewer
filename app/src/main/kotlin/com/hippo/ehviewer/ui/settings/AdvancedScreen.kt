@@ -179,6 +179,11 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 entryValueRes = com.hippo.ehviewer.R.array.preload_image_entry_values,
                 state = preloadImage,
             )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_advanced_disable_reader_network_cache),
+                summary = stringResource(id = R.string.settings_advanced_disable_reader_network_cache_summary),
+                state = Settings.disableReaderNetworkCache.asMutableState(),
+            )
             val decodeAhead = Settings.readerDecodeAhead.asMutableState()
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_reader_decode_ahead),
