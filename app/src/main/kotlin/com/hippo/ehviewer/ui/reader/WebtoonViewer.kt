@@ -58,6 +58,7 @@ fun WebtoonViewer(
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
+
     @Suppress("NAME_SHADOWING")
     val onMenuRegionClick by rememberUpdatedState(onMenuRegionClick)
     // Snapshot size drives item count; do not capture a stale pages list length.
