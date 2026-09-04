@@ -55,12 +55,11 @@ fun withLocalArchivePageCounts(
     return if (changed) out else entries
 }
 
-private fun countLocalZipImageMembers(path: Path): Int =
-    withLocalZipCentralDirectory(path) { cd ->
-        cd.entries.count { entry ->
-            !entry.isDirectory && isImageFileName(entry.name.substringAfterLast('/'))
-        }
-    } ?: 0
+private fun countLocalZipImageMembers(path: Path): Int = withLocalZipCentralDirectory(path) { cd ->
+    cd.entries.count { entry ->
+        !entry.isDirectory && isImageFileName(entry.name.substringAfterLast('/'))
+    }
+} ?: 0
 
 private fun countLocalDocumentPages(path: Path): Int {
     val cacheKey = path.toString()
