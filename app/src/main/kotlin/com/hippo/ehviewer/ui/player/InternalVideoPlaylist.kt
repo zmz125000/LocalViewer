@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.player
 
 import android.net.Uri
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -13,7 +14,8 @@ sealed interface InternalVideoSource {
 
     data class Local(val path: String) : InternalVideoSource {
         override val displayName: String
-            get() = path.substringAfterLast('/').substringAfterLast('\\')
+            get() = ZipPaths.memberLeafName(path)
+                ?: path.substringAfterLast('/').substringAfterLast('\\')
         override val identity: String get() = "local:$path"
     }
 

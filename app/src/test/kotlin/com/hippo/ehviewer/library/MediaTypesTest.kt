@@ -42,6 +42,17 @@ class MediaTypesTest {
     }
 
     @Test
+    fun zipMemberCoverExtractIsImageAndVideoOnly() {
+        assertTrue(isZipMemberCoverExtractAllowed("Album/a.jpg"))
+        assertTrue(isZipMemberCoverExtractAllowed("clip.MP4"))
+        assertFalse(isZipMemberCoverExtractAllowed("notes.pdf"))
+        assertFalse(isZipMemberCoverExtractAllowed("nested.zip"))
+        assertFalse(isZipMemberCoverExtractAllowed("readme.txt"))
+        assertFalse(isZipMemberCoverExtractAllowed("doc.epub"))
+        assertFalse(isZipMemberCoverExtractAllowed("noext"))
+    }
+
+    @Test
     fun unknownUsesGenericViewMime() {
         assertEquals(GENERIC_FILE_MIME, mimeTypeForFileName("noext"))
         assertEquals(GENERIC_FILE_MIME, mimeTypeForFileName("weird.unknownfmt"))

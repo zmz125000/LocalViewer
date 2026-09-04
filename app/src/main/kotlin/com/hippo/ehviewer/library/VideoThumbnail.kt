@@ -381,7 +381,12 @@ object VideoThumbnail {
                 probeSemaphore.withPermit {
                     val (zipAbs, member) = zipMember
                     val zip = openLocalArchiveByteSource(zipAbs.toPath()) ?: return@withPermit null
-                    val memberSrc = ZipMemberByteSource.open(zip, member, ownsZip = true)
+                    val memberSrc = ZipMemberByteSource.open(
+                        zip,
+                        member,
+                        ownsZip = true,
+                        prefixCap = ZipMemberByteSource.DEFLATE_PREFIX_CAP,
+                    )
                         ?: run {
                             runCatching { zip.close() }
                             return@withPermit null
