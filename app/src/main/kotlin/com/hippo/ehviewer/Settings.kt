@@ -116,6 +116,13 @@ object Settings : DataStorePreferences(null) {
     val networkFolderIndexQuickScan = boolPref("network_folder_index_quick_scan", true)
 
     /**
+     * When true, local folder listing / slim / library scan count archive image pages
+     * and persist the archive's own seek index (ZIP CD / EPUB / PDF). Off skips that
+     * work; already-cached listing and reader indexes still show. Settings → General.
+     */
+    val browseArchivePageCount = boolPref("browse_archive_page_count", false)
+
+    /**
      * When true (default): tap video → in-app Media3 player; long-press → external app.
      * When false: tap → external; long-press → Media3.
      * Settings → General.

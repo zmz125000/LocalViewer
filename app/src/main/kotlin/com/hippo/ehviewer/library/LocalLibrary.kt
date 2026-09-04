@@ -20,6 +20,7 @@ import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withNonCancellableContext
+import com.hippo.ehviewer.Settings
 import kotlin.time.Clock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -421,15 +422,17 @@ object LocalLibrary {
             }
             return
         }
+        val previous = db.localGalleryDao().listByRootId(root.id)
         val galleries = LibraryScanner.scan(root.id, path, rootDisplayName = root.displayName)
         // Drop results if the root was removed while scanning (belt-and-suspenders with mutex).
         if (db.libraryRootDao().load(root.id) == null) {
             logcat("LocalLibrary") { "Skip scan write for deleted root ${root.id}" }
             return
         }
-        logcat("LocalLibrary") { "Scanned root ${root.id} (${root.displayName}): ${galleries.size} galleries" }
+        val toWrite = preserveArchivePageCountsIfDisabled(previous, galleries)
+        logcat("LocalLibrary") { "Scanned root ${root.id} (${root.displayName}): ${toWrite.size} galleries" }
         runCatching {
-            db.localGalleryDao().replaceForRoot(root.id, galleries)
+            db.localGalleryDao().replaceForRoot(root.id, toWrite)
         }.onFailure {
             logcat(it)
         }
@@ -470,6 +473,32 @@ object LocalLibrary {
         if (isArchiveFileName(path.name)) return path
         return resolveBrowsePath(path)
     }
+}
+
+/**
+ * When archive page-count scanning is off, [LibraryScanner] writes 0 instead of
+ * opening archives. Keep reader-updated DB totals so a rescan does not wipe them.
+ */
+private fun preserveArchivePageCountsIfDisabled(
+    previous: List<LocalGalleryEntity>,
+    scanned: List<LocalGalleryEntity>,
+): List<LocalGalleryEntity> {
+    if (Settings.browseArchivePageCount.value) return scanned
+    val prev = previous.asSequence()
+        .filter { it.kind == LOCAL_GALLERY_KIND_ARCHIVE && it.pageCount > 0 }
+        .associateBy { it.contentPath }
+    if (prev.isEmpty()) return scanned
+    var changed = false
+    val out = scanned.map { gallery ->
+        if (gallery.kind != LOCAL_GALLERY_KIND_ARCHIVE || gallery.pageCount > 0) {
+            gallery
+        } else {
+            val old = prev[gallery.contentPath] ?: return@map gallery
+            changed = true
+            gallery.copy(pageCount = old.pageCount)
+        }
+    }
+    return if (changed) out else scanned
 }
 
 /** Parent browse folder for a local archive under a configured root. */

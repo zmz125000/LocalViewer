@@ -555,7 +555,7 @@ fun preferCompleteFolderGalleries(
 
 /**
  * Keep a previously counted archive page total when a newer listing has 0
- * (slim / shallow / failed recount) and the file size/mtime still match.
+ * (slim / shallow / failed recount) and the file size still matches.
  */
 fun preferKnownArchivePageCounts(
     previous: List<BrowseEntryRemote>,
@@ -570,11 +570,6 @@ fun preferKnownArchivePageCounts(
         if (entry !is BrowseEntryRemote.ArchiveGallery || entry.pageCount > 0) return@map entry
         val old = prevKnown[archiveGalleryKey(entry)] ?: return@map entry
         if (entry.size > 0L && old.size > 0L && entry.size != old.size) return@map entry
-        if (entry.lastModifiedMs > 0L && old.lastModifiedMs > 0L &&
-            entry.lastModifiedMs != old.lastModifiedMs
-        ) {
-            return@map entry
-        }
         entry.copy(pageCount = old.pageCount)
     }
 }
@@ -691,9 +686,7 @@ fun replaceSlimDirectFilesFromLive(
                         archives += entry.copy(
                             size = live.size,
                             lastModifiedMs = live.lastModifiedMs,
-                            pageCount = if (live.size == entry.size &&
-                                live.lastModifiedMs == entry.lastModifiedMs
-                            ) {
+                            pageCount = if (live.size == entry.size) {
                                 entry.pageCount
                             } else {
                                 0
