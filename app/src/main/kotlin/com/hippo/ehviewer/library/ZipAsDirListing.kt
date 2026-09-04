@@ -379,6 +379,25 @@ object ZipAsDirListing {
     }
 
     /**
+     * Absolute path for a classified file row under [baseDir].
+     * Zip-as-dir members (`file.zip/inner/a.mp4`) become `zipfile:{zip}!{member}` —
+     * they are not real SAF/FS children of the zip file.
+     */
+    fun materializeLocalFilePath(
+        baseDir: Path,
+        relativeFile: String,
+        zipAsDir: Boolean,
+    ): Path {
+        if (zipAsDir) {
+            val split = splitZipBrowsePath(relativeFile)
+            if (split != null && split.second.isNotEmpty()) {
+                return ZipPaths.encodePath(baseDir.resolveRelative(split.first).toString(), split.second)
+            }
+        }
+        return baseDir.resolveRelative(relativeFile)
+    }
+
+    /**
      * History relative path for a zip-as-dir gallery: `dir/file.zip` or
      * `dir/file.zip|Album` (pipe keeps the zip file distinct from inner folders).
      */
