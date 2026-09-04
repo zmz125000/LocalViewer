@@ -149,6 +149,8 @@
     <string name="settings_network_folder_index_cache_summary">關閉時只將資料夾索引保存在 RAM；開啟時也會儲存到磁碟。</string>
     <string name="settings_network_folder_index_quick_scan">資料夾快取快速掃描</string>
     <string name="settings_network_folder_index_quick_scan_summary">命中 RAM 或磁碟快取時，快速檢查子資料夾是否新增或刪除。</string>
+    <string name="settings_browse_archive_page_count">壓縮檔頁數</string>
+    <string name="settings_browse_archive_page_count_summary">掃描資料夾時統計壓縮檔圖片頁數並儲存壓縮檔索引。關閉則跳過該工作；已快取的頁數仍會顯示。</string>
     <string name="settings_download_remote_thumbs">下載網路圖庫封面</string>
     <string name="settings_download_remote_thumbs_summary">取得網路圖庫縮圖。</string>
     <string name="settings_download_network_archive_thumbs">下載網路壓縮檔封面</string>

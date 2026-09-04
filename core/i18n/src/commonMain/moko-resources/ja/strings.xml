@@ -143,6 +143,8 @@
     <string name="settings_network_folder_index_cache_summary">オフの場合、フォルダーのインデックスは RAM のみに保持します。オンの場合、ディスクにも保存します。</string>
     <string name="settings_network_folder_index_quick_scan">フォルダーキャッシュのクイックスキャン</string>
     <string name="settings_network_folder_index_quick_scan_summary">RAM またはディスクのキャッシュにヒットしたとき、サブフォルダーの追加・削除をすばやく確認します。</string>
+    <string name="settings_browse_archive_page_count">アーカイブのページ数</string>
+    <string name="settings_browse_archive_page_count_summary">フォルダーのスキャン時にアーカイブの画像ページ数を数え、アーカイブ索引を保存します。オフではこの処理をスキップし、既存のキャッシュは表示したままです。</string>
     <string name="settings_download_remote_thumbs">ネットワークギャラリーの表紙を取得</string>
     <string name="settings_download_remote_thumbs_summary">ネットワークギャラリーのサムネイルを取得します。</string>
     <string name="settings_download_network_archive_thumbs">ネットワークアーカイブの表紙を取得</string>

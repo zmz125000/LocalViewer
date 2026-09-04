@@ -139,6 +139,8 @@
     <string name="settings_network_folder_index_cache_summary">关闭时仅将文件夹索引保存在内存中；开启时也会保存到磁盘。</string>
     <string name="settings_network_folder_index_quick_scan">文件夹缓存快速扫描</string>
     <string name="settings_network_folder_index_quick_scan_summary">命中内存或磁盘缓存时，快速检查子文件夹是否有新增或删除。</string>
+    <string name="settings_browse_archive_page_count">压缩包页数</string>
+    <string name="settings_browse_archive_page_count_summary">扫描文件夹时统计压缩包图片页数并保存压缩包索引。关闭则跳过该工作；已缓存的页数仍会显示。</string>
     <string name="settings_download_remote_thumbs">下载网络画廊封面</string>
     <string name="settings_download_remote_thumbs_summary">获取网络画廊缩略图。</string>
     <string name="settings_download_network_archive_thumbs">下载网络压缩包封面</string>

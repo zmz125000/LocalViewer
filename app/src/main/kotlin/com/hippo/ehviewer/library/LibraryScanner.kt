@@ -185,7 +185,7 @@ object LibraryScanner {
                 // Keep extension so zip/rar/pdf/epub are distinguishable from folder titles.
                 title = archive.name,
                 kind = LOCAL_GALLERY_KIND_ARCHIVE,
-                pageCount = 0, // unknown until open
+                pageCount = countLocalArchivePages(archive.path, archive.size),
                 coverPath = null,
                 contentPath = contentPath,
                 mtime = mtime,

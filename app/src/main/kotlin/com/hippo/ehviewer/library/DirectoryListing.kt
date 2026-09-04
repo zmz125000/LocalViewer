@@ -113,6 +113,8 @@ sealed interface BrowseEntry {
         val path: Path,
         override val size: Long = 0L,
         override val lastModifiedMs: Long = 0L,
+        /** Image pages when known (local listing/scan). 0 = not counted yet. */
+        val pageCount: Int = 0,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntry
@@ -306,6 +308,8 @@ sealed interface BrowseEntryRemote {
         val parentRelativeName: String = "",
         override val size: Long = 0L,
         override val lastModifiedMs: Long = 0L,
+        /** Image pages when known (local listing/scan). 0 = not counted yet. */
+        val pageCount: Int = 0,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntryRemote
@@ -533,8 +537,8 @@ fun preferCompleteFolderGalleries(
         .filterIsInstance<BrowseEntryRemote.FolderGallery>()
         .filter { !it.pageCountCapped && it.imageFileNames.isNotEmpty() }
         .associateBy { norm(it.relativeName) }
-    if (prevComplete.isEmpty()) return next
-    return next.map { entry ->
+    if (prevComplete.isEmpty()) return preferKnownArchivePageCounts(previous, next)
+    val folders = next.map { entry ->
         if (entry !is BrowseEntryRemote.FolderGallery) return@map entry
         val old = prevComplete[norm(entry.relativeName)] ?: return@map entry
         val newPoor = entry.pageCountCapped || entry.imageFileNames.isEmpty()
@@ -546,6 +550,34 @@ fun preferCompleteFolderGalleries(
             imageFileNames = old.imageFileNames,
         )
     }
+    return preferKnownArchivePageCounts(previous, folders)
+}
+
+/**
+ * Keep a previously counted archive page total when a newer listing has 0
+ * (slim / shallow / failed recount) and the file size still matches.
+ */
+fun preferKnownArchivePageCounts(
+    previous: List<BrowseEntryRemote>,
+    next: List<BrowseEntryRemote>,
+): List<BrowseEntryRemote> {
+    val prevKnown = previous.asSequence()
+        .filterIsInstance<BrowseEntryRemote.ArchiveGallery>()
+        .filter { it.pageCount > 0 }
+        .associateBy { archiveGalleryKey(it) }
+    if (prevKnown.isEmpty()) return next
+    return next.map { entry ->
+        if (entry !is BrowseEntryRemote.ArchiveGallery || entry.pageCount > 0) return@map entry
+        val old = prevKnown[archiveGalleryKey(entry)] ?: return@map entry
+        if (entry.size > 0L && old.size > 0L && entry.size != old.size) return@map entry
+        entry.copy(pageCount = old.pageCount)
+    }
+}
+
+private fun archiveGalleryKey(entry: BrowseEntryRemote.ArchiveGallery): String {
+    val parent = entry.parentRelativeName.replace('\\', '/').trim('/')
+    val file = entry.fileName.replace('\\', '/').trim('/')
+    return if (parent.isEmpty()) file else "$parent/$file"
 }
 
 /**
@@ -654,6 +686,11 @@ fun replaceSlimDirectFilesFromLive(
                         archives += entry.copy(
                             size = live.size,
                             lastModifiedMs = live.lastModifiedMs,
+                            pageCount = if (live.size == entry.size) {
+                                entry.pageCount
+                            } else {
+                                0
+                            },
                         )
                     }
                 }

@@ -1385,6 +1385,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 cover = BrowseCover.LocalArchive(entry.path),
                                                 onClick = { openArchive(entry) },
                                                 onLongClick = { openArchiveInOtherApp(entry) },
+                                                pageCount = entry.pageCount,
+                                                showPages = showGalleryPages,
                                             )
                                             else -> Unit
                                         }
@@ -1516,6 +1518,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 fileName = entry.path.name,
                                                 sizeBytes = entry.size,
                                                 lastModifiedMs = entry.lastModifiedMs,
+                                                pageCount = entry.pageCount,
+                                                showPages = showGalleryPages,
                                             )
                                             else -> Unit
                                         }

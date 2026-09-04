@@ -196,9 +196,6 @@ object SmbGateway {
      */
     private const val SHARE_ENUM_TRANSACT_BUFFER = 64 * 1024
 
-    /** Cooperative download slice so cancel can abort between SMB READs. */
-    private const val DOWNLOAD_CHUNK = 256 * 1024
-
     /** First connect-failure backoff; doubles each trip until [COOLDOWN_MAX_MS]. */
     private const val COOLDOWN_BASE_MS = 1_000L
 
@@ -374,6 +371,10 @@ object SmbGateway {
         return builder.build()
     }
 
+    private val sequenceWindowField by lazy {
+        Connection::class.java.getDeclaredField("sequenceWindow").apply { isAccessible = true }
+    }
+
     /**
      * One-line negotiate dump so htop / speed gaps can be matched to dialect, credits,
      * and which MAC implementation is running. Safe to call more than once.
@@ -388,6 +389,7 @@ object SmbGateway {
                     "maxRead=${proto.maxReadSize} maxWrite=${proto.maxWriteSize} " +
                     "maxTransact=${proto.maxTransactSize} " +
                     "multiCredit=${ctx.supportsMultiCredit()} " +
+                    "credits=${availableCredits(connection)} " +
                     "serverSign=${if (ctx.isServerRequiresSigning) {
                         "required"
                     } else if (ctx.isServerSigningEnabled) {
@@ -407,6 +409,11 @@ object SmbGateway {
             logcat { "SmbGateway: negotiated role=$role $host:$port (partial) ${e.message}" }
         }
     }
+
+    private fun availableCredits(connection: Connection): String = runCatching {
+        val window = sequenceWindowField.get(connection)
+        window.javaClass.getMethod("available").invoke(window).toString()
+    }.getOrDefault("?")
 
     private fun roleTransportName(role: String): String {
         val cfg = when (role) {
@@ -2807,15 +2814,12 @@ object SmbGateway {
         val kind = if (yieldable) ShareOp.Background else ShareOp.Data
         val copy = suspend {
             copyOpenFile(source, password, relativeFilePath, downloadContext, kind) { file ->
-                val buffer = ByteArray(DOWNLOAD_CHUNK)
-                var offset = 0L
-                while (true) {
-                    downloadContext.ensureActive()
-                    val n = file.read(buffer, offset, 0, buffer.size)
-                    if (n <= 0) break
-                    out.write(buffer, 0, n)
-                    offset += n
-                }
+                SmbSequentialCopy.copy(
+                    read = SmbSequentialCopy.of(file),
+                    start = 0L,
+                    maxBytes = Long.MAX_VALUE,
+                    isActive = { downloadContext.isActive },
+                ) { buf, off, len -> out.write(buf, off, len) }
             }
         }
         if (yieldable) withBackgroundRetry { copy() } else copy()
@@ -2836,17 +2840,12 @@ object SmbGateway {
         val downloadContext = coroutineContext
         copyOpenFile(source, password, relativeFilePath, downloadContext) { file ->
             destination.outputStream().buffered().use { out ->
-                val buffer = ByteArray(DOWNLOAD_CHUNK)
-                var copied = 0L
-                while (copied < maxBytes) {
-                    downloadContext.ensureActive()
-                    val request = minOf(buffer.size.toLong(), maxBytes - copied).toInt()
-                    val read = file.read(buffer, copied, 0, request)
-                    if (read <= 0) break
-                    out.write(buffer, 0, read)
-                    copied += read
-                }
-                copied
+                SmbSequentialCopy.copy(
+                    read = SmbSequentialCopy.of(file),
+                    start = 0L,
+                    maxBytes = maxBytes,
+                    isActive = { downloadContext.isActive },
+                ) { buf, off, len -> out.write(buf, off, len) }
             }
         }
     }
@@ -2874,20 +2873,12 @@ object SmbGateway {
                 RandomAccessFile(destination, "rw").use { out ->
                     out.setLength(size)
                     out.seek(tailStart)
-                    val buffer = ByteArray(DOWNLOAD_CHUNK)
-                    var copied = 0L
-                    while (tailStart + copied < size) {
-                        downloadContext.ensureActive()
-                        val request = minOf(
-                            buffer.size.toLong(),
-                            size - tailStart - copied,
-                        ).toInt()
-                        val read = file.read(buffer, tailStart + copied, 0, request)
-                        if (read <= 0) break
-                        out.write(buffer, 0, read)
-                        copied += read
-                    }
-                    copied
+                    SmbSequentialCopy.copy(
+                        read = SmbSequentialCopy.of(file),
+                        start = tailStart,
+                        maxBytes = size - tailStart,
+                        isActive = { downloadContext.isActive },
+                    ) { buf, off, len -> out.write(buf, off, len) }
                 }
             }
         }
@@ -3298,6 +3289,7 @@ private fun isIgnorableListError(e: SMBApiException): Boolean {
 
 /**
  * Standard socket options + bounded connect for smbj DirectTcp.
+ * `SO_RCVBUF`/`SO_SNDBUF` sized for gigabit × Wi-Fi RTT (see [SO_RCVBUF]).
  *
  * IPv4-first host connect (same order as [SmbAsyncTransport]) with a finite timeout so
  * dual-stack LAN names cannot sit on a dead AAAA until the OS default.
@@ -3308,6 +3300,10 @@ private fun isIgnorableListError(e: SMBApiException): Boolean {
 internal object KeepAliveSocketFactory : SocketFactory() {
     /** Distinct app traffic tag for SMB (see TrafficStats.setThreadStatsTag). */
     const val SMB_TRAFFIC_TAG = 0x534D42 // "SMB"
+
+    /** Gigabit × 10–20 ms Wi-Fi BDP. Android defaults are often 128–512 KiB. */
+    const val SO_RCVBUF = 2 * 1024 * 1024
+    const val SO_SNDBUF = 512 * 1024
 
     private const val CONNECT_TIMEOUT_MS = 8_000
 
@@ -3332,6 +3328,8 @@ internal object KeepAliveSocketFactory : SocketFactory() {
         keepAlive = true
         tcpNoDelay = true
         runCatching { setSoLinger(true, 0) }
+        runCatching { receiveBufferSize = SO_RCVBUF }
+        runCatching { sendBufferSize = SO_SNDBUF }
     }
 
     private fun connectPreferIpv4(host: String, port: Int): Socket {

@@ -3,17 +3,20 @@ package com.hippo.ehviewer.smb
 import com.hierynomus.security.Mac
 import com.hierynomus.security.SecurityException
 import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * AES-CMAC (RFC 4493) on JCE `AES/ECB/NoPadding`.
+ * AES-CMAC (RFC 4493) on JCE.
  *
- * Android only exposes a `Mac.getInstance("AESCMAC")` on 14+; older devices (and
- * desktop JVMs) still have hardware AES. SMB3 signing is AES-CMAC over every
- * READ, so this is the path that must not stay on BouncyCastle software AES.
+ * Mid-message blocks use `AES/CBC/NoPadding` with IV = current CBC-MAC state
+ * (one JNI `doFinal` per [update], not per 16-byte block). The last block still
+ * applies K1/K2 then AES-ECB. Per-block `AES/ECB` `doFinal` capped SMB3 signing
+ * at ~150 Mbps on Android 12–13.
  */
 internal class JceAesCmac : Mac {
-    private val cipher: Cipher = Cipher.getInstance(TRANSFORM)
+    private val ecb: Cipher = Cipher.getInstance(ECB)
+    private val cbc: Cipher = Cipher.getInstance(CBC)
     private var key: SecretKeySpec? = null
     private val k1 = ByteArray(BLOCK)
     private val k2 = ByteArray(BLOCK)
@@ -21,14 +24,15 @@ internal class JceAesCmac : Mac {
     private val scratch = ByteArray(BLOCK)
     private val pending = ByteArray(BLOCK)
     private val one = ByteArray(1)
+    private var cbcOut = ByteArray(0)
     private var pendingLen = 0
     private var sawBytes = false
 
     override fun init(keyBytes: ByteArray) {
         val spec = SecretKeySpec(keyBytes, "AES")
         try {
-            cipher.init(Cipher.ENCRYPT_MODE, spec)
-            val l = cipher.doFinal(ByteArray(BLOCK))
+            ecb.init(Cipher.ENCRYPT_MODE, spec)
+            val l = ecb.doFinal(ByteArray(BLOCK))
             dbl(l, k1)
             dbl(k1, k2)
         } catch (e: Exception) {
@@ -50,17 +54,26 @@ internal class JceAesCmac : Mac {
         sawBytes = true
         var off = offset
         var rem = length
-        while (rem > 0) {
+        if (pendingLen > 0) {
             val n = minOf(BLOCK - pendingLen, rem)
             System.arraycopy(array, off, pending, pendingLen, n)
             pendingLen += n
             off += n
             rem -= n
-            // Keep a full last block unprocessed so doFinal can apply K1 vs K2.
             if (pendingLen == BLOCK && rem > 0) {
                 compressPending()
             }
         }
+        if (rem == 0) return
+        val tail = if (rem % BLOCK == 0) BLOCK else rem % BLOCK
+        val bulk = rem - tail
+        if (bulk > 0) {
+            compressBulk(array, off, bulk)
+            off += bulk
+            rem -= bulk
+        }
+        System.arraycopy(array, off, pending, 0, rem)
+        pendingLen = rem
     }
 
     override fun doFinal(): ByteArray {
@@ -72,9 +85,9 @@ internal class JceAesCmac : Mac {
             last[pendingLen] = 0x80.toByte()
             xor16(last, k2, last)
         }
-        xor16(state, last, state)
+        xor16(state, last, last)
         val out = try {
-            cipher.doFinal(state)
+            ecb.doFinal(last)
         } catch (e: Exception) {
             throw IllegalStateException(e)
         }
@@ -88,18 +101,31 @@ internal class JceAesCmac : Mac {
         pendingLen = 0
         sawBytes = false
         val spec = key ?: return
-        cipher.init(Cipher.ENCRYPT_MODE, spec)
+        ecb.init(Cipher.ENCRYPT_MODE, spec)
     }
 
     private fun compressPending() {
         xor16(state, pending, state)
-        cipher.doFinal(state, 0, BLOCK, scratch, 0)
+        ecb.doFinal(state, 0, BLOCK, scratch, 0)
         System.arraycopy(scratch, 0, state, 0, BLOCK)
         pendingLen = 0
     }
 
+    private fun compressBulk(array: ByteArray, offset: Int, length: Int) {
+        val spec = key ?: return
+        if (cbcOut.size < length) cbcOut = ByteArray(length)
+        try {
+            cbc.init(Cipher.ENCRYPT_MODE, spec, IvParameterSpec(state))
+            cbc.doFinal(array, offset, length, cbcOut, 0)
+        } catch (e: Exception) {
+            throw IllegalStateException(e)
+        }
+        System.arraycopy(cbcOut, length - BLOCK, state, 0, BLOCK)
+    }
+
     private companion object {
-        const val TRANSFORM = "AES/ECB/NoPadding"
+        const val ECB = "AES/ECB/NoPadding"
+        const val CBC = "AES/CBC/NoPadding"
         const val BLOCK = 16
 
         fun dbl(input: ByteArray, out: ByteArray) {

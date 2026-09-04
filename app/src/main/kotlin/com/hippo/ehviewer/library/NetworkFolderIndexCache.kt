@@ -21,7 +21,8 @@ import splitties.init.appCtx
  * re-enters folders.
  *
  * `folders[relativeDir]` holds the lazy scanner’s [BrowseEntryRemote] rows, including
- * embedded [BrowseEntryRemote.FolderGallery.imageFileNames]. Zip/cbz-as-dir interiors
+ * embedded [BrowseEntryRemote.FolderGallery.imageFileNames] and local
+ * [BrowseEntryRemote.ArchiveGallery.pageCount]. Zip/cbz-as-dir interiors
  * use the same keys (`dir/file.zip`, `dir/file.zip/Album`). [FolderGalleryIndex] only
  * *reads* these listings (and RAM) — it does not write a separate gallery cache.
  *
@@ -296,6 +297,7 @@ object NetworkFolderIndexCache {
                             put("parentRelativeName", entry.parentRelativeName)
                             if (entry.size > 0L) put("size", entry.size)
                             if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
+                            if (entry.pageCount > 0) put("pageCount", entry.pageCount)
                         }
                         is BrowseEntryRemote.VideoFile -> {
                             put("kind", KIND_VIDEO)
@@ -350,6 +352,7 @@ object NetworkFolderIndexCache {
                         parentRelativeName = item.optString("parentRelativeName"),
                         size = item.optLong("size"),
                         lastModifiedMs = item.optLong("lastModifiedMs"),
+                        pageCount = item.optInt("pageCount"),
                         hidden = hidden,
                         virtual = virtual,
                     )

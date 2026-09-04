@@ -353,6 +353,8 @@ fun BrowseArchiveGalleryRow(
     fileName: String = name,
     sizeBytes: Long = 0L,
     lastModifiedMs: Long = 0L,
+    pageCount: Int = 0,
+    showPages: Boolean = true,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
@@ -362,6 +364,7 @@ fun BrowseArchiveGalleryRow(
                 browseListSupportingLine(
                     typeLabel = browseFileExtensionLabel(fileName),
                     sizeBytes = sizeBytes,
+                    pageCount = if (showPages) pageCount else 0,
                     lastModifiedMs = lastModifiedMs,
                 ),
             )
@@ -733,6 +736,8 @@ fun BrowseArchiveGridItem(
     allowRemoteFetch: Boolean = true,
     /** e.g. PDF long-press → open in external app. */
     onLongClick: (() -> Unit)? = null,
+    pageCount: Int = 0,
+    showPages: Boolean = true,
 ) {
     BrowseGridCell(
         name = name,
@@ -740,20 +745,32 @@ fun BrowseArchiveGridItem(
         modifier = modifier,
         onLongClick = onLongClick ?: onClick,
         thumb = {
-            BrowseCoverThumb(
-                cover = cover,
-                modifier = Modifier.fillMaxSize().clip(ShapeDefaults.Medium),
-                placeholderSize = 40.dp,
-                decodeSizePx = CoverThumb.gridDecodePx(
-                    screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                    columns = GalleryGridDefaults.columnCount(),
-                    margin = GalleryGridDefaults.margin(),
-                    gutter = GalleryGridDefaults.gutter(),
-                ),
-                retryKey = thumbRetryKey,
-                allowRemoteFetch = allowRemoteFetch,
-                placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
-            )
+            Box(Modifier.fillMaxSize()) {
+                BrowseCoverThumb(
+                    cover = cover,
+                    modifier = Modifier.fillMaxSize().clip(ShapeDefaults.Medium),
+                    placeholderSize = 40.dp,
+                    decodeSizePx = CoverThumb.gridDecodePx(
+                        screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                        columns = GalleryGridDefaults.columnCount(),
+                        margin = GalleryGridDefaults.margin(),
+                        gutter = GalleryGridDefaults.gutter(),
+                    ),
+                    retryKey = thumbRetryKey,
+                    allowRemoteFetch = allowRemoteFetch,
+                    placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
+                )
+                if (showPages && pageCount > 0) {
+                    Badge(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .widthIn(min = 32.dp)
+                            .height(24.dp),
+                    ) {
+                        Text(text = "$pageCount")
+                    }
+                }
+            }
         },
     )
 }

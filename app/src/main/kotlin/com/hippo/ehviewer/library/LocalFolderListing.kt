@@ -191,13 +191,31 @@ object LocalFolderListing {
                 BrowseSession.CachedLocalListing(entries = entries, sessionCurrent = sessionCurrent)
             }
             if (cached != null) {
-                val materialized = materializeLocalEntries(effective, cached.entries)
+                val filledRemote = if (cached.sessionCurrent) {
+                    cached.entries
+                } else {
+                    withLocalArchivePageCounts(effective, cached.entries)
+                }
+                if (filledRemote !== cached.entries) {
+                    NetworkFolderIndexCache.saveLocal(
+                        rootId,
+                        configKey,
+                        relativeDir,
+                        filledRemote,
+                    )
+                    BrowseSession.putLocalListing(
+                        pathKey,
+                        filledRemote,
+                        sessionCurrent = cached.sessionCurrent,
+                    )
+                }
+                val materialized = materializeLocalEntries(effective, filledRemote)
                 onCached?.invoke(materialized)
                 val shouldQuickScan =
                     Settings.networkFolderIndexQuickScan.value && !cached.sessionCurrent
                 if (!shouldQuickScan) return@withContext materialized
                 // Shallow stubs must upgrade via full peeks, not slim.
-                if (isShallowIncompleteListing(cached.entries)) {
+                if (isShallowIncompleteListing(filledRemote)) {
                     // Fall through to cold shallow→deep path below (invalidate so we do not
                     // re-hit this branch with the same stub).
                     BrowseSession.invalidateLocalListing(pathKey)
@@ -206,7 +224,7 @@ object LocalFolderListing {
                         val refresh = listDirectorySlim(
                             effective,
                             preferMediaStore,
-                            cached.entries,
+                            filledRemote,
                             rootId,
                             configKey,
                             relativeDir,
@@ -218,7 +236,7 @@ object LocalFolderListing {
                             }
                             return@withContext materialized
                         }
-                        val toKeep = if (refresh.entries != cached.entries ||
+                        val toKeep = if (refresh.entries != filledRemote ||
                             refresh.removedDirectoryNames.isNotEmpty()
                         ) {
                             NetworkFolderIndexCache.saveLocal(
@@ -387,7 +405,10 @@ object LocalFolderListing {
             // Dirs same — still patch surviving file size/mtime; add/drop direct files.
             // Zip-as-dir files are excluded so slim does not re-add ArchiveGallery rows.
             return SlimRefresh(
-                entries = replaceSlimDirectFilesFromLive(cached, liveForFiles, dirName),
+                entries = withLocalArchivePageCounts(
+                    dir,
+                    replaceSlimDirectFilesFromLive(cached, liveForFiles, dirName),
+                ),
                 removedDirectoryNames = emptySet(),
             )
         }
@@ -411,7 +432,7 @@ object LocalFolderListing {
             BrowseSession.invalidateLocalRawChildren(BrowseSession.pathKey(dir / name))
         }
         return SlimRefresh(
-            entries = merged,
+            entries = withLocalArchivePageCounts(dir, merged),
             removedDirectoryNames = zipAdjustedRemoved,
         )
     }
@@ -471,7 +492,10 @@ object LocalFolderListing {
         val dirName = humanizePathName(dir.name).ifEmpty { "Gallery" }
         val classified = classifyChildren(dir, dirName, children, peeks, grandPeeks, zipInteriors)
         // Cache/toggle fallback: leftover zip ArchiveGallery rows (unreadable CD, old cache).
-        return ZipAsDirListing.applyZipAsDirPreferenceLocal(classified, dir)
+        return withLocalArchivePageCounts(
+            dir,
+            ZipAsDirListing.applyZipAsDirPreferenceLocal(classified, dir),
+        )
     }
 
     /**
@@ -746,6 +770,7 @@ fun materializeLocalEntries(
                         path = path,
                         size = entry.size,
                         lastModifiedMs = entry.lastModifiedMs,
+                        pageCount = entry.pageCount,
                         hidden = entry.hidden,
                         virtual = entry.virtual,
                     )

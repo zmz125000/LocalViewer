@@ -42,6 +42,11 @@
     java.util.concurrent.atomic.AtomicBoolean connected;
     com.hierynomus.smbj.transport.tcp.async.AsyncPacketReader packetReader;
     int soTimeout;
+    com.hierynomus.protocol.transport.PacketHandlers handlers;
+}
+
+-keep class com.hierynomus.smbj.connection.Connection {
+    com.hierynomus.smbj.connection.SequenceWindow sequenceWindow;
 }
 
 -keepattributes LineNumberTable
