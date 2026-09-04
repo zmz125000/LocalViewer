@@ -281,6 +281,14 @@ object BrowseSession {
         }
     }
 
+    /** Drop [relativeDir] and every nested zip-as-dir interior (`dir/file.zip`, `dir/file.zip/Album`). */
+    fun invalidateSmbListingsUnder(sourceId: Long, relativeDir: String) {
+        val exact = smbListingKey(sourceId, relativeDir)
+        val nested = "$exact/"
+        smbListings.keys.filter { it == exact || it.startsWith(nested) }.forEach { smbListings.remove(it) }
+        smbRawChildren.keys.filter { it == exact || it.startsWith(nested) }.forEach { smbRawChildren.remove(it) }
+    }
+
     fun invalidateAllSmbListings() {
         smbListings.clear()
         smbRawChildren.clear()
@@ -360,6 +368,13 @@ object BrowseSession {
             webDavListings.remove(webDavListingKey(sourceId, relativeDir))
             invalidateWebDavRawChildren(sourceId, relativeDir)
         }
+    }
+
+    fun invalidateWebDavListingsUnder(sourceId: Long, relativeDir: String) {
+        val exact = webDavListingKey(sourceId, relativeDir)
+        val nested = "$exact/"
+        webDavListings.keys.filter { it == exact || it.startsWith(nested) }.forEach { webDavListings.remove(it) }
+        webDavRawChildren.keys.filter { it == exact || it.startsWith(nested) }.forEach { webDavRawChildren.remove(it) }
     }
 
     /** Drop all WebDAV listing cache (network path change / app background). */

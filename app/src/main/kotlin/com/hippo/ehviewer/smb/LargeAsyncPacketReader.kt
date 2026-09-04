@@ -7,11 +7,13 @@ import com.hierynomus.protocol.transport.PacketFactory
 import com.hierynomus.protocol.transport.PacketReceiver
 import java.io.EOFException
 import java.io.IOException
+import java.net.SocketException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.channels.AsynchronousCloseException
 import java.nio.channels.AsynchronousSocketChannel
+import java.nio.channels.ClosedChannelException
 import java.nio.channels.CompletionHandler
+import java.nio.channels.InterruptedByTimeoutException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -45,36 +47,44 @@ internal class LargeAsyncPacketReader<D : PacketData<*>>(
 
     private fun initiateNextRead(bufferReader: LargePacketBufferReader) {
         if (stopped.get()) return
-        channel.read(
-            bufferReader.buffer,
-            soTimeout.toLong(),
-            TimeUnit.MILLISECONDS,
-            bufferReader,
-            object : CompletionHandler<Int, LargePacketBufferReader> {
-                override fun completed(bytesRead: Int, reader: LargePacketBufferReader) {
-                    if (bytesRead < 0) {
-                        if (!stopped.get()) {
-                            handleAsyncFailure(EOFException("Connection closed by server"))
-                        }
-                        return
+        val completion = object : CompletionHandler<Int, LargePacketBufferReader> {
+            override fun completed(bytesRead: Int, reader: LargePacketBufferReader) {
+                if (bytesRead < 0) {
+                    if (!stopped.get()) {
+                        handleAsyncFailure(EOFException("Connection closed by server"))
                     }
-                    try {
-                        var packetBytes = reader.readNext()
-                        while (packetBytes != null) {
-                            readAndHandlePacket(packetBytes)
-                            packetBytes = reader.readNext()
-                        }
-                        initiateNextRead(reader)
-                    } catch (e: RuntimeException) {
-                        handleAsyncFailure(e)
-                    }
+                    return
                 }
+                try {
+                    var packetBytes = reader.readNext()
+                    while (packetBytes != null) {
+                        readAndHandlePacket(packetBytes)
+                        packetBytes = reader.readNext()
+                    }
+                    initiateNextRead(reader)
+                } catch (e: RuntimeException) {
+                    handleAsyncFailure(e)
+                }
+            }
 
-                override fun failed(exc: Throwable, attachment: LargePacketBufferReader) {
-                    handleAsyncFailure(exc)
-                }
-            },
-        )
+            override fun failed(exc: Throwable, attachment: LargePacketBufferReader) {
+                handleAsyncFailure(exc)
+            }
+        }
+        // Idle header wait has no SO timeout: keep-alive is paused on ON_STOP, and a
+        // 120s read timeout would kill pooled sockets in the background. Mid-packet
+        // stalls still use soTimeout.
+        if (!bufferReader.awaitingHeader && soTimeout > 0) {
+            channel.read(
+                bufferReader.buffer,
+                soTimeout.toLong(),
+                TimeUnit.MILLISECONDS,
+                bufferReader,
+                completion,
+            )
+        } else {
+            channel.read(bufferReader.buffer, bufferReader, completion)
+        }
     }
 
     private fun readAndHandlePacket(packetBytes: ByteArray) {
@@ -88,13 +98,42 @@ internal class LargeAsyncPacketReader<D : PacketData<*>>(
     }
 
     private fun handleAsyncFailure(exc: Throwable) {
-        if (exc is AsynchronousCloseException) {
-            logcat { "channel to $remoteHost closed" }
+        if (!stopped.compareAndSet(false, true)) return
+        if (isExpectedAsyncDisconnect(exc)) {
+            logcat { "channel to $remoteHost closed (${exc.javaClass.simpleName}: ${exc.message})" }
         } else {
             logcat("LargeAsyncPacketReader", exc)
         }
         runCatching { channel.close() }
     }
+}
+
+/**
+ * Peer/OS/app-lifecycle socket death — not a reader bug. Android backgrounds often
+ * surface linger-0 close as `Software caused connection abort` instead of
+ * [ClosedChannelException].
+ */
+internal fun isExpectedAsyncDisconnect(exc: Throwable): Boolean {
+    var cur: Throwable? = exc
+    while (cur != null) {
+        when (cur) {
+            is ClosedChannelException,
+            is InterruptedByTimeoutException,
+            is EOFException,
+            is SocketException,
+            -> return true
+        }
+        val msg = cur.message.orEmpty()
+        if (msg.contains("Software caused connection abort", ignoreCase = true) ||
+            msg.contains("Connection reset", ignoreCase = true) ||
+            msg.contains("Broken pipe", ignoreCase = true) ||
+            msg.contains("Connection closed", ignoreCase = true)
+        ) {
+            return true
+        }
+        cur = cur.cause
+    }
+    return false
 }
 
 /**
@@ -112,11 +151,11 @@ internal class LargePacketBufferReader(
     fun readNext(): ByteArray? {
         buffer.flip()
         var bytes: ByteArray? = null
-        if (isAwaitingHeader() && isHeaderAvailable()) {
+        if (awaitingHeader && isHeaderAvailable()) {
             currentPacketLength = buffer.int and 0xffffff
             currentPacketBytes = ByteArray(currentPacketLength)
             bytes = readPacketBody()
-        } else if (!isAwaitingHeader()) {
+        } else if (!awaitingHeader) {
             bytes = readPacketBody()
         }
         buffer.compact()
@@ -128,9 +167,10 @@ internal class LargePacketBufferReader(
         return bytes
     }
 
-    private fun isHeaderAvailable(): Boolean = buffer.remaining() >= HEADER_SIZE
+    val awaitingHeader: Boolean
+        get() = currentPacketLength == NO_PACKET_LENGTH
 
-    private fun isAwaitingHeader(): Boolean = currentPacketLength == NO_PACKET_LENGTH
+    private fun isHeaderAvailable(): Boolean = buffer.remaining() >= HEADER_SIZE
 
     private fun readPacketBody(): ByteArray? {
         val dest = currentPacketBytes ?: return null

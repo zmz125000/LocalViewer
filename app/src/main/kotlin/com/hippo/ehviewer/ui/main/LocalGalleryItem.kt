@@ -66,6 +66,7 @@ import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.SMB_BROWSE_TOKEN
 import com.hippo.ehviewer.library.WEBDAV_BROWSE_TOKEN
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isVideoFileName
 import okio.Path.Companion.toPath
 
@@ -128,6 +129,10 @@ internal fun CoverImage(
     LaunchedEffect(coverPath, archiveContentPath) {
         val stored = coverPath?.takeIf { it.isNotBlank() }
         if (stored != null) {
+            if (ZipPaths.isZipPath(stored)) {
+                resolvedCover = stored
+                return@LaunchedEffect
+            }
             val resolved = withIOContext { HistoryThumbKey.resolveReadablePath(stored) }
             if (resolved != null) {
                 resolvedCover = resolved
@@ -137,6 +142,7 @@ internal fun CoverImage(
             resolvedCover = null
         }
         val arch = archiveContentPath ?: return@LaunchedEffect
+        if (ZipPaths.isZipPath(arch)) return@LaunchedEffect
         when (val result = withIOContext { ArchiveCoverCache.ensureCover(arch.toPath()) }) {
             is CoverEnsureResult.Hit -> {
                 val pathStr = result.path.toString()

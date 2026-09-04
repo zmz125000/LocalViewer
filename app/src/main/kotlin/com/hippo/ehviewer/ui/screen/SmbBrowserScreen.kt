@@ -361,7 +361,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
      */
     fun applyCachedListing(dir: String): Boolean {
         val cached = BrowseSession.getSmbCachedListing(sourceId, dir) ?: return false
-        entries = cached.entries
+        entries = ZipAsDirListing.presentCachedListing(cached.entries)
         listingSessionCurrent = cached.sessionCurrent
         listedDir = dir
         loading = false
@@ -384,8 +384,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             SmbGateway.sourceConfigKey(src),
             dir,
         ) ?: return false
-        BrowseSession.putSmbListing(sourceId, dir, disk, sessionCurrent = false)
-        entries = disk
+        val presented = ZipAsDirListing.presentCachedListing(disk)
+        BrowseSession.putSmbListing(sourceId, dir, presented, sessionCurrent = false)
+        entries = presented
         listingSessionCurrent = false
         listedDir = dir
         loading = false
@@ -402,6 +403,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     LaunchedEffect(browseZipAsDir) {
         if (browseZipAsDir != prevZipAsDir) {
             prevZipAsDir = browseZipAsDir
+            if (!browseZipAsDir) {
+                ZipAsDirListing.parentSegmentsOfZipBrowsePath(relativeDir)?.let { parent ->
+                    updateSegments(parent)
+                }
+            }
             requestForceReload()
         }
     }

@@ -54,7 +54,7 @@ enum class LibrarySortMode(val prefValue: Int) {
  *   - Name + Last open: HISTORY pin, then title
  *   - Date + Last open: blend max(last-open, scan mtime), then title
  * - Mid: List / Grid layout
- * - Bottom: Photo grid, page count, reading progress, startup scan
+ * - Bottom: Photo grid, zip as folder, back to dir, page count, reading progress, startup scan
  *
  * Tap icon → menu. Long-press → toggle list ↔ grid.
  */
@@ -67,6 +67,8 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
     var libraryRecentOpen by Settings.libraryRecentOpen.asMutableState()
     val useGrid = listMode == 1
     var photoGridMode by Settings.photoGridMode.asMutableState()
+    var browseZipAsDir by Settings.browseZipAsDir.asMutableState()
+    var alwaysExitToDir by Settings.alwaysExitToDir.asMutableState()
     var showGalleryPages by Settings.showGalleryPages.asMutableState()
     var showReadingProgress by Settings.showReadingProgress.asMutableState()
     var libraryStartupScan by Settings.libraryStartupScan.asMutableState()
@@ -138,6 +140,21 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 label = stringResource(R.string.browse_menu_photo_grid),
                 checked = photoGridMode,
                 onClick = { photoGridMode = !photoGridMode },
+            )
+            LibraryMenuToggleItem(
+                label = stringResource(R.string.browse_menu_zip_as_dir),
+                checked = browseZipAsDir,
+                onClick = { browseZipAsDir = !browseZipAsDir },
+            )
+            LibraryMenuToggleItem(
+                label = stringResource(R.string.settings_general_back_to_upper_dir),
+                checked = alwaysExitToDir,
+                onClick = {
+                    alwaysExitToDir = !alwaysExitToDir
+                    if (alwaysExitToDir) {
+                        Settings.historyDirBackToUpper.value = true
+                    }
+                },
             )
             LibraryMenuToggleItem(
                 label = stringResource(R.string.browse_menu_page_count),
