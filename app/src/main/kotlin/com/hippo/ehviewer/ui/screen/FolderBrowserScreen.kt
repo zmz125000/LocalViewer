@@ -1026,8 +1026,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     fun openExternalFile(path: okio.Path) {
         // Always launch with the real path basename — promoted VideoFile rows use a
         // virtual `@dir` display name without extension (wrong MIME / player title).
-        val actualName = path.name
         val pathStr = path.toString()
+        val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
         launchIO {
             // Parent dir + file/video row (non-dir open).
             recordCurrentBrowseFolderHistory()
@@ -1051,8 +1051,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     /** In-app Media3 player. */
     fun playVideo(path: okio.Path) {
-        val actualName = path.name
         val pathStr = path.toString()
+        val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
         launchIO {
             recordCurrentBrowseFolderHistory()
             LocalHistory.recordLocalFile(pathStr, title = actualName)
@@ -1078,19 +1078,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     /** Primary action: Media3 when [Settings.useMedia3Player] is on, else external. */
     fun openVideoPrimary(path: okio.Path) {
-        if (ZipPaths.isZipPath(path.toString()) || stack.lastOrNull()?.isZipBrowse == true) {
-            launchIO { snackbar(context.getString(R.string.zip_video_stub_unsupported)) }
-            return
-        }
         if (Settings.useMedia3Player.value) playVideo(path) else openExternalFile(path)
     }
 
     /** Long-press: opposite of [openVideoPrimary]. */
     fun openVideoSecondary(path: okio.Path) {
-        if (ZipPaths.isZipPath(path.toString()) || stack.lastOrNull()?.isZipBrowse == true) {
-            launchIO { snackbar(context.getString(R.string.zip_video_stub_unsupported)) }
-            return
-        }
         if (Settings.useMedia3Player.value) openExternalFile(path) else playVideo(path)
     }
 

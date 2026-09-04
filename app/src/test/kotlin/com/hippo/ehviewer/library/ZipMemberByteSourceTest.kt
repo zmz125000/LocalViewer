@@ -34,7 +34,12 @@ class ZipMemberByteSourceTest {
         val payload = ByteArray((ZipMemberByteSource.DEFLATE_PREFIX_CAP + 1024L).toInt())
         val zip = writeZip(stored = false, "clip.mp4" to payload)
         FileArchiveByteSource(zip).use { container ->
-            ZipMemberByteSource.open(container, "clip.mp4", ownsZip = false)!!.use { src ->
+            ZipMemberByteSource.open(
+                container,
+                "clip.mp4",
+                ownsZip = false,
+                prefixCap = ZipMemberByteSource.DEFLATE_PREFIX_CAP,
+            )!!.use { src ->
                 assertFalse(src.isRandomAccess)
                 assertEquals(payload.size.toLong(), src.size)
                 val head = ByteArray(4096)

@@ -35,6 +35,12 @@ object ZipPaths {
 
     fun isZipPath(path: String): Boolean = path.startsWith(SCHEME)
 
+    /** Basename of the zip member, or null if [path] is not a [SCHEME] URI. */
+    fun memberLeafName(path: String): String? {
+        val member = parse(path)?.second ?: return null
+        return member.substringAfterLast('/').substringAfterLast('\\').takeIf { it.isNotEmpty() }
+    }
+
     /**
      * Library/history [LocalGalleryEntity.contentPath] for a zip-as-dir gallery.
      * Member `.` means images at the zip root.

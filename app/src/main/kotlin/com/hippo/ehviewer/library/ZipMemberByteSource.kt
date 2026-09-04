@@ -7,14 +7,16 @@ import java.util.zip.Inflater
 /**
  * Range-read one ZIP member without writing [ZipMemberCover] NAND.
  *
- * Store: real random access into the container. Deflate: prefix inflate only
- * (video thumbs need head bytes, not the whole clip).
+ * Store: real random access into the container. Deflate: inflate from the start
+ * (seek-back resets). [prefixCap] limits inflate so video thumbs never decode a
+ * whole clip; playback uses [Long.MAX_VALUE].
  */
 class ZipMemberByteSource private constructor(
     private val zip: ArchiveByteSource,
     private val payloadOffset: Long,
     private val entry: ZipCentralDirectory.Entry,
     private val ownsZip: Boolean,
+    private val prefixCap: Long,
 ) : ArchiveByteSource {
     private val inflater: Inflater? =
         if (entry.method == ZipCentralDirectory.METHOD_DEFLATE) Inflater(true) else null
@@ -42,8 +44,8 @@ class ZipMemberByteSource private constructor(
 
     private fun readDeflatePrefix(offset: Long, buf: ByteArray, off: Int, want: Int): Int {
         val inf = inflater ?: return -1
-        if (offset >= DEFLATE_PREFIX_CAP) return 0
-        val cappedWant = minOf(want.toLong(), DEFLATE_PREFIX_CAP - offset).toInt()
+        if (offset >= prefixCap) return 0
+        val cappedWant = minOf(want.toLong(), prefixCap - offset).toInt()
         if (cappedWant <= 0) return 0
         if (offset < inflatedTo) {
             inf.reset()
@@ -77,9 +79,9 @@ class ZipMemberByteSource private constructor(
 
     private fun skipDeflate(bytes: Long) {
         val inf = inflater ?: return
-        val skip = ByteArray(minOf(64 * 1024, bytes.coerceAtMost(DEFLATE_PREFIX_CAP).toInt()).coerceAtLeast(1))
+        val skip = ByteArray(64 * 1024)
         var left = bytes
-        while (left > 0L && inflatedTo < DEFLATE_PREFIX_CAP) {
+        while (left > 0L && inflatedTo < prefixCap) {
             val n = inf.inflate(skip, 0, minOf(skip.size.toLong(), left).toInt())
             if (n > 0) {
                 inflatedTo += n
@@ -111,6 +113,7 @@ class ZipMemberByteSource private constructor(
             zip: ArchiveByteSource,
             memberRel: String,
             ownsZip: Boolean = true,
+            prefixCap: Long = Long.MAX_VALUE,
         ): ZipMemberByteSource? {
             val cd = ZipCentralDirectory.open(zip) ?: return null
             val entry = cd.find(memberRel) ?: return null
@@ -121,7 +124,7 @@ class ZipMemberByteSource private constructor(
                 return null
             }
             val payload = payloadOffset(zip, entry) ?: return null
-            return ZipMemberByteSource(zip, payload, entry, ownsZip)
+            return ZipMemberByteSource(zip, payload, entry, ownsZip, prefixCap)
         }
 
         fun uncompressedSize(zip: ArchiveByteSource, memberRel: String): Long? = ZipCentralDirectory.open(zip)?.find(memberRel)?.uncompressedSize?.takeIf { it >= 0L }

@@ -20,8 +20,12 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.SidecarSubtitles
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
+import com.hippo.ehviewer.library.ZipMemberByteSource
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isBrowseVideoFileName
 import com.hippo.ehviewer.library.mimeTypeForFileName
+import com.hippo.ehviewer.library.openLocalArchiveByteSource
+import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.provider.ExternalHttpStreamServer
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
@@ -234,12 +238,13 @@ object OpenFileExternally {
             is InternalVideoSource.WebDav ->
                 registerWebDavStreamdoc(source.sourceId, source.remotePath, displayName, mimeType)
         }
+        val zipLocal = source is InternalVideoSource.Local && ZipPaths.isZipPath(source.path)
         return PreparedInternalVideo(
             token = token,
             uri = StreamDocumentProvider.uriFor(token, displayName),
             displayName = displayName,
             mimeType = mimeType,
-            network = source !is InternalVideoSource.Local,
+            network = zipLocal || source !is InternalVideoSource.Local,
         )
     }
 
@@ -284,6 +289,10 @@ object OpenFileExternally {
     }
 
     private fun localDirKey(videoPathStr: String): String {
+        ZipPaths.parse(videoPathStr)?.let { (zip, member) ->
+            val parent = member.substringBeforeLast('/', missingDelimiterValue = "")
+            return "localzip:$zip!$parent"
+        }
         val parent = if (videoPathStr.startsWith('/')) {
             File(videoPathStr).parent ?: videoPathStr
         } else {
@@ -490,6 +499,30 @@ object OpenFileExternally {
             }
         } else {
             null
+        }
+        ZipPaths.parse(pathStr)?.let { (zipAbs, member) ->
+            val zipPath = zipAbs.toPath()
+            val size = openLocalArchiveByteSource(zipPath)?.use { zip ->
+                ZipMemberByteSource.uncompressedSize(zip, member)
+            }?.takeIf { it > 0L } ?: error("empty zip member")
+            return ExternalHttpStreamServer.FileEntry(
+                displayName = displayName,
+                mimeType = mimeType,
+                sizeBytes = size,
+                cacheBody = video,
+                onPlaybackStart = onPlay,
+                open = {
+                    val zip = openLocalArchiveByteSource(zipPath)
+                        ?: error("ZIP missing: $zipAbs")
+                    ExternalHttpStreamServer.ArchiveBody(
+                        ZipMemberByteSource.open(zip, member, ownsZip = true)
+                            ?: run {
+                                runCatching { zip.close() }
+                                error("Cannot stream ZIP video member $member")
+                            },
+                    )
+                },
+            )
         }
         val file = File(pathStr)
         if (pathStr.startsWith('/') && file.isFile) {
@@ -923,6 +956,28 @@ object OpenFileExternally {
         displayName: String,
         mimeType: String,
     ): String {
+        ZipPaths.parse(pathStr)?.let { (zipAbs, member) ->
+            return withIOContext {
+                val zipPath = zipAbs.toPath()
+                val sizeBytes = openLocalArchiveByteSource(zipPath)?.use { zip ->
+                    ZipMemberByteSource.uncompressedSize(zip, member)
+                }?.takeIf { it > 0L } ?: error("empty zip member")
+                StreamDocumentRegistry.register(
+                    displayName = displayName,
+                    mimeType = mimeType,
+                    sizeBytes = sizeBytes,
+                    openSource = {
+                        val zip = openLocalArchiveByteSource(zipPath)
+                            ?: error("ZIP missing: $zipAbs")
+                        ZipMemberByteSource.open(zip, member, ownsZip = true)
+                            ?: run {
+                                runCatching { zip.close() }
+                                error("Cannot stream ZIP video member $member")
+                            }
+                    },
+                )
+            }
+        }
         val openPfd: () -> ParcelFileDescriptor = {
             val file = File(pathStr)
             if (pathStr.startsWith('/') && file.isFile) {
@@ -1025,6 +1080,19 @@ object OpenFileExternally {
     }
 
     private fun findLocalSiblingNames(videoPathStr: String): List<String> {
+        ZipPaths.parse(videoPathStr)?.let { (zipAbs, member) ->
+            val prefix = member.substringBeforeLast('/', missingDelimiterValue = "")
+            return withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
+                cd.entries.mapNotNull { entry ->
+                    if (entry.isDirectory) return@mapNotNull null
+                    val name = entry.name.replace('\\', '/').trimStart('/')
+                    val parent = name.substringBeforeLast('/', missingDelimiterValue = "")
+                    if (parent != prefix) return@mapNotNull null
+                    val leaf = name.substringAfterLast('/')
+                    leaf.takeIf { isHttpExposedMediaName(it) }
+                }
+            }.orEmpty()
+        }
         if (videoPathStr.startsWith('/')) {
             val parent = File(videoPathStr).parentFile ?: return emptyList()
             return parent.list()?.toList().orEmpty()
@@ -1042,6 +1110,11 @@ object OpenFileExternally {
     }
 
     private fun siblingPath(videoPathStr: String, siblingName: String): String? {
+        ZipPaths.parse(videoPathStr)?.let { (zipAbs, member) ->
+            val parent = member.substringBeforeLast('/', missingDelimiterValue = "")
+            val rel = if (parent.isEmpty()) siblingName else "$parent/$siblingName"
+            return ZipPaths.encode(zipAbs, rel)
+        }
         if (videoPathStr.startsWith('/')) {
             val parent = File(videoPathStr).parentFile ?: return null
             return File(parent, siblingName).path
