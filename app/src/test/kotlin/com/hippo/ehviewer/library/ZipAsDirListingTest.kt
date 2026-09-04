@@ -299,6 +299,13 @@ class ZipAsDirListingTest {
     }
 
     @Test
+    fun parentSegmentsOfZipBrowsePath() {
+        assertEquals(emptyList<String>(), ZipAsDirListing.parentSegmentsOfZipBrowsePath("pack.zip"))
+        assertEquals(listOf("share"), ZipAsDirListing.parentSegmentsOfZipBrowsePath("share/pack.zip/Album"))
+        assertEquals(null, ZipAsDirListing.parentSegmentsOfZipBrowsePath("share/Album"))
+    }
+
+    @Test
     fun parentRelativeOfZipPath() {
         assertEquals("", ZipAsDirListing.parentRelative("pack.zip"))
         assertEquals("share", ZipAsDirListing.parentRelative("share/pack.zip"))

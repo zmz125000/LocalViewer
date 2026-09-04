@@ -325,7 +325,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
      */
     fun applyCachedListing(dir: String): Boolean {
         val cached = BrowseSession.getWebDavCachedListing(sourceId, dir) ?: return false
-        entries = cached.entries
+        entries = ZipAsDirListing.presentCachedListing(cached.entries)
         listingSessionCurrent = cached.sessionCurrent
         listedDir = dir
         loading = false
@@ -345,8 +345,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             WebDavGateway.sourceConfigKey(src),
             dir,
         ) ?: return false
-        BrowseSession.putWebDavListing(sourceId, dir, disk, sessionCurrent = false)
-        entries = disk
+        val presented = ZipAsDirListing.presentCachedListing(disk)
+        BrowseSession.putWebDavListing(sourceId, dir, presented, sessionCurrent = false)
+        entries = presented
         listingSessionCurrent = false
         listedDir = dir
         loading = false
@@ -363,6 +364,11 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     LaunchedEffect(browseZipAsDir) {
         if (browseZipAsDir != prevZipAsDir) {
             prevZipAsDir = browseZipAsDir
+            if (!browseZipAsDir) {
+                ZipAsDirListing.parentSegmentsOfZipBrowsePath(relativeDir)?.let { parent ->
+                    updateSegments(parent)
+                }
+            }
             requestForceReload()
         }
     }

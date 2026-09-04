@@ -1732,13 +1732,20 @@ object SmbGateway {
                 BrowseSession.CachedRemoteListing(entries = entries, sessionCurrent = sessionCurrent)
             }
             if (cached != null) {
-                onCached?.invoke(cached.entries)
+                val presented = presentListingForZipAsDirToggle(
+                    source,
+                    configKey,
+                    relativeDir,
+                    cached.entries,
+                    cached.sessionCurrent,
+                )
+                onCached?.invoke(presented)
                 // Quick scan only for old (non-current) listings — every directory independently,
                 // including subfolders hydrated from disk later in the same process.
                 val shouldQuickScan = Settings.networkFolderIndexQuickScan.value &&
                     !cached.sessionCurrent &&
                     isSourceConnected(source)
-                if (!shouldQuickScan) return cached.entries
+                if (!shouldQuickScan) return presented
                 // In-progress shallow stubs must not use slim (would skip peeks forever).
                 if (isShallowIncompleteListing(cached.entries)) {
                     ensureHostNotCoolingDown(endpointHost(source), source.port)
@@ -1767,7 +1774,7 @@ object SmbGateway {
                                     "SMB slim ignored untrusted listing for source=${source.id} " +
                                         "dir=$relativeDir; keeping cache"
                                 }
-                                return@awaitListJob cached.entries
+                                return@awaitListJob presented
                             }
                             // Successful slim marks this exact directory current (even if unchanged).
                             val toKeep = if (refresh.entries != cached.entries ||
@@ -1783,13 +1790,14 @@ object SmbGateway {
                             } else {
                                 refresh.entries
                             }
-                            BrowseSession.putSmbListing(
-                                source.id,
+                            presentListingForZipAsDirToggle(
+                                source,
+                                configKey,
                                 relativeDir,
                                 toKeep,
                                 sessionCurrent = true,
+                                previousForZipNames = cached.entries,
                             )
-                            toKeep
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
                         } catch (e: Throwable) {
@@ -1798,7 +1806,7 @@ object SmbGateway {
                                 "SMB slim refresh failed for source=${source.id} dir=$relativeDir " +
                                     "(${e.message}); keeping cache"
                             }
-                            cached.entries
+                            presented
                         }
                     }
                 } catch (e: IOException) {
@@ -1806,7 +1814,7 @@ object SmbGateway {
                         "SMB slim refresh cancelled for source=${source.id} dir=$relativeDir " +
                             "(${e.message}); keeping cache"
                     }
-                    cached.entries
+                    presented
                 }
             }
         } else {
@@ -1907,17 +1915,13 @@ object SmbGateway {
                     zipInteriors,
                 )
                 val fromRam = preferCompleteFolderGalleries(shallowMerged, deep)
-                val stored = NetworkFolderIndexCache.saveSmb(
-                    source.id,
+                val stored = presentListingForZipAsDirToggle(
+                    source,
                     configKey,
                     relativeDir,
                     fromRam,
-                )
-                BrowseSession.putSmbListing(
-                    source.id,
-                    relativeDir,
-                    stored,
                     sessionCurrent = true,
+                    previousForZipNames = shallowMerged,
                 )
                 ZipAsDirListing.persistFolderIndexes(
                     parentRelativeDir = relativeDir,
@@ -2310,6 +2314,41 @@ object SmbGateway {
         )
     }
 
+    /**
+     * When zip-as-dir is off, replace cached zip Directory/FolderGallery rows with
+     * ArchiveGallery and drop interior index keys (`dir/file.zip`, `dir/file.zip/Album`).
+     */
+    private suspend fun presentListingForZipAsDirToggle(
+        source: SmbSourceEntity,
+        configKey: String,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+        sessionCurrent: Boolean,
+        previousForZipNames: List<BrowseEntryRemote>? = null,
+    ): List<BrowseEntryRemote> {
+        if (Settings.browseZipAsDir.value) return entries
+        var zips = ZipAsDirListing.cachedDirectZipAsDirNames(previousForZipNames ?: entries)
+        if (zips.isEmpty()) {
+            zips = ZipAsDirListing.cachedDirectZipAsDirNames(
+                NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir).orEmpty(),
+            )
+        }
+        val presented = ZipAsDirListing.demoteZipFoldersToArchives(entries)
+        if (zips.isEmpty() && presented == entries) return entries
+        val stored = NetworkFolderIndexCache.saveSmb(
+            source.id,
+            configKey,
+            relativeDir,
+            presented,
+            zips,
+        )
+        BrowseSession.putSmbListing(source.id, relativeDir, stored, sessionCurrent = sessionCurrent)
+        for (name in zips) {
+            BrowseSession.invalidateSmbListingsUnder(source.id, joinRelative(relativeDir, name))
+        }
+        return stored
+    }
+
     private suspend fun persistZipAsDirTreesFromListing(
         source: SmbSourceEntity,
         password: String,
@@ -2383,6 +2422,8 @@ object SmbGateway {
         relativeDir: String,
     ): List<String> = withIOContext {
         if (isServerRootSource(source) && relativeDir.isBlank()) return@withIOContext emptyList()
+        // Virtual zip-as-dir paths are never real SMB directories.
+        if (ZipAsDirListing.splitZipBrowsePath(relativeDir) != null) return@withIOContext emptyList()
         val loc = resolveLocation(source, relativeDir)
         withShare(source, password, ShareOp.List, loc.share) { share ->
             listChildren(share, loc.pathInShare)

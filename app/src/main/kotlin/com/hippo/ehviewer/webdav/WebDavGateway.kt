@@ -111,11 +111,18 @@ object WebDavGateway {
                 BrowseSession.CachedRemoteListing(entries = entries, sessionCurrent = sessionCurrent)
             }
             if (cached != null) {
-                onCached?.invoke(cached.entries)
+                val presented = presentListingForZipAsDirToggle(
+                    source,
+                    configKey,
+                    relativeDir,
+                    cached.entries,
+                    cached.sessionCurrent,
+                )
+                onCached?.invoke(presented)
                 val shouldQuickScan =
                     com.hippo.ehviewer.Settings.networkFolderIndexQuickScan.value &&
                         !cached.sessionCurrent
-                if (!shouldQuickScan) return cached.entries
+                if (!shouldQuickScan) return presented
                 if (isShallowIncompleteListing(cached.entries)) {
                     return listDirectoryShallowThenDeep(
                         source,
@@ -134,7 +141,7 @@ object WebDavGateway {
                             "WebDAV slim ignored untrusted listing for source=${source.id} " +
                                 "dir=$relativeDir; keeping cache"
                         }
-                        return cached.entries
+                        return presented
                     }
                     val toKeep = if (refresh.entries != cached.entries ||
                         refresh.removedDirectoryNames.isNotEmpty()
@@ -149,18 +156,19 @@ object WebDavGateway {
                     } else {
                         refresh.entries
                     }
-                    BrowseSession.putWebDavListing(
-                        source.id,
+                    presentListingForZipAsDirToggle(
+                        source,
+                        configKey,
                         relativeDir,
                         toKeep,
                         sessionCurrent = true,
+                        previousForZipNames = cached.entries,
                     )
-                    toKeep
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (_: Throwable) {
                     // Leave non-current so a later visit can retry quick scan.
-                    cached.entries
+                    presented
                 }
             }
         } else {
@@ -231,17 +239,13 @@ object WebDavGateway {
                     )
                 }
                 val fromRam = preferCompleteFolderGalleries(shallowMerged, deep)
-                val stored = NetworkFolderIndexCache.saveWebDav(
-                    source.id,
+                val stored = presentListingForZipAsDirToggle(
+                    source,
                     configKey,
                     relativeDir,
                     fromRam,
-                )
-                BrowseSession.putWebDavListing(
-                    source.id,
-                    relativeDir,
-                    stored,
                     sessionCurrent = true,
+                    previousForZipNames = shallowMerged,
                 )
                 ZipAsDirListing.persistFolderIndexes(
                     parentRelativeDir = relativeDir,
@@ -304,6 +308,7 @@ object WebDavGateway {
         password: String,
         relativeDir: String,
     ): List<String> = withIOContext {
+        if (ZipAsDirListing.splitZipBrowsePath(relativeDir) != null) return@withIOContext emptyList()
         WebDavClient.listChildren(source, password, relativeDir)
             .asSequence()
             .filterNot { it.isDirectory || it.name.startsWith('.') || isProtectedSystemName(it.name) }
@@ -546,6 +551,37 @@ object WebDavGateway {
                 BrowseSession.putWebDavListing(source.id, dir, entries, sessionCurrent = true)
             },
         )
+    }
+
+    private suspend fun presentListingForZipAsDirToggle(
+        source: WebDavSourceEntity,
+        configKey: String,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+        sessionCurrent: Boolean,
+        previousForZipNames: List<BrowseEntryRemote>? = null,
+    ): List<BrowseEntryRemote> {
+        if (Settings.browseZipAsDir.value) return entries
+        var zips = ZipAsDirListing.cachedDirectZipAsDirNames(previousForZipNames ?: entries)
+        if (zips.isEmpty()) {
+            zips = ZipAsDirListing.cachedDirectZipAsDirNames(
+                NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir).orEmpty(),
+            )
+        }
+        val presented = ZipAsDirListing.demoteZipFoldersToArchives(entries)
+        if (zips.isEmpty() && presented == entries) return entries
+        val stored = NetworkFolderIndexCache.saveWebDav(
+            source.id,
+            configKey,
+            relativeDir,
+            presented,
+            zips,
+        )
+        BrowseSession.putWebDavListing(source.id, relativeDir, stored, sessionCurrent = sessionCurrent)
+        for (name in zips) {
+            BrowseSession.invalidateWebDavListingsUnder(source.id, joinRelative(relativeDir, name))
+        }
+        return stored
     }
 
     private suspend fun persistZipAsDirTreesFromListing(

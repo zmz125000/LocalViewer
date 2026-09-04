@@ -120,6 +120,37 @@ class SlimIndexWipeTest {
     }
 
     @Test
+    fun zipAsDirOffDoesNotKeepZipFakeDirectories() {
+        val previous = listOf(
+            BrowseEntryRemote.Directory(
+                name = "pack.zip",
+                relativeName = "pack.zip",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.Navigable,
+            ),
+            BrowseEntryRemote.FolderGallery(
+                name = "pack.zip",
+                relativeName = "pack.zip",
+                pageCount = 2,
+                coverFileName = "01.jpg",
+                imageFileNames = listOf("01.jpg", "02.jpg"),
+            ),
+        )
+        val next = listOf(
+            BrowseEntryRemote.ArchiveGallery(
+                name = "pack.zip",
+                fileName = "pack.zip",
+                parentRelativeName = "",
+            ),
+        )
+        assertTrue(shouldKeepPreviousFolderIndex(previous, next, zipAsDir = true))
+        assertFalse(shouldKeepPreviousFolderIndex(previous, next, zipAsDir = false))
+        assertTrue(indexKeepDirectoryNames(previous, zipAsDir = true).contains("pack.zip"))
+        assertTrue(indexKeepDirectoryNames(previous, zipAsDir = false).isEmpty())
+    }
+
+    @Test
     fun selectCached_prefersCompleteDiskOverShallowRam() {
         val shallow = listOf(
             BrowseEntryRemote.Directory(

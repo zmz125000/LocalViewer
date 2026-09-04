@@ -158,10 +158,7 @@ object HistoryThumbKey {
                 )?.absolutePath
             }
             else -> {
-                ZipPaths.parse(key)?.let { (zip, member) ->
-                    val dest = ZipMemberCover.destFile(zip, member)
-                    return dest.takeIf { it.isFile && it.length() > 0L }?.absolutePath
-                }
+                ZipPaths.parse(key)?.let { return key }
                 // Local path / content URI / archive_thumb absolute path.
                 return if (ArchiveCoverCache.isCoverPathReadable(key)) key else null
             }

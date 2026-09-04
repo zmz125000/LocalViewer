@@ -63,6 +63,16 @@ object ZipAsDirListing {
         return stored
     }
 
+    /**
+     * Path segments of the folder that contains the zip file, or null when [relativeDir]
+     * is not a zip-as-dir virtual path. Empty list = share/root.
+     */
+    fun parentSegmentsOfZipBrowsePath(relativeDir: String): List<String>? {
+        val (zipRel, _) = splitZipBrowsePath(relativeDir) ?: return null
+        val parent = parentRelative(zipRel)
+        return if (parent.isEmpty()) emptyList() else parent.split('/').filter { it.isNotEmpty() }
+    }
+
     /** Parent of a zip-relative path (`share/pack.zip` → `share`, `pack.zip` → `""`). */
     fun parentRelative(zipRel: String): String {
         val n = zipRel.replace('\\', '/').trim('/')
@@ -521,6 +531,17 @@ object ZipAsDirListing {
         .map { it.name }
         .sortedWith { a, b -> naturalCompare(a, b) }
         .toList()
+
+    /**
+     * Shape a cached listing for the current zip-as-dir toggle without opening zips.
+     * Off: Directory / FolderGallery zip rows → ArchiveGallery.
+     */
+    fun presentCachedListing(entries: List<BrowseEntryRemote>): List<BrowseEntryRemote> =
+        if (Settings.browseZipAsDir.value) {
+            ensureZipAsDirDirectoryRows(entries)
+        } else {
+            demoteZipFoldersToArchives(entries)
+        }
 
     /**
      * Apply [Settings.browseZipAsDir] to a classified listing (also when loading cache).

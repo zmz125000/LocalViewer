@@ -375,7 +375,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     // Zip-as-dir toggle: re-materialize so ArchiveGallery ↔ Folder/Directory updates without
     // waiting for a manual pull-to-refresh (cache still holds the other shape).
     LaunchedEffect(browseZipAsDir) {
-        if (stack.isNotEmpty()) reload(force = false)
+        if (stack.isEmpty()) return@LaunchedEffect
+        if (!browseZipAsDir && stack.last().isZipBrowse) {
+            updateStack(stack.dropLastWhile { it.isZipBrowse })
+            return@LaunchedEffect
+        }
+        reload(force = !browseZipAsDir)
     }
 
     // Turning Hidden files on: mark listing non-current so slim quick-scan deep-scans

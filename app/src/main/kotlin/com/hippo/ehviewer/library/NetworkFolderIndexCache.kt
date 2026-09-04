@@ -171,7 +171,8 @@ object NetworkFolderIndexCache {
             val previous = folders.optJSONArray(key)?.let { array ->
                 runCatching { decodeEntries(array) }.getOrNull()
             }
-            val keepPrevious = previous != null && shouldKeepPreviousFolderIndex(previous, entries)
+            val keepPrevious = previous != null &&
+                shouldKeepPreviousFolderIndex(previous, entries, Settings.browseZipAsDir.value)
             if (!keepPrevious && removedChildDirs.isNotEmpty()) {
                 val parent = normalizeDir(relativeDir)
                 val removedPrefixes = removedChildDirs.map { child ->

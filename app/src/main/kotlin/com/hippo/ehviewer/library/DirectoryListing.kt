@@ -414,12 +414,24 @@ fun isUntrustedSlimLiveListing(
 fun shouldKeepPreviousFolderIndex(
     previous: List<BrowseEntryRemote>,
     next: List<BrowseEntryRemote>,
+    zipAsDir: Boolean = true,
 ): Boolean {
     if (previous.isEmpty()) return false
     if (next.isEmpty()) return true
     if (isShallowIncompleteListing(next) && !isShallowIncompleteListing(previous)) return true
-    return cachedDirectDirectoryNames(previous).isNotEmpty() &&
-        cachedDirectDirectoryNames(next).isEmpty()
+    val prevDirs = indexKeepDirectoryNames(previous, zipAsDir)
+    val nextDirs = indexKeepDirectoryNames(next, zipAsDir)
+    return prevDirs.isNotEmpty() && nextDirs.isEmpty()
+}
+
+/**
+ * Directories that count for [shouldKeepPreviousFolderIndex]. Zip/cbz fake folders
+ * are omitted when zip-as-dir is off so a refresh can replace them with ArchiveGallery.
+ */
+fun indexKeepDirectoryNames(entries: List<BrowseEntryRemote>, zipAsDir: Boolean): Set<String> {
+    val names = cachedDirectDirectoryNames(entries)
+    if (zipAsDir) return names
+    return names.filterNotTo(HashSet()) { isZipArchiveFileName(it) }
 }
 
 /**
