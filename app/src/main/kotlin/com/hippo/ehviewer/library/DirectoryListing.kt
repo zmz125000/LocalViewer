@@ -892,10 +892,6 @@ fun classifyRemoteListingWithPeeks(
                     grandPeeks.containsKey("${e.name}/${leaf.name}")
                 }
                 val canPromote = leaves.size in 1..SMB_PROMOTE_MAX_LEAVES && hasAllGrandPeeks
-                // >3 child dirs: no grand-peek (same as old scan). Classify as Navigable from
-                // one-level peek only — mark hasVideo so Video mode still lists the branch
-                // (deeper video content is unknown without scanning every leaf).
-                val hasUnscannedLargeSubtree = leaves.size > SMB_PROMOTE_MAX_LEAVES
 
                 if (canPromote) {
                     // Promote image leaves as @ galleries and every video-bearing leaf as @ dirs
@@ -1190,7 +1186,7 @@ fun classifyRemoteListingWithPeeks(
                         val navCover = remoteDirCoverFileName(peek, e.name, leaves, grandPeeks)
                         dirs += BrowseEntryRemote.Directory(
                             name = e.name,
-                            hasVideo = kind.hasVideo || hasUnscannedLargeSubtree,
+                            hasVideo = kind.hasVideo,
                             hasGallery = kind.hasGallery,
                             presence = DirPresence.Navigable,
                             coverFileName = navCover,
@@ -1516,9 +1512,9 @@ private fun classifyRemoteChild(dirName: String, peek: List<RemoteChild>): Remot
     if (sawSubdir || sawArchive) {
         return RemoteChildKind.Navigable(
             gallery = gallery,
-            hasVideo = sawVideo,
-            // A subdirectory is an intentionally conservative navigation route: this
-            // bounded peek cannot prove what lies another level below it.
+            // Deep folders (and archive folders for gallery) are conservative
+            // navigation routes: this bounded peek cannot prove what lies below.
+            hasVideo = sawVideo || sawSubdir,
             hasGallery = gallery != null || sawArchive || sawSubdir,
         )
     }
