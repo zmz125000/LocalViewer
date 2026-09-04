@@ -246,6 +246,7 @@ object WebDavGateway {
                     fromRam,
                     sessionCurrent = true,
                     previousForZipNames = shallowMerged,
+                    persist = true,
                 )
                 ZipAsDirListing.persistFolderIndexes(
                     parentRelativeDir = relativeDir,
@@ -479,10 +480,10 @@ object WebDavGateway {
         val configKey = sourceConfigKey(source)
         if (useCache) {
             val cached = BrowseSession.getWebDavListing(source.id, relativeDir)
-                ?: NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir)?.also { entries ->
-                    BrowseSession.putWebDavListing(source.id, relativeDir, entries, sessionCurrent = false)
-                }
+                ?: NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir)
             if (cached != null) {
+                // EOCD listings are complete; there is no slim scan of a virtual zip path.
+                BrowseSession.putWebDavListing(source.id, relativeDir, cached, sessionCurrent = true)
                 onCached?.invoke(cached)
                 return cached
             }
@@ -553,6 +554,15 @@ object WebDavGateway {
         )
     }
 
+    /**
+     * Shape a listing for the current zip-as-dir toggle and land it in RAM.
+     *
+     * On: keep zip Directory/FolderGallery rows. [persist] writes the parent index
+     * (deep classify). Slim/cache hits only [BrowseSession.putWebDavListing] so
+     * session-current can allow folder thumbs.
+     *
+     * Off: demote zip rows to ArchiveGallery, persist that, and drop interior keys.
+     */
     private suspend fun presentListingForZipAsDirToggle(
         source: WebDavSourceEntity,
         configKey: String,
@@ -560,8 +570,17 @@ object WebDavGateway {
         entries: List<BrowseEntryRemote>,
         sessionCurrent: Boolean,
         previousForZipNames: List<BrowseEntryRemote>? = null,
+        persist: Boolean = false,
     ): List<BrowseEntryRemote> {
-        if (Settings.browseZipAsDir.value) return entries
+        if (Settings.browseZipAsDir.value) {
+            val stored = if (persist) {
+                NetworkFolderIndexCache.saveWebDav(source.id, configKey, relativeDir, entries)
+            } else {
+                entries
+            }
+            BrowseSession.putWebDavListing(source.id, relativeDir, stored, sessionCurrent = sessionCurrent)
+            return stored
+        }
         var zips = ZipAsDirListing.cachedDirectZipAsDirNames(previousForZipNames ?: entries)
         if (zips.isEmpty()) {
             zips = ZipAsDirListing.cachedDirectZipAsDirNames(
@@ -569,7 +588,10 @@ object WebDavGateway {
             )
         }
         val presented = ZipAsDirListing.demoteZipFoldersToArchives(entries)
-        if (zips.isEmpty() && presented == entries) return entries
+        if (zips.isEmpty() && presented == entries && !persist) {
+            BrowseSession.putWebDavListing(source.id, relativeDir, entries, sessionCurrent = sessionCurrent)
+            return entries
+        }
         val stored = NetworkFolderIndexCache.saveWebDav(
             source.id,
             configKey,

@@ -1922,6 +1922,7 @@ object SmbGateway {
                     fromRam,
                     sessionCurrent = true,
                     previousForZipNames = shallowMerged,
+                    persist = true,
                 )
                 ZipAsDirListing.persistFolderIndexes(
                     parentRelativeDir = relativeDir,
@@ -2228,10 +2229,10 @@ object SmbGateway {
         val configKey = sourceConfigKey(source)
         if (useCache) {
             val cached = BrowseSession.getSmbListing(source.id, relativeDir)
-                ?: NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)?.also { entries ->
-                    BrowseSession.putSmbListing(source.id, relativeDir, entries, sessionCurrent = false)
-                }
+                ?: NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)
             if (cached != null) {
+                // EOCD listings are complete; there is no slim scan of a virtual zip path.
+                BrowseSession.putSmbListing(source.id, relativeDir, cached, sessionCurrent = true)
                 onCached?.invoke(cached)
                 return cached
             }
@@ -2315,8 +2316,14 @@ object SmbGateway {
     }
 
     /**
-     * When zip-as-dir is off, replace cached zip Directory/FolderGallery rows with
-     * ArchiveGallery and drop interior index keys (`dir/file.zip`, `dir/file.zip/Album`).
+     * Shape a listing for the current zip-as-dir toggle and land it in RAM.
+     *
+     * On: keep zip Directory/FolderGallery rows. [persist] writes the parent index
+     * (deep classify). Slim/cache hits only [BrowseSession.putSmbListing] so
+     * [BrowseSession.isSmbListingSessionCurrent] can allow folder thumbs.
+     *
+     * Off: demote zip rows to ArchiveGallery, persist that, and drop interior keys
+     * (`dir/file.zip`, `dir/file.zip/Album`).
      */
     private suspend fun presentListingForZipAsDirToggle(
         source: SmbSourceEntity,
@@ -2325,8 +2332,17 @@ object SmbGateway {
         entries: List<BrowseEntryRemote>,
         sessionCurrent: Boolean,
         previousForZipNames: List<BrowseEntryRemote>? = null,
+        persist: Boolean = false,
     ): List<BrowseEntryRemote> {
-        if (Settings.browseZipAsDir.value) return entries
+        if (Settings.browseZipAsDir.value) {
+            val stored = if (persist) {
+                NetworkFolderIndexCache.saveSmb(source.id, configKey, relativeDir, entries)
+            } else {
+                entries
+            }
+            BrowseSession.putSmbListing(source.id, relativeDir, stored, sessionCurrent = sessionCurrent)
+            return stored
+        }
         var zips = ZipAsDirListing.cachedDirectZipAsDirNames(previousForZipNames ?: entries)
         if (zips.isEmpty()) {
             zips = ZipAsDirListing.cachedDirectZipAsDirNames(
@@ -2334,7 +2350,10 @@ object SmbGateway {
             )
         }
         val presented = ZipAsDirListing.demoteZipFoldersToArchives(entries)
-        if (zips.isEmpty() && presented == entries) return entries
+        if (zips.isEmpty() && presented == entries && !persist) {
+            BrowseSession.putSmbListing(source.id, relativeDir, entries, sessionCurrent = sessionCurrent)
+            return entries
+        }
         val stored = NetworkFolderIndexCache.saveSmb(
             source.id,
             configKey,
