@@ -38,7 +38,6 @@ import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.isAuthenticationSupported
 import com.hippo.ehviewer.ui.main.NavigationIcon
 import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
-import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -150,10 +149,6 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 title = stringResource(id = R.string.clear_search_history),
             ) {
                 launch {
-                    awaitConfirmationOrCancel(
-                        confirmText = R.string.clear_all,
-                        title = R.string.clear_search_history_confirm,
-                    )
                     searchDatabase.searchDao().clear()
                     launchSnackbar(searchHistoryCleared)
                 }
@@ -163,10 +158,6 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 title = stringResource(id = R.string.settings_privacy_clear_folder_browse_mode),
             ) {
                 launch {
-                    awaitConfirmationOrCancel(
-                        confirmText = R.string.clear_all,
-                        title = R.string.settings_privacy_clear_folder_browse_mode_confirm,
-                    )
                     withIOContext { BrowseModePersist.clearAll() }
                     launchSnackbar(folderBrowseModeCleared)
                 }
@@ -176,10 +167,6 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                 title = stringResource(id = R.string.settings_privacy_clear_folder_index_cache),
             ) {
                 launch {
-                    awaitConfirmationOrCancel(
-                        confirmText = R.string.clear_all,
-                        title = R.string.settings_privacy_clear_folder_index_cache_confirm,
-                    )
                     withIOContext { NetworkFolderIndexCache.clearAll() }
                     launchSnackbar(folderIndexCacheCleared)
                 }

@@ -631,15 +631,12 @@
     <string name="settings_privacy_secure_summary">启用后，将不能截取该应用的屏幕截图，同时，将不会在系统任务切换器中显示该应用的内容预览，重新加载应用以生效此更改</string>
     <string name="clear_search_history">清除设备上的搜索记录</string>
     <string name="clear_search_history_summary">移除您在此设备上执行过的搜索查询的记录</string>
-    <string name="clear_search_history_confirm">要清除搜索记录吗？</string>
     <string name="search_history_cleared">已清除搜索记录</string>
     <string name="settings_privacy_clear_folder_browse_mode">清除文件夹浏览模式</string>
     <string name="settings_privacy_clear_folder_browse_mode_summary">删除已锁定在文件夹上的媒体 / 图库 / 视频 / 文件夹模式</string>
-    <string name="settings_privacy_clear_folder_browse_mode_confirm">清除已保存的文件夹浏览模式？</string>
     <string name="folder_browse_mode_cleared">已清除文件夹浏览模式</string>
     <string name="settings_privacy_clear_folder_index_cache">清除文件夹索引缓存</string>
     <string name="settings_privacy_clear_folder_index_cache_summary">删除本地和网络来源已保存的文件夹列表。下次打开时将重新扫描。</string>
-    <string name="settings_privacy_clear_folder_index_cache_confirm">清除已保存的文件夹索引缓存？</string>
     <string name="folder_index_cache_cleared">已清除文件夹索引缓存</string>
     <string name="download_service">下载服务</string>
     <string name="favorite_name">收藏画廊</string>
