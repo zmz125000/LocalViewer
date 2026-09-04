@@ -11,7 +11,6 @@ import androidx.compose.foundation.scrollbar.ScrollbarAdapter
 import androidx.compose.foundation.scrollbar.ScrollbarStyle
 import androidx.compose.foundation.scrollbar.VerticalScrollbar
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,14 +45,9 @@ fun VerticalScrollbar(
             }
         }
     }
-    val scrollbarModifier = if (scrollbarAlpha.value > 0f && !isDragged && !isScrollInProgress) {
-        modifier.systemGestureExclusion()
-    } else {
-        modifier
-    }
     VerticalScrollbar(
         adapter = adapter,
-        modifier = scrollbarModifier
+        modifier = modifier
             .padding(
                 top = contentPadding.calculateTopPadding(),
                 bottom = contentPadding.calculateBottomPadding(),
