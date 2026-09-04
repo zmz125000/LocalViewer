@@ -4,6 +4,7 @@ import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.runBlocking
+import okio.Path.Companion.toPath
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -331,6 +332,28 @@ class ZipAsDirListingTest {
         assertEquals("Album", ZipAsDirListing.zipInnerPrefix("tree.zip/Album"))
         assertEquals("", ZipAsDirListing.zipInnerPrefix("flat.cbz"))
         assertEquals(null, ZipAsDirListing.zipFileSegment("@tree.zip"))
+    }
+
+    @Test
+    fun materializeLocalFilePathEncodesPromotedZipMember() {
+        val base = "/sdcard/Download/Quick Share".toPath()
+        val path = ZipAsDirListing.materializeLocalFilePath(
+            base,
+            "pack.zip/Album/clip.mp4",
+            zipAsDir = true,
+        )
+        assertEquals(
+            ZipPaths.encode("/sdcard/Download/Quick Share/pack.zip", "Album/clip.mp4"),
+            path.toString(),
+        )
+        val off = ZipAsDirListing.materializeLocalFilePath(
+            base,
+            "pack.zip/Album/clip.mp4",
+            zipAsDir = false,
+        )
+        assertEquals("/sdcard/Download/Quick Share/pack.zip/Album/clip.mp4", off.toString())
+        val loose = ZipAsDirListing.materializeLocalFilePath(base, "clip.mp4", zipAsDir = true)
+        assertEquals("/sdcard/Download/Quick Share/clip.mp4", loose.toString())
     }
 
     @Test

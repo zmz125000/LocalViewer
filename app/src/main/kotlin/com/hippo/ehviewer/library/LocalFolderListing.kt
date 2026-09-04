@@ -779,7 +779,11 @@ fun materializeLocalEntries(
             is BrowseEntryRemote.VideoFile ->
                 BrowseEntry.VideoFile(
                     name = entry.name,
-                    path = baseDir.resolveRelative(entry.fileName),
+                    path = ZipAsDirListing.materializeLocalFilePath(
+                        baseDir,
+                        entry.fileName,
+                        Settings.browseZipAsDir.value,
+                    ),
                     size = entry.size,
                     lastModifiedMs = entry.lastModifiedMs,
                     hidden = entry.hidden,
@@ -788,7 +792,11 @@ fun materializeLocalEntries(
             is BrowseEntryRemote.RegularFile ->
                 BrowseEntry.RegularFile(
                     name = entry.name,
-                    path = baseDir.resolveRelative(entry.fileName),
+                    path = ZipAsDirListing.materializeLocalFilePath(
+                        baseDir,
+                        entry.fileName,
+                        Settings.browseZipAsDir.value,
+                    ),
                     size = entry.size,
                     lastModifiedMs = entry.lastModifiedMs,
                     hidden = entry.hidden,
