@@ -137,8 +137,8 @@ object StreamKeepAlivePolicy {
         }
         // Browse keep-alive is for interactive listing/reader only. Drop it on screen-off
         // even while playing so idle host pools do not ping through EasyTier/VPN.
-        runCatching { SmbGateway.onAppBackgrounded("screen_off") }
-        runCatching { WebDavClient.onAppBackgrounded("screen_off") }
+        runCatching { SmbGateway.dropBrowseSessions("screen_off") }
+        runCatching { WebDavClient.dropBrowseClient("screen_off") }
         logcat("StreamKeepAlive") { "screen_off after: ${runtimeSnapshot()}" }
     }
 
@@ -161,7 +161,7 @@ object StreamKeepAlivePolicy {
         runCatching { ExternalHttpStreamServer.shutdown(reason) }
         runCatching { StreamDocumentRegistry.clearAll(reason) }
         runCatching { dropStickyNetwork(reason) }
-        runCatching { SmbGateway.onAppBackgrounded() }
+        runCatching { SmbGateway.dropBrowseSessions("recents") }
         runCatching { WebDavClient.resetClient() }
         runCatching { WebDavClient.resetStickyClient() }
         // Hard exit: non-daemon coroutine pools would otherwise keep the process.

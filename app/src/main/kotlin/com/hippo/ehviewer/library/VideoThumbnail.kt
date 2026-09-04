@@ -109,7 +109,7 @@ sealed interface VideoThumbnailSource {
  * - MMR runs on [decodePool]. Waiter uses [withTimeout] only — **never**
  *   [MediaMetadataRetriever.release] from the waiter. Worker releases after native returns.
  * - Probe I/O on [probePool]; timeout/cancel closes [ArchiveByteSource] (safe: not under MMR).
- * - [onAppBackgrounded] rejects new network thumbs so ON_STOP pool teardown cannot race decode.
+ * - [onAppBackgrounded] rejects new network thumbs so ON_STOP cannot race decode.
  *
  * Disk: `cache/video_thumb_cache/` under [OriginDiskCache.THUMB_BUDGET_BYTES].
  */
@@ -223,7 +223,7 @@ object VideoThumbnail {
     /**
      * App [Lifecycle.Event.ON_STOP]: reject new network thumbs. In-flight probes still
      * close their [ArchiveByteSource]; in-flight MMR only touches closed snapshots so
-     * browse-pool teardown cannot wedge `media.extractor`.
+     * a later screen-off pool drop cannot wedge `media.extractor`.
      */
     fun onAppBackgrounded() {
         networkPaused.set(true)

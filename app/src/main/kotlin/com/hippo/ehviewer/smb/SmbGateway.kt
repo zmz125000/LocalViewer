@@ -104,9 +104,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 1. Concurrent SMB downloads (reader prefetch + thumbs)
  * 2. Reuse sessions for same host + user (tree-connect extra shares as needed)
  * 3. Stay under Win11 ~20 inbound session limit (cap TCP sessions, multiplex ops)
- * 4. Keep-alive idle sessions **while the process is foreground** (pool exists only
- *    until [onAppBackgrounded] / path change). Extra unused data TCPs are released
- *    after [IDLE_RELEASE_MS] so they leave the browse async group; one data + list stay.
+ * 4. Keep-alive idle sessions **while the process is foreground** (pings pause on
+ *    ProcessLifecycle ON_STOP; sockets stay until screen-off / Recents / path change).
+ *    Extra unused data TCPs are released after [IDLE_RELEASE_MS] so they leave the
+ *    browse async group; one data + list stay.
  *
  * ## Pool model
  * - **Budget:** max [maxConnectionsPerHost] TCP/SMB **data** sessions per `host:port`
@@ -725,6 +726,15 @@ object SmbGateway {
             keepAliveJob = null
         }
 
+        /** ProcessLifecycle ON_STOP: stop pings, leave sockets in the map. */
+        fun pauseKeepAlive() = stopKeepAlive()
+
+        /** ProcessLifecycle ON_START: resume pings; first op still retires a half-open TCP. */
+        fun resumeKeepAlive() {
+            if (closed.get() || size.get() == 0) return
+            startKeepAlive()
+        }
+
         private fun signalFree() {
             freeSignal.trySend(Unit)
         }
@@ -853,6 +863,25 @@ object SmbGateway {
         }
 
         /**
+         * Prefer a free multiplex slot on an existing matching-cred TCP.
+         * Data ops may take the reserved list TCP when no data session has a slot
+         * (symmetric to [tryBorrowDataForList]; listing still prefers that socket).
+         */
+        private fun tryReserveExisting(
+            credKey: String,
+            shareName: String,
+            forList: Boolean,
+        ): PooledSession? {
+            tryReserveSession(credKey, shareName, reservedOnly = forList, dataOnly = !forList)
+                ?.let { return it }
+            if (!forList) {
+                tryReserveSession(credKey, shareName, reservedOnly = true, dataOnly = false)
+                    ?.let { return it }
+            }
+            return null
+        }
+
+        /**
          * End one op. If the session was marked dying, the **last** outstanding op closes it
          * (never close while siblings still read — that crashed high multiplex throughput).
          */
@@ -934,9 +963,12 @@ object SmbGateway {
 
         private suspend fun tryGrow(
             credKey: String,
+            shareName: String,
             forList: Boolean,
             openSession: suspend (reservedForList: Boolean) -> PooledSession,
         ): PooledSession? {
+            // Fill multiplex slots on live TCPs before opening another socket.
+            tryReserveExisting(credKey, shareName, forList)?.let { return it }
             val atCap = if (forList) {
                 liveListCount() >= LIST_RESERVED_SESSIONS
             } else {
@@ -945,6 +977,9 @@ object SmbGateway {
             if (atCap && !retireOneOtherCred(credKey, listOnly = forList)) return null
             return growLock.withLock {
                 if (closed.get()) return@withLock null
+                // Concurrent prefetch serializes here: the first opener's free op slots
+                // must be taken before anyone else calls openSession.
+                tryReserveExisting(credKey, shareName, forList)?.let { return@withLock it }
                 val stillAtCap = if (forList) {
                     liveListCount() >= LIST_RESERVED_SESSIONS
                 } else {
@@ -1041,7 +1076,7 @@ object SmbGateway {
             tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)
                 ?.let { return Acquired(it, heldHostSlot = true) }
             // New username often has no data TCP yet — grow one (may idle-steal other cred).
-            tryGrow(credKey, forList = false, openSession)
+            tryGrow(credKey, shareName, forList = false, openSession)
                 ?.let { return Acquired(it, heldHostSlot = true) }
             hostOpSlots.release()
             return null
@@ -1054,7 +1089,7 @@ object SmbGateway {
         ): Acquired {
             tryReserveSession(credKey, shareName, reservedOnly = true, dataOnly = false)
                 ?.let { return Acquired(it, heldHostSlot = false) }
-            tryGrow(credKey, forList = true, openSession)
+            tryGrow(credKey, shareName, forList = true, openSession)
                 ?.let { return Acquired(it, heldHostSlot = false) }
             tryBorrowDataForList(credKey, shareName, openSession)?.let { return it }
 
@@ -1066,7 +1101,7 @@ object SmbGateway {
             while (true) {
                 tryReserveSession(credKey, shareName, reservedOnly = true, dataOnly = false)
                     ?.let { return Acquired(it, heldHostSlot = false) }
-                tryGrow(credKey, forList = true, openSession)
+                tryGrow(credKey, shareName, forList = true, openSession)
                     ?.let { return Acquired(it, heldHostSlot = false) }
                 tryBorrowDataForList(credKey, shareName, openSession)?.let { return it }
 
@@ -1076,7 +1111,7 @@ object SmbGateway {
                         forcedSteal = true
                         // Other user's list TCP still busy — detach anyway so we can grow.
                         retireOneOtherCred(credKey, listOnly = true, force = true)
-                        tryGrow(credKey, forList = true, openSession)
+                        tryGrow(credKey, shareName, forList = true, openSession)
                             ?.let { return Acquired(it, heldHostSlot = false) }
                         tryBorrowDataForList(credKey, shareName, openSession)?.let { return it }
                         // One short grace after force-steal for openSession / freeSignal.
@@ -1101,8 +1136,8 @@ object SmbGateway {
             openSession: suspend (reservedForList: Boolean) -> PooledSession,
             yieldThumbs: Boolean,
         ): PooledSession {
-            tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
-            tryGrow(credKey, forList = false, openSession)?.let { return it }
+            tryReserveExisting(credKey, shareName, forList = false)?.let { return it }
+            tryGrow(credKey, shareName, forList = false, openSession)?.let { return it }
 
             var waiting = false
             val deadlineNs = System.nanoTime() + ACQUIRE_WAIT_MS * 3 * 1_000_000L
@@ -1114,15 +1149,15 @@ object SmbGateway {
                         interactiveWaiters.incrementAndGet()
                         yieldBackgroundOps("data-wait $hostPortKey")
                     }
-                    tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
-                    tryGrow(credKey, forList = false, openSession)?.let { return it }
+                    tryReserveExisting(credKey, shareName, forList = false)?.let { return it }
+                    tryGrow(credKey, shareName, forList = false, openSession)?.let { return it }
 
                     val remainingMs = ((deadlineNs - System.nanoTime()) / 1_000_000L).coerceAtLeast(0L)
                     if (remainingMs == 0L) {
                         if (!forcedSteal && liveDataCount() >= maxConnectionsPerHost()) {
                             forcedSteal = true
                             retireOneOtherCred(credKey, listOnly = false, force = true)
-                            tryGrow(credKey, forList = false, openSession)?.let { return it }
+                            tryGrow(credKey, shareName, forList = false, openSession)?.let { return it }
                             withTimeoutOrNull(ACQUIRE_WAIT_MS) { freeSignal.receive() }
                             continue
                         }
@@ -1135,13 +1170,13 @@ object SmbGateway {
                     withTimeoutOrNull(remainingMs.coerceAtMost(ACQUIRE_WAIT_MS)) {
                         freeSignal.receive()
                     }
-                    tryReserveSession(credKey, shareName, reservedOnly = false, dataOnly = true)?.let { return it }
+                    tryReserveExisting(credKey, shareName, forList = false)?.let { return it }
                     if (liveDataCount() >= maxConnectionsPerHost()) {
                         if (retireOneOtherCred(credKey)) {
-                            tryGrow(credKey, forList = false, openSession)?.let { return it }
+                            tryGrow(credKey, shareName, forList = false, openSession)?.let { return it }
                         }
                     } else {
-                        tryGrow(credKey, forList = false, openSession)?.let { return it }
+                        tryGrow(credKey, shareName, forList = false, openSession)?.let { return it }
                     }
                 }
             } finally {
@@ -1232,10 +1267,19 @@ object SmbGateway {
                     // Tree dead; drop cached DiskShare. Retire session if transport also gone.
                     ps.dropShare(shareName)
                 }
-                killSession = isTransportError(e) ||
-                    isSessionRejectError(e) ||
-                    isShareClosedError(e) ||
-                    !ps.isConnected
+                val cancelledCaller = e is CancellationException ||
+                    e.isYieldCancellation() ||
+                    !coroutineContext.isActive
+                val fileAbort = isFileHandleAbortError(e)
+                killSession = when {
+                    // DiskShare gone: retire-and-replace. File-handle abort / caller cancel
+                    // must not kill a TCP that is still connected.
+                    isShareClosedError(e) -> true
+                    cancelledCaller || fileAbort -> !ps.connection.isConnected
+                    else -> isTransportError(e) ||
+                        isSessionRejectError(e) ||
+                        !ps.isConnected
+                }
                 throw e
             } finally {
                 releaseOp(ps, killSession = killSession || closed.get())
@@ -1485,10 +1529,26 @@ object SmbGateway {
     }
 
     /**
-     * Drop browse/reader host pools (not sticky FUSE/HTTP). Used on ProcessLifecycle
-     * ON_STOP and on screen-off so keep-alive does not chatter through VPN while idle.
+     * Pause browse keep-alive pings (ProcessLifecycle ON_STOP / activity switch).
+     * List + data sockets stay in the map so folder → external player → back reuses them.
+     * Screen-off and Recents still call [dropBrowseSessions].
      */
     fun onAppBackgrounded(reason: String = "app background") {
+        logcat { "SmbGateway: $reason — pausing browse keep-alive (sessions kept)" }
+        hostPools.values.forEach { it.pauseKeepAlive() }
+    }
+
+    /** Resume keep-alive pings (ProcessLifecycle ON_START). Half-open sockets retire on first op. */
+    fun onAppForegrounded() {
+        logcat { "SmbGateway: app foreground — resuming browse keep-alive" }
+        hostPools.values.forEach { it.resumeKeepAlive() }
+    }
+
+    /**
+     * Drop browse/reader host pools (not sticky FUSE/HTTP). Used on screen-off and Recents
+     * swipe so keep-alive does not chatter through VPN while idle.
+     */
+    fun dropBrowseSessions(reason: String = "drop browse") {
         logcat { "SmbGateway: $reason — closing browse SMB sessions" }
         dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
@@ -1940,11 +2000,8 @@ object SmbGateway {
             }
             cached ?: throw IOException("SMB list timed out", e)
         } catch (e: CancellationException) {
-            // Leaving the folder only cancelled this await; drop the process-scoped
-            // QUERY_DIRECTORY so it does not keep the list TCP / NIO group busy.
-            if (!coroutineContext.isActive && listJobs.remove(cacheKey, deferred)) {
-                deferred.cancel()
-            }
+            // UI leaving (folder → gallery) only cancels this await. Keep the
+            // process-scoped list job so shallow+deep can finish and mark sessionCurrent.
             coroutineContext.ensureActive()
             throw IOException("SMB list cancelled (network lost or refresh)", e)
         }
@@ -2450,8 +2507,8 @@ object SmbGateway {
      * SMB2-* because SMB 3.x still speaks the SMB2 protocol family; dialect selection
      * is the shared pool [buildSmbConfig] (SMB3 preferred when the server negotiates it).
      *
-     * **Not for external FUSE / other-app viewers** — those go background and
-     * [onAppBackgrounded] drops this pool. Use [withStickyOpenFile] instead.
+     * **Not for external FUSE / other-app viewers** — Recents / screen-off
+     * [dropBrowseSessions] drops this pool. Use [withStickyOpenFile] instead.
      */
     suspend fun <T> withOpenFile(
         source: SmbSourceEntity,
@@ -2474,7 +2531,7 @@ object SmbGateway {
     /**
      * Dedicated TCP session **outside** the browse/reader [hostPools].
      *
-     * Survives [onAppBackgrounded] so an external PDF viewer (Drive, etc.) can keep
+     * Survives ProcessLifecycle ON_STOP so an external PDF viewer (Drive, etc.) can keep
      * reading via [com.hippo.ehviewer.provider.StreamDocumentProvider] after LocalViewer
      * is stopped. Session lives only for [block]; closed in `finally` (not pooled).
      *
@@ -2842,6 +2899,7 @@ object SmbGateway {
      * Open [relativeFilePath] and run [block]. If the caller is cancelled, close the
      * handle from another thread so a blocking smbj READ unblocks and the host-pool
      * slot is released. Coroutine cancel alone does not abort AsyncDirectTcp I/O.
+     * The pooled [Connection] is kept unless the socket itself is dead.
      */
     private suspend fun <T> copyOpenFile(
         source: SmbSourceEntity,
@@ -2921,6 +2979,7 @@ object SmbGateway {
             // File.close() from a cancelled caller often surfaces as IOException.
             // Do not treat that as a transport blip and restart the whole transfer.
             ensureActive()
+            if (isFileHandleAbortError(first)) throw first
             if (first is IOException && first.message?.contains("recovering") == true) throw first
             if (first is IOException && first.message?.contains("busy:") == true) throw first
             logcat(first)
@@ -3079,6 +3138,25 @@ private fun isShareClosedError(t: Throwable): Boolean {
         if (msg.contains("has already been closed", ignoreCase = true) &&
             (msg.contains("DiskShare", ignoreCase = true) || msg.contains("Share", ignoreCase = true))
         ) {
+            return true
+        }
+        cur = cur.cause
+    }
+    return false
+}
+
+/**
+ * Cancel-close of an smbj [com.hierynomus.smbj.share.File] — not pooled session death.
+ * [java.net.SocketTimeoutException] extends [InterruptedIOException] and is real transport loss.
+ */
+private fun isFileHandleAbortError(t: Throwable): Boolean {
+    var cur: Throwable? = t
+    while (cur != null) {
+        if (cur is java.io.InterruptedIOException && cur !is java.net.SocketTimeoutException) {
+            return true
+        }
+        val msg = cur.message.orEmpty()
+        if (msg.contains("file has already been closed", ignoreCase = true)) {
             return true
         }
         cur = cur.cause

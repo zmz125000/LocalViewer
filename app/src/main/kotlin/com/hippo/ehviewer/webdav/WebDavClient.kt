@@ -64,8 +64,9 @@ import org.xmlpull.v1.XmlPullParserFactory
  * **Engine: Ktor CIO** (pure Kotlin sockets) — not Cronet / Android HUC (they reject PROPFIND).
  *
  * Lifecycle (aligned with SMB):
- * - [onAppBackgrounded] → drop **browse/reader** CIO client only ([resetClient]).
+ * - ProcessLifecycle ON_STOP → [onAppBackgrounded] **pauses** (keeps browse CIO client).
  *   Sticky client for external FUSE PDF survives so Drive can keep ranging after ON_STOP.
+ * - Screen-off / Recents → [dropBrowseClient] / [resetClient]
  * - [onNetworkPathChanged] → drop **both** clients (path is actually gone)
  * - Transport / timeout errors → reset the client used by that call + **one** retry
  *
@@ -137,7 +138,7 @@ object WebDavClient {
     )
     private val cioDispatcher = cioExecutor.asCoroutineDispatcher()
 
-    /** Browse / in-app reader CIO client — closed on [onAppBackgrounded]. */
+    /** Browse / in-app reader CIO client — kept across activity switches; closed on screen-off. */
     @Volatile
     private var client: HttpClient? = null
 
@@ -241,10 +242,23 @@ object WebDavClient {
     }
 
     /**
-     * Drop browse/reader half-open sockets + listings (ON_STOP / screen-off).
-     * Sticky FUSE client is left alone (external PDF viewers stay foreground).
+     * ProcessLifecycle ON_STOP: keep the browse CIO client so switching to an external
+     * player does not drop keep-alive sockets. Screen-off still calls [dropBrowseClient].
      */
     fun onAppBackgrounded(reason: String = "app background") {
+        logcat { "WebDavClient: $reason — pause browse keep-alive (client kept)" }
+    }
+
+    /** ProcessLifecycle ON_START: browse client was not dropped. */
+    fun onAppForegrounded() {
+        logcat { "WebDavClient: app foreground — browse client still live" }
+    }
+
+    /**
+     * Drop browse/reader CIO client + listings (screen-off / Recents).
+     * Sticky FUSE client is left alone (external PDF viewers stay foreground).
+     */
+    fun dropBrowseClient(reason: String = "drop browse") {
         logcat { "WebDavClient: $reason — reset browse client + listings (sticky kept)" }
         resetClient()
         BrowseSession.invalidateAllWebDavListings()
