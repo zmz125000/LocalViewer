@@ -1,8 +1,16 @@
 package com.hippo.ehviewer.smb
 
+import java.io.EOFException
+import java.io.IOException
+import java.net.SocketException
+import java.nio.channels.AsynchronousCloseException
+import java.nio.channels.ClosedChannelException
+import java.nio.channels.InterruptedByTimeoutException
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LargePacketBufferReaderTest {
@@ -22,8 +30,23 @@ class LargePacketBufferReaderTest {
         val frame = frame(payload)
         reader.buffer.put(frame, 0, 4)
         assertNull(reader.readNext())
+        assertFalse(reader.awaitingHeader)
         reader.buffer.put(frame, 4, frame.size - 4)
         assertArrayEquals(payload, reader.readNext())
+        assertTrue(reader.awaitingHeader)
+    }
+
+    @Test
+    fun expectedDisconnectIncludesAndroidBackgroundAbort() {
+        assertTrue(isExpectedAsyncDisconnect(IOException("Software caused connection abort")))
+        assertTrue(isExpectedAsyncDisconnect(SocketException("Connection reset")))
+        assertTrue(isExpectedAsyncDisconnect(AsynchronousCloseException()))
+        assertTrue(isExpectedAsyncDisconnect(ClosedChannelException()))
+        assertTrue(isExpectedAsyncDisconnect(InterruptedByTimeoutException()))
+        assertTrue(isExpectedAsyncDisconnect(EOFException("Connection closed by server")))
+        assertTrue(isExpectedAsyncDisconnect(IOException("wrapper", IOException("Software caused connection abort"))))
+        assertFalse(isExpectedAsyncDisconnect(IllegalStateException("corrupt packet")))
+        assertFalse(isExpectedAsyncDisconnect(IOException("disk full")))
     }
 
     @Test
