@@ -120,8 +120,9 @@ fun List<BrowseEntry>.filterByContentMode(
 const val BROWSE_SMALL_GALLERY_MIN_PAGES_DEFAULT = 3
 
 /**
- * UI-only filter: when [showSmall] is false, drop folder galleries with fewer than
- * [minPages] images. Capped counts are treated as large enough.
+ * UI-only filter: when [showSmall] is false, drop folder/archive galleries with fewer
+ * than [minPages] images. Capped folder counts and uncounted archives (pageCount 0)
+ * are treated as large enough.
  * Does not touch the lazy scanner or listing cache.
  */
 fun List<BrowseEntry>.filterSmallGalleries(
@@ -133,6 +134,7 @@ fun List<BrowseEntry>.filterSmallGalleries(
     return filter { e ->
         when (e) {
             is BrowseEntry.FolderGallery -> e.pageCountCapped || e.pageCount >= threshold
+            is BrowseEntry.ArchiveGallery -> e.pageCount <= 0 || e.pageCount >= threshold
             else -> true
         }
     }
@@ -149,6 +151,7 @@ fun List<BrowseEntryRemote>.filterRemoteSmallGalleries(
         when (e) {
             is BrowseEntryRemote.FolderGallery ->
                 e.pageCountCapped || e.pageCount >= threshold
+            is BrowseEntryRemote.ArchiveGallery -> e.pageCount <= 0 || e.pageCount >= threshold
             else -> true
         }
     }

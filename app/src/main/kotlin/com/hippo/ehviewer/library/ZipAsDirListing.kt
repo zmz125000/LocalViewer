@@ -767,6 +767,7 @@ object ZipAsDirListing {
                         path = ZipPaths.encodePath(zipAbsolutePath, member),
                         size = entry.size,
                         lastModifiedMs = entry.lastModifiedMs,
+                        pageCount = entry.pageCount,
                         hidden = entry.hidden,
                         virtual = entry.virtual,
                     )

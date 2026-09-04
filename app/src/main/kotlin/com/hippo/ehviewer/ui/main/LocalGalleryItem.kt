@@ -207,11 +207,7 @@ fun LocalGalleryListItem(
             "Folder"
         },
         sizeBytes = archiveSizeBytes,
-        pageCount = when {
-            !showPages -> 0
-            isArchive && archiveSizeBytes > 0L -> 0 // prefer byte size when known
-            else -> gallery.pageCount
-        },
+        pageCount = if (showPages) gallery.pageCount else 0,
         lastModifiedMs = gallery.mtime,
     )
     ListItem(

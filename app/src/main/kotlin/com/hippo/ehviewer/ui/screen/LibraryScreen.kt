@@ -823,10 +823,7 @@ private fun favoriteMetaLine(fav: FavoriteBrowseSource): String {
             browseListSupportingLine(
                 typeLabel = typeLabel,
                 sizeBytes = archiveSize,
-                pageCount = when {
-                    g.kind == LOCAL_GALLERY_KIND_ARCHIVE && archiveSize > 0L -> 0
-                    else -> g.pageCount
-                },
+                pageCount = g.pageCount,
                 lastModifiedMs = g.mtime,
             )
         }
