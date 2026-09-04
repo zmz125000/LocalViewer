@@ -42,6 +42,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -587,15 +588,19 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
-    // Resume after Manage-sources edit or app background: soft refresh current path only.
+    // Resume after Manage-sources edit or a real pool drop: soft refresh current path only.
+    // Returning from the in-app reader / external player with a live pool keeps the listing.
     // Must not call a free-floating reload that races path changes (see LaunchedEffect above).
+    val currentSource = rememberUpdatedState(source)
     DisposableEffect(lifecycleOwner, sourceId) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
                     screenResumed = true
-                    // Soft: keep rows if listed; token bump re-runs effect for current relativeDir.
-                    refreshToken++
+                    val src = currentSource.value
+                    if (src == null || !SmbGateway.isSourceConnected(src)) {
+                        refreshToken++
+                    }
                     connectionProbeToken++
                 }
                 Lifecycle.Event.ON_PAUSE -> {

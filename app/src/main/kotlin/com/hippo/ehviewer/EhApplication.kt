@@ -116,19 +116,22 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         // onCreate body is `with(lifecycleScope)` — use Application receiver explicitly.
         EasyTierRuntime.init(this@EhApplication)
         System.loadLibrary("ehviewer")
-        // SMB + WebDAV: drop half-open sockets when app is backgrounded (power / switch apps).
+        // SMB + WebDAV: pause keep-alive on activity stop (external player); do not drop
+        // the browse pool. Screen-off / Recents still tear sockets down.
         lifecycle.addObserver(
             LifecycleEventObserver { _, event ->
                 when (event) {
                     Lifecycle.Event.ON_STOP -> {
-                        // Pause network thumbs before pool teardown so MMR is never left
-                        // reading a live SMB/WebDAV handle (sticks media.extractor at 100%).
+                        // Pause network thumbs so MMR is never left reading a live handle
+                        // (sticks media.extractor at 100%). Browse sockets stay pooled.
                         VideoThumbnail.onAppBackgrounded()
                         SmbGateway.onAppBackgrounded()
                         WebDavClient.onAppBackgrounded()
                     }
                     Lifecycle.Event.ON_START -> {
                         VideoThumbnail.onAppForegrounded()
+                        SmbGateway.onAppForegrounded()
+                        WebDavClient.onAppForegrounded()
                     }
                     else -> Unit
                 }
