@@ -536,12 +536,11 @@ object ZipAsDirListing {
      * Shape a cached listing for the current zip-as-dir toggle without opening zips.
      * Off: Directory / FolderGallery zip rows → ArchiveGallery.
      */
-    fun presentCachedListing(entries: List<BrowseEntryRemote>): List<BrowseEntryRemote> =
-        if (Settings.browseZipAsDir.value) {
-            ensureZipAsDirDirectoryRows(entries)
-        } else {
-            demoteZipFoldersToArchives(entries)
-        }
+    fun presentCachedListing(entries: List<BrowseEntryRemote>): List<BrowseEntryRemote> = if (Settings.browseZipAsDir.value) {
+        ensureZipAsDirDirectoryRows(entries)
+    } else {
+        demoteZipFoldersToArchives(entries)
+    }
 
     /**
      * Apply [Settings.browseZipAsDir] to a classified listing (also when loading cache).
