@@ -152,8 +152,8 @@ class ZipMemberByteSource private constructor(
 }
 
 /**
- * Video members are ranged/prefix-read. Image (and other) members still extract
- * into [ZipMemberCover] for Coil / reader pages.
+ * Video members are ranged/prefix-read. Image members extract into
+ * [ZipMemberCover] for Coil / reader pages. Other formats are not cached.
  */
 fun openZipContainedFileSource(
     zipKey: String,

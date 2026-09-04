@@ -17,7 +17,9 @@ class ZipMemberTooLargeException(val sizeBytes: Long) : IOException("ZIP member 
 fun Throwable.isZipMemberTooLarge(): Boolean = this is ZipMemberTooLargeException || generateSequence(cause) { it.cause }.any { it is ZipMemberTooLargeException }
 
 /**
- * Extract one ZIP/CBZ member to `cache/zip_folder_pages` for covers / [ZipFolderPageLoader].
+ * Extract one ZIP/CBZ image or video member to `cache/zip_folder_pages` for
+ * covers / [ZipFolderPageLoader]. Other member types are refused so browse
+ * cannot dump PDFs or nested archives into cache without an explicit open.
  */
 object ZipMemberCover {
     /** Cap NAND writes for extracted zip members (open-in-zip / covers / pages). */
@@ -63,6 +65,7 @@ object ZipMemberCover {
         notifyTooLarge: Boolean = true,
         openSource: () -> ArchiveByteSource?,
     ): Path? {
+        if (!isZipMemberCoverExtractAllowed(memberRel)) return null
         val dest = destFile(zipKey, memberRel)
         if (dest.isFile && dest.length() > 0L) return dest.absolutePath.toPath()
         val bytes = extractBytes(zipKey, memberRel, notifyTooLarge, openSource) ?: return null
@@ -87,6 +90,7 @@ object ZipMemberCover {
         notifyTooLarge: Boolean = true,
         openSource: () -> ArchiveByteSource?,
     ): ByteArray? {
+        if (!isZipMemberCoverExtractAllowed(memberRel)) return null
         val dest = destFile(zipKey, memberRel)
         if (dest.isFile && dest.length() > 0L) return dest.readBytes()
         val source = openSource() ?: return null

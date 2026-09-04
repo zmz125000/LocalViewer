@@ -151,6 +151,14 @@ fun isVideoFileName(name: String): Boolean {
     return ext in VIDEO_EXTENSIONS
 }
 
+/**
+ * [ZipMemberCover.ensure] / [ZipMemberCover.extractBytes] may write these members.
+ * Other zip-as-dir files (PDF, nested archives, docs) stay unextracted until a
+ * user-initiated open that does not go through the cover cache.
+ */
+fun isZipMemberCoverExtractAllowed(name: String): Boolean =
+    isImageFileName(name) || isVideoFileName(name)
+
 /** Leaf folder name excluded from video promote/tag (preview packs). */
 fun isSampleDirName(name: String): Boolean = name.equals("sample", ignoreCase = true)
 
