@@ -40,7 +40,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * The Advanced async toggle installs all three factories or none.
  *
  * Socket options that [KeepAliveSocketFactory] sets on blocking sockets are
- * applied here after the channel is opened (async transport ignores SocketFactory).
+ * applied here after the channel is opened (async transport ignores SocketFactory),
+ * including 2 MiB `SO_RCVBUF`. Recv uses [LargeAsyncPacketReader] (1 MiB) instead
+ * of smbj's 9 KiB jumbo-frame reader — that 9 KiB cap was ~150 Mbps/TCP on Win11.
  *
  * Connect is implemented here (not [AsyncDirectTcpTransport.connect]): Android
  * leaves failed DNS unresolved (NIO throws [java.nio.channels.UnresolvedAddressException]),
@@ -75,6 +77,7 @@ internal object SmbAsyncTransport {
     private val connectedField by lazy { field("connected") }
     private val packetReaderField by lazy { field("packetReader") }
     private val soTimeoutField by lazy { field("soTimeout") }
+    private val handlersField by lazy { field("handlers") }
 
     val factory: TransportLayerFactory<SMBPacketData<*>, SMBPacket<*, *>> =
         KeepAliveAsyncTransportFactory(browseGroup, "browse")
@@ -141,6 +144,8 @@ internal object SmbAsyncTransport {
         runCatching { channel.setOption(StandardSocketOptions.SO_KEEPALIVE, true) }
         runCatching { channel.setOption(StandardSocketOptions.TCP_NODELAY, true) }
         runCatching { channel.setOption(StandardSocketOptions.SO_LINGER, 0) }
+        runCatching { channel.setOption(StandardSocketOptions.SO_RCVBUF, KeepAliveSocketFactory.SO_RCVBUF) }
+        runCatching { channel.setOption(StandardSocketOptions.SO_SNDBUF, KeepAliveSocketFactory.SO_SNDBUF) }
     }
 
     private class ResolvingTransport(
@@ -167,11 +172,34 @@ internal object SmbAsyncTransport {
                 throw TransportException.Wrapper.wrap(e)
             }
             (connectedField.get(inner) as AtomicBoolean).set(true)
-            @Suppress("UNCHECKED_CAST")
-            val reader = packetReaderField.get(inner) as AsyncPacketReader<SMBPacketData<*>>
             val soTimeout = soTimeoutField.getInt(inner)
-            reader.start(remoteAddress.hostString, soTimeout)
+            val large = largeReader(inner, channel)
+            if (large != null) {
+                large.start(remoteAddress.hostString, soTimeout)
+            } else {
+                @Suppress("UNCHECKED_CAST")
+                val reader = packetReaderField.get(inner) as AsyncPacketReader<SMBPacketData<*>>
+                reader.start(remoteAddress.hostString, soTimeout)
+            }
         }
+    }
+
+    /**
+     * Replace smbj's 9 KiB [AsyncPacketReader] with [LargeAsyncPacketReader].
+     * Writes still go through [AsyncDirectTcpTransport]; we just own recv.
+     */
+    private fun largeReader(
+        transport: AsyncDirectTcpTransport<SMBPacketData<*>, SMBPacket<*, *>>,
+        channel: AsynchronousSocketChannel,
+    ): LargeAsyncPacketReader<SMBPacketData<*>>? {
+        @Suppress("UNCHECKED_CAST")
+        val handlers = runCatching {
+            handlersField.get(transport) as PacketHandlers<SMBPacketData<*>, SMBPacket<*, *>>
+        }.getOrElse { e ->
+            logcat { "SmbAsyncTransport: no handlers (${e.message}) — 9KiB smbj reader" }
+            return null
+        }
+        return LargeAsyncPacketReader(channel, handlers.packetFactory, handlers.receiver)
     }
 
     private fun socketChannel(transport: AsyncDirectTcpTransport<*, *>): AsynchronousSocketChannel? = runCatching { socketChannelField.get(transport) as AsynchronousSocketChannel }.getOrElse { e ->
