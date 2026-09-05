@@ -144,11 +144,7 @@ abstract class PageLoader(
     }
 
     private fun cacheWeightOf(image: Image): Int {
-        val raw = image.allocationSize
-        // HARDWARE bitmaps sometimes report 0 Java-heap bytes; still evict by pixel area
-        // so the cache cannot retain every page in a long gallery.
-        val pixels = image.intrinsicSize.width.toLong() * image.intrinsicSize.height
-        val estimated = maxOf(raw, pixels * 4L)
+        val estimated = image.estimatedCacheBytes
         if (estimated <= 0L) return 1
         return estimated.coerceAtMost(imageCacheMaxBytes.toLong()).toInt().coerceAtLeast(1)
     }
@@ -504,12 +500,10 @@ abstract class PageLoader(
     @Synchronized
     override fun navigate(navigation: ReaderNavigation) {
         if (size <= 0) return
-        val decodeAhead = if (
-            Settings.readerAutoDecodeAhead.value && isAutoDecodeAheadFormat(navigation.anchor)
-        ) {
-            2
-        } else {
-            Settings.readerDecodeAhead.value.coerceAtLeast(0)
+        val decodeAhead = when {
+            isAnimatedReaderExtension(getImageExtension(navigation.anchor)) -> 0
+            Settings.readerAutoDecodeAhead.value && isAutoDecodeAheadFormat(navigation.anchor) -> 2
+            else -> Settings.readerDecodeAhead.value.coerceAtLeast(0)
         }
         val policy = ReaderLoadPolicy(
             sourceAhead = Settings.preloadImage.value.coerceAtLeast(0),
@@ -530,21 +524,19 @@ abstract class PageLoader(
     }
 
     /**
-     * Cache-off: Ready pages keep decoded bitmaps (Compose pin) and used to keep
-     * compressed bytes via [Image] source. Drop pages outside the demand window
-     * so a long scroll cannot accumulate them. Keep ±1 for pager beyond-viewport.
+     * Ready pages pin bitmaps / animated decoders until status changes. Local zip
+     * always extracts to RAM, so this is not cache-off-only. Keep ±1 for stills
+     * (pager peek); animated pages stay only while demanded.
      */
     private fun dropUndemandedDecodedPages(desired: Set<Int>) {
-        if (!Settings.disableReaderNetworkCache.value) return
         val n = size
         if (n <= 0) return
         val keepMin = (desired.minOrNull() ?: 0) - 1
         val keepMax = (desired.maxOrNull() ?: 0) + 1
-        fun keep(i: Int) = i in desired || i in keepMin..keepMax
-        lock.write {
-            for (i in 0 until n) {
-                if (!keep(i)) cache.remove(i)
-            }
+        fun keep(i: Int): Boolean {
+            if (i in desired) return true
+            if (i !in keepMin..keepMax) return false
+            return !isAnimatedReaderExtension(getImageExtension(i))
         }
         for (i in 0 until n) {
             if (keep(i)) continue
@@ -553,6 +545,11 @@ abstract class PageLoader(
             when (page.status) {
                 is PageStatus.Ready, is PageStatus.Blocked, is PageStatus.Loading -> page.reset()
                 else -> Unit
+            }
+        }
+        lock.write {
+            for (i in 0 until n) {
+                if (!keep(i)) cache.remove(i)
             }
         }
     }
