@@ -355,6 +355,25 @@ object ZipAsDirListing {
         )
     }
 
+    /**
+     * Pending zip/cbz directory rows for a parent listing that has not parsed EOCD yet.
+     * Lets Folder/Galleries paint real dirs while zip CDs are still in flight.
+     */
+    fun pendingZipDirectoryRows(children: List<RemoteChild>): List<BrowseEntryRemote.Directory> {
+        if (!Settings.browseZipAsDir.value) return emptyList()
+        return children.mapNotNull { child ->
+            if (child.isDirectory || !isZipArchiveFileName(child.name)) return@mapNotNull null
+            BrowseEntryRemote.Directory(
+                name = child.name,
+                hasVideo = false,
+                hasGallery = false,
+                presence = DirPresence.Pending,
+                lastModifiedMs = child.lastModifiedMs,
+                hidden = child.hidden || isDotHiddenName(child.name),
+            )
+        }
+    }
+
     /** Shallow paint: zip/cbz files become Pending directories (no CD yet). */
     fun zipFilesAsPendingDirectories(children: List<RemoteChild>): List<RemoteChild> {
         if (children.none { !it.isDirectory && isZipArchiveFileName(it.name) }) return children
