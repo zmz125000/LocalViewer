@@ -6,6 +6,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
+import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCentralDirectory
@@ -77,16 +78,25 @@ suspend inline fun <T> useZipFolderPageLoader(
                     true
                 }.getOrDefault(false)
 
+                override fun convertDestPath(index: Int): Path {
+                    val member = zipFolderMember(prefix, imageNames[index])
+                    return ZipMemberCover.destFile(zipKey, member).absolutePath.toPath()
+                }
+
                 override fun openSource(index: Int): ImageSource {
                     if (Settings.disableReaderNetworkCache.value) {
                         val member = zipFolderMember(prefix, imageNames[index])
                         val dest = ZipMemberCover.destFile(zipKey, member)
-                        if (dest.isFile && dest.length() > 0L) {
-                            val path = dest.absolutePath.toPath()
+                        val destPath = dest.absolutePath.toPath()
+                        val resolved = HdrConvertCache.resolvePagePath(destPath)
+                        val resolvedFile = File(resolved.toString())
+                        if (resolvedFile.isFile && resolvedFile.length() > 0L) {
                             return object : PathSource {
-                                override val source = path
+                                override val source = resolved
                                 override val type by lazy {
-                                    FileUtils.getExtensionFromFilename(imageNames[index])!!
+                                    FileUtils.getExtensionFromFilename(resolved.name)
+                                        ?: FileUtils.getExtensionFromFilename(imageNames[index])
+                                        ?: "jpg"
                                 }
                                 override fun close() = Unit
                             }
@@ -120,7 +130,10 @@ internal fun zipFolderMember(prefix: String, fileName: String): String = if (pre
 @PublishedApi
 internal fun zipFolderPageCached(zipKey: String, prefix: String, fileName: String): Boolean {
     val dest = ZipMemberCover.destFile(zipKey, zipFolderMember(prefix, fileName))
-    return dest.isFile && dest.length() > 0L
+    if (dest.isFile && dest.length() > 0L) return true
+    val uhdr = HdrConvertCache.uhdrSiblingOf(dest.absolutePath.toPath())
+    val f = File(uhdr.toString())
+    return f.isFile && f.length() > 0L
 }
 
 @PublishedApi

@@ -8,6 +8,7 @@ import com.hippo.ehviewer.Settings.archivePasswds
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
+import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.jni.closeArchive
 import com.hippo.ehviewer.jni.continueStreamTarIndex
 import com.hippo.ehviewer.jni.extractToByteBuffer
@@ -28,6 +29,7 @@ import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.ArchiveStreamBridge
 import com.hippo.ehviewer.library.ArchiveStreamPageCache
+import com.hippo.ehviewer.util.FileUtils
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -320,15 +322,16 @@ suspend inline fun <T> useStreamArchivePageLoader(
                             return byteBufferSource(ByteBuffer.wrap(bytes)) {}
                         }
                         val ext = getExtension(index)
-                        val path = pagePaths[index]
-                            ?.takeIf { ArchiveStreamPageCache.isCached(it) }
+                        val primary = pagePaths[index]
                             ?: ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
-                                .takeIf { ArchiveStreamPageCache.isCached(it) }
+                        val path = HdrConvertCache.resolvePagePath(primary)
+                            .takeIf { ArchiveStreamPageCache.isCached(it) }
+                            ?: primary.takeIf { ArchiveStreamPageCache.isCached(it) }
                         checkNotNull(path) { "Stream archive page $index not extracted" }
                         pagePaths[index] = path
                         return object : PathSource {
                             override val source: Path = path
-                            override val type = ext
+                            override val type = FileUtils.getExtensionFromFilename(path.name) ?: ext
                             override fun close() = Unit
                         }
                     }
@@ -406,6 +409,12 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         extractJobs.cancelOutside(sourcePages)
                     }
 
+                    override fun convertDestPath(index: Int): Path = ArchiveStreamPageCache.pagePath(cacheKey, index, getExtension(index).ifBlank { "bin" })
+
+                    override fun releaseRamPage(index: Int) {
+                        ramPages.remove(index)
+                    }
+
                     private fun addReadyWaiter(index: Int, onReady: () -> Unit) {
                         readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
                     }
@@ -420,9 +429,14 @@ suspend inline fun <T> useStreamArchivePageLoader(
                         if (ramPages.containsKey(index)) return true
                         pagePaths[index]?.let { if (ArchiveStreamPageCache.isCached(it)) return true }
                         val ext = getExtension(index).ifBlank { return false }
-                        val path = ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
-                        if (ArchiveStreamPageCache.isCached(path)) {
-                            pagePaths[index] = path
+                        val primary = ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
+                        val resolved = HdrConvertCache.resolvePagePath(primary)
+                        if (ArchiveStreamPageCache.isCached(resolved)) {
+                            pagePaths[index] = resolved
+                            return true
+                        }
+                        if (ArchiveStreamPageCache.isCached(primary)) {
+                            pagePaths[index] = primary
                             return true
                         }
                         return false

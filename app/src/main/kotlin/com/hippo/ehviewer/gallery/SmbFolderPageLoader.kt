@@ -148,6 +148,12 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     downloadJobs.cancelOutside(sourcePages)
                 }
 
+                override fun convertDestPath(index: Int): Path = SmbCache.cachePath(source.id, remoteDir, imageFileNames[index])
+
+                override fun releaseRamPage(index: Int) {
+                    ramPages.remove(index)
+                }
+
                 private fun addReadyWaiter(index: Int, onReady: () -> Unit) {
                     readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
                 }
@@ -204,7 +210,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                                 dispatchReady(index)
                                 return@launch
                             }
-                            if (skipDisk && SmbCache.isCachedOnDisk(SmbCache.resolveReaderPath(cache))) {
+                            if (skipDisk && SmbCache.isPageCachedOnDisk(cache)) {
                                 dispatchReady(index)
                                 return@launch
                             }
@@ -226,8 +232,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                                 }
                             }
                             val ready = if (skipDisk) {
-                                ramPages.containsKey(index) ||
-                                    SmbCache.isCachedOnDisk(SmbCache.resolveReaderPath(cache))
+                                ramPages.containsKey(index) || SmbCache.isPageCachedOnDisk(cache)
                             } else {
                                 SmbCache.isPageCachedOnDisk(cache)
                             }
@@ -277,6 +282,8 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 private suspend fun downloadToRam(index: Int) {
                     if (ramPages.containsKey(index)) return
                     val name = imageFileNames[index]
+                    val cache = SmbCache.cachePath(source.id, remoteDir, name)
+                    if (SmbCache.isPageCachedOnDisk(cache)) return
                     val rel = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
                     ZipAsDirListing.zipMemberPath(rel)?.let { (zipRel, member) ->
                         val bytes = ZipMemberCover.extractBytes(

@@ -118,8 +118,13 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     ramPages.keys.toList().forEach { idx ->
                         if (idx !in decodedPages) ramPages.remove(idx)
                     }
-                    // ConcurrentHashMap.forEach — avoid entries.toList() iterator race on Android.
                     downloadJobs.cancelOutside(sourcePages)
+                }
+
+                override fun convertDestPath(index: Int): Path = WebDavCache.cachePath(source.id, remoteDir, imageFileNames[index])
+
+                override fun releaseRamPage(index: Int) {
+                    ramPages.remove(index)
                 }
 
                 private fun addReadyWaiter(index: Int, onReady: () -> Unit) {
@@ -165,7 +170,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                 dispatchReady(index)
                                 return@launch
                             }
-                            if (skipDisk && WebDavCache.isCachedOnDisk(WebDavCache.resolveReaderPath(cache))) {
+                            if (skipDisk && WebDavCache.isPageCachedOnDisk(cache)) {
                                 dispatchReady(index)
                                 return@launch
                             }
@@ -176,16 +181,12 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                             }
                             slots.withPermit {
                                 if (skipDisk) {
-                                    if (ramPages.containsKey(index) ||
-                                        WebDavCache.isCachedOnDisk(WebDavCache.resolveReaderPath(cache))
-                                    ) {
+                                    if (ramPages.containsKey(index) || WebDavCache.isPageCachedOnDisk(cache)) {
                                         dispatchReady(index)
                                         return@withPermit
                                     }
                                     downloadToRam(index)
-                                    if (ramPages.containsKey(index) ||
-                                        WebDavCache.isCachedOnDisk(WebDavCache.resolveReaderPath(cache))
-                                    ) {
+                                    if (ramPages.containsKey(index) || WebDavCache.isPageCachedOnDisk(cache)) {
                                         dispatchReady(index)
                                     } else if (readyWaiters.containsKey(index)) {
                                         notifyPageFailed(index, "WebDAV download incomplete")
@@ -238,6 +239,8 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 private suspend fun downloadToRam(index: Int) {
                     if (ramPages.containsKey(index)) return
                     val name = imageFileNames[index]
+                    val cache = WebDavCache.cachePath(source.id, remoteDir, name)
+                    if (WebDavCache.isPageCachedOnDisk(cache)) return
                     val remote = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
                     ZipAsDirListing.zipMemberPath(remote)?.let { (zipRel, member) ->
                         val bytes = ZipMemberCover.extractBytes(

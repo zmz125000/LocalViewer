@@ -159,12 +159,23 @@ abstract class PageLoader(
             { raw ->
                 val checkAds = hasAds && detectAds(index, size)
                 val hint = getImageExtension(index)?.let { "page.$it" } ?: "page.bin"
+                val persistTo = if (Settings.disableReaderNetworkCache.value) {
+                    convertDestPath(index)
+                } else {
+                    null
+                }
                 val image = tryDecodeLibDirect(raw, forceOriginal, hint)
-                    ?: Image.decode(
-                        DisplaySource.ensureReady(raw, hint),
-                        checkExtraneousAds = checkAds,
-                        forceOriginal = forceOriginal,
-                    )
+                    ?: run {
+                        val ready = DisplaySource.ensureReady(raw, hint, persistTo = persistTo)
+                        if (persistTo != null && ready is PathSource) {
+                            releaseRamPage(index)
+                        }
+                        Image.decode(
+                            ready,
+                            checkExtraneousAds = checkAds,
+                            forceOriginal = forceOriginal,
+                        )
+                    }
                 try {
                     currentCoroutineContext().ensureActive()
                 } catch (e: CancellationException) {
@@ -622,4 +633,15 @@ abstract class PageLoader(
     }
 
     abstract fun openSource(index: Int): ImageSource
+
+    /**
+     * Cache-off: page-cache primary for this index (`hash.jxl`, `0.jxr`, …).
+     * Lib convert writes the Ultra HDR `.jpg` sibling so the next [onRequest]
+     * hits disk instead of re-fetching. Null → content-hash derived cache only
+     * (local mmap archives).
+     */
+    protected open fun convertDestPath(index: Int): Path? = null
+
+    /** Drop the compressed RAM copy after a lib still was persisted to disk. */
+    protected open fun releaseRamPage(index: Int) {}
 }
