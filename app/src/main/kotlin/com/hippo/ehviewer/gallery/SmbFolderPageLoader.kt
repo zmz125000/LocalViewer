@@ -16,7 +16,6 @@ import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.util.FileUtils
-import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -141,7 +140,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     // cancellation handler cannot resurrect an obsolete interactive transfer.
                     readyWaiters.forEach { idx, _ -> if (idx !in decodedPages) readyWaiters.remove(idx) }
                     ramPages.keys.toList().forEach { idx ->
-                        if (idx !in sourcePages && idx !in decodedPages) ramPages.remove(idx)
+                        if (idx !in decodedPages) ramPages.remove(idx)
                     }
                     // ConcurrentHashMap.forEach (BiConsumer) — never entries/keys iterator.
                     // Android EntryIterator.next can throw NoSuchElementException under concurrent
@@ -295,9 +294,9 @@ suspend inline fun <T> useSmbFolderPageLoader(
                         ramPages[index] = bytes
                         return
                     }
-                    val bos = ByteArrayOutputStream()
-                    SmbGateway.downloadFile(source, password, rel, bos)
-                    ramPages[index] = bos.toByteArray()
+                    val sink = RamByteSink()
+                    SmbGateway.downloadFile(source, password, rel, sink)
+                    ramPages[index] = sink.take()
                 }
 
                 private suspend fun downloadToCache(index: Int) {

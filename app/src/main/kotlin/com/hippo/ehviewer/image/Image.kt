@@ -215,12 +215,17 @@ class Image private constructor(
                         val bytes = ByteArray(n)
                         dup.get(bytes)
                         if (bytes.containsHdrGainMapMarker(n)) return@runCatching true
-                        // Full buffer for ProXDR (archive pages keep whole file in RAM).
+                        // Trailer lives in the last 768 bytes — never copy a 20 MiB page.
                         if (Settings.readerOppoProxdr.value) {
                             val full = src.value.source.asReadOnlyBuffer()
-                            val all = ByteArray(full.remaining())
-                            full.get(all)
-                            return@runCatching OppoProxdr.looksLike(all)
+                            val len = full.remaining()
+                            if (len >= 256) {
+                                val tail = minOf(768, len)
+                                val trailer = ByteArray(tail)
+                                full.position(full.position() + len - tail)
+                                full.get(trailer)
+                                return@runCatching OppoProxdr.looksLike(trailer)
+                            }
                         }
                         false
                     }

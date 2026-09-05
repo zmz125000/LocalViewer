@@ -64,10 +64,15 @@ private val pageLoaderMainHandler = Handler(Looper.getMainLooper())
  */
 private fun pageImageCacheMaxBytes(): Int {
     val heap = OSUtils.appMaxMemory.coerceAtLeast(64L * 1024 * 1024)
-    // ~35% of heap for retained pages; leave room for peak decode + UI + Coil thumbs.
-    val target = (heap * 35 / 100).toInt()
+    // Cache-off keeps compressed pages in the Java heap until decode finishes;
+    // leave more headroom than the disk-backed path.
+    val ram = Settings.disableReaderNetworkCache.value
+    val targetPct = if (ram) 25L else 35L
+    val capBytes = if (ram) 96L * 1024 * 1024 else 160L * 1024 * 1024
+    val capPct = if (ram) 30L else 45L
+    val target = (heap * targetPct / 100).toInt()
     val min = (24L * 1024 * 1024).toInt()
-    val max = minOf((160L * 1024 * 1024).toInt(), (heap * 45 / 100).toInt())
+    val max = minOf(capBytes.toInt(), (heap * capPct / 100).toInt())
     return target.coerceIn(min, max.coerceAtLeast(min))
 }
 
@@ -110,9 +115,16 @@ abstract class PageLoader(
 
     /**
      * Peak software decode is large; keep concurrency low on a 256 MiB heap.
+     * Cache-off also holds compressed bytes on the heap, so decode is 2-wide.
      * Lib-direct F16 is further serialized inside [LibDirectDecode] (one at a time).
      */
-    private val semaphore = Semaphore(if (Settings.readerLibDirectBitmap.value) 2 else 4)
+    private val semaphore = Semaphore(
+        when {
+            Settings.disableReaderNetworkCache.value -> 2
+            Settings.readerLibDirectBitmap.value -> 2
+            else -> 4
+        },
+    )
 
     /**
      * Decoded-page budget. Weight is clamped so one huge bitmap can occupy the

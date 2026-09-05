@@ -400,7 +400,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                     private fun cancelStaleExtracts(sourcePages: Set<Int>, decodedPages: Set<Int>) {
                         readyWaiters.forEach { idx, _ -> if (idx !in decodedPages) readyWaiters.remove(idx) }
                         ramPages.keys.toList().forEach { idx ->
-                            if (idx !in sourcePages && idx !in decodedPages) ramPages.remove(idx)
+                            if (idx !in decodedPages) ramPages.remove(idx)
                         }
                         // ConcurrentHashMap.forEach — avoid entries.toList() iterator race on Android.
                         extractJobs.cancelOutside(sourcePages)
