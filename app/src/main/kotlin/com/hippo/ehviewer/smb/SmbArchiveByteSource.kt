@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -292,9 +293,16 @@ private class KeepOpenSmbFileSource(
                                                 runBatch(op)
                                             }
                                         } else {
-                                            for (op in ops) {
-                                                runBatch(op)
-                                            }
+                                            // Do not iterate until ops.close(): that held the host-pool
+                                            // slot for the whole zip-as-dir reader session. Release
+                                            // after a short idle; the worker re-opens on next demand.
+                                            drainUntilIdle(
+                                                channel = ops,
+                                                idleMs = BROWSE_IDLE_RELEASE_MS,
+                                                isActive = { isActive && !closed.get() },
+                                                handle = { runBatch(it) },
+                                            )
+                                            if (!ops.isEmpty) demand.trySend(Unit)
                                         }
                                     }
                                 } finally {
@@ -464,6 +472,12 @@ private class KeepOpenSmbFileSource(
         const val STICKY_IDLE_PING_MS = 45_000L
 
         /**
+         * Browse-pool keep-open: drop the host-pool borrow after this idle so zip-as-dir
+         * page viewing does not pin an op slot until the reader closes.
+         */
+        const val BROWSE_IDLE_RELEASE_MS = 2_000L
+
+        /**
          * SMB2/3 READ size. 1 MiB matches [SmbSequentialCopy] and typical max read;
          * a 2 MiB video block is two credits in flight instead of one stop-and-wait.
          */
@@ -565,5 +579,24 @@ private class KeepOpenSmbFileSource(
             }
             return false
         }
+    }
+}
+
+/**
+ * Consume [channel] until it is idle for [idleMs] or closed.
+ * Used so browse-pool keep-open returns from [SmbGateway.withOpenFile] and releases
+ * the host-pool slot instead of holding it until the archive source is closed.
+ */
+internal suspend fun <T> drainUntilIdle(
+    channel: ReceiveChannel<T>,
+    idleMs: Long,
+    isActive: () -> Boolean = { true },
+    handle: suspend (T) -> Unit,
+) {
+    while (isActive()) {
+        val item = withTimeoutOrNull(idleMs) {
+            channel.receiveCatching().getOrNull()
+        } ?: channel.tryReceive().getOrNull() ?: return
+        handle(item)
     }
 }
