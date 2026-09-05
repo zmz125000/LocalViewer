@@ -298,12 +298,13 @@ suspend inline fun <T> useSmbFolderPageLoader(
                                 yieldable = false,
                             )
                         } ?: error("Cannot extract ZIP member $member from $zipRel")
-                        ramPages[index] = bytes
+                        if (isDecodedDemand(index)) ramPages[index] = bytes
                         return
                     }
                     val sink = RamByteSink()
                     SmbGateway.downloadFile(source, password, rel, sink)
-                    ramPages[index] = sink.take()
+                    val bytes = sink.take()
+                    if (isDecodedDemand(index)) ramPages[index] = bytes
                 }
 
                 private suspend fun downloadToCache(index: Int) {

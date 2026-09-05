@@ -145,8 +145,12 @@ abstract class PageLoader(
 
     private fun cacheWeightOf(image: Image): Int {
         val raw = image.allocationSize
-        if (raw <= 0L) return 1
-        return raw.coerceAtMost(imageCacheMaxBytes.toLong()).toInt().coerceAtLeast(1)
+        // HARDWARE bitmaps sometimes report 0 Java-heap bytes; still evict by pixel area
+        // so the cache cannot retain every page in a long gallery.
+        val pixels = image.intrinsicSize.width.toLong() * image.intrinsicSize.height
+        val estimated = maxOf(raw, pixels * 4L)
+        if (estimated <= 0L) return 1
+        return estimated.coerceAtMost(imageCacheMaxBytes.toLong()).toInt().coerceAtLeast(1)
     }
 
     private suspend fun atomicallyDecodeAndUpdate(index: Int, forceOriginal: Boolean) {
@@ -176,6 +180,10 @@ abstract class PageLoader(
                             forceOriginal = forceOriginal,
                         )
                     }
+                // Compressed ramPages are only needed until decode. Keep them while this
+                // index is still demanded (save / retry); drop as soon as the bitmap exists
+                // if navigation already moved on.
+                if (!isDecodedDemand(index)) releaseRamPage(index)
                 try {
                     currentCoroutineContext().ensureActive()
                 } catch (e: CancellationException) {
@@ -514,10 +522,39 @@ abstract class PageLoader(
 
         onNavigation(demand)
         prioritizeDecode(demand.decodedPages)
+        dropUndemandedDecodedPages(demand.decodedPages)
         // Interactive viewport first, then nearest decoded neighbors.
         demand.visibleDecode.forEach(::requestDecode)
         demand.decodeAhead.forEach(::requestDecode)
         prefetchAbsent(demand.sourceOnly)
+    }
+
+    /**
+     * Cache-off: Ready pages keep decoded bitmaps (Compose pin) and used to keep
+     * compressed bytes via [Image] source. Drop pages outside the demand window
+     * so a long scroll cannot accumulate them. Keep ±1 for pager beyond-viewport.
+     */
+    private fun dropUndemandedDecodedPages(desired: Set<Int>) {
+        if (!Settings.disableReaderNetworkCache.value) return
+        val n = size
+        if (n <= 0) return
+        val keepMin = (desired.minOrNull() ?: 0) - 1
+        val keepMax = (desired.maxOrNull() ?: 0) + 1
+        fun keep(i: Int) = i in desired || i in keepMin..keepMax
+        lock.write {
+            for (i in 0 until n) {
+                if (!keep(i)) cache.remove(i)
+            }
+        }
+        for (i in 0 until n) {
+            if (keep(i)) continue
+            releaseRamPage(i)
+            val page = pages.getOrNull(i) ?: continue
+            when (page.status) {
+                is PageStatus.Ready, is PageStatus.Blocked, is PageStatus.Loading -> page.reset()
+                else -> Unit
+            }
+        }
     }
 
     private fun isAutoDecodeAheadFormat(index: Int): Boolean {
@@ -644,4 +681,7 @@ abstract class PageLoader(
 
     /** Drop the compressed RAM copy after a lib still was persisted to disk. */
     protected open fun releaseRamPage(index: Int) {}
+
+    /** True while [index] is in the current viewport + decode-ahead window. */
+    protected fun isDecodedDemand(index: Int): Boolean = index in desiredDecodedPages
 }

@@ -87,7 +87,7 @@ import splitties.init.appCtx
  */
 class Image private constructor(
     image: CoilImage,
-    private val src: ImageSource,
+    src: ImageSource,
     /**
      * Lib-direct absolute HDR (no gain map). Combined with [hasGainmap] for window HDR.
      */
@@ -96,6 +96,13 @@ class Image private constructor(
     isWideGamutDirect: Boolean = false,
 ) {
     val refcnt = AtomicInt(1)
+
+    /**
+     * Animated drawables need the source until [recycle]. Bitmap pages close it in
+     * [init] so a cache-off [ByteBufferSource] does not pin the compressed file
+     * for the lifetime of [PageStatus.Ready].
+     */
+    private var src: ImageSource? = src
 
     fun pin() = refcnt.updateAndFetch { if (it != 0) it + 1 else 0 } != 0
 
@@ -158,6 +165,10 @@ class Image private constructor(
             else -> 1f
         }
         isWideGamutContent = isWideGamutDirect || bitmapIsWideGamut(image)
+        if (innerImage is BitmapImage) {
+            this.src?.close()
+            this.src = null
+        }
     }
 
     private fun bitmapIsWideGamut(image: CoilImage): Boolean {
@@ -174,11 +185,12 @@ class Image private constructor(
         when (val image = innerImage!!) {
             is DrawableImage -> {
                 (image.drawable as? AnimatedWebPDrawable)?.dispose()
-                src.close()
+                src?.close()
             }
             is BitmapImage -> image.bitmap.recycle()
         }
         innerImage = null
+        src = null
     }
 
     companion object {
@@ -525,9 +537,7 @@ class Image private constructor(
                     src.left().decodeCoil(checkExtraneousAds, forceOriginal)
                 }
             }
-            return Image(image, src).apply {
-                if (innerImage is BitmapImage) src.close()
-            }
+            return Image(image, src)
         }
 
         /**
@@ -542,9 +552,7 @@ class Image private constructor(
                 isHdrContentDirect = result.isHdrContent,
                 contentHdrBoostOverride = result.contentHdrBoost,
                 isWideGamutDirect = result.isWideGamutSource,
-            ).apply {
-                if (innerImage is BitmapImage) src.close()
-            }
+            )
         }
 
         /**

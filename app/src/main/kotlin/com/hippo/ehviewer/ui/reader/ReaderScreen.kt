@@ -1210,7 +1210,7 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 val names = args.imageNames.ifEmpty {
                     FolderGalleryIndex.loadLocalForReader(info)
                         ?: MediaStoreFs.imageFileNames(path)
-                        .orEmpty()
+                            .orEmpty()
                 }
                 useFolderPageLoader(
                     dir = path,

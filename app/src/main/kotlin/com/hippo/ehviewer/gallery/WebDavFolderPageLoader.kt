@@ -249,12 +249,13 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                         ) {
                             WebDavArchiveByteSource(source, password, zipRel, pipeline = false)
                         } ?: error("Cannot extract ZIP member $member from $zipRel")
-                        ramPages[index] = bytes
+                        if (isDecodedDemand(index)) ramPages[index] = bytes
                         return
                     }
                     val sink = RamByteSink()
                     WebDavClient.downloadFile(source, password, remote, sink)
-                    ramPages[index] = sink.take()
+                    val bytes = sink.take()
+                    if (isDecodedDemand(index)) ramPages[index] = bytes
                 }
             },
         )

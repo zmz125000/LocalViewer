@@ -16,6 +16,7 @@ object LibraryScanner {
         /** Image basenames keyed by browse relativeDir (`""` = root, `dir/file.zip/Album`). */
         val folderPages: Map<String, List<String>>,
     )
+
     /**
      * Scan [rootPath] for galleries.
      *
