@@ -152,6 +152,13 @@ class SmbArchiveByteSource(
         raw?.dropQueuedReads()
     }
 
+    /** Re-open the remote handle after the browse pool's TCP died in the background. */
+    fun requestReconnect() {
+        raw?.requestReconnect()
+        val nested = inner as? SmbArchiveByteSource
+        if (nested != null && nested !== this) nested.requestReconnect()
+    }
+
     override fun close() = inner.close()
 }
 
@@ -390,6 +397,11 @@ private class KeepOpenSmbFileSource(
                 op.result.complete(-1)
             }
         }
+    }
+
+    /** Re-open the remote handle after the browse pool's TCP died in the background. */
+    fun requestReconnect() {
+        if (!closed.get()) demand.trySend(Unit)
     }
 
     override val size: Long

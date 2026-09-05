@@ -567,8 +567,12 @@ abstract class PageLoader(
         lastNavigation?.let(::navigate)
     }
 
-    /** Retry currently demanded pages after network transports are recreated on resume. */
+    /**
+     * Retry currently demanded pages after network transports die in the background.
+     * Drop inflight claims so a hung SMB/WebDAV job cannot block [requestDecode] forever.
+     */
     override fun onForeground() {
+        cancelDecodeJobs()
         replan()
     }
 

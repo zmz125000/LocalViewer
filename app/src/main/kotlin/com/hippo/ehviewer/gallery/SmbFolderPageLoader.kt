@@ -132,6 +132,16 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     cancelStaleDownloads(demand.sourcePages, demand.decodedPages)
                 }
 
+                override fun onForeground() {
+                    downloadJobs.cancelAll()
+                    super.onForeground()
+                    if (!SmbGateway.isSourceConnected(source)) {
+                        scope.launch(Dispatchers.IO) {
+                            SmbGateway.refreshConnectionSignal(source, password)
+                        }
+                    }
+                }
+
                 /** Restrict prefetch only when download will RAM→UHDR convert. */
                 private fun isLibHdrCandidate(name: String): Boolean = HdrConvertCache.usesNetworkLibConvert(name)
 

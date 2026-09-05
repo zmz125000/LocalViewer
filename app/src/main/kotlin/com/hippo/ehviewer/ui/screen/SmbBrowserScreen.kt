@@ -105,6 +105,7 @@ import com.hippo.ehviewer.library.toRemoteBrowseSections
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.smb.smbReconnectProbeDelayMs
 import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.OpenFileExternally
@@ -431,8 +432,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val src = source ?: return@LaunchedEffect
         if (SmbGateway.isSourceConnected(src)) return@LaunchedEffect
         val password = withIOContext { SmbPasswordStore.get(src.id) }
+        var attempt = 0
         while (!SmbGateway.isSourceConnected(src)) {
-            delay(SMB_RECONNECT_RETRY_DELAY_MS)
+            delay(smbReconnectProbeDelayMs(attempt, SMB_RECONNECT_RETRY_DELAY_MS))
+            attempt++
             SmbGateway.refreshConnectionSignal(src, password)
             if (SmbGateway.isSourceConnected(src)) return@LaunchedEffect
         }
