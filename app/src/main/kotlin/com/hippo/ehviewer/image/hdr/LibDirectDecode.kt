@@ -13,7 +13,6 @@ import com.hippo.ehviewer.jni.decodeAvifBytesToDirect
 import com.hippo.ehviewer.jni.decodeJxlBytesToDirect
 import com.hippo.ehviewer.jni.decodeJxrBytesToDirect
 import java.nio.ByteBuffer
-import java.util.function.DoubleUnaryOperator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -58,9 +57,21 @@ object LibDirectDecode {
     internal val heavyDecode = Semaphore(1)
 
     /**
-     * BT.2020 primaries (CIE xy) for linear extended ColorSpace.
-     * Pixels are linear relative to 203 nits (may exceed 1.0). Named
-     * [ColorSpace.Named.BT2020_PQ] / HLG expect transfer-encoded values; we stay linear.
+     * ICC type-3 identity (Y = X). [Bitmap.wrapHardwareBuffer] requires this;
+     * [DoubleUnaryOperator] identity has no native SkColorSpace and throws
+     * "ColorSpace must use an ICC parametric transfer function".
+     *
+     * Same 5-tuple AOSP uses for gamma=1 named spaces (LINEAR_SRGB).
+     * F16 samples may still exceed 1.0 (scene-linear HDR); Skia does not
+     * clamp HardwareBuffer pixels to the public 0..1 ColorSpace range.
+     */
+    private val linearIccTransfer: ColorSpace.Rgb.TransferParameters by lazy {
+        ColorSpace.Rgb.TransferParameters(1.0, 0.0, 0.0, 0.0, 1.0)
+    }
+
+    /**
+     * BT.2020 primaries (CIE xy), linear. Pixels are relative to 203 nits.
+     * Named [ColorSpace.Named.BT2020_PQ] / HLG expect transfer-encoded values.
      */
     private val bt2020LinearExtended: ColorSpace by lazy {
         ColorSpace.Rgb(
@@ -74,14 +85,11 @@ object LibDirectDecode {
                 0.046f,
             ),
             ColorSpace.ILLUMINANT_D65,
-            DoubleUnaryOperator { x -> x },
-            DoubleUnaryOperator { x -> x },
-            0.0f,
-            64.0f,
+            linearIccTransfer,
         )
     }
 
-    /** Linear extended Display P3; matches native gamut=1 F16 samples exactly. */
+    /** Linear Display P3; matches native gamut=1 F16 samples exactly. */
     private val displayP3LinearExtended: ColorSpace by lazy {
         ColorSpace.Rgb(
             "Display-P3-Linear-Extended",
@@ -94,10 +102,7 @@ object LibDirectDecode {
                 0.060f,
             ),
             ColorSpace.ILLUMINANT_D65,
-            DoubleUnaryOperator { x -> x },
-            DoubleUnaryOperator { x -> x },
-            0.0f,
-            64.0f,
+            linearIccTransfer,
         )
     }
 
