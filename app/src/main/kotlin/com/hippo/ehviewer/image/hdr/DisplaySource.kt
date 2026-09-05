@@ -1,10 +1,12 @@
 package com.hippo.ehviewer.image.hdr
 
+import com.ehviewer.core.files.read
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.util.FileUtils
 import java.nio.ByteBuffer
+import kotlinx.io.readByteArray
 import okio.Path
 
 /**
@@ -15,21 +17,30 @@ import okio.Path
  * (`Failed to create image decoder` / `unimplemented`); cache-off must still convert.
  *
  * Local archives pass a mmap [ByteBufferSource] ([extractToByteBuffer]). Platform
- * JPEG/PNG/… stay in that buffer (EhViewer direct access). Only lib stills become a
- * converted JPEG [PathSource] under the derived Ultra HDR cache (not the network
- * original page cache).
+ * JPEG/PNG/… stay in that buffer (EhViewer direct access). Lib stills become a
+ * converted JPEG [PathSource]. When [persistTo] is set (network cache-off), that
+ * JPEG is the Ultra HDR **sibling of the page-cache key** so scroll-back hits
+ * disk instead of re-fetching. Otherwise it lands under the derived Ultra HDR
+ * cache (content hash / local path).
  */
 object DisplaySource {
     /**
+     * @param persistTo network/extract page-cache primary (e.g. `hash.jxl`). Lib
+     *        convert writes the `.jpg` sibling [HdrConvertCache.uhdrSiblingOf]
+     *        so loaders can [HdrConvertCache.resolvePagePath] on the next request.
      * @return Coil-ready source. Platform [ByteBufferSource] is unchanged (no disk).
      *         Caller must [ImageSource.close] the returned source (closes the original when wrapped).
      */
-    suspend fun ensureReady(src: ImageSource, fileNameHint: String = "page.bin"): ImageSource = when (src) {
-        is PathSource -> ensureReadyPath(src)
-        is ByteBufferSource -> ensureReadyBuffer(src, fileNameHint)
+    suspend fun ensureReady(
+        src: ImageSource,
+        fileNameHint: String = "page.bin",
+        persistTo: Path? = null,
+    ): ImageSource = when (src) {
+        is PathSource -> ensureReadyPath(src, persistTo)
+        is ByteBufferSource -> ensureReadyBuffer(src, fileNameHint, persistTo)
     }
 
-    private suspend fun ensureReadyPath(src: PathSource): PathSource {
+    private suspend fun ensureReadyPath(src: PathSource, persistTo: Path?): PathSource {
         // Prefer real filename for HEIC/ProXDR sniff; SAF document ids sometimes lack an ext.
         val hint = src.source.name.let { name ->
             if (name.contains('.')) {
@@ -39,7 +50,7 @@ object DisplaySource {
                 if (t.isNotEmpty()) "$name.$t" else name
             }
         }
-        val ready = HdrConvertCache.ensureCoilReady(src.source, hint)
+        val ready = convertLibToCoilReady(src.source, hint, persistTo)
         if (ready.toString() == src.source.toString()) return src
         val outer = src
         return object : PathSource {
@@ -50,12 +61,16 @@ object DisplaySource {
         }
     }
 
-    private suspend fun ensureReadyBuffer(src: ByteBufferSource, fileNameHint: String): ImageSource {
+    private suspend fun ensureReadyBuffer(
+        src: ByteBufferSource,
+        fileNameHint: String,
+        persistTo: Path?,
+    ): ImageSource {
         val route = classify(src.source, fileNameHint)
         if (!route.needsUhdr) return src
         val bytes = src.source.heapBytesForConvert()
         check(bytes.isNotEmpty()) { "empty image buffer" }
-        val ready = HdrConvertCache.ensureCoilReadyFromBytes(bytes, fileNameHint)
+        val ready = convertLibBytes(bytes, fileNameHint, persistTo)
         val outer = src
         return object : PathSource {
             override val source: Path = ready
@@ -63,6 +78,21 @@ object DisplaySource {
                 FileUtils.getExtensionFromFilename(ready.name) ?: "jpg"
             override fun close() = outer.close()
         }
+    }
+
+    private suspend fun convertLibToCoilReady(source: Path, hint: String, persistTo: Path?): Path {
+        if (persistTo == null) return HdrConvertCache.ensureCoilReady(source, hint)
+        val route = classifyPath(source, hint)
+        if (!route.needsUhdr) return source
+        val bytes = source.read { readByteArray() }
+        check(bytes.isNotEmpty()) { "empty image file: $hint" }
+        return convertLibBytes(bytes, hint, persistTo)
+    }
+
+    private suspend fun convertLibBytes(bytes: ByteArray, fileNameHint: String, persistTo: Path?): Path = if (persistTo != null) {
+        HdrConvertCache.finalizeNetworkBytes(bytes, persistTo, fileNameHint)
+    } else {
+        HdrConvertCache.ensureCoilReadyFromBytes(bytes, fileNameHint)
     }
 }
 

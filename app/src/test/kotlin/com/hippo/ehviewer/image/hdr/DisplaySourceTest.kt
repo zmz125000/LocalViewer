@@ -1,7 +1,9 @@
 package com.hippo.ehviewer.image.hdr
 
 import java.nio.ByteBuffer
+import okio.Path.Companion.toPath
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -31,5 +33,17 @@ class DisplaySourceTest {
         val buf = ByteBuffer.wrap(payload, 4, 8)
         val out = buf.heapBytesForConvert()
         assertArrayEquals(payload.copyOfRange(4, 12), out)
+    }
+
+    @Test
+    fun uhdrSiblingIsIdentityKeyedNotContentHash() {
+        // Cache-off must persist next to the page-cache primary so scroll-back
+        // can resolveReaderPath without the original bytes.
+        val primary = "/data/cache/smb_cache/deadbeef.jxl".toPath()
+        val sibling = HdrConvertCache.uhdrSiblingOf(primary)
+        assertEquals("deadbeef.jpg", sibling.name)
+        assertEquals(primary.parent, sibling.parent)
+        val streamPage = "/data/cache/archive_pages/ab/0.jxr".toPath()
+        assertEquals("0.jpg", HdrConvertCache.uhdrSiblingOf(streamPage).name)
     }
 }
