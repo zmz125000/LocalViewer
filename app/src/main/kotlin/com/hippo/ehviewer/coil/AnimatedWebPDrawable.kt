@@ -21,12 +21,13 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
-// Hold a reference to the buffer as it's used by the decoder
-@Suppress("CanBeParameter")
-class AnimatedWebPDrawable(private val source: ByteBuffer) : Drawable(), Animatable {
+// Hold a reference to the buffer as it's used by the decoder.
+// JNI GetDirectBufferAddress requires a direct buffer; ZIP/RAM pages are heap wraps.
+class AnimatedWebPDrawable(source: ByteBuffer) : Drawable(), Animatable {
+    private val source: ByteBuffer = source.ensureDirectForNative()
     private val decodeScope = CoroutineScope(Dispatchers.IO.limitedParallelism(1))
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private val decoder = nativeCreateDecoder(source)
+    private val decoder = nativeCreateDecoder(this.source)
     private val width: Int
     private val height: Int
     private val loopCount: Int
@@ -144,6 +145,15 @@ class AnimatedWebPDrawable(private val source: ByteBuffer) : Drawable(), Animata
 }
 
 private class Frame(val bitmap: Bitmap, var timestamp: Int)
+
+/** Native WebPAnimDecoder only accepts a direct buffer (capacity == readable range). */
+internal fun ByteBuffer.ensureDirectForNative(): ByteBuffer {
+    if (isDirect && position() == 0 && remaining() == capacity()) return this
+    val copy = ByteBuffer.allocateDirect(remaining())
+    copy.put(duplicate())
+    copy.flip()
+    return copy
+}
 
 private external fun nativeCreateDecoder(source: ByteBuffer): Long
 private external fun nativeGetImageInfo(decoder: Long): Long

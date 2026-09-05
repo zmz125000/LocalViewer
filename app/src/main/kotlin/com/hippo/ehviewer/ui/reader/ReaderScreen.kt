@@ -1269,7 +1269,7 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                         SmbPasswordStore.get(source.id),
                         zipRel,
                         pipeline = false,
-                        yieldable = true,
+                        yieldable = false,
                     )
                 },
                 block = block,

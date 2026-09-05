@@ -617,6 +617,7 @@ object SmbGateway {
         val connection: Connection,
         val session: Session,
         val reservedForList: Boolean = false,
+        /** Last successful user op. Keep-alive ping must not bump this or extra TCPs never idle-release. */
         val lastUsedMs: AtomicLong = AtomicLong(System.currentTimeMillis()),
     ) {
         private val shares = HashMap<String, DiskShare>()
@@ -666,16 +667,10 @@ object SmbGateway {
             return if (probe != null) {
                 try {
                     probe.value.folderExists("")
-                    lastUsedMs.set(System.currentTimeMillis())
                     true
                 } catch (e: SMBApiException) {
                     // Access / path errors still mean the session is alive.
-                    if (isIgnorableListError(e) || !isSessionRejectError(e)) {
-                        lastUsedMs.set(System.currentTimeMillis())
-                        true
-                    } else {
-                        false
-                    }
+                    isIgnorableListError(e) || !isSessionRejectError(e)
                 } catch (e: Throwable) {
                     !isTransportError(e) && !isSessionRejectError(e) && isConnected
                 }
@@ -756,6 +751,7 @@ object SmbGateway {
          * stay and are pinged.
          */
         private fun pingIdleSessions() {
+            sweepDeadSessions()
             val candidates = synchronized(sessionsLock) {
                 sessions.filter { !it.retired.get() && it.outstanding.get() == 0 && it.isConnected }
                     .sortedWith(
@@ -783,33 +779,32 @@ object SmbGateway {
                 val releaseExtra = !ps.reservedForList &&
                     idleMs >= IDLE_RELEASE_MS &&
                     dataLive > MIN_WARM_DATA_SESSIONS
-                // tryAcquire all slots so we don't race an op mid-ping / mid-close
-                var acquired = 0
-                try {
-                    while (acquired < ps.opsLimit && ps.opSlots.tryAcquire()) {
-                        acquired++
-                    }
-                    if (acquired < ps.opsLimit) {
-                        repeat(acquired) { ps.opSlots.release() }
-                        kept++
-                        continue
-                    }
-                    if (releaseExtra) {
+                if (releaseExtra) {
+                    // Exclusive slots only when closing — ping concurrent with a READ is fine,
+                    // and hogging every slot made waiters grow extra TCPs up to the cap.
+                    var acquired = 0
+                    try {
+                        while (acquired < ps.opsLimit && ps.opSlots.tryAcquire()) {
+                            acquired++
+                        }
+                        if (acquired < ps.opsLimit) {
+                            kept++
+                            continue
+                        }
                         markDyingAndMaybeClose(ps)
                         dataLive--
                         released++
-                    } else if (ps.ping()) {
-                        kept++
-                    } else {
-                        markDyingAndMaybeClose(ps)
-                        if (!ps.reservedForList) dataLive--
-                        dropped++
+                    } finally {
+                        if (!ps.retired.get()) {
+                            repeat(acquired) { ps.opSlots.release() }
+                        }
                     }
-                } finally {
-                    // Only release if we still own the slots and session is not dying mid-close.
-                    if (!ps.retired.get()) {
-                        repeat(acquired) { ps.opSlots.release() }
-                    }
+                } else if (ps.ping()) {
+                    kept++
+                } else {
+                    markDyingAndMaybeClose(ps)
+                    if (!ps.reservedForList) dataLive--
+                    dropped++
                 }
             }
             if (dropped > 0 || released > 0) signalFree()
@@ -829,11 +824,42 @@ object SmbGateway {
         }
 
         private fun liveDataCount(): Int = synchronized(sessionsLock) {
-            sessions.count { !it.retired.get() && !it.reservedForList }
+            sessions.count {
+                smbCountsTowardDataCap(it.retired.get(), it.reservedForList, it.connection.isConnected)
+            }
         }
 
         private fun liveListCount(): Int = synchronized(sessionsLock) {
-            sessions.count { !it.retired.get() && it.reservedForList }
+            sessions.count {
+                !it.retired.get() && it.reservedForList && it.connection.isConnected
+            }
+        }
+
+        /** Drop client-side sessions whose TCP is already gone so they cannot fill the cap. */
+        private fun sweepDeadSessions(): Int {
+            val dead = synchronized(sessionsLock) {
+                sessions.filter { !it.retired.get() && !it.connection.isConnected }
+            }
+            if (dead.isEmpty()) return 0
+            dead.forEach { markDyingAndMaybeClose(it) }
+            logcat {
+                "SmbGateway: host $hostPortKey swept ${dead.size} disconnected session(s), " +
+                    "data=${liveDataCount()}/${maxConnectionsPerHost()}"
+            }
+            return dead.size
+        }
+
+        private fun poolDebugSummary(): String = synchronized(sessionsLock) {
+            if (sessions.isEmpty()) return@synchronized "empty"
+            sessions.joinToString(",") { ps ->
+                val role = if (ps.reservedForList) "L" else "D"
+                val st = when {
+                    ps.retired.get() -> "dead"
+                    !ps.connection.isConnected -> "down"
+                    else -> "up"
+                }
+                "$role$st o=${ps.outstanding.get()}/${ps.opsLimit} p=${ps.opSlots.availablePermits}"
+            }
         }
 
         private fun tryReserveSession(
@@ -974,6 +1000,7 @@ object SmbGateway {
             forList: Boolean,
             openSession: suspend (reservedForList: Boolean) -> PooledSession,
         ): PooledSession? {
+            sweepDeadSessions()
             // Fill multiplex slots on live TCPs before opening another socket.
             tryReserveExisting(credKey, shareName, forList)?.let { return it }
             val atCap = if (forList) {
@@ -1156,11 +1183,15 @@ object SmbGateway {
                         interactiveWaiters.incrementAndGet()
                         yieldBackgroundOps("data-wait $hostPortKey")
                     }
+                    sweepDeadSessions()
                     tryReserveExisting(credKey, shareName, forList = false)?.let { return it }
                     tryGrow(credKey, shareName, forList = false, openSession)?.let { return it }
 
                     val remainingMs = ((deadlineNs - System.nanoTime()) / 1_000_000L).coerceAtLeast(0L)
                     if (remainingMs == 0L) {
+                        sweepDeadSessions()
+                        tryReserveExisting(credKey, shareName, forList = false)?.let { return it }
+                        tryGrow(credKey, shareName, forList = false, openSession)?.let { return it }
                         if (!forcedSteal && liveDataCount() >= maxConnectionsPerHost()) {
                             forcedSteal = true
                             retireOneOtherCred(credKey, listOnly = false, force = true)
@@ -1171,7 +1202,8 @@ object SmbGateway {
                         error(
                             "SMB host $hostPortKey busy: no free op slot for this user " +
                                 "(sessions=${liveDataCount()}/${maxConnectionsPerHost()}, " +
-                                "ops/session=${opsPerSession()}, hostOps≤$MAX_SAFE_HOST_OPS)",
+                                "ops/session=${opsPerSession()}, hostOps≤$MAX_SAFE_HOST_OPS, " +
+                                "pool=${poolDebugSummary()})",
                         )
                     }
                     withTimeoutOrNull(remainingMs.coerceAtMost(ACQUIRE_WAIT_MS)) {
@@ -3181,6 +3213,13 @@ object SmbGateway {
         }
     }
 }
+
+/** Data TCP counts toward [SmbGateway.maxConnectionsPerHost] only while the socket is live. */
+internal fun smbCountsTowardDataCap(
+    retired: Boolean,
+    reservedForList: Boolean,
+    connected: Boolean,
+): Boolean = !retired && !reservedForList && connected
 
 /**
  * smbj [com.hierynomus.smbj.share.Share] throws [com.hierynomus.smbj.common.SMBRuntimeException]
