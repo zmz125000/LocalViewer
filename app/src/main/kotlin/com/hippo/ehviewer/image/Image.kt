@@ -305,7 +305,6 @@ class Image private constructor(
             emergencyMaxEdge: Int = 0,
         ): CoilImage {
             val hardwareDirect = !platformHbd && (Settings.readerHardwareBitmap.value || hdrSafe)
-            val ram = Settings.disableReaderNetworkCache.value
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
@@ -318,15 +317,11 @@ class Image private constructor(
                         scale(Scale.FILL)
                         precision(Precision.INEXACT)
                     }
-                    // ORIGINAL maxBitmapSize lets ImageDecoder allocate a 30 MP software
-                    // bitmap. Cache-off already holds the compressed file on the Java heap.
-                    val cap = when {
-                        emergencyMaxEdge > 0 -> emergencyMaxEdge
-                        ram -> 4096
-                        mode.isOriginal -> 0
-                        else -> 8192
+                    if (emergencyMaxEdge > 0) {
+                        maxBitmapSize(Size(emergencyMaxEdge, emergencyMaxEdge))
+                    } else {
+                        maxBitmapSize(Size.ORIGINAL)
                     }
-                    if (cap > 0) maxBitmapSize(Size(cap, cap)) else maxBitmapSize(Size.ORIGINAL)
                     // No forced colorSpace(DISPLAY_P3): preserves embedded ICC under the
                     // reader WCG window (advanced color on). sRGB stays sRGB-tagged (no
                     // oversaturation); P3 stays P3. 8-bit JPEGs stay 8888/HARDWARE.
@@ -583,10 +578,7 @@ class Image private constructor(
          */
         fun maxEdgeForReader(forceOriginal: Boolean): Int {
             val mode = decodeMode(forceOriginal)
-            if (mode.isOriginal) {
-                // Cache-off: a 30 MP software bitmap is ~120 MiB — cap long edge.
-                return if (Settings.disableReaderNetworkCache.value) 4096 else 0
-            }
+            if (mode.isOriginal) return 0
             val scale = mode.scale ?: return 0
             return with(appCtx.resources.displayMetrics) {
                 (minOf(widthPixels, heightPixels) * scale).roundToInt().coerceAtLeast(1)
