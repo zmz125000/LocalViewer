@@ -463,6 +463,12 @@ object LocalHistory {
             ?.coverPath?.toString()?.takeIf { it.isNotBlank() }
             ?.let { return it }
 
+        entries.asSequence()
+            .filterIsInstance<BrowseEntry.FolderGallery>()
+            .mapNotNull { it.coverPath?.toString()?.takeIf { path -> path.isNotBlank() } }
+            .firstOrNull()
+            ?.let { return it }
+
         val rel = normalizeRel(relativePath)
         if (rel.isNotEmpty() && !parentPath.isNullOrEmpty()) {
             val dirName = rel.substringAfterLast('/')
@@ -479,42 +485,27 @@ object LocalHistory {
 
     /**
      * SMB folder-thumb key for browse-dir history. Dual-gallery cover of [relativeDir],
-     * else Directory cover from parent listing, else favourite.
+     * else first child gallery (zip-as-dir promoted albums), else Directory cover from
+     * parent listing, else favourite.
      */
     fun smbBrowseFolderThumbKey(
         sourceId: Long,
         relativeDir: String,
         entries: List<BrowseEntryRemote>,
-    ): String? {
-        val rel = normalizeRel(relativeDir)
-        entries.asSequence()
-            .filterIsInstance<BrowseEntryRemote.FolderGallery>()
-            .firstOrNull { it.relativeName.isEmpty() }
-            ?.coverFileName?.takeIf { it.isNotBlank() }
-            ?.let { fileName ->
-                return zipOrRemoteThumbKey(sourceId, rel, "", fileName, smb = true)
-            }
-
-        if (rel.isNotEmpty()) {
-            val parentRel = parentRelativeOfFile(rel)
-            BrowseSession.getSmbListing(sourceId, parentRel)
-                ?.asSequence()
-                ?.filterIsInstance<BrowseEntryRemote.Directory>()
-                ?.firstOrNull { joinRemote(parentRel, it.relativeName) == rel }
-                ?.coverFileName?.takeIf { it.isNotBlank() }
-                ?.let { fileName ->
-                    return zipOrRemoteThumbKey(sourceId, parentRel, rel.substringAfterLast('/'), fileName, smb = true)
-                }
-        }
-
-        return BrowseFavorites.thumbKeyFor(BrowseFavorites.smbFolderKey(sourceId, rel))
-    }
+    ): String? = remoteBrowseFolderThumbKey(sourceId, relativeDir, entries, smb = true)
 
     /** WebDAV folder-thumb key for browse-dir history (mirrors [smbBrowseFolderThumbKey]). */
     fun webDavBrowseFolderThumbKey(
         sourceId: Long,
         relativeDir: String,
         entries: List<BrowseEntryRemote>,
+    ): String? = remoteBrowseFolderThumbKey(sourceId, relativeDir, entries, smb = false)
+
+    private fun remoteBrowseFolderThumbKey(
+        sourceId: Long,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+        smb: Boolean,
     ): String? {
         val rel = normalizeRel(relativeDir)
         entries.asSequence()
@@ -522,22 +513,47 @@ object LocalHistory {
             .firstOrNull { it.relativeName.isEmpty() }
             ?.coverFileName?.takeIf { it.isNotBlank() }
             ?.let { fileName ->
-                return zipOrRemoteThumbKey(sourceId, rel, "", fileName, smb = false)
+                return zipOrRemoteThumbKey(sourceId, rel, "", fileName, smb)
             }
+
+        entries.asSequence()
+            .filterIsInstance<BrowseEntryRemote.FolderGallery>()
+            .mapNotNull { g ->
+                zipOrRemoteThumbKey(sourceId, rel, g.relativeName, g.coverFileName, smb)
+            }
+            .firstOrNull()
+            ?.let { return it }
 
         if (rel.isNotEmpty()) {
             val parentRel = parentRelativeOfFile(rel)
-            BrowseSession.getWebDavListing(sourceId, parentRel)
+            val parentListing = if (smb) {
+                BrowseSession.getSmbListing(sourceId, parentRel)
+            } else {
+                BrowseSession.getWebDavListing(sourceId, parentRel)
+            }
+            parentListing
                 ?.asSequence()
                 ?.filterIsInstance<BrowseEntryRemote.Directory>()
                 ?.firstOrNull { joinRemote(parentRel, it.relativeName) == rel }
                 ?.coverFileName?.takeIf { it.isNotBlank() }
                 ?.let { fileName ->
-                    return zipOrRemoteThumbKey(sourceId, parentRel, rel.substringAfterLast('/'), fileName, smb = false)
+                    return zipOrRemoteThumbKey(
+                        sourceId,
+                        parentRel,
+                        rel.substringAfterLast('/'),
+                        fileName,
+                        smb,
+                    )
                 }
         }
 
-        return BrowseFavorites.thumbKeyFor(BrowseFavorites.webDavFolderKey(sourceId, rel))
+        return BrowseFavorites.thumbKeyFor(
+            if (smb) {
+                BrowseFavorites.smbFolderKey(sourceId, rel)
+            } else {
+                BrowseFavorites.webDavFolderKey(sourceId, rel)
+            },
+        )
     }
 
     private fun joinRemote(dir: String, file: String): String {

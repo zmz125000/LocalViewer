@@ -458,13 +458,11 @@ class ZipAsDirListingTest {
             imageFileNames = listOf("01.jpg", "02.jpg"),
         )
         val upgraded = ZipAsDirListing.ensureZipAsDirDirectoryRows(listOf(gal))
-        assertTrue(
-            upgraded.any {
-                it is BrowseEntryRemote.Directory &&
-                    it.name == "园区.zip" &&
-                    it.presence == DirPresence.PromotedShell
-            },
-        )
+        val dir = upgraded.filterIsInstance<BrowseEntryRemote.Directory>().single {
+            it.name == "园区.zip"
+        }
+        assertEquals(DirPresence.PromotedShell, dir.presence)
+        assertEquals("园区/01.jpg", dir.coverFileName)
         assertTrue(upgraded.any { it is BrowseEntryRemote.FolderGallery })
     }
 

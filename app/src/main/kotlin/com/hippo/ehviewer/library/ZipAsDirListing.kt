@@ -727,7 +727,9 @@ object ZipAsDirListing {
                 hasVideo = false,
                 hasGallery = true,
                 presence = if (inner.isEmpty()) DirPresence.LeafImages else DirPresence.PromotedShell,
-                coverFileName = if (inner.isEmpty()) entry.coverFileName else null,
+                // Inner albums: store `Album/01.jpg` so parent-listing dir thumbs
+                // resolve via [zipAsDirCoverParts] (basename alone misses the prefix).
+                coverFileName = entry.coverFileName?.let { joinPrefix(inner, it) },
                 hidden = entry.hidden,
             )
             if (extra == null) extra = ArrayList()
