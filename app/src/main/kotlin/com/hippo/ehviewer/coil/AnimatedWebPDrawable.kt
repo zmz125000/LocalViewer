@@ -137,10 +137,13 @@ class AnimatedWebPDrawable(source: ByteBuffer) : Drawable(), Animatable {
     }
 
     fun dispose() {
+        stop()
         runBlocking {
             decodeScope.coroutineContext.job.cancelAndJoin()
         }
         nativeDestroyDecoder(decoder)
+        if (!currentFrame.bitmap.isRecycled) currentFrame.bitmap.recycle()
+        if (!nextFrame.bitmap.isRecycled) nextFrame.bitmap.recycle()
     }
 }
 
