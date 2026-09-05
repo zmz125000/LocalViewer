@@ -145,12 +145,13 @@ object ReaderGalleryPlaylist {
                     } else {
                         "$parentRelative/${e.relativeName}"
                     }.trim('/')
-                    val coverKey = e.coverFileName?.let { fileName ->
-                        HistoryThumbKey.smb(
-                            sourceId,
-                            if (remote.isEmpty()) fileName else "$remote/$fileName",
-                        )
-                    }
+                    val coverKey = LocalHistory.zipOrRemoteThumbKey(
+                        sourceId = sourceId,
+                        listedDir = parentRelative,
+                        relativeName = e.relativeName,
+                        coverFileName = e.coverFileName,
+                        smb = true,
+                    )
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(sourceId, "smb:$remote"),
                         token = SMB_FOLDER_TOKEN,
@@ -214,12 +215,13 @@ object ReaderGalleryPlaylist {
                     } else {
                         "$parentRelative/${e.relativeName}"
                     }.trim('/')
-                    val coverKey = e.coverFileName?.let { fileName ->
-                        HistoryThumbKey.webdav(
-                            sourceId,
-                            if (remote.isEmpty()) fileName else "$remote/$fileName",
-                        )
-                    }
+                    val coverKey = LocalHistory.zipOrRemoteThumbKey(
+                        sourceId = sourceId,
+                        listedDir = parentRelative,
+                        relativeName = e.relativeName,
+                        coverFileName = e.coverFileName,
+                        smb = false,
+                    )
                     val info = BaseGalleryInfo(
                         gid = stableGalleryId(sourceId, "webdav:$remote"),
                         token = WEBDAV_FOLDER_TOKEN,

@@ -213,12 +213,13 @@ object GallerySiblingNavigator {
             }
             is BrowseEntryRemote.FolderGallery -> {
                 val remote = remoteOf(target).trim('/')
-                val coverKey = target.coverFileName?.let { fileName ->
-                    HistoryThumbKey.smb(
-                        source.id,
-                        SmbGateway.joinRelativePath(remote, fileName),
-                    )
-                }
+                val coverKey = LocalHistory.zipOrRemoteThumbKey(
+                    sourceId = source.id,
+                    listedDir = parentRel,
+                    relativeName = target.relativeName,
+                    coverFileName = target.coverFileName,
+                    smb = true,
+                )
                 val info = BaseGalleryInfo(
                     gid = stableGalleryId(source.id, "smb:$remote"),
                     token = SMB_FOLDER_TOKEN,
@@ -307,12 +308,13 @@ object GallerySiblingNavigator {
             }
             is BrowseEntryRemote.FolderGallery -> {
                 val remote = remoteOf(target).trim('/')
-                val coverKey = target.coverFileName?.let { fileName ->
-                    HistoryThumbKey.webdav(
-                        source.id,
-                        WebDavGateway.joinRelative(remote, fileName),
-                    )
-                }
+                val coverKey = LocalHistory.zipOrRemoteThumbKey(
+                    sourceId = source.id,
+                    listedDir = parentRel,
+                    relativeName = target.relativeName,
+                    coverFileName = target.coverFileName,
+                    smb = false,
+                )
                 val info = BaseGalleryInfo(
                     gid = stableGalleryId(source.id, "webdav:$remote"),
                     token = WEBDAV_FOLDER_TOKEN,
