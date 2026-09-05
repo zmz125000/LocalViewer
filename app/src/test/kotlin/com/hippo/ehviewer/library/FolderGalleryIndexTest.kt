@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.library
 
 import kotlinx.coroutines.runBlocking
+import okio.Path.Companion.toPath
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -129,6 +130,37 @@ class FolderGalleryIndexTest {
         assertEquals("/tmp/gal/b.jpg", local.first().path.toString())
         val zip = FolderGalleryIndex.photoGridLocalFiles("/tmp/pack.zip", zipInnerRel = "Album", names)
         assertEquals("zipfile:/tmp/pack.zip!Album/b.jpg", zip.first().path.toString())
+    }
+
+    @Test
+    fun `browse uploader identity is root id and relative dir`() {
+        assertEquals(
+            7L to "share/gal",
+            FolderGalleryIndex.browseIdentityFromUploader("7\u0000share/gal"),
+        )
+        assertNull(FolderGalleryIndex.browseIdentityFromUploader(null))
+        assertNull(FolderGalleryIndex.browseIdentityFromUploader("norootid"))
+    }
+
+    @Test
+    fun `names from local parent ram listing match photo grid`() {
+        val names = listOf("01.jpg", "02.jpg")
+        val listing = listOf(gallery(relativeName = "gal", names = names))
+        val parent = "/tmp/share".toPath()
+        BrowseSession.putLocalListing(
+            BrowseSession.pathKey(parent),
+            listing,
+            sessionCurrent = true,
+        )
+        assertEquals(
+            names,
+            FolderGalleryIndex.namesFromLocalParent(
+                rootId = 1L,
+                parentPath = parent.toString(),
+                parentRelative = "share",
+                galleryDir = "share/gal",
+            ),
+        )
     }
 
     private fun gallery(

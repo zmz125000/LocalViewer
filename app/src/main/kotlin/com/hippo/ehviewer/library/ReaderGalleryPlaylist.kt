@@ -20,6 +20,7 @@ object ReaderGalleryPlaylist {
         data class LocalFolder(
             val path: String,
             val info: BaseGalleryInfo? = null,
+            val imageNames: List<String> = emptyList(),
         ) : Item
 
         data class SmbFolder(
@@ -118,7 +119,17 @@ object ReaderGalleryPlaylist {
                                 uploader = "$rootId\u0000$normRel",
                                 category = 0,
                             )
-                            Item.LocalFolder(e.path.toString(), info)
+                            val names = if (e.pageCountCapped) {
+                                emptyList()
+                            } else {
+                                FolderGalleryIndex.namesFromLocalParent(
+                                    rootId = rootId,
+                                    parentPath = parentPath,
+                                    parentRelative = parentRelative,
+                                    galleryDir = normRel,
+                                ).orEmpty()
+                            }
+                            Item.LocalFolder(e.path.toString(), info, names)
                         }
                 }
                 is BrowseEntry.ArchiveGallery -> Item.Archive(e.path.toString())
@@ -291,7 +302,12 @@ object ReaderGalleryPlaylist {
     }
 
     private fun Item.toArgs(): ReaderScreenArgs = when (this) {
-        is Item.LocalFolder -> ReaderScreenArgs.LocalFolder(path, page = -1, info = info)
+        is Item.LocalFolder -> ReaderScreenArgs.LocalFolder(
+            path,
+            page = -1,
+            info = info,
+            imageNames = imageNames,
+        )
         is Item.LocalZipFolder -> ReaderScreenArgs.LocalZipFolder(
             zipPath,
             innerRel,

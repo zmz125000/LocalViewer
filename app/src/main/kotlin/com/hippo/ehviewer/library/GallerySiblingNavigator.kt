@@ -133,7 +133,22 @@ object GallerySiblingNavigator {
                         uploader = "$rootId\u0000$normRel",
                         category = 0,
                     )
-                    ReaderScreenArgs.LocalFolder(target.path.toString(), page = -1, info = info)
+                    val names = if (target.pageCountCapped) {
+                        emptyList()
+                    } else {
+                        FolderGalleryIndex.namesFromLocalParent(
+                            rootId = rootId,
+                            parentPath = parent.toString(),
+                            parentRelative = parentRel,
+                            galleryDir = normRel,
+                        ).orEmpty()
+                    }
+                    ReaderScreenArgs.LocalFolder(
+                        target.path.toString(),
+                        page = -1,
+                        info = info,
+                        imageNames = names,
+                    )
                 }
             }
             is BrowseEntry.Directory,

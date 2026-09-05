@@ -265,20 +265,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     /** Skip the next [reload] when photo-grid already has the reader file list. */
     var skipNextListing by remember { mutableStateOf(false) }
 
-    fun localPhotoGridNames(parent: BrowseSession.LocalFrame, galleryDir: String): List<String>? {
-        val listedDir = if (parent.isZipBrowse) {
-            ZipAsDirListing.virtualRelativeDir(parent.relativePath, parent.zipInnerRel.orEmpty())
-        } else {
-            parent.relativePath
-        }
-        val ramKey = if (parent.isZipBrowse) {
-            BrowseSession.localZipListingKey(parent.rootId, listedDir)
-        } else {
-            BrowseSession.pathKey(parent.path.toPath())
-        }
-        val remote = BrowseSession.getLocalCachedListing(ramKey)?.entries ?: return null
-        return FolderGalleryIndex.namesFromListing(listedDir, remote, galleryDir)
-    }
+    fun localPhotoGridNames(parent: BrowseSession.LocalFrame, galleryDir: String): List<String>? = FolderGalleryIndex.namesFromLocalParent(
+        rootId = parent.rootId,
+        parentPath = parent.path,
+        parentRelative = parent.relativePath,
+        galleryDir = galleryDir,
+        zipInnerRel = parent.zipInnerRel,
+    )
 
     fun applyLocalPhotoGridFiles(frame: BrowseSession.LocalFrame, names: List<String>) {
         entries = FolderGalleryIndex.photoGridLocalFiles(frame.path, frame.zipInnerRel, names)
@@ -845,7 +838,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 info = info,
             )
         }
-        navToLocalFolderReader(entry.path.toString(), info, page)
+        val names = if (entry.pageCountCapped) {
+            emptyList()
+        } else {
+            localPhotoGridNames(frame, rel).orEmpty()
+        }
+        navToLocalFolderReader(entry.path.toString(), info, page, names)
     }
 
     /**
@@ -1007,7 +1005,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             parentRelative = frame.relativePath,
             entries = entries,
         )
-        navToLocalFolderReader(frame.path, info, page)
+        navToLocalFolderReader(frame.path, info, page, images.map { it.name })
     }
 
     fun openArchiveReader(entry: BrowseEntry.ArchiveGallery) {

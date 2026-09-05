@@ -1,5 +1,8 @@
 package com.hippo.ehviewer.library
 
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.model.GalleryInfo
+import okio.Path
 import okio.Path.Companion.toPath
 
 /**
@@ -39,6 +42,54 @@ object FolderGalleryIndex {
             dirPath.toPath() / name
         }
         BrowseEntry.RegularFile(name = name, path = path)
+    }
+
+    /**
+     * Names from the parent folder's RAM listing — same source photo-grid open uses.
+     * [zipInnerRel] non-null means [parentPath] is a zip/cbz browse frame.
+     */
+    fun namesFromLocalParent(
+        rootId: Long,
+        parentPath: String,
+        parentRelative: String,
+        galleryDir: String,
+        zipInnerRel: String? = null,
+    ): List<String>? {
+        val listedDir = if (zipInnerRel != null) {
+            ZipAsDirListing.virtualRelativeDir(parentRelative, zipInnerRel)
+        } else {
+            parentRelative
+        }
+        val ramKey = if (zipInnerRel != null) {
+            BrowseSession.localZipListingKey(rootId, listedDir)
+        } else {
+            BrowseSession.pathKey(parentPath.toPath())
+        }
+        val remote = BrowseSession.getLocalCachedListing(ramKey)?.entries ?: return null
+        return namesFromListing(listedDir, remote, galleryDir)
+    }
+
+    /** Browse folder-gallery identity stored on [GalleryInfo.uploader]: rootId, NUL, relativeDir. */
+    fun browseIdentityFromUploader(uploader: String?): Pair<Long, String>? {
+        val u = uploader ?: return null
+        val sep = u.indexOf('\u0000')
+        if (sep <= 0) return null
+        val rootId = u.substring(0, sep).toLongOrNull() ?: return null
+        return rootId to u.substring(sep + 1)
+    }
+
+    /**
+     * Complete page names for a local folder reader when the nav args did not pass them.
+     * Walks RAM (zip + SAF/FS path key) then the disk folder index — never lists SAF.
+     */
+    suspend fun loadLocalForReader(info: GalleryInfo?): List<String>? {
+        browseIdentityFromUploader(info?.uploader)?.let { (rootId, rel) ->
+            loadLocalFromRoot(rootId, rel)?.let { return it }
+        }
+        val gid = info?.gid ?: return null
+        val lib = LocalLibrary.loadGallery(gid) ?: return null
+        if (lib.kind == LOCAL_GALLERY_KIND_ARCHIVE) return null
+        return loadLocalFromRoot(lib.rootId, lib.relativePath)
     }
 
     /**
@@ -160,8 +211,20 @@ object FolderGalleryIndex {
         rootId: Long,
         configKey: String,
         galleryDir: String,
+        rootAbs: Path? = null,
     ): List<String>? = namesWalkingParents(galleryDir) { dir ->
-        localListing(rootId, configKey, dir)
+        localListing(rootId, configKey, dir, rootAbs)
+    }
+
+    private suspend fun loadLocalFromRoot(rootId: Long, galleryDir: String): List<String>? {
+        val root = LocalLibrary.loadRoot(rootId) ?: return null
+        val rootPath = LocalLibrary.rootPath(root) ?: return null
+        return loadLocal(
+            rootId,
+            LocalFolderListing.rootConfigKey(rootPath, root.prefersMediaStore),
+            galleryDir,
+            rootAbs = rootPath,
+        )
     }
 
     suspend fun siblingListingSmb(
@@ -206,12 +269,17 @@ object FolderGalleryIndex {
         rootId: Long,
         configKey: String,
         dir: String,
+        rootAbs: Path? = null,
     ): List<BrowseEntryRemote>? {
         val normalized = BrowseSession.normalizeBrowseRelativeDir(dir)
-        return BrowseSession.getLocalCachedListing(
+        BrowseSession.getLocalCachedListing(
             BrowseSession.localZipListingKey(rootId, normalized),
-        )?.entries
-            ?: NetworkFolderIndexCache.loadLocal(rootId, configKey, normalized)
+        )?.entries?.let { return it }
+        if (rootAbs != null) {
+            val abs = if (normalized.isEmpty()) rootAbs else rootAbs.resolveRelative(normalized)
+            BrowseSession.getLocalCachedListing(BrowseSession.pathKey(abs))?.entries?.let { return it }
+        }
+        return NetworkFolderIndexCache.loadLocal(rootId, configKey, normalized)
     }
 
     private fun join(parent: String, child: String): String {

@@ -107,6 +107,7 @@ import com.hippo.ehviewer.gallery.useTarChunkPageLoader
 import com.hippo.ehviewer.gallery.useWebDavFolderPageLoader
 import com.hippo.ehviewer.gallery.useZipFolderPageLoader
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
@@ -184,6 +185,8 @@ sealed interface ReaderScreenArgs {
         val path: String,
         val page: Int = -1,
         val info: BaseGalleryInfo? = null,
+        /** Basenames from the browse listing; empty → resolve from folder index, else list. */
+        val imageNames: List<String> = emptyList(),
     ) : ReaderScreenArgs
 
     /**
@@ -1202,7 +1205,18 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                     passwdProvider = zipPasswd,
                     block = block,
                 )
-            else -> useFolderPageLoader(path, info, page, block)
+            else -> {
+                val names = args.imageNames.ifEmpty {
+                    FolderGalleryIndex.loadLocalForReader(info).orEmpty()
+                }
+                useFolderPageLoader(
+                    dir = path,
+                    info = info,
+                    startPage = page,
+                    imageNames = names,
+                    block = block,
+                )
+            }
         }
     }
     is ReaderScreenArgs.LocalZipFolder -> {
