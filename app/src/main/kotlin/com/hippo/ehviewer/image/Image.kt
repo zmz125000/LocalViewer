@@ -186,10 +186,7 @@ class Image private constructor(
          * Decode target = min(screen edge) × [DecodeSizeType.scale].
          * Default 1.5x (was 4/3). [DecodeSizeType.ORIGIN] / forceOriginal → full file res.
          */
-        private fun sizeResolverFor(mode: DecodeSizeType, emergencyMaxEdge: Int = 0): SizeResolver {
-            if (emergencyMaxEdge > 0) {
-                return SizeResolver(Size(emergencyMaxEdge, emergencyMaxEdge))
-            }
+        private fun sizeResolverFor(mode: DecodeSizeType): SizeResolver {
             val scale = mode.scale ?: return SizeResolver(Size.ORIGINAL)
             return with(appCtx.resources.displayMetrics) {
                 val targetSize = (minOf(widthPixels, heightPixels) * scale).roundToInt().coerceAtLeast(1)
@@ -302,26 +299,21 @@ class Image private constructor(
              * without a slow post-decode transfer pass. Crop/QR off; present may AHB-wrap.
              */
             platformHbd: Boolean = false,
-            emergencyMaxEdge: Int = 0,
         ): CoilImage {
             val hardwareDirect = !platformHbd && (Settings.readerHardwareBitmap.value || hdrSafe)
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
                     onRight { data(it.source.toUri()) }
-                    if (mode.isOriginal && emergencyMaxEdge <= 0) {
+                    if (mode.isOriginal) {
                         size(Size.ORIGINAL)
                         precision(Precision.EXACT)
                     } else {
-                        size(sizeResolverFor(mode, emergencyMaxEdge))
+                        size(sizeResolverFor(mode))
                         scale(Scale.FILL)
                         precision(Precision.INEXACT)
                     }
-                    if (emergencyMaxEdge > 0) {
-                        maxBitmapSize(Size(emergencyMaxEdge, emergencyMaxEdge))
-                    } else {
-                        maxBitmapSize(Size.ORIGINAL)
-                    }
+                    maxBitmapSize(Size.ORIGINAL)
                     // No forced colorSpace(DISPLAY_P3): preserves embedded ICC under the
                     // reader WCG window (advanced color on). sRGB stays sRGB-tagged (no
                     // oversaturation); P3 stays P3. 8-bit JPEGs stay 8888/HARDWARE.
@@ -446,11 +438,10 @@ class Image private constructor(
         private suspend fun Either<ByteBufferSource, PathSource>.decodeCoil(
             checkExtraneousAds: Boolean,
             forceOriginal: Boolean,
-            emergencyMaxEdge: Int = 0,
         ): CoilImage {
             // Gain-map Ultra HDR: always ORIGIN + no crop/QR strip (pref only gates window HDR).
             val mode = decodeMode(forceOriginal)
-            val looksHdr = emergencyMaxEdge <= 0 && isAtLeastU && sourceLooksLikeHdrGainMap(this)
+            val looksHdr = isAtLeastU && sourceLooksLikeHdrGainMap(this)
             val effectiveMode = if (looksHdr) DecodeSizeType.ORIGIN else mode
             val hdrSafe = looksHdr
             val platformHbd = resolvePlatformHbd(gainMap = looksHdr)
@@ -458,28 +449,16 @@ class Image private constructor(
             suspend fun runDecode(m: DecodeSizeType, hdr: Boolean, hbd: Boolean): CoilImage = if (hbd) {
                 // Full-res F16: share lib-direct serialize lock.
                 LibDirectDecode.heavyDecode.withPermit {
-                    decodeCoilOnce(
-                        m,
-                        checkExtraneousAds,
-                        hdrSafe = hdr,
-                        platformHbd = true,
-                        emergencyMaxEdge = emergencyMaxEdge,
-                    )
+                    decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = true)
                 }
             } else {
-                decodeCoilOnce(
-                    m,
-                    checkExtraneousAds,
-                    hdrSafe = hdr,
-                    platformHbd = false,
-                    emergencyMaxEdge = emergencyMaxEdge,
-                )
+                decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = false)
             }
 
             var image = runDecode(effectiveMode, hdrSafe, platformHbd)
 
             // Sniff miss: platform still attached a gain map after a downscale decode → re-do ORIGIN.
-            if (isAtLeastU && emergencyMaxEdge <= 0 && !effectiveMode.isOriginal) {
+            if (isAtLeastU && !effectiveMode.isOriginal) {
                 val bm = image.asBitmapImage()
                 if (bm != null && bm.detectGainmap()) {
                     image.recycleBitmaps()
@@ -508,15 +487,11 @@ class Image private constructor(
          *
          * Prefer Coil-ready [PathSource] from [com.hippo.ehviewer.image.hdr.DisplaySource];
          * [ByteBufferSource] still supported (GIF rewrite / callers that skip prepare).
-         *
-         * [emergencyMaxEdge] > 0 forces a long-edge cap after Java-heap OOM (skips
-         * gain-map ORIGIN bump).
          */
         suspend fun decode(
             src: ImageSource,
             checkExtraneousAds: Boolean = false,
             forceOriginal: Boolean = false,
-            emergencyMaxEdge: Int = 0,
         ): Image {
             val image = when (src) {
                 is PathSource -> {
@@ -534,7 +509,6 @@ class Image private constructor(
                                             },
                                             checkExtraneousAds,
                                             forceOriginal,
-                                            emergencyMaxEdge,
                                         )
                                     },
                                     { buffer, case -> if (case !is ExitCase.Completed) munmap(buffer) },
@@ -542,13 +516,13 @@ class Image private constructor(
                             }
                         }
                     }
-                    src.right().decodeCoil(checkExtraneousAds, forceOriginal, emergencyMaxEdge)
+                    src.right().decodeCoil(checkExtraneousAds, forceOriginal)
                 }
                 is ByteBufferSource -> {
                     if (!isAtLeastU) {
                         rewriteGifSource(src.source)
                     }
-                    src.left().decodeCoil(checkExtraneousAds, forceOriginal, emergencyMaxEdge)
+                    src.left().decodeCoil(checkExtraneousAds, forceOriginal)
                 }
             }
             return Image(image, src).apply {

@@ -24,7 +24,6 @@ import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
 import com.hippo.ehviewer.util.detectAds
 import com.hippo.ehviewer.util.displayString
-import com.hippo.ehviewer.util.isJavaHeapOom
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
@@ -63,8 +62,6 @@ private val pageLoaderMainHandler = Handler(Looper.getMainLooper())
  * with <1% free — independent of SMB multiplex. SMB high throughput only
  * made decode/download finish faster and fill the cache sooner.
  */
-private const val HEAP_DECODE_HEADROOM = 64L * 1024 * 1024
-
 private fun pageImageCacheMaxBytes(): Int {
     val heap = OSUtils.appMaxMemory.coerceAtLeast(64L * 1024 * 1024)
     // Cache-off keeps compressed pages in the Java heap until decode finishes;
@@ -156,55 +153,31 @@ abstract class PageLoader(
         // Local archives: ByteBuffer from mmap extract stays in memory (Coil data(buffer)).
         // Lib stills (JXL/JXR/PQ-AVIF) convert to UHDR jpeg; folder/network PathSource as before.
         // Experimental [Settings.readerLibDirectBitmap]: lib → Bitmap, skip convert.
-        var emergencyMaxEdge = 0
-        var attempt = 0
-        while (true) {
-            trimDecodedCacheIfHeapTight()
-            try {
-                bracketCase(
-                    { openSource(index) },
-                    { raw ->
-                        val checkAds = hasAds && detectAds(index, size)
-                        val hint = getImageExtension(index)?.let { "page.$it" } ?: "page.bin"
-                        val image = tryDecodeLibDirect(raw, forceOriginal, hint, emergencyMaxEdge)
-                            ?: Image.decode(
-                                DisplaySource.ensureReady(raw, hint),
-                                checkExtraneousAds = checkAds,
-                                forceOriginal = forceOriginal,
-                                emergencyMaxEdge = emergencyMaxEdge,
-                            )
-                        try {
-                            currentCoroutineContext().ensureActive()
-                        } catch (e: CancellationException) {
-                            image.unpin()
-                            throw e
-                        }
-                        val runningJob = currentCoroutineContext()[Job]
-                        if (!commitDecodedImage(index, image, runningJob)) {
-                            // Navigation changed or this job was replaced before publication.
-                            image.unpin()
-                        }
-                    },
-                    { src, case -> if (case !is ExitCase.Completed) src.close() },
-                )
-                return
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                if (!e.isJavaHeapOom() || attempt >= 2) throw e
-                attempt++
-                lock.write { cache.evictAll() }
-                emergencyMaxEdge = if (attempt == 1) 2048 else 1280
-                logcat("PageLoader") { "OOM decoding page $index, retry maxEdge=$emergencyMaxEdge" }
-            }
-        }
-    }
-
-    private fun trimDecodedCacheIfHeapTight() {
-        val rt = Runtime.getRuntime()
-        val remaining = rt.maxMemory() - (rt.totalMemory() - rt.freeMemory())
-        if (remaining >= HEAP_DECODE_HEADROOM) return
-        lock.write { cache.trimToSize((imageCacheMaxBytes / 2).coerceAtLeast(1)) }
+        bracketCase(
+            { openSource(index) },
+            { raw ->
+                val checkAds = hasAds && detectAds(index, size)
+                val hint = getImageExtension(index)?.let { "page.$it" } ?: "page.bin"
+                val image = tryDecodeLibDirect(raw, forceOriginal, hint)
+                    ?: Image.decode(
+                        DisplaySource.ensureReady(raw, hint),
+                        checkExtraneousAds = checkAds,
+                        forceOriginal = forceOriginal,
+                    )
+                try {
+                    currentCoroutineContext().ensureActive()
+                } catch (e: CancellationException) {
+                    image.unpin()
+                    throw e
+                }
+                val runningJob = currentCoroutineContext()[Job]
+                if (!commitDecodedImage(index, image, runningJob)) {
+                    // Navigation changed or this job was replaced before publication.
+                    image.unpin()
+                }
+            },
+            { src, case -> if (case !is ExitCase.Completed) src.close() },
+        )
     }
 
     /**
@@ -215,7 +188,6 @@ abstract class PageLoader(
         raw: ImageSource,
         forceOriginal: Boolean,
         hint: String,
-        emergencyMaxEdge: Int = 0,
     ): Image? {
         if (!Settings.readerLibDirectBitmap.value) return null
         val nameHint = when (raw) {
@@ -227,7 +199,7 @@ abstract class PageLoader(
             is ByteBufferSource -> classify(raw.source, nameHint)
         }
         if (!route.needsLibDecode) return null
-        val maxEdge = if (emergencyMaxEdge > 0) emergencyMaxEdge else Image.maxEdgeForReader(forceOriginal)
+        val maxEdge = Image.maxEdgeForReader(forceOriginal)
         val direct = LibDirectDecode.decode(raw, nameHint, maxEdge) ?: return null
         return Image.fromLibDirect(direct, raw)
     }
@@ -467,9 +439,6 @@ abstract class PageLoader(
     }
 
     private fun requestDecode(index: Int) {
-        if (Settings.disableReaderNetworkCache.value) {
-            trimDecodedCacheIfHeapTight()
-        }
         if (index !in 0 until size) return
         val page = pages.getOrNull(index) ?: return
         when (val st = page.status) {
