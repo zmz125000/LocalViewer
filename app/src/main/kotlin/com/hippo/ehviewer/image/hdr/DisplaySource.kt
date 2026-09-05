@@ -71,12 +71,12 @@ object DisplaySource {
         val bytes = src.source.heapBytesForConvert()
         check(bytes.isNotEmpty()) { "empty image buffer" }
         val ready = convertLibBytes(bytes, fileNameHint, persistTo)
-        val outer = src
+        src.close()
         return object : PathSource {
             override val source: Path = ready
             override val type: String =
                 FileUtils.getExtensionFromFilename(ready.name) ?: "jpg"
-            override fun close() = outer.close()
+            override fun close() = Unit
         }
     }
 

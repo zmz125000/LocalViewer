@@ -41,4 +41,15 @@ class RamByteSinkTest {
         sink.write(payload)
         assertArrayEquals(bos.toByteArray(), sink.take())
     }
+
+    @Test
+    fun takeReleasesInternalChunks() {
+        val first = ByteArray(80 * 1024) { 1 }
+        val second = ByteArray(40 * 1024) { 2 }
+        val sink = RamByteSink(chunkSize = 32 * 1024)
+        sink.write(first)
+        assertArrayEquals(first, sink.take())
+        sink.write(second)
+        assertArrayEquals(second, sink.take())
+    }
 }

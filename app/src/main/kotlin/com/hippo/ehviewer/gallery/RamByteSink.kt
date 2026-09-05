@@ -32,7 +32,9 @@ internal class RamByteSink(
         var i = 0
         while (i < len) {
             if (pos == current.size) flushChunk()
+            if (current.isEmpty()) current = ByteArray(chunkSize.coerceAtLeast(1))
             val n = min(len - i, current.size - pos)
+            if (n <= 0) error("RamByteSink: empty buffer")
             System.arraycopy(b, off + i, current, pos, n)
             pos += n
             i += n
@@ -42,16 +44,22 @@ internal class RamByteSink(
 
     @PublishedApi
     internal fun take(): ByteArray {
-        if (chunks.isEmpty()) {
-            return if (pos == current.size) current else current.copyOf(pos)
+        val out = if (chunks.isEmpty()) {
+            if (pos == current.size) current else current.copyOf(pos)
+        } else {
+            ByteArray(total).also { dest ->
+                var o = 0
+                for (c in chunks) {
+                    System.arraycopy(c, 0, dest, o, c.size)
+                    o += c.size
+                }
+                if (pos > 0) System.arraycopy(current, 0, dest, o, pos)
+            }
         }
-        val out = ByteArray(total)
-        var o = 0
-        for (c in chunks) {
-            System.arraycopy(c, 0, out, o, c.size)
-            o += c.size
-        }
-        if (pos > 0) System.arraycopy(current, 0, out, o, pos)
+        chunks.clear()
+        current = ByteArray(chunkSize)
+        pos = 0
+        total = 0
         return out
     }
 

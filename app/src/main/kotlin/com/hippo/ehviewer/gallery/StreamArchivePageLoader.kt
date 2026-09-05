@@ -552,7 +552,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
                                 check(buffer.isDirect)
                                 val bytes = ByteArray(buffer.remaining())
                                 buffer.duplicate().get(bytes)
-                                ramPages[index] = bytes
+                                if (isDecodedDemand(index)) ramPages[index] = bytes
                             } finally {
                                 releaseByteBuffer(buffer)
                             }
