@@ -97,17 +97,20 @@ class SmbArchiveByteSource(
             val (zipRel, memberRel) = zipMember
             raw = null
             inner = openZipContainedFileSource("smb:${source.id}:$zipRel", memberRel) {
+                // Honor the outer flags. Video already windows in VideoDirectLink
+                // (2 MiB × 28). Forcing readahead here slides a 16 MiB array on every
+                // inflater/64 KiB ZIP read → LOS GC storm and 4K never starts.
                 SmbArchiveByteSource(
                     source = source,
                     password = password,
                     remoteRelativeFile = zipRel,
-                    pipeline = false,
+                    pipeline = pipeline,
                     yieldable = yieldable,
                     stickySession = stickySession,
                     httpStickyPool = httpStickyPool,
                     httpStickyWait = httpStickyWait,
-                    videoPlay = false,
-                    readahead = true,
+                    videoPlay = videoPlay,
+                    readahead = readahead,
                 )
             }
         } else {
