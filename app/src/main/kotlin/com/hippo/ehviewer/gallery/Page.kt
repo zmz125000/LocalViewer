@@ -9,7 +9,28 @@ import kotlinx.coroutines.flow.update
 class Page(
     val index: Int,
     val statusFlow: MutableStateFlow<PageStatus> = MutableStateFlow(PageStatus.Queued),
-)
+) {
+    /** Last decoded pixel size; [reset] does not clear this so placeholders keep list height. */
+    var layoutWidth: Int = 0
+        private set
+    var layoutHeight: Int = 0
+        private set
+
+    val layoutAspect: Float
+        get() {
+            val w = layoutWidth
+            val h = layoutHeight
+            if (w <= 0 || h <= 0) return 0f
+            return (w.toFloat() / h.toFloat()).coerceAtLeast(0.01f)
+        }
+
+    fun rememberLayout(width: Int, height: Int) {
+        if (width > 0 && height > 0) {
+            layoutWidth = width
+            layoutHeight = height
+        }
+    }
+}
 
 fun Page.unblock() = statusFlow.update { status ->
     when (status) {

@@ -78,10 +78,11 @@ fun PagerItem(
     // Scheduling is driven by one ReaderNavigation from the viewport. This item only renders
     // status and owns a display pin; Compose retention no longer determines decode-ahead.
     val defaultError = stringResource(id = R.string.decode_image_error)
+    val aspect = page.layoutAspect.takeIf { it > 0f } ?: DEFAULT_ASPECT
     val placeholderMod = if (horizontalStrip) {
-        modifier.fillMaxHeight().aspectRatio(DEFAULT_ASPECT, matchHeightConstraintsFirst = true)
+        modifier.fillMaxHeight().aspectRatio(aspect, matchHeightConstraintsFirst = true)
     } else {
-        modifier.fillMaxWidth().aspectRatio(DEFAULT_ASPECT)
+        modifier.fillMaxWidth().aspectRatio(aspect)
     }
     when (val state = page.statusObserved) {
         is PageStatus.Queued, is PageStatus.Loading -> {

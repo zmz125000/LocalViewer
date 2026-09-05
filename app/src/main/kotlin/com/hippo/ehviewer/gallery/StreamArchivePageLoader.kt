@@ -29,6 +29,7 @@ import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.ArchiveStreamBridge
 import com.hippo.ehviewer.library.ArchiveStreamPageCache
+import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.util.FileUtils
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
@@ -361,6 +362,12 @@ suspend inline fun <T> useStreamArchivePageLoader(
 
                     override fun onNavigation(demand: ReaderDemand) {
                         cancelStaleExtracts(demand.sourcePages, demand.decodedPages)
+                    }
+
+                    override fun onForeground() {
+                        extractJobs.cancelAll()
+                        super.onForeground()
+                        (source as? SmbArchiveByteSource)?.requestReconnect()
                     }
 
                     override fun close() {

@@ -111,6 +111,11 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     cancelStaleDownloads(demand.sourcePages, demand.decodedPages)
                 }
 
+                override fun onForeground() {
+                    downloadJobs.cancelAll()
+                    super.onForeground()
+                }
+
                 private fun isLibHdrCandidate(name: String): Boolean = HdrConvertCache.usesNetworkLibConvert(name)
 
                 private fun cancelStaleDownloads(sourcePages: Set<Int>, decodedPages: Set<Int>) {

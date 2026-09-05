@@ -19,6 +19,7 @@ package com.hippo.ehviewer.image
 
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
+import android.graphics.drawable.Animatable
 import android.hardware.HardwareBuffer
 import android.os.Build
 import android.util.Log
@@ -110,6 +111,24 @@ class Image private constructor(
 
     val intrinsicSize = with(image) { IntSize(width, height) }
     val allocationSize = image.size
+
+    /**
+     * LRU weight. HARDWARE bitmaps may report 0 Java bytes; animated drawables
+     * are one-frame in Coil [size] but keep 2+ software frames plus the source.
+     */
+    val estimatedCacheBytes: Long
+        get() {
+            val pixels = intrinsicSize.width.toLong().coerceAtLeast(0) *
+                intrinsicSize.height.toLong().coerceAtLeast(0)
+            val frame = pixels * 4L
+            return when (val img = innerImage) {
+                is DrawableImage -> {
+                    val frames = if (img.drawable is AnimatedWebPDrawable) 2L else 4L
+                    maxOf(img.size, frame * frames)
+                }
+                else -> maxOf(allocationSize, frame)
+            }
+        }
     val hasQrCode = when (image) {
         is BitmapImageWithExtraInfo -> image.hasQrCode
         else -> false
@@ -165,7 +184,9 @@ class Image private constructor(
             else -> 1f
         }
         isWideGamutContent = isWideGamutDirect || bitmapIsWideGamut(image)
-        if (innerImage is BitmapImage) {
+        // AWEBP already copied the buffer into a direct native decoder source.
+        val drawable = (innerImage as? DrawableImage)?.drawable
+        if (innerImage is BitmapImage || drawable is AnimatedWebPDrawable) {
             this.src?.close()
             this.src = null
         }
@@ -184,7 +205,10 @@ class Image private constructor(
     private fun recycle() {
         when (val image = innerImage!!) {
             is DrawableImage -> {
-                (image.drawable as? AnimatedWebPDrawable)?.dispose()
+                val drawable = image.drawable
+                (drawable as? Animatable)?.stop()
+                (drawable as? AnimatedWebPDrawable)?.dispose()
+                drawable.callback = null
                 src?.close()
             }
             is BitmapImage -> image.bitmap.recycle()

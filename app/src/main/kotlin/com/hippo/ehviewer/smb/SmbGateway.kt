@@ -736,6 +736,54 @@ object SmbGateway {
         fun resumeKeepAlive() {
             if (closed.get() || size.get() == 0) return
             startKeepAlive()
+            // Do not wait [KEEPALIVE_INTERVAL_MS] to notice sockets the OS already aborted.
+            gatewayScope.launch { pingIdleSessions() }
+        }
+
+        /**
+         * Drop client-side sessions whose TCP is already gone. Safe on the main thread:
+         * socket close is async. Returns live (data+list) count after the sweep.
+         *
+         * Must run on ProcessLifecycle ON_START **before** Activity ON_RESUME: folder
+         * view skips listing while [connectedHosts] is still true.
+         */
+        fun retireDisconnectedNow(): Int {
+            val dead = synchronized(sessionsLock) {
+                sessions.filter { !it.retired.get() && !it.connection.isConnected }
+            }
+            val idleDead = ArrayList<PooledSession>(dead.size)
+            for (ps in dead) {
+                ps.retired.set(true)
+                if (ps.outstanding.get() <= 0) {
+                    synchronized(sessionsLock) {
+                        if (sessions.remove(ps)) {
+                            size.updateAndGet { (it - 1).coerceAtLeast(0) }
+                        }
+                    }
+                    idleDead.add(ps)
+                }
+                signalFree()
+            }
+            if (idleDead.isNotEmpty()) {
+                logcat {
+                    "SmbGateway: host $hostPortKey foreground swept ${idleDead.size} dead session(s)"
+                }
+                gatewayScope.launch {
+                    idleDead.forEach { runCatching { it.closeQuietly() } }
+                }
+            }
+            val live = liveDataCount() + liveListCount()
+            dropEmptyPoolIfDisconnected()
+            return live
+        }
+
+        private fun dropEmptyPoolIfDisconnected() {
+            if (liveDataCount() + liveListCount() > 0) return
+            setHostConnected(hostPortKey, false)
+            if (size.get() == 0) {
+                stopKeepAlive()
+                hostPools.remove(hostPortKey, this)
+            }
         }
 
         private fun signalFree() {
@@ -760,7 +808,10 @@ object SmbGateway {
                             .thenBy { it.lastUsedMs.get() },
                     )
             }
-            if (candidates.isEmpty()) return
+            if (candidates.isEmpty()) {
+                dropEmptyPoolIfDisconnected()
+                return
+            }
             var kept = 0
             var dropped = 0
             var released = 0
@@ -809,13 +860,7 @@ object SmbGateway {
                 }
             }
             if (dropped > 0 || released > 0) signalFree()
-            if ((dropped > 0 || released > 0) && size.get() == 0) {
-                setHostConnected(hostPortKey, false)
-                stopKeepAlive()
-                // Drop empty pool so the next list/reader op gets a clean HostPool
-                // (lazy recreate after idle release / NAT drop while cache-browsing).
-                hostPools.remove(hostPortKey, this)
-            }
+            dropEmptyPoolIfDisconnected()
             if (dropped > 0 || released > 0 || kept > 0) {
                 logcat {
                     "SmbGateway: keep-alive $hostPortKey idle-ok≈$kept dropped=$dropped " +
@@ -1577,10 +1622,19 @@ object SmbGateway {
         hostPools.values.forEach { it.pauseKeepAlive() }
     }
 
-    /** Resume keep-alive pings (ProcessLifecycle ON_START). Half-open sockets retire on first op. */
+    /**
+     * Resume keep-alive pings (ProcessLifecycle ON_START).
+     *
+     * Android often aborts linger-0 SMB sockets a few seconds after ON_STOP. Sweep those
+     * **synchronously** so [isSourceConnected] is false before Activity ON_RESUME; otherwise
+     * folder view keeps the cached listing and never opens a new TCP.
+     */
     fun onAppForegrounded() {
         logcat { "SmbGateway: app foreground — resuming browse keep-alive" }
-        hostPools.values.forEach { it.resumeKeepAlive() }
+        hostPools.values.toList().forEach { pool ->
+            val live = pool.retireDisconnectedNow()
+            if (live > 0) pool.resumeKeepAlive()
+        }
     }
 
     /**
@@ -3220,6 +3274,16 @@ internal fun smbCountsTowardDataCap(
     reservedForList: Boolean,
     connected: Boolean,
 ): Boolean = !retired && !reservedForList && connected
+
+/**
+ * Toolbar / folder-resume "connected" follows live TCPs, not map occupancy.
+ * After a background abort the sockets can sit in the pool with transport down;
+ * leaving the flag true makes [SmbBrowserScreen] skip listing and the reconnect probe.
+ */
+internal fun smbUiHostConnected(liveSessionCount: Int): Boolean = liveSessionCount > 0
+
+/** First reconnect probe after resume is immediate; later attempts wait [gapMs]. */
+internal fun smbReconnectProbeDelayMs(attemptIndex: Int, gapMs: Long): Long = if (attemptIndex <= 0) 0L else gapMs
 
 /**
  * smbj [com.hierynomus.smbj.share.Share] throws [com.hierynomus.smbj.common.SMBRuntimeException]

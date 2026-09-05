@@ -144,11 +144,7 @@ abstract class PageLoader(
     }
 
     private fun cacheWeightOf(image: Image): Int {
-        val raw = image.allocationSize
-        // HARDWARE bitmaps sometimes report 0 Java-heap bytes; still evict by pixel area
-        // so the cache cannot retain every page in a long gallery.
-        val pixels = image.intrinsicSize.width.toLong() * image.intrinsicSize.height
-        val estimated = maxOf(raw, pixels * 4L)
+        val estimated = image.estimatedCacheBytes
         if (estimated <= 0L) return 1
         return estimated.coerceAtMost(imageCacheMaxBytes.toLong()).toInt().coerceAtLeast(1)
     }
@@ -388,6 +384,7 @@ abstract class PageLoader(
                 }
             }
         }
+        pages[index].rememberLayout(image.intrinsicSize.width, image.intrinsicSize.height)
         pages[index].statusFlow.update { if (image.hasQrCode) PageStatus.Blocked(image) else PageStatus.Ready(image) }
     }
 
@@ -530,22 +527,16 @@ abstract class PageLoader(
     }
 
     /**
-     * Cache-off: Ready pages keep decoded bitmaps (Compose pin) and used to keep
-     * compressed bytes via [Image] source. Drop pages outside the demand window
-     * so a long scroll cannot accumulate them. Keep ±1 for pager beyond-viewport.
+     * Ready pages pin bitmaps / animated decoders until status changes. Local zip
+     * always extracts to RAM, so this is not cache-off-only. Keep ±1 so webtoon
+     * reverse scroll does not collapse item height and fight the same page.
      */
     private fun dropUndemandedDecodedPages(desired: Set<Int>) {
-        if (!Settings.disableReaderNetworkCache.value) return
         val n = size
         if (n <= 0) return
         val keepMin = (desired.minOrNull() ?: 0) - 1
         val keepMax = (desired.maxOrNull() ?: 0) + 1
         fun keep(i: Int) = i in desired || i in keepMin..keepMax
-        lock.write {
-            for (i in 0 until n) {
-                if (!keep(i)) cache.remove(i)
-            }
-        }
         for (i in 0 until n) {
             if (keep(i)) continue
             releaseRamPage(i)
@@ -553,6 +544,11 @@ abstract class PageLoader(
             when (page.status) {
                 is PageStatus.Ready, is PageStatus.Blocked, is PageStatus.Loading -> page.reset()
                 else -> Unit
+            }
+        }
+        lock.write {
+            for (i in 0 until n) {
+                if (!keep(i)) cache.remove(i)
             }
         }
     }
@@ -571,8 +567,12 @@ abstract class PageLoader(
         lastNavigation?.let(::navigate)
     }
 
-    /** Retry currently demanded pages after network transports are recreated on resume. */
+    /**
+     * Retry currently demanded pages after network transports die in the background.
+     * Drop inflight claims so a hung SMB/WebDAV job cannot block [requestDecode] forever.
+     */
     override fun onForeground() {
+        cancelDecodeJobs()
         replan()
     }
 
