@@ -22,7 +22,10 @@ class ZipMemberByteSource private constructor(
         if (entry.method == ZipCentralDirectory.METHOD_DEFLATE) Inflater(true) else null
     private var inflatedTo = 0L
     private var compressedAt = 0L
-    private val compressed = ByteArray(64 * 1024)
+
+    /** Reused; 1 MiB amortizes SMB/WebDAV RTT when inflating a stored-as-deflate video. */
+    private val compressed = ByteArray(DEFLATE_IO_CHUNK)
+    private val skipBuf = ByteArray(DEFLATE_IO_CHUNK)
 
     override val size: Long get() = entry.uncompressedSize.coerceAtLeast(0L)
 
@@ -79,10 +82,9 @@ class ZipMemberByteSource private constructor(
 
     private fun skipDeflate(bytes: Long) {
         val inf = inflater ?: return
-        val skip = ByteArray(64 * 1024)
         var left = bytes
         while (left > 0L && inflatedTo < prefixCap) {
-            val n = inf.inflate(skip, 0, minOf(skip.size.toLong(), left).toInt())
+            val n = inf.inflate(skipBuf, 0, minOf(skipBuf.size.toLong(), left).toInt())
             if (n > 0) {
                 inflatedTo += n
                 left -= n
@@ -108,6 +110,8 @@ class ZipMemberByteSource private constructor(
     companion object {
         /** Deflate members are prefix-only so thumbs never inflate a whole video. */
         const val DEFLATE_PREFIX_CAP = 16L * 1024L * 1024L
+
+        private const val DEFLATE_IO_CHUNK = 1024 * 1024
 
         fun open(
             zip: ArchiveByteSource,

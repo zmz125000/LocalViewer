@@ -57,9 +57,11 @@ class WebDavArchiveByteSource(
                     source = source,
                     password = password,
                     remoteRelativeFile = zipRel,
-                    pipeline = false,
+                    preferSequential = preferSequential,
+                    pipeline = pipeline,
+                    sequentialWindow = sequentialWindow,
                     stickySession = stickySession,
-                    readahead = true,
+                    readahead = readahead,
                 )
             }
         } else {
