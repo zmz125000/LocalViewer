@@ -199,7 +199,10 @@ internal object SmbAsyncTransport {
             logcat { "SmbAsyncTransport: no handlers (${e.message}) — 9KiB smbj reader" }
             return null
         }
-        return LargeAsyncPacketReader(channel, handlers.packetFactory, handlers.receiver)
+        val connected = connectedField.get(transport) as AtomicBoolean
+        return LargeAsyncPacketReader(channel, handlers.packetFactory, handlers.receiver) {
+            connected.set(false)
+        }
     }
 
     private fun socketChannel(transport: AsyncDirectTcpTransport<*, *>): AsynchronousSocketChannel? = runCatching { socketChannelField.get(transport) as AsynchronousSocketChannel }.getOrElse { e ->
