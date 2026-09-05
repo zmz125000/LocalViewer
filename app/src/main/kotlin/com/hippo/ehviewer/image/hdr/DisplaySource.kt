@@ -1,21 +1,23 @@
 package com.hippo.ehviewer.image.hdr
 
-import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.util.FileUtils
+import java.nio.ByteBuffer
 import okio.Path
 
 /**
  * Reader chokepoint: Coil / ImageDecoder-ready [ImageSource].
  *
  * Lib convert (JXR/JXL/PQ-AVIF → Ultra HDR JPEG) lives here and in network finalize —
- * not in [com.hippo.ehviewer.image.Image].
+ * not in [com.hippo.ehviewer.image.Image]. ImageDecoder cannot open those codecs
+ * (`Failed to create image decoder` / `unimplemented`); cache-off must still convert.
  *
  * Local archives pass a mmap [ByteBufferSource] ([extractToByteBuffer]). Platform
  * JPEG/PNG/… stay in that buffer (EhViewer direct access). Only lib stills become a
- * converted JPEG [PathSource].
+ * converted JPEG [PathSource] under the derived Ultra HDR cache (not the network
+ * original page cache).
  */
 object DisplaySource {
     /**
@@ -37,11 +39,7 @@ object DisplaySource {
                 if (t.isNotEmpty()) "$name.$t" else name
             }
         }
-        val ready = if (Settings.disableReaderNetworkCache.value) {
-            src.source
-        } else {
-            HdrConvertCache.ensureCoilReady(src.source, hint)
-        }
+        val ready = HdrConvertCache.ensureCoilReady(src.source, hint)
         if (ready.toString() == src.source.toString()) return src
         val outer = src
         return object : PathSource {
@@ -53,14 +51,10 @@ object DisplaySource {
     }
 
     private suspend fun ensureReadyBuffer(src: ByteBufferSource, fileNameHint: String): ImageSource {
-        if (Settings.disableReaderNetworkCache.value) return src
         val route = classify(src.source, fileNameHint)
         if (!route.needsUhdr) return src
-        val dup = src.source.asReadOnlyBuffer()
-        val n = dup.remaining()
-        check(n > 0) { "empty image buffer" }
-        val bytes = ByteArray(n)
-        dup.get(bytes)
+        val bytes = src.source.heapBytesForConvert()
+        check(bytes.isNotEmpty()) { "empty image buffer" }
         val ready = HdrConvertCache.ensureCoilReadyFromBytes(bytes, fileNameHint)
         val outer = src
         return object : PathSource {
@@ -70,4 +64,19 @@ object DisplaySource {
             override fun close() = outer.close()
         }
     }
+}
+
+/**
+ * ramPages wrap a heap [ByteArray] — reuse it for lib convert instead of cloning
+ * a 20–30 MiB page. Direct/mmap buffers still copy.
+ */
+internal fun ByteBuffer.heapBytesForConvert(): ByteArray {
+    if (hasArray() && !isReadOnly) {
+        val n = remaining()
+        if (arrayOffset() == 0 && position() == 0 && n == array().size) return array()
+    }
+    val dup = asReadOnlyBuffer()
+    val n = dup.remaining()
+    if (n <= 0) return ByteArray(0)
+    return ByteArray(n).also { dup.get(it) }
 }

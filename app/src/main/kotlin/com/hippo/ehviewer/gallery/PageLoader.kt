@@ -151,7 +151,8 @@ abstract class PageLoader(
 
     private suspend fun atomicallyDecodeAndUpdate(index: Int, forceOriginal: Boolean) {
         // Local archives: ByteBuffer from mmap extract stays in memory (Coil data(buffer)).
-        // Lib stills (JXL/JXR/PQ-AVIF) convert to UHDR jpeg; folder/network PathSource as before.
+        // Lib stills (JXL/JXR/PQ-AVIF) convert to UHDR jpeg even when network cache is off —
+        // ImageDecoder cannot open those codecs. Folder/network PathSource as before.
         // Experimental [Settings.readerLibDirectBitmap]: lib → Bitmap, skip convert.
         bracketCase(
             { openSource(index) },
