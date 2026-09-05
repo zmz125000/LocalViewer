@@ -229,6 +229,24 @@ object MediaStoreFs {
         .map { it.path }
 
     /**
+     * Direct image basenames from MediaStore (no SAF children query).
+     * Maps a SAF tree path when possible so library/SAF-mode galleries reuse the
+     * same file list the library scanner already indexed.
+     */
+    fun imageFileNames(dir: Path): List<String>? {
+        val ms = when {
+            dir.isMediaStorePath() -> dir
+            else -> tryConvertSafPathToMediaStore(dir)
+        } ?: return null
+        val names = listChildren(ms)
+            .mapNotNull { child ->
+                child.name.takeIf { !child.isDirectory && isImageFileName(it) }
+            }
+            .sortedWith { a, b -> naturalCompare(a, b) }
+        return names.takeIf { it.isNotEmpty() }
+    }
+
+    /**
      * Direct image files under [relativeDir] and every descendant folder.
      * Includes [SafMediaStoreListing.ImageFile.lastModifiedMs] from DATE_MODIFIED.
      */

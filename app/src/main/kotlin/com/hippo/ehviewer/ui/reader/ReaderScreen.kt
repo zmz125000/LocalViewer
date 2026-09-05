@@ -111,6 +111,7 @@ import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isDocumentFileName
@@ -1207,7 +1208,9 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 )
             else -> {
                 val names = args.imageNames.ifEmpty {
-                    FolderGalleryIndex.loadLocalForReader(info).orEmpty()
+                    FolderGalleryIndex.loadLocalForReader(info)
+                        ?: MediaStoreFs.imageFileNames(path)
+                        .orEmpty()
                 }
                 useFolderPageLoader(
                     dir = path,

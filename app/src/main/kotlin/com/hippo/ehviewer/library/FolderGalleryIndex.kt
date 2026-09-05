@@ -24,6 +24,66 @@ object FolderGalleryIndex {
      */
     fun completeNames(entry: BrowseEntryRemote.FolderGallery): List<String>? = entry.imageFileNames.takeIf { !entry.pageCountCapped && it.isNotEmpty() }
 
+    /** Library DB uses `"."` for the root gallery; browse listings use `""`. */
+    fun normalizeGalleryRelativeDir(dir: String): String {
+        val n = BrowseSession.normalizeBrowseRelativeDir(dir)
+        return if (n == ".") "" else n
+    }
+
+    /** Self-listing shape browse/photo-grid/reader all read: gallery row + image files. */
+    fun listingFromImageNames(dirName: String, names: List<String>): List<BrowseEntryRemote> {
+        if (names.isEmpty()) return emptyList()
+        val cover = names.first()
+        return buildList(names.size + 1) {
+            add(
+                BrowseEntryRemote.FolderGallery(
+                    name = dirName.ifEmpty { "Gallery" },
+                    relativeName = "",
+                    pageCount = names.size,
+                    pageCountCapped = false,
+                    coverFileName = cover,
+                    imageFileNames = names,
+                ),
+            )
+            for (name in names) {
+                add(BrowseEntryRemote.RegularFile(name = name, fileName = name))
+            }
+        }
+    }
+
+    /**
+     * Write library-scan page lists into the same folder index browse/photo-grid/reader use.
+     * Zip interiors go under the zip RAM key; real folders under the absolute path key.
+     */
+    suspend fun persistLocalFolderPages(
+        rootId: Long,
+        configKey: String,
+        rootAbs: Path,
+        pages: Map<String, List<String>>,
+    ) {
+        for ((rel, names) in pages) {
+            if (names.isEmpty()) continue
+            val dir = normalizeGalleryRelativeDir(rel)
+            val title = dir.substringAfterLast('/').ifEmpty { "Gallery" }
+            val entries = listingFromImageNames(title, names)
+            NetworkFolderIndexCache.saveLocal(rootId, configKey, dir, entries)
+            if (ZipAsDirListing.splitZipBrowsePath(dir) != null) {
+                BrowseSession.putLocalListing(
+                    BrowseSession.localZipListingKey(rootId, dir),
+                    entries,
+                    sessionCurrent = true,
+                )
+            } else {
+                val abs = if (dir.isEmpty()) rootAbs else rootAbs.resolveRelative(dir)
+                BrowseSession.putLocalListing(
+                    BrowseSession.pathKey(abs),
+                    entries,
+                    sessionCurrent = true,
+                )
+            }
+        }
+    }
+
     /** Image rows for a photo-grid overlay; same order as the reader page list. */
     fun photoGridRemoteFiles(names: List<String>): List<BrowseEntryRemote.RegularFile> = names.map { name -> BrowseEntryRemote.RegularFile(name = name, fileName = name) }
 
@@ -155,10 +215,11 @@ object FolderGalleryIndex {
         galleryDir: String,
         listingFor: suspend (listedDir: String) -> List<BrowseEntryRemote>?,
     ): List<String>? {
-        var listed = BrowseSession.normalizeBrowseRelativeDir(galleryDir)
+        val gallery = normalizeGalleryRelativeDir(galleryDir)
+        var listed = gallery
         while (true) {
             listingFor(listed)?.let { entries ->
-                namesFromListing(listed, entries, galleryDir)?.let { return it }
+                namesFromListing(listed, entries, gallery)?.let { return it }
             }
             if (listed.isEmpty()) break
             listed = parentRelativeOfFile(listed)

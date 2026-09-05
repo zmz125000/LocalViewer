@@ -83,6 +83,7 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
@@ -315,10 +316,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     frame.rootId,
                     LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
                     galleryDir,
+                    rootAbs = rootPath,
                 )
             } else {
                 null
-            }
+            } ?: MediaStoreFs.imageFileNames(frame.path.toPath())
             if (!names.isNullOrEmpty()) {
                 applyLocalPhotoGridFiles(frame, names)
                 return

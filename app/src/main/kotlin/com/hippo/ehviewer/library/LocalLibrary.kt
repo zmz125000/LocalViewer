@@ -423,16 +423,26 @@ object LocalLibrary {
             return
         }
         val previous = db.localGalleryDao().listByRootId(root.id)
-        val galleries = LibraryScanner.scan(root.id, path, rootDisplayName = root.displayName)
+        val scanned = LibraryScanner.scan(root.id, path, rootDisplayName = root.displayName)
         // Drop results if the root was removed while scanning (belt-and-suspenders with mutex).
         if (db.libraryRootDao().load(root.id) == null) {
             logcat("LocalLibrary") { "Skip scan write for deleted root ${root.id}" }
             return
         }
-        val toWrite = preserveArchivePageCountsIfDisabled(previous, galleries)
+        val toWrite = preserveArchivePageCountsIfDisabled(previous, scanned.galleries)
         logcat("LocalLibrary") { "Scanned root ${root.id} (${root.displayName}): ${toWrite.size} galleries" }
         runCatching {
             db.localGalleryDao().replaceForRoot(root.id, toWrite)
+        }.onFailure {
+            logcat(it)
+        }
+        runCatching {
+            FolderGalleryIndex.persistLocalFolderPages(
+                rootId = root.id,
+                configKey = LocalFolderListing.rootConfigKey(path, root.prefersMediaStore),
+                rootAbs = path,
+                pages = scanned.folderPages,
+            )
         }.onFailure {
             logcat(it)
         }

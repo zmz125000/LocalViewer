@@ -143,6 +143,16 @@ class FolderGalleryIndexTest {
     }
 
     @Test
+    fun `library root relative dir dot matches empty browse key`() {
+        assertEquals("", FolderGalleryIndex.normalizeGalleryRelativeDir("."))
+        assertEquals("gal", FolderGalleryIndex.normalizeGalleryRelativeDir("gal"))
+        val names = listOf("a.jpg", "b.jpg")
+        val listing = FolderGalleryIndex.listingFromImageNames("gal", names)
+        assertEquals(names, FolderGalleryIndex.namesFromListing("gal", listing, "gal"))
+        assertEquals(names, FolderGalleryIndex.completeNames(listing.filterIsInstance<BrowseEntryRemote.FolderGallery>().single()))
+    }
+
+    @Test
     fun `names from local parent ram listing match photo grid`() {
         val names = listOf("01.jpg", "02.jpg")
         val listing = listOf(gallery(relativeName = "gal", names = names))
