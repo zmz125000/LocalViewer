@@ -19,6 +19,7 @@ import com.ehviewer.core.util.logcat
 fun tryHardwareF16Wrap(software: Bitmap): Bitmap? {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
     if (software.config != Bitmap.Config.RGBA_F16) return null
+    if (!colorSpaceSupportsHardwareWrap(software.colorSpace)) return null
     return runCatching {
         val w = software.width
         val h = software.height
@@ -54,6 +55,7 @@ fun tryHardwareF16FromPixels(
     if (width <= 0 || height <= 0) return null
     val expected = width.toLong() * height * 8L
     if (expected > Int.MAX_VALUE || pixels.size.toLong() != expected) return null
+    if (!colorSpaceSupportsHardwareWrap(colorSpace)) return null
     return runCatching {
         val usage = HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_WRITE_RARELY
         val buffer = HardwareBuffer.create(width, height, HardwareBuffer.RGBA_FP16, 1, usage)
@@ -65,4 +67,16 @@ fun tryHardwareF16FromPixels(
             buffer.close()
         }
     }.onFailure { logcat("HardwareF16", it) }.getOrNull()
+}
+
+/**
+ * [Bitmap.wrapHardwareBuffer] calls native SkColorSpace creation, which requires
+ * a named space or an RGB space with ICC parametric transfer parameters.
+ */
+private fun colorSpaceSupportsHardwareWrap(colorSpace: ColorSpace?): Boolean {
+    if (colorSpace == null) return true
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+    if (colorSpace.id != ColorSpace.MIN_ID) return true
+    val rgb = colorSpace as? ColorSpace.Rgb ?: return false
+    return rgb.transferParameters != null
 }
