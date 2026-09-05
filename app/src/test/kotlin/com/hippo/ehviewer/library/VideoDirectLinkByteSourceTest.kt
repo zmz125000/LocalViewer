@@ -32,7 +32,34 @@ class VideoDirectLinkByteSourceTest {
         video.close()
     }
 
-    private class RecordingSource(override val size: Long) : ArchiveByteSource {
+    @Test
+    fun sequentialSourceDoesNotPrefetchFarAheadInParallel() {
+        val lane = RecordingSource(size = 32L * 1024, isRandomAccess = false)
+        val video = VideoDirectLinkByteSource(
+            demand = lane,
+            prefetch = null,
+            knownSize = lane.size,
+            blockSize = 1024,
+            maxBlocks = 8,
+            prefetchAhead = 8,
+            prefetchParallel = 4,
+        )
+        val buf = ByteArray(16)
+        assertTrue(video.readAt(0L, buf, 0, 16) > 0)
+        Thread.sleep(200)
+        val starts = lane.reads.toSet()
+        assertTrue("must read the demand block", 0L in starts)
+        assertTrue(
+            "deflate-style sources must not jump many blocks ahead: $starts",
+            starts.all { it <= 2L * 1024 },
+        )
+        video.close()
+    }
+
+    private class RecordingSource(
+        override val size: Long,
+        override val isRandomAccess: Boolean = true,
+    ) : ArchiveByteSource {
         val reads = CopyOnWriteArrayList<Long>()
         val drops = AtomicInteger(0)
 
