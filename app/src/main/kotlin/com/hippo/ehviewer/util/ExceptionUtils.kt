@@ -34,3 +34,16 @@ fun Throwable.displayString(): String = logcat(this).let {
         else -> message ?: appCtx.getString(R.string.error_unknown)
     }
 }
+
+/** Java-heap OOM, including Coil wrapping ART's "Failed to allocate … until OOM". */
+fun Throwable.isJavaHeapOom(): Boolean {
+    var t: Throwable? = this
+    repeat(8) {
+        val cur = t ?: return false
+        if (cur is OutOfMemoryError) return true
+        val m = cur.message
+        if (m != null && (m.contains("Failed to allocate") || m.contains("OutOfMemory"))) return true
+        t = cur.cause
+    }
+    return false
+}
