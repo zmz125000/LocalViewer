@@ -42,6 +42,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,6 +75,7 @@ import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
+import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
@@ -212,6 +214,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         BrowseVirtualKind.None
     }
     val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
+    val photoGridNow = rememberUpdatedState(photoGrid)
     val folderId = BrowseFolderId.webDav(sourceId, relativeDirForMode)
     val contentMode = rememberEffectiveBrowseContentMode(folderId)
     val useGrid = virtual.forceGrid || listMode == 1
@@ -427,6 +430,21 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
 
         val loadDir = if (configChanged) "" else targetDir
+        // Photo-grid open: same complete index the reader uses — no directory scan.
+        if (!force && !configChanged && photoGridNow.value) {
+            val names = FolderGalleryIndex.loadWebDav(src.id, configKey, loadDir)
+            if (!names.isNullOrEmpty()) {
+                if (listedDir != loadDir || entries.isEmpty()) {
+                    entries = FolderGalleryIndex.photoGridRemoteFiles(names)
+                    listedDir = loadDir
+                    listingSessionCurrent = true
+                }
+                loading = false
+                refreshing = false
+                error = null
+                return@LaunchedEffect
+            }
+        }
         val haveListing = listedDir == loadDir && entries.isNotEmpty()
         // Soft resume (same path, already shown): no full-screen spinner.
         val needSpinner = force || configChanged || !haveListing
@@ -672,10 +690,22 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             WebDavGateway.joinRelative(relativeDir, entry.relativeName)
         }
         val entered = entry.relativeName.isNotEmpty()
+        val names = FolderGalleryIndex.completeNames(entry)
+        val parentCurrent = listingSessionCurrent
         if (entered) {
             enterDir(entry.relativeName)
         }
         setPhotoGrid(remote, enteredFromParent = entered)
+        // Child gallery: paint the reader file list now so enterDir does not scan.
+        // Current-dir overlay keeps the existing listing (leave photo-grid stays here).
+        if (entered && names != null) {
+            entries = FolderGalleryIndex.photoGridRemoteFiles(names)
+            listedDir = remote
+            listingSessionCurrent = parentCurrent
+            loading = false
+            refreshing = false
+            error = null
+        }
     }
 
     fun openFolderGalleryPrimary(entry: BrowseEntryRemote.FolderGallery) {

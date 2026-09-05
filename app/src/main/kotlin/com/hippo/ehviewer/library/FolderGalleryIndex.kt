@@ -1,5 +1,10 @@
 package com.hippo.ehviewer.library
 
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.model.GalleryInfo
+import okio.Path
+import okio.Path.Companion.toPath
+
 /**
  * Resolve a complete folder-gallery page list from RAM / disk index without network.
  *
@@ -13,6 +18,140 @@ package com.hippo.ehviewer.library
  * A complete cache hit opens the same way as the folder path; missing pages stay per-page errors.
  */
 object FolderGalleryIndex {
+    /**
+     * Page names the reader uses from a classified gallery row, or null when it would
+     * live-list (capped / empty). Photo-grid open uses the same list and skips a scan.
+     */
+    fun completeNames(entry: BrowseEntryRemote.FolderGallery): List<String>? = entry.imageFileNames.takeIf { !entry.pageCountCapped && it.isNotEmpty() }
+
+    /** Library DB uses `"."` for the root gallery; browse listings use `""`. */
+    fun normalizeGalleryRelativeDir(dir: String): String {
+        val n = BrowseSession.normalizeBrowseRelativeDir(dir)
+        return if (n == ".") "" else n
+    }
+
+    /** Self-listing shape browse/photo-grid/reader all read: gallery row + image files. */
+    fun listingFromImageNames(dirName: String, names: List<String>): List<BrowseEntryRemote> {
+        if (names.isEmpty()) return emptyList()
+        val cover = names.first()
+        return buildList(names.size + 1) {
+            add(
+                BrowseEntryRemote.FolderGallery(
+                    name = dirName.ifEmpty { "Gallery" },
+                    relativeName = "",
+                    pageCount = names.size,
+                    pageCountCapped = false,
+                    coverFileName = cover,
+                    imageFileNames = names,
+                ),
+            )
+            for (name in names) {
+                add(BrowseEntryRemote.RegularFile(name = name, fileName = name))
+            }
+        }
+    }
+
+    /**
+     * Write library-scan page lists into the same folder index browse/photo-grid/reader use.
+     * Zip interiors go under the zip RAM key; real folders under the absolute path key.
+     */
+    suspend fun persistLocalFolderPages(
+        rootId: Long,
+        configKey: String,
+        rootAbs: Path,
+        pages: Map<String, List<String>>,
+    ) {
+        for ((rel, names) in pages) {
+            if (names.isEmpty()) continue
+            val dir = normalizeGalleryRelativeDir(rel)
+            val title = dir.substringAfterLast('/').ifEmpty { "Gallery" }
+            val entries = listingFromImageNames(title, names)
+            NetworkFolderIndexCache.saveLocal(rootId, configKey, dir, entries)
+            if (ZipAsDirListing.splitZipBrowsePath(dir) != null) {
+                BrowseSession.putLocalListing(
+                    BrowseSession.localZipListingKey(rootId, dir),
+                    entries,
+                    sessionCurrent = true,
+                )
+            } else {
+                val abs = if (dir.isEmpty()) rootAbs else rootAbs.resolveRelative(dir)
+                BrowseSession.putLocalListing(
+                    BrowseSession.pathKey(abs),
+                    entries,
+                    sessionCurrent = true,
+                )
+            }
+        }
+    }
+
+    /** Image rows for a photo-grid overlay; same order as the reader page list. */
+    fun photoGridRemoteFiles(names: List<String>): List<BrowseEntryRemote.RegularFile> = names.map { name -> BrowseEntryRemote.RegularFile(name = name, fileName = name) }
+
+    /**
+     * Local photo-grid files. [zipInnerRel] non-null means [dirPath] is the zip/cbz and
+     * names are members under that prefix (`zipfile:` paths).
+     */
+    fun photoGridLocalFiles(
+        dirPath: String,
+        zipInnerRel: String?,
+        names: List<String>,
+    ): List<BrowseEntry.RegularFile> = names.map { name ->
+        val path = if (zipInnerRel != null) {
+            ZipPaths.encodePath(dirPath, ZipAsDirListing.joinPrefix(zipInnerRel, name))
+        } else {
+            dirPath.toPath() / name
+        }
+        BrowseEntry.RegularFile(name = name, path = path)
+    }
+
+    /**
+     * Names from the parent folder's RAM listing — same source photo-grid open uses.
+     * [zipInnerRel] non-null means [parentPath] is a zip/cbz browse frame.
+     */
+    fun namesFromLocalParent(
+        rootId: Long,
+        parentPath: String,
+        parentRelative: String,
+        galleryDir: String,
+        zipInnerRel: String? = null,
+    ): List<String>? {
+        val listedDir = if (zipInnerRel != null) {
+            ZipAsDirListing.virtualRelativeDir(parentRelative, zipInnerRel)
+        } else {
+            parentRelative
+        }
+        val ramKey = if (zipInnerRel != null) {
+            BrowseSession.localZipListingKey(rootId, listedDir)
+        } else {
+            BrowseSession.pathKey(parentPath.toPath())
+        }
+        val remote = BrowseSession.getLocalCachedListing(ramKey)?.entries ?: return null
+        return namesFromListing(listedDir, remote, galleryDir)
+    }
+
+    /** Browse folder-gallery identity stored on [GalleryInfo.uploader]: rootId, NUL, relativeDir. */
+    fun browseIdentityFromUploader(uploader: String?): Pair<Long, String>? {
+        val u = uploader ?: return null
+        val sep = u.indexOf('\u0000')
+        if (sep <= 0) return null
+        val rootId = u.substring(0, sep).toLongOrNull() ?: return null
+        return rootId to u.substring(sep + 1)
+    }
+
+    /**
+     * Complete page names for a local folder reader when the nav args did not pass them.
+     * Walks RAM (zip + SAF/FS path key) then the disk folder index — never lists SAF.
+     */
+    suspend fun loadLocalForReader(info: GalleryInfo?): List<String>? {
+        browseIdentityFromUploader(info?.uploader)?.let { (rootId, rel) ->
+            loadLocalFromRoot(rootId, rel)?.let { return it }
+        }
+        val gid = info?.gid ?: return null
+        val lib = LocalLibrary.loadGallery(gid) ?: return null
+        if (lib.kind == LOCAL_GALLERY_KIND_ARCHIVE) return null
+        return loadLocalFromRoot(lib.rootId, lib.relativePath)
+    }
+
     /**
      * Names from a complete [BrowseEntryRemote.FolderGallery] in [entries] whose resolved
      * path equals [galleryDir]. If this listing **is** the gallery directory, image
@@ -76,10 +215,11 @@ object FolderGalleryIndex {
         galleryDir: String,
         listingFor: suspend (listedDir: String) -> List<BrowseEntryRemote>?,
     ): List<String>? {
-        var listed = BrowseSession.normalizeBrowseRelativeDir(galleryDir)
+        val gallery = normalizeGalleryRelativeDir(galleryDir)
+        var listed = gallery
         while (true) {
             listingFor(listed)?.let { entries ->
-                namesFromListing(listed, entries, galleryDir)?.let { return it }
+                namesFromListing(listed, entries, gallery)?.let { return it }
             }
             if (listed.isEmpty()) break
             listed = parentRelativeOfFile(listed)
@@ -132,8 +272,20 @@ object FolderGalleryIndex {
         rootId: Long,
         configKey: String,
         galleryDir: String,
+        rootAbs: Path? = null,
     ): List<String>? = namesWalkingParents(galleryDir) { dir ->
-        localListing(rootId, configKey, dir)
+        localListing(rootId, configKey, dir, rootAbs)
+    }
+
+    private suspend fun loadLocalFromRoot(rootId: Long, galleryDir: String): List<String>? {
+        val root = LocalLibrary.loadRoot(rootId) ?: return null
+        val rootPath = LocalLibrary.rootPath(root) ?: return null
+        return loadLocal(
+            rootId,
+            LocalFolderListing.rootConfigKey(rootPath, root.prefersMediaStore),
+            galleryDir,
+            rootAbs = rootPath,
+        )
     }
 
     suspend fun siblingListingSmb(
@@ -178,12 +330,17 @@ object FolderGalleryIndex {
         rootId: Long,
         configKey: String,
         dir: String,
+        rootAbs: Path? = null,
     ): List<BrowseEntryRemote>? {
         val normalized = BrowseSession.normalizeBrowseRelativeDir(dir)
-        return BrowseSession.getLocalCachedListing(
+        BrowseSession.getLocalCachedListing(
             BrowseSession.localZipListingKey(rootId, normalized),
-        )?.entries
-            ?: NetworkFolderIndexCache.loadLocal(rootId, configKey, normalized)
+        )?.entries?.let { return it }
+        if (rootAbs != null) {
+            val abs = if (normalized.isEmpty()) rootAbs else rootAbs.resolveRelative(normalized)
+            BrowseSession.getLocalCachedListing(BrowseSession.pathKey(abs))?.entries?.let { return it }
+        }
+        return NetworkFolderIndexCache.loadLocal(rootId, configKey, normalized)
     }
 
     private fun join(parent: String, child: String): String {

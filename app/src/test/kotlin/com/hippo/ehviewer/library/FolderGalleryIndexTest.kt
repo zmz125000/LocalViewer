@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.library
 
 import kotlinx.coroutines.runBlocking
+import okio.Path.Companion.toPath
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -111,6 +112,65 @@ class FolderGalleryIndexTest {
         val names = listOf("cover.jpg")
         val listing = listOf(gallery(relativeName = "gal", names = names))
         assertEquals(names, FolderGalleryIndex.namesFromListing("", listing, "gal"))
+    }
+
+    @Test
+    fun `complete names skip capped and empty so photo grid can live-list`() {
+        val names = listOf("b.jpg", "a.jpg")
+        val row = gallery(relativeName = "gal", names = names)
+        assertEquals(names, FolderGalleryIndex.completeNames(row))
+        assertNull(FolderGalleryIndex.completeNames(gallery(relativeName = "gal", names = names, capped = true)))
+        assertNull(FolderGalleryIndex.completeNames(gallery(relativeName = "gal", names = emptyList())))
+        assertEquals(
+            names,
+            FolderGalleryIndex.photoGridRemoteFiles(names).map { it.fileName },
+        )
+        val local = FolderGalleryIndex.photoGridLocalFiles("/tmp/gal", zipInnerRel = null, names)
+        assertEquals(names, local.map { it.name })
+        assertEquals("/tmp/gal/b.jpg", local.first().path.toString())
+        val zip = FolderGalleryIndex.photoGridLocalFiles("/tmp/pack.zip", zipInnerRel = "Album", names)
+        assertEquals("zipfile:/tmp/pack.zip!Album/b.jpg", zip.first().path.toString())
+    }
+
+    @Test
+    fun `browse uploader identity is root id and relative dir`() {
+        assertEquals(
+            7L to "share/gal",
+            FolderGalleryIndex.browseIdentityFromUploader("7\u0000share/gal"),
+        )
+        assertNull(FolderGalleryIndex.browseIdentityFromUploader(null))
+        assertNull(FolderGalleryIndex.browseIdentityFromUploader("norootid"))
+    }
+
+    @Test
+    fun `library root relative dir dot matches empty browse key`() {
+        assertEquals("", FolderGalleryIndex.normalizeGalleryRelativeDir("."))
+        assertEquals("gal", FolderGalleryIndex.normalizeGalleryRelativeDir("gal"))
+        val names = listOf("a.jpg", "b.jpg")
+        val listing = FolderGalleryIndex.listingFromImageNames("gal", names)
+        assertEquals(names, FolderGalleryIndex.namesFromListing("gal", listing, "gal"))
+        assertEquals(names, FolderGalleryIndex.completeNames(listing.filterIsInstance<BrowseEntryRemote.FolderGallery>().single()))
+    }
+
+    @Test
+    fun `names from local parent ram listing match photo grid`() {
+        val names = listOf("01.jpg", "02.jpg")
+        val listing = listOf(gallery(relativeName = "gal", names = names))
+        val parent = "/tmp/share".toPath()
+        BrowseSession.putLocalListing(
+            BrowseSession.pathKey(parent),
+            listing,
+            sessionCurrent = true,
+        )
+        assertEquals(
+            names,
+            FolderGalleryIndex.namesFromLocalParent(
+                rootId = 1L,
+                parentPath = parent.toString(),
+                parentRelative = "share",
+                galleryDir = "share/gal",
+            ),
+        )
     }
 
     private fun gallery(

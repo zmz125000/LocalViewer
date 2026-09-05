@@ -19,12 +19,19 @@ suspend inline fun <T> useFolderPageLoader(
     dir: Path,
     info: GalleryInfo? = null,
     startPage: Int = 0,
+    imageNames: List<String> = emptyList(),
     crossinline block: suspend (PageLoader) -> T,
 ) = autoCloseScope {
     coroutineScope {
-        val files = dir.list()
-            .filter { it.isFile && isImageFileName(it.name) }
-            .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+        // Browse/photo-grid already classified these names. Join onto [dir] so SAF
+        // trees skip DocumentsContract children queries (MediaStore list is cheap).
+        val files = if (imageNames.isNotEmpty()) {
+            imageNames.map { dir / it }
+        } else {
+            dir.list()
+                .filter { it.isFile && isImageFileName(it.name) }
+                .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+        }
         check(files.isNotEmpty()) { "Folder has no images: $dir" }
         val size = files.size
         val loader = install(

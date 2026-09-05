@@ -75,6 +75,7 @@ import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
+import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
@@ -235,6 +236,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         photoGridDir = photoGridDir,
     )
     val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
+    val photoGridNow = rememberUpdatedState(photoGrid)
     // Virtual share-list key must not govern mode under real share paths.
     val smbModeSkipAncestors = remember(sourceId, source) {
         if (source?.let { SmbGateway.isServerRootSource(it) } == true) {
@@ -525,6 +527,21 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
 
         val loadDir = if (configChanged) "" else targetDir
+        // Photo-grid open: same complete index the reader uses — no directory scan.
+        if (!force && !configChanged && photoGridNow.value) {
+            val names = FolderGalleryIndex.loadSmb(src.id, configKey, loadDir)
+            if (!names.isNullOrEmpty()) {
+                if (listedDir != loadDir || entries.isEmpty()) {
+                    entries = FolderGalleryIndex.photoGridRemoteFiles(names)
+                    listedDir = loadDir
+                    listingSessionCurrent = true
+                }
+                loading = false
+                refreshing = false
+                error = null
+                return@LaunchedEffect
+            }
+        }
         val haveListing = listedDir == loadDir && entries.isNotEmpty()
         // Soft resume (same path, already shown): no full-screen spinner.
         val needSpinner = force || configChanged || !haveListing
@@ -789,11 +806,23 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             SmbGateway.joinRelativePath(relativeDir, entry.relativeName)
         }
         val entered = entry.relativeName.isNotEmpty()
+        val names = FolderGalleryIndex.completeNames(entry)
+        val parentCurrent = listingSessionCurrent
         if (entered) {
             enterDir(entry.relativeName)
         }
         // enterDir clears photo grid; re-enable for the target path.
         setPhotoGrid(remote, enteredFromParent = entered)
+        // Child gallery: paint the reader file list now so enterDir does not scan.
+        // Current-dir overlay keeps the existing listing (leave photo-grid stays here).
+        if (entered && names != null) {
+            entries = FolderGalleryIndex.photoGridRemoteFiles(names)
+            listedDir = remote
+            listingSessionCurrent = parentCurrent
+            loading = false
+            refreshing = false
+            error = null
+        }
     }
 
     /** Primary / secondary open for folder galleries based on [Settings.photoGridMode]. */

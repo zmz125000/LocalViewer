@@ -56,7 +56,12 @@ context(_: DestinationsNavigator)
 fun navToReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1) = navToReader(ReaderScreenArgs.Archive(path, page = page, info = info))
 
 context(_: DestinationsNavigator)
-fun navToLocalFolderReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1) = navToReader(ReaderScreenArgs.LocalFolder(path, page, info))
+fun navToLocalFolderReader(
+    path: String,
+    info: BaseGalleryInfo? = null,
+    page: Int = -1,
+    imageNames: List<String> = emptyList(),
+) = navToReader(ReaderScreenArgs.LocalFolder(path, page, info, imageNames))
 
 context(_: DestinationsNavigator)
 fun navToLocalZipFolderReader(

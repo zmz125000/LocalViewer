@@ -11,6 +11,11 @@ import okio.Path
 // isZipArchiveFileName / Zip* used by zip-as-dir scan path
 
 object LibraryScanner {
+    data class Result(
+        val galleries: List<LocalGalleryEntity>,
+        /** Image basenames keyed by browse relativeDir (`""` = root, `dir/file.zip/Album`). */
+        val folderPages: Map<String, List<String>>,
+    )
     /**
      * Scan [rootPath] for galleries.
      *
@@ -26,8 +31,9 @@ object LibraryScanner {
      * SAF roots with media permission list folder galleries from MediaStore first
      * (including nested dirs), then walk SAF only for archives and unindexed files.
      */
-    fun scan(rootId: Long, rootPath: Path, rootDisplayName: String = ""): List<LocalGalleryEntity> {
+    fun scan(rootId: Long, rootPath: Path, rootDisplayName: String = ""): Result {
         val results = ArrayList<LocalGalleryEntity>()
+        val folderPages = LinkedHashMap<String, List<String>>()
         val indexedFolders = LinkedHashSet<String>()
         val msRoot = tryConvertSafPathToMediaStore(rootPath)
         if (msRoot != null && MediaPermissions.hasMediaAccess()) {
@@ -38,6 +44,7 @@ object LibraryScanner {
                 rootDisplayName = rootDisplayName,
                 indexedFolders = indexedFolders,
                 out = results,
+                folderPages = folderPages,
             )
         }
         scanDir(
@@ -47,8 +54,9 @@ object LibraryScanner {
             rootDisplayName = rootDisplayName,
             indexedFolders = indexedFolders,
             out = results,
+            folderPages = folderPages,
         )
-        return results
+        return Result(results, folderPages)
     }
 
     private fun scanMediaStoreFolderGalleries(
@@ -58,6 +66,7 @@ object LibraryScanner {
         rootDisplayName: String,
         indexedFolders: MutableSet<String>,
         out: MutableList<LocalGalleryEntity>,
+        folderPages: MutableMap<String, List<String>>,
     ) {
         val folders = SafMediaStoreListing.imageFoldersUnderRoot(
             rootRelativeDir = msRoot.mediaStoreRelativeDir(),
@@ -87,6 +96,7 @@ object LibraryScanner {
                 // Date sort: latest direct image DATE_MODIFIED from MediaStore.
                 mtime = folder.latestImageMs,
             )
+            folderPages[rel] = folder.names
         }
     }
 
@@ -97,6 +107,7 @@ object LibraryScanner {
         rootDisplayName: String,
         indexedFolders: MutableSet<String>,
         out: MutableList<LocalGalleryEntity>,
+        folderPages: MutableMap<String, List<String>>,
     ) {
         val children = runCatching { dir.listBrowseChildrenRaw() }.getOrElse {
             logcat(it)
@@ -149,6 +160,7 @@ object LibraryScanner {
                     contentPath = dir.toString(),
                     mtime = mtime,
                 )
+                folderPages[relativePath] = images.map { it.name }
             }
         }
 
@@ -173,6 +185,7 @@ object LibraryScanner {
                         mtime = mtime,
                         indexedFolders = indexedFolders,
                         out = out,
+                        folderPages = folderPages,
                     )
                 }.getOrDefault(false)
                 if (indexed) continue
@@ -198,7 +211,7 @@ object LibraryScanner {
             } else {
                 "$relativePath/${sub.name}"
             }
-            scanDir(rootId, sub.path, rel, rootDisplayName, indexedFolders, out)
+            scanDir(rootId, sub.path, rel, rootDisplayName, indexedFolders, out, folderPages)
         }
     }
 
@@ -213,6 +226,7 @@ object LibraryScanner {
         mtime: Long,
         indexedFolders: MutableSet<String>,
         out: MutableList<LocalGalleryEntity>,
+        folderPages: MutableMap<String, List<String>>,
     ): Boolean {
         return withLocalZipCentralDirectory(zipPath) { cd ->
             val prefixes = ZipAsDirListing.imageBearingPrefixes(cd)
@@ -241,6 +255,7 @@ object LibraryScanner {
                     contentPath = ZipPaths.encode(zipAbs, inner.ifEmpty { "." }),
                     mtime = mtime,
                 )
+                folderPages[ZipAsDirListing.virtualRelativeDir(zipRel, inner)] = names
                 added = true
             }
             added
