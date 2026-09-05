@@ -360,7 +360,7 @@ object Settings : DataStorePreferences(null) {
      * page). Decode from RAM; leftover files from earlier sessions may still be read.
      * Local folders already skip a page cache.
      */
-    val disableReaderNetworkCache = boolPref("disable_reader_network_cache", false)
+    val disableReaderNetworkCache = boolPref("disable_reader_network_cache", true)
 
     /** Decoded images to keep ahead independently of [preloadImage]. */
     val readerDecodeAhead = intPref("pref_reader_decode_ahead", 3)
