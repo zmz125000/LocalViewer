@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.library
 
+import okio.Path.Companion.toPath
+
 /**
  * Resolve a complete folder-gallery page list from RAM / disk index without network.
  *
@@ -13,6 +15,32 @@ package com.hippo.ehviewer.library
  * A complete cache hit opens the same way as the folder path; missing pages stay per-page errors.
  */
 object FolderGalleryIndex {
+    /**
+     * Page names the reader uses from a classified gallery row, or null when it would
+     * live-list (capped / empty). Photo-grid open uses the same list and skips a scan.
+     */
+    fun completeNames(entry: BrowseEntryRemote.FolderGallery): List<String>? = entry.imageFileNames.takeIf { !entry.pageCountCapped && it.isNotEmpty() }
+
+    /** Image rows for a photo-grid overlay; same order as the reader page list. */
+    fun photoGridRemoteFiles(names: List<String>): List<BrowseEntryRemote.RegularFile> = names.map { name -> BrowseEntryRemote.RegularFile(name = name, fileName = name) }
+
+    /**
+     * Local photo-grid files. [zipInnerRel] non-null means [dirPath] is the zip/cbz and
+     * names are members under that prefix (`zipfile:` paths).
+     */
+    fun photoGridLocalFiles(
+        dirPath: String,
+        zipInnerRel: String?,
+        names: List<String>,
+    ): List<BrowseEntry.RegularFile> = names.map { name ->
+        val path = if (zipInnerRel != null) {
+            ZipPaths.encodePath(dirPath, ZipAsDirListing.joinPrefix(zipInnerRel, name))
+        } else {
+            dirPath.toPath() / name
+        }
+        BrowseEntry.RegularFile(name = name, path = path)
+    }
+
     /**
      * Names from a complete [BrowseEntryRemote.FolderGallery] in [entries] whose resolved
      * path equals [galleryDir]. If this listing **is** the gallery directory, image

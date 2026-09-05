@@ -113,6 +113,24 @@ class FolderGalleryIndexTest {
         assertEquals(names, FolderGalleryIndex.namesFromListing("", listing, "gal"))
     }
 
+    @Test
+    fun `complete names skip capped and empty so photo grid can live-list`() {
+        val names = listOf("b.jpg", "a.jpg")
+        val row = gallery(relativeName = "gal", names = names)
+        assertEquals(names, FolderGalleryIndex.completeNames(row))
+        assertNull(FolderGalleryIndex.completeNames(gallery(relativeName = "gal", names = names, capped = true)))
+        assertNull(FolderGalleryIndex.completeNames(gallery(relativeName = "gal", names = emptyList())))
+        assertEquals(
+            names,
+            FolderGalleryIndex.photoGridRemoteFiles(names).map { it.fileName },
+        )
+        val local = FolderGalleryIndex.photoGridLocalFiles("/tmp/gal", zipInnerRel = null, names)
+        assertEquals(names, local.map { it.name })
+        assertEquals("/tmp/gal/b.jpg", local.first().path.toString())
+        val zip = FolderGalleryIndex.photoGridLocalFiles("/tmp/pack.zip", zipInnerRel = "Album", names)
+        assertEquals("zipfile:/tmp/pack.zip!Album/b.jpg", zip.first().path.toString())
+    }
+
     private fun gallery(
         relativeName: String,
         names: List<String>,
