@@ -111,10 +111,15 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * ## Pool model
  * - **Budget:** max [maxConnectionsPerHost] TCP/SMB **data** sessions per `host:port`
- *   (Settings concurrency, default 5), plus one reserved list TCP that data never takes.
- * - **Multiplex:** each session allows up to [opsPerSession] concurrent ops, with a
- *   host-wide hard cap ([MAX_SAFE_HOST_OPS]) so 5 TCP sessions do not open 15
- *   concurrent large-page reads (OOM / close-under-read crash).
+ *   (Advanced → SMB concurrent connections), plus one reserved list TCP. Data may
+ *   borrow that list socket only after the data budget is full and every data TCP
+ *   is out of multiplex slots.
+ * - **Spread then multiplex:** concurrent file ops (browse thumbs, reader pages)
+ *   each take their own data TCP until the budget is used. Only then are leftover
+ *   ops multiplexed onto the least-loaded session ([opsPerSession] slots, host-wide
+ *   cap [MAX_SAFE_HOST_OPS]). Filling one session's slots first made the setting a
+ *   max-session cap while work queued on a single TCP; extras stayed connected
+ *   and idle.
  * - **Session identity:** `host|port|user|domain|password`
  * - **Multi-user same host:** several sources may share `host:port` with different
  *   usernames. List has one reserved TCP — a new user may idle-steal that slot (or
@@ -913,8 +918,7 @@ object SmbGateway {
             reservedOnly: Boolean,
             dataOnly: Boolean,
         ): PooledSession? = synchronized(sessionsLock) {
-            val ordered = sessions
-                .filter { !it.retired.get() && it.credKey == credKey && it.isConnected }
+            val matching = sessions.filter { !it.retired.get() && it.credKey == credKey && it.isConnected }
                 .filter { ps ->
                     when {
                         reservedOnly -> ps.reservedForList
@@ -922,28 +926,42 @@ object SmbGateway {
                         else -> true
                     }
                 }
-                .sortedWith(
-                    compareByDescending<PooledSession> { it.reservedForList }
-                        .thenByDescending { it.hasShare(shareName) },
+            if (dataOnly) {
+                val place = smbPlaceDataOp(
+                    outstanding = IntArray(matching.size) { matching[it].outstanding.get() },
+                    availableSlots = IntArray(matching.size) { matching[it].opSlots.availablePermits },
+                    maxConnections = maxConnectionsPerHost(),
+                    hasShare = BooleanArray(matching.size) { matching[it].hasShare(shareName) },
                 )
+                val ps = (place as? SmbDataPlacement.Use)?.let { matching[it.index] } ?: return@synchronized null
+                return@synchronized takeSlot(ps)
+            }
+            val ordered = matching.sortedWith(
+                compareByDescending<PooledSession> { it.reservedForList }
+                    .thenByDescending { it.hasShare(shareName) }
+                    .thenBy { it.outstanding.get() },
+            )
             for (ps in ordered) {
-                if (ps.opSlots.tryAcquire()) {
-                    // Re-check after slot: may have been marked dying between filter and acquire.
-                    if (ps.retired.get() || !ps.connection.isConnected) {
-                        ps.opSlots.release()
-                        continue
-                    }
-                    ps.outstanding.incrementAndGet()
-                    return ps
-                }
+                takeSlot(ps)?.let { return@synchronized it }
             }
             null
         }
 
+        private fun takeSlot(ps: PooledSession): PooledSession? {
+            if (!ps.opSlots.tryAcquire()) return null
+            if (ps.retired.get() || !ps.connection.isConnected) {
+                ps.opSlots.release()
+                return null
+            }
+            ps.outstanding.incrementAndGet()
+            return ps
+        }
+
         /**
-         * Prefer a free multiplex slot on an existing matching-cred TCP.
-         * Data ops may take the reserved list TCP when no data session has a slot
-         * (symmetric to [tryBorrowDataForList]; listing still prefers that socket).
+         * Matching-cred TCP with a free slot.
+         * Data: idle reuse, or least-loaded multiplex once at [maxConnectionsPerHost].
+         * List fallback only when the data budget is already full (do not absorb
+         * concurrent files onto the reserved list TCP instead of growing).
          */
         private fun tryReserveExisting(
             credKey: String,
@@ -952,7 +970,7 @@ object SmbGateway {
         ): PooledSession? {
             tryReserveSession(credKey, shareName, reservedOnly = forList, dataOnly = !forList)
                 ?.let { return it }
-            if (!forList) {
+            if (!forList && liveDataCount() >= maxConnectionsPerHost()) {
                 tryReserveSession(credKey, shareName, reservedOnly = true, dataOnly = false)
                     ?.let { return it }
             }
@@ -1046,7 +1064,8 @@ object SmbGateway {
             openSession: suspend (reservedForList: Boolean) -> PooledSession,
         ): PooledSession? {
             sweepDeadSessions()
-            // Fill multiplex slots on live TCPs before opening another socket.
+            // Idle reuse / at-cap multiplex only — do not pack new files onto a busy
+            // TCP's leftover [opsPerSession] slots while we can still grow.
             tryReserveExisting(credKey, shareName, forList)?.let { return it }
             val atCap = if (forList) {
                 liveListCount() >= LIST_RESERVED_SESSIONS
@@ -1056,8 +1075,9 @@ object SmbGateway {
             if (atCap && !retireOneOtherCred(credKey, listOnly = forList)) return null
             return growLock.withLock {
                 if (closed.get()) return@withLock null
-                // Concurrent prefetch serializes here: the first opener's free op slots
-                // must be taken before anyone else calls openSession.
+                // Another waiter may have opened a TCP; take it only if placement says so
+                // (idle, or at cap). Concurrent prefetch used to serialize onto the first
+                // opener's free multiplex slots and never spread across the pool.
                 tryReserveExisting(credKey, shareName, forList)?.let { return@withLock it }
                 val stillAtCap = if (forList) {
                     liveListCount() >= LIST_RESERVED_SESSIONS
@@ -1089,6 +1109,11 @@ object SmbGateway {
                 synchronized(sessionsLock) { sessions.add(opened) }
                 size.incrementAndGet()
                 startKeepAlive()
+                logcat {
+                    "SmbGateway: host $hostPortKey opened ${if (forList) "list" else "data"} TCP " +
+                        "data=${liveDataCount()}/${maxConnectionsPerHost()} " +
+                        "list=${liveListCount()}/$LIST_RESERVED_SESSIONS"
+                }
                 opened
             }
         }
@@ -3266,6 +3291,81 @@ object SmbGateway {
             }
         }
     }
+}
+
+/**
+ * Where a new **data** file op should go.
+ *
+ * Under the connection budget: reuse an idle TCP, otherwise grow. Do not pile
+ * more ops onto a busy session's leftover multiplex slots: that made
+ * [SmbGateway.maxConnectionsPerHost] only a cap while browse/reader/thumbs
+ * queued on one TCP, and left extra sessions connected but unused.
+ *
+ * At cap: multiplex onto the least-loaded session that still has a slot.
+ */
+internal sealed interface SmbDataPlacement {
+    data class Use(val index: Int) : SmbDataPlacement
+    data object Grow : SmbDataPlacement
+    data object Wait : SmbDataPlacement
+}
+
+internal fun smbPlaceDataOp(
+    outstanding: IntArray,
+    availableSlots: IntArray,
+    maxConnections: Int,
+    hasShare: BooleanArray? = null,
+): SmbDataPlacement {
+    require(outstanding.size == availableSlots.size)
+    require(hasShare == null || hasShare.size == outstanding.size)
+    val cap = maxConnections.coerceAtLeast(1)
+    val atCap = outstanding.size >= cap
+    var best = -1
+    var bestOut = Int.MAX_VALUE
+    var bestHasShare = false
+    for (i in outstanding.indices) {
+        if (availableSlots[i] <= 0) continue
+        if (!atCap && outstanding[i] >= 1) continue
+        val share = hasShare?.get(i) == true
+        val better = best < 0 ||
+            outstanding[i] < bestOut ||
+            (outstanding[i] == bestOut && share && !bestHasShare)
+        if (better) {
+            best = i
+            bestOut = outstanding[i]
+            bestHasShare = share
+        }
+    }
+    if (best >= 0) return SmbDataPlacement.Use(best)
+    return if (!atCap) SmbDataPlacement.Grow else SmbDataPlacement.Wait
+}
+
+/**
+ * Spread [opCount] overlapping data ops across new/idle TCPs, then multiplex.
+ * Returns outstanding counts per session (stable open order).
+ */
+internal fun smbSpreadDataOps(opCount: Int, maxConnections: Int, opsPerSession: Int): List<Int> {
+    val outstanding = ArrayList<Int>()
+    val available = ArrayList<Int>()
+    repeat(opCount) {
+        when (
+            val place = smbPlaceDataOp(
+                outstanding.toIntArray(),
+                available.toIntArray(),
+                maxConnections,
+            )
+        ) {
+            is SmbDataPlacement.Use -> {
+                outstanding[place.index]++
+                available[place.index]--
+            }
+            SmbDataPlacement.Grow -> {
+                outstanding.add(1)
+                available.add((opsPerSession.coerceAtLeast(1)) - 1)
+            }
+            SmbDataPlacement.Wait -> error("data pool full with no multiplex slot")
+        }
+    }
+    return outstanding
 }
 
 /** Data TCP counts toward [SmbGateway.maxConnectionsPerHost] only while the socket is live. */
