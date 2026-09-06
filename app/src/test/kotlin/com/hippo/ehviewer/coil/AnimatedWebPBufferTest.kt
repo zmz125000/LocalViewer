@@ -2,6 +2,7 @@ package com.hippo.ehviewer.coil
 
 import java.nio.ByteBuffer
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,5 +38,34 @@ class AnimatedWebPBufferTest {
         val out = ByteArray(direct.remaining())
         direct.duplicate().get(out)
         assertArrayEquals(byteArrayOf(2, 3, 4), out)
+    }
+
+    @Test
+    fun hidingUnschedulesInsteadOfLeavingACompletedJobStuck() {
+        assertEquals(
+            AnimatedWebPVisibleOp.PauseUnschedule,
+            animatedWebPVisibleOp(visible = false, restart = false, jobNull = false),
+        )
+    }
+
+    @Test
+    fun showingWithNoJobRestarts() {
+        assertEquals(
+            AnimatedWebPVisibleOp.Restart,
+            animatedWebPVisibleOp(visible = true, restart = false, jobNull = true),
+        )
+        assertEquals(
+            AnimatedWebPVisibleOp.Restart,
+            animatedWebPVisibleOp(visible = true, restart = true, jobNull = false),
+        )
+    }
+
+    @Test
+    fun showingWithExistingJobInvalidatesSoDrawAdvances() {
+        // Old start() no-op'd when decodeJob != null, so a completed frame never swapped.
+        assertEquals(
+            AnimatedWebPVisibleOp.ResumeInvalidate,
+            animatedWebPVisibleOp(visible = true, restart = false, jobNull = false),
+        )
     }
 }

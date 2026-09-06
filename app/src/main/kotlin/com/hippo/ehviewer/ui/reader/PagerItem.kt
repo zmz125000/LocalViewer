@@ -151,8 +151,11 @@ fun PagerItem(
                     colorFilter = colorFilter,
                     horizontalStrip = horizontalStrip,
                     modifier = Modifier.thenIf(drawable is Animatable) {
-                        onVisibilityChanged(minDurationMs = 33, minFractionVisible = 0.5f) {
-                            drawable!!.setVisible(it, false)
+                        // Any on-screen pixel is enough. 0.5f froze webtoon/pager WebP that
+                        // GIF/APNG still resumed via AnimatedImageDrawable.setVisible.
+                        onVisibilityChanged(minDurationMs = 33, minFractionVisible = 0f) { visible ->
+                            drawable!!.setVisible(visible, false)
+                            if (visible) (drawable as Animatable).start()
                         }
                     }.then(modifier),
                     contentModifier = contentModifier,
