@@ -131,6 +131,8 @@ import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToWebDavFolderReader
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
+import com.hippo.ehviewer.util.LocalNetworkPermission
+import com.hippo.ehviewer.util.ensureLocalNetworkPermission
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
@@ -463,6 +465,18 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
         // Password decrypt uses Android Keystore — keep it off Main (StrictMode).
         val password = withIOContext { WebDavPasswordStore.get(src.id) }
+        if (!ensureLocalNetworkPermission()) {
+            val denied = LocalNetworkPermission.deniedMessage(context)
+            if (entries.isEmpty()) {
+                error = denied
+                listedDir = loadDir
+                listingSessionCurrent = false
+                WebDavRepository.markError(src.id, denied)
+            }
+            loading = false
+            refreshing = false
+            return@LaunchedEffect
+        }
         // On cancel (path change / new refreshToken), do NOT clear loading — goUp/enterDir or
         // the replacement effect already owns that flag. Clearing here caused empty+spinner
         // races and could leave a superseded load stuck spinning forever.

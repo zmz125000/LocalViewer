@@ -11,6 +11,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Android 17+: LAN sockets (SMB / local WebDAV) require this runtime permission.
+         Without it, TCP connect fails as TimeoutException instead of a permission error. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Network streamdoc proxy for external players (SMB/WebDAV movies/PDFs). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

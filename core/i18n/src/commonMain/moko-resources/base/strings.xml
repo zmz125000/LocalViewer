@@ -34,6 +34,7 @@
     <string name="source_access_device_media_summary">Read images and videos via system media permission. Archives not included.</string>
     <string name="source_device_media_name">Device media</string>
     <string name="source_media_permission_denied">Media permission denied</string>
+    <string name="error_local_network_permission">Local network permission denied. Allow Nearby devices / Local network access to connect to SMB and WebDAV shares.</string>
     <string name="source_access_mode_media">Media (MediaStore)</string>
     <string name="source_access_mode_media_archive">Media + archives (file access)</string>
     <string name="source_access_mode_toggle">Toggle media / media+archives access</string>

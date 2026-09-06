@@ -34,6 +34,7 @@
     <string name="source_access_device_media_summary">透過系統媒體權限讀取圖片和影片。不含壓縮檔。</string>
     <string name="source_device_media_name">裝置媒體</string>
     <string name="source_media_permission_denied">媒體權限被拒絕</string>
+    <string name="error_local_network_permission">本機網路權限被拒絕。請允許「附近的裝置/本機網路」權限後再連線 SMB 和 WebDAV。</string>
     <string name="source_access_mode_media">媒體 (MediaStore)</string>
     <string name="source_access_mode_media_archive">媒體 + 壓縮檔（檔案存取）</string>
     <string name="source_access_mode_toggle">切換媒體 / 媒體+壓縮檔存取</string>

@@ -31,6 +31,7 @@
     <string name="source_access_device_media_summary">通过系统媒体权限读取图片和视频。不包含压缩包。</string>
     <string name="source_device_media_name">设备媒体</string>
     <string name="source_media_permission_denied">媒体权限被拒绝</string>
+    <string name="error_local_network_permission">本地网络权限被拒绝。请允许“附近的设备/本地网络”权限后再连接 SMB 和 WebDAV。</string>
     <string name="source_access_mode_media">媒体 (MediaStore)</string>
     <string name="source_access_mode_media_archive">媒体 + 压缩包（文件访问）</string>
     <string name="source_access_mode_toggle">切换媒体 / 媒体+压缩包访问</string>

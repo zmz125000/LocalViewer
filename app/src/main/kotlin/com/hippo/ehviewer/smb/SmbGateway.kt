@@ -50,6 +50,7 @@ import com.hippo.ehviewer.library.preferCompleteFolderGalleries
 import com.hippo.ehviewer.library.replaceSlimDirectFilesFromLive
 import com.hippo.ehviewer.library.selectCachedFolderListing
 import com.hippo.ehviewer.library.withHiddenFlags
+import com.hippo.ehviewer.util.LocalNetworkPermission
 import com.hippo.ehviewer.util.PrivacyLog
 import java.io.IOException
 import java.io.OutputStream
@@ -1744,6 +1745,7 @@ object SmbGateway {
 
     suspend fun testConnection(source: SmbSourceEntity, password: String): Result<Unit> = withIOContext {
         runCatching {
+            LocalNetworkPermission.requireGranted()
             val host = endpointHost(source)
             ensureHostNotCoolingDown(host, source.port)
             val fixed = fixedShare(source)
@@ -3600,6 +3602,7 @@ internal object KeepAliveSocketFactory : SocketFactory() {
     }
 
     private fun connectPreferIpv4(host: String, port: Int): Socket {
+        LocalNetworkPermission.requireGranted()
         val addrs = InetAddress.getAllByName(host)
         if (addrs.isEmpty()) throw UnknownHostException(host)
         val ordered = buildList {
@@ -3630,6 +3633,7 @@ internal object KeepAliveSocketFactory : SocketFactory() {
     }
 
     override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket = withSmbTrafficTag {
+        LocalNetworkPermission.requireGranted()
         val addrs = InetAddress.getAllByName(host)
         val remote = addrs.firstOrNull { it is Inet4Address } ?: addrs.firstOrNull()
             ?: throw UnknownHostException(host)
@@ -3641,6 +3645,7 @@ internal object KeepAliveSocketFactory : SocketFactory() {
     }
 
     override fun createSocket(host: InetAddress, port: Int): Socket = withSmbTrafficTag {
+        LocalNetworkPermission.requireGranted()
         val socket = defaultFactory.createSocket()
         socket.configure()
         socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
@@ -3653,6 +3658,7 @@ internal object KeepAliveSocketFactory : SocketFactory() {
         localAddress: InetAddress,
         localPort: Int,
     ): Socket = withSmbTrafficTag {
+        LocalNetworkPermission.requireGranted()
         val socket = defaultFactory.createSocket()
         socket.configure()
         socket.bind(InetSocketAddress(localAddress, localPort))

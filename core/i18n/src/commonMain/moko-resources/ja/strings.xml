@@ -35,6 +35,7 @@
     <string name="source_access_device_media_summary">システムのメディア権限で画像と動画を読み取ります。アーカイブは含まれません。</string>
     <string name="source_device_media_name">端末メディア</string>
     <string name="source_media_permission_denied">メディア権限が拒否されました</string>
+    <string name="error_local_network_permission">ローカルネットワーク権限が拒否されました。SMB/WebDAV に接続するには「付近のデバイス/ローカルネットワーク」を許可してください。</string>
     <string name="source_access_mode_media">メディア (MediaStore)</string>
     <string name="source_access_mode_media_archive">メディア + アーカイブ（ファイルアクセス）</string>
     <string name="source_access_mode_toggle">メディア / メディア+アーカイブを切り替え</string>

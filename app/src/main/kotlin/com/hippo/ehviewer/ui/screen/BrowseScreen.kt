@@ -99,6 +99,8 @@ import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.easytier.EasyTierDialog
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.util.LocalNetworkPermission
+import com.hippo.ehviewer.util.ensureLocalNetworkPermission
 import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavRepository
 import com.ramcosta.composedestinations.annotation.Destination
@@ -338,6 +340,10 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
 
     fun testWebDav(testState: WebDavEditorState, password: String) {
         launch {
+            if (!ensureLocalNetworkPermission()) {
+                snackbar(string(R.string.network_test_fail, LocalNetworkPermission.deniedMessage()))
+                return@launch
+            }
             val entity = com.ehviewer.core.database.model.WebDavSourceEntity(
                 id = testState.id,
                 displayName = testState.resolvedDisplayName(),
@@ -402,6 +408,10 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     fun testSmb(testState: SmbEditorState, password: String) {
         val (share, pathPrefix) = testState.resolvedShareAndPath()
         launch {
+            if (!ensureLocalNetworkPermission()) {
+                snackbar(string(R.string.network_test_fail, LocalNetworkPermission.deniedMessage()))
+                return@launch
+            }
             val entity = SmbSourceEntity(
                 id = testState.id,
                 displayName = testState.resolvedDisplayName(),
