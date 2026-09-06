@@ -22,6 +22,11 @@ import kotlin.math.roundToInt
 /**
  * Minimal [Painter] for Android [Drawable]s (incl. [Animatable]), replacing
  * Accompanist `drawablepainter` for API 32+.
+ *
+ * Must not [Animatable.stop] / clear [Drawable.callback] if another painter now owns
+ * the same drawable — scroll recreates this painter; the old [onForgotten] racing
+ * after the new [onRemembered] froze WebP in release (debug is slower so the order
+ * often went forgotten-then-remembered).
  */
 class DrawablePainter(val drawable: Drawable) : Painter(), RememberObserver {
     private var invalidateTick by mutableIntStateOf(0)
@@ -30,7 +35,16 @@ class DrawablePainter(val drawable: Drawable) : Painter(), RememberObserver {
         private val handler = Handler(Looper.getMainLooper())
 
         override fun invalidateDrawable(who: Drawable) {
-            invalidateTick++
+            if (who.callback !== this) return
+            // Decode completions run on IO. Release Compose drops Snapshot writes
+            // off the main thread, so the animation plays once then freezes after scroll.
+            if (Looper.myLooper() === Looper.getMainLooper()) {
+                invalidateTick++
+            } else {
+                handler.post {
+                    if (who.callback === this) invalidateTick++
+                }
+            }
         }
 
         override fun scheduleDrawable(who: Drawable, what: Runnable, `when`: Long) {
@@ -75,6 +89,11 @@ class DrawablePainter(val drawable: Drawable) : Painter(), RememberObserver {
         // Read tick so Compose invalidates when the drawable animates.
         @Suppress("UNUSED_EXPRESSION")
         invalidateTick
+        // onVisibilityChanged(false) during scroll can stick. If Compose is painting
+        // this node, the image is on screen — resume even if the fraction callback lagged.
+        if (!drawable.isVisible) {
+            drawable.setVisible(true, false)
+        }
         drawIntoCanvas { canvas ->
             canvas.withSave {
                 drawable.setBounds(0, 0, size.width.roundToInt(), size.height.roundToInt())
@@ -84,10 +103,12 @@ class DrawablePainter(val drawable: Drawable) : Painter(), RememberObserver {
     }
 
     override fun onRemembered() {
+        drawable.callback = callback
         (drawable as? Animatable)?.start()
     }
 
     override fun onForgotten() {
+        if (!drawablePainterOwnsCallback(drawable.callback, callback)) return
         (drawable as? Animatable)?.stop()
         drawable.callback = null
     }
@@ -96,3 +117,6 @@ class DrawablePainter(val drawable: Drawable) : Painter(), RememberObserver {
         onForgotten()
     }
 }
+
+/** True when [onForgotten] may stop the drawable (we still own [Drawable.callback]). */
+internal fun drawablePainterOwnsCallback(current: Any?, self: Any): Boolean = current === self

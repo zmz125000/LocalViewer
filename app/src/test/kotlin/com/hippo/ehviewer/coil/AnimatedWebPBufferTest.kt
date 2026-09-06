@@ -68,4 +68,14 @@ class AnimatedWebPBufferTest {
             animatedWebPVisibleOp(visible = true, restart = false, jobNull = false),
         )
     }
+
+    @Test
+    fun decoderCompletionAlwaysSchedulesOnTheClockNotInline() {
+        val now = 1_000L
+        assertEquals(now, animatedWebPInvalidateAt(reset = true, now = now, timeToShowNextFrame = 0L))
+        assertEquals(
+            5_000L,
+            animatedWebPInvalidateAt(reset = false, now = now, timeToShowNextFrame = 5_000L),
+        )
+    }
 }
