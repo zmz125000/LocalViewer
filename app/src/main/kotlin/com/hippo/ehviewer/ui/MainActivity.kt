@@ -143,6 +143,7 @@ import com.hippo.ehviewer.updater.AppUpdater
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.addTextToClipboard
 import com.hippo.ehviewer.util.displayString
+import com.hippo.ehviewer.util.ensureLocalNetworkPermission
 import com.hippo.ehviewer.util.getParcelableExtraCompat
 import com.hippo.ehviewer.util.getUrlFromClipboard
 import com.hippo.ehviewer.util.setReaderColorMode
@@ -361,6 +362,12 @@ class MainActivity : AppCompatActivity() {
             LaunchedEffect(Unit) {
                 Settings.enabledSecurity.valueFlow().collect {
                     window.setSecureScreen(it)
+                }
+            }
+            LaunchedEffect(Unit) {
+                while (!initialized) delay(16)
+                runCatching {
+                    with(this@MainActivity) { ensureLocalNetworkPermission() }
                 }
             }
             if (isAuthenticationSupported()) {
