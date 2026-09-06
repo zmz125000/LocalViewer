@@ -101,6 +101,31 @@ class AnimatedWebPDrawable(source: ByteBuffer) : Drawable(), Animatable {
         canvas.drawBitmap(currentFrame.bitmap, null, bounds, paint)
     }
 
+    /**
+     * [AnimatedImageDrawable] resumes from [setVisible]; without this, a viewport
+     * fraction callback left WebP on a still frame until an unrelated redraw.
+     */
+    override fun setVisible(visible: Boolean, restart: Boolean): Boolean {
+        val changed = super.setVisible(visible, restart)
+        when (
+            animatedWebPVisibleOp(
+                visible = visible,
+                restart = restart,
+                jobNull = decodeJob == null,
+            )
+        ) {
+            AnimatedWebPVisibleOp.PauseUnschedule -> unscheduleSelf(runnable)
+            AnimatedWebPVisibleOp.Restart -> {
+                stop()
+                start()
+            }
+            AnimatedWebPVisibleOp.ResumeInvalidate -> {
+                if (decodeJob == null) start() else invalidateSelf()
+            }
+        }
+        return changed
+    }
+
     @Deprecated("Deprecated in Java")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
@@ -125,8 +150,9 @@ class AnimatedWebPDrawable(source: ByteBuffer) : Drawable(), Animatable {
     override fun isRunning() = decodeJob != null
 
     override fun start() {
-        if (decodeJob == null) {
-            decodeJob = decodeNextFrame(true)
+        when {
+            decodeJob == null -> decodeJob = decodeNextFrame(true)
+            decodeJob?.isCompleted == true -> invalidateSelf()
         }
     }
 
@@ -148,6 +174,23 @@ class AnimatedWebPDrawable(source: ByteBuffer) : Drawable(), Animatable {
 }
 
 private class Frame(val bitmap: Bitmap, var timestamp: Int)
+
+/** What [AnimatedWebPDrawable.setVisible] should do so playback matches GIF/APNG. */
+internal enum class AnimatedWebPVisibleOp {
+    PauseUnschedule,
+    Restart,
+    ResumeInvalidate,
+}
+
+internal fun animatedWebPVisibleOp(
+    visible: Boolean,
+    restart: Boolean,
+    jobNull: Boolean,
+): AnimatedWebPVisibleOp = when {
+    !visible -> AnimatedWebPVisibleOp.PauseUnschedule
+    restart || jobNull -> AnimatedWebPVisibleOp.Restart
+    else -> AnimatedWebPVisibleOp.ResumeInvalidate
+}
 
 /** Native WebPAnimDecoder only accepts a direct buffer (capacity == readable range). */
 internal fun ByteBuffer.ensureDirectForNative(): ByteBuffer {
