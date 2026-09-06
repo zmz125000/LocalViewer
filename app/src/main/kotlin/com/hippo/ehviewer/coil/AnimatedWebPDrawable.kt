@@ -79,11 +79,14 @@ class AnimatedWebPDrawable(source: ByteBuffer) : Drawable(), Animatable {
     }.apply {
         invokeOnCompletion { cause ->
             when (cause) {
-                null -> if (reset) {
-                    runnable.run()
-                } else {
-                    scheduleSelf(runnable, timeToShowNextFrame)
-                }
+                null -> scheduleSelf(
+                    runnable,
+                    animatedWebPInvalidateAt(
+                        reset = reset,
+                        now = SystemClock.uptimeMillis(),
+                        timeToShowNextFrame = timeToShowNextFrame,
+                    ),
+                )
                 !is CancellationException -> logcat(cause)
             }
         }
@@ -107,6 +110,7 @@ class AnimatedWebPDrawable(source: ByteBuffer) : Drawable(), Animatable {
      */
     override fun setVisible(visible: Boolean, restart: Boolean): Boolean {
         val changed = super.setVisible(visible, restart)
+        if (!changed && !restart) return false
         when (
             animatedWebPVisibleOp(
                 visible = visible,
@@ -191,6 +195,9 @@ internal fun animatedWebPVisibleOp(
     restart || jobNull -> AnimatedWebPVisibleOp.Restart
     else -> AnimatedWebPVisibleOp.ResumeInvalidate
 }
+
+/** Decoder thread must [Drawable.scheduleSelf], never run the frame runnable inline. */
+internal fun animatedWebPInvalidateAt(reset: Boolean, now: Long, timeToShowNextFrame: Long): Long = if (reset) now else timeToShowNextFrame
 
 /** Native WebPAnimDecoder only accepts a direct buffer (capacity == readable range). */
 internal fun ByteBuffer.ensureDirectForNative(): ByteBuffer {

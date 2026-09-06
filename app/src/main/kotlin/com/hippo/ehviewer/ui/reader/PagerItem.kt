@@ -110,7 +110,7 @@ fun PagerItem(
         }
         is PageStatus.Ready -> {
             val image = state.image
-            var painter by remember { mutableStateOf<Painter?>(null) }
+            var painter by remember(image) { mutableStateOf<Painter?>(null) }
             LaunchedEffect(image) {
                 if (!image.pin()) {
                     // Recycled / dead image still marked Ready — force a clean reload.
@@ -118,7 +118,9 @@ fun PagerItem(
                     pageLoader.retryPage(page.index)
                     return@LaunchedEffect
                 }
-                painter = image.toPainter()
+                // Reuse the same painter for this Image. A new DrawablePainter on every
+                // effect start raced with the old onForgotten(stop) after scroll.
+                if (painter == null) painter = image.toPainter()
                 try {
                     awaitCancellation()
                 } finally {
@@ -144,7 +146,7 @@ fun PagerItem(
                     else -> null
                 }
                 FitPageImage(
-                    painter = remember(painter) { painter },
+                    painter = painter,
                     rotate = rotate,
                     clockwise = clockwise,
                     contentScale = contentScale,
