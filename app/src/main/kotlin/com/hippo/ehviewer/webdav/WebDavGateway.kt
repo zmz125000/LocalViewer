@@ -29,6 +29,7 @@ import com.hippo.ehviewer.library.preferCompleteFolderGalleries
 import com.hippo.ehviewer.library.replaceSlimDirectFilesFromLive
 import com.hippo.ehviewer.library.selectCachedFolderListing
 import com.hippo.ehviewer.library.withHiddenFlags
+import com.hippo.ehviewer.smb.SmbGateway
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
@@ -45,13 +46,15 @@ import kotlinx.coroutines.withTimeout
 
 /**
  * Browse listing for WebDAV: PROPFIND + parallel peeks + same remote classify as SMB.
- * No TCP session pool — HTTP multiplexes; [WebDavClient] caps fan-out.
+ * No TCP session pool — HTTP multiplexes; peek fan-out follows Advanced →
+ * SMB concurrent connections ([SmbGateway.maxConnectionsPerHost]).
  */
 object WebDavGateway {
-    private val peekSlots = Semaphore(6)
-
     /** Deep peek/classify budget after shallow paint; keep shallow on expiry. */
     private const val DEEP_CLASSIFY_TIMEOUT_MS = 180_000L
+
+    /** Subfolder PROPFIND / zip-root fan-out. Same cap as Advanced → SMB concurrent connections. */
+    private fun peekConcurrency(): Int = SmbGateway.maxConnectionsPerHost().coerceAtLeast(1)
 
     fun sourceConfigKey(source: WebDavSourceEntity): String = "${source.id}|${source.baseUrl}|${source.pathPrefix}|${source.username}"
 
@@ -403,11 +406,12 @@ object WebDavGateway {
                 (deepScanHidden || !c.hidden)
         }
         val peeks = ConcurrentHashMap<String, List<RemoteChild>>()
+        val gate = Semaphore(peekConcurrency())
         if (dirsToPeek.isNotEmpty()) {
             coroutineScope {
                 dirsToPeek.map { c ->
                     async {
-                        peekSlots.withPermit {
+                        gate.withPermit {
                             val childRel = joinRelative(relativeDir, c.name)
                             peeks[c.name] = runCatching {
                                 listChildrenForRelativeDir(source, password, childRel)
@@ -439,7 +443,7 @@ object WebDavGateway {
             coroutineScope {
                 leavesToPeek.map { (subName, leafName) ->
                     async {
-                        peekSlots.withPermit {
+                        gate.withPermit {
                             val leafRel = joinRelative(joinRelative(relativeDir, subName), leafName)
                             grandPeeks["$subName/$leafName"] = runCatching {
                                 listChildrenForRelativeDir(source, password, leafRel)
@@ -536,10 +540,11 @@ object WebDavGateway {
         if (zips.isEmpty()) return emptyMap()
         val out = ConcurrentHashMap<String, ZipAsDirListing.ZipRootListing>()
         val t0 = System.nanoTime()
+        val gate = Semaphore(peekConcurrency())
         coroutineScope {
             zips.map { child ->
                 async {
-                    peekSlots.withPermit {
+                    gate.withPermit {
                         val zipRel = joinRelative(relativeDir, child.name)
                         runCatching {
                             WebDavArchiveByteSource(

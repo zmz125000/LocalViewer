@@ -182,7 +182,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
 
                     override fun getImageExtension(index: Int) = engine.extOf(index)
 
-                    override fun save(index: Int, file: Path): Boolean = runCatching {
+                    override fun savePage(index: Int, file: Path): Boolean = runCatching {
                         val ext = engine.extOf(index) ?: return@runCatching false
                         // Prefer in-memory map (no File.stat on caller thread).
                         val path = pagePaths[index]
@@ -439,7 +439,7 @@ fun cachedSolidLoader(
 
         override fun getImageExtension(index: Int) = exts[index]
 
-        override fun save(index: Int, file: Path): Boolean = runCatching {
+        override fun savePage(index: Int, file: Path): Boolean = runCatching {
             val ext = exts[index] ?: return@runCatching false
             val path = SolidExtractCache.pagePath(cacheKey, index, ext)
             File(path.toString()).copyTo(File(file.toString()), overwrite = true)

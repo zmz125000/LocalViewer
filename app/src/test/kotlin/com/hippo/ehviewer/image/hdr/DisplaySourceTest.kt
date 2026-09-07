@@ -36,6 +36,15 @@ class DisplaySourceTest {
     }
 
     @Test
+    fun exportExtensionPrefersConvertedJpgOverOriginalJxr() {
+        assertEquals("jpg", exportImageExtension("jxr", "deadbeef.jpg"))
+        assertEquals("jpg", exportImageExtension("jxl", "0.jpg"))
+        assertEquals("jxr", exportImageExtension("jxr", "photo.jxr"))
+        assertEquals("jxr", exportImageExtension("jxr", null))
+        assertEquals("png", exportImageExtension("png", "page.png"))
+    }
+
+    @Test
     fun uhdrSiblingIsIdentityKeyedNotContentHash() {
         // Cache-off must persist next to the page-cache primary so scroll-back
         // can resolveReaderPath without the original bytes.

@@ -95,6 +95,22 @@ fun isHdrMaybeConvertExtension(ext: String?): Boolean {
 fun isHdrConvertCandidateExtension(ext: String?): Boolean = isLibStillExtension(ext) || isHdrMaybeConvertExtension(ext)
 
 /**
+ * Extension to use when exporting a reader page.
+ *
+ * [decodedFileName] is the Coil-ready file after [DisplaySource.ensureReady]
+ * (Ultra HDR `.jpg` for JXR/JXL/PQ-AVIF convert). Falls back to [originalExt]
+ * when the page was not converted (or lib-direct skipped convert).
+ */
+fun exportImageExtension(originalExt: String?, decodedFileName: String? = null): String {
+    FileUtils.getExtensionFromFilename(decodedFileName)
+        ?.lowercase()
+        ?.removePrefix(".")
+        ?.takeIf { it.isNotEmpty() }
+        ?.let { return it }
+    return originalExt?.lowercase()?.removePrefix(".")?.ifEmpty { null } ?: "jpg"
+}
+
+/**
  * File-name only (no I/O). Lib formats always convert; AVIF needs byte sniff.
  */
 fun classifyByExtension(fileName: String): StillRoute {
