@@ -641,15 +641,37 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         }
     }
 
-    LaunchedEffect(pageLoader, hdrDisplayEnabled, advancedColorEnabled, pagerDual) {
+    val configuration = LocalConfiguration.current
+    LaunchedEffect(
+        pageLoader,
+        hdrDisplayEnabled,
+        advancedColorEnabled,
+        pagerDual,
+        // MainActivity handles orientation itself; Android recreates the surface as SDR
+        // while Ready pages emit nothing — re-assert colorMode on size/orientation change.
+        configuration.orientation,
+        configuration.screenWidthDp,
+        configuration.screenHeightDp,
+    ) {
         if (!hdrDisplayEnabled && !advancedColorEnabled) {
-            activity.setReaderColorMode(hdr = false, wideColor = false)
+            activity.setReaderColorMode(hdr = false, wideColor = false, force = true)
             return@LaunchedEffect
+        }
+        // First write after (re)start must punch through a stale Window.colorMode getter.
+        var forceColorMode = true
+        fun applyColorMode(anyHdr: Boolean, maxBoost: Float = 1f) {
+            activity.setReaderColorMode(
+                hdr = hdrDisplayEnabled && anyHdr,
+                contentBoost = maxBoost,
+                wideColor = advancedColorEnabled,
+                force = forceColorMode,
+            )
+            forceColorMode = false
         }
         // Option A: raise WCG as soon as the reader opens (advanced on) so platform
         // decode under a WCG window preserves ICC — no forced Coil target ColorSpace.
         if (advancedColorEnabled) {
-            activity.setReaderColorMode(hdr = false, wideColor = true)
+            applyColorMode(anyHdr = false)
         }
         // Compose range from layout (pager beyondViewport / list visible) with ±1 fallback.
         // Status is Flow-backed — nest collectLatest and re-scan Ready pages in range.
@@ -694,14 +716,14 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             }
         }.collectLatest { range ->
             if (range.isEmpty()) {
-                activity.setReaderColorMode(hdr = false, wideColor = advancedColorEnabled)
+                applyColorMode(anyHdr = false)
                 return@collectLatest
             }
             val statusFlows = range.mapNotNull { idx ->
                 pageLoader.pages.getOrNull(idx)?.statusFlow
             }
             if (statusFlows.isEmpty()) {
-                activity.setReaderColorMode(hdr = false, wideColor = advancedColorEnabled)
+                applyColorMode(anyHdr = false)
                 return@collectLatest
             }
             // Any status emission in the window → re-evaluate HDR (WCG stays session-wide).
@@ -720,11 +742,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 }
                 // Option A: advanced → session WCG (not only when isWideGamutContent).
                 // HDR still wins the single colorMode slot in setReaderColorMode.
-                activity.setReaderColorMode(
-                    hdr = hdrDisplayEnabled && anyHdr,
-                    contentBoost = maxBoost,
-                    wideColor = advancedColorEnabled,
-                )
+                applyColorMode(anyHdr, maxBoost)
             }
         }
     }

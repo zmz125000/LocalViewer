@@ -67,11 +67,15 @@ fun Activity.setHdrColorMode(on: Boolean, contentBoost: Float = 1f) {
  * @param contentBoost unused; headroom is automatic on API 35+
  * @param wideColor enable [ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT] when not HDR
  *   and the display is wide-gamut (Android WCG is opt-in)
+ * @param force re-apply even when [Window.colorMode] already matches. Needed after
+ *   orientation [android.content.pm.ActivityInfo.configChanges] — Android recreates
+ *   the surface as SDR while the getter can still report the old mode.
  */
 fun Activity.setReaderColorMode(
     hdr: Boolean,
     contentBoost: Float = 1f,
     wideColor: Boolean = false,
+    force: Boolean = false,
 ) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val enableHdr = hdr && supportsScreenHdr()
@@ -83,20 +87,21 @@ fun Activity.setReaderColorMode(
         else -> ActivityInfo.COLOR_MODE_DEFAULT
     }
     // Skip redundant setColorMode — each flip can re-trigger surface brightness ramps.
-    if (window.colorMode != targetMode) {
+    // [force] still writes: after rotation the surface is new even if the getter matches.
+    if (force || window.colorMode != targetMode) {
         window.colorMode = targetMode
         val displayOk = displayOrNull()?.isWideColorGamut == true
         val configOk = resources.configuration.isScreenWideColorGamut
         Log.d(
             TAG,
-            "colorMode=$targetMode hdr=$enableHdr wcg=$enableWcg " +
+            "colorMode=$targetMode hdr=$enableHdr wcg=$enableWcg force=$force " +
                 "(wantWide=$wideColor capable=$wcgCapable display=$displayOk config=$configOk)",
         )
         if (wideColor && !enableHdr && !wcgCapable) {
             Log.w(TAG, "WCG requested but display/config report no wide color gamut")
         }
     }
-    applyDesiredHdrHeadroom(enableHdr, contentBoost)
+    applyDesiredHdrHeadroom(enableHdr, contentBoost, force)
 }
 
 /**
@@ -109,17 +114,17 @@ fun Activity.setReaderColorMode(
  * [contentBoost] is retained for API compatibility / logging only (not applied).
  * Presentation still relies on [ActivityInfo.COLOR_MODE_HDR].
  */
-private fun Activity.applyDesiredHdrHeadroom(enable: Boolean, contentBoost: Float) {
+private fun Activity.applyDesiredHdrHeadroom(enable: Boolean, contentBoost: Float, force: Boolean = false) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
     val key = System.identityHashCode(window)
     try {
         // 0f = automatic headroom (do not force content/panel boost).
-        if (lastDesiredHeadroom[key] != 0f) {
+        if (force || lastDesiredHeadroom[key] != 0f) {
             window.setDesiredHdrHeadroom(0f)
             lastDesiredHeadroom[key] = 0f
             Log.d(
                 TAG,
-                "desiredHdrHeadroom=auto(0) enable=$enable contentBoost=$contentBoost",
+                "desiredHdrHeadroom=auto(0) enable=$enable force=$force contentBoost=$contentBoost",
             )
         }
     } catch (e: Throwable) {
