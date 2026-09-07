@@ -42,7 +42,9 @@ suspend inline fun <T> useFolderPageLoader(
 
                 override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(files[index].name)
 
-                override fun save(index: Int, file: Path): Boolean = runCatching {
+                override fun getOriginalImageFileName(index: Int) = files[index].name
+
+                override fun savePage(index: Int, file: Path): Boolean = runCatching {
                     files[index] sendTo file
                     true
                 }.getOrDefault(false)

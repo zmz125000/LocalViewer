@@ -79,7 +79,9 @@ suspend inline fun <T> useSmbFolderPageLoader(
 
                 override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(imageFileNames[index])
 
-                override fun save(index: Int, file: Path): Boolean = runCatching {
+                override fun getOriginalImageFileName(index: Int) = imageFileNames[index]
+
+                override fun savePage(index: Int, file: Path): Boolean = runCatching {
                     ramPages[index]?.let {
                         java.io.File(file.toString()).writeBytes(it)
                         return@runCatching true

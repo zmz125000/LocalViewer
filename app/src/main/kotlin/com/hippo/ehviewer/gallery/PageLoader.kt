@@ -6,6 +6,7 @@ import android.util.LruCache
 import androidx.compose.runtime.mutableIntStateOf
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.bracketCase
+import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.EhDB
@@ -15,15 +16,18 @@ import com.hippo.ehviewer.image.Image
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.hdr.DisplaySource
+import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
 import com.hippo.ehviewer.image.hdr.classify
 import com.hippo.ehviewer.image.hdr.classifyPath
+import com.hippo.ehviewer.image.hdr.exportImageExtension
 import com.hippo.ehviewer.image.hdr.isHeicImageExtension
 import com.hippo.ehviewer.image.hdr.needsLibDecode
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
 import com.hippo.ehviewer.util.detectAds
 import com.hippo.ehviewer.util.displayString
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
@@ -114,6 +118,13 @@ abstract class PageLoader(
     private val mutex = NamedMutex<Int>()
 
     /**
+     * Coil-ready file from the last [DisplaySource.ensureReady] (UHDR `.jpg` after
+     * JXR/JXL/PQ-AVIF convert). Save/share use this path and its extension so the
+     * exported name matches the bytes, not the original `.jxr`.
+     */
+    private val exportFiles = ConcurrentHashMap<Int, Path>()
+
+    /**
      * Peak software decode is large; keep concurrency low on a 256 MiB heap.
      * Cache-off also holds compressed bytes on the heap, so decode is 2-wide.
      * Lib-direct F16 is further serialized inside [LibDirectDecode] (one at a time).
@@ -167,6 +178,9 @@ abstract class PageLoader(
                 val image = tryDecodeLibDirect(raw, forceOriginal, hint)
                     ?: run {
                         val ready = DisplaySource.ensureReady(raw, hint, persistTo = persistTo)
+                        if (ready is PathSource) {
+                            exportFiles[index] = ready.source
+                        }
                         if (persistTo != null && ready is PathSource) {
                             releaseRamPage(index)
                         }
@@ -275,6 +289,7 @@ abstract class PageLoader(
 
     override fun restart() {
         cancelDecodeJobs()
+        exportFiles.clear()
         lock.write { cache.evictAll() }
         pages.forEach(Page::reset)
         replan()
@@ -411,6 +426,7 @@ abstract class PageLoader(
 
     override fun close() {
         cancelDecodeJobs()
+        exportFiles.clear()
         lock.write { cache.evictAll() }
         persistProgress()
     }
@@ -451,8 +467,20 @@ abstract class PageLoader(
 
     protected abstract fun getImageExtension(index: Int): String?
 
-    override fun getImageFilename(index: Int): String? = getImageExtension(index)?.let {
-        FileUtils.sanitizeFilename("$title - ${index + 1}.${it.lowercase()}")
+    /**
+     * Original page file name (including extension) when the source has one.
+     * Folder / SMB / WebDAV / zip-as-dir override this so save keeps `photo.jpg`
+     * instead of `Album - 1.jpg`.
+     */
+    protected open fun getOriginalImageFileName(index: Int): String? = null
+
+    override fun getImageFilename(index: Int): String? {
+        val originalExt = getImageExtension(index) ?: return null
+        val ext = exportImageExtension(originalExt, exportFiles[index]?.name)
+        val originalName = getOriginalImageFileName(index)
+        val stem = originalName?.let { FileUtils.getNameFromFilename(it) ?: it }
+            ?: "$title - ${index + 1}"
+        return FileUtils.sanitizeFilename("$stem.${ext.lowercase()}")
     }
 
     private fun requestDecode(index: Int) {
@@ -603,7 +631,19 @@ abstract class PageLoader(
         job?.cancel()
     }
 
-    abstract override fun save(index: Int, file: Path): Boolean
+    final override fun save(index: Int, file: Path): Boolean {
+        val export = exportFiles[index]
+        if (export != null && HdrConvertCache.isPresent(export)) {
+            return runCatching {
+                export sendTo file
+                true
+            }.getOrDefault(false)
+        }
+        return savePage(index, file)
+    }
+
+    /** Copy the original source page when no converted export file is available. */
+    protected abstract fun savePage(index: Int, file: Path): Boolean
 
     /**
      * Decode [index] when the source file is ready.

@@ -303,7 +303,7 @@ suspend inline fun <T> useStreamArchivePageLoader(
 
                     override fun getImageExtension(index: Int) = getExtension(index)
 
-                    override fun save(index: Int, file: Path): Boolean = runCatching {
+                    override fun savePage(index: Int, file: Path): Boolean = runCatching {
                         ramPages[index]?.let {
                             java.io.File(file.toString()).writeBytes(it)
                             return@runCatching true
@@ -756,7 +756,7 @@ internal fun cachedStreamLoader(
 
         override fun getImageExtension(index: Int) = exts[index]
 
-        override fun save(index: Int, file: Path): Boolean = runCatching {
+        override fun savePage(index: Int, file: Path): Boolean = runCatching {
             val ext = exts[index] ?: return@runCatching false
             val path = ArchiveStreamPageCache.pagePath(cacheKey, index, ext)
             java.io.File(path.toString()).copyTo(java.io.File(file.toString()), overwrite = true)

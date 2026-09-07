@@ -165,7 +165,7 @@ suspend inline fun <T> useTarChunkPageLoader(
 
                 override fun getImageExtension(index: Int) = engine.extOf(index)
 
-                override fun save(index: Int, file: Path): Boolean = runCatching {
+                override fun savePage(index: Int, file: Path): Boolean = runCatching {
                     val ext = engine.extOf(index) ?: return@runCatching false
                     val path = pagePaths[index]
                         ?: ArchiveStreamPageCache.pagePath(cacheKey, index, ext)

@@ -195,7 +195,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
 
                 override fun getImageExtension(index: Int) = engine.extOf(index)
 
-                override fun save(index: Int, file: Path): Boolean = runCatching {
+                override fun savePage(index: Int, file: Path): Boolean = runCatching {
                     val ext = engine.extOf(index) ?: return@runCatching false
                     val path = pagePaths[index]
                         ?: DocumentExtractCache.pagePath(cacheKey, index, ext)
@@ -627,7 +627,7 @@ internal fun cachedDocumentLoader(
 
         override fun getImageExtension(index: Int) = exts[index]
 
-        override fun save(index: Int, file: Path): Boolean = runCatching {
+        override fun savePage(index: Int, file: Path): Boolean = runCatching {
             val ext = exts[index] ?: return@runCatching false
             val path = DocumentExtractCache.pagePath(cacheKey, index, ext)
             File(path.toString()).copyTo(File(file.toString()), overwrite = true)

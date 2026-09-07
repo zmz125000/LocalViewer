@@ -115,7 +115,12 @@ suspend inline fun <T> useArchivePageLoader(
 
                     override fun getImageExtension(index: Int) = getExtension(nat(index))
 
-                    override fun save(index: Int, file: Path) = runCatching {
+                    override fun getOriginalImageFileName(index: Int): String? {
+                        val raw = getArchiveFilename(nat(index))
+                        return raw.substringAfterLast('/').substringAfterLast('\\').ifEmpty { null }
+                    }
+
+                    override fun savePage(index: Int, file: Path) = runCatching {
                         file.openFileDescriptor("w").use {
                             synchronized(extractLock) {
                                 extractToFd(nat(index), it.fd)
