@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOWER_BOUND
 import com.hippo.ehviewer.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
@@ -37,6 +38,26 @@ object GalleryGridDefaults {
 
     @Composable
     fun columns(): GridCells = GridCells.Fixed(columnCount())
+
+    /**
+     * List-mode columns from [Configuration.smallestScreenWidthDp] (stable across
+     * rotation) plus orientation:
+     * phone portrait 1, phone landscape 2, tablet 3, tablet landscape 4.
+     * Tablet = sw ≥ 600dp ([WIDTH_DP_MEDIUM_LOWER_BOUND] / `sw600dp`).
+     */
+    @Composable
+    fun listColumnCount(): Int {
+        val configuration = LocalConfiguration.current
+        val smallestWidthDp = configuration.smallestScreenWidthDp
+        val landscape =
+            configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        return remember(smallestWidthDp, landscape) {
+            effectiveListColumnCount(smallestWidthDp, landscape)
+        }
+    }
+
+    @Composable
+    fun listColumns(): GridCells = GridCells.Fixed(listColumnCount())
 
     @Composable
     fun margin(): Dp = dimensionResource(R.dimen.gallery_grid_margin)
@@ -68,4 +89,15 @@ internal fun effectiveColumnCount(thumbColumns: Int, landscape: Boolean): Int {
     val base = thumbColumns.coerceIn(1, 10)
     if (!landscape) return base
     return ceil(base * 1.5).toInt().coerceAtLeast(1)
+}
+
+/** Phone 1 / phone landscape 2 / tablet 3 / tablet landscape 4. */
+internal fun effectiveListColumnCount(smallestWidthDp: Int, landscape: Boolean): Int {
+    val tablet = smallestWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
+    return when {
+        tablet && landscape -> 4
+        tablet -> 3
+        landscape -> 2
+        else -> 1
+    }
 }

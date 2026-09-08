@@ -84,6 +84,12 @@
     <string name="settings_external_video_randomize_token">隨機化影片播放器權杖</string>
     <string name="settings_external_video_randomize_token_summary">外部影片播放使用隨機的本機 HTTP 工作階段權杖和連接埠，而非固定值</string>
     <string name="browse_menu_photo_grid">照片牆</string>
+    <string name="browse_item_more">更多</string>
+    <string name="browse_action_not_supported">不支援此操作</string>
+    <string name="browse_item_info">資訊</string>
+    <string name="browse_play">播放</string>
+    <string name="browse_external_player">外部播放器</string>
+    <string name="browse_copy_url">複製連結</string>
     <string name="browse_menu_favorites_on_top">收藏置頂</string>
     <string name="browse_menu_page_count">頁數</string>
     <string name="browse_menu_reading_progress">閱讀進度</string>
@@ -135,6 +141,10 @@
     <string name="webdav_archive_not_supported">暫不支援透過 WebDAV 開啟壓縮檔</string>
     <string name="webdav_listing_error">列出目錄失敗：%s</string>
     <string name="webdav_anonymous">匿名（無需登入）</string>
+    <string name="settings_webdav_concurrent_listing">WebDAV 並行列表</string>
+    <string name="settings_webdav_concurrent_listing_summary">最多同時探測 %s 個子資料夾</string>
+    <string name="settings_webdav_download_slots">WebDAV 並行下載</string>
+    <string name="settings_webdav_download_slots_summary">最多同時 %s 個頁面或 Range 請求</string>
     <string name="settings_advanced_webdav_insecure_tls">允許 WebDAV 不安全 TLS</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">信任任意憑證（自簽 HTTPS）。</string>
     <string name="settings_advanced_unlimit_foreground_service">不限制前景服務</string>
@@ -552,6 +562,8 @@
     <string name="settings_advanced_dump_logcat_to">已將紀錄檔儲存至 %s</string>
     <string name="settings_advanced_read_cache_size">閱讀快取大小</string>
     <string name="settings_advanced_app_language_title">應用程式介面語言</string>
+    <string name="settings_advanced_enable_http2">HTTP/2 支援</string>
+    <string name="settings_advanced_enable_http2_summary">WebDAV 使用 OkHttp HTTP/2。關閉則使用 HTTP/1.1。</string>
     <string name="settings_advanced_export_data">匯出檔案</string>
     <string name="settings_advanced_export_data_summary">儲存資料至外接儲存裝置，例如下載列表，快速搜尋列表</string>
     <string name="settings_advanced_export_data_to">已匯出資料至 %s</string>

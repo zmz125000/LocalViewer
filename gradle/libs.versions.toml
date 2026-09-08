@@ -6,6 +6,7 @@ androidx-appcompat = "1.7.1"
 androidx-biometric = "1.4.0-alpha07"
 androidx-browser = "1.10.0"
 androidx-core = "1.18.0"
+androidx-core-splashscreen = "1.2.0"
 androidx-datastore = "1.2.1"
 androidx-lifecycle = "2.10.0"
 androidx-paging = "3.5.0"
@@ -48,6 +49,7 @@ androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "a
 androidx-biometric = { module = "androidx.biometric:biometric-compose", version.ref = "androidx-biometric" }
 androidx-browser = { module = "androidx.browser:browser", version.ref = "androidx-browser" }
 androidx-core = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
+androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "androidx-core-splashscreen" }
 androidx-datastore = { module = "androidx.datastore:datastore-preferences", version.ref = "androidx-datastore" }
 androidx-lifecycle-process = { module = "androidx.lifecycle:lifecycle-process", version.ref = "androidx-lifecycle" }
 androidx-lifecycle-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
@@ -102,8 +104,9 @@ ktlint = "com.pinterest.ktlint:ktlint-cli:1.8.0"
 
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-android = { module = "io.ktor:ktor-client-android", version.ref = "ktor" }
-# Pure-Kotlin engine for WebDAV (PROPFIND). Cronet/Android HUC reject non-standard methods.
+# WebDAV PROPFIND: Cronet/Android HUC reject non-standard methods.
 ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
 
 logcat = "com.squareup.logcat:logcat:0.4"
 

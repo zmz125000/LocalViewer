@@ -15,11 +15,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Cloud
@@ -68,8 +66,8 @@ import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.ui.component.ElevatedCard
-import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.util.launch
@@ -141,7 +139,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     // Survive NavHost dispose/restore (e.g. open favourite folder → back).
     // collectAsState(initial=empty) remounted an empty list for one frame and
     // coerced LazyList scroll to top; VM-held state keeps last data + scroll position.
-    val listState = rememberInVM { LazyListState() }
+    val listState = rememberInVM { LazyGridState() }
     val gridState = rememberInVM { LazyGridState() }
     var searchBarOffsetY by rememberInVM { mutableIntStateOf(0) }
     // Always keep the full library stream; filter client-side as the user types.
@@ -253,7 +251,30 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         // }
     }
 
-    fun openGallery(gallery: LocalGalleryEntity) {
+    fun openGalleryPhotoGrid(gallery: LocalGalleryEntity, info: BaseGalleryInfo) {
+        val root = roots.firstOrNull { it.id == gallery.rootId }
+        val rootPath = root?.let { LocalLibrary.rootPath(it) }
+        if (root == null || rootPath == null) {
+            navToLocalFolderReader(gallery.contentPath, info)
+        } else {
+            openLocalFolderPhotoGrid(
+                rootId = root.id,
+                rootDisplayName = root.displayName,
+                rootPath = rootPath,
+                relativePath = gallery.relativePath,
+                preferMediaStore = root.prefersMediaStore,
+                title = gallery.title,
+                fromLibrary = true,
+            )
+        }
+    }
+
+    /**
+     * Folder galleries: [photoGrid] follows [Settings.photoGridMode] on tap and the
+     * opposite on long-press (same as browse folder galleries). Archives always open
+     * the reader — they have no photo-grid listing.
+     */
+    fun openGallery(gallery: LocalGalleryEntity, photoGrid: Boolean = Settings.photoGridMode.value) {
         // Navigation must run on the main thread — Compose crashes if navigate() is
         // called from Dispatchers.IO ("Cannot start a writer when a reader is pending").
         // Playlist = visible library list so double-tap prev/next walks that order,
@@ -265,74 +286,69 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
             // Pass info so read progress uses library id (same as progress chip).
             navToReader(gallery.contentPath, info)
-        } else {
-            val zip = ZipPaths.parse(gallery.contentPath)
-            if (zip != null) {
-                val (zipAbs, member) = zip
-                val inner = if (member == "." || member.isEmpty()) "" else member
-                launchIO {
-                    val galleryDir = ZipAsDirListing.parseZipGalleryRelative(gallery.relativePath)
-                        ?.let { ZipAsDirListing.virtualRelativeDir(it.first, it.second) }
-                    val root = roots.firstOrNull { it.id == gallery.rootId }
-                    val names = runCatching {
-                        if (galleryDir != null && root != null) {
-                            val rp = LocalLibrary.rootPath(root)
-                            if (rp != null) {
-                                FolderGalleryIndex.loadLocal(
-                                    gallery.rootId,
-                                    LocalFolderListing.rootConfigKey(
-                                        rp,
-                                        root.prefersMediaStore,
-                                    ),
-                                    galleryDir,
-                                )
-                            } else {
-                                null
-                            }
+            return
+        }
+        if (photoGrid) {
+            openGalleryPhotoGrid(gallery, info)
+            return
+        }
+        val zip = ZipPaths.parse(gallery.contentPath)
+        if (zip != null) {
+            val (zipAbs, member) = zip
+            val inner = if (member == "." || member.isEmpty()) "" else member
+            launchIO {
+                val galleryDir = ZipAsDirListing.parseZipGalleryRelative(gallery.relativePath)
+                    ?.let { ZipAsDirListing.virtualRelativeDir(it.first, it.second) }
+                val root = roots.firstOrNull { it.id == gallery.rootId }
+                val names = runCatching {
+                    if (galleryDir != null && root != null) {
+                        val rp = LocalLibrary.rootPath(root)
+                        if (rp != null) {
+                            FolderGalleryIndex.loadLocal(
+                                gallery.rootId,
+                                LocalFolderListing.rootConfigKey(
+                                    rp,
+                                    root.prefersMediaStore,
+                                ),
+                                galleryDir,
+                            )
                         } else {
                             null
-                        } ?: withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
-                            ZipAsDirListing.directImageNames(cd, inner)
-                        }.orEmpty()
-                    }.getOrDefault(emptyList())
-                    if (names.isEmpty()) {
-                        snackbar(string(R.string.browse_open_failed))
-                        return@launchIO
-                    }
-                    withUIContext {
-                        navToLocalZipFolderReader(
-                            zipPath = zipAbs,
-                            innerRel = inner,
-                            imageNames = names,
-                            info = info,
-                        )
-                    }
+                        }
+                    } else {
+                        null
+                    } ?: withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
+                        ZipAsDirListing.directImageNames(cd, inner)
+                    }.orEmpty()
+                }.getOrDefault(emptyList())
+                if (names.isEmpty()) {
+                    snackbar(string(R.string.browse_open_failed))
+                    return@launchIO
                 }
-            } else if (Settings.photoGridMode.value) {
-                // Tap → photo-grid virtual folder (same as browse primary when mode on).
-                val root = roots.firstOrNull { it.id == gallery.rootId }
-                val rootPath = root?.let { LocalLibrary.rootPath(it) }
-                if (root == null || rootPath == null) {
-                    navToLocalFolderReader(gallery.contentPath, info)
-                } else {
-                    openLocalFolderPhotoGrid(
-                        rootId = root.id,
-                        rootDisplayName = root.displayName,
-                        rootPath = rootPath,
-                        relativePath = gallery.relativePath,
-                        preferMediaStore = root.prefersMediaStore,
-                        title = gallery.title,
-                        fromLibrary = true,
+                withUIContext {
+                    navToLocalZipFolderReader(
+                        zipPath = zipAbs,
+                        innerRel = inner,
+                        imageNames = names,
+                        info = info,
                     )
                 }
-            } else {
-                navToLocalFolderReader(gallery.contentPath, info)
             }
+        } else {
+            navToLocalFolderReader(gallery.contentPath, info)
         }
     }
 
-    fun toggleGalleryFavorite(gallery: LocalGalleryEntity) {
-        notifyFavoriteToggle(BrowseFavorites.toggleGallery(gallery.id))
+    fun openGalleryPrimary(gallery: LocalGalleryEntity) {
+        openGallery(gallery, photoGrid = Settings.photoGridMode.value)
+    }
+
+    fun openGallerySecondary(gallery: LocalGalleryEntity) {
+        if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
+            openGallery(gallery, photoGrid = false)
+            return
+        }
+        openGallery(gallery, photoGrid = !Settings.photoGridMode.value)
     }
 
     /** Favourites strip: long-press always unfavourites (toggle on a pin removes it). */
@@ -380,7 +396,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     fromLibrary = true,
                 )
             }
-            is FavoriteBrowseSource.Gallery -> openGallery(fav.gallery)
+            is FavoriteBrowseSource.Gallery -> openGalleryPrimary(fav.gallery)
             is FavoriteBrowseSource.LocalFolder -> {
                 val rootPath = LocalLibrary.rootPath(fav.root) ?: return
                 openLocalBrowseDir(
@@ -459,13 +475,17 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     top = paddingValues.calculateTopPadding() + marginV,
                     bottom = paddingValues.calculateBottomPadding() + marginV,
                 )
-                FastScrollLazyColumn(
+                FastScrollLazyVerticalGrid(
+                    columns = GalleryGridDefaults.listColumns(),
                     modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
                     state = listState,
                     contentPadding = listPadding,
                 ) {
                     if (showFavorites) {
-                        item(key = "fav-hdr") {
+                        item(
+                            key = "fav-hdr",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
                             // Extra list margin so section titles are not flush to the screen edge
                             // (rows stay edge-aligned with folder ListItems).
                             BrowseSectionHeader(
@@ -478,7 +498,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             when (fav) {
                                 is FavoriteBrowseSource.Gallery -> LocalGalleryListItem(
                                     gallery = fav.gallery,
-                                    onClick = { openGallery(fav.gallery) },
+                                    onClick = { openGalleryPrimary(fav.gallery) },
                                     onLongClick = { toggleFavorite(fav) },
                                     showPages = showPages,
                                     showProgress = showProgress,
@@ -492,7 +512,10 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             }
                         }
                         if (galleries.isNotEmpty()) {
-                            item(key = "gal-hdr") {
+                            item(
+                                key = "gal-hdr",
+                                span = { GridItemSpan(maxLineSpan) },
+                            ) {
                                 BrowseSectionHeader(
                                     stringResource(R.string.library),
                                     modifier = Modifier.padding(horizontal = marginH),
@@ -503,8 +526,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     items(galleries, key = { it.id }) { gallery ->
                         LocalGalleryListItem(
                             gallery = gallery,
-                            onClick = { openGallery(gallery) },
-                            onLongClick = { toggleGalleryFavorite(gallery) },
+                            onClick = { openGalleryPrimary(gallery) },
+                            onLongClick = { openGallerySecondary(gallery) },
                             showPages = showPages,
                             showProgress = showProgress,
                             modifier = Modifier.fillMaxWidth(),
@@ -550,8 +573,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     items(galleries, key = { it.id }) { gallery ->
                         LocalGalleryGridItem(
                             gallery = gallery,
-                            onClick = { openGallery(gallery) },
-                            onLongClick = { toggleGalleryFavorite(gallery) },
+                            onClick = { openGalleryPrimary(gallery) },
+                            onLongClick = { openGallerySecondary(gallery) },
                             showPages = showPages,
                             showProgress = showProgress,
                         )

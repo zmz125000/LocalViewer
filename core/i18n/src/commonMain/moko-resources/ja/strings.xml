@@ -78,6 +78,12 @@
     <string name="browse_folder_thumbs">フォルダサムネイル</string>
     <string name="settings_browse_folder_thumbs_summary">フォルダ一覧で表紙サムネイルを表示します（ギャラリー表紙と同じキャッシュを使用）。</string>
     <string name="browse_menu_photo_grid">フォトグリッド</string>
+    <string name="browse_item_more">その他</string>
+    <string name="browse_action_not_supported">この操作はサポートされていません</string>
+    <string name="browse_item_info">情報</string>
+    <string name="browse_play">再生</string>
+    <string name="browse_external_player">外部プレーヤー</string>
+    <string name="browse_copy_url">URL をコピー</string>
     <string name="browse_menu_favorites_on_top">お気に入りを先頭に</string>
     <string name="browse_menu_page_count">ページ数</string>
     <string name="browse_menu_reading_progress">読書進捗</string>
@@ -129,6 +135,10 @@
     <string name="webdav_archive_not_supported">WebDAV 経由でのアーカイブの開封は未対応です</string>
     <string name="webdav_listing_error">ディレクトリの一覧取得に失敗しました: %s</string>
     <string name="webdav_anonymous">匿名（ログインなし）</string>
+    <string name="settings_webdav_concurrent_listing">WebDAV 同時リスト</string>
+    <string name="settings_webdav_concurrent_listing_summary">サブフォルダの並列取得は最大 %s</string>
+    <string name="settings_webdav_download_slots">WebDAV 同時ダウンロード</string>
+    <string name="settings_webdav_download_slots_summary">ページ / Range 取得は最大 %s 並列</string>
     <string name="settings_advanced_webdav_insecure_tls">WebDAV の安全でない TLS を許可</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">任意の証明書を信頼します（自己署名 HTTPS）。</string>
     <string name="settings_advanced_unlimit_foreground_service">フォアグラウンドサービスを無制限</string>
@@ -564,6 +574,8 @@
     <string name="settings_advanced_read_cache_size">読書用キャッシュのサイズ</string>
     <string name="settings_advanced_app_language_title">アプリの言語</string>
     <string name="settings_advanced_enable_quic">QUIC をサポート</string>
+    <string name="settings_advanced_enable_http2">HTTP/2 をサポート</string>
+    <string name="settings_advanced_enable_http2_summary">WebDAV は OkHttp HTTP/2。オフで HTTP/1.1。</string>
     <string name="settings_advanced_hardware_bitmap_threshold">ハードウェアビットマップ (パフォーマンス向上) のしきい値</string>
     <string name="settings_advanced_hardware_bitmap_threshold_summary">長い画像の読み込みに失敗する場合はこれを減らしてみてください</string>
     <string name="settings_advanced_export_data">データをエクスポート</string>

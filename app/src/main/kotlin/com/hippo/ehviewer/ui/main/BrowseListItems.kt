@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Folder
@@ -44,10 +46,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -230,6 +236,55 @@ sealed class BrowseCover {
     ) : BrowseCover()
 }
 
+/**
+ * Title with an inline favourite star after the name.
+ * Same placement as Browse source list ([BrowseScreen] source rows).
+ */
+@Composable
+fun BrowseFavoriteTitle(
+    name: String,
+    favorited: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    // Inline star so PlaceholderVerticalAlign.TextCenter lines up with the
+    // glyph center (not the taller line box that Row+CenterVertically uses).
+    if (!favorited) {
+        Text(name, modifier = modifier, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        return
+    }
+    val starId = "fav"
+    val starTint = MaterialTheme.colorScheme.primary
+    val starCd = stringResource(R.string.favourite)
+    val text = buildAnnotatedString {
+        append(name)
+        append('\u00A0') // thin gap before star; stays with the last word
+        appendInlineContent(starId, "[★]")
+    }
+    val inline = mapOf(
+        starId to InlineTextContent(
+            Placeholder(
+                width = 18.sp,
+                height = 18.sp,
+                placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
+            ),
+        ) {
+            Icon(
+                Icons.Default.Star,
+                contentDescription = starCd,
+                modifier = Modifier.fillMaxSize(),
+                tint = starTint,
+            )
+        },
+    )
+    Text(
+        text = text,
+        modifier = modifier,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+        inlineContent = inline,
+    )
+}
+
 @Composable
 fun BrowseDirectoryRow(
     name: String,
@@ -241,10 +296,13 @@ fun BrowseDirectoryRow(
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
     lastModifiedMs: Long = 0L,
+    overflow: BrowseOverflowActions? = null,
+    /** Inline star after the name — same as Browse source list. */
+    showFavoriteStar: Boolean = false,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
-        headlineContent = { Text(name) },
+        headlineContent = { BrowseFavoriteTitle(name = name, favorited = showFavoriteStar) },
         supportingContent = {
             Text(
                 browseListSupportingLine(
@@ -262,6 +320,11 @@ fun BrowseDirectoryRow(
                 allowRemoteFetch = allowRemoteFetch,
                 placeholderIcon = Icons.Default.Folder,
             )
+        },
+        trailingContent = overflow?.let { actions ->
+            {
+                BrowseItemOverflowButton(actions, BrowseOverflowPlacement.ListTrailing)
+            }
         },
         modifier = modifier
             .fillMaxWidth()
@@ -298,6 +361,7 @@ fun BrowseFolderGalleryRow(
     /** Long-press → photo-grid virtual folder; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
     lastModifiedMs: Long = 0L,
+    overflow: BrowseOverflowActions? = null,
 ) {
     val haptic = LocalHapticFeedback.current
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
@@ -320,6 +384,11 @@ fun BrowseFolderGalleryRow(
                 retryKey = thumbRetryKey,
                 allowRemoteFetch = allowRemoteFetch,
             )
+        },
+        trailingContent = overflow?.let { actions ->
+            {
+                BrowseItemOverflowButton(actions, BrowseOverflowPlacement.ListTrailing)
+            }
         },
         modifier = modifier
             .fillMaxWidth()
@@ -355,6 +424,7 @@ fun BrowseArchiveGalleryRow(
     lastModifiedMs: Long = 0L,
     pageCount: Int = 0,
     showPages: Boolean = true,
+    overflow: BrowseOverflowActions? = null,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
@@ -377,6 +447,11 @@ fun BrowseArchiveGalleryRow(
                 allowRemoteFetch = allowRemoteFetch,
                 placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
             )
+        },
+        trailingContent = overflow?.let { actions ->
+            {
+                BrowseItemOverflowButton(actions, BrowseOverflowPlacement.ListTrailing)
+            }
         },
         modifier = modifier
             .fillMaxWidth()
@@ -412,6 +487,7 @@ fun BrowseVideoRow(
     fileName: String = name,
     sizeBytes: Long = 0L,
     lastModifiedMs: Long = 0L,
+    overflow: BrowseOverflowActions? = null,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
@@ -433,6 +509,11 @@ fun BrowseVideoRow(
                 iconSize = 24.dp,
                 allowRemoteFetch = allowRemoteFetch,
             )
+        },
+        trailingContent = overflow?.let { actions ->
+            {
+                BrowseItemOverflowButton(actions, BrowseOverflowPlacement.ListTrailing)
+            }
         },
         modifier = modifier
             .fillMaxWidth()
@@ -471,6 +552,7 @@ fun BrowseFileRow(
     fileName: String = name,
     sizeBytes: Long = 0L,
     lastModifiedMs: Long = 0L,
+    overflow: BrowseOverflowActions? = null,
 ) {
     val haptic = LocalHapticFeedback.current
     val longClick = onLongClick ?: onClick
@@ -496,6 +578,11 @@ fun BrowseFileRow(
                 photoGridThumb = usePhotoThumb,
                 placeholderIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
             )
+        },
+        trailingContent = overflow?.let { actions ->
+            {
+                BrowseItemOverflowButton(actions, BrowseOverflowPlacement.ListTrailing)
+            }
         },
         modifier = modifier
             .fillMaxWidth()
@@ -528,6 +615,7 @@ fun BrowseDirectoryGridItem(
     showFolderThumb: Boolean = false,
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
+    overflow: BrowseOverflowActions? = null,
 ) {
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
@@ -538,86 +626,112 @@ fun BrowseDirectoryGridItem(
         onLongClick = onLongClick ?: onClick,
         modifier = modifier.fillMaxWidth().aspectRatio(1f),
     ) {
-        if (useThumbStyle) {
-            // Same as Library [FavoriteSourceGridCell] gallery: cover fills cell; label on scrim.
-            Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
-                BrowseCoverThumb(
-                    cover = cover,
-                    modifier = Modifier.fillMaxSize(),
-                    placeholderSize = 40.dp,
-                    decodeSizePx = CoverThumb.gridDecodePx(
-                        screenWidthDp = LocalConfiguration.current.screenWidthDp,
-                        columns = GalleryGridDefaults.columnCount(),
-                        margin = GalleryGridDefaults.margin(),
-                        gutter = GalleryGridDefaults.gutter(),
-                    ),
-                    retryKey = thumbRetryKey,
-                    allowRemoteFetch = allowRemoteFetch,
-                    placeholderIcon = Icons.Default.Folder,
-                )
-                if (showFavoriteStar) {
-                    Icon(
-                        Icons.Default.Star,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(4.dp)
-                            .size(18.dp),
-                        tint = MaterialTheme.colorScheme.primary,
+        Box(Modifier.fillMaxSize()) {
+            if (useThumbStyle) {
+                // Same as Library [FavoriteSourceGridCell] gallery: cover fills cell; label on scrim.
+                Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
+                    BrowseCoverThumb(
+                        cover = cover,
+                        modifier = Modifier.fillMaxSize(),
+                        placeholderSize = 40.dp,
+                        decodeSizePx = CoverThumb.gridDecodePx(
+                            screenWidthDp = LocalConfiguration.current.screenWidthDp,
+                            columns = GalleryGridDefaults.columnCount(),
+                            margin = GalleryGridDefaults.margin(),
+                            gutter = GalleryGridDefaults.gutter(),
+                        ),
+                        retryKey = thumbRetryKey,
+                        allowRemoteFetch = allowRemoteFetch,
+                        placeholderIcon = Icons.Default.Folder,
                     )
-                }
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Start,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
-                        .padding(horizontal = namePadH)
-                        .padding(top = 4.dp, bottom = namePadBottom),
-                )
-            }
-        } else {
-            // Classic icon + caption (no cover, or folder thumbs off).
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .clip(ShapeDefaults.Medium),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Default.Folder,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-                if (showFavoriteStar) {
-                    Icon(
-                        Icons.Default.Star,
-                        contentDescription = null,
+                    if (showFavoriteStar) {
+                        Icon(
+                            Icons.Default.Star,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(4.dp)
+                                .size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    Row(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(4.dp)
-                            .size(18.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                            .padding(horizontal = namePadH)
+                            .padding(top = 4.dp, bottom = namePadBottom),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier.weight(1f),
+                        )
+                        overflow?.let { actions ->
+                            BrowseItemOverflowButton(
+                                actions = actions,
+                                placement = BrowseOverflowPlacement.GridBottomEnd,
+                            )
+                        }
+                    }
+                }
+            } else {
+                // Classic icon + caption (no cover, or folder thumbs off).
+                Column(Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clip(ShapeDefaults.Medium),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.Folder,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        if (showFavoriteStar) {
+                            Icon(
+                                Icons.Default.Star,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(4.dp)
+                                    .size(18.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = namePadH)
+                            .padding(bottom = namePadBottom),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier.weight(1f),
+                        )
+                        overflow?.let { actions ->
+                            BrowseItemOverflowButton(
+                                actions = actions,
+                                placement = BrowseOverflowPlacement.GridBottomEnd,
+                            )
+                        }
+                    }
                 }
             }
-            Text(
-                text = name,
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Start,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = namePadH)
-                    .padding(bottom = namePadBottom),
-            )
         }
     }
 }
@@ -635,12 +749,14 @@ fun BrowseFolderGalleryGridItem(
     showPages: Boolean = true,
     /** Long-press → photo-grid virtual folder; defaults to [onClick] when null. */
     onLongClick: (() -> Unit)? = null,
+    overflow: BrowseOverflowActions? = null,
 ) {
     BrowseGridCell(
         name = name,
         onClick = onClick,
         modifier = modifier,
         onLongClick = onLongClick,
+        overflow = overflow,
         thumb = {
             Box(Modifier.fillMaxSize()) {
                 BrowseCoverThumb(
@@ -691,6 +807,7 @@ fun BrowsePhotoGridImageItem(
     showPhotoThumb: Boolean = true,
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
+    overflow: BrowseOverflowActions? = null,
 ) {
     if (showPhotoThumb && cover != null) {
         BrowseGridCell(
@@ -698,6 +815,7 @@ fun BrowsePhotoGridImageItem(
             onClick = onClick,
             onLongClick = onLongClick,
             modifier = modifier,
+            overflow = overflow,
             thumb = {
                 BrowseCoverThumb(
                     cover = cover,
@@ -722,6 +840,7 @@ fun BrowsePhotoGridImageItem(
             onClick = onClick,
             onLongClick = onLongClick,
             modifier = modifier,
+            overflow = overflow,
         )
     }
 }
@@ -738,12 +857,14 @@ fun BrowseArchiveGridItem(
     onLongClick: (() -> Unit)? = null,
     pageCount: Int = 0,
     showPages: Boolean = true,
+    overflow: BrowseOverflowActions? = null,
 ) {
     BrowseGridCell(
         name = name,
         onClick = onClick,
         modifier = modifier,
         onLongClick = onLongClick ?: onClick,
+        overflow = overflow,
         thumb = {
             Box(Modifier.fillMaxSize()) {
                 BrowseCoverThumb(
@@ -787,12 +908,14 @@ fun BrowseVideoGridItem(
     allowRemoteFetch: Boolean = true,
     /** Long-press → open in external app; defaults to [onClick]. */
     onLongClick: (() -> Unit)? = null,
+    overflow: BrowseOverflowActions? = null,
 ) {
     BrowseGridCell(
         name = name,
         onClick = onClick,
         onLongClick = onLongClick ?: onClick,
         modifier = modifier,
+        overflow = overflow,
         thumb = {
             BrowseVideoThumbnail(
                 thumbnailSource,
@@ -856,12 +979,14 @@ fun BrowseFileGridItem(
     modifier: Modifier = Modifier,
     /** Long-press → system "Open with"; defaults to [onClick]. */
     onLongClick: (() -> Unit)? = null,
+    overflow: BrowseOverflowActions? = null,
 ) {
     BrowseGridCell(
         name = name,
         onClick = onClick,
         onLongClick = onLongClick ?: onClick,
         modifier = modifier,
+        overflow = overflow,
         thumb = {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -885,6 +1010,7 @@ private fun BrowseGridCell(
     thumb: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
+    overflow: BrowseOverflowActions? = null,
 ) {
     val longClick = onLongClick ?: onClick
     // Same caption metrics as Library grid (GalleryGridDefaults).
@@ -906,7 +1032,7 @@ private fun BrowseGridCell(
                 thumb()
             }
             // Fixed height so 1-line and 2-line names share the same cell size;
-            // text sits on the bottom of the band.
+            // text sits on the bottom of the band; overflow sits in the label on the right.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -914,14 +1040,27 @@ private fun BrowseGridCell(
                     .padding(horizontal = namePadH),
                 contentAlignment = Alignment.BottomStart,
             ) {
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Start,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = namePadBottom),
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = namePadBottom),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.weight(1f),
+                    )
+                    overflow?.let { actions ->
+                        BrowseItemOverflowButton(
+                            actions = actions,
+                            placement = BrowseOverflowPlacement.GridBottomEnd,
+                        )
+                    }
+                }
             }
         }
     }

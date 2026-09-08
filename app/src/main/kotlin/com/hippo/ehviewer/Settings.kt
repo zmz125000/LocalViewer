@@ -436,7 +436,30 @@ object Settings : DataStorePreferences(null) {
     val saveCrashLog = boolPref("save_crash_log", false)
     val readCacheSize = intPref("read_cache_size_2", 640)
     val enableCronet = boolPref("enable_cronet", true)
+
+    /** Cronet QUIC for the main app HTTP client. Stub for WebDAV (unused). */
     val enableQuic = boolPref("enable_quic", true)
+
+    /**
+     * WebDAV HTTP/2 via OkHttp (Advanced). Default on.
+     * Off: Ktor CIO HTTP/1.1. Rebuilds [WebDavClient] on change.
+     */
+    val webDavHttp2 = boolPref("webdav_http2", true).observed {
+        runCatching {
+            com.hippo.ehviewer.webdav.WebDavClient.resetClient()
+            com.hippo.ehviewer.webdav.WebDavClient.resetStickyClient()
+        }
+    }
+
+    /**
+     * WebDAV subfolder PROPFIND / zip-root fan-out (Advanced). Default: 5.
+     */
+    val webDavConcurrentListing = intPref("webdav_concurrent_listing", 5)
+
+    /**
+     * WebDAV parallel page / Range GET fan-out (Advanced). Default: 4.
+     */
+    val webDavDownloadSlots = intPref("webdav_download_slots", 4)
 
     /**
      * WebDAV: trust any TLS certificate / skip hostname verify (self-signed LAN HTTPS).

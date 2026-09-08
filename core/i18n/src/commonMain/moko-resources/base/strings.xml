@@ -84,6 +84,12 @@
     <string name="settings_external_video_randomize_token">Randomize video player token</string>
     <string name="settings_external_video_randomize_token_summary">Use a random local HTTP session token and port instead of stable values for external video playback</string>
     <string name="browse_menu_photo_grid">Photo grid</string>
+    <string name="browse_item_more">More</string>
+    <string name="browse_action_not_supported">This action is not supported</string>
+    <string name="browse_item_info">Info</string>
+    <string name="browse_play">Play</string>
+    <string name="browse_external_player">External player</string>
+    <string name="browse_copy_url">Copy URL</string>
     <string name="browse_menu_favorites_on_top">Favorites on top</string>
     <string name="browse_menu_page_count">Page count</string>
     <string name="browse_menu_reading_progress">Reading progress</string>
@@ -141,6 +147,10 @@
     <string name="webdav_listing_error">Failed to list directory: %s</string>
     <string name="webdav_anonymous">Anonymous (no login)</string>
     <string name="webdav_http_hint">Using HTTP (cleartext). Prefer HTTPS when possible.</string>
+    <string name="settings_webdav_concurrent_listing">WebDAV concurrent listing</string>
+    <string name="settings_webdav_concurrent_listing_summary">Up to %s parallel folder peeks</string>
+    <string name="settings_webdav_download_slots">WebDAV concurrent downloads</string>
+    <string name="settings_webdav_download_slots_summary">Up to %s parallel page and Range reads</string>
     <string name="settings_advanced_webdav_insecure_tls">Allow insecure TLS for WebDAV</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">Trust any certificate (self-signed HTTPS).</string>
     <string name="settings_advanced_unlimit_foreground_service">Unlimit foreground service</string>
@@ -567,6 +577,8 @@
     <string name="settings_advanced_read_cache_size_summary">Max size for SMB page cache (and legacy online image cache)</string>
     <string name="settings_advanced_app_language_title">App language</string>
     <string name="settings_advanced_enable_quic">QUIC support</string>
+    <string name="settings_advanced_enable_http2">HTTP/2 support</string>
+    <string name="settings_advanced_enable_http2_summary">WebDAV via OkHttp HTTP/2. Off uses HTTP/1.1.</string>
     <string name="settings_advanced_hardware_bitmap_threshold">Hardware bitmap (better performance) threshold</string>
     <string name="settings_advanced_hardware_bitmap_threshold_summary">Try decreasing this if long images fail to load</string>
     <string name="settings_advanced_export_data">Export data</string>

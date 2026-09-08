@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
@@ -58,7 +57,6 @@ import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
-import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
@@ -121,6 +119,8 @@ import com.hippo.ehviewer.ui.main.BrowseFileRow
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryGridItem
 import com.hippo.ehviewer.ui.main.BrowseFolderGalleryRow
 import com.hippo.ehviewer.ui.main.BrowseFolderSection
+import com.hippo.ehviewer.ui.main.BrowseOverflowActions
+import com.hippo.ehviewer.ui.main.BrowseOverflowKind
 import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
@@ -132,6 +132,7 @@ import com.hippo.ehviewer.ui.navToWebDavFolderReader
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.util.LocalNetworkPermission
+import com.hippo.ehviewer.util.addTextToClipboard
 import com.hippo.ehviewer.util.ensureLocalNetworkPermission
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
@@ -993,6 +994,73 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    fun notSupportedAction() {
+        launch { snackbar(context.getString(R.string.browse_action_not_supported)) }
+    }
+
+    fun copyWebDavVideoUrl(fileName: String) {
+        val src = source ?: return
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
+        launchIO {
+            try {
+                val uri = OpenFileExternally.ensureWebDavVideoHttpUri(
+                    context = context,
+                    sourceId = src.id,
+                    remoteRelativeFile = remote,
+                    displayName = actualName,
+                    mimeType = mimeTypeForFileName(actualName),
+                )
+                withUIContext {
+                    with(context) { addTextToClipboard(uri.toString()) }
+                }
+            } catch (e: Throwable) {
+                if (e.isZipMemberTooLarge()) return@launchIO
+                snackbar(
+                    context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
+    fun dirOverflow(name: String, coverFileName: String? = null) = BrowseOverflowActions(
+        kind = BrowseOverflowKind.Common,
+        favorited = isDirFavorite(name),
+        onFavorite = { toggleDirFavorite(name, coverFileName) },
+        onUnsupported = { notSupportedAction() },
+    )
+
+    fun folderGalleryOverflow(entry: BrowseEntryRemote.FolderGallery) = BrowseOverflowActions(
+        kind = BrowseOverflowKind.Gallery,
+        favorited = isDirFavorite(entry.relativeName),
+        onFavorite = { toggleDirFavorite(entry.relativeName, entry.coverFileName) },
+        onRead = { openFolderGallery(entry) },
+        onPhotoGrid = { openFolderGalleryPhotoGrid(entry) },
+        onUnsupported = { notSupportedAction() },
+    )
+
+    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery) = BrowseOverflowActions(
+        kind = BrowseOverflowKind.Gallery,
+        onRead = { openArchive(entry) },
+        onOpenWith = { openArchiveInOtherApp(entry) },
+        onUnsupported = { notSupportedAction() },
+    )
+
+    fun videoOverflow(fileName: String) = BrowseOverflowActions(
+        kind = BrowseOverflowKind.Video,
+        onPlay = { playVideo(fileName) },
+        onExternalPlayer = { openExternalFile(fileName) },
+        onCopyUrl = { copyWebDavVideoUrl(fileName) },
+        onOpenWith = { openExternalFile(fileName) },
+        onUnsupported = { notSupportedAction() },
+    )
+
+    fun fileOverflow(fileName: String) = BrowseOverflowActions(
+        kind = BrowseOverflowKind.Common,
+        onOpenWith = { openExternalFile(fileName) },
+        onUnsupported = { notSupportedAction() },
+    )
+
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
@@ -1236,6 +1304,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     allowRemoteFetch = allowRemoteThumbs,
                                     onClick = { openFolderImage(file) },
                                     onLongClick = { openExternalFile(file.fileName) },
+                                    overflow = fileOverflow(file.fileName),
                                 )
                             }
                         }
@@ -1276,6 +1345,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             showFolderThumb = browseFolderThumbs,
                                             thumbRetryKey = refreshToken,
                                             allowRemoteFetch = allowRemoteThumbs,
+                                            overflow = dirOverflow(dir.relativeName, dir.coverFileName),
                                         )
                                     }
                                 }
@@ -1305,6 +1375,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     showPages = showGalleryPages,
                                                     onClick = { openFolderGalleryPrimary(entry) },
                                                     onLongClick = { openFolderGallerySecondary(entry) },
+                                                    overflow = folderGalleryOverflow(entry),
                                                 )
                                             is BrowseEntryRemote.ArchiveGallery ->
                                                 BrowseArchiveGridItem(
@@ -1315,6 +1386,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     allowRemoteFetch = allowRemoteThumbs,
                                                     onClick = { openArchive(entry) },
                                                     onLongClick = { openArchiveInOtherApp(entry) },
+                                                    overflow = archiveOverflow(entry),
                                                 )
                                             else -> Unit
                                         }
@@ -1344,6 +1416,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             allowRemoteFetch = allowRemoteThumbs,
                                             onClick = { openVideoPrimary(video.fileName) },
                                             onLongClick = { openVideoSecondary(video.fileName) },
+                                            overflow = videoOverflow(video.fileName),
                                         )
                                     }
                                 }
@@ -1370,6 +1443,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 allowRemoteFetch = allowRemoteThumbs,
                                                 onClick = { openFolderImage(file) },
                                                 onLongClick = { openExternalFile(file.fileName) },
+                                                overflow = fileOverflow(file.fileName),
                                             )
                                         } else {
                                             BrowseFileGridItem(
@@ -1377,6 +1451,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 name = file.name,
                                                 onClick = { openExternalFile(file.fileName) },
                                                 onLongClick = { openExternalFile(file.fileName) },
+                                                overflow = fileOverflow(file.fileName),
                                             )
                                         }
                                     }
@@ -1384,13 +1459,17 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             }
                         }
                     } else {
-                        val listState = rememberSmbBrowseListState(sourceId, "dav|$dirKey", scrollLayoutKey)
-                        FastScrollLazyColumn(
+                        val listState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey", scrollLayoutKey)
+                        FastScrollLazyVerticalGrid(
+                            columns = GalleryGridDefaults.listColumns(),
                             state = listState,
                             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
                         ) {
                             if (dirs.isNotEmpty()) {
-                                item(key = "hdr-dirs") {
+                                item(
+                                    key = "hdr-dirs",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_directories),
                                         onClick = { toggleSection(BrowseFolderSection.Directories) },
@@ -1410,12 +1489,17 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             thumbRetryKey = refreshToken,
                                             allowRemoteFetch = allowRemoteThumbs,
                                             lastModifiedMs = dir.lastModifiedMs,
+                                            overflow = dirOverflow(dir.relativeName, dir.coverFileName),
+                                            showFavoriteStar = isDirFavorite(dir.relativeName),
                                         )
                                     }
                                 }
                             }
                             if (galleries.isNotEmpty()) {
-                                item(key = "hdr-gal") {
+                                item(
+                                    key = "hdr-gal",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_galleries),
                                         onClick = { toggleSection(BrowseFolderSection.Galleries) },
@@ -1437,6 +1521,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     onClick = { openFolderGalleryPrimary(entry) },
                                                     onLongClick = { openFolderGallerySecondary(entry) },
                                                     lastModifiedMs = entry.lastModifiedMs,
+                                                    overflow = folderGalleryOverflow(entry),
                                                 )
                                             is BrowseEntryRemote.ArchiveGallery ->
                                                 BrowseArchiveGalleryRow(
@@ -1450,6 +1535,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     fileName = entry.fileName,
                                                     sizeBytes = entry.size,
                                                     lastModifiedMs = entry.lastModifiedMs,
+                                                    overflow = archiveOverflow(entry),
                                                 )
                                             else -> Unit
                                         }
@@ -1457,7 +1543,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 }
                             }
                             if (videos.isNotEmpty()) {
-                                item(key = "hdr-vid") {
+                                item(
+                                    key = "hdr-vid",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_videos),
                                         onClick = { toggleSection(BrowseFolderSection.Videos) },
@@ -1479,12 +1568,16 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             fileName = video.fileName,
                                             sizeBytes = video.size,
                                             lastModifiedMs = video.lastModifiedMs,
+                                            overflow = videoOverflow(video.fileName),
                                         )
                                     }
                                 }
                             }
                             if (files.isNotEmpty()) {
-                                item(key = "hdr-files") {
+                                item(
+                                    key = "hdr-files",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_files),
                                         onClick = { toggleSection(BrowseFolderSection.Files) },
@@ -1510,6 +1603,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             fileName = file.fileName,
                                             sizeBytes = file.size,
                                             lastModifiedMs = file.lastModifiedMs,
+                                            overflow = fileOverflow(file.fileName),
                                         )
                                     }
                                 }

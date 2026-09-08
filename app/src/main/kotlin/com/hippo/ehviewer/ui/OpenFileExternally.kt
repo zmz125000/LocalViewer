@@ -250,6 +250,42 @@ object OpenFileExternally {
 
     // region HTTP external video
 
+    private data class PreparedHttpVideo(
+        val session: ExternalHttpStreamServer.Session,
+        val reused: Boolean,
+        val videoUri: Uri,
+        val displayName: String,
+        val mimeType: String,
+        val accessDir: Boolean,
+    )
+
+    /**
+     * Start (or reuse) the loopback HTTP session used by external video playback and
+     * return the file URL (`http://127.0.0.1:{port}/s/{sessionId}/{fileName}`).
+     * The session stays alive so a copied URL can be pasted into a player.
+     */
+    suspend fun ensureLocalVideoHttpUri(
+        pathStr: String,
+        displayName: String = File(pathStr).name,
+        mimeType: String = mimeTypeForFileName(displayName),
+    ): Uri = prepareLocalVideoHttp(pathStr, displayName, mimeType).videoUri
+
+    suspend fun ensureSmbVideoHttpUri(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        mimeType: String = mimeTypeForFileName(displayName),
+    ): Uri = prepareSmbVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType).videoUri
+
+    suspend fun ensureWebDavVideoHttpUri(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        mimeType: String = mimeTypeForFileName(displayName),
+    ): Uri = prepareWebDavVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType).videoUri
+
     /**
      * Off (default): opened video + matching sidecars only.
      * On: every video + subtitle file in the same directory (folder playlist).
@@ -308,12 +344,11 @@ object OpenFileExternally {
     /** Folder access shares one token; restricted access keeps one token per opened video. */
     private fun httpSessionKey(dirKey: String, accessDir: Boolean, displayName: String): String = if (accessDir) "$dirKey|folder" else "$dirKey|file:${displayName.length}:$displayName"
 
-    private suspend fun openLocalVideoHttp(
-        context: Context,
+    private suspend fun prepareLocalVideoHttp(
         pathStr: String,
         displayName: String,
         mimeType: String,
-    ) {
+    ): PreparedHttpVideo {
         val accessDir = accessDirEnabled()
         val dirKey = httpSessionKey(localDirKey(pathStr), accessDir, displayName)
         val (session, reused) = withIOContext {
@@ -346,21 +381,38 @@ object OpenFileExternally {
             "HTTP local video session=${session.id} file=${PrivacyLog.file(displayName)} " +
                 "files=${session.files.size} accessDir=$accessDir reused=$reused"
         }
+        return PreparedHttpVideo(session, reused, videoUri, displayName, mimeType, accessDir)
+    }
+
+    private suspend fun openLocalVideoHttp(
+        context: Context,
+        pathStr: String,
+        displayName: String,
+        mimeType: String,
+    ) {
+        val prepared = prepareLocalVideoHttp(pathStr, displayName, mimeType)
         try {
-            launchHttpView(context, videoUri, displayName, mimeType, session, accessDir)
+            launchHttpView(
+                context,
+                prepared.videoUri,
+                prepared.displayName,
+                prepared.mimeType,
+                prepared.session,
+                prepared.accessDir,
+            )
         } catch (e: Throwable) {
-            if (!reused) ExternalHttpStreamServer.removeSession(session.id)
+            if (!prepared.reused) ExternalHttpStreamServer.removeSession(prepared.session.id)
             throw e
         }
     }
 
-    private suspend fun openSmbVideoHttp(
+    private suspend fun prepareSmbVideoHttp(
         context: Context,
         sourceId: Long,
         remoteRelativeFile: String,
         displayName: String,
         mimeType: String,
-    ) {
+    ): PreparedHttpVideo {
         requestStreamNotificationPermission(context)
         val accessDir = accessDirEnabled()
         val (session, reused) = withIOContext {
@@ -413,22 +465,40 @@ object OpenFileExternally {
             }
         }
         val videoUri = ExternalHttpStreamServer.uriFor(session.id, displayName)
-        SmbGateway.beginVideoPlay("http-open:${PrivacyLog.file(displayName)}")
-        try {
-            launchHttpView(context, videoUri, displayName, mimeType, session, accessDir)
-        } catch (e: Throwable) {
-            if (!reused) ExternalHttpStreamServer.removeSession(session.id)
-            throw e
-        }
+        return PreparedHttpVideo(session, reused, videoUri, displayName, mimeType, accessDir)
     }
 
-    private suspend fun openWebDavVideoHttp(
+    private suspend fun openSmbVideoHttp(
         context: Context,
         sourceId: Long,
         remoteRelativeFile: String,
         displayName: String,
         mimeType: String,
     ) {
+        val prepared = prepareSmbVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType)
+        SmbGateway.beginVideoPlay("http-open:${PrivacyLog.file(displayName)}")
+        try {
+            launchHttpView(
+                context,
+                prepared.videoUri,
+                prepared.displayName,
+                prepared.mimeType,
+                prepared.session,
+                prepared.accessDir,
+            )
+        } catch (e: Throwable) {
+            if (!prepared.reused) ExternalHttpStreamServer.removeSession(prepared.session.id)
+            throw e
+        }
+    }
+
+    private suspend fun prepareWebDavVideoHttp(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String,
+        mimeType: String,
+    ): PreparedHttpVideo {
         requestStreamNotificationPermission(context)
         val accessDir = accessDirEnabled()
         val (session, reused) = withIOContext {
@@ -479,10 +549,28 @@ object OpenFileExternally {
             }
         }
         val videoUri = ExternalHttpStreamServer.uriFor(session.id, displayName)
+        return PreparedHttpVideo(session, reused, videoUri, displayName, mimeType, accessDir)
+    }
+
+    private suspend fun openWebDavVideoHttp(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String,
+        mimeType: String,
+    ) {
+        val prepared = prepareWebDavVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType)
         try {
-            launchHttpView(context, videoUri, displayName, mimeType, session, accessDir)
+            launchHttpView(
+                context,
+                prepared.videoUri,
+                prepared.displayName,
+                prepared.mimeType,
+                prepared.session,
+                prepared.accessDir,
+            )
         } catch (e: Throwable) {
-            if (!reused) ExternalHttpStreamServer.removeSession(session.id)
+            if (!prepared.reused) ExternalHttpStreamServer.removeSession(prepared.session.id)
             throw e
         }
     }

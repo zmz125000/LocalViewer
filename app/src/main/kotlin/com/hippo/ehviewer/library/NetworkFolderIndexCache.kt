@@ -17,8 +17,8 @@ import splitties.init.appCtx
  * **Identity:** one JSON file per source — `{protocol}_{sourceId}.json`
  * (e.g. `smb_7.json`). Editing host / share / user / URL on the **same** row keeps
  * this file. Stored `configKey` is only a stamp (updated on save); it must **not**
- * invalidate the whole index — slim quick scan drops stale dirs/files as the user
- * re-enters folders.
+ * invalidate the whole index — slim quick scan marks stale dirs unreachable as the user
+ * re-enters folders (descendant keys stay until a later slim hit recovers them).
  *
  * `folders[relativeDir]` holds the lazy scanner’s [BrowseEntryRemote] rows, including
  * embedded [BrowseEntryRemote.FolderGallery.imageFileNames] and local
@@ -283,6 +283,7 @@ object NetworkFolderIndexCache {
                             put("presence", entry.presence.name)
                             entry.coverFileName?.let { put("coverFileName", it) }
                             if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
+                            if (entry.unreachable) put("unreachable", true)
                         }
                         is BrowseEntryRemote.FolderGallery -> {
                             put("kind", KIND_FOLDER_GALLERY)
@@ -336,6 +337,7 @@ object NetworkFolderIndexCache {
                         lastModifiedMs = item.optLong("lastModifiedMs"),
                         hidden = hidden,
                         virtual = virtual,
+                        unreachable = item.optBoolean("unreachable"),
                     )
                     KIND_FOLDER_GALLERY -> BrowseEntryRemote.FolderGallery(
                         name = name,

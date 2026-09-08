@@ -161,45 +161,49 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
     mode: BrowseContentMode,
     showHiddenFiles: Boolean = true,
     showVirtualGalleries: Boolean = true,
-): List<BrowseEntryRemote> = filter { e ->
-    if (!showHiddenFiles && e.hidden) return@filter false
-    if (!showVirtualGalleries && e.virtual) return@filter false
-    when (mode) {
-        BrowseContentMode.Galleries -> when (e) {
-            is BrowseEntryRemote.Directory -> {
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+): List<BrowseEntryRemote> {
+    val unreachable = cachedUnreachableDirectoryNames(this)
+    return filter { e ->
+        if (e.isUnderUnreachableFolder(unreachable)) return@filter false
+        if (!showHiddenFiles && e.hidden) return@filter false
+        if (!showVirtualGalleries && e.virtual) return@filter false
+        when (mode) {
+            BrowseContentMode.Galleries -> when (e) {
+                is BrowseEntryRemote.Directory -> {
+                    if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
+                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+                }
+                is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery -> true
+                is BrowseEntryRemote.VideoFile, is BrowseEntryRemote.RegularFile -> false
             }
-            is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery -> true
-            is BrowseEntryRemote.VideoFile, is BrowseEntryRemote.RegularFile -> false
-        }
-        BrowseContentMode.Media -> when (e) {
-            is BrowseEntryRemote.Directory -> {
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+            BrowseContentMode.Media -> when (e) {
+                is BrowseEntryRemote.Directory -> {
+                    if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
+                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+                }
+                is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery -> true
+                is BrowseEntryRemote.VideoFile -> true
+                is BrowseEntryRemote.RegularFile -> false
             }
-            is BrowseEntryRemote.FolderGallery, is BrowseEntryRemote.ArchiveGallery -> true
-            is BrowseEntryRemote.VideoFile -> true
-            is BrowseEntryRemote.RegularFile -> false
-        }
-        BrowseContentMode.Video -> when (e) {
-            is BrowseEntryRemote.Directory -> {
-                if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
-                e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+            BrowseContentMode.Video -> when (e) {
+                is BrowseEntryRemote.Directory -> {
+                    if (!showVirtualGalleries && e.presence == DirPresence.PromotedShell) return@filter true
+                    e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+                }
+                is BrowseEntryRemote.VideoFile -> true
+                is BrowseEntryRemote.FolderGallery,
+                is BrowseEntryRemote.ArchiveGallery,
+                is BrowseEntryRemote.RegularFile,
+                -> false
             }
-            is BrowseEntryRemote.VideoFile -> true
-            is BrowseEntryRemote.FolderGallery,
-            is BrowseEntryRemote.ArchiveGallery,
-            is BrowseEntryRemote.RegularFile,
-            -> false
-        }
-        BrowseContentMode.Folder -> when (e) {
-            is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
-            is BrowseEntryRemote.ArchiveGallery,
-            is BrowseEntryRemote.RegularFile,
-            -> true
-            is BrowseEntryRemote.VideoFile -> !e.virtual
-            is BrowseEntryRemote.FolderGallery -> false
+            BrowseContentMode.Folder -> when (e) {
+                is BrowseEntryRemote.Directory -> e.presence.visibleIn(mode, e.hasGallery, e.hasVideo)
+                is BrowseEntryRemote.ArchiveGallery,
+                is BrowseEntryRemote.RegularFile,
+                -> true
+                is BrowseEntryRemote.VideoFile -> !e.virtual
+                is BrowseEntryRemote.FolderGallery -> false
+            }
         }
     }
 }

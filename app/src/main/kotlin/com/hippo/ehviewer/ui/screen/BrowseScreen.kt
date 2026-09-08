@@ -19,13 +19,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.InlineTextContent
-import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Cloud
@@ -34,7 +31,6 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -57,12 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.Placeholder
-import androidx.compose.ui.text.PlaceholderVerticalAlign
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewModelScope
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_FOLDER
 import com.ehviewer.core.database.model.LIBRARY_ROOT_ROLE_LIBRARY
@@ -72,7 +63,6 @@ import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.i18n.R
-import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.util.launch
@@ -98,7 +88,9 @@ import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.easytier.EasyTierDialog
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
+import com.hippo.ehviewer.ui.main.BrowseFavoriteTitle
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.util.LocalNetworkPermission
 import com.hippo.ehviewer.util.ensureLocalNetworkPermission
 import com.hippo.ehviewer.webdav.WebDavClient
@@ -125,7 +117,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     // Survive NavHost dispose/restore (enter a source → back).
     // collectAsState(initial=empty) remounted empty lists for one frame and
     // coerced LazyList scroll to top; VM-held state keeps last data + scroll.
-    val listState = rememberInVM { LazyListState() }
+    val listState = rememberInVM { LazyGridState() }
     val gridState = rememberInVM { LazyGridState() }
     val roots by rememberInVM {
         mutableStateOf(emptyList<LibraryRootEntity>()).also { state ->
@@ -596,7 +588,8 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 }
             }
         } else {
-            FastScrollLazyColumn(
+            FastScrollLazyVerticalGrid(
+                columns = GalleryGridDefaults.listColumns(),
                 state = listState,
                 modifier = Modifier
                     .padding(padding)
@@ -604,14 +597,17 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     .fillMaxSize(),
             ) {
                 if (smbSources.isNotEmpty() || webDavSources.isNotEmpty()) {
-                    item(key = "hdr-net") {
+                    item(
+                        key = "hdr-net",
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
                         BrowseSectionHeader(stringResource(R.string.network))
                     }
                     items(smbSources, key = { "s-${it.id}" }) { source ->
                         val favorited = BrowseFavorites.smbKey(source.id) in favoriteKeys
                         ListItem(
                             headlineContent = {
-                                BrowseSourceTitle(name = source.displayName, favorited = favorited)
+                                BrowseFavoriteTitle(name = source.displayName, favorited = favorited)
                             },
                             supportingContent = { Text(smbSubtitle(source)) },
                             leadingContent = {
@@ -631,7 +627,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         val favorited = BrowseFavorites.webDavKey(source.id) in favoriteKeys
                         ListItem(
                             headlineContent = {
-                                BrowseSourceTitle(name = source.displayName, favorited = favorited)
+                                BrowseFavoriteTitle(name = source.displayName, favorited = favorited)
                             },
                             supportingContent = { Text(webDavSubtitle(source)) },
                             leadingContent = {
@@ -649,14 +645,17 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     }
                 }
                 if (roots.isNotEmpty()) {
-                    item(key = "hdr-fol") {
+                    item(
+                        key = "hdr-fol",
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
                         BrowseSectionHeader(stringResource(R.string.folder))
                     }
                     items(roots, key = { "r-${it.id}" }) { root ->
                         val favorited = BrowseFavorites.localKey(root.id) in favoriteKeys
                         ListItem(
                             headlineContent = {
-                                BrowseSourceTitle(name = root.displayName, favorited = favorited)
+                                BrowseFavoriteTitle(name = root.displayName, favorited = favorited)
                             },
                             supportingContent = {
                                 Text(
@@ -753,51 +752,6 @@ private fun smbSubtitle(source: SmbSourceEntity): String = buildString {
 }
 
 @Composable
-private fun BrowseSourceTitle(
-    name: String,
-    favorited: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    // Inline star so PlaceholderVerticalAlign.TextCenter lines up with the
-    // glyph center (not the taller line box that Row+CenterVertically uses).
-    if (!favorited) {
-        Text(name, modifier = modifier, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        return
-    }
-    val starId = "fav"
-    val starTint = MaterialTheme.colorScheme.primary
-    val starCd = stringResource(R.string.favourite)
-    val text = buildAnnotatedString {
-        append(name)
-        append('\u00A0') // thin gap before star; stays with the last word
-        appendInlineContent(starId, "[★]")
-    }
-    val inline = mapOf(
-        starId to InlineTextContent(
-            Placeholder(
-                width = 18.sp,
-                height = 18.sp,
-                placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
-            ),
-        ) {
-            Icon(
-                Icons.Default.Star,
-                contentDescription = starCd,
-                modifier = Modifier.fillMaxSize(),
-                tint = starTint,
-            )
-        },
-    )
-    Text(
-        text = text,
-        modifier = modifier,
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
-        inlineContent = inline,
-    )
-}
-
-@Composable
 private fun BrowseRootCard(
     title: String,
     subtitle: String,
@@ -813,7 +767,7 @@ private fun BrowseRootCard(
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             icon()
-            BrowseSourceTitle(name = title, favorited = favorited)
+            BrowseFavoriteTitle(name = title, favorited = favorited)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 2)
         }
     }
