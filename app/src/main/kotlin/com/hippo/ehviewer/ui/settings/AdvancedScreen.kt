@@ -268,6 +268,14 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                     }
                 }
             }
+            val webDavListing = Settings.webDavConcurrentListing.asMutableState()
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.settings_webdav_concurrent_listing),
+                summary = stringResource(id = R.string.settings_webdav_concurrent_listing_summary, webDavListing.value),
+                entry = com.hippo.ehviewer.R.array.webdav_concurrent_listing_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.webdav_concurrent_listing_entry_values,
+                state = webDavListing,
+            )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_advanced_webdav_insecure_tls),
                 state = Settings.webDavInsecureTls.asMutableState(),

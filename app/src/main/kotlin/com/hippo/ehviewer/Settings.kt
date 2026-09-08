@@ -439,6 +439,11 @@ object Settings : DataStorePreferences(null) {
     val enableQuic = boolPref("enable_quic", true)
 
     /**
+     * WebDAV subfolder PROPFIND / zip-root fan-out (Advanced). Default: 5.
+     */
+    val webDavConcurrentListing = intPref("webdav_concurrent_listing", 5)
+
+    /**
      * WebDAV: trust any TLS certificate / skip hostname verify (self-signed LAN HTTPS).
      * Default off — normal system trust for https://. Rebuilds [WebDavClient] on change.
      * Cleartext http:// is controlled by network security config (explicit http URLs only).

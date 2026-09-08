@@ -135,6 +135,8 @@
     <string name="webdav_archive_not_supported">暫不支援透過 WebDAV 開啟壓縮檔</string>
     <string name="webdav_listing_error">列出目錄失敗：%s</string>
     <string name="webdav_anonymous">匿名（無需登入）</string>
+    <string name="settings_webdav_concurrent_listing">WebDAV 並行列表</string>
+    <string name="settings_webdav_concurrent_listing_summary">最多同時探測 %s 個子資料夾</string>
     <string name="settings_advanced_webdav_insecure_tls">允許 WebDAV 不安全 TLS</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">信任任意憑證（自簽 HTTPS）。</string>
     <string name="settings_advanced_unlimit_foreground_service">不限制前景服務</string>

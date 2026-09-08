@@ -29,7 +29,6 @@ import com.hippo.ehviewer.library.preferCompleteFolderGalleries
 import com.hippo.ehviewer.library.replaceSlimDirectFilesFromLive
 import com.hippo.ehviewer.library.selectCachedFolderListing
 import com.hippo.ehviewer.library.withHiddenFlags
-import com.hippo.ehviewer.smb.SmbGateway
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
@@ -47,14 +46,16 @@ import kotlinx.coroutines.withTimeout
 /**
  * Browse listing for WebDAV: PROPFIND + parallel peeks + same remote classify as SMB.
  * No TCP session pool — HTTP multiplexes; peek fan-out follows Advanced →
- * SMB concurrent connections ([SmbGateway.maxConnectionsPerHost]).
+ * WebDAV concurrent listing ([Settings.webDavConcurrentListing]).
  */
 object WebDavGateway {
     /** Deep peek/classify budget after shallow paint; keep shallow on expiry. */
     private const val DEEP_CLASSIFY_TIMEOUT_MS = 180_000L
 
-    /** Subfolder PROPFIND / zip-root fan-out. Same cap as Advanced → SMB concurrent connections. */
-    private fun peekConcurrency(): Int = SmbGateway.maxConnectionsPerHost().coerceAtLeast(1)
+    private const val PEEK_CONCURRENCY_MAX = 7
+
+    /** Subfolder PROPFIND / zip-root fan-out. Advanced → WebDAV concurrent listing. */
+    private fun peekConcurrency(): Int = Settings.webDavConcurrentListing.value.coerceIn(3, PEEK_CONCURRENCY_MAX)
 
     fun sourceConfigKey(source: WebDavSourceEntity): String = "${source.id}|${source.baseUrl}|${source.pathPrefix}|${source.username}"
 
