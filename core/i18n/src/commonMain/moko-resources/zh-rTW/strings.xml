@@ -74,6 +74,10 @@
     <string name="settings_browse_folder_thumbs_summary">在瀏覽中為資料夾顯示封面縮圖（共用圖庫封面的縮圖快取）。</string>
     <string name="settings_use_media3_player">使用 Media3 播放器</string>
     <string name="settings_use_media3_player_summary">開啟：單擊應用內播放，長按外部應用。關閉：單擊外部應用，長按應用內播放。</string>
+    <string name="settings_open_html_with_browser">用瀏覽器開啟 HTML</string>
+    <string name="settings_open_html_with_browser_summary">開啟：單擊 HTML 會啟動本機 HTTP 並開啟預設瀏覽器（提供整個資料夾）。關閉：當作一般檔案開啟。</string>
+    <string name="settings_open_html_in_incognito">無痕模式開啟</string>
+    <string name="settings_open_html_in_incognito_summary">開啟：單擊 HTML 用 Chrome 無痕分頁開啟。關閉：使用預設瀏覽器。</string>
     <string name="settings_default_video_player">預設影片播放器</string>
     <string name="settings_default_video_player_always_ask">每次詢問</string>
     <string name="settings_default_video_player_none">找不到影片應用</string>
@@ -90,6 +94,9 @@
     <string name="browse_play">播放</string>
     <string name="browse_external_player">外部播放器</string>
     <string name="browse_copy_url">複製連結</string>
+    <string name="browse_open_in_browser">用瀏覽器開啟</string>
+    <string name="browse_open_in_incognito">無痕模式開啟</string>
+    <string name="browse_chrome_incognito_failed">無痕瀏覽需要 Chrome 136 或更高版本</string>
     <string name="browse_menu_favorites_on_top">收藏置頂</string>
     <string name="browse_menu_page_count">頁數</string>
     <string name="browse_menu_reading_progress">閱讀進度</string>

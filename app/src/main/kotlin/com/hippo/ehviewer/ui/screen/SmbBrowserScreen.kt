@@ -88,6 +88,7 @@ import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterRemoteByContentMode
 import com.hippo.ehviewer.library.filterRemoteSmallGalleries
 import com.hippo.ehviewer.library.isDocumentFileName
+import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
@@ -968,7 +969,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
-    fun openExternalFile(fileName: String) {
+    fun openExternalFile(fileName: String, asFile: Boolean = false, usePreferredPlayer: Boolean = true) {
         val src = source ?: return
         // fileName may be multi-segment for promoted single-video rows (`S/leaf/movie.mp4`).
         // Launch with the real basename so MIME and player title stay correct.
@@ -985,7 +986,59 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     remoteRelativeFile = remote,
                     displayName = actualName,
                     mimeType = mimeTypeForFileName(actualName),
+                    asFile = asFile,
+                    usePreferredPlayer = usePreferredPlayer,
                 )
+            } catch (e: Throwable) {
+                if (e.isZipMemberTooLarge()) return@launchIO
+                snackbar(
+                    context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
+    fun openSmbHtml(fileName: String, incognito: Boolean) {
+        val src = source ?: return
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        launchIO {
+            recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordSmbFile(src.id, remote, title = actualName)
+            try {
+                OpenFileExternally.openSmbHtml(
+                    context = context,
+                    sourceId = src.id,
+                    remoteRelativeFile = remote,
+                    displayName = actualName,
+                    mimeType = mimeTypeForFileName(actualName),
+                    incognito = incognito,
+                )
+            } catch (e: Throwable) {
+                if (e.isZipMemberTooLarge()) return@launchIO
+                snackbar(
+                    context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
+    fun copySmbHtmlUrl(fileName: String) {
+        val src = source ?: return
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        launchIO {
+            try {
+                val uri = OpenFileExternally.ensureSmbHtmlHttpUri(
+                    context = context,
+                    sourceId = src.id,
+                    remoteRelativeFile = remote,
+                    displayName = actualName,
+                    mimeType = mimeTypeForFileName(actualName),
+                )
+                withUIContext {
+                    with(context) { addTextToClipboard(uri.toString()) }
+                }
             } catch (e: Throwable) {
                 if (e.isZipMemberTooLarge()) return@launchIO
                 snackbar(
@@ -1176,15 +1229,26 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onPlay = { playVideo(fileName) },
         onExternalPlayer = { openExternalFile(fileName) },
         onCopyUrl = { copySmbVideoUrl(fileName) },
-        onOpenWith = { openExternalFile(fileName) },
+        onOpenWith = { openExternalFile(fileName, usePreferredPlayer = false) },
         onUnsupported = { notSupportedAction() },
     )
 
-    fun fileOverflow(fileName: String) = BrowseOverflowActions(
-        kind = BrowseOverflowKind.Common,
-        onOpenWith = { openExternalFile(fileName) },
-        onUnsupported = { notSupportedAction() },
-    )
+    fun fileOverflow(fileName: String) = if (isHtmlFileName(fileName)) {
+        BrowseOverflowActions(
+            kind = BrowseOverflowKind.Webpage,
+            onOpenInBrowser = { openSmbHtml(fileName, incognito = false) },
+            onOpenIncognito = { openSmbHtml(fileName, incognito = true) },
+            onCopyUrl = { copySmbHtmlUrl(fileName) },
+            onOpenWith = { openExternalFile(fileName, asFile = true) },
+            onUnsupported = { notSupportedAction() },
+        )
+    } else {
+        BrowseOverflowActions(
+            kind = BrowseOverflowKind.Common,
+            onOpenWith = { openExternalFile(fileName) },
+            onUnsupported = { notSupportedAction() },
+        )
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),

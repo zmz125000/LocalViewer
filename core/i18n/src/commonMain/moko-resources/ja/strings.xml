@@ -84,6 +84,13 @@
     <string name="browse_play">再生</string>
     <string name="browse_external_player">外部プレーヤー</string>
     <string name="browse_copy_url">URL をコピー</string>
+    <string name="browse_open_in_browser">ブラウザで開く</string>
+    <string name="browse_open_in_incognito">シークレットで開く</string>
+    <string name="browse_chrome_incognito_failed">シークレット閲覧には Chrome 136 以降が必要です</string>
+    <string name="settings_open_html_with_browser">HTML をブラウザで開く</string>
+    <string name="settings_open_html_with_browser_summary">オン：HTML をタップするとフォルダをローカル HTTP で公開し、標準ブラウザで開きます。オフ：通常のファイルとして開きます。</string>
+    <string name="settings_open_html_in_incognito">シークレットで開く</string>
+    <string name="settings_open_html_in_incognito_summary">オン：HTML をタップすると Chrome のシークレットタブで開きます。オフ：標準ブラウザ。</string>
     <string name="browse_menu_favorites_on_top">お気に入りを先頭に</string>
     <string name="browse_menu_page_count">ページ数</string>
     <string name="browse_menu_reading_progress">読書進捗</string>

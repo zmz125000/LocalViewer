@@ -183,6 +183,12 @@ fun isBrowseVideoEntry(name: String, mimeType: String? = null): Boolean {
     return mime.startsWith("video/") && !isSampleVideoFileName(name)
 }
 
+/** HTML / XHTML webpage files opened via loopback HTTP + browser. */
+fun isHtmlFileName(name: String): Boolean {
+    val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false
+    return ext == "html" || ext == "htm" || ext == "xhtml"
+}
+
 /**
  * Unknown / no-extension files. `application/octet-stream` matches almost no
  * ACTION_VIEW filters, so the system picker shows the wrong category (or none).
@@ -239,7 +245,10 @@ private fun extraMimeForExtension(ext: String): String? = when (ext) {
     "csv" -> "text/csv"
     "json" -> "application/json"
     "xml" -> "application/xml"
-    "html", "htm" -> "text/html"
+    "html", "htm", "xhtml" -> "text/html"
+    "css" -> "text/css"
+    "js", "mjs" -> "text/javascript"
+    "wasm" -> "application/wasm"
     "rtf" -> "application/rtf"
     "srt" -> "application/x-subrip"
     "ass", "ssa" -> "text/x-ssa"

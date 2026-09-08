@@ -2568,6 +2568,34 @@ object SmbGateway {
         }
     }
 
+    /**
+     * Flat child files and directories (one [share.list], no classify / peeks).
+     * Used by HTML loopback HTTP to serve a folder tree.
+     */
+    suspend fun listChildFilesAndDirs(
+        source: SmbSourceEntity,
+        password: String,
+        relativeDir: String,
+    ): Pair<List<String>, List<String>> = withIOContext {
+        if (isServerRootSource(source) && relativeDir.isBlank()) {
+            return@withIOContext emptyList<String>() to emptyList()
+        }
+        if (ZipAsDirListing.splitZipBrowsePath(relativeDir) != null) {
+            return@withIOContext emptyList<String>() to emptyList()
+        }
+        val loc = resolveLocation(source, relativeDir)
+        withShare(source, password, ShareOp.List, loc.share) { share ->
+            val children = listChildren(share, loc.pathInShare)
+            val files = ArrayList<String>()
+            val dirs = ArrayList<String>()
+            for (child in children) {
+                if (isProtectedSystemName(child.name) || child.name.startsWith('.')) continue
+                if (child.isDirectory) dirs += child.name else files += child.name
+            }
+            files.sorted() to dirs.sorted()
+        }
+    }
+
     private fun listChildrenLenient(share: DiskShare, path: String): List<RemoteChild> = try {
         listChildren(share, path)
     } catch (e: SMBApiException) {

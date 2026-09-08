@@ -70,6 +70,10 @@
     <string name="settings_browse_folder_thumbs_summary">在浏览中为文件夹显示封面缩略图（复用画廊封面的缩略图缓存）。</string>
     <string name="settings_use_media3_player">使用 Media3 播放器</string>
     <string name="settings_use_media3_player_summary">开启：单击应用内播放，长按外部应用。关闭：单击外部应用，长按应用内播放。</string>
+    <string name="settings_open_html_with_browser">用浏览器打开 HTML</string>
+    <string name="settings_open_html_with_browser_summary">开启：单击 HTML 会启动本地 HTTP 并打开默认浏览器（提供整个文件夹）。关闭：当作普通文件打开。</string>
+    <string name="settings_open_html_in_incognito">无痕模式打开</string>
+    <string name="settings_open_html_in_incognito_summary">开启：单击 HTML 用 Chrome 无痕标签打开。关闭：使用默认浏览器。</string>
     <string name="settings_default_video_player">默认视频播放器</string>
     <string name="settings_default_video_player_always_ask">每次询问</string>
     <string name="settings_default_video_player_none">未找到视频应用</string>
@@ -86,6 +90,9 @@
     <string name="browse_play">播放</string>
     <string name="browse_external_player">外部播放器</string>
     <string name="browse_copy_url">复制链接</string>
+    <string name="browse_open_in_browser">用浏览器打开</string>
+    <string name="browse_open_in_incognito">无痕模式打开</string>
+    <string name="browse_chrome_incognito_failed">无痕浏览需要 Chrome 136 或更高版本</string>
     <string name="browse_menu_favorites_on_top">收藏置顶</string>
     <string name="browse_menu_page_count">页数</string>
     <string name="browse_menu_reading_progress">阅读进度</string>
