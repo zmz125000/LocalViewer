@@ -135,6 +135,7 @@ import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
 import com.hippo.ehviewer.ui.destinations.SettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
+import com.hippo.ehviewer.ui.main.BrowseSaveSnackbars
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.settings.showNewVersion
 import com.hippo.ehviewer.ui.tools.DialogState
@@ -484,14 +485,16 @@ class MainActivity : AppCompatActivity() {
                 Scaffold(
                     contentWindowInsets = WindowInsets(0, 0, 0, 0),
                     snackbarHost = {
-                        SnackbarHost(
-                            hostState = snackbarState,
+                        Column(
                             modifier = Modifier.onGloballyPositioned {
                                 with(density) {
                                     snackbarFabPadding = it.size.height.toDp()
                                 }
                             },
-                        )
+                        ) {
+                            BrowseSaveSnackbars()
+                            SnackbarHost(hostState = snackbarState)
+                        }
                     },
                     bottomBar = {
                         AnimatedVisibility(

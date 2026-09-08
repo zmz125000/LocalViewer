@@ -97,6 +97,10 @@
     <string name="browse_open_in_browser">用瀏覽器開啟</string>
     <string name="browse_open_in_incognito">無痕模式開啟</string>
     <string name="browse_chrome_incognito_failed">無痕瀏覽需要 Chrome 136 或更高版本</string>
+    <string name="browse_saved">已儲存至 %s</string>
+    <string name="browse_save_failed">無法儲存</string>
+    <string name="browse_saving_progress">%1$s  %2$s  %3$s/s</string>
+    <string name="browse_save_cancelled">已取消</string>
     <string name="browse_menu_favorites_on_top">收藏置頂</string>
     <string name="browse_menu_page_count">頁數</string>
     <string name="browse_menu_reading_progress">閱讀進度</string>
