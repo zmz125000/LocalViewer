@@ -103,16 +103,16 @@ class SlimDirectFilesRefreshTest {
             RemoteChild(name = "notes.txt", isDirectory = false, size = 2L),
         )
         val plan = planRemoteDirectorySlimRefresh(cached, live)
-        assertTrue("tree.zip" in plan.removedDirectoryNames)
+        assertTrue("tree.zip" in plan.unreachableDirectoryNames)
 
         val zipFiles = ZipAsDirListing.zipFileNames(live)
         assertEquals(setOf("tree.zip"), zipFiles)
-        val keptRemoved = plan.removedDirectoryNames - zipFiles
-        assertTrue(keptRemoved.isEmpty())
+        val keptUnreachable = plan.unreachableDirectoryNames - zipFiles
+        assertTrue(keptUnreachable.isEmpty())
 
         val merged = mergeRemoteDirectorySlimRefresh(
             cached,
-            RemoteDirectorySlimPlan(addedDirectories = emptyList(), removedDirectoryNames = keptRemoved),
+            RemoteDirectorySlimPlan(addedDirectories = emptyList(), unreachableDirectoryNames = keptUnreachable),
             emptyList(),
         )
         val liveForFiles = live.filterNot { it.name in zipFiles }

@@ -146,15 +146,12 @@ object WebDavGateway {
                         }
                         return presented
                     }
-                    val toKeep = if (refresh.entries != cached.entries ||
-                        refresh.removedDirectoryNames.isNotEmpty()
-                    ) {
+                    val toKeep = if (refresh.entries != cached.entries) {
                         NetworkFolderIndexCache.saveWebDav(
                             source.id,
                             configKey,
                             relativeDir,
                             refresh.entries,
-                            refresh.removedDirectoryNames,
                         )
                     } else {
                         refresh.entries
@@ -358,8 +355,11 @@ object WebDavGateway {
         } else {
             children.filterNot { it.name in zipFileNames }
         }
-        val zipAdjustedRemoved = plan.removedDirectoryNames - zipFileNames
-        val dirsUnchanged = plan.addedDirectories.isEmpty() && zipAdjustedRemoved.isEmpty()
+        val zipAdjustedUnreachable = plan.unreachableDirectoryNames - zipFileNames
+        val recovered = plan.recoveredDirectoryNames
+        val dirsUnchanged = plan.addedDirectories.isEmpty() &&
+            zipAdjustedUnreachable.isEmpty() &&
+            recovered.isEmpty()
         if (dirsUnchanged && deepHidden.isEmpty() && newZips.isEmpty()) {
             return SlimDirectoryRefresh(
                 entries = replaceSlimDirectFilesFromLive(cached, liveForFiles, dirName),
@@ -368,7 +368,9 @@ object WebDavGateway {
         }
         val effectivePlan = RemoteDirectorySlimPlan(
             addedDirectories = toClassify,
-            removedDirectoryNames = zipAdjustedRemoved + deepNames,
+            removedDirectoryNames = deepNames,
+            unreachableDirectoryNames = zipAdjustedUnreachable,
+            recoveredDirectoryNames = recovered,
         )
         val addedEntries = if (toClassify.isEmpty()) {
             emptyList()
@@ -382,12 +384,8 @@ object WebDavGateway {
         )
         return SlimDirectoryRefresh(
             entries = merged,
-            removedDirectoryNames = zipAdjustedRemoved,
-        ).also {
-            zipAdjustedRemoved.forEach { name ->
-                BrowseSession.invalidateWebDavRawChildren(source.id, joinRelative(relativeDir, name))
-            }
-        }
+            removedDirectoryNames = emptySet(),
+        )
     }
 
     private suspend fun classifyDirectoryChildren(

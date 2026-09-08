@@ -1890,15 +1890,12 @@ object SmbGateway {
                                 return@awaitListJob presented
                             }
                             // Successful slim marks this exact directory current (even if unchanged).
-                            val toKeep = if (refresh.entries != cached.entries ||
-                                refresh.removedDirectoryNames.isNotEmpty()
-                            ) {
+                            val toKeep = if (refresh.entries != cached.entries) {
                                 NetworkFolderIndexCache.saveSmb(
                                     source.id,
                                     configKey,
                                     relativeDir,
                                     refresh.entries,
-                                    refresh.removedDirectoryNames,
                                 )
                             } else {
                                 refresh.entries
@@ -2171,7 +2168,7 @@ object SmbGateway {
             val addedEntries = shareRootEntries(plan.addedDirectories.map { it.name })
             return SlimDirectoryRefresh(
                 entries = mergeRemoteDirectorySlimRefresh(cached, plan, addedEntries),
-                removedDirectoryNames = plan.removedDirectoryNames,
+                removedDirectoryNames = emptySet(),
             )
         }
         val children = listChildrenForRelativeDir(source, password, relativeDir)
@@ -2208,8 +2205,11 @@ object SmbGateway {
         } else {
             children.filterNot { it.name in zipFileNames }
         }
-        val zipAdjustedRemoved = plan.removedDirectoryNames - zipFileNames
-        val dirsUnchanged = plan.addedDirectories.isEmpty() && zipAdjustedRemoved.isEmpty()
+        val zipAdjustedUnreachable = plan.unreachableDirectoryNames - zipFileNames
+        val recovered = plan.recoveredDirectoryNames
+        val dirsUnchanged = plan.addedDirectories.isEmpty() &&
+            zipAdjustedUnreachable.isEmpty() &&
+            recovered.isEmpty()
         if (dirsUnchanged && deepHidden.isEmpty() && newZips.isEmpty()) {
             // Dirs same — still patch surviving file size/mtime; add/drop direct files.
             return SlimDirectoryRefresh(
@@ -2219,7 +2219,9 @@ object SmbGateway {
         }
         val effectivePlan = RemoteDirectorySlimPlan(
             addedDirectories = toClassify,
-            removedDirectoryNames = zipAdjustedRemoved + deepNames,
+            removedDirectoryNames = deepNames,
+            unreachableDirectoryNames = zipAdjustedUnreachable,
+            recoveredDirectoryNames = recovered,
         )
         val addedEntries = if (toClassify.isEmpty()) {
             emptyList()
@@ -2233,12 +2235,8 @@ object SmbGateway {
         )
         return SlimDirectoryRefresh(
             entries = merged,
-            removedDirectoryNames = zipAdjustedRemoved,
-        ).also {
-            zipAdjustedRemoved.forEach { name ->
-                BrowseSession.invalidateSmbRawChildren(source.id, joinRelative(relativeDir, name))
-            }
-        }
+            removedDirectoryNames = emptySet(),
+        )
     }
 
     private suspend fun classifyDirectoryChildren(

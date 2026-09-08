@@ -236,15 +236,12 @@ object LocalFolderListing {
                             }
                             return@withContext materialized
                         }
-                        val toKeep = if (refresh.entries != filledRemote ||
-                            refresh.removedDirectoryNames.isNotEmpty()
-                        ) {
+                        val toKeep = if (refresh.entries != filledRemote) {
                             NetworkFolderIndexCache.saveLocal(
                                 rootId,
                                 configKey,
                                 relativeDir,
                                 refresh.entries,
-                                refresh.removedDirectoryNames,
                             )
                         } else {
                             refresh.entries
@@ -399,8 +396,11 @@ object LocalFolderListing {
         } else {
             children.filterNot { it.name in zipFileNames }
         }
-        val zipAdjustedRemoved = plan.removedDirectoryNames - zipFileNames
-        val dirsUnchanged = plan.addedDirectories.isEmpty() && zipAdjustedRemoved.isEmpty()
+        val zipAdjustedUnreachable = plan.unreachableDirectoryNames - zipFileNames
+        val recovered = plan.recoveredDirectoryNames
+        val dirsUnchanged = plan.addedDirectories.isEmpty() &&
+            zipAdjustedUnreachable.isEmpty() &&
+            recovered.isEmpty()
         if (dirsUnchanged && deepHidden.isEmpty() && newZips.isEmpty()) {
             // Dirs same — still patch surviving file size/mtime; add/drop direct files.
             // Zip-as-dir files are excluded so slim does not re-add ArchiveGallery rows.
@@ -413,10 +413,13 @@ object LocalFolderListing {
             )
         }
         // Drop shallow hidden shells (via removedDirectoryNames) then re-add full classify.
+        // Missing live dirs are marked unreachable — descendant index keys stay.
         // Keep cached zip-as-dir Directory/FolderGallery rows: live listing still has the file.
         val effectivePlan = RemoteDirectorySlimPlan(
             addedDirectories = toClassify,
-            removedDirectoryNames = zipAdjustedRemoved + deepNames,
+            removedDirectoryNames = deepNames,
+            unreachableDirectoryNames = zipAdjustedUnreachable,
+            recoveredDirectoryNames = recovered,
         )
         val addedEntries = if (toClassify.isEmpty()) {
             emptyList()
@@ -428,12 +431,9 @@ object LocalFolderListing {
             liveForFiles,
             dirName,
         )
-        zipAdjustedRemoved.forEach { name ->
-            BrowseSession.invalidateLocalRawChildren(BrowseSession.pathKey(dir / name))
-        }
         return SlimRefresh(
             entries = withLocalArchivePageCounts(dir, merged),
-            removedDirectoryNames = zipAdjustedRemoved,
+            removedDirectoryNames = emptySet(),
         )
     }
 
@@ -678,7 +678,9 @@ fun materializeLocalEntries(
 ): List<BrowseEntry> {
     // Re-apply zip-as-dir preference so RAM/disk cache respects the current toggle.
     val entries = ZipAsDirListing.applyZipAsDirPreferenceLocal(remote, baseDir)
-    return entries.map { entry ->
+    val unreachable = cachedUnreachableDirectoryNames(entries)
+    return entries.mapNotNull { entry ->
+        if (entry.isUnderUnreachableFolder(unreachable)) return@mapNotNull null
         when (entry) {
             is BrowseEntryRemote.Directory -> {
                 val zipSeg = if (Settings.browseZipAsDir.value) {
