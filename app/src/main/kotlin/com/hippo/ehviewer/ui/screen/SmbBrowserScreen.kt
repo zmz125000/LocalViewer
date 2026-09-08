@@ -128,6 +128,7 @@ import com.hippo.ehviewer.ui.main.BrowseFolderSection
 import com.hippo.ehviewer.ui.main.BrowseOverflowActions
 import com.hippo.ehviewer.ui.main.BrowseOverflowKind
 import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
+import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
@@ -1201,10 +1202,28 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    fun saveSmbFile(fileName: String, displayName: String = fileName.substringAfterLast('/')) {
+        val src = source ?: return
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        launchIO {
+            with(context) { BrowseSaveAs.saveSmbFile(src.id, remote, displayName) }
+        }
+    }
+
+    fun saveSmbFolder(relativeName: String, displayName: String = relativeName.substringAfterLast('/')) {
+        val src = source ?: return
+        val remote = if (relativeDir.isEmpty()) relativeName else SmbGateway.joinRelativePath(relativeDir, relativeName)
+        val name = displayName.ifEmpty { relativeName.substringAfterLast('/') }
+        launchIO {
+            with(context) { BrowseSaveAs.saveSmbFolder(src.id, remote, name) }
+        }
+    }
+
     fun dirOverflow(name: String, coverFileName: String? = null) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(name),
         onFavorite = { toggleDirFavorite(name, coverFileName) },
+        onSaveAs = { saveSmbFolder(name) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1214,6 +1233,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onFavorite = { toggleDirFavorite(entry.relativeName, entry.coverFileName) },
         onRead = { openFolderGallery(entry) },
         onPhotoGrid = { openFolderGalleryPhotoGrid(entry) },
+        onSaveAs = { saveSmbFolder(entry.relativeName, entry.name) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1221,6 +1241,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         kind = BrowseOverflowKind.Gallery,
         onRead = { openArchive(entry) },
         onOpenWith = { openArchiveInOtherApp(entry) },
+        onSaveAs = {
+            saveSmbFile(
+                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                entry.fileName.substringAfterLast('/'),
+            )
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1230,6 +1256,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onExternalPlayer = { openExternalFile(fileName) },
         onCopyUrl = { copySmbVideoUrl(fileName) },
         onOpenWith = { openExternalFile(fileName, usePreferredPlayer = false) },
+        onSaveAs = { saveSmbFile(fileName) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1240,12 +1267,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             onOpenIncognito = { openSmbHtml(fileName, incognito = true) },
             onCopyUrl = { copySmbHtmlUrl(fileName) },
             onOpenWith = { openExternalFile(fileName, asFile = true) },
+            onSaveAs = { saveSmbFile(fileName) },
             onUnsupported = { notSupportedAction() },
         )
     } else {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Common,
             onOpenWith = { openExternalFile(fileName) },
+            onSaveAs = { saveSmbFile(fileName) },
             onUnsupported = { notSupportedAction() },
         )
     }

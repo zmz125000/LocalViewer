@@ -123,6 +123,7 @@ import com.hippo.ehviewer.ui.main.BrowseFolderSection
 import com.hippo.ehviewer.ui.main.BrowseOverflowActions
 import com.hippo.ehviewer.ui.main.BrowseOverflowKind
 import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
+import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
@@ -1076,10 +1077,28 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    fun saveWebDavFile(fileName: String, displayName: String = fileName.substringAfterLast('/')) {
+        val src = source ?: return
+        val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
+        launchIO {
+            with(context) { BrowseSaveAs.saveWebDavFile(src.id, remote, displayName) }
+        }
+    }
+
+    fun saveWebDavFolder(relativeName: String, displayName: String = relativeName.substringAfterLast('/')) {
+        val src = source ?: return
+        val remote = if (relativeDir.isEmpty()) relativeName else WebDavGateway.joinRelative(relativeDir, relativeName)
+        val name = displayName.ifEmpty { relativeName.substringAfterLast('/') }
+        launchIO {
+            with(context) { BrowseSaveAs.saveWebDavFolder(src.id, remote, name) }
+        }
+    }
+
     fun dirOverflow(name: String, coverFileName: String? = null) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(name),
         onFavorite = { toggleDirFavorite(name, coverFileName) },
+        onSaveAs = { saveWebDavFolder(name) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1089,6 +1108,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onFavorite = { toggleDirFavorite(entry.relativeName, entry.coverFileName) },
         onRead = { openFolderGallery(entry) },
         onPhotoGrid = { openFolderGalleryPhotoGrid(entry) },
+        onSaveAs = { saveWebDavFolder(entry.relativeName, entry.name) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1096,6 +1116,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         kind = BrowseOverflowKind.Gallery,
         onRead = { openArchive(entry) },
         onOpenWith = { openArchiveInOtherApp(entry) },
+        onSaveAs = {
+            saveWebDavFile(
+                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                entry.fileName.substringAfterLast('/'),
+            )
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1105,6 +1131,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onExternalPlayer = { openExternalFile(fileName) },
         onCopyUrl = { copyWebDavVideoUrl(fileName) },
         onOpenWith = { openExternalFile(fileName, usePreferredPlayer = false) },
+        onSaveAs = { saveWebDavFile(fileName) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1115,12 +1142,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             onOpenIncognito = { openWebDavHtml(fileName, incognito = true) },
             onCopyUrl = { copyWebDavHtmlUrl(fileName) },
             onOpenWith = { openExternalFile(fileName, asFile = true) },
+            onSaveAs = { saveWebDavFile(fileName) },
             onUnsupported = { notSupportedAction() },
         )
     } else {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Common,
             onOpenWith = { openExternalFile(fileName) },
+            onSaveAs = { saveWebDavFile(fileName) },
             onUnsupported = { notSupportedAction() },
         )
     }

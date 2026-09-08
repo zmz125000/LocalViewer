@@ -87,6 +87,8 @@
     <string name="browse_open_in_browser">ブラウザで開く</string>
     <string name="browse_open_in_incognito">シークレットで開く</string>
     <string name="browse_chrome_incognito_failed">シークレット閲覧には Chrome 136 以降が必要です</string>
+    <string name="browse_saved">「%s」に保存しました</string>
+    <string name="browse_save_failed">保存できませんでした</string>
     <string name="settings_open_html_with_browser">HTML をブラウザで開く</string>
     <string name="settings_open_html_with_browser_summary">オン：HTML をタップするとフォルダをローカル HTTP で公開し、標準ブラウザで開きます。オフ：通常のファイルとして開きます。</string>
     <string name="settings_open_html_in_incognito">シークレットで開く</string>

@@ -97,6 +97,8 @@
     <string name="browse_open_in_browser">Open in browser</string>
     <string name="browse_open_in_incognito">Open in incognito</string>
     <string name="browse_chrome_incognito_failed">Private browsing needs Chrome 136 or later</string>
+    <string name="browse_saved">Saved to %s</string>
+    <string name="browse_save_failed">Couldn\'t save</string>
     <string name="browse_menu_favorites_on_top">Favorites on top</string>
     <string name="browse_menu_page_count">Page count</string>
     <string name="browse_menu_reading_progress">Reading progress</string>
