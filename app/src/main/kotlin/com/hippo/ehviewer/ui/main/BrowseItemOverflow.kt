@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.main
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -9,7 +10,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -17,7 +18,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 
@@ -60,17 +63,26 @@ fun BrowseItemOverflowButton(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val grid = placement == BrowseOverflowPlacement.GridBottomEnd
-    Box(modifier = if (grid) modifier.padding(4.dp) else modifier) {
-        IconButton(
-            onClick = { expanded = true },
-            modifier = if (grid) Modifier.size(16.dp) else Modifier,
-        ) {
-            Icon(
-                imageVector = Icons.Default.MoreVert,
-                contentDescription = stringResource(R.string.browse_item_more),
-                modifier = if (grid) Modifier.size(18.dp) else Modifier,
-            )
+    val more = stringResource(R.string.browse_item_more)
+    val iconSize = with(LocalDensity.current) {
+        val style = if (grid) {
+            MaterialTheme.typography.labelMedium
+        } else {
+            // ListItem headline uses titleMedium.
+            MaterialTheme.typography.titleMedium
         }
+        style.fontSize.toDp()
+    }
+    Box(modifier) {
+        Icon(
+            imageVector = Icons.Default.MoreVert,
+            contentDescription = more,
+            modifier = Modifier
+                .then(if (grid) Modifier.padding(start = 4.dp) else Modifier)
+                .size(iconSize)
+                .clickable(role = Role.Button, onClick = { expanded = true }),
+            tint = MaterialTheme.colorScheme.onSurface,
+        )
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },

@@ -598,19 +598,30 @@ fun BrowseDirectoryGridItem(
                             tint = MaterialTheme.colorScheme.primary,
                         )
                     }
-                    Text(
-                        text = name,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Start,
+                    Row(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
                             .padding(horizontal = namePadH)
                             .padding(top = 4.dp, bottom = namePadBottom),
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier.weight(1f),
+                        )
+                        overflow?.let { actions ->
+                            BrowseItemOverflowButton(
+                                actions = actions,
+                                placement = BrowseOverflowPlacement.GridBottomEnd,
+                            )
+                        }
+                    }
                 }
             } else {
                 // Classic icon + caption (no cover, or folder thumbs off).
@@ -640,25 +651,29 @@ fun BrowseDirectoryGridItem(
                             )
                         }
                     }
-                    Text(
-                        text = name,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Start,
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = namePadH)
                             .padding(bottom = namePadBottom),
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier.weight(1f),
+                        )
+                        overflow?.let { actions ->
+                            BrowseItemOverflowButton(
+                                actions = actions,
+                                placement = BrowseOverflowPlacement.GridBottomEnd,
+                            )
+                        }
+                    }
                 }
-            }
-            overflow?.let { actions ->
-                BrowseItemOverflowButton(
-                    actions = actions,
-                    placement = BrowseOverflowPlacement.GridBottomEnd,
-                    modifier = Modifier.align(Alignment.BottomEnd),
-                )
             }
         }
     }
@@ -958,16 +973,9 @@ private fun BrowseGridCell(
                     .clip(ShapeDefaults.Medium),
             ) {
                 thumb()
-                overflow?.let { actions ->
-                    BrowseItemOverflowButton(
-                        actions = actions,
-                        placement = BrowseOverflowPlacement.GridBottomEnd,
-                        modifier = Modifier.align(Alignment.BottomEnd),
-                    )
-                }
             }
             // Fixed height so 1-line and 2-line names share the same cell size;
-            // text sits on the bottom of the band.
+            // text sits on the bottom of the band; overflow sits in the label on the right.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -975,14 +983,27 @@ private fun BrowseGridCell(
                     .padding(horizontal = namePadH),
                 contentAlignment = Alignment.BottomStart,
             ) {
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Start,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = namePadBottom),
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = namePadBottom),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.weight(1f),
+                    )
+                    overflow?.let { actions ->
+                        BrowseItemOverflowButton(
+                            actions = actions,
+                            placement = BrowseOverflowPlacement.GridBottomEnd,
+                        )
+                    }
+                }
             }
         }
     }
