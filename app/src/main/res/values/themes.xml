@@ -30,18 +30,6 @@
         <item name="android:dialogTheme">@style/DialogTheme</item>
     </style>
 
-    <!-- Launch: no logo splash. Translucent window + system translucent enter = fade in. -->
-    <style name="AppTheme.Main" parent="AppTheme">
-        <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:windowAnimationStyle">@android:style/Animation.Translucent</item>
-        <!-- Android 12+ still draws a starting splash; keep it empty (no launcher icon). -->
-        <item name="android:windowSplashScreenBackground" tools:targetApi="s">@android:color/transparent</item>
-        <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="s">@drawable/splash_transparent</item>
-        <item name="android:windowSplashScreenIconBackgroundColor" tools:targetApi="s">@android:color/transparent</item>
-        <item name="android:windowSplashScreenAnimationDuration" tools:targetApi="s">0</item>
-    </style>
-
     <!-- Apply blur on Android 12 above -->
     <style name="DialogTheme" parent="Theme.AppCompat.DayNight.Dialog">
         <item name="android:windowBlurBehindEnabled" tools:targetApi="s">true</item>
