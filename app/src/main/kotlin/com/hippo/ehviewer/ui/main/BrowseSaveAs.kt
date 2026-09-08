@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
+import android.provider.DocumentsContract.Document
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.SnackbarHostState
 import com.ehviewer.core.database.model.SmbSourceEntity
@@ -71,7 +72,7 @@ object BrowseSaveAs {
     suspend fun saveLocalFolder(dir: Path, displayName: String, relativeName: String) = saveCatching {
         val destRoot = pickTreeDir() ?: return@saveCatching
         val dest = uniqueChildDir(destRoot, displayName.ifEmpty { "folder" })
-        val name = dest.name
+        val name = displayName.ifEmpty { dest.name }
         val ok = string(R.string.browse_saved, dest.toUri().displayPath ?: dest.toString())
         BrowseSaveTransfers.start(name, ok) { counter ->
             withIOContext {
@@ -114,7 +115,7 @@ object BrowseSaveAs {
         val destRoot = pickTreeDir() ?: return@saveCatching
         val dest = uniqueChildDir(destRoot, displayName.ifEmpty { "folder" })
         val ok = string(R.string.browse_saved, dest.toUri().displayPath ?: dest.toString())
-        BrowseSaveTransfers.start(dest.name, ok) { counter ->
+        BrowseSaveTransfers.start(displayName.ifEmpty { dest.name }, ok) { counter ->
             withIOContext { copySmbDir(source, password, relativeDir, dest, counter) }
         }
     }
@@ -144,7 +145,7 @@ object BrowseSaveAs {
         val destRoot = pickTreeDir() ?: return@saveCatching
         val dest = uniqueChildDir(destRoot, displayName.ifEmpty { "folder" })
         val ok = string(R.string.browse_saved, dest.toUri().displayPath ?: dest.toString())
-        BrowseSaveTransfers.start(dest.name, ok) { counter ->
+        BrowseSaveTransfers.start(displayName.ifEmpty { dest.name }, ok) { counter ->
             withIOContext { copyWebDavDir(source, password, relativeDir, dest, counter) }
         }
     }
@@ -211,27 +212,29 @@ object BrowseSaveAs {
             coroutineContext.ensureActive()
             val name = child.name
             if (skipChildName(name)) continue
-            val target = dest / name
             if (child.isDirectory) {
-                target.mkdirs()
-                copyLocalDir(child, target, counter)
+                copyLocalDir(child, dest.createChildDir(name), counter)
             } else {
-                copyCounted(child, target, counter)
+                dest.createChildFile(name).use { out ->
+                    copyCounted(child, out, counter)
+                }
             }
         }
     }
 
     private suspend fun copyCounted(src: Path, dest: Path, counter: ByteCounter) {
+        dest.sink().use { output -> copyCounted(src, output, counter) }
+    }
+
+    private suspend fun copyCounted(src: Path, dest: OutputStream, counter: ByteCounter) {
         ParcelFileDescriptor.AutoCloseInputStream(src.openFileDescriptor("r")).use { input ->
-            dest.sink().use { output ->
-                val buf = ByteArray(256 * 1024)
-                while (true) {
-                    coroutineContext.ensureActive()
-                    val n = input.read(buf)
-                    if (n <= 0) break
-                    output.write(buf, 0, n)
-                    counter.add(n)
-                }
+            val buf = ByteArray(256 * 1024)
+            while (true) {
+                coroutineContext.ensureActive()
+                val n = input.read(buf)
+                if (n <= 0) break
+                dest.write(buf, 0, n)
+                counter.add(n)
             }
         }
     }
@@ -273,16 +276,20 @@ object BrowseSaveAs {
             coroutineContext.ensureActive()
             if (skipChildName(name)) continue
             val remote = SmbGateway.joinRelativePath(relativeDir, name)
-            dest.childFile(name).sink().use { out ->
+            dest.createChildFile(name).use { out ->
                 writeSmbFile(source, password, remote, CountingOutputStream(out, counter))
             }
         }
         for (name in dirs) {
             coroutineContext.ensureActive()
             if (skipChildName(name)) continue
-            val childDest = dest / name
-            childDest.mkdirs()
-            copySmbDir(source, password, SmbGateway.joinRelativePath(relativeDir, name), childDest, counter)
+            copySmbDir(
+                source,
+                password,
+                SmbGateway.joinRelativePath(relativeDir, name),
+                dest.createChildDir(name),
+                counter,
+            )
         }
     }
 
@@ -323,20 +330,18 @@ object BrowseSaveAs {
             coroutineContext.ensureActive()
             if (skipChildName(name)) continue
             val remote = WebDavGateway.joinRelative(relativeDir, name)
-            dest.childFile(name).sink().use { out ->
+            dest.createChildFile(name).use { out ->
                 writeWebDavFile(source, password, remote, CountingOutputStream(out, counter))
             }
         }
         for (name in dirs) {
             coroutineContext.ensureActive()
             if (skipChildName(name)) continue
-            val childDest = dest / name
-            childDest.mkdirs()
             copyWebDavDir(
                 source,
                 password,
                 WebDavGateway.joinRelative(relativeDir, name),
-                childDest,
+                dest.createChildDir(name),
                 counter,
             )
         }
@@ -365,6 +370,8 @@ object BrowseSaveAs {
     ) {
         val prefix = ZipAsDirListing.normalizePrefix(innerPrefix)
         val prefixSlash = if (prefix.isEmpty()) "" else "$prefix/"
+        val dirs = HashMap<String, Path>()
+        dirs[""] = dest
         for (entry in cd.entries) {
             active.ensureActive()
             if (entry.isEncrypted || entry.isDirectory) continue
@@ -384,33 +391,68 @@ object BrowseSaveAs {
             if (rel.isEmpty()) continue
             val first = rel.substringBefore('/')
             if (skipChildName(first)) continue
-            val destFile = rel.split('/').fold(dest) { p, seg ->
-                p / FileUtils.sanitizeFilename(seg)
+            val segs = rel.split('/').map { FileUtils.sanitizeFilename(it) }.filter { it.isNotEmpty() }
+            if (segs.isEmpty()) continue
+            var dir = dest
+            var prefixKey = ""
+            for (seg in segs.dropLast(1)) {
+                prefixKey = if (prefixKey.isEmpty()) seg else "$prefixKey/$seg"
+                dir = dirs.getOrPut(prefixKey) { dir.createChildDir(seg) }
             }
-            destFile.parent?.mkdirs()
             val bytes = cd.extract(entry, SAVE_EXTRACT_MAX_BYTES)
                 ?: error("Cannot extract $rel")
-            destFile.sink().use { it.write(bytes) }
+            dir.createChildFile(segs.last()).use { it.write(bytes) }
             counter.add(bytes.size)
         }
     }
 
     private fun uniqueChildDir(parent: Path, name: String): Path {
         val base = FileUtils.sanitizeFilename(name)
-        var dest = parent / base
-        if (dest.exists()) {
-            var i = 2
-            while (true) {
-                dest = parent / FileUtils.sanitizeFilename("$base ($i)")
-                if (!dest.exists()) break
-                i++
+        if (parent.toString().startsWith('/')) {
+            var dest = parent / base
+            if (dest.exists()) {
+                var i = 2
+                while (true) {
+                    dest = parent / FileUtils.sanitizeFilename("$base ($i)")
+                    if (!dest.exists()) break
+                    i++
+                }
             }
+            dest.mkdirs()
+            return dest
         }
-        dest.mkdirs()
-        return dest
+        return parent.createChildDir(base)
     }
 
-    private fun Path.childFile(name: String): Path = this / FileUtils.sanitizeFilename(name)
+    private fun Path.createChildDir(name: String): Path {
+        val dirname = FileUtils.sanitizeFilename(name)
+        if (toString().startsWith('/')) {
+            val child = this / dirname
+            child.mkdirs()
+            return child
+        }
+        return createSafChild(dirname, Document.MIME_TYPE_DIR)
+    }
+
+    private fun Path.createChildFile(name: String): OutputStream {
+        val filename = FileUtils.sanitizeFilename(name)
+        if (toString().startsWith('/')) {
+            return (this / filename).sink()
+        }
+        return createSafChild(filename, createDocumentMime(filename)).toUri().openOutputStream()
+    }
+
+    /** MediaStore document IDs are opaque; use the Uri createDocument returns. */
+    private fun Path.createSafChild(displayName: String, mimeType: String): Path {
+        val resolver = splitties.init.appCtx.contentResolver
+        val parentUri = toUri()
+        val created = DocumentsContract.createDocument(resolver, parentUri, mimeType, displayName)
+            ?: error("Cannot create $displayName")
+        val child = runCatching {
+            DocumentsContract.buildDocumentUriUsingTree(parentUri, DocumentsContract.getDocumentId(created))
+        }.getOrElse { created }
+        return child.toOkioPath()
+    }
 
     private fun Path.sink(): OutputStream = ParcelFileDescriptor.AutoCloseOutputStream(openFileDescriptor("wt"))
 
