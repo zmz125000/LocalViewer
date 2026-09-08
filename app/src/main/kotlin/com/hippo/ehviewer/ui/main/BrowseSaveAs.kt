@@ -14,7 +14,6 @@ import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.list
 import com.ehviewer.core.files.mkdirs
 import com.ehviewer.core.files.openFileDescriptor
-import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
@@ -39,6 +38,7 @@ import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.OutputStream
+import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
@@ -60,8 +60,10 @@ object BrowseSaveAs {
     context(_: SnackbarHostState, ctx: Context)
     suspend fun saveLocalFile(path: Path, displayName: String) = saveCatching {
         pickCreateFile(displayName)?.let { uri ->
-            withIOContext { writeLocalFile(path, uri) }
-            snackbar(string(R.string.browse_saved, uri.displayPath ?: displayName))
+            val ok = string(R.string.browse_saved, uri.displayPath ?: displayName)
+            BrowseSaveTransfers.start(displayName, ok) { counter ->
+                withIOContext { writeLocalFile(path, uri, counter) }
+            }
         }
     }
 
@@ -69,30 +71,36 @@ object BrowseSaveAs {
     suspend fun saveLocalFolder(dir: Path, displayName: String, relativeName: String) = saveCatching {
         val destRoot = pickTreeDir() ?: return@saveCatching
         val dest = uniqueChildDir(destRoot, displayName.ifEmpty { "folder" })
-        withIOContext {
-            val zipSeg = ZipAsDirListing.zipFileSegment(relativeName, displayName)
-            if (zipSeg != null) {
-                val inner = ZipAsDirListing.zipInnerPrefix(relativeName)
-                withLocalZipCentralDirectory(dir) { cd ->
-                    copyZipFolder(cd, inner, dest)
-                } ?: error("Cannot read ZIP")
-            } else {
-                copyLocalDir(dir, dest)
+        val name = dest.name
+        val ok = string(R.string.browse_saved, dest.toUri().displayPath ?: dest.toString())
+        BrowseSaveTransfers.start(name, ok) { counter ->
+            withIOContext {
+                val zipSeg = ZipAsDirListing.zipFileSegment(relativeName, displayName)
+                if (zipSeg != null) {
+                    val inner = ZipAsDirListing.zipInnerPrefix(relativeName)
+                    val active = coroutineContext
+                    withLocalZipCentralDirectory(dir) { cd ->
+                        copyZipFolder(cd, inner, dest, counter, active)
+                    } ?: error("Cannot read ZIP")
+                } else {
+                    copyLocalDir(dir, dest, counter)
+                }
             }
         }
-        snackbar(string(R.string.browse_saved, dest.toUri().displayPath ?: dest.toString()))
     }
 
     context(_: SnackbarHostState, ctx: Context)
     suspend fun saveSmbFile(sourceId: Long, relativeFile: String, displayName: String) = saveCatching {
         val (source, password) = smbCreds(sourceId)
         pickCreateFile(displayName)?.let { uri ->
-            withIOContext {
-                ctx.contentResolver.openOutputStream(uri)?.use { out ->
-                    writeSmbFile(source, password, relativeFile, out)
-                } ?: error("Cannot write destination")
+            val ok = string(R.string.browse_saved, uri.displayPath ?: displayName)
+            BrowseSaveTransfers.start(displayName, ok) { counter ->
+                withIOContext {
+                    ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                        writeSmbFile(source, password, relativeFile, CountingOutputStream(out, counter))
+                    } ?: error("Cannot write destination")
+                }
             }
-            snackbar(string(R.string.browse_saved, uri.displayPath ?: displayName))
         }
     }
 
@@ -105,20 +113,24 @@ object BrowseSaveAs {
         val (source, password) = smbCreds(sourceId)
         val destRoot = pickTreeDir() ?: return@saveCatching
         val dest = uniqueChildDir(destRoot, displayName.ifEmpty { "folder" })
-        withIOContext { copySmbDir(source, password, relativeDir, dest) }
-        snackbar(string(R.string.browse_saved, dest.toUri().displayPath ?: dest.toString()))
+        val ok = string(R.string.browse_saved, dest.toUri().displayPath ?: dest.toString())
+        BrowseSaveTransfers.start(dest.name, ok) { counter ->
+            withIOContext { copySmbDir(source, password, relativeDir, dest, counter) }
+        }
     }
 
     context(_: SnackbarHostState, ctx: Context)
     suspend fun saveWebDavFile(sourceId: Long, relativeFile: String, displayName: String) = saveCatching {
         val (source, password) = webDavCreds(sourceId)
         pickCreateFile(displayName)?.let { uri ->
-            withIOContext {
-                ctx.contentResolver.openOutputStream(uri)?.use { out ->
-                    writeWebDavFile(source, password, relativeFile, out)
-                } ?: error("Cannot write destination")
+            val ok = string(R.string.browse_saved, uri.displayPath ?: displayName)
+            BrowseSaveTransfers.start(displayName, ok) { counter ->
+                withIOContext {
+                    ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                        writeWebDavFile(source, password, relativeFile, CountingOutputStream(out, counter))
+                    } ?: error("Cannot write destination")
+                }
             }
-            snackbar(string(R.string.browse_saved, uri.displayPath ?: displayName))
         }
     }
 
@@ -131,8 +143,10 @@ object BrowseSaveAs {
         val (source, password) = webDavCreds(sourceId)
         val destRoot = pickTreeDir() ?: return@saveCatching
         val dest = uniqueChildDir(destRoot, displayName.ifEmpty { "folder" })
-        withIOContext { copyWebDavDir(source, password, relativeDir, dest) }
-        snackbar(string(R.string.browse_saved, dest.toUri().displayPath ?: dest.toString()))
+        val ok = string(R.string.browse_saved, dest.toUri().displayPath ?: dest.toString())
+        BrowseSaveTransfers.start(dest.name, ok) { counter ->
+            withIOContext { copyWebDavDir(source, password, relativeDir, dest, counter) }
+        }
     }
 
     context(_: SnackbarHostState, _: Context)
@@ -178,7 +192,7 @@ object BrowseSaveAs {
         return path
     }
 
-    private fun writeLocalFile(path: Path, dest: Uri) {
+    private suspend fun writeLocalFile(path: Path, dest: Uri, counter: ByteCounter) {
         ZipPaths.parse(path)?.let { (zipAbs, member) ->
             val bytes = withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
                 val entry = cd.find(member) ?: error("Missing ZIP member $member")
@@ -186,21 +200,38 @@ object BrowseSaveAs {
                     ?: error("Cannot extract $member")
             } ?: error("Cannot read ZIP")
             dest.openOutputStream().use { it.write(bytes) }
+            counter.add(bytes.size)
             return
         }
-        path sendTo dest.toOkioPath()
+        copyCounted(path, dest.toOkioPath(), counter)
     }
 
-    private fun copyLocalDir(src: Path, dest: Path) {
+    private suspend fun copyLocalDir(src: Path, dest: Path, counter: ByteCounter) {
         for (child in src.list()) {
+            coroutineContext.ensureActive()
             val name = child.name
             if (skipChildName(name)) continue
             val target = dest / name
             if (child.isDirectory) {
                 target.mkdirs()
-                copyLocalDir(child, target)
+                copyLocalDir(child, target, counter)
             } else {
-                child sendTo target
+                copyCounted(child, target, counter)
+            }
+        }
+    }
+
+    private suspend fun copyCounted(src: Path, dest: Path, counter: ByteCounter) {
+        ParcelFileDescriptor.AutoCloseInputStream(src.openFileDescriptor("r")).use { input ->
+            dest.sink().use { output ->
+                val buf = ByteArray(256 * 1024)
+                while (true) {
+                    coroutineContext.ensureActive()
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    output.write(buf, 0, n)
+                    counter.add(n)
+                }
             }
         }
     }
@@ -227,12 +258,13 @@ object BrowseSaveAs {
         password: String,
         relativeDir: String,
         dest: Path,
+        counter: ByteCounter,
     ) {
         coroutineContext.ensureActive()
         ZipAsDirListing.splitZipBrowsePath(relativeDir)?.let { (zipRel, inner) ->
             SmbArchiveByteSource(source, password, zipRel, pipeline = false, yieldable = true).use { src ->
                 val cd = ZipCentralDirectory.open(src) ?: error("Cannot read ZIP")
-                copyZipFolder(cd, inner, dest)
+                copyZipFolder(cd, inner, dest, counter, coroutineContext)
             }
             return
         }
@@ -242,7 +274,7 @@ object BrowseSaveAs {
             if (skipChildName(name)) continue
             val remote = SmbGateway.joinRelativePath(relativeDir, name)
             dest.childFile(name).sink().use { out ->
-                writeSmbFile(source, password, remote, out)
+                writeSmbFile(source, password, remote, CountingOutputStream(out, counter))
             }
         }
         for (name in dirs) {
@@ -250,7 +282,7 @@ object BrowseSaveAs {
             if (skipChildName(name)) continue
             val childDest = dest / name
             childDest.mkdirs()
-            copySmbDir(source, password, SmbGateway.joinRelativePath(relativeDir, name), childDest)
+            copySmbDir(source, password, SmbGateway.joinRelativePath(relativeDir, name), childDest, counter)
         }
     }
 
@@ -276,12 +308,13 @@ object BrowseSaveAs {
         password: String,
         relativeDir: String,
         dest: Path,
+        counter: ByteCounter,
     ) {
         coroutineContext.ensureActive()
         ZipAsDirListing.splitZipBrowsePath(relativeDir)?.let { (zipRel, inner) ->
             WebDavArchiveByteSource(source, password, zipRel, pipeline = false).use { src ->
                 val cd = ZipCentralDirectory.open(src) ?: error("Cannot read ZIP")
-                copyZipFolder(cd, inner, dest)
+                copyZipFolder(cd, inner, dest, counter, coroutineContext)
             }
             return
         }
@@ -291,7 +324,7 @@ object BrowseSaveAs {
             if (skipChildName(name)) continue
             val remote = WebDavGateway.joinRelative(relativeDir, name)
             dest.childFile(name).sink().use { out ->
-                writeWebDavFile(source, password, remote, out)
+                writeWebDavFile(source, password, remote, CountingOutputStream(out, counter))
             }
         }
         for (name in dirs) {
@@ -304,6 +337,7 @@ object BrowseSaveAs {
                 password,
                 WebDavGateway.joinRelative(relativeDir, name),
                 childDest,
+                counter,
             )
         }
     }
@@ -322,10 +356,17 @@ object BrowseSaveAs {
         }
     }
 
-    private fun copyZipFolder(cd: ZipCentralDirectory, innerPrefix: String, dest: Path) {
+    private fun copyZipFolder(
+        cd: ZipCentralDirectory,
+        innerPrefix: String,
+        dest: Path,
+        counter: ByteCounter,
+        active: CoroutineContext,
+    ) {
         val prefix = ZipAsDirListing.normalizePrefix(innerPrefix)
         val prefixSlash = if (prefix.isEmpty()) "" else "$prefix/"
         for (entry in cd.entries) {
+            active.ensureActive()
             if (entry.isEncrypted || entry.isDirectory) continue
             val name = entry.name.replace('\\', '/').trimStart('/')
             if (name.isEmpty() || name == "." || name == ".." ||
@@ -350,6 +391,7 @@ object BrowseSaveAs {
             val bytes = cd.extract(entry, SAVE_EXTRACT_MAX_BYTES)
                 ?: error("Cannot extract $rel")
             destFile.sink().use { it.write(bytes) }
+            counter.add(bytes.size)
         }
     }
 

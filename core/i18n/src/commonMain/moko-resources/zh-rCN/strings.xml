@@ -95,6 +95,8 @@
     <string name="browse_chrome_incognito_failed">无痕浏览需要 Chrome 136 或更高版本</string>
     <string name="browse_saved">已保存至 %s</string>
     <string name="browse_save_failed">无法保存</string>
+    <string name="browse_saving_progress">%1$s  %2$s  %3$s/s</string>
+    <string name="browse_save_cancelled">已取消</string>
     <string name="browse_menu_favorites_on_top">收藏置顶</string>
     <string name="browse_menu_page_count">页数</string>
     <string name="browse_menu_reading_progress">阅读进度</string>
