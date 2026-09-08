@@ -120,6 +120,7 @@ import com.hippo.ehviewer.ui.main.BrowseFolderSection
 import com.hippo.ehviewer.ui.main.BrowseOverflowActions
 import com.hippo.ehviewer.ui.main.BrowseOverflowKind
 import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
+import com.hippo.ehviewer.ui.main.BrowseSaveAs
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
@@ -1245,10 +1246,21 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    fun saveLocalFile(path: okio.Path) {
+        val name = ZipPaths.memberLeafName(path.toString()) ?: path.name
+        launchIO { with(context) { BrowseSaveAs.saveLocalFile(path, name) } }
+    }
+
+    fun saveLocalFolder(dir: okio.Path, displayName: String, relativeName: String) {
+        val name = relativeName.substringAfterLast('/').ifEmpty { displayName }
+        launchIO { with(context) { BrowseSaveAs.saveLocalFolder(dir, name, relativeName) } }
+    }
+
     fun dirOverflow(dir: BrowseEntry.Directory) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(dir),
         onFavorite = { toggleDirFavorite(dir) },
+        onSaveAs = { saveLocalFolder(dir.path, dir.name, dir.relativeName) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1258,6 +1270,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onFavorite = { toggleFolderGalleryFavorite(entry) },
         onRead = { openFolderGallery(entry) },
         onPhotoGrid = { openFolderGalleryPhotoGrid(entry) },
+        onSaveAs = { saveLocalFolder(entry.path, entry.name, entry.relativeName) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1265,6 +1278,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         kind = BrowseOverflowKind.Gallery,
         onRead = { openArchive(entry) },
         onOpenWith = { openArchiveInOtherApp(entry) },
+        onSaveAs = { saveLocalFile(entry.path) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1274,6 +1288,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onExternalPlayer = { openExternalFile(path) },
         onCopyUrl = { copyLocalVideoUrl(path) },
         onOpenWith = { openExternalFile(path, usePreferredPlayer = false) },
+        onSaveAs = { saveLocalFile(path) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1284,12 +1299,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             onOpenIncognito = { openLocalHtml(path, incognito = true) },
             onCopyUrl = { copyLocalHtmlUrl(path) },
             onOpenWith = { openExternalFile(path, asFile = true) },
+            onSaveAs = { saveLocalFile(path) },
             onUnsupported = { notSupportedAction() },
         )
     } else {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Common,
             onOpenWith = { openExternalFile(path) },
+            onSaveAs = { saveLocalFile(path) },
             onUnsupported = { notSupportedAction() },
         )
     }

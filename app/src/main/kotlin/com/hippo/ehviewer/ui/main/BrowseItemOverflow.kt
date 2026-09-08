@@ -44,7 +44,7 @@ data class BrowseOverflowActions(
     val kind: BrowseOverflowKind = BrowseOverflowKind.Common,
     val favorited: Boolean = false,
     val onFavorite: (() -> Unit)? = null,
-    val onDownload: (() -> Unit)? = null,
+    val onSaveAs: (() -> Unit)? = null,
     val onShare: (() -> Unit)? = null,
     val onOpenWith: (() -> Unit)? = null,
     val onInfo: (() -> Unit)? = null,
@@ -158,8 +158,8 @@ fun BrowseItemOverflowButton(
                 onClick = { run(actions.onFavorite) },
             )
             DropdownMenuItem(
-                text = { Text(stringResource(R.string.download)) },
-                onClick = { run(actions.onDownload) },
+                text = { Text(stringResource(R.string.action_save_to)) },
+                onClick = { run(actions.onSaveAs) },
             )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.share)) },
