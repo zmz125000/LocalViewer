@@ -4,8 +4,11 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import androidx.browser.customtabs.CustomTabsClient
+import androidx.browser.customtabs.CustomTabsIntent
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.files.openFileDescriptor
@@ -1384,21 +1387,41 @@ object OpenFileExternally {
         }
     }
 
+    /**
+     * Chrome ignores third-party `EXTRA_OPEN_NEW_INCOGNITO_TAB`. The supported
+     * path is an Ephemeral Custom Tab (Chrome 136+): isolated cookies/cache, and
+     * the overflow “Open in Chrome” action opens a real Incognito tab.
+     */
     private fun launchChromeIncognito(context: Context, uri: Uri) {
-        for (pkg in CHROME_PACKAGES) {
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                addCategory(Intent.CATEGORY_BROWSABLE)
-                setPackage(pkg)
-                putExtra(CHROME_INCOGNITO_EXTRA, true)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            try {
-                context.startActivity(intent)
-                return
-            } catch (_: ActivityNotFoundException) {
-            }
+        val pkg = ephemeralChromePackage(context)
+            ?: error(context.getString(R.string.browse_chrome_incognito_failed))
+        val tabs = CustomTabsIntent.Builder()
+            .setEphemeralBrowsingEnabled(true)
+            .setShareState(CustomTabsIntent.SHARE_STATE_OFF)
+            .setUrlBarHidingEnabled(false)
+            .build()
+        tabs.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        tabs.intent.setPackage(pkg)
+        try {
+            tabs.launchUrl(context, uri)
+        } catch (e: ActivityNotFoundException) {
+            logcat("OpenFileExternally", e)
+            error(context.getString(R.string.browse_chrome_incognito_failed))
         }
-        error(context.getString(R.string.browse_chrome_incognito_failed))
+    }
+
+    private fun ephemeralChromePackage(context: Context): String? {
+        for (pkg in CHROME_PACKAGES) {
+            if (CustomTabsClient.isEphemeralBrowsingSupported(context, pkg)) return pkg
+        }
+        return CHROME_PACKAGES.firstOrNull { chromeInstalled(context, it) }
+    }
+
+    private fun chromeInstalled(context: Context, pkg: String): Boolean = try {
+        context.packageManager.getPackageInfo(pkg, 0)
+        true
+    } catch (_: PackageManager.NameNotFoundException) {
+        false
     }
 
     // endregion
@@ -1727,7 +1750,6 @@ object OpenFileExternally {
         "com.chrome.dev",
         "com.chrome.canary",
     )
-    private const val CHROME_INCOGNITO_EXTRA = "com.android.chrome.EXTRA_OPEN_NEW_INCOGNITO_TAB"
 
     /** Virtual playlist basename served from the HTTP session (not a real on-disk file). */
     private fun playlistNameFor(sessionId: String): String = ".localviewer-$sessionId.m3u8"

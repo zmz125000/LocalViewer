@@ -68,6 +68,14 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="video/x-matroska" />
         </intent>
+        <!-- Chrome Custom Tabs: detect ephemeral (private) browsing support. -->
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+        <package android:name="com.android.chrome" />
+        <package android:name="com.chrome.beta" />
+        <package android:name="com.chrome.dev" />
+        <package android:name="com.chrome.canary" />
     </queries>
 
     <application

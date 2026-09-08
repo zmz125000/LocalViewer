@@ -137,8 +137,9 @@ object Settings : DataStorePreferences(null) {
     val openHtmlWithBrowser = boolPref("open_html_with_browser", true)
 
     /**
-     * When true (default) and [openHtmlWithBrowser] is on: tap HTML opens Chrome
-     * incognito. Hidden in settings when HTML-in-browser is off.
+     * When true (default) and [openHtmlWithBrowser] is on: tap HTML opens an
+     * isolated Chrome Custom Tab (ephemeral / private, Chrome 136+). Hidden in
+     * settings when HTML-in-browser is off.
      */
     val openHtmlInIncognito = boolPref("open_html_in_incognito", true)
 
