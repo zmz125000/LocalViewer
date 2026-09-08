@@ -241,8 +241,7 @@ object WebDavClient {
 
     private val okHttpThreadSeq = AtomicInteger(0)
 
-    private fun buildClient(insecureTls: Boolean, http2: Boolean): HttpClient =
-        if (http2) buildOkHttpClient(insecureTls) else buildCioClient(insecureTls)
+    private fun buildClient(insecureTls: Boolean, http2: Boolean): HttpClient = if (http2) buildOkHttpClient(insecureTls) else buildCioClient(insecureTls)
 
     private fun buildCioClient(insecureTls: Boolean): HttpClient = HttpClient(CIO) {
         engine {

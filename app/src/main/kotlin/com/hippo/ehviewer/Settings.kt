@@ -436,6 +436,7 @@ object Settings : DataStorePreferences(null) {
     val saveCrashLog = boolPref("save_crash_log", false)
     val readCacheSize = intPref("read_cache_size_2", 640)
     val enableCronet = boolPref("enable_cronet", true)
+
     /** Cronet QUIC for the main app HTTP client. Stub for WebDAV (unused). */
     val enableQuic = boolPref("enable_quic", true)
 
