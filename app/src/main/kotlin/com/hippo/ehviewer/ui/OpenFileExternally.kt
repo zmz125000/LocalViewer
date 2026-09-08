@@ -802,7 +802,9 @@ object OpenFileExternally {
                         preferSequential = false,
                         pipeline = false,
                         stickySession = true,
-                        httpStickyPool = true,
+                        // Video: 2-slot HTTP sticky + beginVideoPlay (seek / next-file).
+                        // HTML/CSS/subs: dedicated sticky TCP, not the video generation.
+                        httpStickyPool = video,
                         knownSize = sizeBytes.takeIf { it > 0L } ?: -1L,
                         readahead = false,
                         videoPlay = video,
