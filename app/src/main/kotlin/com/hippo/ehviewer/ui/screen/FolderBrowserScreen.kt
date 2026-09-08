@@ -18,7 +18,6 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
@@ -61,7 +60,6 @@ import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
-import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
@@ -1262,7 +1260,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     if (roots.isEmpty()) {
                         BrowseEmptyHint(stringResource(R.string.folder_no_roots))
                     } else {
-                        FastScrollLazyColumn(Modifier.fillMaxSize()) {
+                        FastScrollLazyVerticalGrid(
+                            columns = GalleryGridDefaults.listColumns(),
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
                             items(roots, key = { it.id }) { root ->
                                 BrowseDirectoryRow(
                                     name = root.displayName,
@@ -1520,13 +1521,17 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             }
                         }
                     } else {
-                        val listState = rememberBrowseListState(pathKey, scrollLayoutKey)
-                        FastScrollLazyColumn(
+                        val listState = rememberBrowseGridState(pathKey, scrollLayoutKey)
+                        FastScrollLazyVerticalGrid(
+                            columns = GalleryGridDefaults.listColumns(),
                             state = listState,
                             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
                         ) {
                             if (dirs.isNotEmpty()) {
-                                item(key = "hdr-dirs") {
+                                item(
+                                    key = "hdr-dirs",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_directories),
                                         onClick = { toggleSection(BrowseFolderSection.Directories) },
@@ -1547,7 +1552,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 }
                             }
                             if (galleries.isNotEmpty()) {
-                                item(key = "hdr-gal") {
+                                item(
+                                    key = "hdr-gal",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_galleries),
                                         onClick = { toggleSection(BrowseFolderSection.Galleries) },
@@ -1594,7 +1602,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 }
                             }
                             if (videos.isNotEmpty()) {
-                                item(key = "hdr-vid") {
+                                item(
+                                    key = "hdr-vid",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_videos),
                                         onClick = { toggleSection(BrowseFolderSection.Videos) },
@@ -1619,7 +1630,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                 }
                             }
                             if (files.isNotEmpty()) {
-                                item(key = "hdr-files") {
+                                item(
+                                    key = "hdr-files",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_files),
                                         onClick = { toggleSection(BrowseFolderSection.Files) },

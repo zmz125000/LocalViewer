@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
@@ -58,7 +57,6 @@ import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
-import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.launch
@@ -1384,13 +1382,17 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                             }
                         }
                     } else {
-                        val listState = rememberSmbBrowseListState(sourceId, "dav|$dirKey", scrollLayoutKey)
-                        FastScrollLazyColumn(
+                        val listState = rememberSmbBrowseGridState(sourceId, "dav|$dirKey", scrollLayoutKey)
+                        FastScrollLazyVerticalGrid(
+                            columns = GalleryGridDefaults.listColumns(),
                             state = listState,
                             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
                         ) {
                             if (dirs.isNotEmpty()) {
-                                item(key = "hdr-dirs") {
+                                item(
+                                    key = "hdr-dirs",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_directories),
                                         onClick = { toggleSection(BrowseFolderSection.Directories) },
@@ -1415,7 +1417,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 }
                             }
                             if (galleries.isNotEmpty()) {
-                                item(key = "hdr-gal") {
+                                item(
+                                    key = "hdr-gal",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_galleries),
                                         onClick = { toggleSection(BrowseFolderSection.Galleries) },
@@ -1457,7 +1462,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 }
                             }
                             if (videos.isNotEmpty()) {
-                                item(key = "hdr-vid") {
+                                item(
+                                    key = "hdr-vid",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_videos),
                                         onClick = { toggleSection(BrowseFolderSection.Videos) },
@@ -1484,7 +1492,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                 }
                             }
                             if (files.isNotEmpty()) {
-                                item(key = "hdr-files") {
+                                item(
+                                    key = "hdr-files",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
                                     BrowseSectionHeader(
                                         stringResource(R.string.browse_files),
                                         onClick = { toggleSection(BrowseFolderSection.Files) },

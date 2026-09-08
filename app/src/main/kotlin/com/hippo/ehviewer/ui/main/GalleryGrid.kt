@@ -12,6 +12,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.ehviewer.core.ui.util.LocalWindowSizeClass
+import com.ehviewer.core.ui.util.isMediumWidthOrWider
 import com.hippo.ehviewer.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
@@ -37,6 +39,19 @@ object GalleryGridDefaults {
 
     @Composable
     fun columns(): GridCells = GridCells.Fixed(columnCount())
+
+    /**
+     * List-mode columns: one on compact (bottom nav), two when the Navigation rail
+     * is shown (medium+ width).
+     */
+    @Composable
+    fun listColumnCount(): Int {
+        val wide = LocalWindowSizeClass.current.isMediumWidthOrWider
+        return if (wide) 2 else 1
+    }
+
+    @Composable
+    fun listColumns(): GridCells = GridCells.Fixed(listColumnCount())
 
     @Composable
     fun margin(): Dp = dimensionResource(R.dimen.gallery_grid_margin)

@@ -19,11 +19,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
@@ -70,7 +69,6 @@ import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.i18n.R
-import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.util.launch
@@ -94,6 +92,7 @@ import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseEmptyHint
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
+import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.util.LocalNetworkPermission
 import com.hippo.ehviewer.util.ensureLocalNetworkPermission
 import com.hippo.ehviewer.webdav.WebDavClient
@@ -120,7 +119,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
     // Survive NavHost dispose/restore (enter a source → back).
     // collectAsState(initial=empty) remounted empty lists for one frame and
     // coerced LazyList scroll to top; VM-held state keeps last data + scroll.
-    val listState = rememberInVM { LazyListState() }
+    val listState = rememberInVM { LazyGridState() }
     val gridState = rememberInVM { LazyGridState() }
     val roots by rememberInVM {
         mutableStateOf(emptyList<LibraryRootEntity>()).also { state ->
@@ -578,7 +577,8 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                 }
             }
         } else {
-            FastScrollLazyColumn(
+            FastScrollLazyVerticalGrid(
+                columns = GalleryGridDefaults.listColumns(),
                 state = listState,
                 modifier = Modifier
                     .padding(padding)
@@ -586,7 +586,10 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     .fillMaxSize(),
             ) {
                 if (smbSources.isNotEmpty() || webDavSources.isNotEmpty()) {
-                    item(key = "hdr-net") {
+                    item(
+                        key = "hdr-net",
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
                         BrowseSectionHeader(stringResource(R.string.network))
                     }
                     items(smbSources, key = { "s-${it.id}" }) { source ->
@@ -631,7 +634,10 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     }
                 }
                 if (roots.isNotEmpty()) {
-                    item(key = "hdr-fol") {
+                    item(
+                        key = "hdr-fol",
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
                         BrowseSectionHeader(stringResource(R.string.folder))
                     }
                     items(roots, key = { "r-${it.id}" }) { root ->

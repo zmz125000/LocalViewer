@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.plus
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ClearAll
@@ -55,7 +53,6 @@ import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
-import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.icons.EhIcons
 import com.ehviewer.core.ui.icons.big.History
@@ -173,10 +170,15 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     val marginH = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_h)
     val marginV = dimensionResource(id = com.hippo.ehviewer.R.dimen.gallery_list_margin_v)
     val gridColumnCount = GalleryGridDefaults.columnCount()
-    // Collapsed: list max 10 / grid max two rows. Expanded: full dir pin list.
+    // Collapsed: list 5 rows (× columns on wide) / grid max two rows. Expanded: full dir pin list.
     var directoriesExpanded by rememberSaveable { mutableStateOf(false) }
-    val directoryCollapsedLimit = remember(listMode, gridColumnCount) {
-        if (listMode == 0) HISTORY_DIRECTORY_LIST_LIMIT else gridColumnCount * HISTORY_DIRECTORY_GRID_ROWS
+    val listColumnCount = GalleryGridDefaults.listColumnCount()
+    val directoryCollapsedLimit = remember(listMode, gridColumnCount, listColumnCount) {
+        if (listMode == 0) {
+            HISTORY_DIRECTORY_LIST_LIMIT * listColumnCount
+        } else {
+            gridColumnCount * HISTORY_DIRECTORY_GRID_ROWS
+        }
     }
     val canExpandDirectories = allDirectoryItems.size > directoryCollapsedLimit
     // Drop expanded state when there is nothing left to expand (filter / fewer pins).
@@ -830,13 +832,14 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
         }
 
         if (listMode == 0) {
-            val listState = rememberLazyListState()
+            val listState = rememberLazyGridState()
             // Match browse folder list: no extra horizontal marginH (ListItem inset only).
             val listPadding = PaddingValues(
                 top = paddingValues.calculateTopPadding() + marginV,
                 bottom = paddingValues.calculateBottomPadding() + marginV,
             )
-            FastScrollLazyColumn(
+            FastScrollLazyVerticalGrid(
+                columns = GalleryGridDefaults.listColumns(),
                 modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
                 state = listState,
                 contentPadding = listPadding,
@@ -863,7 +866,10 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     }
                     // Gap under dirs: tap toggles expand/collapse when there is overflow.
                     if (historyItems.isNotEmpty() || canExpandDirectories) {
-                        item(key = "dir-gap") {
+                        item(
+                            key = "dir-gap",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
                             HistoryDirectorySectionGap(
                                 tappable = canExpandDirectories,
                                 onToggle = { directoriesExpanded = !directoriesExpanded },
@@ -954,7 +960,7 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
     }
 }
 
-/** Max browse-dir pins shown in History list mode (collapsed). */
+/** Max browse-dir pins shown per column in History list mode (collapsed). */
 private const val HISTORY_DIRECTORY_LIST_LIMIT = 5
 
 /** Max rows of browse-dir pins shown in History grid mode (collapsed). */

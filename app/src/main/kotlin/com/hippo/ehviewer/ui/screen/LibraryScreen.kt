@@ -15,11 +15,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.plus
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Cloud
@@ -69,7 +67,6 @@ import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.ui.component.ElevatedCard
-import com.ehviewer.core.ui.component.FastScrollLazyColumn
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.ehviewer.core.ui.util.rememberInVM
 import com.ehviewer.core.util.launch
@@ -138,7 +135,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     // Survive NavHost dispose/restore (e.g. open favourite folder → back).
     // collectAsState(initial=empty) remounted an empty list for one frame and
     // coerced LazyList scroll to top; VM-held state keeps last data + scroll position.
-    val listState = rememberInVM { LazyListState() }
+    val listState = rememberInVM { LazyGridState() }
     val gridState = rememberInVM { LazyGridState() }
     var searchBarOffsetY by rememberInVM { mutableIntStateOf(0) }
     // Always keep the full library stream; filter client-side as the user types.
@@ -456,13 +453,17 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     top = paddingValues.calculateTopPadding() + marginV,
                     bottom = paddingValues.calculateBottomPadding() + marginV,
                 )
-                FastScrollLazyColumn(
+                FastScrollLazyVerticalGrid(
+                    columns = GalleryGridDefaults.listColumns(),
                     modifier = Modifier.nestedScroll(searchBarConnection).fillMaxSize(),
                     state = listState,
                     contentPadding = listPadding,
                 ) {
                     if (showFavorites) {
-                        item(key = "fav-hdr") {
+                        item(
+                            key = "fav-hdr",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
                             // Extra list margin so section titles are not flush to the screen edge
                             // (rows stay edge-aligned with folder ListItems).
                             BrowseSectionHeader(
@@ -488,7 +489,10 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             }
                         }
                         if (galleries.isNotEmpty()) {
-                            item(key = "gal-hdr") {
+                            item(
+                                key = "gal-hdr",
+                                span = { GridItemSpan(maxLineSpan) },
+                            ) {
                                 BrowseSectionHeader(
                                     stringResource(R.string.library),
                                     modifier = Modifier.padding(horizontal = marginH),
