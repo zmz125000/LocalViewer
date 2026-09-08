@@ -147,6 +147,11 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.settings_use_media3_player),
                 state = Settings.useMedia3Player.asMutableState(),
             )
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_open_html_with_browser),
+                summary = stringResource(id = R.string.settings_open_html_with_browser_summary),
+                state = Settings.openHtmlWithBrowser.asMutableState(),
+            )
             var defaultVideoPlayer by Settings.defaultVideoPlayerComponent.asMutableState()
             val alwaysAsk = stringResource(id = R.string.settings_default_video_player_always_ask)
             val noVideoApps = stringResource(id = R.string.settings_default_video_player_none)

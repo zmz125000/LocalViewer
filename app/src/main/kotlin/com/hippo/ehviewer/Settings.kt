@@ -130,6 +130,13 @@ object Settings : DataStorePreferences(null) {
     val useMedia3Player = boolPref("use_media3_player", true)
 
     /**
+     * When true (default): tap HTML → loopback HTTP + default browser, serving the
+     * parent directory (relative CSS/JS/images and subdir listings).
+     * When false: tap treats HTML as a regular file (current open-with / streamdoc).
+     */
+    val openHtmlWithBrowser = boolPref("open_html_with_browser", true)
+
+    /**
      * Preferred external video player as flattened [android.content.ComponentName]
      * (`package/class`). Empty = system chooser. Settings → General.
      */

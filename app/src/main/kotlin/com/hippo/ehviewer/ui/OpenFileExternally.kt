@@ -23,6 +23,7 @@ import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isBrowseVideoFileName
+import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
@@ -49,6 +50,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import okio.Path.Companion.toPath
 
 /**
@@ -98,7 +100,12 @@ object OpenFileExternally {
         pathStr: String,
         displayName: String = File(pathStr).name,
         mimeType: String = mimeTypeForFileName(displayName),
+        asFile: Boolean = false,
     ) {
+        if (!asFile && isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value) {
+            openLocalHtml(context, pathStr, displayName, mimeType, incognito = false)
+            return
+        }
         if (DefaultVideoPlayer.isVideoMime(mimeType)) {
             openLocalVideoHttp(context, pathStr, displayName, mimeType)
             return
@@ -132,7 +139,12 @@ object OpenFileExternally {
         remoteRelativeFile: String,
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
         mimeType: String = mimeTypeForFileName(displayName),
+        asFile: Boolean = false,
     ) {
+        if (!asFile && isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value) {
+            openSmbHtml(context, sourceId, remoteRelativeFile, displayName, mimeType, incognito = false)
+            return
+        }
         if (DefaultVideoPlayer.isVideoMime(mimeType)) {
             openSmbVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType)
             return
@@ -167,7 +179,12 @@ object OpenFileExternally {
         remoteRelativeFile: String,
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
         mimeType: String = mimeTypeForFileName(displayName),
+        asFile: Boolean = false,
     ) {
+        if (!asFile && isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value) {
+            openWebDavHtml(context, sourceId, remoteRelativeFile, displayName, mimeType, incognito = false)
+            return
+        }
         if (DefaultVideoPlayer.isVideoMime(mimeType)) {
             openWebDavVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType)
             return
@@ -285,6 +302,78 @@ object OpenFileExternally {
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
         mimeType: String = mimeTypeForFileName(displayName),
     ): Uri = prepareWebDavVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType).videoUri
+
+    suspend fun ensureLocalHtmlHttpUri(
+        pathStr: String,
+        displayName: String = File(pathStr).name,
+        mimeType: String = mimeTypeForFileName(displayName),
+    ): Uri = prepareLocalHtmlHttp(pathStr, displayName, mimeType).uri
+
+    suspend fun ensureSmbHtmlHttpUri(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        mimeType: String = mimeTypeForFileName(displayName),
+    ): Uri = prepareSmbHtmlHttp(context, sourceId, remoteRelativeFile, displayName, mimeType).uri
+
+    suspend fun ensureWebDavHtmlHttpUri(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        mimeType: String = mimeTypeForFileName(displayName),
+    ): Uri = prepareWebDavHtmlHttp(context, sourceId, remoteRelativeFile, displayName, mimeType).uri
+
+    suspend fun openLocalHtml(
+        context: Context,
+        pathStr: String,
+        displayName: String = File(pathStr).name,
+        mimeType: String = mimeTypeForFileName(displayName),
+        incognito: Boolean = false,
+    ) {
+        val prepared = prepareLocalHtmlHttp(pathStr, displayName, mimeType)
+        try {
+            launchHtmlBrowser(context, prepared.uri, incognito)
+        } catch (e: Throwable) {
+            if (!prepared.reused) ExternalHttpStreamServer.removeSession(prepared.session.id)
+            throw e
+        }
+    }
+
+    suspend fun openSmbHtml(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        mimeType: String = mimeTypeForFileName(displayName),
+        incognito: Boolean = false,
+    ) {
+        val prepared = prepareSmbHtmlHttp(context, sourceId, remoteRelativeFile, displayName, mimeType)
+        try {
+            launchHtmlBrowser(context, prepared.uri, incognito)
+        } catch (e: Throwable) {
+            if (!prepared.reused) ExternalHttpStreamServer.removeSession(prepared.session.id)
+            throw e
+        }
+    }
+
+    suspend fun openWebDavHtml(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        mimeType: String = mimeTypeForFileName(displayName),
+        incognito: Boolean = false,
+    ) {
+        val prepared = prepareWebDavHtmlHttp(context, sourceId, remoteRelativeFile, displayName, mimeType)
+        try {
+            launchHtmlBrowser(context, prepared.uri, incognito)
+        } catch (e: Throwable) {
+            if (!prepared.reused) ExternalHttpStreamServer.removeSession(prepared.session.id)
+            throw e
+        }
+    }
 
     /**
      * Off (default): opened video + matching sidecars only.
@@ -1035,6 +1124,233 @@ object OpenFileExternally {
         return text.toByteArray(Charsets.UTF_8)
     }
 
+    private data class PreparedHttpHtml(
+        val session: ExternalHttpStreamServer.Session,
+        val reused: Boolean,
+        val uri: Uri,
+    )
+
+    private fun htmlSessionKey(dirKey: String): String = "$dirKey|html"
+
+    private suspend fun prepareLocalHtmlHttp(
+        pathStr: String,
+        displayName: String,
+        mimeType: String,
+    ): PreparedHttpHtml {
+        val parent = localFilesystemParent(pathStr)
+        val dirKey = htmlSessionKey(localDirKey(pathStr))
+        val (session, reused) = withIOContext {
+            withDirHttpSession(network = false, dirKey = dirKey) { session, _ ->
+                session.dirSource = parent?.let { localHtmlDirSource(it) }
+                session.put(localFileEntry(pathStr, displayName, mimeType))
+            }
+        }
+        val uri = ExternalHttpStreamServer.uriFor(session.id, displayName)
+        logcat("OpenFileExternally") {
+            "HTTP local HTML session=${session.id} file=${PrivacyLog.file(displayName)} " +
+                "dirSource=${session.dirSource != null} reused=$reused"
+        }
+        return PreparedHttpHtml(session, reused, uri)
+    }
+
+    private suspend fun prepareSmbHtmlHttp(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String,
+        mimeType: String,
+    ): PreparedHttpHtml {
+        requestStreamNotificationPermission(context)
+        val (session, reused) = withIOContext {
+            val source = SmbRepository.load(sourceId) ?: throw IOException("SMB source missing")
+            val password = SmbPasswordStore.get(sourceId)
+            val parentDir = parentRelative(remoteRelativeFile)
+            val dirKey = htmlSessionKey(smbDirKey(sourceId, parentDir))
+            withDirHttpSession(network = true, dirKey = dirKey) { session, _ ->
+                session.dirSource = smbHtmlDirSource(source, password, parentDir)
+                session.put(
+                    smbFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes = -1L),
+                )
+            }
+        }
+        return PreparedHttpHtml(
+            session,
+            reused,
+            ExternalHttpStreamServer.uriFor(session.id, displayName),
+        )
+    }
+
+    private suspend fun prepareWebDavHtmlHttp(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String,
+        mimeType: String,
+    ): PreparedHttpHtml {
+        requestStreamNotificationPermission(context)
+        val (session, reused) = withIOContext {
+            val source = WebDavRepository.load(sourceId) ?: throw IOException("WebDAV source missing")
+            val password = WebDavPasswordStore.get(sourceId)
+            val parentDir = parentRelative(remoteRelativeFile)
+            val dirKey = htmlSessionKey(webDavDirKey(sourceId, parentDir))
+            withDirHttpSession(network = true, dirKey = dirKey) { session, _ ->
+                session.dirSource = webDavHtmlDirSource(source, password, parentDir)
+                session.put(
+                    webDavFileEntry(source, password, remoteRelativeFile, displayName, mimeType, sizeBytes = -1L),
+                )
+            }
+        }
+        return PreparedHttpHtml(
+            session,
+            reused,
+            ExternalHttpStreamServer.uriFor(session.id, displayName),
+        )
+    }
+
+    private fun localFilesystemParent(pathStr: String): String? {
+        if (ZipPaths.parse(pathStr) != null) return null
+        if (pathStr.startsWith('/')) return File(pathStr).parent
+        return runCatching { pathStr.toPath().parent?.toString() }.getOrNull()
+    }
+
+    private fun localHtmlDirSource(parentPathStr: String): ExternalHttpStreamServer.HttpDirSource {
+        val parentFile = File(parentPathStr)
+        val parentCanonical = runCatching { parentFile.canonicalFile }.getOrNull()
+        return object : ExternalHttpStreamServer.HttpDirSource {
+            override fun list(relativeDir: String): ExternalHttpStreamServer.HttpDirIndex {
+                val dir = if (relativeDir.isEmpty()) {
+                    parentFile
+                } else {
+                    File(parentFile, relativeDir.replace('/', File.separatorChar))
+                }
+                if (!isUnderParent(dir) || !dir.isDirectory) {
+                    return ExternalHttpStreamServer.HttpDirIndex()
+                }
+                val files = ArrayList<String>()
+                val dirs = ArrayList<String>()
+                dir.listFiles()?.forEach { child ->
+                    val name = child.name
+                    if (!ExternalHttpStreamServer.isSafeFileName(name)) return@forEach
+                    if (child.isDirectory) {
+                        dirs += name
+                    } else if (child.isFile) {
+                        files += name
+                    }
+                }
+                return ExternalHttpStreamServer.HttpDirIndex(files.sorted(), dirs.sorted())
+            }
+
+            override fun open(relativeFile: String): ExternalHttpStreamServer.FileEntry? {
+                if (!ExternalHttpStreamServer.isSafeRelativePath(relativeFile)) return null
+                val file = File(parentFile, relativeFile.replace('/', File.separatorChar))
+                if (!isUnderParent(file) || !file.isFile) return null
+                return runCatching {
+                    localFileEntry(file.path, relativeFile, mimeTypeForFileName(relativeFile))
+                }.getOrNull()
+            }
+
+            private fun isUnderParent(file: File): Boolean {
+                val root = parentCanonical ?: return false
+                val child = runCatching { file.canonicalFile }.getOrNull() ?: return false
+                return child == root || child.path.startsWith(root.path + File.separator)
+            }
+        }
+    }
+
+    private fun smbHtmlDirSource(
+        source: SmbSourceEntity,
+        password: String,
+        parentDir: String,
+    ): ExternalHttpStreamServer.HttpDirSource = object : ExternalHttpStreamServer.HttpDirSource {
+        override fun list(relativeDir: String): ExternalHttpStreamServer.HttpDirIndex = runCatching {
+            val remote = if (relativeDir.isEmpty()) parentDir else SmbGateway.joinRelativePath(parentDir, relativeDir)
+            val (files, dirs) = runBlocking {
+                SmbGateway.listChildFilesAndDirs(source, password, remote)
+            }
+            ExternalHttpStreamServer.HttpDirIndex(files, dirs)
+        }.getOrDefault(ExternalHttpStreamServer.HttpDirIndex())
+
+        override fun open(relativeFile: String): ExternalHttpStreamServer.FileEntry? {
+            if (!ExternalHttpStreamServer.isSafeRelativePath(relativeFile)) return null
+            val remote = SmbGateway.joinRelativePath(parentDir, relativeFile)
+            return smbFileEntry(
+                source,
+                password,
+                remote,
+                relativeFile,
+                mimeTypeForFileName(relativeFile),
+                sizeBytes = -1L,
+            )
+        }
+    }
+
+    private fun webDavHtmlDirSource(
+        source: WebDavSourceEntity,
+        password: String,
+        parentDir: String,
+    ): ExternalHttpStreamServer.HttpDirSource = object : ExternalHttpStreamServer.HttpDirSource {
+        override fun list(relativeDir: String): ExternalHttpStreamServer.HttpDirIndex = runCatching {
+            val remote = if (relativeDir.isEmpty()) parentDir else WebDavGateway.joinRelative(parentDir, relativeDir)
+            val (files, dirs) = runBlocking {
+                WebDavGateway.listChildFilesAndDirs(source, password, remote)
+            }
+            ExternalHttpStreamServer.HttpDirIndex(files, dirs)
+        }.getOrDefault(ExternalHttpStreamServer.HttpDirIndex())
+
+        override fun open(relativeFile: String): ExternalHttpStreamServer.FileEntry? {
+            if (!ExternalHttpStreamServer.isSafeRelativePath(relativeFile)) return null
+            val remote = WebDavGateway.joinRelative(parentDir, relativeFile)
+            return webDavFileEntry(
+                source,
+                password,
+                remote,
+                relativeFile,
+                mimeTypeForFileName(relativeFile),
+                sizeBytes = -1L,
+            )
+        }
+    }
+
+    private suspend fun launchHtmlBrowser(context: Context, uri: Uri, incognito: Boolean) {
+        withUIContext {
+            if (incognito) {
+                launchChromeIncognito(context, uri)
+            } else {
+                launchDefaultBrowser(context, uri)
+            }
+        }
+    }
+
+    private fun launchDefaultBrowser(context: Context, uri: Uri) {
+        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            context.startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            logcat("OpenFileExternally", e)
+            error(context.getString(R.string.browse_open_failed))
+        }
+    }
+
+    private fun launchChromeIncognito(context: Context, uri: Uri) {
+        for (pkg in CHROME_PACKAGES) {
+            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                addCategory(Intent.CATEGORY_BROWSABLE)
+                setPackage(pkg)
+                putExtra(CHROME_INCOGNITO_EXTRA, true)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                context.startActivity(intent)
+                return
+            } catch (_: ActivityNotFoundException) {
+            }
+        }
+        error(context.getString(R.string.browse_chrome_incognito_failed))
+    }
+
     // endregion
 
     // region streamdoc (in-app Media3 + non-video external)
@@ -1354,6 +1670,14 @@ object OpenFileExternally {
      * High enough for large video folders (300+) without unbounded multi-GB intent clips.
      */
     private const val MAX_DIR_MEDIA_FILES = 2000
+
+    private val CHROME_PACKAGES = arrayOf(
+        "com.android.chrome",
+        "com.chrome.beta",
+        "com.chrome.dev",
+        "com.chrome.canary",
+    )
+    private const val CHROME_INCOGNITO_EXTRA = "com.android.chrome.EXTRA_OPEN_NEW_INCOGNITO_TAB"
 
     /** Virtual playlist basename served from the HTTP session (not a real on-disk file). */
     private fun playlistNameFor(sessionId: String): String = ".localviewer-$sessionId.m3u8"

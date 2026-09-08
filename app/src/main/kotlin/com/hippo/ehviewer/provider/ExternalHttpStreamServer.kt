@@ -103,6 +103,23 @@ object ExternalHttpStreamServer {
         }
     }
 
+    /** One directory listing for HTML / folder HTTP (files + child dirs). */
+    data class HttpDirIndex(
+        val files: List<String> = emptyList(),
+        val dirs: List<String> = emptyList(),
+    ) {
+        val isEmpty: Boolean get() = files.isEmpty() && dirs.isEmpty()
+    }
+
+    /**
+     * Lazy whole-dir serve (HTML). HTTP worker threads call this; implementations
+     * may block (SMB/WebDAV).
+     */
+    interface HttpDirSource {
+        fun list(relativeDir: String): HttpDirIndex
+        fun open(relativeFile: String): FileEntry?
+    }
+
     sealed interface StreamBody : AutoCloseable {
         val size: Long
         fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int
@@ -171,6 +188,11 @@ object ExternalHttpStreamServer {
         val dirKey: String,
         val files: ConcurrentHashMap<String, FileEntry> = ConcurrentHashMap(),
         @Volatile var lastAccessMs: Long = SystemClock.elapsedRealtime(),
+        /**
+         * When set, GET/listing may resolve nested paths under the session root
+         * (HTML sites: CSS, images, subdirectories).
+         */
+        @Volatile var dirSource: HttpDirSource? = null,
     ) {
         private val bodyLock = Any()
         private val bodyCache = HashMap<String, CachedBody>()
@@ -202,14 +224,48 @@ object ExternalHttpStreamServer {
 
         fun get(fileName: String): FileEntry? {
             touch()
-            if (!isSafeFileName(fileName)) return null
-            val key = fileName.trim()
+            val key = normalizeRelativePath(fileName)
+            if (key.isEmpty() || !isSafeRelativePath(key)) return null
             files[key]?.let { return it }
-            // Case-insensitive fallback for odd players.
             files.entries.firstOrNull { it.key.equals(key, ignoreCase = true) }?.value?.let {
                 return it
             }
-            return null
+            val resolved = dirSource?.open(key) ?: return null
+            put(resolved)
+            return resolved
+        }
+
+        fun listDir(relativeDir: String): HttpDirIndex {
+            touch()
+            val rel = normalizeRelativePath(relativeDir)
+            if (rel.isNotEmpty() && !isSafeRelativePath(rel)) return HttpDirIndex()
+            dirSource?.list(rel)?.let { return it }
+            return listingFromRegistered(rel)
+        }
+
+        private fun listingFromRegistered(rel: String): HttpDirIndex {
+            val fileNames = ArrayList<String>()
+            val dirs = linkedSetOf<String>()
+            val prefix = if (rel.isEmpty()) "" else "$rel/"
+            for (key in files.keys) {
+                val rest = if (rel.isEmpty()) {
+                    key
+                } else {
+                    if (!key.startsWith(prefix)) continue
+                    key.substring(prefix.length)
+                }
+                if (rest.isEmpty()) continue
+                val slash = rest.indexOf('/')
+                if (slash < 0) {
+                    fileNames += rest
+                } else {
+                    dirs += rest.substring(0, slash)
+                }
+            }
+            return HttpDirIndex(
+                files = fileNames.distinct().sorted(),
+                dirs = dirs.sorted(),
+            )
         }
 
         /**
@@ -825,13 +881,26 @@ object ExternalHttpStreamServer {
         val randomizePort = sessions[sessionId]?.randomizedToken
             ?: Settings.externalVideoRandomizeToken.value
         val p = ensureStarted(randomizePort)
-        val encoded = Uri.encode(pathKey(fileName))
+        val encoded = encodeRelativePath(fileName)
         return Uri.parse("http://127.0.0.1:$p/s/$sessionId/$encoded")
     }
 
     fun pathKey(displayName: String): String {
-        val base = displayName.replace('\\', '/').substringAfterLast('/').trim()
-        return base.ifEmpty { "file" }
+        val n = normalizeRelativePath(displayName)
+        return n.ifEmpty { "file" }
+    }
+
+    fun normalizeRelativePath(path: String): String = path.replace('\\', '/').trim().trim('/')
+
+    fun encodeRelativePath(fileName: String): String = pathKey(fileName).split('/').joinToString("/") { Uri.encode(it) }
+
+    /** Nested path under a session (`css/style.css`). Each segment must be a safe file name. */
+    fun isSafeRelativePath(path: String): Boolean {
+        val n = normalizeRelativePath(path)
+        if (n.isEmpty() || n.length > MAX_RELATIVE_PATH_LENGTH) return false
+        val segs = n.split('/')
+        if (segs.size > MAX_RELATIVE_DEPTH) return false
+        return segs.all { isSafeFileName(it) }
     }
 
     /** A resolver may only receive one ordinary file-name component. */
@@ -1069,19 +1138,30 @@ object ExternalHttpStreamServer {
             return preferKeepAlive
         }
         session.touch()
-        // Directory listing (players / next-prev that probe the parent URL).
-        if (segs.size == 2 || (segs.size == 3 && segs[2].isEmpty())) {
-            writeDirectoryListing(output, session, headOnly, preferKeepAlive)
+        val relSegs = segs.drop(2).filter { it.isNotEmpty() }
+        val trailingSlash = rawPath.endsWith('/')
+        val rel = relSegs.joinToString("/")
+        // Directory listing: session root, trailing slash, or a nested folder.
+        if (segs.size == 2 || trailingSlash || rel.isEmpty()) {
+            if (rel.isNotEmpty() && !isSafeRelativePath(rel)) {
+                writeSimple(output, 404, "Not Found", keepAlive = preferKeepAlive)
+                return preferKeepAlive
+            }
+            writeDirectoryListing(output, session, rel, headOnly, preferKeepAlive)
             return preferKeepAlive
         }
-        if (segs.size != 3 || !isSafeFileName(segs[2])) {
+        if (!isSafeRelativePath(rel)) {
             writeSimple(output, 404, "Not Found", keepAlive = preferKeepAlive)
             return preferKeepAlive
         }
-        val fileName = segs[2]
+        val fileName = rel
         val entry = session.get(fileName)
         if (entry == null) {
-            // Players invent many sidecar URLs (.srt/.ass/.sami/…); only pre-listed names exist.
+            val index = session.listDir(rel)
+            if (!index.isEmpty) {
+                writeDirectoryListing(output, session, rel, headOnly, preferKeepAlive)
+                return preferKeepAlive
+            }
             writeSimple(output, 404, "Not Found", keepAlive = preferKeepAlive)
             return preferKeepAlive
         }
@@ -1291,20 +1371,35 @@ object ExternalHttpStreamServer {
         output.write(body)
     }
 
-    /** Simple HTML index so clients can discover every registered video/sub under the session. */
+    /** HTML index of registered files and (when [Session.dirSource] is set) live subdirs. */
     private fun writeDirectoryListing(
         output: OutputStream,
         session: Session,
+        relativeDir: String,
         headOnly: Boolean,
         keepAlive: Boolean,
     ) {
-        val names = session.files.values.map { it.displayName }.distinct().sorted()
+        val rel = normalizeRelativePath(relativeDir)
+        val index = session.listDir(rel)
+        val pathLabel = if (rel.isEmpty()) {
+            "/s/${session.id}/"
+        } else {
+            "/s/${session.id}/$rel/"
+        }
         val html = buildString {
             append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/>")
-            append("<title>Index of /s/").append(session.id).append("/</title></head><body>")
-            append("<h1>Index of /s/").append(session.id).append("/</h1><hr/><pre>")
-            for (name in names) {
-                val href = Uri.encode(pathKey(name))
+            append("<title>Index of ").append(escapeHtml(pathLabel)).append("</title></head><body>")
+            append("<h1>Index of ").append(escapeHtml(pathLabel)).append("</h1><hr/><pre>")
+            if (rel.isNotEmpty()) {
+                append("<a href=\"../\">../</a>\n")
+            }
+            for (name in index.dirs) {
+                val href = Uri.encode(name) + "/"
+                append("<a href=\"").append(href).append("\">")
+                append(escapeHtml(name)).append("/</a>\n")
+            }
+            for (name in index.files) {
+                val href = Uri.encode(name)
                 append("<a href=\"").append(href).append("\">")
                 append(escapeHtml(name)).append("</a>\n")
             }
@@ -1366,6 +1461,8 @@ object ExternalHttpStreamServer {
     private const val HEX_DIGITS = "0123456789abcdef"
     private const val MAX_CONCURRENT_CONNECTIONS = 16
     private const val MAX_FILE_NAME_LENGTH = 1024
+    private const val MAX_RELATIVE_PATH_LENGTH = 2048
+    private const val MAX_RELATIVE_DEPTH = 16
     private const val MAX_REQUEST_LINE_LENGTH = 4096
     private const val MAX_HEADER_LINE_LENGTH = 8192
     private const val MAX_HEADER_COUNT = 64

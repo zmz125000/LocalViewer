@@ -312,6 +312,28 @@ object WebDavGateway {
     }
 
     /**
+     * Flat child files and directories (one PROPFIND, no classify / peeks).
+     * Used by HTML loopback HTTP to serve a folder tree.
+     */
+    suspend fun listChildFilesAndDirs(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeDir: String,
+    ): Pair<List<String>, List<String>> = withIOContext {
+        if (ZipAsDirListing.splitZipBrowsePath(relativeDir) != null) {
+            return@withIOContext emptyList<String>() to emptyList()
+        }
+        val children = WebDavClient.listChildren(source, password, relativeDir)
+        val files = ArrayList<String>()
+        val dirs = ArrayList<String>()
+        for (child in children) {
+            if (child.name.startsWith('.') || isProtectedSystemName(child.name)) continue
+            if (child.isDirectory) dirs += child.name else files += child.name
+        }
+        files.sorted() to dirs.sorted()
+    }
+
+    /**
      * Cache-hit refresh: one PROPFIND for the current directory. Only new child folders
      * run the existing child/leaf peek classifier. Direct files are reconciled
      * (drop stale / add new) from the live listing.

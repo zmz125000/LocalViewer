@@ -28,6 +28,7 @@ enum class BrowseOverflowKind {
     Common,
     Gallery,
     Video,
+    Webpage,
 }
 
 enum class BrowseOverflowPlacement {
@@ -52,6 +53,8 @@ data class BrowseOverflowActions(
     val onPlay: (() -> Unit)? = null,
     val onExternalPlayer: (() -> Unit)? = null,
     val onCopyUrl: (() -> Unit)? = null,
+    val onOpenInBrowser: (() -> Unit)? = null,
+    val onOpenIncognito: (() -> Unit)? = null,
     val onUnsupported: () -> Unit,
 )
 
@@ -116,6 +119,21 @@ fun BrowseItemOverflowButton(
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.browse_external_player)) },
                         onClick = { run(actions.onExternalPlayer) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.browse_copy_url)) },
+                        onClick = { run(actions.onCopyUrl) },
+                    )
+                    HorizontalDivider()
+                }
+                BrowseOverflowKind.Webpage -> {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.browse_open_in_browser)) },
+                        onClick = { run(actions.onOpenInBrowser) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.browse_open_in_incognito)) },
+                        onClick = { run(actions.onOpenIncognito) },
                     )
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.browse_copy_url)) },

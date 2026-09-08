@@ -90,6 +90,7 @@ import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
+import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
@@ -1099,7 +1100,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
-    fun openExternalFile(path: okio.Path) {
+    fun openExternalFile(path: okio.Path, asFile: Boolean = false) {
         // Always launch with the real path basename — promoted VideoFile rows use a
         // virtual `@dir` display name without extension (wrong MIME / player title).
         val pathStr = path.toString()
@@ -1114,12 +1115,56 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     pathStr,
                     displayName = actualName,
                     mimeType = mimeTypeForFileName(actualName),
+                    asFile = asFile,
                 )
             } catch (e: Throwable) {
                 snackbar(
                     context.getString(
                         R.string.browse_open_failed,
                     ) + " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
+    fun openLocalHtml(path: okio.Path, incognito: Boolean) {
+        val pathStr = path.toString()
+        val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
+        launchIO {
+            recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFile(pathStr, title = actualName)
+            try {
+                OpenFileExternally.openLocalHtml(
+                    context = context,
+                    pathStr = pathStr,
+                    displayName = actualName,
+                    mimeType = mimeTypeForFileName(actualName),
+                    incognito = incognito,
+                )
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
+    fun copyLocalHtmlUrl(path: okio.Path) {
+        val pathStr = path.toString()
+        val actualName = ZipPaths.memberLeafName(pathStr) ?: path.name
+        launchIO {
+            try {
+                val uri = OpenFileExternally.ensureLocalHtmlHttpUri(
+                    pathStr = pathStr,
+                    displayName = actualName,
+                    mimeType = mimeTypeForFileName(actualName),
+                )
+                withUIContext {
+                    with(context) { addTextToClipboard(uri.toString()) }
+                }
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_open_failed) + " " + (e.message ?: e.toString()),
                 )
             }
         }
@@ -1231,11 +1276,22 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onUnsupported = { notSupportedAction() },
     )
 
-    fun fileOverflow(path: okio.Path) = BrowseOverflowActions(
-        kind = BrowseOverflowKind.Common,
-        onOpenWith = { openExternalFile(path) },
-        onUnsupported = { notSupportedAction() },
-    )
+    fun fileOverflow(path: okio.Path) = if (isHtmlFileName(path.name)) {
+        BrowseOverflowActions(
+            kind = BrowseOverflowKind.Webpage,
+            onOpenInBrowser = { openLocalHtml(path, incognito = false) },
+            onOpenIncognito = { openLocalHtml(path, incognito = true) },
+            onCopyUrl = { copyLocalHtmlUrl(path) },
+            onOpenWith = { openExternalFile(path, asFile = true) },
+            onUnsupported = { notSupportedAction() },
+        )
+    } else {
+        BrowseOverflowActions(
+            kind = BrowseOverflowKind.Common,
+            onOpenWith = { openExternalFile(path) },
+            onUnsupported = { notSupportedAction() },
+        )
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
