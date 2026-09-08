@@ -286,7 +286,6 @@ object OpenFileExternally {
         mimeType: String = mimeTypeForFileName(displayName),
     ): Uri = prepareWebDavVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType).videoUri
 
-
     /**
      * Off (default): opened video + matching sidecars only.
      * On: every video + subtitle file in the same directory (folder playlist).
