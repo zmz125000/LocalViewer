@@ -457,6 +457,11 @@ object Settings : DataStorePreferences(null) {
     val webDavConcurrentListing = intPref("webdav_concurrent_listing", 5)
 
     /**
+     * WebDAV parallel page / Range GET fan-out (Advanced). Default: 4.
+     */
+    val webDavDownloadSlots = intPref("webdav_download_slots", 4)
+
+    /**
      * WebDAV: trust any TLS certificate / skip hostname verify (self-signed LAN HTTPS).
      * Default off — normal system trust for https://. Rebuilds [WebDavClient] on change.
      * Cleartext http:// is controlled by network security config (explicit http URLs only).

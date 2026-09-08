@@ -280,6 +280,14 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 entryValueRes = com.hippo.ehviewer.R.array.webdav_concurrent_listing_entry_values,
                 state = webDavListing,
             )
+            val webDavDownloads = Settings.webDavDownloadSlots.asMutableState()
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.settings_webdav_download_slots),
+                summary = stringResource(id = R.string.settings_webdav_download_slots_summary, webDavDownloads.value),
+                entry = com.hippo.ehviewer.R.array.webdav_download_slots_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.webdav_download_slots_entry_values,
+                state = webDavDownloads,
+            )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_advanced_webdav_insecure_tls),
                 state = Settings.webDavInsecureTls.asMutableState(),

@@ -141,6 +141,8 @@
     <string name="webdav_http_hint">Using HTTP (cleartext). Prefer HTTPS when possible.</string>
     <string name="settings_webdav_concurrent_listing">WebDAV concurrent listing</string>
     <string name="settings_webdav_concurrent_listing_summary">Up to %s parallel folder peeks</string>
+    <string name="settings_webdav_download_slots">WebDAV concurrent downloads</string>
+    <string name="settings_webdav_download_slots_summary">Up to %s parallel page and Range reads</string>
     <string name="settings_advanced_webdav_insecure_tls">Allow insecure TLS for WebDAV</string>
     <string name="settings_advanced_webdav_insecure_tls_summary">Trust any certificate (self-signed HTTPS).</string>
     <string name="settings_advanced_unlimit_foreground_service">Unlimit foreground service</string>

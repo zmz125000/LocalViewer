@@ -119,8 +119,24 @@ object WebDavClient {
     /** Parallel list/peek concurrency (HTTP/2 multiplex + HTTP/1.1 multi-connection). */
     private val listSlots = Semaphore(6)
 
-    /** Parallel file downloads (pages + thumbs). */
-    private val downloadSlots = Semaphore(4)
+    private const val DOWNLOAD_SLOTS_MIN = 2
+    private const val DOWNLOAD_SLOTS_MAX = 8
+
+    private val downloadSlotsLock = Any()
+    private var downloadSlotsCap = -1
+    private var downloadSlots = Semaphore(4)
+
+    /** Parallel page / Range GET fan-out. Advanced → WebDAV concurrent downloads. */
+    private fun downloadGate(): Semaphore {
+        val cap = Settings.webDavDownloadSlots.value.coerceIn(DOWNLOAD_SLOTS_MIN, DOWNLOAD_SLOTS_MAX)
+        if (cap == downloadSlotsCap) return downloadSlots
+        synchronized(downloadSlotsLock) {
+            if (cap == downloadSlotsCap) return downloadSlots
+            downloadSlots = Semaphore(cap)
+            downloadSlotsCap = cap
+            return downloadSlots
+        }
+    }
 
     /**
      * Dedicated CIO workers with [TrafficStats] tag set for the whole thread lifetime
@@ -515,7 +531,7 @@ object WebDavClient {
             return@withIOContext
         }
         val downloadContext = coroutineContext
-        downloadSlots.withPermit {
+        downloadGate().withPermit {
             withTransportRetry {
                 val url = absoluteUrl(source, relativeFilePath)
                 val auth = basicAuthHeader(source.username, password)
@@ -546,7 +562,7 @@ object WebDavClient {
 
     /**
      * Stream a bounded file prefix through the normal browse/reader client and
-     * [downloadSlots]. Closing the response after [maxBytes] stops the remaining body.
+     * [downloadGate]. Closing the response after [maxBytes] stops the remaining body.
      * This never touches the sticky external-player client or loopback HTTP.
      */
     suspend fun downloadFilePrefix(
@@ -558,7 +574,7 @@ object WebDavClient {
     ): Long = withIOContext {
         require(maxBytes > 0L)
         val downloadContext = coroutineContext
-        downloadSlots.withPermit {
+        downloadGate().withPermit {
             withTransportRetry {
                 val url = absoluteUrl(source, relativeFilePath)
                 val auth = basicAuthHeader(source.username, password)
@@ -666,7 +682,7 @@ object WebDavClient {
             }
         }
         runCatching {
-            downloadSlots.withPermit {
+            downloadGate().withPermit {
                 withTransportRetry(sticky) {
                     val url = absoluteUrl(source, relativeFilePath)
                     val auth = basicAuthHeader(source.username, password)
@@ -747,7 +763,7 @@ object WebDavClient {
         len: Int,
         sticky: Boolean = false,
     ): Int = withIOContext {
-        downloadSlots.withPermit {
+        downloadGate().withPermit {
             withTransportRetry(sticky) {
                 val url = absoluteUrl(source, relativeFilePath)
                 val auth = basicAuthHeader(source.username, password)
