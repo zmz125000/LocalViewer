@@ -76,6 +76,8 @@
     <string name="settings_use_media3_player_summary">On: tap opens in-app player, long-press opens external app. Off: tap external, long-press in-app.</string>
     <string name="settings_open_html_with_browser">Open HTML with browser</string>
     <string name="settings_open_html_with_browser_summary">On: tap HTML starts a local HTTP server for the folder and opens the default browser. Off: treat HTML as a regular file.</string>
+    <string name="settings_open_html_in_incognito">Open in incognito</string>
+    <string name="settings_open_html_in_incognito_summary">On: tap HTML opens a Chrome incognito tab. Off: default browser.</string>
     <string name="settings_default_video_player">Default video player</string>
     <string name="settings_default_video_player_always_ask">Always ask</string>
     <string name="settings_default_video_player_none">No video apps found</string>

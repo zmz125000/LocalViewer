@@ -1100,7 +1100,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
-    fun openExternalFile(path: okio.Path, asFile: Boolean = false) {
+    fun openExternalFile(path: okio.Path, asFile: Boolean = false, usePreferredPlayer: Boolean = true) {
         // Always launch with the real path basename — promoted VideoFile rows use a
         // virtual `@dir` display name without extension (wrong MIME / player title).
         val pathStr = path.toString()
@@ -1116,6 +1116,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     displayName = actualName,
                     mimeType = mimeTypeForFileName(actualName),
                     asFile = asFile,
+                    usePreferredPlayer = usePreferredPlayer,
                 )
             } catch (e: Throwable) {
                 snackbar(
@@ -1272,7 +1273,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onPlay = { playVideo(path) },
         onExternalPlayer = { openExternalFile(path) },
         onCopyUrl = { copyLocalVideoUrl(path) },
-        onOpenWith = { openExternalFile(path) },
+        onOpenWith = { openExternalFile(path, usePreferredPlayer = false) },
         onUnsupported = { notSupportedAction() },
     )
 

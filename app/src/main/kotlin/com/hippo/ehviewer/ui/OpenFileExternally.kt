@@ -101,13 +101,20 @@ object OpenFileExternally {
         displayName: String = File(pathStr).name,
         mimeType: String = mimeTypeForFileName(displayName),
         asFile: Boolean = false,
+        usePreferredPlayer: Boolean = true,
     ) {
         if (!asFile && isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value) {
-            openLocalHtml(context, pathStr, displayName, mimeType, incognito = false)
+            openLocalHtml(
+                context,
+                pathStr,
+                displayName,
+                mimeType,
+                incognito = Settings.openHtmlInIncognito.value,
+            )
             return
         }
         if (DefaultVideoPlayer.isVideoMime(mimeType)) {
-            openLocalVideoHttp(context, pathStr, displayName, mimeType)
+            openLocalVideoHttp(context, pathStr, displayName, mimeType, usePreferredPlayer)
             return
         }
         val token = registerLocalStreamdoc(pathStr, displayName, mimeType)
@@ -140,13 +147,28 @@ object OpenFileExternally {
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
         mimeType: String = mimeTypeForFileName(displayName),
         asFile: Boolean = false,
+        usePreferredPlayer: Boolean = true,
     ) {
         if (!asFile && isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value) {
-            openSmbHtml(context, sourceId, remoteRelativeFile, displayName, mimeType, incognito = false)
+            openSmbHtml(
+                context,
+                sourceId,
+                remoteRelativeFile,
+                displayName,
+                mimeType,
+                incognito = Settings.openHtmlInIncognito.value,
+            )
             return
         }
         if (DefaultVideoPlayer.isVideoMime(mimeType)) {
-            openSmbVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType)
+            openSmbVideoHttp(
+                context,
+                sourceId,
+                remoteRelativeFile,
+                displayName,
+                mimeType,
+                usePreferredPlayer,
+            )
             return
         }
         val token = registerSmbStreamdoc(sourceId, remoteRelativeFile, displayName, mimeType)
@@ -180,13 +202,28 @@ object OpenFileExternally {
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
         mimeType: String = mimeTypeForFileName(displayName),
         asFile: Boolean = false,
+        usePreferredPlayer: Boolean = true,
     ) {
         if (!asFile && isHtmlFileName(displayName) && Settings.openHtmlWithBrowser.value) {
-            openWebDavHtml(context, sourceId, remoteRelativeFile, displayName, mimeType, incognito = false)
+            openWebDavHtml(
+                context,
+                sourceId,
+                remoteRelativeFile,
+                displayName,
+                mimeType,
+                incognito = Settings.openHtmlInIncognito.value,
+            )
             return
         }
         if (DefaultVideoPlayer.isVideoMime(mimeType)) {
-            openWebDavVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType)
+            openWebDavVideoHttp(
+                context,
+                sourceId,
+                remoteRelativeFile,
+                displayName,
+                mimeType,
+                usePreferredPlayer,
+            )
             return
         }
         val token = registerWebDavStreamdoc(sourceId, remoteRelativeFile, displayName, mimeType)
@@ -478,6 +515,7 @@ object OpenFileExternally {
         pathStr: String,
         displayName: String,
         mimeType: String,
+        usePreferredPlayer: Boolean = true,
     ) {
         val prepared = prepareLocalVideoHttp(pathStr, displayName, mimeType)
         try {
@@ -488,6 +526,7 @@ object OpenFileExternally {
                 prepared.mimeType,
                 prepared.session,
                 prepared.accessDir,
+                usePreferredPlayer,
             )
         } catch (e: Throwable) {
             if (!prepared.reused) ExternalHttpStreamServer.removeSession(prepared.session.id)
@@ -563,6 +602,7 @@ object OpenFileExternally {
         remoteRelativeFile: String,
         displayName: String,
         mimeType: String,
+        usePreferredPlayer: Boolean = true,
     ) {
         val prepared = prepareSmbVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType)
         SmbGateway.beginVideoPlay("http-open:${PrivacyLog.file(displayName)}")
@@ -574,6 +614,7 @@ object OpenFileExternally {
                 prepared.mimeType,
                 prepared.session,
                 prepared.accessDir,
+                usePreferredPlayer,
             )
         } catch (e: Throwable) {
             if (!prepared.reused) ExternalHttpStreamServer.removeSession(prepared.session.id)
@@ -647,6 +688,7 @@ object OpenFileExternally {
         remoteRelativeFile: String,
         displayName: String,
         mimeType: String,
+        usePreferredPlayer: Boolean = true,
     ) {
         val prepared = prepareWebDavVideoHttp(context, sourceId, remoteRelativeFile, displayName, mimeType)
         try {
@@ -657,6 +699,7 @@ object OpenFileExternally {
                 prepared.mimeType,
                 prepared.session,
                 prepared.accessDir,
+                usePreferredPlayer,
             )
         } catch (e: Throwable) {
             if (!prepared.reused) ExternalHttpStreamServer.removeSession(prepared.session.id)
@@ -992,6 +1035,7 @@ object OpenFileExternally {
         mimeType: String,
         session: ExternalHttpStreamServer.Session,
         accessDir: Boolean,
+        usePreferredPlayer: Boolean = true,
     ) {
         // Sidecars for the opened video (matching stem) — always attach when present.
         val subUris = session.files.values
@@ -1062,7 +1106,11 @@ object OpenFileExternally {
                 attachPlaylistExtras(videoUris, displayName)
             }
         }
-        val preferred = DefaultVideoPlayer.preferredComponentOrNull(context)
+        val preferred = if (usePreferredPlayer) {
+            DefaultVideoPlayer.preferredComponentOrNull(context)
+        } else {
+            null
+        }
         if (preferred != null) {
             // Avoid UnsafeIntentLaunchViolation: only set full component when filters match.
             DefaultVideoPlayer.bindPreferredPlayer(context, view, preferred)

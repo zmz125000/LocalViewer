@@ -847,7 +847,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
-    fun openExternalFile(fileName: String, asFile: Boolean = false) {
+    fun openExternalFile(fileName: String, asFile: Boolean = false, usePreferredPlayer: Boolean = true) {
         val src = source ?: return
         // fileName may be multi-segment for promoted single-video rows (`S/leaf/movie.mp4`).
         // Launch with the real basename so MIME and player title stay correct.
@@ -865,6 +865,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     displayName = actualName,
                     mimeType = mimeTypeForFileName(actualName),
                     asFile = asFile,
+                    usePreferredPlayer = usePreferredPlayer,
                 )
             } catch (e: Throwable) {
                 if (e.isZipMemberTooLarge()) return@launchIO
@@ -1103,7 +1104,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onPlay = { playVideo(fileName) },
         onExternalPlayer = { openExternalFile(fileName) },
         onCopyUrl = { copyWebDavVideoUrl(fileName) },
-        onOpenWith = { openExternalFile(fileName) },
+        onOpenWith = { openExternalFile(fileName, usePreferredPlayer = false) },
         onUnsupported = { notSupportedAction() },
     )
 

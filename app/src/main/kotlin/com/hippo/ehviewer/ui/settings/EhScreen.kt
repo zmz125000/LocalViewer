@@ -147,11 +147,17 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.settings_use_media3_player),
                 state = Settings.useMedia3Player.asMutableState(),
             )
+            val openHtmlWithBrowser = Settings.openHtmlWithBrowser.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_open_html_with_browser),
-                summary = stringResource(id = R.string.settings_open_html_with_browser_summary),
-                state = Settings.openHtmlWithBrowser.asMutableState(),
+                state = openHtmlWithBrowser,
             )
+            AnimatedVisibility(visible = openHtmlWithBrowser.value) {
+                SwitchPreference(
+                    title = stringResource(id = R.string.settings_open_html_in_incognito),
+                    state = Settings.openHtmlInIncognito.asMutableState(),
+                )
+            }
             var defaultVideoPlayer by Settings.defaultVideoPlayerComponent.asMutableState()
             val alwaysAsk = stringResource(id = R.string.settings_default_video_player_always_ask)
             val noVideoApps = stringResource(id = R.string.settings_default_video_player_none)

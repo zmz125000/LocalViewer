@@ -72,6 +72,8 @@
     <string name="settings_use_media3_player_summary">开启：单击应用内播放，长按外部应用。关闭：单击外部应用，长按应用内播放。</string>
     <string name="settings_open_html_with_browser">用浏览器打开 HTML</string>
     <string name="settings_open_html_with_browser_summary">开启：单击 HTML 会启动本地 HTTP 并打开默认浏览器（提供整个文件夹）。关闭：当作普通文件打开。</string>
+    <string name="settings_open_html_in_incognito">无痕模式打开</string>
+    <string name="settings_open_html_in_incognito_summary">开启：单击 HTML 用 Chrome 无痕标签打开。关闭：使用默认浏览器。</string>
     <string name="settings_default_video_player">默认视频播放器</string>
     <string name="settings_default_video_player_always_ask">每次询问</string>
     <string name="settings_default_video_player_none">未找到视频应用</string>
