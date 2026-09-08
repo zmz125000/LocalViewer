@@ -716,9 +716,10 @@ fun BrowseEntryRemote.isUnderUnreachableFolder(unreachableRoots: Set<String>): B
 /**
  * Reconcile **direct** files against the live parent listing while keeping the composed
  * cache shape:
- * - surviving archive/video/regular rows: **patch size/mtime only** (no reclassify)
+ * - surviving archive/video/regular rows (including loose images): **patch size/mtime only**
  * - missing direct files: drop
  * - new non-image files: classify only the delta
+ * - new images: RegularFile rows (Folder mode) + current-dir FolderGallery (Photo mode)
  * - current-dir image gallery (`relativeName` ""): rebuild name list from live images
  * - promoted multi-segment rows / child galleries: keep
  */
@@ -795,15 +796,11 @@ fun replaceSlimDirectFilesFromLive(
                     val live = liveByName[path]
                     if (live != null) {
                         seenDirectNames += path
-                        // Images belong in the current-dir FolderGallery, not as RegularFile.
-                        if (isImageFileName(path)) {
-                            // Drop stray image RegularFile; gallery rebuild covers it.
-                        } else {
-                            regularFiles += entry.copy(
-                                size = live.size,
-                                lastModifiedMs = live.lastModifiedMs,
-                            )
-                        }
+                        regularFiles += entry.copy(
+                            size = live.size,
+                            lastModifiedMs = live.lastModifiedMs,
+                            hidden = live.hidden || isDotHiddenName(path),
+                        )
                     }
                 }
             }
@@ -811,9 +808,8 @@ fun replaceSlimDirectFilesFromLive(
     }
 
     // Classify only brand-new non-image files (archives / videos / other).
-    val newNonImage = liveFiles.filter {
-        it.name !in seenDirectNames && !isImageFileName(it.name)
-    }
+    val newFiles = liveFiles.filter { it.name !in seenDirectNames }
+    val newNonImage = newFiles.filter { !isImageFileName(it.name) }
     if (newNonImage.isNotEmpty()) {
         val added = classifyRemoteListingWithPeeks(
             currentDirName = currentDirName.ifEmpty { "Gallery" },
@@ -830,10 +826,19 @@ fun replaceSlimDirectFilesFromLive(
             }
         }
     }
+    for (img in newFiles) {
+        if (!isImageFileName(img.name)) continue
+        regularFiles += BrowseEntryRemote.RegularFile(
+            name = img.name,
+            size = img.size,
+            lastModifiedMs = img.lastModifiedMs,
+            hidden = img.hidden || isDotHiddenName(img.name),
+        )
+    }
 
     // Current-dir gallery from live image basenames (no per-file reclassify).
     val imageNames = liveFiles.asSequence()
-        .filter { isImageFileName(it.name) }
+        .filter { isImageFileName(it.name) && !(it.hidden || isDotHiddenName(it.name)) }
         .map { it.name }
         .sortedWith { a, b -> naturalCompare(a, b) }
         .toList()
