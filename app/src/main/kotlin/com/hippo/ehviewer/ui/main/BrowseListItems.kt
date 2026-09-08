@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Folder
@@ -44,10 +46,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -230,6 +236,55 @@ sealed class BrowseCover {
     ) : BrowseCover()
 }
 
+/**
+ * Title with an inline favourite star after the name.
+ * Same placement as Browse source list ([BrowseScreen] source rows).
+ */
+@Composable
+fun BrowseFavoriteTitle(
+    name: String,
+    favorited: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    // Inline star so PlaceholderVerticalAlign.TextCenter lines up with the
+    // glyph center (not the taller line box that Row+CenterVertically uses).
+    if (!favorited) {
+        Text(name, modifier = modifier, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        return
+    }
+    val starId = "fav"
+    val starTint = MaterialTheme.colorScheme.primary
+    val starCd = stringResource(R.string.favourite)
+    val text = buildAnnotatedString {
+        append(name)
+        append('\u00A0') // thin gap before star; stays with the last word
+        appendInlineContent(starId, "[★]")
+    }
+    val inline = mapOf(
+        starId to InlineTextContent(
+            Placeholder(
+                width = 18.sp,
+                height = 18.sp,
+                placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
+            ),
+        ) {
+            Icon(
+                Icons.Default.Star,
+                contentDescription = starCd,
+                modifier = Modifier.fillMaxSize(),
+                tint = starTint,
+            )
+        },
+    )
+    Text(
+        text = text,
+        modifier = modifier,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+        inlineContent = inline,
+    )
+}
+
 @Composable
 fun BrowseDirectoryRow(
     name: String,
@@ -242,10 +297,12 @@ fun BrowseDirectoryRow(
     allowRemoteFetch: Boolean = true,
     lastModifiedMs: Long = 0L,
     overflow: BrowseOverflowActions? = null,
+    /** Inline star after the name — same as Browse source list. */
+    showFavoriteStar: Boolean = false,
 ) {
     val haptic = LocalHapticFeedback.current
     ListItem(
-        headlineContent = { Text(name) },
+        headlineContent = { BrowseFavoriteTitle(name = name, favorited = showFavoriteStar) },
         supportingContent = {
             Text(
                 browseListSupportingLine(

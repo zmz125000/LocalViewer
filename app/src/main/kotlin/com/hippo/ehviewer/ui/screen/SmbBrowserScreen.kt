@@ -1621,6 +1621,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                             allowRemoteFetch = allowRemoteThumbs,
                                             lastModifiedMs = dir.lastModifiedMs,
                                             overflow = dirOverflow(dir.relativeName, dir.coverFileName),
+                                            showFavoriteStar = isDirFavorite(dir.relativeName),
                                         )
                                     }
                                 }

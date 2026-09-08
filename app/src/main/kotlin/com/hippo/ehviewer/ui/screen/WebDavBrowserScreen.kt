@@ -1490,6 +1490,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             allowRemoteFetch = allowRemoteThumbs,
                                             lastModifiedMs = dir.lastModifiedMs,
                                             overflow = dirOverflow(dir.relativeName, dir.coverFileName),
+                                            showFavoriteStar = isDirFavorite(dir.relativeName),
                                         )
                                     }
                                 }

@@ -1633,6 +1633,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             showFolderThumb = browseFolderThumbs,
                                             lastModifiedMs = dir.lastModifiedMs,
                                             overflow = dirOverflow(dir),
+                                            showFavoriteStar = isDirFavorite(dir),
                                         )
                                     }
                                 }
