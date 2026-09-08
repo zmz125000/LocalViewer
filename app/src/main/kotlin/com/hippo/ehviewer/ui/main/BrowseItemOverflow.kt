@@ -1,8 +1,8 @@
 package com.hippo.ehviewer.ui.main
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
@@ -12,6 +12,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,7 +22,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 
 enum class BrowseOverflowKind {
@@ -71,16 +71,21 @@ fun BrowseItemOverflowButton(
             // ListItem headline uses titleMedium.
             MaterialTheme.typography.titleMedium
         }
-        style.fontSize.toDp()
+        style.fontSize.toDp() * 1.3f
     }
     Box(modifier) {
+        val interactionSource = remember { MutableInteractionSource() }
         Icon(
             imageVector = Icons.Default.MoreVert,
             contentDescription = more,
             modifier = Modifier
-                .then(if (grid) Modifier.padding(start = 4.dp) else Modifier)
                 .size(iconSize)
-                .clickable(role = Role.Button, onClick = { expanded = true }),
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = ripple(bounded = false),
+                    role = Role.Button,
+                    onClick = { expanded = true },
+                ),
             tint = MaterialTheme.colorScheme.onSurface,
         )
         DropdownMenu(
