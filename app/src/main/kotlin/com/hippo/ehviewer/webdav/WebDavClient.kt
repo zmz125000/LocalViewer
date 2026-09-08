@@ -16,6 +16,7 @@ import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.naturalCompare
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.timeout
@@ -43,28 +44,35 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.URLDecoder
 import java.net.UnknownHostException
+import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.Base64
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import okhttp3.Dispatcher
+import okhttp3.Protocol
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 
 /**
  * Read-only WebDAV (PROPFIND + GET).
  *
- * **Engine: Ktor CIO** (pure Kotlin sockets) — not Cronet / Android HUC (they reject PROPFIND).
+ * **Engine:** OkHttp HTTP/2 by default ([Settings.webDavHttp2]). Off → Ktor CIO HTTP/1.1.
+ * Cronet / Android HUC reject PROPFIND.
  *
  * Lifecycle (aligned with SMB):
- * - ProcessLifecycle ON_STOP → [onAppBackgrounded] **pauses** (keeps browse CIO client).
+ * - ProcessLifecycle ON_STOP → [onAppBackgrounded] **pauses** (keeps browse client).
  *   Sticky client for external FUSE PDF survives so Drive can keep ranging after ON_STOP.
  * - Screen-off / Recents → [dropBrowseClient] / [resetClient]
  * - [onNetworkPathChanged] → drop **both** clients (path is actually gone)
@@ -103,12 +111,12 @@ object WebDavClient {
 
     /**
      * TrafficStats tag for WebDAV sockets ("WDV1").
-     * CIO opens NIO channels on its own threads; StrictMode requires the **opening
+     * CIO / OkHttp open sockets on pool threads; StrictMode requires the **opening
      * thread** to have a stats tag — set once on each pool thread below.
      */
     private const val TRAFFIC_TAG = 0x57445631
 
-    /** Parallel list/peek concurrency (HTTP/1.1 multi-connection). */
+    /** Parallel list/peek concurrency (HTTP/2 multiplex + HTTP/1.1 multi-connection). */
     private val listSlots = Semaphore(6)
 
     /** Parallel file downloads (pages + thumbs). */
@@ -138,7 +146,7 @@ object WebDavClient {
     )
     private val cioDispatcher = cioExecutor.asCoroutineDispatcher()
 
-    /** Browse / in-app reader CIO client — kept across activity switches; closed on screen-off. */
+    /** Browse / in-app reader HTTP client — kept across activity switches; closed on screen-off. */
     @Volatile
     private var client: HttpClient? = null
 
@@ -156,6 +164,12 @@ object WebDavClient {
     @Volatile
     private var stickyClientInsecure: Boolean = false
 
+    @Volatile
+    private var clientHttp2: Boolean = false
+
+    @Volatile
+    private var stickyClientHttp2: Boolean = false
+
     private val lastPathChangeMs = AtomicLong(0L)
 
     private val trustAllManager = object : X509TrustManager {
@@ -164,46 +178,75 @@ object WebDavClient {
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
 
+    private val trustAllSslContext: SSLContext by lazy {
+        SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf<TrustManager>(trustAllManager), SecureRandom())
+        }
+    }
+
     private fun http(sticky: Boolean = false): HttpClient {
         if (sticky) return stickyHttp()
         val wantInsecure = Settings.webDavInsecureTls.value
+        val wantHttp2 = Settings.webDavHttp2.value
         client?.let { existing ->
-            if (clientInsecure == wantInsecure) return existing
+            if (clientInsecure == wantInsecure && clientHttp2 == wantHttp2) return existing
             resetClient()
         }
         synchronized(this) {
             client?.let { existing ->
-                if (clientInsecure == wantInsecure) return existing
+                if (clientInsecure == wantInsecure && clientHttp2 == wantHttp2) return existing
             }
-            val built = buildClient(wantInsecure)
+            val built = buildClient(wantInsecure, wantHttp2)
             client = built
             clientInsecure = wantInsecure
+            clientHttp2 = wantHttp2
             return built
         }
     }
 
     private fun stickyHttp(): HttpClient {
         val wantInsecure = Settings.webDavInsecureTls.value
+        val wantHttp2 = Settings.webDavHttp2.value
         stickyClient?.let { existing ->
-            if (stickyClientInsecure == wantInsecure) return existing
+            if (stickyClientInsecure == wantInsecure && stickyClientHttp2 == wantHttp2) return existing
             resetStickyClient()
         }
         synchronized(this) {
             stickyClient?.let { existing ->
-                if (stickyClientInsecure == wantInsecure) return existing
+                if (stickyClientInsecure == wantInsecure && stickyClientHttp2 == wantHttp2) return existing
             }
-            val built = buildClient(wantInsecure)
+            val built = buildClient(wantInsecure, wantHttp2)
             stickyClient = built
             stickyClientInsecure = wantInsecure
+            stickyClientHttp2 = wantHttp2
             return built
         }
     }
 
-    private fun buildClient(insecureTls: Boolean): HttpClient = HttpClient(CIO) {
+    private fun taggedExecutor(namePrefix: String) = Executors.newCachedThreadPool(
+        ThreadFactory { runnable ->
+            Thread(
+                {
+                    TrafficStats.setThreadStatsTag(TRAFFIC_TAG)
+                    try {
+                        runnable.run()
+                    } finally {
+                        TrafficStats.clearThreadStatsTag()
+                    }
+                },
+                "$namePrefix-${okHttpThreadSeq.incrementAndGet()}",
+            ).apply { isDaemon = true }
+        },
+    )
+
+    private val okHttpThreadSeq = AtomicInteger(0)
+
+    private fun buildClient(insecureTls: Boolean, http2: Boolean): HttpClient =
+        if (http2) buildOkHttpClient(insecureTls) else buildCioClient(insecureTls)
+
+    private fun buildCioClient(insecureTls: Boolean): HttpClient = HttpClient(CIO) {
         engine {
-            // Run connect/read on tagged threads (see cioExecutor).
             dispatcher = cioDispatcher
-            // Ceiling; per-call [timeout] plugin overrides for list vs download.
             requestTimeout = DL_REQUEST_MS
             maxConnectionsCount = 32
             if (insecureTls) {
@@ -212,16 +255,45 @@ object WebDavClient {
                 }
             }
         }
+        installListDownloadTimeout()
+        expectSuccess = false
+    }
+
+    private fun buildOkHttpClient(insecureTls: Boolean): HttpClient = HttpClient(OkHttp) {
+        engine {
+            config {
+                protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
+                dispatcher(
+                    Dispatcher(taggedExecutor("webdav-okhttp")).apply {
+                        maxRequests = 32
+                        maxRequestsPerHost = 16
+                    },
+                )
+                connectTimeout(DL_CONNECT_MS, TimeUnit.MILLISECONDS)
+                readTimeout(DL_SOCKET_MS, TimeUnit.MILLISECONDS)
+                writeTimeout(DL_SOCKET_MS, TimeUnit.MILLISECONDS)
+                callTimeout(0, TimeUnit.MILLISECONDS)
+                retryOnConnectionFailure(true)
+                if (insecureTls) {
+                    sslSocketFactory(trustAllSslContext.socketFactory, trustAllManager)
+                    hostnameVerifier { _, _ -> true }
+                }
+            }
+        }
+        installListDownloadTimeout()
+        expectSuccess = false
+    }
+
+    private fun io.ktor.client.HttpClientConfig<*>.installListDownloadTimeout() {
         install(HttpTimeout) {
             requestTimeoutMillis = DL_REQUEST_MS
             connectTimeoutMillis = DL_CONNECT_MS
             socketTimeoutMillis = DL_SOCKET_MS
         }
-        expectSuccess = false
     }
 
     /**
-     * Close browse/reader CIO client (drops keep-alive sockets). Safe from any thread.
+     * Close browse/reader HTTP client (drops keep-alive sockets). Safe from any thread.
      * Next request opens a fresh client. Does **not** touch the sticky FUSE client.
      */
     fun resetClient() {
@@ -242,7 +314,7 @@ object WebDavClient {
     }
 
     /**
-     * ProcessLifecycle ON_STOP: keep the browse CIO client so switching to an external
+     * ProcessLifecycle ON_STOP: keep the browse HTTP client so switching to an external
      * player does not drop keep-alive sockets. Screen-off still calls [dropBrowseClient].
      */
     fun onAppBackgrounded(reason: String = "app background") {
@@ -255,7 +327,7 @@ object WebDavClient {
     }
 
     /**
-     * Drop browse/reader CIO client + listings (screen-off / Recents).
+     * Drop browse/reader HTTP client + listings (screen-off / Recents).
      * Sticky FUSE client is left alone (external PDF viewers stay foreground).
      */
     fun dropBrowseClient(reason: String = "drop browse") {
@@ -266,7 +338,7 @@ object WebDavClient {
 
     /**
      * Network identity change (Wi‑Fi/cell/VPN/EasyTier). Debounced like SMB.
-     * Drops **both** CIO pools so the next request does not hang on a dead keep-alive.
+     * Drops **both** HTTP clients so the next request does not hang on a dead keep-alive.
      */
     fun onNetworkPathChanged(reason: String) {
         val now = System.currentTimeMillis()
@@ -569,7 +641,7 @@ object WebDavClient {
      *
      * Null if unknown / unreachable. Never throws to callers (transport blips return null).
      *
-     * @param sticky Use the external-FUSE CIO client (survives [onAppBackgrounded]).
+     * @param sticky Use the external-FUSE HTTP client (survives [onAppBackgrounded]).
      */
     suspend fun fileSizeOrNull(
         source: WebDavSourceEntity,
@@ -662,7 +734,7 @@ object WebDavClient {
      * Accepting that as a ranged read corrupts ZIP/TAR/PDF parsers at nonzero offsets.
      * Only `206` with a matching [Content-Range] start, or `200` at offset 0, is accepted.
      *
-     * @param sticky Use the external-FUSE CIO client (survives [onAppBackgrounded]).
+     * @param sticky Use the external-FUSE HTTP client (survives [onAppBackgrounded]).
      * @return bytes copied into [buf]
      * @throws RemoteRangeNotSupportedException when the server ignores Range at nonzero offset
      */

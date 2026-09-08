@@ -97,8 +97,7 @@ Build with Grok 4.5.
 * Network folder playback for MPV/MX Player/VLC with subtitles and external autio track. 
 * Wide Color Gamut and 10-bit color mode support.
 * Fast smbj client with concurrent connections support.
-* Ktor CIO WebDAV client with HTTP/1.1 and TLS support.
-* // Cronet WebDAV client with HTTP/2 and QUIC support.
+* Ktor OkHttp WebDAV client with HTTP/2 (default) and CIO HTTP/1.1 fallback.
 * Network gallery folders recognition with fast cover loading.
 * High performance reader with network cache from EhViewer.
 * Reader allow full size image decode.

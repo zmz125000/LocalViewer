@@ -566,6 +566,8 @@
     <string name="settings_advanced_read_cache_size">読書用キャッシュのサイズ</string>
     <string name="settings_advanced_app_language_title">アプリの言語</string>
     <string name="settings_advanced_enable_quic">QUIC をサポート</string>
+    <string name="settings_advanced_enable_http2">HTTP/2 をサポート</string>
+    <string name="settings_advanced_enable_http2_summary">WebDAV は OkHttp HTTP/2。オフで HTTP/1.1。</string>
     <string name="settings_advanced_hardware_bitmap_threshold">ハードウェアビットマップ (パフォーマンス向上) のしきい値</string>
     <string name="settings_advanced_hardware_bitmap_threshold_summary">長い画像の読み込みに失敗する場合はこれを減らしてみてください</string>
     <string name="settings_advanced_export_data">データをエクスポート</string>

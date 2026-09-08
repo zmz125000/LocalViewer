@@ -567,6 +567,8 @@
     <string name="settings_advanced_read_cache_size_summary">Max size for SMB page cache (and legacy online image cache)</string>
     <string name="settings_advanced_app_language_title">App language</string>
     <string name="settings_advanced_enable_quic">QUIC support</string>
+    <string name="settings_advanced_enable_http2">HTTP/2 support</string>
+    <string name="settings_advanced_enable_http2_summary">WebDAV via OkHttp HTTP/2. Off uses HTTP/1.1.</string>
     <string name="settings_advanced_hardware_bitmap_threshold">Hardware bitmap (better performance) threshold</string>
     <string name="settings_advanced_hardware_bitmap_threshold_summary">Try decreasing this if long images fail to load</string>
     <string name="settings_advanced_export_data">Export data</string>

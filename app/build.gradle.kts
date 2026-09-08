@@ -253,10 +253,11 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
 
-    // Cronet (app HTTP) + Android HUC fallback — no OkHttp.
+    // Cronet (app HTTP) + Android HUC fallback.
     implementation(libs.ktor.client.android)
-    // WebDAV PROPFIND needs a pure engine: Cronet and Android HUC both reject PROPFIND.
+    // WebDAV PROPFIND: CIO HTTP/1.1, OkHttp HTTP/2 (Advanced toggle). Both accept custom methods.
     implementation(libs.ktor.client.cio)
+    implementation(libs.ktor.client.okhttp)
 
     implementation(libs.bundles.kotlinx.serialization)
 

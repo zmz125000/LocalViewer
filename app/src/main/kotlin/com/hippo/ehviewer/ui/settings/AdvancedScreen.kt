@@ -268,6 +268,10 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                     }
                 }
             }
+            SwitchPreference(
+                title = stringResource(id = R.string.settings_advanced_enable_http2),
+                state = Settings.webDavHttp2.asMutableState(),
+            )
             val webDavListing = Settings.webDavConcurrentListing.asMutableState()
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_webdav_concurrent_listing),
