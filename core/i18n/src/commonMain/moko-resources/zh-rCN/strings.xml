@@ -80,6 +80,12 @@
     <string name="settings_external_video_randomize_token">随机化视频播放器令牌</string>
     <string name="settings_external_video_randomize_token_summary">外部视频播放使用随机的本地 HTTP 会话令牌和端口，而不是固定值</string>
     <string name="browse_menu_photo_grid">照片墙</string>
+    <string name="browse_item_more">更多</string>
+    <string name="browse_action_not_supported">不支持此操作</string>
+    <string name="browse_item_info">信息</string>
+    <string name="browse_play">播放</string>
+    <string name="browse_external_player">外部播放器</string>
+    <string name="browse_copy_url">复制链接</string>
     <string name="browse_menu_favorites_on_top">收藏置顶</string>
     <string name="browse_menu_page_count">页数</string>
     <string name="browse_menu_reading_progress">阅读进度</string>

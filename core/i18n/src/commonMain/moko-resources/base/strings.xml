@@ -84,6 +84,12 @@
     <string name="settings_external_video_randomize_token">Randomize video player token</string>
     <string name="settings_external_video_randomize_token_summary">Use a random local HTTP session token and port instead of stable values for external video playback</string>
     <string name="browse_menu_photo_grid">Photo grid</string>
+    <string name="browse_item_more">More</string>
+    <string name="browse_action_not_supported">This action is not supported</string>
+    <string name="browse_item_info">Info</string>
+    <string name="browse_play">Play</string>
+    <string name="browse_external_player">External player</string>
+    <string name="browse_copy_url">Copy URL</string>
     <string name="browse_menu_favorites_on_top">Favorites on top</string>
     <string name="browse_menu_page_count">Page count</string>
     <string name="browse_menu_reading_progress">Reading progress</string>
