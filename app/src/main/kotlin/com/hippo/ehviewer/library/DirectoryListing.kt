@@ -287,6 +287,7 @@ sealed interface BrowseEntryRemote {
          */
         val coverFileName: String? = null,
         override val lastModifiedMs: Long = 0L,
+        override val size: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
         /**
@@ -295,6 +296,11 @@ sealed interface BrowseEntryRemote {
          * hit recovers it (clears this flag without re-peeking).
          */
         val unreachable: Boolean = false,
+        /**
+         * Zip-as-dir: live zip file size/mtime no longer match this row. Interiors
+         * stay until the user enters; enter then re-reads EOCD and clears the mark.
+         */
+        val zipStale: Boolean = false,
     ) : BrowseEntryRemote
 
     data class FolderGallery(
@@ -717,6 +723,7 @@ fun BrowseEntryRemote.isUnderUnreachableFolder(unreachableRoots: Set<String>): B
  * Reconcile **direct** files against the live parent listing while keeping the composed
  * cache shape:
  * - surviving archive/video/regular rows (including loose images): **patch size/mtime only**
+ * - zip-as-dir Directory rows: patch live zip size/mtime and set [BrowseEntryRemote.Directory.zipStale]
  * - missing direct files: drop
  * - new non-image files: classify only the delta
  * - new images: RegularFile rows (Folder mode) + current-dir FolderGallery (Photo mode)
@@ -746,7 +753,32 @@ fun replaceSlimDirectFilesFromLive(
 
     for (entry in merged) {
         when (entry) {
-            is BrowseEntryRemote.Directory -> dirs += entry
+            is BrowseEntryRemote.Directory -> {
+                val zipName = ZipAsDirListing.zipFileSegment(
+                    entry.relativeName.ifEmpty { entry.name },
+                    entry.name,
+                )
+                val live = zipName?.let { liveByName[it] }
+                if (live != null) {
+                    seenDirectNames += zipName
+                    val size = live.size.takeIf { it > 0L } ?: entry.size
+                    val mtime = live.lastModifiedMs.takeIf { it > 0L } ?: entry.lastModifiedMs
+                    val changed =
+                        (live.size > 0L && entry.size > 0L && live.size != entry.size) ||
+                            (
+                                live.lastModifiedMs > 0L &&
+                                    entry.lastModifiedMs > 0L &&
+                                    live.lastModifiedMs != entry.lastModifiedMs
+                                )
+                    dirs += entry.copy(
+                        size = size,
+                        lastModifiedMs = mtime,
+                        zipStale = entry.zipStale || changed,
+                    )
+                } else {
+                    dirs += entry
+                }
+            }
             is BrowseEntryRemote.FolderGallery -> {
                 val rel = norm(entry.relativeName)
                 if (rel.isNotEmpty()) {
@@ -1410,6 +1442,16 @@ fun classifyRemoteListingWithPeeks(
         }
     }
 
+    val childSizeByName = HashMap<String, Long>(entries.size)
+    for (e in entries) {
+        if (e.size > 0L) childSizeByName[e.name] = e.size
+    }
+    if (childSizeByName.isNotEmpty()) {
+        for (i in dirs.indices) {
+            val sz = childSizeByName[dirs[i].name] ?: continue
+            if (dirs[i].size != sz) dirs[i] = dirs[i].copy(size = sz)
+        }
+    }
     dirs.sortWith { a, b -> naturalCompare(a.name, b.name) }
     leafGalleries.sortWith { a, b -> naturalCompare(a.name, b.name) }
     archives.sortWith { a, b -> naturalCompare(a.name, b.name) }

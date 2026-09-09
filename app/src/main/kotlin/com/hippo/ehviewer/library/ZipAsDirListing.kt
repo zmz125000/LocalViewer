@@ -306,7 +306,7 @@ object ZipAsDirListing {
             for ((leaf, leafPeek) in listing.grandPeeks) {
                 grandPeeks["${child.name}/$leaf"] = leafPeek
             }
-            out += child.copy(isDirectory = true, size = 0L)
+            out += child.copy(isDirectory = true)
         }
         return ZipFakeFolderExpansion(out, peeks, grandPeeks)
     }
@@ -369,6 +369,7 @@ object ZipAsDirListing {
                 hasGallery = false,
                 presence = DirPresence.Pending,
                 lastModifiedMs = child.lastModifiedMs,
+                size = child.size,
                 hidden = child.hidden || isDotHiddenName(child.name),
             )
         }
@@ -379,7 +380,7 @@ object ZipAsDirListing {
         if (children.none { !it.isDirectory && isZipArchiveFileName(it.name) }) return children
         return children.map { child ->
             if (!child.isDirectory && isZipArchiveFileName(child.name)) {
-                child.copy(isDirectory = true, size = 0L)
+                child.copy(isDirectory = true)
             } else {
                 child
             }
@@ -560,6 +561,37 @@ object ZipAsDirListing {
             }
         }
         return names
+    }
+
+    fun isZipAsDirStale(parentEntries: List<BrowseEntryRemote>?, zipFileName: String): Boolean {
+        if (parentEntries == null || zipFileName.isEmpty()) return false
+        val want = zipFileName.substringAfterLast('/').substringAfterLast('\\')
+        return parentEntries.any { entry ->
+            entry is BrowseEntryRemote.Directory &&
+                entry.zipStale &&
+                zipFileSegment(entry.relativeName.ifEmpty { entry.name }, entry.name) == want
+        }
+    }
+
+    fun clearZipAsDirStale(
+        parentEntries: List<BrowseEntryRemote>,
+        zipFileName: String,
+    ): List<BrowseEntryRemote> {
+        val want = zipFileName.substringAfterLast('/').substringAfterLast('\\')
+        var changed = false
+        val out = ArrayList<BrowseEntryRemote>(parentEntries.size)
+        for (entry in parentEntries) {
+            if (entry is BrowseEntryRemote.Directory &&
+                entry.zipStale &&
+                zipFileSegment(entry.relativeName.ifEmpty { entry.name }, entry.name) == want
+            ) {
+                changed = true
+                out += entry.copy(zipStale = false)
+            } else {
+                out += entry
+            }
+        }
+        return if (changed) out else parentEntries
     }
 
     /** Direct image basenames under [innerPrefix] (natural sort). */

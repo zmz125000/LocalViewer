@@ -104,6 +104,12 @@ object NetworkFolderIndexCache {
 
     suspend fun deleteLocal(rootId: Long) = delete("local", rootId)
 
+    suspend fun removeSmbUnder(sourceId: Long, relativeDir: String) = removeUnder("smb", sourceId, relativeDir)
+
+    suspend fun removeWebDavUnder(sourceId: Long, relativeDir: String) = removeUnder("webdav", sourceId, relativeDir)
+
+    suspend fun removeLocalUnder(rootId: Long, relativeDir: String) = removeUnder("local", rootId, relativeDir)
+
     /** Drop every protocol file (current + legacy cacheDir) and process RAM listings. */
     suspend fun clearAll() = withContext(Dispatchers.IO) {
         lock.withLock {
@@ -221,6 +227,47 @@ object NetworkFolderIndexCache {
         }
     }
 
+    /**
+     * Drop [relativeDir] and nested keys (`dir/file.zip`, `dir/file.zip/Album`).
+     * Empty [relativeDir] is ignored so a whole source index is never wiped.
+     */
+    private suspend fun removeUnder(
+        protocol: String,
+        sourceId: Long,
+        relativeDir: String,
+    ) = withContext(Dispatchers.IO) {
+        val prefix = normalizeDir(relativeDir)
+        if (prefix.isEmpty()) return@withContext
+        if (!Settings.networkFolderIndexCache.value) return@withContext
+        lock.withLock {
+            val file = fileFor(protocol, sourceId)
+            val root = readRoot(file)?.takeIf { matchesVersion(it) } ?: return@withLock
+            val folders = root.optJSONObject("folders") ?: return@withLock
+            val stale = buildList {
+                val keys = folders.keys()
+                while (keys.hasNext()) {
+                    val keyName = keys.next()
+                    if (keyName == prefix || keyName.startsWith("$prefix/")) add(keyName)
+                }
+            }
+            if (stale.isEmpty()) return@withLock
+            stale.forEach { folders.remove(it) }
+            cacheDir.mkdirs()
+            val tmp = File(cacheDir, "${file.name}.tmp.${System.nanoTime()}")
+            try {
+                tmp.writeText(root.toString())
+                if (CachePagePublish.atomicReplaceFile(tmp, file)) {
+                    file.setLastModified(System.currentTimeMillis())
+                    File(legacyCacheDir, file.name).delete()
+                }
+            } catch (e: Throwable) {
+                logcat("FolderIndex", e)
+            } finally {
+                tmp.delete()
+            }
+        }
+    }
+
     private suspend fun delete(protocol: String, sourceId: Long) = withContext(Dispatchers.IO) {
         lock.withLock {
             val name = "${protocol}_$sourceId.json"
@@ -283,7 +330,9 @@ object NetworkFolderIndexCache {
                             put("presence", entry.presence.name)
                             entry.coverFileName?.let { put("coverFileName", it) }
                             if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
+                            if (entry.size > 0L) put("size", entry.size)
                             if (entry.unreachable) put("unreachable", true)
+                            if (entry.zipStale) put("zipStale", true)
                         }
                         is BrowseEntryRemote.FolderGallery -> {
                             put("kind", KIND_FOLDER_GALLERY)
@@ -335,9 +384,11 @@ object NetworkFolderIndexCache {
                         presence = DirPresence.valueOf(item.getString("presence")),
                         coverFileName = item.optNullableString("coverFileName"),
                         lastModifiedMs = item.optLong("lastModifiedMs"),
+                        size = item.optLong("size"),
                         hidden = hidden,
                         virtual = virtual,
                         unreachable = item.optBoolean("unreachable"),
+                        zipStale = item.optBoolean("zipStale"),
                     )
                     KIND_FOLDER_GALLERY -> BrowseEntryRemote.FolderGallery(
                         name = name,
