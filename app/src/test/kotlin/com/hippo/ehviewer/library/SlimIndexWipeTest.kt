@@ -260,4 +260,33 @@ class SlimIndexWipeTest {
         assertTrue(visible.none { it is BrowseEntryRemote.FolderGallery && it.relativeName.startsWith("Videos") })
         assertTrue(visible.none { it.name == "Videos" })
     }
+
+    @Test
+    fun libraryMediaStorePagesDoNotDropDirsOrArchives() {
+        val previous = listOf(
+            comics,
+            BrowseEntryRemote.ArchiveGallery(name = "vol1.cbz", fileName = "vol1.cbz", size = 9L),
+            BrowseEntryRemote.RegularFile(name = "old.jpg", fileName = "old.jpg"),
+            BrowseEntryRemote.FolderGallery(
+                name = "Parent",
+                relativeName = "",
+                pageCount = 1,
+                coverFileName = "old.jpg",
+                imageFileNames = listOf("old.jpg"),
+            ),
+        )
+        val merged = FolderGalleryIndex.mergeLibraryFolderPages(
+            previous,
+            "Parent",
+            listOf("01.jpg", "02.jpg"),
+        )
+        assertTrue(merged.any { it is BrowseEntryRemote.Directory && it.name == "Comics" })
+        assertTrue(merged.any { it is BrowseEntryRemote.ArchiveGallery && it.name == "vol1.cbz" })
+        val gallery = merged.filterIsInstance<BrowseEntryRemote.FolderGallery>()
+            .single { it.relativeName.isEmpty() }
+        assertEquals(listOf("01.jpg", "02.jpg"), gallery.imageFileNames)
+        assertFalse(merged.any { it.name == "old.jpg" })
+        assertTrue(FolderGalleryIndex.isImagePagesOnlyListing(FolderGalleryIndex.listingFromImageNames("P", listOf("a.jpg"))))
+        assertFalse(FolderGalleryIndex.isImagePagesOnlyListing(merged))
+    }
 }

@@ -49,7 +49,8 @@ data class BrowseChild(
  * [includeSafRemainder] is for SAF trees only. When media permission maps the folder
  * onto MediaStore, children are emitted from the index first (including subdirs).
  * SAF then skips names already listed — files and dirs — so archives / unindexed
- * folders remain. Peeks of MediaStore-known children pass false to skip SAF entirely.
+ * folders remain. Child peeks also take that remainder: MediaStore never indexes
+ * archives, so a MediaStore-only peek would tag image+zip folders as image leaves.
  */
 inline fun Path.forEachBrowseChild(
     includeSafRemainder: Boolean = true,
