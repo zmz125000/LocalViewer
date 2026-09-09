@@ -144,6 +144,11 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     }
                 }
 
+                override fun close() {
+                    downloadJobs.cancelAll()
+                    super.close()
+                }
+
                 /** Restrict prefetch only when download will RAM→UHDR convert. */
                 private fun isLibHdrCandidate(name: String): Boolean = HdrConvertCache.usesNetworkLibConvert(name)
 
