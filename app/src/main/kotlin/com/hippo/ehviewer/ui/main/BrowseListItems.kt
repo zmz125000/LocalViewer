@@ -96,6 +96,12 @@ import okio.Path.Companion.toPath
 
 private const val BROWSE_LIST_SEP = " · "
 
+/** Glyph in the 56.dp list leading slot when there is no cover thumb. */
+val BrowseListLeadingIconSize = 42.dp
+
+/** Placeholder glyph in grid cells when there is no cover thumb. */
+val BrowseGridPlaceholderIconSize = 42.dp
+
 /** Uppercase extension from a basename / relative path; `"FILE"` when missing. */
 fun browseFileExtensionLabel(fileName: String): String {
     val base = fileName.substringAfterLast('/').substringAfterLast('\\')
@@ -502,11 +508,11 @@ fun BrowseVideoRow(
             )
         },
         leadingContent = {
-            // Same 56dp / 24dp icon metrics as [BrowseCoverThumb] list default.
+            // Same 56dp slot / [BrowseListLeadingIconSize] as [BrowseCoverThumb] list default.
             BrowseVideoThumbnail(
                 source = thumbnailSource,
                 modifier = Modifier.size(56.dp).clip(ShapeDefaults.Medium),
-                iconSize = 24.dp,
+                iconSize = BrowseListLeadingIconSize,
                 allowRemoteFetch = allowRemoteFetch,
             )
         },
@@ -633,7 +639,7 @@ fun BrowseDirectoryGridItem(
                     BrowseCoverThumb(
                         cover = cover,
                         modifier = Modifier.fillMaxSize(),
-                        placeholderSize = 40.dp,
+                        placeholderSize = BrowseGridPlaceholderIconSize,
                         decodeSizePx = CoverThumb.gridDecodePx(
                             screenWidthDp = LocalConfiguration.current.screenWidthDp,
                             columns = GalleryGridDefaults.columnCount(),
@@ -693,7 +699,7 @@ fun BrowseDirectoryGridItem(
                         Icon(
                             Icons.Default.Folder,
                             contentDescription = null,
-                            modifier = Modifier.size(48.dp),
+                            modifier = Modifier.size(BrowseGridPlaceholderIconSize),
                             tint = MaterialTheme.colorScheme.primary,
                         )
                         if (showFavoriteStar) {
@@ -762,7 +768,7 @@ fun BrowseFolderGalleryGridItem(
                 BrowseCoverThumb(
                     cover = cover,
                     modifier = Modifier.fillMaxSize().clip(ShapeDefaults.Medium),
-                    placeholderSize = 40.dp,
+                    placeholderSize = BrowseGridPlaceholderIconSize,
                     decodeSizePx = CoverThumb.gridDecodePx(
                         screenWidthDp = LocalConfiguration.current.screenWidthDp,
                         columns = GalleryGridDefaults.columnCount(),
@@ -820,7 +826,7 @@ fun BrowsePhotoGridImageItem(
                 BrowseCoverThumb(
                     cover = cover,
                     modifier = Modifier.fillMaxSize().clip(ShapeDefaults.Medium),
-                    placeholderSize = 40.dp,
+                    placeholderSize = BrowseGridPlaceholderIconSize,
                     decodeSizePx = CoverThumb.gridDecodePx(
                         screenWidthDp = LocalConfiguration.current.screenWidthDp,
                         columns = GalleryGridDefaults.columnCount(),
@@ -870,7 +876,7 @@ fun BrowseArchiveGridItem(
                 BrowseCoverThumb(
                     cover = cover,
                     modifier = Modifier.fillMaxSize().clip(ShapeDefaults.Medium),
-                    placeholderSize = 40.dp,
+                    placeholderSize = BrowseGridPlaceholderIconSize,
                     decodeSizePx = CoverThumb.gridDecodePx(
                         screenWidthDp = LocalConfiguration.current.screenWidthDp,
                         columns = GalleryGridDefaults.columnCount(),
@@ -920,7 +926,7 @@ fun BrowseVideoGridItem(
             BrowseVideoThumbnail(
                 thumbnailSource,
                 Modifier.fillMaxSize(),
-                48.dp,
+                BrowseGridPlaceholderIconSize,
                 allowRemoteFetch,
             )
         },
@@ -995,7 +1001,7 @@ fun BrowseFileGridItem(
                 Icon(
                     Icons.AutoMirrored.Filled.InsertDriveFile,
                     contentDescription = null,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(BrowseGridPlaceholderIconSize),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -1072,7 +1078,7 @@ fun BrowseCoverThumb(
     modifier: Modifier = Modifier
         .size(56.dp)
         .clip(ShapeDefaults.Medium),
-    placeholderSize: Dp = 24.dp,
+    placeholderSize: Dp = BrowseListLeadingIconSize,
     decodeSizePx: Int? = null,
     /**
      * Bumped by parent (e.g. SMB browse [refreshToken]) to clear sticky fail and re-fetch
