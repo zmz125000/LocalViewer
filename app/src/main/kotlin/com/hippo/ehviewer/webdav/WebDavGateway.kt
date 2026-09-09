@@ -373,11 +373,6 @@ object WebDavGateway {
         }
         val toClassify = (plan.addedDirectories + deepHidden + newZips).distinctBy { it.name }
         val dirName = relativeDir.substringAfterLast('/').ifEmpty { source.displayName }
-        val liveForFiles = if (zipFileNames.isEmpty()) {
-            children
-        } else {
-            children.filterNot { it.name in zipFileNames }
-        }
         val zipAdjustedUnreachable = plan.unreachableDirectoryNames - zipFileNames
         val recovered = plan.recoveredDirectoryNames
         val dirsUnchanged = plan.addedDirectories.isEmpty() &&
@@ -385,7 +380,7 @@ object WebDavGateway {
             recovered.isEmpty()
         if (dirsUnchanged && deepHidden.isEmpty() && newZips.isEmpty()) {
             return SlimDirectoryRefresh(
-                entries = replaceSlimDirectFilesFromLive(cached, liveForFiles, dirName),
+                entries = replaceSlimDirectFilesFromLive(cached, children, dirName),
                 removedDirectoryNames = emptySet(),
             )
         }
@@ -402,7 +397,7 @@ object WebDavGateway {
         }
         val merged = replaceSlimDirectFilesFromLive(
             mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
-            liveForFiles,
+            children,
             dirName,
         )
         return SlimDirectoryRefresh(
@@ -511,7 +506,12 @@ object WebDavGateway {
         onCached: ((List<BrowseEntryRemote>) -> Unit)?,
     ): List<BrowseEntryRemote> {
         val configKey = sourceConfigKey(source)
-        if (useCache) {
+        val zipName = zipRel.substringAfterLast('/')
+        val parentRel = ZipAsDirListing.parentRelative(zipRel)
+        val parentEntries = BrowseSession.getWebDavListing(source.id, parentRel)
+            ?: NetworkFolderIndexCache.loadWebDav(source.id, configKey, parentRel)
+        val stale = ZipAsDirListing.isZipAsDirStale(parentEntries, zipName)
+        if (useCache && !stale) {
             val cached = BrowseSession.getWebDavListing(source.id, relativeDir)
                 ?: NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir)
             if (cached != null) {
@@ -520,11 +520,15 @@ object WebDavGateway {
                 onCached?.invoke(cached)
                 return cached
             }
-        } else {
+        } else if (!useCache) {
             BrowseSession.invalidateWebDavListing(source.id, relativeDir)
         }
+        if (stale) {
+            BrowseSession.invalidateWebDavListingsUnder(source.id, zipRel)
+            NetworkFolderIndexCache.removeWebDavUnder(source.id, zipRel)
+        }
         val title = inner.substringAfterLast('/').ifEmpty {
-            zipRel.substringAfterLast('/').ifEmpty { source.displayName }
+            zipName.ifEmpty { source.displayName }
         }
         val entries = withIOContext {
             try {
@@ -537,6 +541,9 @@ object WebDavGateway {
                 ).use { src ->
                     val cd = ZipCentralDirectory.open(src) ?: return@use emptyList()
                     persistZipVirtualFolderTree(source, configKey, zipRel, inner, title, cd)
+                    if (stale && parentEntries != null) {
+                        clearZipAsDirStaleOnParent(source, configKey, zipRel, zipName, parentEntries)
+                    }
                     BrowseSession.getWebDavListing(source.id, relativeDir)
                         ?: ZipAsDirListing.classifyAt(cd, inner, title)
                 }
@@ -612,6 +619,20 @@ object WebDavGateway {
                 BrowseSession.putWebDavListing(source.id, dir, entries, sessionCurrent = true)
             },
         )
+    }
+
+    private suspend fun clearZipAsDirStaleOnParent(
+        source: WebDavSourceEntity,
+        configKey: String,
+        zipRel: String,
+        zipName: String,
+        parentEntries: List<BrowseEntryRemote>,
+    ) {
+        val cleared = ZipAsDirListing.clearZipAsDirStale(parentEntries, zipName)
+        if (cleared === parentEntries) return
+        val parent = ZipAsDirListing.parentRelative(zipRel)
+        val stored = NetworkFolderIndexCache.saveWebDav(source.id, configKey, parent, cleared)
+        BrowseSession.putWebDavListing(source.id, parent, stored, sessionCurrent = true)
     }
 
     /**

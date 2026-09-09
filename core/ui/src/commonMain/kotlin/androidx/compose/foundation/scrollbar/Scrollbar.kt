@@ -389,7 +389,7 @@ private val SliderAdapter.thumbPixelRange: IntRange
         val start = position.roundToInt()
         val endExclusive = start + thumbSize.roundToInt()
 
-        return (start until endExclusive)
+        return start until endExclusive
     }
 
 private val IntRange.size get() = last + 1 - first

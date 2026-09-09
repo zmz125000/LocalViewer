@@ -90,13 +90,13 @@ object PlatformBitDepth {
 
     private fun isPngSignature(bytes: ByteArray, n: Int): Boolean {
         if (n < 8) return false
-        return (bytes[0].toInt() and 0xff) == 0x89 &&
+        return bytes[0].toInt() and 0xff == 0x89 &&
             bytes[1] == 'P'.code.toByte() &&
             bytes[2] == 'N'.code.toByte() &&
             bytes[3] == 'G'.code.toByte() &&
-            (bytes[4].toInt() and 0xff) == 0x0d &&
-            (bytes[5].toInt() and 0xff) == 0x0a &&
-            (bytes[6].toInt() and 0xff) == 0x1a &&
-            (bytes[7].toInt() and 0xff) == 0x0a
+            bytes[4].toInt() and 0xff == 0x0d &&
+            bytes[5].toInt() and 0xff == 0x0a &&
+            bytes[6].toInt() and 0xff == 0x1a &&
+            bytes[7].toInt() and 0xff == 0x0a
     }
 }

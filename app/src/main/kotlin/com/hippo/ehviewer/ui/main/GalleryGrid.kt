@@ -95,8 +95,8 @@ internal fun effectiveColumnCount(thumbColumns: Int, landscape: Boolean): Int {
 internal fun effectiveListColumnCount(smallestWidthDp: Int, landscape: Boolean): Int {
     val tablet = smallestWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
     return when {
-        tablet && landscape -> 4
-        tablet -> 3
+        tablet && landscape -> 3
+        tablet -> 2
         landscape -> 2
         else -> 1
     }

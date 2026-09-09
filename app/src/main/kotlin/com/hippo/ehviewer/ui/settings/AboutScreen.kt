@@ -157,7 +157,7 @@ suspend fun showNewVersion(release: Release) {
         val time = ReadableTime.getFilenamableTime()
         EhDB.exportDB(downloadLocation / "$time.db")
     }
-    // TODO: Download in the background and show progress in notification
+    // Background download with notification progress is not implemented yet.
     val path = AppConfig.tempDir / "update.apk"
     AppUpdater.downloadUpdate(release.downloadLink, path.apply { delete() })
     withUIContext { installPackage(path.toFile()) }

@@ -97,6 +97,8 @@ import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.EasyTierScreenDestination
 import com.hippo.ehviewer.ui.easytier.EasyTierDialog
+import com.hippo.ehviewer.ui.main.BrowseGridPlaceholderIconSize
+import com.hippo.ehviewer.ui.main.BrowseListLeadingIconSize
 import com.hippo.ehviewer.ui.main.BrowseListSupportingContent
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.CoverImage
@@ -673,7 +675,7 @@ private fun FavoriteSourceListRow(
                     Icon(
                         favoriteIcon(fav),
                         contentDescription = null,
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.size(BrowseListLeadingIconSize),
                         tint = MaterialTheme.colorScheme.primary,
                     )
                 }
@@ -693,7 +695,7 @@ private fun FavoriteSourceListRow(
 
 /**
  * Square favourite grid cell (column width from [GalleryGridDefaults]).
- * Sources: 48.dp icon above caption.
+ * Sources: 42.dp icon above caption.
  * Galleries + folder favourites with a **cache-hit** thumb: full-bleed cover + bottom
  * label scrim (same as favourite gallery). Miss / no key keeps classic icon layout.
  */
@@ -739,6 +741,7 @@ private fun FavoriteSourceGridCell(
                             } else {
                                 Icons.Default.Folder
                             },
+                            placeholderSize = BrowseGridPlaceholderIconSize,
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
@@ -746,6 +749,7 @@ private fun FavoriteSourceGridCell(
                         coverPath = folderThumbKey,
                         sizePx = gridDecodePx,
                         placeholder = Icons.Default.Folder,
+                        placeholderSize = BrowseGridPlaceholderIconSize,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -786,7 +790,7 @@ private fun FavoriteSourceGridCell(
                 Icon(
                     favoriteIcon(fav),
                     contentDescription = null,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(BrowseGridPlaceholderIconSize),
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }

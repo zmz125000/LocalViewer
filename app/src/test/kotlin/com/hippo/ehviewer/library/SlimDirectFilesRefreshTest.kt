@@ -115,14 +115,101 @@ class SlimDirectFilesRefreshTest {
             RemoteDirectorySlimPlan(addedDirectories = emptyList(), unreachableDirectoryNames = keptUnreachable),
             emptyList(),
         )
-        val liveForFiles = live.filterNot { it.name in zipFiles }
-        val updated = replaceSlimDirectFilesFromLive(merged, liveForFiles, "Parent")
-        assertTrue(
-            updated.any { it is BrowseEntryRemote.Directory && it.name == "tree.zip" },
-        )
+        val updated = replaceSlimDirectFilesFromLive(merged, live, "Parent")
+        val zipDir = updated.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "tree.zip" }
+        assertEquals(99L, zipDir.size)
+        assertFalse(zipDir.zipStale)
         assertTrue(updated.none { it is BrowseEntryRemote.ArchiveGallery })
         val notes = updated.filterIsInstance<BrowseEntryRemote.RegularFile>().single()
         assertEquals(2L, notes.size)
+    }
+
+    @Test
+    fun zipAsDirPatchesSizeMtimeAndMarksStaleWhenBothKnown() {
+        val cached = listOf(
+            BrowseEntryRemote.Directory(
+                name = "tree.zip",
+                relativeName = "tree.zip",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.Navigable,
+                lastModifiedMs = 100L,
+                size = 10L,
+            ),
+        )
+        val live = listOf(
+            RemoteChild(name = "tree.zip", isDirectory = false, size = 20L, lastModifiedMs = 200L),
+        )
+        val updated = replaceSlimDirectFilesFromLive(cached, live, "Parent")
+        val zipDir = updated.filterIsInstance<BrowseEntryRemote.Directory>().single()
+        assertEquals(20L, zipDir.size)
+        assertEquals(200L, zipDir.lastModifiedMs)
+        assertTrue(zipDir.zipStale)
+        assertTrue(updated.none { it is BrowseEntryRemote.ArchiveGallery })
+    }
+
+    @Test
+    fun zipAsDirSeedsZeroFingerprintWithoutMarking() {
+        val cached = listOf(
+            BrowseEntryRemote.Directory(
+                name = "tree.zip",
+                relativeName = "tree.zip",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.Navigable,
+            ),
+        )
+        val live = listOf(
+            RemoteChild(name = "tree.zip", isDirectory = false, size = 20L, lastModifiedMs = 200L),
+        )
+        val updated = replaceSlimDirectFilesFromLive(cached, live, "Parent")
+        val zipDir = updated.filterIsInstance<BrowseEntryRemote.Directory>().single()
+        assertEquals(20L, zipDir.size)
+        assertEquals(200L, zipDir.lastModifiedMs)
+        assertFalse(zipDir.zipStale)
+    }
+
+    @Test
+    fun zipAsDirUnchangedFingerprintKeepsMarkOff() {
+        val cached = listOf(
+            BrowseEntryRemote.Directory(
+                name = "tree.zip",
+                relativeName = "tree.zip",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.Navigable,
+                lastModifiedMs = 100L,
+                size = 10L,
+            ),
+        )
+        val live = listOf(
+            RemoteChild(name = "tree.zip", isDirectory = false, size = 10L, lastModifiedMs = 100L),
+        )
+        val updated = replaceSlimDirectFilesFromLive(cached, live, "Parent")
+        val zipDir = updated.filterIsInstance<BrowseEntryRemote.Directory>().single()
+        assertFalse(zipDir.zipStale)
+        assertEquals(10L, zipDir.size)
+    }
+
+    @Test
+    fun zipAsDirKeepsExistingStaleMarkUntilEnter() {
+        val cached = listOf(
+            BrowseEntryRemote.Directory(
+                name = "tree.zip",
+                relativeName = "tree.zip",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.Navigable,
+                lastModifiedMs = 100L,
+                size = 10L,
+                zipStale = true,
+            ),
+        )
+        val live = listOf(
+            RemoteChild(name = "tree.zip", isDirectory = false, size = 10L, lastModifiedMs = 100L),
+        )
+        val updated = replaceSlimDirectFilesFromLive(cached, live, "Parent")
+        assertTrue(updated.filterIsInstance<BrowseEntryRemote.Directory>().single().zipStale)
     }
 
     @Test

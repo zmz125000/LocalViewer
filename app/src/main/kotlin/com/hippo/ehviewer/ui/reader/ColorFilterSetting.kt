@@ -57,7 +57,7 @@ fun ColorFilterSetting() = Column(modifier = Modifier.verticalScroll(rememberScr
         val b by bf
         val af = remember { mutableIntStateOf(color.alpha) }
         val a by af
-        color = (a shl 24) or (r shl 16) or (g shl 8) or (b)
+        color = (a shl 24) or (r shl 16) or (g shl 8) or b
         Column {
             SliderChoice(
                 startSlot = { Text(text = "R") },

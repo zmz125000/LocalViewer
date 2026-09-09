@@ -412,7 +412,7 @@ abstract class RangeSet<T : Comparable<T>> :
      * @return whether any values were removed
      */
     override fun retainAll(elements: Collection<ClosedRange<T>>): Boolean {
-        // TODO: determine if this entire can be more efficiently designed
+        // Candidate for a more efficient retain-all design.
 
         val unnormalizedRanges = elements.map { element ->
             val clone = clone()

@@ -451,7 +451,7 @@ private suspend fun ZoomableState?.panRight(distance: Float, bounds: Rect): Bool
 }
 
 private inline fun ZoomableState?.canPan(getRemaining: (Rect) -> Float): Boolean {
-    // TODO: Remove when K2 mode in IDE is stable
+    // Contract so the nullable receiver smart-casts when this returns true.
     contract {
         returns(true) implies (this@canPan != null)
     }

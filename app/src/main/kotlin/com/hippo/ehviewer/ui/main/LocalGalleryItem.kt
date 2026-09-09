@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
@@ -119,6 +120,7 @@ internal fun CoverImage(
      * file (evicted `archive_thumb` after cache trim / clear).
      */
     archiveContentPath: String? = null,
+    placeholderSize: Dp = BrowseListLeadingIconSize,
 ) {
     // Do not paint a DB/history path until IO verifies it still exists — stale
     // archive_thumb keys cause CoverPathFetcher ENOENT spam. Logical HistoryThumbKey
@@ -166,7 +168,7 @@ internal fun CoverImage(
         Icon(
             imageVector = placeholder,
             contentDescription = null,
-            modifier = Modifier.size(48.dp),
+            modifier = Modifier.size(placeholderSize),
             tint = MaterialTheme.colorScheme.primary,
         )
         val request = coverRequest(resolvedCover, sizePx)
@@ -371,6 +373,7 @@ fun HistoryGridItem(
                     coverPath = coverKey,
                     sizePx = gridDecodePx,
                     placeholder = placeholderIcon,
+                    placeholderSize = BrowseGridPlaceholderIconSize,
                     modifier = Modifier.fillMaxSize(),
                 )
                 if (showPages && LocalHistory.showsPageProgress(info)) {
@@ -438,7 +441,7 @@ fun HistoryGridItem(
 /**
  * History **Directories** section grid cell — same square layout as Library
  * [FavoriteSourceGridCell]: full-bleed cover + bottom scrim when a thumb is cached;
- * otherwise 48.dp folder icon + caption (Lan/Cloud badge for network browse pins).
+ * otherwise 42.dp folder icon + caption (Lan/Cloud badge for network browse pins).
  */
 @Composable
 fun HistoryDirectoryGridItem(
@@ -478,6 +481,7 @@ fun HistoryDirectoryGridItem(
                         gutter = GalleryGridDefaults.gutter(),
                     ),
                     placeholder = Icons.Default.Folder,
+                    placeholderSize = BrowseGridPlaceholderIconSize,
                     modifier = Modifier.fillMaxSize(),
                 )
                 Text(
@@ -508,7 +512,7 @@ fun HistoryDirectoryGridItem(
                 Icon(
                     Icons.Default.Folder,
                     contentDescription = null,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(BrowseGridPlaceholderIconSize),
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }
@@ -583,6 +587,7 @@ fun LocalGalleryGridItem(
                     } else {
                         Icons.Default.Folder
                     },
+                    placeholderSize = BrowseGridPlaceholderIconSize,
                     modifier = Modifier.fillMaxSize(),
                 )
                 if (showPages && gallery.pageCount > 0) {

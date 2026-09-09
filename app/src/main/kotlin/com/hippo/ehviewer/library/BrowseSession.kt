@@ -391,6 +391,15 @@ object BrowseSession {
      */
     fun localZipListingKey(rootId: Long, relativeDir: String): String = "zipasdir:$rootId|${normalizeBrowseRelativeDir(relativeDir)}"
 
+    /** Drop [relativeDir] and nested zip-as-dir interiors (`dir/file.zip`, `dir/file.zip/Album`). */
+    fun invalidateLocalZipListingsUnder(rootId: Long, relativeDir: String) {
+        val dir = normalizeBrowseRelativeDir(relativeDir)
+        if (dir.isEmpty()) return
+        val exact = localZipListingKey(rootId, dir)
+        val nested = "$exact/"
+        localListings.keys.filter { it == exact || it.startsWith(nested) }.forEach { localListings.remove(it) }
+    }
+
     fun normalizeBrowseRelativeDir(relativeDir: String): String = relativeDir.replace('\\', '/').trim('/')
 
     /**

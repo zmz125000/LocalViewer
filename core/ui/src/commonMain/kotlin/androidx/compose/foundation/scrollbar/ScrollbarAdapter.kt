@@ -248,8 +248,8 @@ internal class LazyListScrollbarAdapter(
                 val second = this[1]
                 // If either the indices or the offsets aren't continuous, then the first item is
                 // sticky, so we return 1
-                if ((first.index < second.index - 1) ||
-                    (first.offset + first.size + lineSpacing > second.offset)
+                if (first.index < second.index - 1 ||
+                    first.offset + first.size + lineSpacing > second.offset
                 ) {
                     1
                 } else {

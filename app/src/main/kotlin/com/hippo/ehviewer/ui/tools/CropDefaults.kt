@@ -6,7 +6,7 @@ import com.ehviewer.core.model.V2GalleryPreview
 private const val CROP_MIN_ASPECT = 0.5F
 private const val CROP_MAX_ASPECT = 0.8f
 private val CROP_GOOD_RANGE = CROP_MIN_ASPECT..CROP_MAX_ASPECT
-private fun shouldCrop(width: Int, height: Int) = (width.toFloat() / height) in CROP_GOOD_RANGE
+private fun shouldCrop(width: Int, height: Int) = width.toFloat() / height in CROP_GOOD_RANGE
 
 val V2GalleryPreview.shouldCrop: Boolean
     get() = shouldCrop(clipWidth, clipHeight)

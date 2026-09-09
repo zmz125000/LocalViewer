@@ -41,7 +41,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 
 class CronetEngine(override val config: CronetConfig) : HttpClientEngineBase("Cronet") {
     // Limit thread to 1 since we are async & non-blocking
-    // TODO: Investigate https://github.com/FooIbar/EhViewer/issues/2854
+    // See https://github.com/FooIbar/EhViewer/issues/2854 for dispatcher parallelism.
     // override val dispatcher = Dispatchers.Default.limitedParallelism(1)
 
     override val supportedCapabilities = setOf(HttpTimeoutCapability)

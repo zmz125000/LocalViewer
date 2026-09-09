@@ -771,10 +771,10 @@ internal class PdfParser(
                 val upLeft = if (x >= colors) prev[x - colors].toInt() and 0xff else 0
                 val valByte = when (filter) {
                     0 -> raw
-                    1 -> (raw + left) and 0xff
-                    2 -> (raw + up) and 0xff
-                    3 -> (raw + ((left + up) / 2)) and 0xff
-                    4 -> (raw + paeth(left, up, upLeft)) and 0xff
+                    1 -> raw + left and 0xff
+                    2 -> raw + up and 0xff
+                    3 -> raw + ((left + up) / 2) and 0xff
+                    4 -> raw + paeth(left, up, upLeft) and 0xff
                     else -> raw
                 }
                 out[oi + x] = valByte.toByte()
@@ -1294,7 +1294,7 @@ internal class PdfParser(
         while (i < data.size) {
             while (i < data.size && data[i].toInt().toChar().isPdfWs()) i++
             if (i + 1 < data.size && data[i] == '>'.code.toByte() && data[i + 1] == '>'.code.toByte()) {
-                return PdfDict(map) to (i + 2)
+                return PdfDict(map) to i + 2
             }
             val (key, keyEnd) = parseValue(data, i) ?: return null
             if (key !is PdfName) return null
@@ -1443,9 +1443,9 @@ internal class PdfParser(
                 while (i < data.size && data[i] != '\n'.code.toByte() && data[i] != '\r'.code.toByte()) i++
                 parseValue(data, i)
             }
-            c == 't' && matchWord(data, i, "true") -> PdfBool(true) to (i + 4)
-            c == 'f' && matchWord(data, i, "false") -> PdfBool(false) to (i + 5)
-            c == 'n' && matchWord(data, i, "null") -> PdfNull to (i + 4)
+            c == 't' && matchWord(data, i, "true") -> PdfBool(true) to i + 4
+            c == 'f' && matchWord(data, i, "false") -> PdfBool(false) to i + 5
+            c == 'n' && matchWord(data, i, "null") -> PdfNull to i + 4
             c == '+' || c == '-' || c == '.' || c.isDigit() -> {
                 val startNum = i
                 if (c == '+' || c == '-') i++
@@ -1467,7 +1467,7 @@ internal class PdfParser(
                         val gen = String(data, genStart, j - genStart, Charsets.ISO_8859_1).toIntOrNull()
                         val obj = numStr.toIntOrNull()
                         if (obj != null && gen != null) {
-                            return PdfRef(obj, gen) to (k + 1)
+                            return PdfRef(obj, gen) to k + 1
                         }
                     }
                 }

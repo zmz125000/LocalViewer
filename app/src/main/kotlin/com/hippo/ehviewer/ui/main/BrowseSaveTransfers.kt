@@ -52,7 +52,7 @@ object BrowseSaveTransfers {
                     val now = SystemClock.elapsedRealtime()
                     val bytes = counter.bytes
                     val dt = (now - lastAt).coerceAtLeast(1L)
-                    val speed = ((bytes - lastBytes) * 1000L) / dt
+                    val speed = (bytes - lastBytes) * 1000L / dt
                     lastBytes = bytes
                     lastAt = now
                     patch(id) { copy(bytes = bytes, speedBps = speed) }

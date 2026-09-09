@@ -1472,7 +1472,7 @@ object SmbGateway {
      */
     private fun listDiskShareNamesOnSession(session: Session): List<String> = MsSrvsShareEnum.listSharesLevel1(session)
         .asSequence()
-        .filter { (it.type and MsSrvsShareEnum.STYPE_TYPE_MASK) == MsSrvsShareEnum.STYPE_DISKTREE }
+        .filter { it.type and MsSrvsShareEnum.STYPE_TYPE_MASK == MsSrvsShareEnum.STYPE_DISKTREE }
         .map { it.name.trim() }
         .filter { it.isNotEmpty() }
         .filterNot { it.endsWith('$') }
@@ -2200,11 +2200,6 @@ object SmbGateway {
         val toClassify = (plan.addedDirectories + deepHidden + newZips).distinctBy { it.name }
         val dirName = relativeDir.substringAfterLast('/').substringAfterLast('\\')
             .ifEmpty { source.displayName }
-        val liveForFiles = if (zipFileNames.isEmpty()) {
-            children
-        } else {
-            children.filterNot { it.name in zipFileNames }
-        }
         val zipAdjustedUnreachable = plan.unreachableDirectoryNames - zipFileNames
         val recovered = plan.recoveredDirectoryNames
         val dirsUnchanged = plan.addedDirectories.isEmpty() &&
@@ -2213,7 +2208,7 @@ object SmbGateway {
         if (dirsUnchanged && deepHidden.isEmpty() && newZips.isEmpty()) {
             // Dirs same — still patch surviving file size/mtime; add/drop direct files.
             return SlimDirectoryRefresh(
-                entries = replaceSlimDirectFilesFromLive(cached, liveForFiles, dirName),
+                entries = replaceSlimDirectFilesFromLive(cached, children, dirName),
                 removedDirectoryNames = emptySet(),
             )
         }
@@ -2230,7 +2225,7 @@ object SmbGateway {
         }
         val merged = replaceSlimDirectFilesFromLive(
             mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
-            liveForFiles,
+            children,
             dirName,
         )
         return SlimDirectoryRefresh(
@@ -2348,7 +2343,12 @@ object SmbGateway {
         onCached: ((List<BrowseEntryRemote>) -> Unit)?,
     ): List<BrowseEntryRemote> {
         val configKey = sourceConfigKey(source)
-        if (useCache) {
+        val zipName = zipRel.substringAfterLast('/').substringAfterLast('\\')
+        val parentRel = ZipAsDirListing.parentRelative(zipRel)
+        val parentEntries = BrowseSession.getSmbListing(source.id, parentRel)
+            ?: NetworkFolderIndexCache.loadSmb(source.id, configKey, parentRel)
+        val stale = ZipAsDirListing.isZipAsDirStale(parentEntries, zipName)
+        if (useCache && !stale) {
             val cached = BrowseSession.getSmbListing(source.id, relativeDir)
                 ?: NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)
             if (cached != null) {
@@ -2357,11 +2357,15 @@ object SmbGateway {
                 onCached?.invoke(cached)
                 return cached
             }
-        } else {
+        } else if (!useCache) {
             BrowseSession.invalidateSmbListing(source.id, relativeDir)
         }
+        if (stale) {
+            BrowseSession.invalidateSmbListingsUnder(source.id, zipRel)
+            NetworkFolderIndexCache.removeSmbUnder(source.id, zipRel)
+        }
         val title = inner.substringAfterLast('/').ifEmpty {
-            zipRel.substringAfterLast('/').substringAfterLast('\\').ifEmpty { source.displayName }
+            zipName.ifEmpty { source.displayName }
         }
         val entries = withIOContext {
             try {
@@ -2375,6 +2379,9 @@ object SmbGateway {
                 ).use { src ->
                     val cd = ZipCentralDirectory.open(src) ?: return@use emptyList()
                     persistZipVirtualFolderTree(source, configKey, zipRel, inner, title, cd)
+                    if (stale && parentEntries != null) {
+                        clearZipAsDirStaleOnParent(source, configKey, zipRel, zipName, parentEntries)
+                    }
                     BrowseSession.getSmbListing(source.id, relativeDir)
                         ?: ZipAsDirListing.classifyAt(cd, inner, title)
                 }
@@ -2453,6 +2460,20 @@ object SmbGateway {
         )
     }
 
+    private suspend fun clearZipAsDirStaleOnParent(
+        source: SmbSourceEntity,
+        configKey: String,
+        zipRel: String,
+        zipName: String,
+        parentEntries: List<BrowseEntryRemote>,
+    ) {
+        val cleared = ZipAsDirListing.clearZipAsDirStale(parentEntries, zipName)
+        if (cleared === parentEntries) return
+        val parent = ZipAsDirListing.parentRelative(zipRel)
+        val stored = NetworkFolderIndexCache.saveSmb(source.id, configKey, parent, cleared)
+        BrowseSession.putSmbListing(source.id, parent, stored, sessionCurrent = true)
+    }
+
     /**
      * Shape a listing for the current zip-as-dir toggle and land it in RAM.
      *
@@ -2528,10 +2549,10 @@ object SmbGateway {
         val name = info.fileName
         if (name == "." || name == "..") return@mapNotNull null
         val attrs = info.fileAttributes
-        val isDir = (attrs and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
-        val hidden = (attrs and FileAttributes.FILE_ATTRIBUTE_HIDDEN.value) != 0L ||
+        val isDir = attrs and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value != 0L
+        val hidden = attrs and FileAttributes.FILE_ATTRIBUTE_HIDDEN.value != 0L ||
             isDotHiddenName(name)
-        val readOnly = (attrs and FileAttributes.FILE_ATTRIBUTE_READONLY.value) != 0L
+        val readOnly = attrs and FileAttributes.FILE_ATTRIBUTE_READONLY.value != 0L
         val size = if (isDir) 0L else info.endOfFile.coerceAtLeast(0L)
         val lastModifiedMs = runCatching { info.lastWriteTime.toEpochMillis() }.getOrDefault(0L).coerceAtLeast(0L)
         RemoteChild(
@@ -3388,7 +3409,7 @@ internal fun smbSpreadDataOps(opCount: Int, maxConnections: Int, opsPerSession: 
             }
             SmbDataPlacement.Grow -> {
                 outstanding.add(1)
-                available.add((opsPerSession.coerceAtLeast(1)) - 1)
+                available.add(opsPerSession.coerceAtLeast(1) - 1)
             }
             SmbDataPlacement.Wait -> error("data pool full with no multiplex slot")
         }
@@ -3530,7 +3551,7 @@ private fun isHostCapacityError(t: Throwable): Boolean {
                 return true
             }
             val code = runCatching { cur.status.value }.getOrNull()
-            if (code != null && (code and 0xFFFFFFFFL) == 0xC00000D0L) return true
+            if (code != null && code and 0xFFFFFFFFL == 0xC00000D0L) return true
         }
         val msg = cur.message.orEmpty()
         if (msg.contains("STATUS_REQUEST_NOT_ACCEPTED", ignoreCase = true) ||

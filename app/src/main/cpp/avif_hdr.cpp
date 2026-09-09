@@ -27,32 +27,6 @@
 
 namespace {
 
-uint16_t float_to_half(float f) {
-    union {
-        float f;
-        uint32_t u;
-    } v{f};
-    uint32_t x = v.u;
-    uint32_t sign = (x >> 16) & 0x8000u;
-    int32_t exp = static_cast<int32_t>((x >> 23) & 0xff) - 127 + 15;
-    uint32_t mant = x & 0x7fffffu;
-    if (exp <= 0) {
-        if (exp < -10) return static_cast<uint16_t>(sign);
-        mant |= 0x800000u;
-        uint32_t t = 14 - exp;
-        uint32_t m = mant >> t;
-        if ((mant >> (t - 1)) & 1u) m++;
-        return static_cast<uint16_t>(sign | m);
-    }
-    if (exp >= 31) {
-        if (mant) return static_cast<uint16_t>(sign | 0x7e00u);
-        return static_cast<uint16_t>(sign | 0x7c00u);
-    }
-    uint32_t half = sign | (static_cast<uint32_t>(exp) << 10) | (mant >> 13);
-    if (mant & 0x1000u) half++;
-    return static_cast<uint16_t>(half);
-}
-
 // SMPTE ST 2084 PQ EOTF → linear relative luminance [0, 10000] nits-ish (absolute).
 float pq_eotf(float n) {
     if (n <= 0.f) return 0.f;

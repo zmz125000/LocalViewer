@@ -372,7 +372,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                             if (probePageOnDisk(index)) {
                                 markReady(index)
                                 if (
-                                    (progressiveEngine?.structureComplete ?: true) &&
+                                    progressiveEngine?.structureComplete ?: true &&
                                     pagePaths.size >= engine.pageCount
                                 ) {
                                     DocumentExtractCache.saveIndexAsync(

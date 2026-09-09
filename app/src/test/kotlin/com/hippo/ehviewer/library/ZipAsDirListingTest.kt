@@ -6,6 +6,7 @@ import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.runBlocking
 import okio.Path.Companion.toPath
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -383,6 +384,31 @@ class ZipAsDirListingTest {
         assertTrue("园区.zip" in names)
         assertTrue("flat.cbz" in names)
         assertTrue("tree.zip" in names)
+    }
+
+    @Test
+    fun zipAsDirStaleMarkRoundTrip() {
+        val parent = listOf(
+            BrowseEntryRemote.Directory(
+                name = "tree.zip",
+                relativeName = "tree.zip",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.Navigable,
+                zipStale = true,
+            ),
+            BrowseEntryRemote.Directory(
+                name = "Keep",
+                hasVideo = false,
+                hasGallery = false,
+                presence = DirPresence.Navigable,
+            ),
+        )
+        assertTrue(ZipAsDirListing.isZipAsDirStale(parent, "tree.zip"))
+        assertFalse(ZipAsDirListing.isZipAsDirStale(parent, "other.zip"))
+        val cleared = ZipAsDirListing.clearZipAsDirStale(parent, "tree.zip")
+        assertFalse(ZipAsDirListing.isZipAsDirStale(cleared, "tree.zip"))
+        assertTrue(cleared.any { it is BrowseEntryRemote.Directory && it.name == "Keep" })
     }
 
     @Test
