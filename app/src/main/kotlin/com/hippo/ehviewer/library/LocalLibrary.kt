@@ -180,7 +180,9 @@ object LocalLibrary {
     /**
      * Toggle MediaStore vs file access for a SAF library/folder source.
      * Device-media roots stay [LIBRARY_ROOT_ACCESS_MEDIA] (no archives).
-     * Rescans library-role roots so gallery set matches the new backend.
+     * Drops that source's folder index (same as delete-source) because listing
+     * keys / children differ between backends. Rescans library-role roots so
+     * the gallery set matches the new backend.
      */
     suspend fun setRootAccessMode(rootId: Long, accessMode: Int) = withNonCancellableContext {
         // Same as addRoot: Manage Sources' launchIO is cancelled on back, which used to
@@ -194,6 +196,7 @@ object LocalLibrary {
             }
             if (root.accessMode == mode) return@withIOContext
             db.libraryRootDao().updateAccessMode(rootId, mode)
+            NetworkFolderIndexCache.deleteLocal(rootId)
             BrowseSession.invalidateLocalListing()
             // Drop in-memory stack if this root is open — paths may switch SAF ↔ MediaStore.
             if (BrowseSession.localStack.any { it.rootId == rootId }) {
