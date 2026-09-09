@@ -170,7 +170,7 @@ object CachePagePublish {
         if (n < 3) return false
         return when (e) {
             "jpg", "jpeg", "jpe" ->
-                (header[0].toInt() and 0xff) == 0xff && (header[1].toInt() and 0xff) == 0xd8
+                header[0].toInt() and 0xff == 0xff && header[1].toInt() and 0xff == 0xd8
             "png" ->
                 n >= 8 &&
                     header[0] == 0x89.toByte() && header[1] == 'P'.code.toByte() &&
@@ -194,14 +194,14 @@ object CachePagePublish {
                 // JPEG XR little-endian: II 0xBC 0x01
                 n >= 4 &&
                     header[0] == 'I'.code.toByte() && header[1] == 'I'.code.toByte() &&
-                    (header[2].toInt() and 0xff) == 0xbc &&
-                    (header[3].toInt() and 0xff) == 0x01
+                    header[2].toInt() and 0xff == 0xbc &&
+                    header[3].toInt() and 0xff == 0x01
             "jxl" ->
                 // Codestream FF 0A, or container ....JXL
                 (
                     n >= 2 &&
-                        (header[0].toInt() and 0xff) == 0xff &&
-                        (header[1].toInt() and 0xff) == 0x0a
+                        header[0].toInt() and 0xff == 0xff &&
+                        header[1].toInt() and 0xff == 0x0a
                     ) ||
                     (
                         n >= 12 &&

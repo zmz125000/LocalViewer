@@ -1472,7 +1472,7 @@ object SmbGateway {
      */
     private fun listDiskShareNamesOnSession(session: Session): List<String> = MsSrvsShareEnum.listSharesLevel1(session)
         .asSequence()
-        .filter { (it.type and MsSrvsShareEnum.STYPE_TYPE_MASK) == MsSrvsShareEnum.STYPE_DISKTREE }
+        .filter { it.type and MsSrvsShareEnum.STYPE_TYPE_MASK == MsSrvsShareEnum.STYPE_DISKTREE }
         .map { it.name.trim() }
         .filter { it.isNotEmpty() }
         .filterNot { it.endsWith('$') }
@@ -2528,10 +2528,10 @@ object SmbGateway {
         val name = info.fileName
         if (name == "." || name == "..") return@mapNotNull null
         val attrs = info.fileAttributes
-        val isDir = (attrs and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
-        val hidden = (attrs and FileAttributes.FILE_ATTRIBUTE_HIDDEN.value) != 0L ||
+        val isDir = attrs and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value != 0L
+        val hidden = attrs and FileAttributes.FILE_ATTRIBUTE_HIDDEN.value != 0L ||
             isDotHiddenName(name)
-        val readOnly = (attrs and FileAttributes.FILE_ATTRIBUTE_READONLY.value) != 0L
+        val readOnly = attrs and FileAttributes.FILE_ATTRIBUTE_READONLY.value != 0L
         val size = if (isDir) 0L else info.endOfFile.coerceAtLeast(0L)
         val lastModifiedMs = runCatching { info.lastWriteTime.toEpochMillis() }.getOrDefault(0L).coerceAtLeast(0L)
         RemoteChild(
@@ -3388,7 +3388,7 @@ internal fun smbSpreadDataOps(opCount: Int, maxConnections: Int, opsPerSession: 
             }
             SmbDataPlacement.Grow -> {
                 outstanding.add(1)
-                available.add((opsPerSession.coerceAtLeast(1)) - 1)
+                available.add(opsPerSession.coerceAtLeast(1) - 1)
             }
             SmbDataPlacement.Wait -> error("data pool full with no multiplex slot")
         }
@@ -3530,7 +3530,7 @@ private fun isHostCapacityError(t: Throwable): Boolean {
                 return true
             }
             val code = runCatching { cur.status.value }.getOrNull()
-            if (code != null && (code and 0xFFFFFFFFL) == 0xC00000D0L) return true
+            if (code != null && code and 0xFFFFFFFFL == 0xC00000D0L) return true
         }
         val msg = cur.message.orEmpty()
         if (msg.contains("STATUS_REQUEST_NOT_ACCEPTED", ignoreCase = true) ||

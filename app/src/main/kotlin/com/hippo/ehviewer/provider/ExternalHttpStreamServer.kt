@@ -1336,12 +1336,12 @@ object ExternalHttpStreamServer {
                 val suffix = endStr.toLongOrNull() ?: return null
                 if (suffix <= 0L) return null
                 val len = suffix.coerceAtMost(total)
-                (total - len) to (total - 1L)
+                total - len to total - 1L
             }
             startStr.isNotEmpty() && endStr.isEmpty() -> {
                 val start = startStr.toLongOrNull() ?: return null
                 if (start < 0L || start >= total) return null
-                start to (total - 1L)
+                start to total - 1L
             }
             startStr.isNotEmpty() && endStr.isNotEmpty() -> {
                 val start = startStr.toLongOrNull() ?: return null

@@ -800,11 +800,9 @@ object VideoThumbnail {
             for (sampleX in 0 until SAMPLE_GRID) {
                 val x = (sampleX * bitmap.width / SAMPLE_GRID).coerceAtMost(bitmap.width - 1)
                 val color = bitmap.getPixel(x, y)
-                val luma = (
-                    77 * android.graphics.Color.red(color) +
-                        150 * android.graphics.Color.green(color) +
-                        29 * android.graphics.Color.blue(color)
-                    ) shr 8
+                val luma = 77 * android.graphics.Color.red(color) +
+                    150 * android.graphics.Color.green(color) +
+                    29 * android.graphics.Color.blue(color) shr 8
                 if (luma >= BLACK_LUMA) visible++
             }
         }

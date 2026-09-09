@@ -105,7 +105,7 @@ object ReadableTime {
         val now = nowInstant.toEpochMilliseconds()
         val diff = now - time
         return when {
-            (diff < 0 || time <= 0) -> stringResource(id = R.string.from_the_future)
+            diff < 0 || time <= 0 -> stringResource(id = R.string.from_the_future)
             diff < MINUTE_MILLIS -> stringResource(id = R.string.just_now)
             diff < 2 * MINUTE_MILLIS -> pluralStringResource(R.plurals.some_minutes_ago, 1, 1)
             diff < 50 * MINUTE_MILLIS -> {

@@ -250,14 +250,14 @@ private fun isJpegXrMagic(bytes: ByteArray, n: Int): Boolean {
     if (n < 4) return false
     return bytes[0] == 'I'.code.toByte() &&
         bytes[1] == 'I'.code.toByte() &&
-        (bytes[2].toInt() and 0xff) == 0xbc &&
-        (bytes[3].toInt() and 0xff) == 0x01
+        bytes[2].toInt() and 0xff == 0xbc &&
+        bytes[3].toInt() and 0xff == 0x01
 }
 
 private fun isJpegXlMagic(bytes: ByteArray, n: Int): Boolean {
     if (n >= 2 &&
-        (bytes[0].toInt() and 0xff) == 0xff &&
-        (bytes[1].toInt() and 0xff) == 0x0a
+        bytes[0].toInt() and 0xff == 0xff &&
+        bytes[1].toInt() and 0xff == 0x0a
     ) {
         return true
     }

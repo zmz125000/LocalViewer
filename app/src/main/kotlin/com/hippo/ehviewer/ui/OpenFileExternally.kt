@@ -930,7 +930,7 @@ object OpenFileExternally {
             logcat("OpenFileExternally", it)
         }.getOrDefault(emptyList())
         val names = when {
-            live.isNotEmpty() && cached.isNotEmpty() -> (cached + live)
+            live.isNotEmpty() && cached.isNotEmpty() -> cached + live
             live.isNotEmpty() -> live
             cached.isNotEmpty() -> cached
             else -> listSmbDirChildNames(sourceId, source, password, parentDir)
@@ -1021,7 +1021,7 @@ object OpenFileExternally {
             logcat("OpenFileExternally", it)
         }.getOrDefault(emptyList())
         val names = when {
-            live.isNotEmpty() && cached.isNotEmpty() -> (cached + live)
+            live.isNotEmpty() && cached.isNotEmpty() -> cached + live
             live.isNotEmpty() -> live
             cached.isNotEmpty() -> cached
             else -> listWebDavDirChildNames(sourceId, source, password, parentDir)

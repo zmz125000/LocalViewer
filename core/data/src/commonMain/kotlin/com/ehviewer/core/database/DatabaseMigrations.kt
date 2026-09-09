@@ -48,7 +48,7 @@ class Schema10to11 : AutoMigrationSpec {
             "DOWNLOADS",
         )
         needMigrationTables.forEach { table ->
-            // TODO: Rewrite this with row_number() when min sdk is 30 (SQLite 3.28.0)
+            // Historical migration. minSdk is already 31; do not rewrite — this already ran.
             connection.execSQL("UPDATE $table SET POSITION = (SELECT COUNT(*) FROM $table T WHERE T.TIME < $table.TIME)")
         }
     }

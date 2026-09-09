@@ -26,7 +26,7 @@ class ZipCentralDirectory private constructor(
         val localHeaderOffset: Long,
         val gpFlag: Int,
     ) {
-        val isEncrypted: Boolean get() = (gpFlag and 1) != 0
+        val isEncrypted: Boolean get() = gpFlag and 1 != 0
         val isDirectory: Boolean get() = name.endsWith('/')
     }
 

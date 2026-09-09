@@ -359,7 +359,7 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                     // Prefer args.info; PageLoader also carries resolved local-archive info.
                     is ReaderScreenArgs.Archive ->
                         args.info
-                            ?: (loader.info as? BaseGalleryInfo)
+                            ?: loader.info as? BaseGalleryInfo
                 }
                 // Explicit dispose path: system back / pop also abort archive extract so
                 // ArchiveAccess is not held after the reader leaves.

@@ -294,7 +294,7 @@ class TarChunkEngine(
             pendingName = null
         }
 
-        if (isReg && !isDir && size > 0 && size < (1L shl 31) && isPlayable(name)) {
+        if (isReg && !isDir && size > 0 && size < 1L shl 31 && isPlayable(name)) {
             val pageIndex = nextPageIndex
             val ext = name.substringAfterLast('.', missingDelimiterValue = "bin")
                 .lowercase().ifBlank { "bin" }.take(8)
@@ -399,7 +399,7 @@ class TarChunkEngine(
         private fun paddedSize(size: Long): Long {
             if (size <= 0L) return 0L
             val mask = (BLOCK - 1).toLong()
-            return (size + mask) and mask.inv()
+            return size + mask and mask.inv()
         }
 
         private fun isZeroBlock(h: ByteArray): Boolean {
@@ -410,7 +410,7 @@ class TarChunkEngine(
         private fun checksumOk(h: ByteArray): Boolean {
             var sum = 0
             for (i in h.indices) {
-                sum += if (i in 148 until 156) ' '.code else (h[i].toInt() and 0xff)
+                sum += if (i in 148 until 156) ' '.code else h[i].toInt() and 0xff
             }
             val stored = parseOctal(h, 148, 8)
             return stored == sum.toLong()
@@ -431,7 +431,7 @@ class TarChunkEngine(
         }
 
         private fun parseSizeField(h: ByteArray, off: Int): Long {
-            if ((h[off].toInt() and 0x80) != 0) {
+            if (h[off].toInt() and 0x80 != 0) {
                 var uv = 0L
                 for (i in 1 until 12) {
                     uv = (uv shl 8) or (h[off + i].toInt() and 0xff).toLong()

@@ -215,8 +215,8 @@ object HdrConvertCache {
             ?.takeIf { it.isNotEmpty() && it != "bin" }
             ?.let { return it }
         if (bytes.size >= 3 &&
-            (bytes[0].toInt() and 0xff) == 0xff &&
-            (bytes[1].toInt() and 0xff) == 0xd8
+            bytes[0].toInt() and 0xff == 0xff &&
+            bytes[1].toInt() and 0xff == 0xd8
         ) {
             return "jpg"
         }
