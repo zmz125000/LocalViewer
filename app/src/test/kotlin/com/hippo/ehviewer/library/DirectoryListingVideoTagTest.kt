@@ -59,4 +59,38 @@ class DirectoryListingVideoTagTest {
         assertTrue(packs.presence.visibleIn(BrowseContentMode.Galleries, packs.hasGallery, packs.hasVideo))
         assertFalse(packs.presence.visibleIn(BrowseContentMode.Video, packs.hasGallery, packs.hasVideo))
     }
+
+    @Test
+    fun imagePlusArchiveFolder_staysNavigableNotLeaf() {
+        val entries = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Comics", isDirectory = true)),
+            childPeeks = mapOf(
+                "Comics" to listOf(
+                    RemoteChild(name = "01.jpg", isDirectory = false),
+                    RemoteChild(name = "vol1.cbz", isDirectory = false),
+                ),
+            ),
+        )
+        val comics = entries.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Comics" }
+        assertEquals(DirPresence.Navigable, comics.presence)
+        val folderView = entries.filterRemoteByContentMode(BrowseContentMode.Folder)
+        assertTrue(folderView.any { it is BrowseEntryRemote.Directory && it.name == "Comics" })
+    }
+
+    @Test
+    fun imageOnlyPeek_isLeafHiddenInFolderMode() {
+        val entries = classifyRemoteListingWithPeeks(
+            currentDirName = "Library",
+            entries = listOf(RemoteChild(name = "Comics", isDirectory = true)),
+            childPeeks = mapOf(
+                "Comics" to listOf(RemoteChild(name = "01.jpg", isDirectory = false)),
+            ),
+        )
+        val comics = entries.filterIsInstance<BrowseEntryRemote.Directory>().single { it.name == "Comics" }
+        assertEquals(DirPresence.LeafImages, comics.presence)
+        val galleries = entries.filterRemoteByContentMode(BrowseContentMode.Galleries)
+        assertTrue(galleries.none { it is BrowseEntryRemote.Directory && it.name == "Comics" })
+        assertTrue(galleries.any { it is BrowseEntryRemote.FolderGallery && it.relativeName == "Comics" })
+    }
 }

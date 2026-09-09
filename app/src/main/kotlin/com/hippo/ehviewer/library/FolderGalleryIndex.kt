@@ -52,6 +52,35 @@ object FolderGalleryIndex {
     }
 
     /**
+     * Library MediaStore pages are image-only. Overlay them onto a classified listing
+     * instead of replacing it — otherwise child dirs and archives vanish and
+     * [BrowseSession] marks the folder current so SAF never runs.
+     */
+    fun mergeLibraryFolderPages(
+        previous: List<BrowseEntryRemote>?,
+        dirName: String,
+        names: List<String>,
+    ): List<BrowseEntryRemote> {
+        val pages = listingFromImageNames(dirName, names)
+        if (pages.isEmpty()) return previous.orEmpty()
+        if (previous.isNullOrEmpty()) return pages
+        if (shouldKeepPreviousFolderIndex(previous, pages) || !isShallowIncompleteListing(previous)) {
+            val kept = previous.filter { entry ->
+                when (entry) {
+                    is BrowseEntryRemote.FolderGallery -> entry.relativeName.isNotEmpty()
+                    is BrowseEntryRemote.RegularFile -> {
+                        val path = entry.fileName.replace('\\', '/').trim('/')
+                        path.isEmpty() || '/' in path || !isImageFileName(entry.name)
+                    }
+                    else -> true
+                }
+            }
+            return pages + kept
+        }
+        return pages
+    }
+
+    /**
      * Write library-scan page lists into the same folder index browse/photo-grid/reader use.
      * Zip interiors go under the zip RAM key; real folders under the absolute path key.
      */
@@ -65,21 +94,31 @@ object FolderGalleryIndex {
             if (names.isEmpty()) continue
             val dir = normalizeGalleryRelativeDir(rel)
             val title = dir.substringAfterLast('/').ifEmpty { "Gallery" }
-            val entries = listingFromImageNames(title, names)
-            NetworkFolderIndexCache.saveLocal(rootId, configKey, dir, entries)
-            if (ZipAsDirListing.splitZipBrowsePath(dir) != null) {
-                BrowseSession.putLocalListing(
-                    BrowseSession.localZipListingKey(rootId, dir),
-                    entries,
-                    sessionCurrent = true,
-                )
+            val ramKey = if (ZipAsDirListing.splitZipBrowsePath(dir) != null) {
+                BrowseSession.localZipListingKey(rootId, dir)
             } else {
                 val abs = if (dir.isEmpty()) rootAbs else rootAbs.resolveRelative(dir)
-                BrowseSession.putLocalListing(
-                    BrowseSession.pathKey(abs),
-                    entries,
-                    sessionCurrent = true,
-                )
+                BrowseSession.pathKey(abs)
+            }
+            val previousRam = BrowseSession.getLocalCachedListing(ramKey)
+            val previous = previousRam?.entries
+                ?: NetworkFolderIndexCache.loadLocal(rootId, configKey, dir)
+            val entries = mergeLibraryFolderPages(previous, title, names)
+            val sessionCurrent = previousRam?.sessionCurrent == true &&
+                !isImagePagesOnlyListing(entries)
+            NetworkFolderIndexCache.saveLocal(rootId, configKey, dir, entries)
+            BrowseSession.putLocalListing(ramKey, entries, sessionCurrent = sessionCurrent)
+        }
+    }
+
+    /** True when the listing has no child folders/archives — library MediaStore pages only. */
+    fun isImagePagesOnlyListing(entries: List<BrowseEntryRemote>): Boolean {
+        if (entries.isEmpty()) return true
+        return entries.all { entry ->
+            when (entry) {
+                is BrowseEntryRemote.FolderGallery -> entry.relativeName.isEmpty()
+                is BrowseEntryRemote.RegularFile -> isImageFileName(entry.name)
+                else -> false
             }
         }
     }

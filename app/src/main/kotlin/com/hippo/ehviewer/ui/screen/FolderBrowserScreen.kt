@@ -94,8 +94,10 @@ import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
+import com.hippo.ehviewer.library.materializeLocalEntries
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
+import com.hippo.ehviewer.library.resolveBrowsePath
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toBrowseSections
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
@@ -285,6 +287,58 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         error = null
     }
 
+    /** Paint RAM listing immediately (return-from-reader / remount) like SMB. */
+    fun applyCachedLocalListing(frame: BrowseSession.LocalFrame): Boolean {
+        if (frame.photoGrid) return false
+        if (frame.isZipBrowse) {
+            val virtualDir = ZipAsDirListing.virtualRelativeDir(
+                frame.relativePath,
+                frame.zipInnerRel.orEmpty(),
+            )
+            val cached = BrowseSession.getLocalCachedListing(
+                BrowseSession.localZipListingKey(frame.rootId, virtualDir),
+            ) ?: return false
+            entries = ZipAsDirListing.materializeLocal(
+                frame.path,
+                frame.zipInnerRel.orEmpty(),
+                cached.entries,
+            )
+            listedPath = frameListKey(frame)
+            loading = false
+            refreshing = !cached.sessionCurrent
+            error = null
+            return true
+        }
+        val effective = resolveBrowsePath(
+            frame.path.toPath(),
+            preferMediaStore = frame.preferMediaStore,
+        )
+        val cached = BrowseSession.getLocalCachedListing(BrowseSession.pathKey(effective)) ?: return false
+        entries = materializeLocalEntries(effective, cached.entries)
+        listedPath = frameListKey(frame)
+        loading = false
+        refreshing = !cached.sessionCurrent
+        error = null
+        return true
+    }
+
+    fun isLocalListingSessionCurrent(frame: BrowseSession.LocalFrame): Boolean {
+        if (frame.isZipBrowse) {
+            val virtualDir = ZipAsDirListing.virtualRelativeDir(
+                frame.relativePath,
+                frame.zipInnerRel.orEmpty(),
+            )
+            return BrowseSession.isLocalListingSessionCurrent(
+                BrowseSession.localZipListingKey(frame.rootId, virtualDir),
+            )
+        }
+        val effective = resolveBrowsePath(
+            frame.path.toPath(),
+            preferMediaStore = frame.preferMediaStore,
+        )
+        return BrowseSession.isLocalListingSessionCurrent(BrowseSession.pathKey(effective))
+    }
+
     suspend fun reload(force: Boolean = false) {
         val frame = stack.lastOrNull()
         if (frame == null) {
@@ -329,7 +383,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 return
             }
         }
-        loading = true
+        if (!force && applyCachedLocalListing(frame) && isLocalListingSessionCurrent(frame)) {
+            loading = false
+            refreshing = false
+            return
+        }
+        val haveListing = listedPath == targetPath && entries.isNotEmpty()
+        loading = force || !haveListing
         error = null
         // Drop stale rows so we never paint child content under a parent path (or vice versa).
         // Also removes the Lazy list from composition so its DisposableEffect can save scroll
