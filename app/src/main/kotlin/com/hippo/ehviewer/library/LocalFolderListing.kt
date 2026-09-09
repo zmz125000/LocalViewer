@@ -310,20 +310,7 @@ object LocalFolderListing {
                 val stored =
                     NetworkFolderIndexCache.saveLocal(rootId, configKey, relativeDir, fromRam)
                 BrowseSession.putLocalListing(pathKey, stored, sessionCurrent = true)
-                ZipAsDirListing.persistFolderIndexes(
-                    parentRelativeDir = relativeDir,
-                    interiors = zipInteriors,
-                    save = { dir, entries ->
-                        NetworkFolderIndexCache.saveLocal(rootId, configKey, dir, entries)
-                    },
-                    putRam = { dir, entries ->
-                        BrowseSession.putLocalListing(
-                            BrowseSession.localZipListingKey(rootId, dir),
-                            entries,
-                            sessionCurrent = true,
-                        )
-                    },
-                )
+                persistZipVirtualInteriors(rootId, configKey, relativeDir, zipInteriors)
                 logcat("FolderIndex") {
                     "Local deep classify root=$rootId dir=$relativeDir " +
                         "entries=${stored.size} ms=${(System.nanoTime() - t1) / 1_000_000}"
@@ -366,7 +353,6 @@ object LocalFolderListing {
         if (isUntrustedSlimLiveListing(cached, children)) {
             return SlimRefresh(cached, emptySet(), persist = false)
         }
-        persistZipAsDirTreesFromListing(dir, children, rootId, configKey, relativeDir)
         val plan = planRemoteDirectorySlimRefresh(cached, children)
         val zipFileNames = if (Settings.browseZipAsDir.value) {
             ZipAsDirListing.zipFileNames(children)
@@ -421,11 +407,13 @@ object LocalFolderListing {
             unreachableDirectoryNames = zipAdjustedUnreachable,
             recoveredDirectoryNames = recovered,
         )
+        val zipInteriors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
         val addedEntries = if (toClassify.isEmpty()) {
             emptyList()
         } else {
-            classifyDirectoryChildren(dir, preferMediaStore, toClassify)
+            classifyDirectoryChildren(dir, preferMediaStore, toClassify, zipInteriors)
         }
+        persistZipVirtualInteriors(rootId, configKey, relativeDir, zipInteriors)
         val merged = replaceSlimDirectFilesFromLive(
             mergeRemoteDirectorySlimRefresh(cached, effectivePlan, addedEntries),
             liveForFiles,
@@ -543,8 +531,23 @@ object LocalFolderListing {
         zipRel: String,
         interiors: Map<String, List<BrowseEntryRemote>>,
     ) {
+        persistZipVirtualInteriors(
+            rootId,
+            configKey,
+            ZipAsDirListing.parentRelative(zipRel),
+            interiors,
+        )
+    }
+
+    private suspend fun persistZipVirtualInteriors(
+        rootId: Long,
+        configKey: String,
+        parentRelativeDir: String,
+        interiors: Map<String, List<BrowseEntryRemote>>,
+    ) {
+        if (interiors.isEmpty()) return
         ZipAsDirListing.persistFolderIndexes(
-            parentRelativeDir = ZipAsDirListing.parentRelative(zipRel),
+            parentRelativeDir = parentRelativeDir,
             interiors = interiors,
             save = { dir, entries ->
                 NetworkFolderIndexCache.saveLocal(rootId, configKey, dir, entries)
@@ -552,33 +555,6 @@ object LocalFolderListing {
             putRam = { dir, entries ->
                 BrowseSession.putLocalListing(
                     BrowseSession.localZipListingKey(rootId, dir),
-                    entries,
-                    sessionCurrent = true,
-                )
-            },
-        )
-    }
-
-    private suspend fun persistZipAsDirTreesFromListing(
-        dir: Path,
-        children: List<RemoteChild>,
-        rootId: Long,
-        configKey: String,
-        relativeDir: String,
-    ) {
-        if (!Settings.browseZipAsDir.value) return
-        val interiors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
-        zipRootListings(dir, children, interiors)
-        if (interiors.isEmpty()) return
-        ZipAsDirListing.persistFolderIndexes(
-            parentRelativeDir = relativeDir,
-            interiors = interiors,
-            save = { d, entries ->
-                NetworkFolderIndexCache.saveLocal(rootId, configKey, d, entries)
-            },
-            putRam = { d, entries ->
-                BrowseSession.putLocalListing(
-                    BrowseSession.localZipListingKey(rootId, d),
                     entries,
                     sessionCurrent = true,
                 )
