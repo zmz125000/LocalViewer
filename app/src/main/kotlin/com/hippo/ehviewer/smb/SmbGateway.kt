@@ -3299,15 +3299,28 @@ object SmbGateway {
         val lock = hostConnectLocks.getOrPut(key) { Mutex() }
         return lock.withLock {
             ensureHostNotCoolingDown(host, source.port)
+            coroutineContext.ensureActive()
             // Dedicated SMBClient per session so smbj's host Connection cache
             // cannot poison other pool slots / shares on half-open TCP.
             val smbClient = SMBClient(smbConfig(forList = reservedForList))
+            // Socket.connect is not a cancellation point. Hop / source.close()
+            // cancel this Job while we still hold growLock + a hostOpSlot;
+            // close the client from another thread so connect unblocks now
+            // instead of after SMB_IO_TIMEOUT_SEC.
+            val connecting = AtomicReference(smbClient)
+            val cancelClose = coroutineContext[Job]?.invokeOnCompletion { cause ->
+                if (cause == null) return@invokeOnCompletion
+                connecting.getAndSet(null)?.let { client ->
+                    SmbAsyncClose.run { client.close() }
+                }
+            }
             val prevTag = TrafficStats.getThreadStatsTag()
             TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
             try {
                 val connection = smbClient.connect(host, source.port)
                 try {
                     val session = connection.authenticate(auth(source, password))
+                    connecting.set(null)
                     logNegotiated(
                         if (reservedForList) "list" else "browse",
                         host,
@@ -3330,8 +3343,11 @@ object SmbGateway {
                 }
             } catch (e: Throwable) {
                 runCatching { smbClient.close() }
+                coroutineContext.ensureActive()
                 throw e
             } finally {
+                cancelClose?.dispose()
+                connecting.set(null)
                 if (prevTag == -1) {
                     TrafficStats.clearThreadStatsTag()
                 } else {

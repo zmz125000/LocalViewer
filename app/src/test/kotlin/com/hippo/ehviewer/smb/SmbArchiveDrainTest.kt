@@ -49,4 +49,18 @@ class SmbArchiveDrainTest {
         drainUntilIdle(ch, idleMs = 5_000L) { seen.add(it) }
         assertEquals(listOf(9), seen)
     }
+
+    @Test
+    fun drainUntilIdleStopsImmediatelyOnJobCancel() = runBlocking {
+        val ch = Channel<Int>(Channel.UNLIMITED)
+        val job = launch {
+            drainUntilIdle(ch, idleMs = 5_000L) { }
+        }
+        delay(20)
+        val start = System.nanoTime()
+        job.cancel()
+        job.join()
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000L
+        assertTrue("cancel waited ${elapsedMs}ms for idle drain", elapsedMs < 500L)
+    }
 }
