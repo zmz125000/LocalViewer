@@ -54,13 +54,15 @@ data class BrowseChild(
  */
 inline fun Path.forEachBrowseChild(
     includeSafRemainder: Boolean = true,
+    overlayMediaStore: Boolean = true,
+    lightSafMeta: Boolean? = null,
     visitor: (BrowseChild) -> Boolean,
 ) {
     val str = toString()
     when {
         str.startsWith('/') -> forEachPhysicalChild(visitor)
         isMediaStorePath() -> forEachMediaStoreChild(visitor)
-        else -> forEachSafChild(includeSafRemainder, visitor)
+        else -> forEachSafChild(includeSafRemainder, overlayMediaStore, lightSafMeta, visitor)
     }
 }
 
@@ -90,8 +92,12 @@ internal inline fun Path.forEachMediaStoreChild(visitor: (BrowseChild) -> Boolea
  *
  * Applies [withHiddenFlags] so directories that contain `.nomedia` are tagged hidden.
  */
-fun Path.listBrowseChildren(includeSafRemainder: Boolean = true): List<BrowseChild> = buildList {
-    forEachBrowseChild(includeSafRemainder) {
+fun Path.listBrowseChildren(
+    includeSafRemainder: Boolean = true,
+    overlayMediaStore: Boolean = true,
+    lightSafMeta: Boolean? = null,
+): List<BrowseChild> = buildList {
+    forEachBrowseChild(includeSafRemainder, overlayMediaStore, lightSafMeta) {
         add(it)
         true
     }
@@ -100,9 +106,16 @@ fun Path.listBrowseChildren(includeSafRemainder: Boolean = true): List<BrowseChi
 /**
  * Raw children without the `.nomedia` directory pass (caller will enrich, or only needs
  * a streaming visit). Dot names are still included with [BrowseChild.hidden].
+ *
+ * Library scan passes [overlayMediaStore] false: MediaStore already indexed image
+ * folders, and overlay would re-query Images/Video/Files in every directory.
  */
-fun Path.listBrowseChildrenRaw(includeSafRemainder: Boolean = true): List<BrowseChild> = buildList {
-    forEachBrowseChild(includeSafRemainder) {
+fun Path.listBrowseChildrenRaw(
+    includeSafRemainder: Boolean = true,
+    overlayMediaStore: Boolean = true,
+    lightSafMeta: Boolean? = null,
+): List<BrowseChild> = buildList {
+    forEachBrowseChild(includeSafRemainder, overlayMediaStore, lightSafMeta) {
         add(it)
         true
     }
@@ -133,9 +146,11 @@ internal inline fun Path.forEachPhysicalChild(visitor: (BrowseChild) -> Boolean)
 @PublishedApi
 internal inline fun Path.forEachSafChild(
     includeSafRemainder: Boolean = true,
+    overlayMediaStore: Boolean = true,
+    lightSafMeta: Boolean? = null,
     visitor: (BrowseChild) -> Boolean,
 ) {
-    val overlay = mediaStoreOverlayChildren()
+    val overlay = if (overlayMediaStore) mediaStoreOverlayChildren() else null
     val skipNames = HashSet<String>()
     if (overlay != null) {
         for (child in overlay) {
@@ -144,7 +159,7 @@ internal inline fun Path.forEachSafChild(
         }
         if (!includeSafRemainder) return
     }
-    val lightMeta = !overlay.isNullOrEmpty()
+    val lightMeta = lightSafMeta ?: !overlay.isNullOrEmpty()
     forEachSafDocumentChild(skipNames, lightMeta, visitor)
 }
 

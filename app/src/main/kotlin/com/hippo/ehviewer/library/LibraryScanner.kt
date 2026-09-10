@@ -3,10 +3,13 @@ package com.hippo.ehviewer.library
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_FOLDER
 import com.ehviewer.core.database.model.LocalGalleryEntity
+import com.ehviewer.core.files.exists
+import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.metadataOrNull
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
 import okio.Path
+import okio.Path.Companion.toPath
 
 // isZipArchiveFileName / Zip* used by zip-as-dir scan path
 
@@ -33,8 +36,10 @@ object LibraryScanner {
      * SAF roots with media permission list folder galleries from MediaStore first
      * (including nested dirs). A recursive directory walk then runs only when
      * MediaStore is unavailable **or** [includeArchives] is true (archives are not
-     * in MediaStore). Media-only rescan stays on the RELATIVE_PATH Images query;
-     * startup skips that dump when the MediaStore fingerprint is unchanged.
+     * in MediaStore) **and** [walkDirectories] is true. Media-only rescan stays on
+     * the RELATIVE_PATH Images query; startup skips that dump when the MediaStore
+     * fingerprint is unchanged. Archive-mode startup sets [walkDirectories] false
+     * and keeps known zips after an existence prune (no tree walk).
      */
     fun scan(
         rootId: Long,
@@ -42,6 +47,7 @@ object LibraryScanner {
         rootDisplayName: String = "",
         includeArchives: Boolean = true,
         knownArchives: Map<String, List<LocalGalleryEntity>> = emptyMap(),
+        walkDirectories: Boolean = true,
     ): Result {
         val results = ArrayList<LocalGalleryEntity>()
         val folderPages = LinkedHashMap<String, List<String>>()
@@ -59,7 +65,7 @@ object LibraryScanner {
                 folderPages = folderPages,
             )
         }
-        if (needsDirectoryWalk(mediaStoreIndexed, includeArchives)) {
+        if (shouldWalkDirectories(mediaStoreIndexed, includeArchives, walkDirectories)) {
             scanDir(
                 rootId = rootId,
                 dir = rootPath,
@@ -68,9 +74,12 @@ object LibraryScanner {
                 indexedFolders = indexedFolders,
                 includeArchives = includeArchives,
                 knownArchives = knownArchives,
+                mediaStoreIndexed = mediaStoreIndexed,
                 out = results,
                 folderPages = folderPages,
             )
+        } else if (includeArchives && knownArchives.isNotEmpty()) {
+            results += keepExistingArchives(knownArchives)
         }
         return Result(results, folderPages)
     }
@@ -80,6 +89,13 @@ object LibraryScanner {
      * archives (and folders the index never saw).
      */
     fun needsDirectoryWalk(mediaStoreIndexed: Boolean, includeArchives: Boolean): Boolean = !mediaStoreIndexed || includeArchives
+
+    /** Startup archive scan can skip the tree walk ([walkDirectories] false). */
+    fun shouldWalkDirectories(
+        mediaStoreIndexed: Boolean,
+        includeArchives: Boolean,
+        walkDirectories: Boolean,
+    ): Boolean = walkDirectories && needsDirectoryWalk(mediaStoreIndexed, includeArchives)
 
     private fun scanMediaStoreFolderGalleries(
         rootId: Long,
@@ -143,6 +159,31 @@ object LibraryScanner {
         return out
     }
 
+    /**
+     * Startup prune: keep previously indexed archive / zip-as-dir rows whose
+     * archive file still exists. Does not open the zip.
+     */
+    fun keepExistingArchives(knownArchives: Map<String, List<LocalGalleryEntity>>): List<LocalGalleryEntity> {
+        if (knownArchives.isEmpty()) return emptyList()
+        val out = ArrayList<LocalGalleryEntity>()
+        for ((path, rows) in knownArchives) {
+            if (EmptyArchiveRegistry.isMarked(path)) continue
+            if (!archiveFileExists(path)) continue
+            out += rows
+        }
+        return out
+    }
+
+    fun archiveFileExists(path: String): Boolean {
+        if (path.isEmpty()) return false
+        if (path.startsWith('/')) {
+            val file = java.io.File(path)
+            return file.isFile
+        }
+        val file = path.toPath()
+        return file.exists() && !file.isDirectory
+    }
+
     private fun scanDir(
         rootId: Long,
         dir: Path,
@@ -151,10 +192,19 @@ object LibraryScanner {
         indexedFolders: MutableSet<String>,
         includeArchives: Boolean,
         knownArchives: Map<String, List<LocalGalleryEntity>>,
+        mediaStoreIndexed: Boolean,
         out: MutableList<LocalGalleryEntity>,
         folderPages: MutableMap<String, List<String>>,
     ) {
-        val children = runCatching { dir.listBrowseChildrenRaw() }.getOrElse {
+        val children = runCatching {
+            // Overlay re-queries MediaStore in every folder; the library scan already
+            // indexed image folders. Light SAF meta when those dates come from MediaStore
+            // — archive mtime falls back to [childMtime] / path metadata.
+            dir.listBrowseChildrenRaw(
+                overlayMediaStore = false,
+                lightSafMeta = mediaStoreIndexed,
+            )
+        }.getOrElse {
             logcat(it)
             return
         }
@@ -269,6 +319,7 @@ object LibraryScanner {
                 indexedFolders,
                 includeArchives,
                 knownArchives,
+                mediaStoreIndexed,
                 out,
                 folderPages,
             )
