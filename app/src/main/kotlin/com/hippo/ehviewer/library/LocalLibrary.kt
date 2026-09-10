@@ -256,9 +256,9 @@ object LocalLibrary {
     /**
      * App-startup library maintenance (background, non-blocking for UI):
      * - **All sources**: drop gallery rows whose path is gone / no longer a gallery.
-     * - **Media mode** (not file/archive access): also run a full MediaStore scan so
-     *   new folders appear without a manual rescan. File mode skips the full walk
-     *   (SAF tree walks are expensive); only the existence prune runs there.
+     * - **Media mode** (not file/archive access): MediaStore index only (no SAF tree
+     *   walk). File mode skips the full walk (SAF tree walks are expensive); only the
+     *   existence prune runs there.
      */
     suspend fun startupMaintenance() = withIOContext {
         scanMutex.withLock {
@@ -426,7 +426,12 @@ object LocalLibrary {
             return
         }
         val previous = db.localGalleryDao().listByRootId(root.id)
-        val scanned = LibraryScanner.scan(root.id, path, rootDisplayName = root.displayName)
+        val scanned = LibraryScanner.scan(
+            root.id,
+            path,
+            rootDisplayName = root.displayName,
+            includeArchives = root.includesArchives,
+        )
         // Drop results if the root was removed while scanning (belt-and-suspenders with mutex).
         if (db.libraryRootDao().load(root.id) == null) {
             logcat("LocalLibrary") { "Skip scan write for deleted root ${root.id}" }
