@@ -292,12 +292,39 @@ object SmbGateway {
 
     private enum class TransportRole { Browse, List, Video }
 
-    private fun smbConfig(forList: Boolean = false): SmbConfig = smbConfig(if (forList) TransportRole.List else TransportRole.Browse)
+    private fun smbConfig(forList: Boolean = false): SmbConfig =
+        smbConfig(if (forList) TransportRole.List else TransportRole.Browse)
 
-    private fun smbConfig(role: TransportRole): SmbConfig = when (role) {
+    private fun smbConfig(role: TransportRole): SmbConfig {
+        peekSmbConfig(role)?.let { return it }
+        return synchronized(configLock) {
+            peekSmbConfig(role) ?: buildSmbConfig(role).also { storeSmbConfig(role, it) }
+        }
+    }
+
+    private fun peekSmbConfig(role: TransportRole): SmbConfig? = when (role) {
         TransportRole.Browse -> config
         TransportRole.List -> listConfig
         TransportRole.Video -> videoConfig
+    }
+
+    private fun storeSmbConfig(role: TransportRole, value: SmbConfig) {
+        when (role) {
+            TransportRole.Browse -> config = value
+            TransportRole.List -> listConfig = value
+            TransportRole.Video -> videoConfig = value
+        }
+    }
+
+    /**
+     * Build smbj [SmbConfig]s off the main thread. [SmbConfig.builder] loads SLF4J via
+     * ServiceLoader (APK ZipFile reads) — that must not run during [SmbGateway] class init
+     * on ProcessLifecycle ON_START.
+     */
+    fun prewarm() {
+        smbConfig(TransportRole.Browse)
+        smbConfig(TransportRole.List)
+        smbConfig(TransportRole.Video)
     }
 
     /**
@@ -306,9 +333,11 @@ object SmbGateway {
      * reconnects with the new dialects/capabilities/transport.
      */
     fun onProtocolSettingsChanged() {
-        config = buildSmbConfig(TransportRole.Browse)
-        listConfig = buildSmbConfig(TransportRole.List)
-        videoConfig = buildSmbConfig(TransportRole.Video)
+        synchronized(configLock) {
+            storeSmbConfig(TransportRole.Browse, buildSmbConfig(TransportRole.Browse))
+            storeSmbConfig(TransportRole.List, buildSmbConfig(TransportRole.List))
+            storeSmbConfig(TransportRole.Video, buildSmbConfig(TransportRole.Video))
+        }
         logcat {
             "SmbGateway: protocol settings changed " +
                 "(smb3Only=${Settings.smb3Only.value}, encrypt=${Settings.smbEncryptData.value}, " +
@@ -423,9 +452,9 @@ object SmbGateway {
 
     private fun roleTransportName(role: String): String {
         val cfg = when (role) {
-            "list" -> listConfig
-            "sticky" -> videoConfig
-            else -> config
+            "list" -> smbConfig(TransportRole.List)
+            "sticky" -> smbConfig(TransportRole.Video)
+            else -> smbConfig(TransportRole.Browse)
         }
         return cfg.transportLayerFactory.javaClass.simpleName
     }
@@ -433,15 +462,18 @@ object SmbGateway {
     /**
      * Rebuilt when Advanced SMB dialect/encryption toggles change.
      * Always read via [smbConfig]; never cache a stale client config across toggles.
+     * Null until first [smbConfig] / [prewarm] so class init does not hit smbj/SLF4J disk I/O.
      */
-    @Volatile
-    private var config: SmbConfig = buildSmbConfig(TransportRole.Browse)
+    private val configLock = Any()
 
     @Volatile
-    private var listConfig: SmbConfig = buildSmbConfig(TransportRole.List)
+    private var config: SmbConfig? = null
 
     @Volatile
-    private var videoConfig: SmbConfig = buildSmbConfig(TransportRole.Video)
+    private var listConfig: SmbConfig? = null
+
+    @Volatile
+    private var videoConfig: SmbConfig? = null
 
     private val hostPools = ConcurrentHashMap<String, HostPool>()
     private val connectedHosts = ConcurrentHashMap.newKeySet<String>()
