@@ -52,7 +52,7 @@ object LibraryScanner {
         val results = ArrayList<LocalGalleryEntity>()
         val folderPages = LinkedHashMap<String, List<String>>()
         val indexedFolders = LinkedHashSet<String>()
-        val msRoot = tryConvertSafPathToMediaStore(rootPath)
+        val msRoot = mediaStoreRootForScan(rootPath)
         val mediaStoreIndexed = msRoot != null && MediaPermissions.hasMediaAccess()
         if (mediaStoreIndexed) {
             scanMediaStoreFolderGalleries(
@@ -82,6 +82,17 @@ object LibraryScanner {
             results += keepExistingArchives(knownArchives)
         }
         return Result(results, folderPages)
+    }
+
+    /**
+     * Virtual `mediastore:/…` roots are already indexed; SAF trees convert when
+     * they map to external storage. [tryConvertSafPathToMediaStore] only accepts
+     * `content:` URIs, so device-media roots must be recognized here or a
+     * no-walk startup scan writes an empty library.
+     */
+    fun mediaStoreRootForScan(rootPath: Path): Path? = when {
+        rootPath.isMediaStorePath() -> rootPath
+        else -> tryConvertSafPathToMediaStore(rootPath)
     }
 
     /**
