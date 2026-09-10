@@ -196,6 +196,7 @@ object LocalLibrary {
             if (root.accessMode == mode) return@withIOContext
             db.libraryRootDao().updateAccessMode(rootId, mode)
             NetworkFolderIndexCache.deleteLocal(rootId)
+            MediaStoreIndexStamp.clear(rootId)
             BrowseSession.invalidateLocalListing()
             // Drop in-memory stack if this root is open — paths may switch SAF ↔ MediaStore.
             if (BrowseSession.localStack.any { it.rootId == rootId }) {
@@ -231,6 +232,7 @@ object LocalLibrary {
             db.libraryRootDao().delete(root)
             BrowseSession.invalidateLocalListing()
             NetworkFolderIndexCache.deleteLocal(root.id)
+            MediaStoreIndexStamp.clear(root.id)
         }
     }
 
@@ -254,7 +256,8 @@ object LocalLibrary {
 
     /**
      * App-startup library maintenance (background, non-blocking for UI):
-     * - **Media mode**: MediaStore index only (no directory walk).
+     * - **Media mode**: skip the Images dump when MediaStore generation (API 30+)
+     *   or a cheap [_ID, DATE_MODIFIED] fingerprint matches the last scan.
      * - **Archive mode**: walk folders to pick up new image folders and new archives;
      *   already-indexed archives are kept without re-parsing EOCD / page count.
      */
@@ -268,8 +271,7 @@ object LocalLibrary {
                     if (root.includesArchives) {
                         scanRootLocked(root, reuseKnownArchives = true)
                     } else {
-                        // MediaStore mode: index walk is cheap and refreshes the set.
-                        scanRootLocked(root)
+                        scanRootLocked(root, skipIfUnchanged = true)
                     }
                 }
             } finally {
@@ -303,6 +305,7 @@ object LocalLibrary {
     private suspend fun scanRootLocked(
         root: LibraryRootEntity,
         reuseKnownArchives: Boolean = false,
+        skipIfUnchanged: Boolean = false,
     ) {
         if (root.role != LIBRARY_ROOT_ROLE_LIBRARY) {
             db.localGalleryDao().deleteByRootId(root.id)
@@ -332,6 +335,26 @@ object LocalLibrary {
             return
         }
         val previous = db.localGalleryDao().listByRootId(root.id)
+        val mediaOnly = !root.includesArchives && path.isMediaStorePath()
+        val mediaRelative = if (mediaOnly) path.mediaStoreRelativeDir() else ""
+        var pendingStamp: MediaStoreIndexStamp? = null
+        if (mediaOnly && skipIfUnchanged && previous.isNotEmpty()) {
+            val stored = MediaStoreIndexStamp.load(root.id)
+            val generation = MediaStoreFs.volumeGeneration()
+            if (stored != null && stored.generationUnchanged(generation)) {
+                logcat("LocalLibrary") { "Skip unchanged MediaStore root ${root.id} (generation)" }
+                return
+            }
+            if (stored != null) {
+                val stamp = MediaStoreFs.imageIndexStamp(mediaRelative)
+                pendingStamp = stamp
+                if (MediaStoreIndexStamp.shouldSkip(stored, stamp, hasGalleries = true)) {
+                    MediaStoreIndexStamp.remember(root.id, stamp)
+                    logcat("LocalLibrary") { "Skip unchanged MediaStore root ${root.id} (fingerprint)" }
+                    return
+                }
+            }
+        }
         val knownArchives = if (reuseKnownArchives) {
             LibraryScanner.groupKnownArchives(previous)
         } else {
@@ -351,11 +374,11 @@ object LocalLibrary {
         }
         val toWrite = preserveArchivePageCountsIfDisabled(previous, scanned.galleries)
         logcat("LocalLibrary") { "Scanned root ${root.id} (${root.displayName}): ${toWrite.size} galleries" }
-        runCatching {
+        val wrote = runCatching {
             db.localGalleryDao().replaceForRoot(root.id, toWrite)
         }.onFailure {
             logcat(it)
-        }
+        }.isSuccess
         runCatching {
             FolderGalleryIndex.persistLocalFolderPages(
                 rootId = root.id,
@@ -365,6 +388,10 @@ object LocalLibrary {
             )
         }.onFailure {
             logcat(it)
+        }
+        if (mediaOnly && wrote) {
+            val stamp = pendingStamp ?: MediaStoreFs.imageIndexStamp(mediaRelative)
+            MediaStoreIndexStamp.remember(root.id, stamp)
         }
     }
 

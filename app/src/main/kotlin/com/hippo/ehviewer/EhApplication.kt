@@ -151,7 +151,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
                 FileUtils.cleanupDirectory(AppConfig.externalParseErrorDir)
             }
             launch { cleanupDownload() }
-            // Library: prune dead galleries (all sources); MediaStore roots also rescan.
+            // Library: skip unchanged MediaStore roots; archive sources rescan with known zips.
             launch {
                 if (!Settings.libraryStartupScan.value) return@launch
                 runCatching { LocalLibrary.startupMaintenance() }.onFailure { logcat(it) }

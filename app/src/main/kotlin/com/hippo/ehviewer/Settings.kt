@@ -304,9 +304,16 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * When true (default), app start runs [com.hippo.ehviewer.library.LocalLibrary.startupMaintenance]
-     * (MediaStore index; archive-mode sources walk for new folders/archives and skip known zips).
+     * (MediaStore roots skip a full dump when generation / DATE_MODIFIED fingerprint match;
+     * archive-mode sources walk for new folders/archives and skip known zips).
      */
     val libraryStartupScan = boolPref("library_startup_scan", true)
+
+    /**
+     * Per-root MediaStore skip stamps for library startup:
+     * `{rootId}:{generation}:{count}:{maxDateModifiedSecs}:{idXor}`.
+     */
+    val libraryMediaStoreStamps = stringSetPref("library_ms_stamps", emptySet())
 
     /**
      * Library favourites strip. Keys:

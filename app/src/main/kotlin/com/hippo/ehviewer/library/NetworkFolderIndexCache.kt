@@ -98,6 +98,22 @@ object NetworkFolderIndexCache {
         removedChildDirs: Set<String> = emptySet(),
     ): List<BrowseEntryRemote> = save("local", rootId, configKey, relativeDir, entries, removedChildDirs)
 
+    /** All folder keys currently stored for a local root (one JSON parse). */
+    suspend fun loadLocalFolders(
+        rootId: Long,
+        configKey: String,
+    ): Map<String, List<BrowseEntryRemote>> = loadAllFolders("local", rootId, configKey)
+
+    /**
+     * Apply many local folder listings and write the JSON **once**.
+     * Keys not present in [folders] are left unchanged.
+     */
+    suspend fun saveLocalAll(
+        rootId: Long,
+        configKey: String,
+        folders: Map<String, List<BrowseEntryRemote>>,
+    ): Map<String, List<BrowseEntryRemote>> = saveAll("local", rootId, configKey, folders)
+
     suspend fun deleteSmb(sourceId: Long) = delete("smb", sourceId)
 
     suspend fun deleteWebDav(sourceId: Long) = delete("webdav", sourceId)
@@ -152,6 +168,38 @@ object NetworkFolderIndexCache {
         }
     }
 
+    private suspend fun loadAllFolders(
+        protocol: String,
+        sourceId: Long,
+        configKey: String,
+    ): Map<String, List<BrowseEntryRemote>> = withContext(Dispatchers.IO) {
+        if (!Settings.networkFolderIndexCache.value) return@withContext emptyMap()
+        lock.withLock {
+            val file = fileFor(protocol, sourceId)
+            val root = readRoot(file) ?: return@withLock emptyMap()
+            if (!matchesVersion(root)) return@withLock emptyMap()
+            val storedKey = root.optString("configKey")
+            if (storedKey.isNotEmpty() && storedKey != configKey) {
+                logcat("FolderIndex") {
+                    "Keeping $protocol/$sourceId index after source edit (configKey stamp differs)"
+                }
+            }
+            val array = root.optJSONObject("folders") ?: return@withLock emptyMap()
+            val out = LinkedHashMap<String, List<BrowseEntryRemote>>()
+            val keys = array.keys()
+            while (keys.hasNext()) {
+                val keyName = keys.next()
+                val decoded = runCatching { decodeEntries(array.getJSONArray(keyName)) }
+                    .onFailure { logcat("FolderIndex", it) }
+                    .getOrNull()
+                    ?: continue
+                out[keyName] = decoded
+            }
+            if (out.isNotEmpty()) file.setLastModified(System.currentTimeMillis())
+            out
+        }
+    }
+
     private suspend fun save(
         protocol: String,
         sourceId: Long,
@@ -163,67 +211,138 @@ object NetworkFolderIndexCache {
         if (!Settings.networkFolderIndexCache.value) return@withContext entries
         lock.withLock {
             val file = fileFor(protocol, sourceId)
-            // Reuse folders JSON across source edits (same id); only VERSION must match.
-            val existing = readRoot(file)?.takeIf { matchesVersion(it) }
-            val root = existing ?: JSONObject().apply {
-                put("version", VERSION)
-                put("folders", JSONObject())
-            }
-            root.put("version", VERSION)
-            root.put("configKey", configKey) // stamp only — not a load gate
-            if (!root.has("folders")) root.put("folders", JSONObject())
+            val root = mutableRoot(file, configKey)
             val folders = root.getJSONObject("folders")
-            val key = normalizeDir(relativeDir)
-            val previous = folders.optJSONArray(key)?.let { array ->
-                runCatching { decodeEntries(array) }.getOrNull()
+            val zipAsDir = Settings.browseZipAsDir.value
+            val (toStore, dirty) = mergeFolderEntry(
+                folders,
+                relativeDir,
+                entries,
+                removedChildDirs,
+                zipAsDir,
+                logKeep = "$protocol/$sourceId",
+            )
+            if (dirty) writeRootFile(file, root)
+            toStore
+        }
+    }
+
+    private suspend fun saveAll(
+        protocol: String,
+        sourceId: Long,
+        configKey: String,
+        updates: Map<String, List<BrowseEntryRemote>>,
+    ): Map<String, List<BrowseEntryRemote>> = withContext(Dispatchers.IO) {
+        if (updates.isEmpty()) return@withContext emptyMap()
+        if (!Settings.networkFolderIndexCache.value) return@withContext updates
+        lock.withLock {
+            val file = fileFor(protocol, sourceId)
+            val root = mutableRoot(file, configKey)
+            val folders = root.getJSONObject("folders")
+            val zipAsDir = Settings.browseZipAsDir.value
+            val stored = LinkedHashMap<String, List<BrowseEntryRemote>>(updates.size)
+            var dirty = false
+            for ((relativeDir, entries) in updates) {
+                val (toStore, changed) = mergeFolderEntry(
+                    folders,
+                    relativeDir,
+                    entries,
+                    removedChildDirs = emptySet(),
+                    zipAsDir = zipAsDir,
+                    logKeep = "$protocol/$sourceId",
+                )
+                stored[normalizeDir(relativeDir)] = toStore
+                dirty = dirty || changed
             }
-            val keepPrevious = previous != null &&
-                shouldKeepPreviousFolderIndex(previous, entries, Settings.browseZipAsDir.value)
-            if (!keepPrevious && removedChildDirs.isNotEmpty()) {
-                val parent = normalizeDir(relativeDir)
-                val removedPrefixes = removedChildDirs.map { child ->
-                    listOf(parent, normalizeDir(child)).filter { it.isNotEmpty() }.joinToString("/")
-                }
-                val staleKeys = buildList {
-                    val keys = folders.keys()
-                    while (keys.hasNext()) {
-                        val keyName = keys.next()
-                        if (removedPrefixes.any { prefix ->
-                                keyName == prefix || keyName.startsWith("$prefix/")
-                            }
-                        ) {
-                            add(keyName)
+            if (dirty) writeRootFile(file, root)
+            stored
+        }
+    }
+
+    private fun mutableRoot(file: File, configKey: String): JSONObject {
+        // Reuse folders JSON across source edits (same id); only VERSION must match.
+        val existing = readRoot(file)?.takeIf { matchesVersion(it) }
+        val root = existing ?: JSONObject().apply {
+            put("version", VERSION)
+            put("folders", JSONObject())
+        }
+        root.put("version", VERSION)
+        root.put("configKey", configKey) // stamp only — not a load gate
+        if (!root.has("folders")) root.put("folders", JSONObject())
+        return root
+    }
+
+    /**
+     * @return stored listing and whether [folders] changed enough to rewrite the file.
+     */
+    private fun mergeFolderEntry(
+        folders: JSONObject,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+        removedChildDirs: Set<String>,
+        zipAsDir: Boolean,
+        logKeep: String,
+    ): Pair<List<BrowseEntryRemote>, Boolean> {
+        val key = normalizeDir(relativeDir)
+        val previous = folders.optJSONArray(key)?.let { array ->
+            runCatching { decodeEntries(array) }.getOrNull()
+        }
+        val keepPrevious = previous != null &&
+            shouldKeepPreviousFolderIndex(previous, entries, zipAsDir)
+        var removed = false
+        if (!keepPrevious && removedChildDirs.isNotEmpty()) {
+            val parent = normalizeDir(relativeDir)
+            val removedPrefixes = removedChildDirs.map { child ->
+                listOf(parent, normalizeDir(child)).filter { it.isNotEmpty() }.joinToString("/")
+            }
+            val staleKeys = buildList {
+                val keys = folders.keys()
+                while (keys.hasNext()) {
+                    val keyName = keys.next()
+                    if (removedPrefixes.any { prefix ->
+                            keyName == prefix || keyName.startsWith("$prefix/")
                         }
+                    ) {
+                        add(keyName)
                     }
                 }
+            }
+            if (staleKeys.isNotEmpty()) {
                 staleKeys.forEach { folders.remove(it) }
+                removed = true
             }
-            val toStore = if (keepPrevious) {
-                logcat("FolderIndex") {
-                    "Keeping $protocol/$sourceId dir=$key index " +
-                        "(new listing empty/shallow or dropped every folder)"
-                }
-                checkNotNull(previous)
-            } else if (previous != null) {
-                preferCompleteFolderGalleries(previous, entries)
-            } else {
-                entries
+        }
+        val toStore = if (keepPrevious) {
+            logcat("FolderIndex") {
+                "Keeping $logKeep dir=$key index " +
+                    "(new listing empty/shallow or dropped every folder)"
             }
+            checkNotNull(previous)
+        } else if (previous != null) {
+            preferCompleteFolderGalleries(previous, entries)
+        } else {
+            entries
+        }
+        val unchanged = previous != null && toStore == previous
+        if (!unchanged) {
             folders.put(key, encodeEntries(toStore))
-            cacheDir.mkdirs()
-            val tmp = File(cacheDir, "${file.name}.tmp.${System.nanoTime()}")
-            try {
-                tmp.writeText(root.toString())
-                if (CachePagePublish.atomicReplaceFile(tmp, file)) {
-                    file.setLastModified(System.currentTimeMillis())
-                    File(legacyCacheDir, file.name).delete()
-                }
-            } catch (e: Throwable) {
-                logcat("FolderIndex", e)
-            } finally {
-                tmp.delete()
+        }
+        return toStore to (removed || !unchanged)
+    }
+
+    private fun writeRootFile(file: File, root: JSONObject) {
+        cacheDir.mkdirs()
+        val tmp = File(cacheDir, "${file.name}.tmp.${System.nanoTime()}")
+        try {
+            tmp.writeText(root.toString())
+            if (CachePagePublish.atomicReplaceFile(tmp, file)) {
+                file.setLastModified(System.currentTimeMillis())
+                File(legacyCacheDir, file.name).delete()
             }
-            toStore
+        } catch (e: Throwable) {
+            logcat("FolderIndex", e)
+        } finally {
+            tmp.delete()
         }
     }
 

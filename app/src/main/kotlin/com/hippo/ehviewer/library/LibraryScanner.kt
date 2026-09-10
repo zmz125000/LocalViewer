@@ -33,7 +33,8 @@ object LibraryScanner {
      * SAF roots with media permission list folder galleries from MediaStore first
      * (including nested dirs). A recursive directory walk then runs only when
      * MediaStore is unavailable **or** [includeArchives] is true (archives are not
-     * in MediaStore). Media-only startup/rescan stays on the single index query.
+     * in MediaStore). Media-only rescan stays on the RELATIVE_PATH Images query;
+     * startup skips that dump when the MediaStore fingerprint is unchanged.
      */
     fun scan(
         rootId: Long,
