@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -23,8 +24,8 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -291,6 +292,57 @@ fun BrowseFavoriteTitle(
     )
 }
 
+/**
+ * Folder-view list row. Matches M3 [ListItem] inset (16.dp / 8.dp) so dir and
+ * non-dir rows share padding. Dirs keep centered leading/trailing; unbounded
+ * names top-align the thumb and title, with overflow centered on the thumb.
+ */
+@Composable
+private fun BrowseFolderListItem(
+    headlineContent: @Composable () -> Unit,
+    supportingContent: @Composable () -> Unit,
+    leadingContent: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    trailingContent: (@Composable () -> Unit)? = null,
+    verticalAlignment: Alignment.Vertical,
+) {
+    val leadSize = 56.dp
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = leadSize)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = verticalAlignment,
+    ) {
+        Box(Modifier.padding(end = 16.dp), contentAlignment = Alignment.Center) {
+            leadingContent()
+        }
+        Column(Modifier.weight(1f)) {
+            ProvideTextStyle(MaterialTheme.typography.bodyLarge) {
+                headlineContent()
+            }
+            ProvideTextStyle(
+                MaterialTheme.typography.bodyMedium.copy(
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+            ) {
+                supportingContent()
+            }
+        }
+        if (trailingContent != null) {
+            // Top-aligned rows: pin overflow to the 56.dp thumb, not the full name height.
+            val trailingMod = if (verticalAlignment == Alignment.Top) {
+                Modifier.padding(start = 16.dp).height(leadSize)
+            } else {
+                Modifier.padding(start = 16.dp)
+            }
+            Box(trailingMod, contentAlignment = Alignment.Center) {
+                trailingContent()
+            }
+        }
+    }
+}
+
 @Composable
 fun BrowseDirectoryRow(
     name: String,
@@ -307,7 +359,7 @@ fun BrowseDirectoryRow(
     showFavoriteStar: Boolean = false,
 ) {
     val haptic = LocalHapticFeedback.current
-    ListItem(
+    BrowseFolderListItem(
         headlineContent = { BrowseFavoriteTitle(name = name, favorited = showFavoriteStar) },
         supportingContent = {
             Text(
@@ -332,6 +384,7 @@ fun BrowseDirectoryRow(
                 BrowseItemOverflowButton(actions, BrowseOverflowPlacement.ListTrailing)
             }
         },
+        verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .fillMaxWidth()
             .then(
@@ -371,7 +424,7 @@ fun BrowseFolderGalleryRow(
 ) {
     val haptic = LocalHapticFeedback.current
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
-    ListItem(
+    BrowseFolderListItem(
         headlineContent = { Text(name) },
         supportingContent = {
             Text(
@@ -396,6 +449,7 @@ fun BrowseFolderGalleryRow(
                 BrowseItemOverflowButton(actions, BrowseOverflowPlacement.ListTrailing)
             }
         },
+        verticalAlignment = Alignment.Top,
         modifier = modifier
             .fillMaxWidth()
             .then(
@@ -433,7 +487,7 @@ fun BrowseArchiveGalleryRow(
     overflow: BrowseOverflowActions? = null,
 ) {
     val haptic = LocalHapticFeedback.current
-    ListItem(
+    BrowseFolderListItem(
         headlineContent = { Text(name) },
         supportingContent = {
             Text(
@@ -459,6 +513,7 @@ fun BrowseArchiveGalleryRow(
                 BrowseItemOverflowButton(actions, BrowseOverflowPlacement.ListTrailing)
             }
         },
+        verticalAlignment = Alignment.Top,
         modifier = modifier
             .fillMaxWidth()
             .then(
@@ -496,7 +551,7 @@ fun BrowseVideoRow(
     overflow: BrowseOverflowActions? = null,
 ) {
     val haptic = LocalHapticFeedback.current
-    ListItem(
+    BrowseFolderListItem(
         headlineContent = { Text(name) },
         supportingContent = {
             Text(
@@ -521,6 +576,7 @@ fun BrowseVideoRow(
                 BrowseItemOverflowButton(actions, BrowseOverflowPlacement.ListTrailing)
             }
         },
+        verticalAlignment = Alignment.Top,
         modifier = modifier
             .fillMaxWidth()
             .then(
@@ -563,7 +619,7 @@ fun BrowseFileRow(
     val haptic = LocalHapticFeedback.current
     val longClick = onLongClick ?: onClick
     val usePhotoThumb = showPhotoThumb && cover != null
-    ListItem(
+    BrowseFolderListItem(
         headlineContent = { Text(name) },
         supportingContent = {
             Text(
@@ -590,6 +646,7 @@ fun BrowseFileRow(
                 BrowseItemOverflowButton(actions, BrowseOverflowPlacement.ListTrailing)
             }
         },
+        verticalAlignment = Alignment.Top,
         modifier = modifier
             .fillMaxWidth()
             .combinedClickable(
