@@ -127,10 +127,11 @@ suspend inline fun <T> useZipFolderPageLoader(
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) = notifySourceReady(index, orgImg)
 
                 override fun close() {
-                    // Hop calls PageLoader.close() before replace. Close the SMB/WebDAV
-                    // source now — do not wait for composition dispose or the 2s idle drain.
-                    session.close()
+                    // Cancel decode first so a FILE_CLOSED extract cannot notifyPageFailed
+                    // on the outgoing gallery. Then close the SMB/WebDAV source immediately
+                    // — do not wait for composition dispose or the 2s idle drain.
                     super.close()
+                    session.close()
                 }
             },
         )

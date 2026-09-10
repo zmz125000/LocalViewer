@@ -244,9 +244,13 @@ private class KeepOpenSmbFileSource(
                                                     readFullyWithRetry(file, op.offset, op.buf, op.off, op.len),
                                                 )
                                             } catch (e: Throwable) {
-                                                if (!isShareClosedError(e)) logcat("SmbArchive", e)
-                                                op.result.completeExceptionally(e)
-                                                if (isShareClosedError(e) || closed.get()) throw e
+                                                if (!isSmbExpectedCloseError(e)) logcat("SmbArchive", e)
+                                                if (closed.get() || isSmbExpectedCloseError(e)) {
+                                                    op.result.complete(-1)
+                                                } else {
+                                                    op.result.completeExceptionally(e)
+                                                }
+                                                if (isSmbExpectedCloseError(e) || closed.get()) throw e
                                             }
                                         }
                                         suspend fun runBatch(first: Op) {
@@ -282,7 +286,7 @@ private class KeepOpenSmbFileSource(
                                                         file.fileInformation.standardInformation.endOfFile
                                                     } catch (e: Throwable) {
                                                         if (closed.get() || !isActive) break
-                                                        if (isShareClosedError(e)) {
+                                                        if (isSmbExpectedCloseError(e)) {
                                                             logcat("SmbArchive") {
                                                                 "sticky idle: transport gone, reconnect on demand"
                                                             }
@@ -353,7 +357,7 @@ private class KeepOpenSmbFileSource(
                             if (closed.get() || !isActive) throw e
                             // Share/transport death mid-session is expected after screen-off
                             // dropSticky / NAS idle; reconnect on next demand without Error spam.
-                            if (isShareClosedError(e)) {
+                            if (isSmbExpectedCloseError(e)) {
                                 logcat("SmbArchive") {
                                     "sticky share closed (${if (opened) "reconnect on demand" else "retry open"}): ${e.message}"
                                 }
@@ -368,7 +372,7 @@ private class KeepOpenSmbFileSource(
                                 break
                             }
                             openAttempts++
-                            if (!isShareClosedError(e) || openAttempts >= MAX_OPEN_ATTEMPTS) {
+                            if (!isSmbExpectedCloseError(e) || openAttempts >= MAX_OPEN_ATTEMPTS) {
                                 if (!sizeReady.isCompleted) sizeReady.completeExceptionally(e)
                                 while (true) {
                                     val op = ops.tryReceive().getOrNull() ?: break
@@ -384,7 +388,7 @@ private class KeepOpenSmbFileSource(
                 } catch (e: Throwable) {
                     if (closed.get() || !isActive) break
                     // App ON_STOP / pool drop under an open drain — expected, not a fault.
-                    if (isShareClosedError(e)) {
+                    if (isSmbExpectedCloseError(e)) {
                         logcat("SmbArchive") { "share closed under drain: ${e.message}" }
                         continue
                     }
@@ -438,7 +442,7 @@ private class KeepOpenSmbFileSource(
                 return -1
             }
             // App background closes the browse pool under mid-read; caller soft-fails.
-            if (isShareClosedError(e)) return -1
+            if (isSmbExpectedCloseError(e)) return -1
             logcat("SmbArchive", e)
             -1
         }
@@ -517,7 +521,7 @@ private class KeepOpenSmbFileSource(
                     if (n > 0 || len == 0) return n
                     last = IOException("SMB read returned 0 at offset=$fileOffset len=$len")
                 } catch (e: Throwable) {
-                    if (isShareClosedError(e)) throw e
+                    if (isSmbExpectedCloseError(e)) throw e
                     last = e
                 }
                 if (attempt < READ_ATTEMPTS - 1) {
@@ -535,7 +539,11 @@ private class KeepOpenSmbFileSource(
             len: Int,
         ): Int {
             if (len <= READ_CHUNK) {
-                return file.read(buf, fileOffset, off, len)
+                return try {
+                    file.read(buf, fileOffset, off, len)
+                } catch (e: Throwable) {
+                    if (isSmbExpectedCloseError(e)) -1 else throw e
+                }
             }
             var filled = 0
             while (filled < len) {
@@ -555,7 +563,13 @@ private class KeepOpenSmbFileSource(
                         val at = pos
                         val chunk = batch[i]
                         launch(Dispatchers.IO) {
-                            got[i] = file.read(buf, fileOffset + at, off + at, chunk)
+                            got[i] = try {
+                                file.read(buf, fileOffset + at, off + at, chunk)
+                            } catch (e: Throwable) {
+                                // Hop close / idle drop: sibling READs must not
+                                // CancellationException-suppress a 4-wide FILE_CLOSED fan-out.
+                                if (isSmbExpectedCloseError(e)) -1 else throw e
+                            }
                         }
                         pos += chunk
                     }
@@ -575,22 +589,6 @@ private class KeepOpenSmbFileSource(
             return filled
         }
 
-        private fun isShareClosedError(e: Throwable): Boolean {
-            var cur: Throwable? = e
-            while (cur != null) {
-                val msg = cur.message.orEmpty()
-                if (msg.contains("DiskShare has already been closed", ignoreCase = true) ||
-                    msg.contains("Share has already been closed", ignoreCase = true) ||
-                    msg.contains("Connection closed", ignoreCase = true) ||
-                    msg.contains("Transport is closed", ignoreCase = true) ||
-                    msg.contains("Socket closed", ignoreCase = true)
-                ) {
-                    return true
-                }
-                cur = cur.cause
-            }
-            return false
-        }
     }
 }
 
