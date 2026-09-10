@@ -153,9 +153,9 @@ sealed interface BrowseEntry {
  * SMB/WebDAV (full peeks, leaf promote, exact page counts) via [LocalFolderListing].
  *
  * Prefer [LocalFolderListing.listDirectory] from the folder UI for disk index + slim
- * quick scan. This sync entry keeps RAM cache / sibling navigation working.
+ * quick scan. This entry keeps RAM cache / sibling navigation working.
  */
-fun listLocalDirectory(
+suspend fun listLocalDirectory(
     dir: Path,
     useCache: Boolean = true,
     preferMediaStore: Boolean = true,
@@ -165,7 +165,7 @@ fun listLocalDirectory(
     preferMediaStore = preferMediaStore,
 )
 
-fun listLocalDirectoryUncached(
+suspend fun listLocalDirectoryUncached(
     dir: Path,
     preferMediaStore: Boolean = true,
 ): List<BrowseEntry> {

@@ -71,7 +71,7 @@ object GallerySiblingNavigator {
     }
 
     /** Local folder gallery or archive file in the same parent listing. */
-    private fun localPathSibling(currentPath: String, next: Boolean): ReaderScreenArgs? {
+    private suspend fun localPathSibling(currentPath: String, next: Boolean): ReaderScreenArgs? {
         val path = currentPath.toPath()
         val parent = path.parent ?: return null
         // Prefer the browse listing for the current stack frame when it matches this parent

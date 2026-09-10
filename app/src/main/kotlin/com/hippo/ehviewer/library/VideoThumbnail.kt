@@ -39,7 +39,7 @@ sealed interface VideoThumbnailSource {
     /**
      * Stable disk / mutex identity. Must **not** include [knownSizeBytes] or mtime —
      * History resolves `vid-*` keys with size 0 while browse often passes listing size;
-     * both must hit the same `video_thumb_cache` JPEG.
+     * both must hit the same `video_thumb_cache` file.
      */
     val cacheIdentity: String
     val isNetwork: Boolean
@@ -258,7 +258,7 @@ object VideoThumbnail {
 
     /**
      * Deletes per-file skip notes (`*.failed`) under the video-thumb data dir.
-     * Does not touch JPEG thumbs. Safe if the directory is missing.
+     * Does not touch cached thumbs. Safe if the directory is missing.
      */
     fun clearFailureMarkers() {
         val directory = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache")
@@ -270,9 +270,15 @@ object VideoThumbnail {
         }
     }
 
-    fun cachedJpegIfPresent(source: VideoThumbnailSource): File? {
-        val target = File(cacheDirectory(), "${cacheKey(source)}.jpg")
-        return target.takeIf(::isCachedJpeg)
+    fun cachedJpegIfPresent(source: VideoThumbnailSource): File? = cachedIfPresent(source)
+
+    fun cachedIfPresent(source: VideoThumbnailSource): File? {
+        val directory = cacheDirectory()
+        val key = cacheKey(source)
+        val webp = File(directory, "$key.${OriginDiskCache.THUMB_EXT}")
+        if (isCachedThumb(webp)) return webp
+        val jpg = File(directory, "$key.${OriginDiskCache.THUMB_LEGACY_EXT}")
+        return jpg.takeIf(::isCachedThumb)
     }
 
     @Suppress("UNUSED_PARAMETER")
@@ -282,9 +288,9 @@ object VideoThumbnail {
         }
         val directory = cacheDirectory()
         val cacheKey = cacheKey(source)
-        val target = File(directory, "$cacheKey.jpg")
+        cachedIfPresent(source)?.let { return@withIOContext it }
+        val target = File(directory, "$cacheKey.${OriginDiskCache.THUMB_EXT}")
         val failure = File(directory, "$cacheKey.failed")
-        if (isCachedJpeg(target)) return@withIOContext target
         if (shouldSkipFailed(failure)) return@withIOContext null
         if (source.isNetwork && !Settings.downloadNetworkVideoThumbs.value) {
             return@withIOContext null
@@ -292,7 +298,7 @@ object VideoThumbnail {
 
         val mutex = pathLocks.getOrPut(source.cacheIdentity) { Mutex() }
         mutex.withLock {
-            if (isCachedJpeg(target)) return@withLock target
+            cachedIfPresent(source)?.let { return@withLock it }
             if (shouldSkipFailed(failure)) return@withLock null
             if (source.isNetwork && !Settings.downloadNetworkVideoThumbs.value) {
                 return@withLock null
@@ -316,7 +322,7 @@ object VideoThumbnail {
                 writeFailureMarker(failure)
                 return@withLock null
             }
-            if (!persistJpeg(target, frame)) {
+            if (!persistThumb(target, frame)) {
                 return@withLock null
             }
             failure.delete()
@@ -324,12 +330,12 @@ object VideoThumbnail {
         }
     }
 
-    private fun persistJpeg(target: File, frame: Bitmap): Boolean {
+    private fun persistThumb(target: File, frame: Bitmap): Boolean {
         val scaled = scale(frame)
         return try {
             val temporary = File(target.path + ".tmp." + System.nanoTime())
             val written = temporary.outputStream().buffered().use { output ->
-                scaled.compress(Bitmap.CompressFormat.JPEG, 82, output)
+                scaled.compress(Bitmap.CompressFormat.WEBP_LOSSY, 82, output)
             }
             if (!written || !temporary.renameTo(target)) {
                 temporary.delete()
@@ -362,14 +368,14 @@ object VideoThumbnail {
         runCatching { failure.createNewFile() }
     }
 
-    private fun isCachedJpeg(target: File): Boolean = target.isFile && target.length() > 0L
+    private fun isCachedThumb(target: File): Boolean = target.isFile && target.length() > 0L
 
     /**
      * Local: decode only. Network: probe under [probeSemaphore] (closes remote), then
      * decode the snapshot under [extractSemaphore] — never MMR over a live pool handle.
      *
      * @param persistTarget when the waiter is cancelled/timed out but native still returns
-     * a frame, write JPEG here so the next visit is a disk hit.
+     * a frame, write WebP here so the next visit is a disk hit.
      */
     private suspend fun extractThumbnailFrame(
         source: VideoThumbnailSource,
@@ -839,7 +845,7 @@ object VideoThumbnail {
                     // Waiter already timed out / cancelled — still cache a good frame.
                     if (frame != null && persistTarget != null && visibleSampleCount(frame) > 0) {
                         runCatching {
-                            persistJpeg(persistTarget, frame) // recycles [frame]
+                            persistThumb(persistTarget, frame) // recycles [frame]
                             logcat("VideoThumb") { "late persist ($label)" }
                         }
                     } else {

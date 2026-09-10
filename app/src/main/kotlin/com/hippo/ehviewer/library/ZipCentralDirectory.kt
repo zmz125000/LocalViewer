@@ -13,10 +13,35 @@ import java.util.zip.InflaterInputStream
  *
  * Filenames: Info-ZIP Unicode Path extra / UTF-8 flag, then archive-wide best-effort
  * detect for legacy (non-UTF-8) code pages — see [ZipNameDecoder].
+ *
+ * Zip-as-dir browse can sample the CD ([ZipCdParse]) instead of always downloading
+ * the whole directory: mixed packs abort after [ZipCentralDirectory.SAMPLE_FILES]
+ * countable files on the parent listing.
  */
+enum class ZipCdParse {
+    /** Always read the whole CD (extract / EPUB / covers). */
+    Full,
+
+    /**
+     * Sample [ZipCentralDirectory.SAMPLE_FILES] countable files, then either finish
+     * the CD (gallery) or stop (mixed — no folder index).
+     */
+    Parent,
+
+    /**
+     * Same sample to recognize gallery vs mixed, then always finish the CD so mixed
+     * zips can cache a plain folder tree.
+     */
+    Enter,
+}
+
 class ZipCentralDirectory private constructor(
     private val source: ArchiveByteSource,
     val entries: List<Entry>,
+    /** Sampled (≥[SAMPLE_FILES] or whole CD) image/video ratio ≥ 50%. */
+    val gallery: Boolean,
+    /** False when [ZipCdParse.Parent] aborted a mixed zip mid-CD. */
+    val complete: Boolean,
 ) {
     data class Entry(
         val name: String,
@@ -97,15 +122,27 @@ class ZipCentralDirectory private constructor(
          */
         const val MAX_CD_BYTES = 64L * 1024L * 1024L
 
-        fun open(source: ArchiveByteSource): ZipCentralDirectory? {
+        /** Countable files (non-dir, non-dot, non-encrypted) used to recognize gallery vs mixed. */
+        const val SAMPLE_FILES = 100
+
+        private const val CD_CHUNK = 256 * 1024
+
+        fun open(
+            source: ArchiveByteSource,
+            mode: ZipCdParse = ZipCdParse.Full,
+        ): ZipCentralDirectory? {
             val size = runCatching { source.size }.getOrDefault(-1L)
             if (size < 22L) return null
-            return runCatching { parse(source, size) }
+            return runCatching { parse(source, size, mode) }
                 .onFailure { logcat("ZipCD", it) }
                 .getOrNull()
         }
 
-        private fun parse(source: ArchiveByteSource, archiveSize: Long): ZipCentralDirectory? {
+        private fun parse(
+            source: ArchiveByteSource,
+            archiveSize: Long,
+            mode: ZipCdParse,
+        ): ZipCentralDirectory? {
             val tailLen = minOf(archiveSize, 65535L + 22L).toInt()
             val tail = ByteArray(tailLen)
             val tailOff = archiveSize - tailLen
@@ -148,72 +185,61 @@ class ZipCentralDirectory private constructor(
             ) {
                 return null
             }
-            val cd = ByteArray(cdSize.toInt())
-            if (readFully(source, cdOff, cd) != cd.size) return null
-
             val parsed = ArrayList<Parsed>(64)
+            var window = ByteArray(0)
             var pos = 0
-            while (pos + 46 <= cd.size) {
-                if (cd[pos] != 'P'.code.toByte() || cd[pos + 1] != 'K'.code.toByte() ||
-                    cd[pos + 2] != 1.toByte() || cd[pos + 3] != 2.toByte()
-                ) {
-                    break
-                }
-                val gp = u16(cd, pos + 8)
-                val method = u16(cd, pos + 10)
-                var comp = u32(cd, pos + 20)
-                var uncomp = u32(cd, pos + 24)
-                val nameLen = u16(cd, pos + 28)
-                val extraLen = u16(cd, pos + 30)
-                val commentLen = u16(cd, pos + 32)
-                var local = u32(cd, pos + 42)
-                val nameOff = pos + 46
-                val extraOff = nameOff + nameLen
-                val next = extraOff + extraLen + commentLen
-                if (next > cd.size || nameOff + nameLen > cd.size) break
+            var fetched = 0L
+            var files = 0
+            var media = 0
+            var sampleGallery: Boolean? = null
+            var complete = true
 
-                val nameBytes = cd.copyOfRange(nameOff, nameOff + nameLen)
-                var unicodeName: String? = null
-                if (extraLen >= 4) {
-                    var ex = 0
-                    while (ex + 4 <= extraLen) {
-                        val tag = u16(cd, extraOff + ex)
-                        val sz = u16(cd, extraOff + ex + 2)
-                        if (ex + 4 + sz > extraLen) break
-                        if (tag == 0x0001) {
-                            var o = ex + 4
-                            if (uncomp == 0xFFFF_FFFFL && o + 8 <= ex + 4 + sz) {
-                                uncomp = u64(cd, extraOff + o)
-                                o += 8
-                            }
-                            if (comp == 0xFFFF_FFFFL && o + 8 <= ex + 4 + sz) {
-                                comp = u64(cd, extraOff + o)
-                                o += 8
-                            }
-                            if (local == 0xFFFF_FFFFL && o + 8 <= ex + 4 + sz) {
-                                local = u64(cd, extraOff + o)
-                            }
-                        } else if (tag == ZipNameDecoder.EXTRA_UNICODE_PATH) {
-                            unicodeName = ZipNameDecoder.nameFromUnicodePath(
-                                cd,
-                                extraOff + ex + 4,
-                                sz,
-                            )
-                        }
-                        ex += 4 + sz
+            fun compact() {
+                if (pos <= 0) return
+                window = if (pos >= window.size) ByteArray(0) else window.copyOfRange(pos, window.size)
+                pos = 0
+            }
+
+            fun fetchMore(): Boolean {
+                if (fetched >= cdSize) return false
+                val want = minOf(CD_CHUNK.toLong(), cdSize - fetched).toInt()
+                if (want <= 0) return false
+                compact()
+                val chunk = ByteArray(want)
+                if (readFully(source, cdOff + fetched, chunk) != want) return false
+                fetched += want
+                window = if (window.isEmpty()) chunk else window + chunk
+                return true
+            }
+
+            while (true) {
+                val available = window.size - pos
+                if (available < 46) {
+                    if (!fetchMore()) break
+                    continue
+                }
+                val rec = parseCdRecord(window, pos) ?: break
+                if (rec.length > available) {
+                    if (!fetchMore()) break
+                    continue
+                }
+                parsed += rec.parsed
+                when (sampleFileDelta(rec.parsed)) {
+                    0 -> Unit
+                    1 -> {
+                        files++
+                        media++
+                    }
+                    else -> files++
+                }
+                pos += rec.length
+                if (mode != ZipCdParse.Full && sampleGallery == null && files >= SAMPLE_FILES) {
+                    sampleGallery = isGalleryRatio(files, media)
+                    if (mode == ZipCdParse.Parent && sampleGallery == false) {
+                        complete = false
+                        break
                     }
                 }
-
-                parsed += Parsed(
-                    nameBytes = nameBytes,
-                    gpFlag = gp,
-                    unicodeName = unicodeName,
-                    method = method,
-                    compressedSize = comp,
-                    uncompressedSize = uncomp,
-                    localHeaderOffset = local,
-                )
-                pos = next
             }
             if (parsed.isEmpty()) return null
             val names = ZipNameDecoder.decodeAll(
@@ -231,7 +257,98 @@ class ZipCentralDirectory private constructor(
                     gpFlag = p.gpFlag,
                 )
             }
-            return ZipCentralDirectory(source, list)
+            val gallery = sampleGallery ?: isGalleryRatio(files, media)
+            return ZipCentralDirectory(source, list, gallery, complete)
+        }
+
+        private class CdRecord(val parsed: Parsed, val length: Int)
+
+        /**
+         * Parse one CD file header at [pos]. [CdRecord.length] is the full record
+         * size and may exceed `cd.size - pos` when more bytes are needed.
+         */
+        private fun parseCdRecord(cd: ByteArray, pos: Int): CdRecord? {
+            if (pos + 46 > cd.size) return null
+            if (cd[pos] != 'P'.code.toByte() || cd[pos + 1] != 'K'.code.toByte() ||
+                cd[pos + 2] != 1.toByte() || cd[pos + 3] != 2.toByte()
+            ) {
+                return null
+            }
+            val gp = u16(cd, pos + 8)
+            val method = u16(cd, pos + 10)
+            var comp = u32(cd, pos + 20)
+            var uncomp = u32(cd, pos + 24)
+            val nameLen = u16(cd, pos + 28)
+            val extraLen = u16(cd, pos + 30)
+            val commentLen = u16(cd, pos + 32)
+            var local = u32(cd, pos + 42)
+            val nameOff = pos + 46
+            val extraOff = nameOff + nameLen
+            val length = 46 + nameLen + extraLen + commentLen
+            if (pos + length > cd.size || nameOff + nameLen > cd.size) {
+                return CdRecord(
+                    Parsed(ByteArray(0), gp, null, method, comp, uncomp, local),
+                    length,
+                )
+            }
+
+            val nameBytes = cd.copyOfRange(nameOff, nameOff + nameLen)
+            var unicodeName: String? = null
+            if (extraLen >= 4) {
+                var ex = 0
+                while (ex + 4 <= extraLen) {
+                    val tag = u16(cd, extraOff + ex)
+                    val sz = u16(cd, extraOff + ex + 2)
+                    if (ex + 4 + sz > extraLen) break
+                    if (tag == 0x0001) {
+                        var o = ex + 4
+                        if (uncomp == 0xFFFF_FFFFL && o + 8 <= ex + 4 + sz) {
+                            uncomp = u64(cd, extraOff + o)
+                            o += 8
+                        }
+                        if (comp == 0xFFFF_FFFFL && o + 8 <= ex + 4 + sz) {
+                            comp = u64(cd, extraOff + o)
+                            o += 8
+                        }
+                        if (local == 0xFFFF_FFFFL && o + 8 <= ex + 4 + sz) {
+                            local = u64(cd, extraOff + o)
+                        }
+                    } else if (tag == ZipNameDecoder.EXTRA_UNICODE_PATH) {
+                        unicodeName = ZipNameDecoder.nameFromUnicodePath(
+                            cd,
+                            extraOff + ex + 4,
+                            sz,
+                        )
+                    }
+                    ex += 4 + sz
+                }
+            }
+            return CdRecord(
+                Parsed(
+                    nameBytes = nameBytes,
+                    gpFlag = gp,
+                    unicodeName = unicodeName,
+                    method = method,
+                    compressedSize = comp,
+                    uncompressedSize = uncomp,
+                    localHeaderOffset = local,
+                ),
+                length,
+            )
+        }
+
+        private fun isGalleryRatio(files: Int, media: Int): Boolean = files > 0 && media > 0 && media * 2 >= files
+
+        /** 0 skip, 1 media file, 2 non-media file. */
+        private fun sampleFileDelta(parsed: Parsed): Int {
+            val raw = parsed.unicodeName ?: parsed.nameBytes.toString(Charsets.ISO_8859_1)
+            val name = raw.replace('\\', '/').trimStart('/')
+            if (name.isEmpty() || name == ".") return 0
+            if (name.startsWith("../") || name.contains("/../") || name == "..") return 0
+            if (parsed.gpFlag and 1 != 0 || name.endsWith('/')) return 0
+            val base = name.substringAfterLast('/')
+            if (base.isEmpty() || base.startsWith('.')) return 0
+            return if (isImageFileName(base) || isVideoFileName(base)) 1 else 2
         }
 
         private class Parsed(

@@ -67,6 +67,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
 import com.hippo.ehviewer.library.ArchiveTooLargeException
+import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
@@ -95,6 +96,7 @@ import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.isZipMemberTooLarge
+import com.hippo.ehviewer.library.isZipPlainFolderListing
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
@@ -235,11 +237,17 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     var connectionProbeToken by remember { mutableStateOf(0) }
     val sourceConnectionKey = source?.let { SmbGateway.sourceConfigKey(it) }
     val relativeDirForMode = segments.joinToString("/")
-    // Virtual layers (RPC share list / photo grid): not regular folder-view modes.
+    // Virtual layers (RPC share list / photo grid / mixed zip): not regular folder-view modes.
+    val zipPlainFolder = isZipPlainFolderListing(
+        relativeDirForMode,
+        hasFolderGallery = entries.any { it is BrowseEntryRemote.FolderGallery },
+        listingReady = listedDir == relativeDirForMode && entries.isNotEmpty(),
+    )
     val virtual = smbBrowseVirtual(
         isServerRootSource = source?.let { SmbGateway.isServerRootSource(it) } == true,
         relativeDir = relativeDirForMode,
         photoGridDir = photoGridDir,
+        zipPlainFolder = zipPlainFolder,
     )
     val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
     val photoGridNow = rememberUpdatedState(photoGrid)
@@ -318,6 +326,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     .sortedWith { a, b -> naturalCompare(a.name, b.name) }
             // Share names only — no content-mode filter.
             BrowseVirtualKind.RpcShareRoot -> displayEntries
+            BrowseVirtualKind.ZipPlainFolder ->
+                displayEntries
+                    .filterRemoteByContentMode(
+                        BrowseContentMode.Folder,
+                        showHiddenFiles,
+                        showVirtualGalleries,
+                    )
+                    .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
             BrowseVirtualKind.None ->
                 displayEntries
                     .filterRemoteByContentMode(contentMode, showHiddenFiles, showVirtualGalleries)

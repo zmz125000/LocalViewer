@@ -9,9 +9,6 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -27,13 +24,13 @@ import splitties.init.appCtx
 /**
  * Disk cache for WebDAV (mirrors [com.hippo.ehviewer.smb.SmbCache] split).
  * - Pages: `webdav_cache/` full files — unified origin budget ([OriginDiskCache])
- * - Thumbs: `webdav_thumb_cache/` small JPEG — shared thumb budget
+ * - Thumbs: `webdav_thumb_cache/` small WebP (leftover JPEG until LRU) — shared thumb budget
  */
 object WebDavCache {
     enum class Kind { Page, Thumb }
 
     const val THUMB_DISK_EDGE = OriginDiskCache.THUMB_EDGE
-    private const val THUMB_JPEG_QUALITY = 85
+    private const val THUMB_WEBP_QUALITY = OriginDiskCache.THUMB_QUALITY
     private const val THUMB_FORMAT_VERSION = 2
     private val thumbFetchSlots = Semaphore(3)
 
@@ -98,7 +95,15 @@ object WebDavCache {
     fun thumbCachePath(sourceId: Long, remoteRelativeFile: String): Path {
         val normalized = remoteRelativeFile.replace('\\', '/').trimStart('/')
         val key = "davthumb:$sourceId:$normalized@$THUMB_DISK_EDGE.v$THUMB_FORMAT_VERSION"
-        return thumbRoot / "${sha256Hex(key)}.jpg"
+        return thumbRoot / OriginDiskCache.thumbFileName(sha256Hex(key))
+    }
+
+    /** WebP if present, else leftover JPEG of the same hash. Disk probe — not for main. */
+    fun cachedThumbIfPresent(sourceId: Long, remoteRelativeFile: String): Path? {
+        val hit = OriginDiskCache.existingThumb(thumbCachePath(sourceId, remoteRelativeFile)) ?: return null
+        markPresent(hit)
+        touch(hit)
+        return hit
     }
 
     /**
@@ -148,9 +153,10 @@ object WebDavCache {
 
     /**
      * Browse thumb: reuse page cache if present; else RAM download → MaxEdge-only thumb.
-     * Decoded JPEG **always** lands in the thumb cache. When [cacheOriginal] is true and page
-     * cache is missing, download via [downloadIfNeeded] (same path + HDR convert as the reader),
-     * then encode the thumb from that page file.
+     * New platform thumbs land as WebP; lib/HDR thumbs stay Ultra HDR JPEG. Leftover JPEGs
+     * are reused until LRU. When [cacheOriginal] is true and page cache is missing, download
+     * via [downloadIfNeeded] (same path + HDR convert as the reader), then encode the thumb
+     * from that page file.
      */
     suspend fun ensureBrowseThumb(
         sourceId: Long,
@@ -158,24 +164,15 @@ object WebDavCache {
         cacheOriginal: Boolean = false,
         download: suspend (OutputStream) -> Unit,
     ): Path = withContext(Dispatchers.IO) {
+        cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
         val destPath = thumbCachePath(sourceId, remoteRelativeFile)
-        if (probeDisk(destPath)) {
-            touch(destPath)
-            return@withContext destPath
-        }
         val pagePath = cachePathForRemoteFile(sourceId, remoteRelativeFile, Kind.Page)
         val key = destPath.toString()
         val mutex = pathLocks.getOrPut(key) { Mutex() }
         mutex.withLock {
-            if (probeDisk(destPath)) {
-                touch(destPath)
-                return@withContext destPath
-            }
+            cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
             thumbFetchSlots.withPermit {
-                if (probeDisk(destPath)) {
-                    touch(destPath)
-                    return@withContext destPath
-                }
+                cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
                 val name = remoteRelativeFile.substringAfterLast('/')
                 ensureRootDirs()
                 File(destPath.parent!!.toString()).mkdirs()
@@ -187,23 +184,16 @@ object WebDavCache {
                 }
                 val pageAfter = resolveReaderPath(pagePath)
                 if (probeDisk(pageAfter)) {
-                    val jpgTmp = File("$key.jpg.${System.nanoTime()}")
                     try {
-                        writeSubsampledJpeg(
+                        writeSubsampledThumb(
                             File(pageAfter.toString()),
-                            jpgTmp,
+                            dest,
                             THUMB_DISK_EDGE,
-                            THUMB_JPEG_QUALITY,
+                            THUMB_WEBP_QUALITY,
                         )
-                        commitTmp(jpgTmp, dest)
-                        markPresent(destPath)
-                        touch(destPath)
                     } catch (e: Throwable) {
-                        if (jpgTmp.exists()) jpgTmp.delete()
-                        if (probeDisk(destPath)) return@withContext destPath
+                        cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
                         throw e
-                    } finally {
-                        if (jpgTmp.exists()) jpgTmp.delete()
                     }
                 } else {
                     // No page cache: MaxEdge-only thumb (no full-page UHDR from grid browse).
@@ -213,17 +203,16 @@ object WebDavCache {
                         bytes = bos.toByteArray(),
                         destJpeg = dest,
                         maxEdge = THUMB_DISK_EDGE,
-                        quality = THUMB_JPEG_QUALITY,
+                        quality = THUMB_WEBP_QUALITY,
                         fileNameHint = name,
                     )
-                    if (!ok || !dest.isFile || dest.length() == 0L) {
+                    if (!ok) {
                         error("WebDAV browse thumb failed for $remoteRelativeFile")
                     }
-                    markPresent(destPath)
-                    touch(destPath)
                 }
                 scheduleTrim()
-                destPath
+                cachedThumbIfPresent(sourceId, remoteRelativeFile)
+                    ?: error("WebDAV browse thumb missing after write for $remoteRelativeFile")
             }
         }
     }
@@ -330,27 +319,16 @@ object WebDavCache {
      *
      * Suspend (no [runBlocking]) so leave-folder cancel can stop thumb encode work.
      */
-    private suspend fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {
-        val ok = HdrConvertCache.writeThumbJpeg(
+    private suspend fun writeSubsampledThumb(source: File, dest: File, maxEdge: Int, quality: Int) {
+        val ok = HdrConvertCache.writeThumb(
             source = source.toOkioPath(),
-            destJpeg = destJpeg,
+            dest = dest,
             maxEdge = maxEdge,
             quality = quality,
             fileNameHint = source.name,
         )
-        check(ok && destJpeg.isFile && destJpeg.length() > 0L) {
-            "JPEG thumb failed for ${source.name}"
-        }
-    }
-
-    private fun commitTmp(tmp: File, dest: File) {
-        if (dest.exists()) dest.delete()
-        if (!tmp.renameTo(dest)) {
-            try {
-                Files.move(tmp.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(tmp.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
+        check(ok && OriginDiskCache.existingThumb(dest) != null) {
+            "thumb failed for ${source.name}"
         }
     }
 

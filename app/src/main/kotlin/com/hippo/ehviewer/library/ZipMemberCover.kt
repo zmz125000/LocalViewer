@@ -29,7 +29,7 @@ fun Throwable.isZipMemberTooLarge(): Boolean = this is ZipMemberTooLargeExceptio
  * - **Reader pages** (`cache/zip_folder_pages`): [ensure] / [ZipFolderPageLoader] when
  *   [com.hippo.ehviewer.Settings.disableReaderNetworkCache] is off, or
  *   [com.hippo.ehviewer.Settings.saveThumbOriginalCache] on a zip-as-dir thumb.
- * - **Browse thumbs**: [ensureBrowseThumb] writes a small JPEG only (same MaxEdge path
+ * - **Browse thumbs**: [ensureBrowseThumb] writes a small WebP, or Ultra HDR JPEG for lib stills
  *   as folder image thumbs). Range-read via [ZipCentralDirectory.extract].
  *
  * Other member types are refused so browse cannot dump PDFs or nested archives
@@ -135,9 +135,9 @@ object ZipMemberCover {
     }
 
     /**
-     * Zip-as-dir browse thumb: small JPEG at [destJpeg] (MaxEdge, same as folder image thumbs).
+     * Zip-as-dir browse thumb: WebP, or Ultra HDR JPEG for lib stills (MaxEdge).
      *
-     * 1. Thumb hit → return
+     * 1. Thumb hit (WebP or leftover JPEG) → return
      * 2. Reader original already in [destFile] → subsample, no network
      * 3. [cacheOriginal] → [ensure] then subsample (save-thumb-original setting)
      * 4. Else range-extract to RAM → [HdrConvertCache.writeThumbFromBytes]
@@ -151,10 +151,10 @@ object ZipMemberCover {
         openSource: () -> ArchiveByteSource?,
     ): Path? = withContext(Dispatchers.IO) {
         if (!isImageFileName(memberRel)) return@withContext null
-        if (destJpeg.isFile && destJpeg.length() > 0L) return@withContext destJpeg.absolutePath.toPath()
+        OriginDiskCache.existingThumb(destJpeg)?.let { return@withContext it.absolutePath.toPath() }
         val mutex = thumbLocks.getOrPut(destJpeg.path) { Mutex() }
         mutex.withLock {
-            if (destJpeg.isFile && destJpeg.length() > 0L) return@withLock destJpeg.absolutePath.toPath()
+            OriginDiskCache.existingThumb(destJpeg)?.let { return@withLock it.absolutePath.toPath() }
             destJpeg.parentFile?.mkdirs()
             val origin = destFile(zipKey, memberRel)
             if (origin.isFile && origin.length() > 0L) {
@@ -170,7 +170,7 @@ object ZipMemberCover {
                 destJpeg = destJpeg,
                 fileNameHint = memberRel.substringAfterLast('/').substringAfterLast('\\'),
             )
-            if (ok && destJpeg.isFile && destJpeg.length() > 0L) destJpeg.absolutePath.toPath() else null
+            OriginDiskCache.existingThumb(destJpeg)?.takeIf { ok }?.absolutePath?.toPath()
         }
     }
 
@@ -182,12 +182,12 @@ object ZipMemberCover {
         openLocalArchiveByteSource(zipPath.toPath())
     }
 
-    private suspend fun encodeThumbFromFile(origin: File, destJpeg: File, memberRel: String): Path? {
-        val ok = HdrConvertCache.writeThumbJpeg(
+    private suspend fun encodeThumbFromFile(origin: File, dest: File, memberRel: String): Path? {
+        val ok = HdrConvertCache.writeThumb(
             source = origin.toOkioPath(),
-            destJpeg = destJpeg,
+            dest = dest,
             fileNameHint = memberRel.substringAfterLast('/').substringAfterLast('\\'),
         )
-        return if (ok && destJpeg.isFile && destJpeg.length() > 0L) destJpeg.absolutePath.toPath() else null
+        return OriginDiskCache.existingThumb(dest)?.takeIf { ok }?.absolutePath?.toPath()
     }
 }

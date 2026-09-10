@@ -196,6 +196,7 @@ object LocalLibrary {
             if (root.accessMode == mode) return@withIOContext
             db.libraryRootDao().updateAccessMode(rootId, mode)
             NetworkFolderIndexCache.deleteLocal(rootId)
+            MediaStoreIndexStamp.clear(rootId)
             BrowseSession.invalidateLocalListing()
             // Drop in-memory stack if this root is open — paths may switch SAF ↔ MediaStore.
             if (BrowseSession.localStack.any { it.rootId == rootId }) {
@@ -217,20 +218,25 @@ object LocalLibrary {
         role: Int = LIBRARY_ROOT_ROLE_LIBRARY,
     ): AddRootResult = addRoot(MEDIASTORE_ROOT_URI, displayName, role)
 
-    suspend fun removeRoot(root: LibraryRootEntity) = withIOContext {
-        // Serialize with scanRoot: otherwise a long MediaStore scan can finish after
-        // delete and replaceForRoot() → SQLITE_CONSTRAINT_FOREIGNKEY (orphan ROOT_ID).
-        scanMutex.withLock {
-            if (!isMediaStoreRootUri(root.treeUri)) {
-                runCatching {
-                    appCtx.contentResolver.releasePersistableUriPermission(root.treeUri.toUri(), URI_FLAGS)
-                }.onFailure { logcat(it) }
+    suspend fun removeRoot(root: LibraryRootEntity) = withNonCancellableContext {
+        // NonCancellable: Manage Sources' launchIO is cancelled on back. A startup
+        // scan can hold scanMutex for a long time; without this the delete never runs.
+        withIOContext {
+            // Serialize with scanRoot: otherwise a long MediaStore scan can finish after
+            // delete and replaceForRoot() → SQLITE_CONSTRAINT_FOREIGNKEY (orphan ROOT_ID).
+            scanMutex.withLock {
+                if (!isMediaStoreRootUri(root.treeUri)) {
+                    runCatching {
+                        appCtx.contentResolver.releasePersistableUriPermission(root.treeUri.toUri(), URI_FLAGS)
+                    }.onFailure { logcat(it) }
+                }
+                // CASCADE also clears galleries; explicit delete keeps behavior obvious if FK is off.
+                db.localGalleryDao().deleteByRootId(root.id)
+                db.libraryRootDao().delete(root)
+                BrowseSession.invalidateLocalListing()
+                NetworkFolderIndexCache.deleteLocal(root.id)
+                MediaStoreIndexStamp.clear(root.id)
             }
-            // CASCADE also clears galleries; explicit delete keeps behavior obvious if FK is off.
-            db.localGalleryDao().deleteByRootId(root.id)
-            db.libraryRootDao().delete(root)
-            BrowseSession.invalidateLocalListing()
-            NetworkFolderIndexCache.deleteLocal(root.id)
         }
     }
 
@@ -254,9 +260,10 @@ object LocalLibrary {
 
     /**
      * App-startup library maintenance (background, non-blocking for UI):
-     * - **Media mode**: MediaStore index only (no directory walk).
-     * - **Archive mode**: walk folders to pick up new image folders and new archives;
-     *   already-indexed archives are kept without re-parsing EOCD / page count.
+     * - **Media mode**: skip the Images dump when MediaStore generation (API 30+)
+     *   or a cheap [_ID, DATE_MODIFIED] fingerprint matches the last scan.
+     * - **Archive / SAF mode**: no tree walk. Refresh folder galleries from MediaStore
+     *   when that index changed; otherwise keep last folders and prune missing archives.
      */
     suspend fun startupMaintenance() = withIOContext {
         scanMutex.withLock {
@@ -266,10 +273,9 @@ object LocalLibrary {
                 for (root in roots) {
                     if (db.libraryRootDao().load(root.id) == null) continue
                     if (root.includesArchives) {
-                        scanRootLocked(root, reuseKnownArchives = true)
+                        scanRootLocked(root, reuseKnownArchives = true, skipIfUnchanged = true)
                     } else {
-                        // MediaStore mode: index walk is cheap and refreshes the set.
-                        scanRootLocked(root)
+                        scanRootLocked(root, skipIfUnchanged = true)
                     }
                 }
             } finally {
@@ -303,6 +309,7 @@ object LocalLibrary {
     private suspend fun scanRootLocked(
         root: LibraryRootEntity,
         reuseKnownArchives: Boolean = false,
+        skipIfUnchanged: Boolean = false,
     ) {
         if (root.role != LIBRARY_ROOT_ROLE_LIBRARY) {
             db.localGalleryDao().deleteByRootId(root.id)
@@ -332,7 +339,41 @@ object LocalLibrary {
             return
         }
         val previous = db.localGalleryDao().listByRootId(root.id)
-        val knownArchives = if (reuseKnownArchives) {
+        val msRoot = when {
+            path.isMediaStorePath() -> path
+            else -> tryConvertSafPathToMediaStore(path)
+        }
+        val canMs = msRoot != null && MediaPermissions.hasMediaAccess()
+        val mediaRelative = msRoot?.mediaStoreRelativeDir().orEmpty()
+        var pendingStamp: MediaStoreIndexStamp? = null
+        var skipMediaDump = false
+        if (skipIfUnchanged && previous.isNotEmpty() && canMs) {
+            val stored = MediaStoreIndexStamp.load(root.id)
+            val generation = MediaStoreFs.volumeGeneration()
+            if (stored != null && stored.generationUnchanged(generation)) {
+                skipMediaDump = true
+            } else if (stored != null) {
+                val stamp = MediaStoreFs.imageIndexStamp(mediaRelative)
+                pendingStamp = stamp
+                if (MediaStoreIndexStamp.shouldSkip(stored, stamp, hasGalleries = true)) {
+                    MediaStoreIndexStamp.remember(root.id, stamp)
+                    skipMediaDump = true
+                }
+            }
+        }
+        if (skipIfUnchanged && previous.isNotEmpty() && (root.includesArchives || !canMs)) {
+            // SAF / archive-mode startup: prune missing zips, keep last folder galleries.
+            // No tree walk — new archives appear on a manual full rescan.
+            if (skipMediaDump || !canMs) {
+                writePrunedStartup(root, previous)
+                return
+            }
+        }
+        if (skipMediaDump && !root.includesArchives) {
+            logcat("LocalLibrary") { "Skip unchanged MediaStore root ${root.id}" }
+            return
+        }
+        val knownArchives = if (reuseKnownArchives || (skipIfUnchanged && root.includesArchives)) {
             LibraryScanner.groupKnownArchives(previous)
         } else {
             emptyMap()
@@ -343,6 +384,7 @@ object LocalLibrary {
             rootDisplayName = root.displayName,
             includeArchives = root.includesArchives,
             knownArchives = knownArchives,
+            walkDirectories = !skipIfUnchanged || previous.isEmpty(),
         )
         // Drop results if the root was removed while scanning (belt-and-suspenders with mutex).
         if (db.libraryRootDao().load(root.id) == null) {
@@ -350,12 +392,21 @@ object LocalLibrary {
             return
         }
         val toWrite = preserveArchivePageCountsIfDisabled(previous, scanned.galleries)
+        if (toWrite.isEmpty() && previous.isNotEmpty()) {
+            val stamp = pendingStamp ?: if (canMs) MediaStoreFs.imageIndexStamp(mediaRelative) else null
+            if (stamp == null || stamp.count > 0) {
+                logcat("LocalLibrary") {
+                    "Ignore empty scan for root ${root.id} (had ${previous.size} galleries, stamp=$stamp)"
+                }
+                return
+            }
+        }
         logcat("LocalLibrary") { "Scanned root ${root.id} (${root.displayName}): ${toWrite.size} galleries" }
-        runCatching {
+        val wrote = runCatching {
             db.localGalleryDao().replaceForRoot(root.id, toWrite)
         }.onFailure {
             logcat(it)
-        }
+        }.isSuccess
         runCatching {
             FolderGalleryIndex.persistLocalFolderPages(
                 rootId = root.id,
@@ -366,6 +417,36 @@ object LocalLibrary {
         }.onFailure {
             logcat(it)
         }
+        if (canMs && wrote) {
+            val stamp = pendingStamp ?: MediaStoreFs.imageIndexStamp(mediaRelative)
+            MediaStoreIndexStamp.remember(root.id, stamp)
+        }
+    }
+
+    /**
+     * Startup for SAF / archive-mode roots when MediaStore is unchanged or unavailable:
+     * drop missing archives, keep last folder galleries, no directory walk.
+     */
+    private suspend fun writePrunedStartup(
+        root: LibraryRootEntity,
+        previous: List<LocalGalleryEntity>,
+    ) {
+        val known = LibraryScanner.groupKnownArchives(previous)
+        val keptArchives = LibraryScanner.keepExistingArchives(known)
+        val folders = previous.filter { LibraryScanner.archiveFilePath(it) == null }
+        val toWrite = preserveArchivePageCountsIfDisabled(previous, folders + keptArchives)
+        if (toWrite.size == previous.size &&
+            toWrite.map { it.id }.toSet() == previous.map { it.id }.toSet()
+        ) {
+            logcat("LocalLibrary") { "Skip unchanged SAF/archive root ${root.id} (prune)" }
+            return
+        }
+        logcat("LocalLibrary") {
+            "Pruned missing archives for root ${root.id}: ${previous.size} → ${toWrite.size}"
+        }
+        runCatching {
+            db.localGalleryDao().replaceForRoot(root.id, toWrite)
+        }.onFailure { logcat(it) }
     }
 
     /**

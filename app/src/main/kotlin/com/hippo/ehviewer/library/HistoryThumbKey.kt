@@ -7,13 +7,13 @@ import okio.Path.Companion.toPath
 
 /**
  * Stable [GalleryInfo.thumbKey] encodings for history / favourite rows so UI paints the
- * same JPEG as browse covers when the disk cache already has it (**no network**).
+ * same thumb as browse covers when the disk cache already has it (**no network**).
  *
  * - Local folder gallery: absolute cover path (filesystem / content URI).
  * - SMB / WebDAV folder gallery: `smb-thumb:{sourceId}:{remoteRelativeFile}` /
- *   `dav-thumb:…` → [SmbCache] / [WebDavCache] thumb JPEG.
+ *   `dav-thumb:…` → [SmbCache] / [WebDavCache] thumb (WebP, leftover JPEG until LRU).
  * - SMB / WebDAV network archive: `smb-arch:{sourceId}:{remote}` /
- *   `dav-arch:…` → [ArchiveCoverCache] first-page JPEG (`archive_thumb/`, same key as
+ *   `dav-arch:…` → [ArchiveCoverCache] first-page thumb (`archive_thumb/`, same key as
  *   browse `smb:` / `webdav:` stream covers).
  * - Videos: `vid-local:{path}` / `vid-smb:…` / `vid-dav:…` → [VideoThumbnail] cache hit
  *   only. Disk identity is path/source only (not listing size); matches browse frames.
@@ -53,7 +53,7 @@ object HistoryThumbKey {
         return "$DAV_ARCH_PREFIX$sourceId:$remote"
     }
 
-    /** Zip-as-dir cover identity (small JPEG in thumb cache; original optional in [ZipMemberCover]). */
+    /** Zip-as-dir cover identity (small WebP in thumb cache; original optional in [ZipMemberCover]). */
     fun smbZip(sourceId: Long, zipRel: String, memberRel: String): String {
         val zip = zipRel.replace('\\', '/').trimStart('/')
         val member = memberRel.replace('\\', '/').trimStart('/')
@@ -112,46 +112,35 @@ object HistoryThumbKey {
         when {
             key.startsWith(SMB_PREFIX) -> {
                 val (sourceId, remote) = parseSourceRemote(key, SMB_PREFIX) ?: return null
-                val cache = SmbCache.thumbCachePath(sourceId, remote)
-                if (!SmbCache.isCachedOnDisk(cache)) return null
-                SmbCache.touch(cache)
-                return cache.toString()
+                return SmbCache.cachedThumbIfPresent(sourceId, remote)?.toString()
             }
             key.startsWith(DAV_PREFIX) -> {
                 val (sourceId, remote) = parseSourceRemote(key, DAV_PREFIX) ?: return null
-                val cache = WebDavCache.thumbCachePath(sourceId, remote)
-                if (!WebDavCache.isCachedOnDisk(cache)) return null
-                WebDavCache.touch(cache)
-                return cache.toString()
+                return WebDavCache.cachedThumbIfPresent(sourceId, remote)?.toString()
             }
             key.startsWith(SMB_ARCH_PREFIX) || key.startsWith(DAV_ARCH_PREFIX) -> {
                 val cacheKey = archiveCacheKey(key) ?: return null
                 val dest = ArchiveCoverCache.resolveCoverDest(cacheKey)
-                if (!ArchiveCoverCache.isCachedOnDisk(dest)) return null
-                return dest.toString()
+                return ArchiveCoverCache.cachedCoverIfPresent(dest)?.toString()
             }
             key.startsWith(SMB_ZIP_PREFIX) -> {
                 val parsed = parseZipMemberKey(key, SMB_ZIP_PREFIX) ?: return null
-                val thumb = SmbCache.thumbCachePath(
+                SmbCache.cachedThumbIfPresent(
                     parsed.first,
                     ZipMemberCover.thumbRemote(parsed.second, parsed.third),
-                )
-                if (SmbCache.isCachedOnDisk(thumb)) {
-                    SmbCache.touch(thumb)
-                    return thumb.toString()
+                )?.let { hit ->
+                    return hit.toString()
                 }
                 val dest = ZipMemberCover.destFile("smb:${parsed.first}:${parsed.second}", parsed.third)
                 return dest.takeIf { it.isFile && it.length() > 0L }?.absolutePath
             }
             key.startsWith(DAV_ZIP_PREFIX) -> {
                 val parsed = parseZipMemberKey(key, DAV_ZIP_PREFIX) ?: return null
-                val thumb = WebDavCache.thumbCachePath(
+                WebDavCache.cachedThumbIfPresent(
                     parsed.first,
                     ZipMemberCover.thumbRemote(parsed.second, parsed.third),
-                )
-                if (WebDavCache.isCachedOnDisk(thumb)) {
-                    WebDavCache.touch(thumb)
-                    return thumb.toString()
+                )?.let { hit ->
+                    return hit.toString()
                 }
                 val dest = ZipMemberCover.destFile("webdav:${parsed.first}:${parsed.second}", parsed.third)
                 return dest.takeIf { it.isFile && it.length() > 0L }?.absolutePath

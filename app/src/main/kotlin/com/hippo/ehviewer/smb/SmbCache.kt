@@ -9,9 +9,6 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -30,27 +27,26 @@ import splitties.init.appCtx
  * - **Pages** (`smb_cache/`): full remote files for the reader. Shares the unified
  *   origin budget in [com.hippo.ehviewer.library.OriginDiskCache] (Advanced image
  *   disk cache size). Oldest files first; archives are not protected.
- * - **Browse thumbs** (`smb_thumb_cache/`): small JPEG only (long edge
- *   [THUMB_DISK_EDGE]), shared [OriginDiskCache.THUMB_BUDGET_BYTES] with other
- *   thumb stores — separate from origin budget.
+ * - **Browse thumbs** (`smb_thumb_cache/`): small WebP (long edge
+ *   [THUMB_DISK_EDGE]); leftover JPEG files stay until LRU. Shared
+ *   [OriginDiskCache.THUMB_BUDGET_BYTES] with other thumb stores — separate from origin budget.
  */
 object SmbCache {
     enum class Kind {
         /** Reader page / full-file download. */
         Page,
 
-        /** Browse folder-list cover (small JPEG on disk). */
+        /** Browse folder-list cover (small WebP on disk; JPEG leftovers until LRU). */
         Thumb,
     }
 
     /**
-     * Long edge of JPEGs stored for browse covers.
+     * Long edge of thumbs stored for browse covers.
      * @see com.hippo.ehviewer.library.OriginDiskCache.THUMB_EDGE
      */
     const val THUMB_DISK_EDGE = OriginDiskCache.THUMB_EDGE
 
-    /** JPEG quality for disk thumbs (small + sharp enough for list/grid). */
-    private const val THUMB_JPEG_QUALITY = 85
+    private const val THUMB_WEBP_QUALITY = OriginDiskCache.THUMB_QUALITY
 
     /**
      * Bump when thumb encode semantics change (e.g. EXIF bake-in) so old on-disk
@@ -124,7 +120,7 @@ object SmbCache {
 
     /**
      * Cache path for a full share-relative file path (`Comics/Title/001.jpg`).
-     * For [Kind.Thumb] this is always a **`.jpg` small thumb**, not the original file.
+     * For [Kind.Thumb] this is always a **`.webp` small thumb** (or leftover `.jpg`), not the original file.
      */
     fun cachePathForRemoteFile(sourceId: Long, remoteRelativeFile: String): Path = cachePathForRemoteFile(sourceId, remoteRelativeFile, Kind.Page)
 
@@ -146,11 +142,19 @@ object SmbCache {
         return cachePath(sourceId, parent, name, Kind.Page)
     }
 
-    /** Stable path for a small JPEG browse thumb. */
+    /** Canonical path for a small WebP browse thumb (same hash as leftover `.jpg`). */
     fun thumbCachePath(sourceId: Long, remoteRelativeFile: String): Path {
         val normalized = remoteRelativeFile.replace('\\', '/').trimStart('/')
         val key = "thumb:$sourceId:$normalized@$THUMB_DISK_EDGE.v$THUMB_FORMAT_VERSION"
-        return thumbRoot / "${sha256Hex(key)}.jpg"
+        return thumbRoot / OriginDiskCache.thumbFileName(sha256Hex(key))
+    }
+
+    /** WebP if present, else leftover JPEG of the same hash. Disk probe — not for main. */
+    fun cachedThumbIfPresent(sourceId: Long, remoteRelativeFile: String): Path? {
+        val hit = OriginDiskCache.existingThumb(thumbCachePath(sourceId, remoteRelativeFile)) ?: return null
+        markPresent(hit)
+        touch(hit)
+        return hit
     }
 
     /**
@@ -207,15 +211,16 @@ object SmbCache {
     }
 
     /**
-     * Ensure a **small JPEG** browse thumb exists for [remoteRelativeFile].
+     * Ensure a **small WebP** browse thumb exists for [remoteRelativeFile].
      *
-     * 1. Thumb hit → return
+     * 1. Thumb hit (WebP or leftover JPEG) → return
      * 2. If page cache already has the file (reader opened first) → MaxEdge/subsample offline
      * 3. Else download to **RAM** → [HdrConvertCache.writeThumbFromBytes] (HDR = MaxEdge only)
      *
-     * The decoded JPEG **always** lands in [thumbRoot]. When [cacheOriginal] is true and page
-     * cache is missing, download via [downloadIfNeeded] (same path + HDR convert as the reader),
-     * then encode the thumb from that page file.
+     * New platform thumbs land as WebP; lib/HDR thumbs stay Ultra HDR JPEG on the
+     * same-hash `.jpg` sibling. Leftover JPEGs are reused until LRU.
+     * When [cacheOriginal] is true and page cache is missing, download via [downloadIfNeeded]
+     * (same path + HDR convert as the reader), then encode the thumb from that page file.
      */
     suspend fun ensureBrowseThumb(
         sourceId: Long,
@@ -223,24 +228,15 @@ object SmbCache {
         cacheOriginal: Boolean = false,
         download: suspend (OutputStream) -> Unit,
     ): Path = withContext(Dispatchers.IO) {
+        cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
         val destPath = thumbCachePath(sourceId, remoteRelativeFile)
-        if (isCachedOnDisk(destPath)) {
-            touch(destPath)
-            return@withContext destPath
-        }
         val pagePath = cachePathForRemoteFile(sourceId, remoteRelativeFile, Kind.Page)
         val key = destPath.toString()
         val mutex = pathLocks.getOrPut(key) { Mutex() }
         mutex.withLock {
-            if (isCachedOnDisk(destPath)) {
-                touch(destPath)
-                return@withContext destPath
-            }
+            cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
             thumbFetchSlots.withPermit {
-                if (isCachedOnDisk(destPath)) {
-                    touch(destPath)
-                    return@withContext destPath
-                }
+                cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
                 ensureRootDirs()
                 File(destPath.parent!!.toString()).mkdirs()
                 val dest = File(key)
@@ -252,23 +248,16 @@ object SmbCache {
                 }
                 val pageAfter = resolveReaderPath(pagePath)
                 if (isCachedOnDisk(pageAfter)) {
-                    val jpgTmp = File("$key.jpg.${System.nanoTime()}")
                     try {
-                        writeSubsampledJpeg(
+                        writeSubsampledThumb(
                             File(pageAfter.toString()),
-                            jpgTmp,
+                            dest,
                             THUMB_DISK_EDGE,
-                            THUMB_JPEG_QUALITY,
+                            THUMB_WEBP_QUALITY,
                         )
-                        commitTmp(jpgTmp, dest)
-                        markPresent(destPath)
-                        touch(destPath)
                     } catch (e: Throwable) {
-                        if (jpgTmp.exists()) jpgTmp.delete()
-                        if (isCachedOnDisk(destPath)) return@withContext destPath
+                        cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
                         throw e
-                    } finally {
-                        if (jpgTmp.exists()) jpgTmp.delete()
                     }
                 } else {
                     // No page cache: MaxEdge-only thumb (no full-page UHDR from grid browse).
@@ -278,17 +267,16 @@ object SmbCache {
                         bytes = bos.toByteArray(),
                         destJpeg = dest,
                         maxEdge = THUMB_DISK_EDGE,
-                        quality = THUMB_JPEG_QUALITY,
+                        quality = THUMB_WEBP_QUALITY,
                         fileNameHint = pageName,
                     )
-                    if (!ok || !dest.isFile || dest.length() == 0L) {
+                    if (!ok) {
                         error("SMB browse thumb failed for $remoteRelativeFile")
                     }
-                    markPresent(destPath)
-                    touch(destPath)
                 }
                 scheduleTrim()
-                destPath
+                cachedThumbIfPresent(sourceId, remoteRelativeFile)
+                    ?: error("SMB browse thumb missing after write for $remoteRelativeFile")
             }
         }
     }
@@ -396,67 +384,31 @@ object SmbCache {
     ): Path = HdrConvertCache.finalizeNetworkDownload(tmp, primaryPath, originalFileName)
 
     /**
-     * Decode [source] → small JPEG at [destJpeg] (same [smb_thumb_cache] key as always).
-     * Convert-path formats: native decode + libultrahdr; else ImageDecoder subsample.
+     * Decode [source] → small WebP, or Ultra HDR JPEG for lib stills (same thumb-cache key).
      *
      * Must stay suspend (no [runBlocking]): photo-grid leave cancels the parent
      * [ensureBrowseThumb] coroutine — runBlocking would keep encoding at high CPU.
      */
-    private suspend fun writeSubsampledJpeg(
+    private suspend fun writeSubsampledThumb(
         source: File,
-        destJpeg: File,
+        dest: File,
         maxEdge: Int,
         quality: Int,
     ) {
-        val ok = HdrConvertCache.writeThumbJpeg(
+        val ok = HdrConvertCache.writeThumb(
             source = source.toOkioPath(),
-            destJpeg = destJpeg,
+            dest = dest,
             maxEdge = maxEdge,
             quality = quality,
             fileNameHint = source.name,
         )
-        if (!ok || !destJpeg.isFile || destJpeg.length() == 0L) {
-            error("Empty JPEG thumb for ${source.name}")
+        if (!ok || OriginDiskCache.existingThumb(dest) == null) {
+            error("Empty thumb for ${source.name}")
         }
     }
 
     private fun scheduleTrim() {
         OriginDiskCache.scheduleTrim()
-    }
-
-    private fun commitTmp(tmp: File, dest: File) {
-        if (!tmp.isFile || tmp.length() == 0L) {
-            tmp.delete()
-            error("SMB download produced empty temp file for ${dest.name}")
-        }
-        if (tmp.renameTo(dest)) return
-        if (dest.isFile && dest.length() > 0L) {
-            tmp.delete()
-            return
-        }
-        try {
-            try {
-                Files.move(
-                    tmp.toPath(),
-                    dest.toPath(),
-                    StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE,
-                )
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(
-                    tmp.toPath(),
-                    dest.toPath(),
-                    StandardCopyOption.REPLACE_EXISTING,
-                )
-            }
-        } catch (e: Throwable) {
-            tmp.delete()
-            if (dest.isFile && dest.length() > 0L) return
-            throw IllegalStateException("Failed to commit SMB cache for ${dest.name}", e)
-        }
-        if (!dest.isFile || dest.length() == 0L) {
-            error("Failed to commit SMB cache for ${dest.name}")
-        }
     }
 
     private fun sha256Hex(s: String): String {

@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import okio.Path
 import okio.Path.Companion.toOkioPath
 import splitties.init.appCtx
 
@@ -34,11 +35,54 @@ import splitties.init.appCtx
  *    [THUMB_BUDGET_BYTES] — separate from origin budget and settings.
  */
 object OriginDiskCache {
-    /** Generated browse/cover JPEG long edge (px). */
+    /** Generated browse/cover thumb long edge (px). */
     const val THUMB_EDGE = 768
+
+    /** Canonical on-disk thumb extension for platform stills. Lib/HDR thumbs use `.jpg`. */
+    const val THUMB_EXT = "webp"
+
+    const val THUMB_LEGACY_EXT = "jpg"
+
+    /** Lossy WebP quality for new thumbs (JPEG leftovers keep their original bytes). */
+    const val THUMB_QUALITY = 85
 
     /** Shared budget for all on-disk thumb stores (not Coil’s separate 256 MiB). */
     const val THUMB_BUDGET_BYTES = 512L * 1024L * 1024L
+
+    fun thumbFileName(hash: String): String = "$hash.$THUMB_EXT"
+
+    /** Same-hash leftover JPEG next to a canonical `.webp` thumb path. */
+    fun jpegSibling(webpPath: Path): Path {
+        val s = webpPath.toString()
+        if (!s.endsWith(".$THUMB_EXT", ignoreCase = true)) return webpPath
+        return File(s.substring(0, s.length - THUMB_EXT.length) + THUMB_LEGACY_EXT).toOkioPath()
+    }
+
+    fun jpegSibling(webpFile: File): File {
+        val s = webpFile.path
+        if (!s.endsWith(".$THUMB_EXT", ignoreCase = true)) return webpFile
+        return File(s.substring(0, s.length - THUMB_EXT.length) + THUMB_LEGACY_EXT)
+    }
+
+    /**
+     * Prefer WebP if present; otherwise the same-hash JPEG (Ultra HDR lib thumbs, or leftover SDR JPEG).
+     * Does not encode. Null if neither file is present.
+     */
+    fun existingThumb(canonicalWebp: Path): Path? {
+        val webp = File(canonicalWebp.toString())
+        if (webp.isFile && webp.length() > 0L) return canonicalWebp
+        val jpegPath = jpegSibling(canonicalWebp)
+        if (jpegPath.toString() == canonicalWebp.toString()) return null
+        val jpg = File(jpegPath.toString())
+        return if (jpg.isFile && jpg.length() > 0L) jpegPath else null
+    }
+
+    fun existingThumb(canonicalWebp: File): File? {
+        if (canonicalWebp.isFile && canonicalWebp.length() > 0L) return canonicalWebp
+        val jpg = jpegSibling(canonicalWebp)
+        if (jpg.path == canonicalWebp.path) return null
+        return jpg.takeIf { it.isFile && it.length() > 0L }
+    }
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -269,8 +313,8 @@ object OriginDiskCache {
             if (!f.isFile) continue
             val name = f.name
             // Skip temps and video-thumb failure markers (*.failed).
-            if (name.contains(".tmp.") || name.contains(".jpg.") || name.endsWith(".tmp") ||
-                name.endsWith(".failed")
+            if (name.contains(".tmp.") || name.contains(".jpg.") || name.contains(".webp.") ||
+                name.contains(".uhdr.") || name.endsWith(".tmp") || name.endsWith(".failed")
             ) {
                 continue
             }

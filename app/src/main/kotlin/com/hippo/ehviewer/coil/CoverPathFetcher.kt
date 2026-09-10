@@ -35,19 +35,33 @@ data class CoverPath(val path: String)
  * Fetches cover bytes for SAF / file / MediaStore virtual paths.
  *
  * Lib formats → [HdrConvertCache.ensureCoilReady] (Ultra HDR JPEG); platform → original.
+ * Zip-as-dir members extract first, then the **same** convert — ImageDecoder cannot open
+ * JXL/JXR (`Failed to create image decoder` / `unimplemented`).
  */
 class CoverPathFetcher(
     private val data: CoverPath,
     private val options: Options,
 ) : Fetcher {
     override suspend fun fetch(): FetchResult {
+        val resolved = resolveFile()
+        val hint = coverConvertHint(data.path, resolved.name)
+        val ext = FileUtils.getExtensionFromFilename(hint)?.lowercase()
+            ?: FileUtils.getExtensionFromFilename(resolved.name)?.lowercase()
+        val openPath = if (isHdrConvertCandidateExtension(ext)) {
+            HdrConvertCache.ensureCoilReady(resolved, hint)
+        } else {
+            resolved
+        }
+        return openAsSource(openPath)
+    }
+
+    private fun resolveFile(): Path {
         ZipPaths.parse(data.path)?.let { (zip, member) ->
             if (!isImageFileName(member)) {
                 throw FileNotFoundException("ZIP member is not a cover: ${data.path}")
             }
-            val extracted = ZipMemberCover.ensureLocal(zip, member, notifyTooLarge = false)
+            return ZipMemberCover.ensureLocal(zip, member, notifyTooLarge = false)
                 ?: throw FileNotFoundException("ZIP cover missing: ${data.path}")
-            return openAsSource(extracted)
         }
         val path = data.path.toPath()
         // Absolute FS covers (archive_thumb, origin files): fail before openAFD if gone
@@ -58,13 +72,7 @@ class CoverPathFetcher(
                 throw FileNotFoundException("Cover missing: ${data.path}")
             }
         }
-        val ext = FileUtils.getExtensionFromFilename(path.name)?.lowercase()
-        val openPath = if (isHdrConvertCandidateExtension(ext)) {
-            HdrConvertCache.ensureCoilReady(path, path.name)
-        } else {
-            path
-        }
-        return openAsSource(openPath)
+        return path
     }
 
     private fun openAsSource(openPath: Path): SourceFetchResult {
@@ -93,3 +101,9 @@ class CoverPathFetcher(
 object CoverPathKeyer : Keyer<CoverPath> {
     override fun key(data: CoverPath, options: Options): String = data.path
 }
+
+/**
+ * Convert classify uses the zip member leaf (`a.jxl`), not the hashed extract name.
+ * ImageDecoder cannot open those codecs — same rule as folder covers / [DisplaySource].
+ */
+internal fun coverConvertHint(coverPath: String, resolvedFileName: String): String = ZipPaths.memberLeafName(coverPath) ?: resolvedFileName

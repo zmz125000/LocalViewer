@@ -250,7 +250,7 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * When false, SMB/WebDAV **archive/document** browse thumbs are not extracted over the network
-     * (cached JPEG / solid_extract / document_extract page 0 still show). Separate from
+     * (cached thumb / solid_extract / document_extract page 0 still show). Separate from
      * [downloadRemoteThumbs] so first-page extract can stay off without disabling folder image covers.
      * Default true.
      */
@@ -258,7 +258,7 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * When false, SMB/WebDAV **video** browse thumbs are not extracted over the network
-     * (already-cached JPEG in [com.hippo.ehviewer.library.VideoThumbnail] still shows).
+     * (already-cached file in [com.hippo.ehviewer.library.VideoThumbnail] still shows).
      * Local video always uses disk cache extraction. Default true.
      */
     val downloadNetworkVideoThumbs = boolPref("download_network_video_thumbs", true)
@@ -304,9 +304,16 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * When true (default), app start runs [com.hippo.ehviewer.library.LocalLibrary.startupMaintenance]
-     * (MediaStore index; archive-mode sources walk for new folders/archives and skip known zips).
+     * (MediaStore roots skip a full dump when generation / DATE_MODIFIED fingerprint match;
+     * archive-mode sources walk for new folders/archives and skip known zips).
      */
     val libraryStartupScan = boolPref("library_startup_scan", true)
+
+    /**
+     * Per-root MediaStore skip stamps for library startup:
+     * `{rootId}:{generation}:{count}:{maxDateModifiedSecs}:{idXor}`.
+     */
+    val libraryMediaStoreStamps = stringSetPref("library_ms_stamps", emptySet())
 
     /**
      * Library favourites strip. Keys:
@@ -379,9 +386,6 @@ object Settings : DataStorePreferences(null) {
 
     /** Decoded images to keep ahead independently of [preloadImage]. */
     val readerDecodeAhead = intPref("pref_reader_decode_ahead", 3)
-
-    /** Use one decoded page of lookahead for formats with expensive decode pipelines. */
-    val readerAutoDecodeAhead = boolPref("pref_reader_auto_decode_ahead", true)
     val downloadOriginImage = boolPref("download_origin_image", false)
     val saveAsCbz = boolPref("save_as_cbz", false)
     val archiveMetadata = boolPref("archive_metadata", true)

@@ -50,11 +50,11 @@ import splitties.init.appCtx
  * ProXDR attaches [android.graphics.Gainmap] after Coil decode (no UHDR convert).
  *
  * Public surface: [ensureCoilReady], [ensureUhdrFromBytes], [finalizeNetworkBytes],
- * [finalizeNetworkDownload], [writeThumbJpeg] / [writeThumbFromBytes].
+ * [finalizeNetworkDownload], [writeThumb] / [writeThumbFromBytes].
  */
 object HdrConvertCache {
     private const val TAG = "HdrConvert"
-    private const val THUMB_JPEG_QUALITY = 85
+    private const val THUMB_WEBP_QUALITY = OriginDiskCache.THUMB_QUALITY
 
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
 
@@ -241,28 +241,37 @@ object HdrConvertCache {
     }
 
     /**
-     * Write long-edge [maxEdge] JPEG thumb into caller-owned [destJpeg] (same folder/key).
+     * Write a long-edge [maxEdge] browse/cover thumb next to caller-owned [dest]
+     * (canonical `.webp` path, or leftover `.jpg`).
      *
-     * - Lib (JXR/JXL/PQ-AVIF): libultrahdr with **fixed MaxCLL 1000 nits** (MaxEdge JNI)
-     * - Platform: ImageDecoder subsample
+     * - Lib (JXR/JXL/PQ-AVIF): MaxEdge Ultra HDR JPEG on the `.jpg` sibling — no WebP
+     * - Platform: ImageDecoder subsample → WebP at [dest]
      */
     suspend fun writeThumbJpeg(
         source: Path,
         destJpeg: File,
         maxEdge: Int = OriginDiskCache.THUMB_EDGE,
-        quality: Int = THUMB_JPEG_QUALITY,
+        quality: Int = THUMB_WEBP_QUALITY,
+        fileNameHint: String = source.name,
+    ): Boolean = writeThumb(source, destJpeg, maxEdge, quality, fileNameHint)
+
+    suspend fun writeThumb(
+        source: Path,
+        dest: File,
+        maxEdge: Int = OriginDiskCache.THUMB_EDGE,
+        quality: Int = THUMB_WEBP_QUALITY,
         fileNameHint: String = source.name,
     ): Boolean = withContext(Dispatchers.IO) {
-        if (destJpeg.isFile && destJpeg.length() > 0L) return@withContext true
+        if (OriginDiskCache.existingThumb(dest) != null) return@withContext true
         val edge = maxEdge.coerceIn(64, 2048)
         val route = classifyPath(source, fileNameHint)
         val ok = if (route.needsUhdr) {
             val lib = route as StillRoute.Lib
-            writeConvertThumb(source, destJpeg, edge, fileNameHint, lib.codec)
+            writeConvertThumb(source, dest, edge, fileNameHint, lib.codec)
         } else {
-            writePlatformThumb(source, destJpeg, edge, quality)
+            writePlatformThumb(source, dest, edge, quality)
         }
-        if (ok && destJpeg.isFile && destJpeg.length() > 0L) {
+        if (ok && OriginDiskCache.existingThumb(dest) != null) {
             OriginDiskCache.scheduleTrim()
             true
         } else {
@@ -387,20 +396,20 @@ object HdrConvertCache {
         bytes: ByteArray,
         destJpeg: File,
         maxEdge: Int = OriginDiskCache.THUMB_EDGE,
-        quality: Int = THUMB_JPEG_QUALITY,
+        quality: Int = THUMB_WEBP_QUALITY,
         fileNameHint: String,
     ): Boolean = withContext(Dispatchers.IO) {
-        if (destJpeg.isFile && destJpeg.length() > 0L) return@withContext true
+        if (OriginDiskCache.existingThumb(destJpeg) != null) return@withContext true
         if (bytes.isEmpty()) return@withContext false
         val edge = maxEdge.coerceIn(64, 2048)
         val route = classify(bytes, bytes.size, fileNameHint)
         val ok = if (route.needsUhdr) {
             val lib = route as StillRoute.Lib
-            convertToUhdr(bytes, destJpeg, lib.codec, maxEdge = edge)
+            writeConvertThumbBytes(bytes, destJpeg, edge, lib.codec)
         } else {
             writePlatformThumbBytes(bytes, destJpeg, edge, quality)
         }
-        if (ok && destJpeg.isFile && destJpeg.length() > 0L) {
+        if (ok && OriginDiskCache.existingThumb(destJpeg) != null) {
             OriginDiskCache.scheduleTrim()
             true
         } else {
@@ -550,7 +559,7 @@ object HdrConvertCache {
             }
             try {
                 FileOutputStream(tmp).use { out ->
-                    check(decoded.compress(Bitmap.CompressFormat.JPEG, quality, out))
+                    check(decoded.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality, out))
                 }
             } finally {
                 if (!decoded.isRecycled) decoded.recycle()
@@ -595,7 +604,7 @@ object HdrConvertCache {
 
     private suspend fun writeConvertThumb(
         source: Path,
-        destJpeg: File,
+        dest: File,
         maxEdge: Int,
         fileNameHint: String,
         codec: LibCodec,
@@ -605,8 +614,21 @@ object HdrConvertCache {
             Log.e(TAG, "writeConvertThumb: unreadable $fileNameHint")
             return false
         }
-        return convertToUhdr(bytes, destJpeg, codec, maxEdge = maxEdge)
+        return writeConvertThumbBytes(bytes, dest, maxEdge, codec)
     }
+
+    /** Native MaxEdge Ultra HDR JPEG on the `.jpg` sibling — no second encode. */
+    private suspend fun writeConvertThumbBytes(
+        bytes: ByteArray,
+        dest: File,
+        maxEdge: Int,
+        codec: LibCodec,
+    ): Boolean = convertToUhdr(
+        bytes,
+        OriginDiskCache.jpegSibling(dest),
+        codec,
+        maxEdge = maxEdge,
+    )
 
     private fun writePlatformThumb(source: Path, destJpeg: File, maxEdge: Int, quality: Int): Boolean {
         return runCatching {
@@ -633,7 +655,7 @@ object HdrConvertCache {
             }
             try {
                 FileOutputStream(tmp).use { out ->
-                    check(decoded.compress(Bitmap.CompressFormat.JPEG, quality, out))
+                    check(decoded.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality, out))
                 }
             } finally {
                 if (!decoded.isRecycled) decoded.recycle()

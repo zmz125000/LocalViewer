@@ -201,8 +201,6 @@
     <string name="settings_advanced_disable_reader_network_cache_summary">SMB / WebDAV / ストリームアーカイブのページをキャッシュに書き込みません。</string>
     <string name="settings_reader_decode_ahead">先行デコード</string>
     <string name="settings_reader_decode_ahead_summary">読み進める方向の次の %s ページをデコード済みに保つ</string>
-    <string name="settings_advanced_auto_decode_ahead">先行デコードを制限</string>
-    <string name="settings_advanced_auto_decode_ahead_summary">OPPO ProXDR HEIC と JXR ファイルでは 2 ページだけ先行デコードします</string>
     <string name="settings_advanced_read_cache_size_summary">SMB ページキャッシュ（および旧オンライン画像キャッシュ）の最大サイズ</string>
     <string name="insufficient_gp">オリジナル画像をダウンロードする GP が不足しています</string>
     <string name="settings_privacy_save_history">履歴を保存</string>

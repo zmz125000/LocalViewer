@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
@@ -249,30 +250,102 @@ object MediaStoreFs {
     /**
      * Direct image files under [relativeDir] and every descendant folder.
      * Includes [SafMediaStoreListing.ImageFile.lastModifiedMs] from DATE_MODIFIED.
+     *
+     * Listing uses RELATIVE_PATH only. OEM rows with an empty relative path are
+     * filled from a second query that projects DATA (not an unindexed LIKE).
      */
     fun listDescendantImageFiles(relativeDir: String): List<SafMediaStoreListing.ImageFile> {
         if (!MediaPermissions.hasImagePermission()) return emptyList()
         val root = relativeDir.replace('\\', '/').trim('/')
         val out = ArrayList<SafMediaStoreListing.ImageFile>()
-        val selection: String?
-        val selectionArgs: Array<String>?
-        if (root.isEmpty()) {
-            selection = null
-            selectionArgs = null
-        } else {
-            selection =
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? OR " +
-                "${MediaStore.MediaColumns.DATA} LIKE ?"
-            selectionArgs = arrayOf("$root/", root, "$root/%", "%/$root/%")
-        }
-        val projection = arrayOf(
-            MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.RELATIVE_PATH,
-            MediaStore.MediaColumns.DATA,
-            MediaStore.MediaColumns.DATE_MODIFIED,
+        val seen = HashSet<String>()
+        val pathFilter = MediaStorePathQuery.descendantRelativePathSelection(root)
+        absorbImageFiles(
+            projection = arrayOf(
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+            ),
+            selection = pathFilter?.first,
+            selectionArgs = pathFilter?.second,
+            includeData = false,
+            root = root,
+            out = out,
+            seen = seen,
         )
+        absorbImageFiles(
+            projection = arrayOf(
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                MediaStore.MediaColumns.DATA,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+            ),
+            selection = MediaStorePathQuery.emptyRelativePathSelection(),
+            selectionArgs = null,
+            includeData = true,
+            root = root,
+            out = out,
+            seen = seen,
+        )
+        return out
+    }
+
+    /**
+     * Cheap Images fingerprint for startup skip: [_ID, DATE_MODIFIED] with the same
+     * RELATIVE_PATH prefix as [listDescendantImageFiles] (no DATA).
+     */
+    fun imageIndexStamp(relativeDir: String): MediaStoreIndexStamp {
+        val generation = volumeGeneration()
+        if (!MediaPermissions.hasImagePermission()) {
+            return MediaStoreIndexStamp(generation, 0, 0L, 0L)
+        }
+        val root = relativeDir.replace('\\', '/').trim('/')
+        val pathFilter = MediaStorePathQuery.descendantRelativePathSelection(root)
+        var count = 0
+        var maxDate = 0L
+        var idXor = 0L
+        runCatching {
+            appCtx.contentResolver.query(
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+                arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_MODIFIED),
+                pathFilter?.first,
+                pathFilter?.second,
+                null,
+            )?.use { c ->
+                val idIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                val modIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
+                while (c.moveToNext()) {
+                    count++
+                    idXor = idXor xor c.getLong(idIdx)
+                    if (!c.isNull(modIdx)) {
+                        val date = c.getLong(modIdx).coerceAtLeast(0L)
+                        if (date > maxDate) maxDate = date
+                    }
+                }
+            }
+        }
+        return MediaStoreIndexStamp(generation, count, maxDate, idXor)
+    }
+
+    /** External-volume MediaStore generation, or [MediaStoreIndexStamp.GENERATION_UNKNOWN]. */
+    fun volumeGeneration(): Long {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return MediaStoreIndexStamp.GENERATION_UNKNOWN
+        }
+        return runCatching {
+            MediaStore.getGeneration(appCtx, MediaStore.VOLUME_EXTERNAL)
+        }.getOrDefault(MediaStoreIndexStamp.GENERATION_UNKNOWN)
+    }
+
+    private fun absorbImageFiles(
+        projection: Array<String>,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        includeData: Boolean,
+        root: String,
+        out: MutableList<SafMediaStoreListing.ImageFile>,
+        seen: MutableSet<String>,
+    ) {
         runCatching {
             appCtx.contentResolver.query(
                 MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
@@ -283,15 +356,19 @@ object MediaStoreFs {
             )?.use { c ->
                 val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                 val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
-                val dataIdx = c.getColumnIndex(MediaStore.MediaColumns.DATA)
+                val dataIdx = if (includeData) c.getColumnIndex(MediaStore.MediaColumns.DATA) else -1
                 val modIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
                 while (c.moveToNext()) {
                     val name = c.getString(nameIdx) ?: continue
+                    val relCol = c.getString(pathIdx)
+                    if (!includeData && relCol.isNullOrBlank()) continue
                     val relPath = mediaStoreParentRelativeDir(
-                        c.getString(pathIdx),
+                        relCol,
                         if (dataIdx < 0) null else c.getString(dataIdx),
                     )
-                    // DATE_MODIFIED is seconds; convert to epoch ms.
+                    if (SafMediaStoreListing.relativeUnderRoot(root, relPath) == null) continue
+                    val key = "$relPath/$name"
+                    if (!seen.add(key)) continue
                     val lastMod = if (modIdx < 0 || c.isNull(modIdx)) {
                         0L
                     } else {
@@ -305,7 +382,6 @@ object MediaStoreFs {
                 }
             }
         }
-        return out
     }
 
     /**
@@ -345,68 +421,106 @@ object MediaStoreFs {
 
     private fun queryMediaId(collection: Uri, relativeDir: String, fileName: String): Long? {
         val projection = arrayOf(MediaStore.MediaColumns._ID)
-        // RELATIVE_PATH is stored with trailing slash by MediaStore. DATA LIKE
-        // covers OEM video rows that leave RELATIVE_PATH empty.
-        val relWithSlash = if (relativeDir.isEmpty()) "" else "$relativeDir/"
-        val selection = if (relativeDir.isEmpty()) {
-            "(${MediaStore.MediaColumns.RELATIVE_PATH} IS NULL OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = '' OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = '/') AND " +
-                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
-        } else {
-            "(${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.MediaColumns.DATA} LIKE ?) AND " +
-                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
-        }
-        val args = if (relativeDir.isEmpty()) {
-            arrayOf(fileName)
-        } else {
-            arrayOf(relWithSlash, relativeDir, "%/$relativeDir/$fileName", fileName)
-        }
-        return runCatching {
-            appCtx.contentResolver.query(collection, projection, selection, args, null)?.use { c ->
-                if (c.moveToFirst()) c.getLong(0) else null
-            }
-        }.getOrNull()
+        queryMediaIdOnce(collection, projection, MediaStorePathQuery.resolveByRelativePathSelection(relativeDir, fileName))
+            ?.let { return it }
+        // OEM rows that leave RELATIVE_PATH empty.
+        return queryMediaIdOnce(collection, projection, MediaStorePathQuery.resolveByDataSelection(relativeDir, fileName))
     }
+
+    private fun queryMediaIdOnce(
+        collection: Uri,
+        projection: Array<String>,
+        filter: Pair<String, Array<String>>,
+    ): Long? = runCatching {
+        appCtx.contentResolver.query(collection, projection, filter.first, filter.second, null)?.use { c ->
+            if (c.moveToFirst()) c.getLong(0) else null
+        }
+    }.getOrNull()
 
     private fun listChildrenRelative(relativeDir: String): List<Child> {
         val dirs = linkedMapOf<String, Path>()
         // Deduplicate files that appear under both collections (unlikely) or same name.
         val files = linkedMapOf<String, Child>()
         val prefix = if (relativeDir.isEmpty()) "" else "$relativeDir/"
+        val pathFilter = MediaStorePathQuery.descendantRelativePathSelection(relativeDir)
 
-        // Root needs a full index walk to discover top-level folders. Nested dirs filter
-        // by RELATIVE_PATH, plus DATA LIKE for OEM video rows with empty RELATIVE_PATH.
-        val pathSelection: String?
-        val pathArgs: Array<String>?
-        if (relativeDir.isEmpty()) {
-            pathSelection = null
-            pathArgs = null
-        } else {
-            pathSelection =
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? OR " +
-                "${MediaStore.MediaColumns.DATA} LIKE ?"
-            pathArgs = arrayOf(
-                "$relativeDir/",
-                relativeDir,
-                "$relativeDir/%",
-                "%/$relativeDir/%",
-            )
+        fun placeChild(
+            displayName: String,
+            relPath: String,
+            size: Long,
+            lastMod: Long,
+            mime: String?,
+        ) {
+            if (relativeDir.isEmpty()) {
+                if (relPath.isEmpty()) {
+                    files.putIfAbsent(
+                        displayName,
+                        Child(
+                            displayName,
+                            false,
+                            mediaStoreFilePath("", displayName),
+                            size = size,
+                            lastModifiedMs = lastMod,
+                            mimeType = mime,
+                        ),
+                    )
+                } else {
+                    val top = relPath.substringBefore('/')
+                    if (top.isNotEmpty()) {
+                        dirs.putIfAbsent(top, mediaStoreDirPath(top))
+                    }
+                }
+                return
+            }
+            if (relPath == relativeDir) {
+                files.putIfAbsent(
+                    displayName,
+                    Child(
+                        displayName,
+                        false,
+                        mediaStoreFilePath(relativeDir, displayName),
+                        size = size,
+                        lastModifiedMs = lastMod,
+                        mimeType = mime,
+                    ),
+                )
+                return
+            }
+            if (relPath.startsWith(prefix)) {
+                val rest = relPath.removePrefix(prefix)
+                if (rest.isEmpty()) return
+                val childName = rest.substringBefore('/')
+                if (childName.isNotEmpty()) {
+                    dirs.putIfAbsent(childName, mediaStoreDirPath("$relativeDir/$childName"))
+                }
+            }
         }
 
-        fun absorbCollection(collection: Uri, extraSelection: String? = null) {
-            val projection = arrayOf(
-                MediaStore.MediaColumns.DISPLAY_NAME,
-                MediaStore.MediaColumns.RELATIVE_PATH,
-                MediaStore.MediaColumns.DATA,
-                MediaStore.MediaColumns.SIZE,
-                MediaStore.MediaColumns.DATE_MODIFIED,
-                MediaStore.MediaColumns.MIME_TYPE,
-            )
+        fun absorbCollection(
+            collection: Uri,
+            extraSelection: String? = null,
+            pathSelection: String?,
+            pathArgs: Array<String>?,
+            includeData: Boolean,
+        ) {
+            val projection = if (includeData) {
+                arrayOf(
+                    MediaStore.MediaColumns.DISPLAY_NAME,
+                    MediaStore.MediaColumns.RELATIVE_PATH,
+                    MediaStore.MediaColumns.DATA,
+                    MediaStore.MediaColumns.SIZE,
+                    MediaStore.MediaColumns.DATE_MODIFIED,
+                    MediaStore.MediaColumns.MIME_TYPE,
+                )
+            } else {
+                arrayOf(
+                    MediaStore.MediaColumns.DISPLAY_NAME,
+                    MediaStore.MediaColumns.RELATIVE_PATH,
+                    MediaStore.MediaColumns.SIZE,
+                    MediaStore.MediaColumns.DATE_MODIFIED,
+                    MediaStore.MediaColumns.MIME_TYPE,
+                )
+            }
             val selection = when {
                 pathSelection != null && extraSelection != null -> "($pathSelection) AND ($extraSelection)"
                 pathSelection != null -> pathSelection
@@ -423,91 +537,69 @@ object MediaStoreFs {
                 )?.use { c ->
                     val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                     val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
-                    val dataIdx = c.getColumnIndex(MediaStore.MediaColumns.DATA)
+                    val dataIdx = if (includeData) c.getColumnIndex(MediaStore.MediaColumns.DATA) else -1
                     val sizeIdx = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
                     val modIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
                     val mimeIdx = c.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
                     while (c.moveToNext()) {
                         val displayName = c.getString(nameIdx) ?: continue
+                        val relCol = c.getString(pathIdx)
+                        if (!includeData && relCol.isNullOrBlank()) continue
                         val relPath = mediaStoreParentRelativeDir(
-                            c.getString(pathIdx),
+                            relCol,
                             if (dataIdx < 0) null else c.getString(dataIdx),
                         )
                         val size = if (sizeIdx < 0 || c.isNull(sizeIdx)) 0L else c.getLong(sizeIdx).coerceAtLeast(0L)
-                        // DATE_MODIFIED is seconds; convert to epoch ms.
                         val lastMod = if (modIdx < 0 || c.isNull(modIdx)) {
                             0L
                         } else {
                             (c.getLong(modIdx) * 1000L).coerceAtLeast(0L)
                         }
                         val mime = if (mimeIdx < 0) null else c.getString(mimeIdx)
-
-                        if (relativeDir.isEmpty()) {
-                            if (relPath.isEmpty()) {
-                                files.putIfAbsent(
-                                    displayName,
-                                    Child(
-                                        displayName,
-                                        false,
-                                        mediaStoreFilePath("", displayName),
-                                        size = size,
-                                        lastModifiedMs = lastMod,
-                                        mimeType = mime,
-                                    ),
-                                )
-                            } else {
-                                val top = relPath.substringBefore('/')
-                                if (top.isNotEmpty()) {
-                                    dirs.putIfAbsent(top, mediaStoreDirPath(top))
-                                }
-                            }
-                            continue
-                        }
-
-                        if (relPath == relativeDir) {
-                            files.putIfAbsent(
-                                displayName,
-                                Child(
-                                    displayName,
-                                    false,
-                                    mediaStoreFilePath(relativeDir, displayName),
-                                    size = size,
-                                    lastModifiedMs = lastMod,
-                                    mimeType = mime,
-                                ),
-                            )
-                            continue
-                        }
-
-                        if (relPath.startsWith(prefix)) {
-                            val rest = relPath.removePrefix(prefix)
-                            if (rest.isEmpty()) continue
-                            val childName = rest.substringBefore('/')
-                            if (childName.isNotEmpty()) {
-                                dirs.putIfAbsent(childName, mediaStoreDirPath("$relativeDir/$childName"))
-                            }
-                        }
+                        placeChild(displayName, relPath, size, lastMod, mime)
                     }
                 }
             }
         }
 
-        if (MediaPermissions.hasImagePermission()) {
-            absorbCollection(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))
+        fun absorbAll(pathSelection: String?, pathArgs: Array<String>?, includeData: Boolean) {
+            if (MediaPermissions.hasImagePermission()) {
+                absorbCollection(
+                    MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+                    pathSelection = pathSelection,
+                    pathArgs = pathArgs,
+                    includeData = includeData,
+                )
+            }
+            if (MediaPermissions.hasVideoPermission()) {
+                absorbCollection(
+                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+                    pathSelection = pathSelection,
+                    pathArgs = pathArgs,
+                    includeData = includeData,
+                )
+            }
+            if (MediaPermissions.hasMediaAccess()) {
+                val mediaType =
+                    "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ${MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE} OR " +
+                        "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ${MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO}"
+                absorbCollection(
+                    MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
+                    extraSelection = mediaType,
+                    pathSelection = pathSelection,
+                    pathArgs = pathArgs,
+                    includeData = includeData,
+                )
+            }
         }
-        if (MediaPermissions.hasVideoPermission()) {
-            absorbCollection(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))
-        }
-        // Files table: videos that never landed in Video.Media (some Downloads / MKV).
-        if (MediaPermissions.hasMediaAccess()) {
-            val mediaType =
-                "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ${MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE} OR " +
-                    "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ${MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO}"
-            absorbCollection(
-                MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
-                extraSelection = mediaType,
-            )
-        }
+
+        // RELATIVE_PATH prefix only (no DATA LIKE). Empty-path OEM rows come next.
+        absorbAll(pathFilter?.first, pathFilter?.second, includeData = false)
+        absorbAll(
+            MediaStorePathQuery.emptyRelativePathSelection(),
+            pathArgs = null,
+            includeData = true,
+        )
 
         val dirChildren = dirs.map { (name, path) -> Child(name, true, path) }
             .sortedWith { a, b -> naturalCompare(a.name, b.name) }

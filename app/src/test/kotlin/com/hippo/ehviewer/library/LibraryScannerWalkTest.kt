@@ -3,6 +3,7 @@ package com.hippo.ehviewer.library
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_FOLDER
 import com.ehviewer.core.database.model.LocalGalleryEntity
+import okio.Path.Companion.toPath
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -10,6 +11,34 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LibraryScannerWalkTest {
+    @Test
+    fun `mediastore virtual path is a scan root without SAF conversion`() {
+        val root = "mediastore:/Pictures/Comics".toPath()
+        assertEquals(root, LibraryScanner.mediaStoreRootForScan(root))
+        assertEquals("mediastore:/".toPath(), LibraryScanner.mediaStoreRootForScan("mediastore:/".toPath()))
+    }
+
+    @Test
+    fun `startup dump without walk still indexes MediaStore virtual roots`() {
+        // Device-media startup: walkDirectories=false. If the root is not treated as
+        // MediaStore-indexed, scan returns empty and replaceForRoot wipes the library.
+        assertFalse(
+            LibraryScanner.shouldWalkDirectories(
+                mediaStoreIndexed = true,
+                includeArchives = false,
+                walkDirectories = false,
+            ),
+        )
+        assertTrue(LibraryScanner.mediaStoreRootForScan("mediastore:/".toPath()) != null)
+        assertFalse(
+            LibraryScanner.shouldWalkDirectories(
+                mediaStoreIndexed = false,
+                includeArchives = false,
+                walkDirectories = false,
+            ),
+        )
+    }
+
     @Test
     fun `media-only scan skips directory walk after MediaStore index`() {
         assertFalse(LibraryScanner.needsDirectoryWalk(mediaStoreIndexed = true, includeArchives = false))
@@ -21,9 +50,50 @@ class LibraryScannerWalkTest {
     }
 
     @Test
+    fun `startup archive scan can skip the tree walk`() {
+        assertFalse(
+            LibraryScanner.shouldWalkDirectories(
+                mediaStoreIndexed = true,
+                includeArchives = true,
+                walkDirectories = false,
+            ),
+        )
+        assertTrue(
+            LibraryScanner.shouldWalkDirectories(
+                mediaStoreIndexed = true,
+                includeArchives = true,
+                walkDirectories = true,
+            ),
+        )
+    }
+
+    @Test
     fun `without MediaStore the tree is always walked`() {
         assertTrue(LibraryScanner.needsDirectoryWalk(mediaStoreIndexed = false, includeArchives = false))
         assertTrue(LibraryScanner.needsDirectoryWalk(mediaStoreIndexed = false, includeArchives = true))
+    }
+
+    @Test
+    fun `keepExistingArchives drops missing files`() {
+        val existing = kotlin.io.path.createTempFile("keep", ".cbz").toFile()
+        val gone = kotlin.io.path.createTempFile("gone", ".cbz").toFile().apply { delete() }
+        try {
+            val known = mapOf(
+                existing.path to listOf(
+                    gallery(kind = LOCAL_GALLERY_KIND_ARCHIVE, contentPath = existing.path, id = 1),
+                ),
+                gone.path to listOf(
+                    gallery(kind = LOCAL_GALLERY_KIND_ARCHIVE, contentPath = gone.path, id = 2),
+                ),
+            )
+            val kept = LibraryScanner.keepExistingArchives(known)
+            assertEquals(listOf(1L), kept.map { it.id })
+            assertTrue(LibraryScanner.archiveFileExists(existing.path))
+            assertFalse(LibraryScanner.archiveFileExists(gone.path))
+            assertFalse(LibraryScanner.archiveFileExists(""))
+        } finally {
+            existing.delete()
+        }
     }
 
     @Test

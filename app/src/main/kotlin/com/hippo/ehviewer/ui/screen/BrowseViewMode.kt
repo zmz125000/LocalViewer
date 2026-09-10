@@ -101,7 +101,7 @@ fun rememberEffectiveBrowseContentMode(
  * [folder] is the current directory identity. Null (root picker / Library / History)
  * disables per-folder persist for content modes (global pref still applies).
  * [hideContentModes] hides Media/Galleries/Video/Folder for [BrowseVirtualKind] layers
- * (RPC share list, photo grid) — virtual listings, not regular folder-view mode.
+ * (RPC share list, photo grid, mixed zip folder) — virtual listings, not regular folder-view mode.
  */
 @Composable
 fun BrowseViewModeMenu(

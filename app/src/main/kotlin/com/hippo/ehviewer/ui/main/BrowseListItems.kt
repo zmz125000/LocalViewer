@@ -538,7 +538,7 @@ fun BrowseVideoRow(
     modifier: Modifier = Modifier,
     thumbnailSource: VideoThumbnailSource? = null,
     /**
-     * When false, only show an on-disk JPEG (old/offline listing). No extract.
+     * When false, only show an on-disk thumb (old/offline listing). No extract.
      */
     allowRemoteFetch: Boolean = true,
     /** Long-press → open in external app; null keeps click-only. */
@@ -965,7 +965,7 @@ fun BrowseVideoGridItem(
     modifier: Modifier = Modifier,
     thumbnailSource: VideoThumbnailSource? = null,
     /**
-     * When false, only show an on-disk JPEG (old/offline listing). No extract.
+     * When false, only show an on-disk thumb (old/offline listing). No extract.
      */
     allowRemoteFetch: Boolean = true,
     /** Long-press → open in external app; defaults to [onClick]. */
@@ -1360,11 +1360,11 @@ fun BrowseCoverThumb(
                 }
             }
             is BrowseCover.Smb -> {
-                val cache = SmbCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
-                val onDisk = withIOContext { SmbCache.isCachedOnDisk(cache) }
-                if (onDisk) {
-                    withIOContext { SmbCache.touch(cache) }
-                    localPath = cache
+                val cached = withIOContext {
+                    SmbCache.cachedThumbIfPresent(cover.sourceId, cover.remoteRelativeFile)
+                }
+                if (cached != null) {
+                    localPath = cached
                     fetchFailed = false
                     return@LaunchedEffect
                 }
@@ -1405,11 +1405,11 @@ fun BrowseCoverThumb(
                 fetchFailed = true
             }
             is BrowseCover.WebDav -> {
-                val cache = WebDavCache.thumbCachePath(cover.sourceId, cover.remoteRelativeFile)
-                val onDisk = withIOContext { WebDavCache.isCachedOnDisk(cache) }
-                if (onDisk) {
-                    withIOContext { WebDavCache.touch(cache) }
-                    localPath = cache
+                val cached = withIOContext {
+                    WebDavCache.cachedThumbIfPresent(cover.sourceId, cover.remoteRelativeFile)
+                }
+                if (cached != null) {
+                    localPath = cached
                     fetchFailed = false
                     return@LaunchedEffect
                 }
@@ -1448,10 +1448,14 @@ fun BrowseCoverThumb(
                     cover.sourceId,
                     ZipMemberCover.thumbRemote(cover.zipRelativeFile, cover.memberRel),
                 )
-                val onDisk = withIOContext { SmbCache.isCachedOnDisk(thumbPath) }
-                if (onDisk) {
-                    withIOContext { SmbCache.touch(thumbPath) }
-                    localPath = thumbPath
+                val cached = withIOContext {
+                    SmbCache.cachedThumbIfPresent(
+                        cover.sourceId,
+                        ZipMemberCover.thumbRemote(cover.zipRelativeFile, cover.memberRel),
+                    )
+                }
+                if (cached != null) {
+                    localPath = cached
                     fetchFailed = false
                     return@LaunchedEffect
                 }
@@ -1490,7 +1494,7 @@ fun BrowseCoverThumb(
                     }
                 }
                 if (extracted != null) {
-                    SmbCache.markPresent(thumbPath)
+                    SmbCache.markPresent(extracted)
                     localPath = extracted
                     fetchFailed = false
                 } else {
@@ -1503,10 +1507,14 @@ fun BrowseCoverThumb(
                     cover.sourceId,
                     ZipMemberCover.thumbRemote(cover.zipRelativeFile, cover.memberRel),
                 )
-                val onDisk = withIOContext { WebDavCache.isCachedOnDisk(thumbPath) }
-                if (onDisk) {
-                    withIOContext { WebDavCache.touch(thumbPath) }
-                    localPath = thumbPath
+                val cached = withIOContext {
+                    WebDavCache.cachedThumbIfPresent(
+                        cover.sourceId,
+                        ZipMemberCover.thumbRemote(cover.zipRelativeFile, cover.memberRel),
+                    )
+                }
+                if (cached != null) {
+                    localPath = cached
                     fetchFailed = false
                     return@LaunchedEffect
                 }
@@ -1544,7 +1552,7 @@ fun BrowseCoverThumb(
                     }
                 }
                 if (extracted != null) {
-                    WebDavCache.markPresent(thumbPath)
+                    WebDavCache.markPresent(extracted)
                     localPath = extracted
                     fetchFailed = false
                 } else {

@@ -28,6 +28,7 @@ import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipCdParse
 import com.hippo.ehviewer.library.ZipCentralDirectory
 import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipMemberCover
@@ -2377,7 +2378,7 @@ object SmbGateway {
                     yieldable = true,
                     readahead = false,
                 ).use { src ->
-                    val cd = ZipCentralDirectory.open(src) ?: return@use emptyList()
+                    val cd = ZipCentralDirectory.open(src, ZipCdParse.Enter) ?: return@use emptyList()
                     persistZipVirtualFolderTree(source, configKey, zipRel, cd)
                     if (stale && parentEntries != null) {
                         clearZipAsDirStaleOnParent(source, configKey, zipRel, zipName, parentEntries)
@@ -2423,9 +2424,9 @@ object SmbGateway {
                                 knownSize = child.size,
                                 readahead = false,
                             ).use { src ->
-                                val cd = ZipCentralDirectory.open(src) ?: return@use
+                                val cd = ZipCentralDirectory.open(src, ZipCdParse.Parent) ?: return@use
                                 out[child.name] = ZipAsDirListing.zipRootListingFromCd(cd)
-                                interiors.putAll(ZipAsDirListing.virtualFolderTree(cd, child.name))
+                                interiors.putAll(ZipAsDirListing.parentListingInteriors(cd, child.name))
                             }
                         }
                     }
@@ -3486,21 +3487,42 @@ private fun isShareClosedError(t: Throwable): Boolean {
 /**
  * Cancel-close of an smbj [com.hierynomus.smbj.share.File] — not pooled session death.
  * [java.net.SocketTimeoutException] extends [InterruptedIOException] and is real transport loss.
+ *
+ * Hop / [KeepOpenSmbFileSource.close] closes the file under in-flight READ_PIPELINE
+ * workers; the server then returns [NtStatus.STATUS_FILE_CLOSED] (0xc0000128).
  */
 private fun isFileHandleAbortError(t: Throwable): Boolean {
-    var cur: Throwable? = t
-    while (cur != null) {
-        if (cur is java.io.InterruptedIOException && cur !is java.net.SocketTimeoutException) {
-            return true
+    fun chain(start: Throwable?): Boolean {
+        var cur: Throwable? = start
+        while (cur != null) {
+            if (cur is java.io.InterruptedIOException && cur !is java.net.SocketTimeoutException) {
+                return true
+            }
+            if (cur is SMBApiException) {
+                if (cur.status == NtStatus.STATUS_FILE_CLOSED) return true
+                val code = runCatching { cur.statusCode }.getOrNull()
+                if (code != null && code and 0xFFFFFFFFL == 0xC0000128L) return true
+            }
+            val msg = cur.message.orEmpty()
+            if (msg.contains("file has already been closed", ignoreCase = true) ||
+                msg.contains("STATUS_FILE_CLOSED", ignoreCase = true) ||
+                msg.contains("0xc0000128", ignoreCase = true)
+            ) {
+                return true
+            }
+            cur = cur.cause
         }
-        val msg = cur.message.orEmpty()
-        if (msg.contains("file has already been closed", ignoreCase = true)) {
-            return true
-        }
-        cur = cur.cause
+        return false
     }
-    return false
+    if (chain(t)) return true
+    return t.suppressed.any(::chain)
 }
+
+/** Share death **or** file-id abort — quiet for archive reads; do not retry. */
+internal fun isSmbExpectedCloseError(t: Throwable): Boolean = isShareClosedError(t) || isFileHandleAbortError(t)
+
+/** True only for pooled DiskShare/session death (kill TCP). File-id abort is not this. */
+internal fun isSmbShareSessionDeath(t: Throwable): Boolean = isShareClosedError(t)
 
 private fun isTransportError(t: Throwable): Boolean {
     if (isShareClosedError(t)) return true
