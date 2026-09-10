@@ -40,6 +40,7 @@ object LibraryScanner {
         rootPath: Path,
         rootDisplayName: String = "",
         includeArchives: Boolean = true,
+        knownArchives: Map<String, List<LocalGalleryEntity>> = emptyMap(),
     ): Result {
         val results = ArrayList<LocalGalleryEntity>()
         val folderPages = LinkedHashMap<String, List<String>>()
@@ -65,6 +66,7 @@ object LibraryScanner {
                 rootDisplayName = rootDisplayName,
                 indexedFolders = indexedFolders,
                 includeArchives = includeArchives,
+                knownArchives = knownArchives,
                 out = results,
                 folderPages = folderPages,
             )
@@ -120,6 +122,27 @@ object LibraryScanner {
         }
     }
 
+    /**
+     * File path for an already-indexed archive / zip-as-dir gallery, used to skip
+     * re-opening the zip on startup. Regular folder galleries return null.
+     */
+    fun archiveFilePath(gallery: LocalGalleryEntity): String? {
+        ZipPaths.parseGallery(gallery.contentPath)?.let { return it.first }
+        if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) return gallery.contentPath
+        return null
+    }
+
+    /** Previous library rows keyed by archive/zip file path. */
+    fun groupKnownArchives(galleries: List<LocalGalleryEntity>): Map<String, List<LocalGalleryEntity>> {
+        if (galleries.isEmpty()) return emptyMap()
+        val out = LinkedHashMap<String, ArrayList<LocalGalleryEntity>>()
+        for (gallery in galleries) {
+            val key = archiveFilePath(gallery) ?: continue
+            out.getOrPut(key) { ArrayList() }.add(gallery)
+        }
+        return out
+    }
+
     private fun scanDir(
         rootId: Long,
         dir: Path,
@@ -127,6 +150,7 @@ object LibraryScanner {
         rootDisplayName: String,
         indexedFolders: MutableSet<String>,
         includeArchives: Boolean,
+        knownArchives: Map<String, List<LocalGalleryEntity>>,
         out: MutableList<LocalGalleryEntity>,
         folderPages: MutableMap<String, List<String>>,
     ) {
@@ -190,6 +214,11 @@ object LibraryScanner {
             val contentPath = archive.path.toString()
             // Skip archives already confirmed empty (lazy cover open / prior hide).
             if (EmptyArchiveRegistry.isMarked(contentPath)) continue
+            knownArchives[contentPath]?.let { existing ->
+                // Startup: keep indexed zip/archive rows; do not re-parse EOCD / page count.
+                out += existing
+                continue
+            }
             val rel = if (relativePath.isEmpty()) {
                 archive.name
             } else {
@@ -239,6 +268,7 @@ object LibraryScanner {
                 rootDisplayName,
                 indexedFolders,
                 includeArchives,
+                knownArchives,
                 out,
                 folderPages,
             )

@@ -14,7 +14,6 @@ import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.database.roomDb
-import com.ehviewer.core.files.exists
 import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.util.logcat
@@ -255,10 +254,9 @@ object LocalLibrary {
 
     /**
      * App-startup library maintenance (background, non-blocking for UI):
-     * - **All sources**: drop gallery rows whose path is gone / no longer a gallery.
-     * - **Media mode** (not file/archive access): MediaStore index only (no SAF tree
-     *   walk). File mode skips the full walk (SAF tree walks are expensive); only the
-     *   existence prune runs there.
+     * - **Media mode**: MediaStore index only (no directory walk).
+     * - **Archive mode**: walk folders to pick up new image folders and new archives;
+     *   already-indexed archives are kept without re-parsing EOCD / page count.
      */
     suspend fun startupMaintenance() = withIOContext {
         scanMutex.withLock {
@@ -268,8 +266,7 @@ object LocalLibrary {
                 for (root in roots) {
                     if (db.libraryRootDao().load(root.id) == null) continue
                     if (root.includesArchives) {
-                        // File / media+archive mode: cheap path checks only.
-                        cleanupInaccessibleForRootLocked(root)
+                        scanRootLocked(root, reuseKnownArchives = true)
                     } else {
                         // MediaStore mode: index walk is cheap and refreshes the set.
                         scanRootLocked(root)
@@ -280,100 +277,6 @@ object LocalLibrary {
             }
         }
     }
-
-    /**
-     * Remove stored galleries under [root] whose content is missing or no longer
-     * qualifies (folder with no direct images, deleted archive). Does not discover
-     * new galleries — use [scanRoot] / [rescanAll] for that.
-     */
-    private suspend fun cleanupInaccessibleForRootLocked(root: LibraryRootEntity) {
-        if (root.role != LIBRARY_ROOT_ROLE_LIBRARY) {
-            db.localGalleryDao().deleteByRootId(root.id)
-            return
-        }
-        // Whole root gone (revoked SAF, missing media permission for device root).
-        val path = rootPath(root)
-        if (path == null) {
-            logcat("LocalLibrary") { "Startup cleanup: root inaccessible, clear galleries: ${root.treeUri}" }
-            if (db.libraryRootDao().load(root.id) != null) {
-                db.localGalleryDao().deleteByRootId(root.id)
-            }
-            return
-        }
-        if (!isMediaStoreRootUri(root.treeUri) && !path.isDirectory) {
-            logcat("LocalLibrary") { "Startup cleanup: root not a directory, clear galleries: $path" }
-            if (db.libraryRootDao().load(root.id) != null) {
-                db.localGalleryDao().deleteByRootId(root.id)
-            }
-            return
-        }
-        if (isMediaStoreRootUri(root.treeUri) && !MediaPermissions.hasMediaAccess()) {
-            // Don't wipe the library when permission is temporarily missing.
-            logcat("LocalLibrary") { "Startup cleanup: skip device media root without permission" }
-            return
-        }
-
-        val galleries = db.localGalleryDao().listByRootId(root.id)
-        if (galleries.isEmpty()) return
-        val deadIds = ArrayList<Long>()
-        for (g in galleries) {
-            if (!isGalleryAccessible(g)) {
-                deadIds += g.id
-            }
-        }
-        if (deadIds.isEmpty()) {
-            logcat("LocalLibrary") {
-                "Startup cleanup root ${root.id} (${root.displayName}): 0 removed / ${galleries.size}"
-            }
-            return
-        }
-        // Room IN (:ids) is fine for typical library sizes; batch if huge.
-        deadIds.chunked(500).forEach { chunk ->
-            db.localGalleryDao().deleteByIds(chunk)
-        }
-        logcat("LocalLibrary") {
-            "Startup cleanup root ${root.id} (${root.displayName}): removed ${deadIds.size} / ${galleries.size}"
-        }
-    }
-
-    /**
-     * True when the stored gallery path still exists and still looks like a gallery
-     * (folder has ≥1 direct image, archive file still present).
-     */
-    private fun isGalleryAccessible(gallery: LocalGalleryEntity): Boolean = runCatching {
-        // Zip-as-dir interiors are `zipfile:{zip}!{member}` — not a real folder.
-        ZipPaths.parse(gallery.contentPath)?.let { (zipAbs, _) ->
-            return@runCatching zipAbs.toPath().exists()
-        }
-        val path = gallery.contentPath.toPath()
-        when {
-            path.isMediaStorePath() -> {
-                if (!MediaPermissions.hasMediaAccess()) {
-                    // Keep rows until permission returns; scan will refresh then.
-                    return@runCatching true
-                }
-                if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                    // Media mode never indexes archives.
-                    return@runCatching false
-                }
-                MediaStoreFs.listChildren(path).any { !it.isDirectory && isImageFileName(it.name) }
-            }
-            gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE -> path.exists()
-            else -> {
-                // Folder gallery: need at least one direct image child (same rule as scan).
-                var hasImage = false
-                path.forEachBrowseChild { child ->
-                    if (!child.isDirectory && isImageFileName(child.name)) {
-                        hasImage = true
-                        false
-                    } else {
-                        true
-                    }
-                }
-                hasImage
-            }
-        }
-    }.getOrDefault(false)
 
     suspend fun scanRoot(rootId: Long) = withNonCancellableContext {
         // NonCancellable: Privacy / Library / Manage Sources jobs die on back. The tree
@@ -397,7 +300,10 @@ object LocalLibrary {
         }
     }
 
-    private suspend fun scanRootLocked(root: LibraryRootEntity) {
+    private suspend fun scanRootLocked(
+        root: LibraryRootEntity,
+        reuseKnownArchives: Boolean = false,
+    ) {
         if (root.role != LIBRARY_ROOT_ROLE_LIBRARY) {
             db.localGalleryDao().deleteByRootId(root.id)
             return
@@ -426,11 +332,17 @@ object LocalLibrary {
             return
         }
         val previous = db.localGalleryDao().listByRootId(root.id)
+        val knownArchives = if (reuseKnownArchives) {
+            LibraryScanner.groupKnownArchives(previous)
+        } else {
+            emptyMap()
+        }
         val scanned = LibraryScanner.scan(
             root.id,
             path,
             rootDisplayName = root.displayName,
             includeArchives = root.includesArchives,
+            knownArchives = knownArchives,
         )
         // Drop results if the root was removed while scanning (belt-and-suspenders with mutex).
         if (db.libraryRootDao().load(root.id) == null) {

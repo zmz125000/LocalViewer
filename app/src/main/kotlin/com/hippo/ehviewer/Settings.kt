@@ -303,7 +303,7 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * When true (default), app start runs [com.hippo.ehviewer.library.LocalLibrary.startupMaintenance]
-     * (prune inaccessible galleries; MediaStore sources also rescan).
+     * (MediaStore index; archive-mode sources walk for new folders/archives and skip known zips).
      */
     val libraryStartupScan = boolPref("library_startup_scan", true)
 
