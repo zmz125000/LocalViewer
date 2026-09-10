@@ -78,8 +78,7 @@ object LibraryScanner {
      * After a MediaStore folder index, walking the tree is only needed to find
      * archives (and folders the index never saw).
      */
-    fun needsDirectoryWalk(mediaStoreIndexed: Boolean, includeArchives: Boolean): Boolean =
-        !mediaStoreIndexed || includeArchives
+    fun needsDirectoryWalk(mediaStoreIndexed: Boolean, includeArchives: Boolean): Boolean = !mediaStoreIndexed || includeArchives
 
     private fun scanMediaStoreFolderGalleries(
         rootId: Long,

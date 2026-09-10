@@ -74,4 +74,3 @@ class LibraryScannerWalkTest {
         mtime = 0L,
     )
 }
-
