@@ -122,7 +122,7 @@ object LocalFolderListing {
         }
 
         val tree = withLocalZipCentralDirectory(zipPath) { cd ->
-            ZipAsDirListing.classifyAllVirtualFolders(cd, zipName)
+            ZipAsDirListing.virtualFolderTree(cd, zipName)
         } ?: return@withContext null
         val treeKey = ZipAsDirListing.virtualRelativeDir(zipName, inner)
         if (configKey != null) {
@@ -524,7 +524,7 @@ object LocalFolderListing {
         runParallel(zips) { child ->
             withLocalZipCentralDirectory(dir / child.name) { cd ->
                 out[child.name] = ZipAsDirListing.zipRootListingFromCd(cd)
-                zipInteriors?.putAll(ZipAsDirListing.classifyAllVirtualFolders(cd, child.name))
+                zipInteriors?.putAll(ZipAsDirListing.virtualFolderTree(cd, child.name))
             }
         }
         return out

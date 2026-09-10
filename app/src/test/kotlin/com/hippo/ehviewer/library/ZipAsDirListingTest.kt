@@ -301,6 +301,58 @@ class ZipAsDirListingTest {
     }
 
     @Test
+    fun galleryZipIsClassifiedAndMixedAssetZipIsUncategorized() {
+        val comic = openZip(
+            "001.jpg" to byteArrayOf(1),
+            "002.jpg" to byteArrayOf(2),
+            "003.webp" to byteArrayOf(3),
+        )
+        assertTrue(ZipAsDirListing.isGalleryZip(comic))
+        assertTrue(ZipAsDirListing.zipRootListingFromCd(comic).classified)
+        val comicTree = ZipAsDirListing.virtualFolderTree(comic, "comic.cbz")
+        assertTrue(
+            comicTree.getValue("comic.cbz").any { it is BrowseEntryRemote.FolderGallery },
+        )
+
+        val mixed = openZip(
+            "VaM/scene.json" to byteArrayOf(1),
+            "VaM/plugin.cs" to byteArrayOf(2),
+            "VaM/asset.bin" to byteArrayOf(3),
+            "VaM/thumb.png" to byteArrayOf(4),
+            "VaM/more.dll" to byteArrayOf(5),
+            "VaM/data.hash" to byteArrayOf(6),
+            "VaM/pack.bundle" to byteArrayOf(7),
+        )
+        assertFalse(ZipAsDirListing.isGalleryZip(mixed))
+        assertFalse(ZipAsDirListing.zipRootListingFromCd(mixed).classified)
+        val tree = ZipAsDirListing.virtualFolderTree(mixed, "VaM.zip")
+        assertEquals(setOf("VaM.zip", "VaM.zip/VaM"), tree.keys)
+        assertTrue(tree.getValue("VaM.zip").none { it is BrowseEntryRemote.FolderGallery })
+        val inner = tree.getValue("VaM.zip/VaM")
+        assertTrue(inner.any { it is BrowseEntryRemote.RegularFile && it.name == "scene.json" })
+        assertTrue(inner.any { it is BrowseEntryRemote.RegularFile && it.name == "thumb.png" })
+        assertTrue(inner.none { it is BrowseEntryRemote.FolderGallery })
+    }
+
+    @Test
+    fun uncategorizedZipParentRowIsDirectoryOnly() {
+        val mixed = openZip(
+            "Addon/a.meta" to byteArrayOf(1),
+            "Addon/b.cs" to byteArrayOf(2),
+            "Addon/c.png" to byteArrayOf(3),
+        )
+        val rows = ZipAsDirListing.classifyZipFileAsFolderRows(
+            mixed,
+            BrowseEntryRemote.ArchiveGallery(name = "Addon.zip", fileName = "Addon.zip"),
+        )
+        val dir = rows.filterIsInstance<BrowseEntryRemote.Directory>().single()
+        assertEquals("Addon.zip", dir.name)
+        assertEquals(DirPresence.Navigable, dir.presence)
+        assertFalse(dir.hasGallery)
+        assertTrue(rows.none { it is BrowseEntryRemote.FolderGallery })
+    }
+
+    @Test
     fun parentSegmentsOfZipBrowsePath() {
         assertEquals(emptyList<String>(), ZipAsDirListing.parentSegmentsOfZipBrowsePath("pack.zip"))
         assertEquals(listOf("share"), ZipAsDirListing.parentSegmentsOfZipBrowsePath("share/pack.zip/Album"))
