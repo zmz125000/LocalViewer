@@ -93,7 +93,6 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import okio.Path
-import okio.Path.Companion.toPath
 
 private const val BROWSE_LIST_SEP = " · "
 
@@ -1150,8 +1149,8 @@ fun BrowseCoverThumb(
     /**
      * Photo image cells (photo-grid virtual folder **or** Folder-mode image files):
      * gate network fetch with [Settings.downloadNetworkPhotoGridThumb]. Original page-cache
-     * write uses [Settings.saveThumbOriginalCache] for these cells **and** gallery covers.
-     * Thumbs always land in `*_thumb_cache` under the same path key as photo grid.
+     * write uses [Settings.saveThumbOriginalCache] for these cells **and** gallery covers
+     * (including zip-as-dir members). Thumbs always land in `*_thumb_cache`.
      */
     photoGridThumb: Boolean = false,
     placeholderIcon: ImageVector = Icons.Default.PhotoLibrary,
@@ -1223,7 +1222,8 @@ fun BrowseCoverThumb(
     // Lazy: only runs when this row is composed (in LazyColumn viewport).
     // Always probe disk on IO first so cached thumbs show even when download is off.
     // Folder image covers use [downloadRemoteThumbs] (or photo-grid prefs);
-    // original page-cache write uses [saveThumbOriginalCache] for gallery covers too;
+    // original page-cache write uses [saveThumbOriginalCache] for gallery covers too
+    // (zip-as-dir members write `zip_folder_pages` only when that toggle is on);
     // archive first-page uses [downloadNetworkArchiveThumbs].
     LaunchedEffect(
         remoteKey,
@@ -1444,31 +1444,53 @@ fun BrowseCoverThumb(
             }
             is BrowseCover.SmbZipMember -> {
                 val key = "smb:${cover.sourceId}:${cover.zipRelativeFile}"
-                val disk = withIOContext {
-                    ZipMemberCover.destFile(key, cover.memberRel).let { f ->
-                        if (f.isFile && f.length() > 0L) f.absolutePath.toPath() else null
-                    }
-                }
-                if (disk != null) {
-                    localPath = disk
+                val thumbPath = SmbCache.thumbCachePath(
+                    cover.sourceId,
+                    ZipMemberCover.thumbRemote(cover.zipRelativeFile, cover.memberRel),
+                )
+                val onDisk = withIOContext { SmbCache.isCachedOnDisk(thumbPath) }
+                if (onDisk) {
+                    withIOContext { SmbCache.touch(thumbPath) }
+                    localPath = thumbPath
                     fetchFailed = false
                     return@LaunchedEffect
                 }
-                if (!allowRemoteFetch || !downloadNetworkArchiveThumbs) return@LaunchedEffect
+                val originOnDisk = withIOContext {
+                    ZipMemberCover.destFile(key, cover.memberRel).let { f ->
+                        f.isFile && f.length() > 0L
+                    }
+                }
+                if (!originOnDisk && (!allowRemoteFetch || !allowNetworkImageDownload)) {
+                    return@LaunchedEffect
+                }
                 val extracted = withIOContext {
-                    val source = SmbRepository.load(cover.sourceId) ?: return@withIOContext null
-                    val password = SmbPasswordStore.get(cover.sourceId)
-                    ZipMemberCover.ensure(key, cover.memberRel, notifyTooLarge = false) {
-                        SmbArchiveByteSource(
-                            source,
-                            password,
-                            cover.zipRelativeFile,
-                            pipeline = false,
-                            yieldable = true,
+                    SmbCache.withBrowseThumbFetchSlot {
+                        val source = SmbRepository.load(cover.sourceId)
+                        val password = source?.let { SmbPasswordStore.get(it.id) }
+                        ZipMemberCover.ensureBrowseThumb(
+                            zipKey = key,
+                            memberRel = cover.memberRel,
+                            destJpeg = java.io.File(thumbPath.toString()),
+                            cacheOriginal = cacheThumbOriginal,
+                            notifyTooLarge = false,
+                            openSource = {
+                                if (source == null || password == null) {
+                                    null
+                                } else {
+                                    SmbArchiveByteSource(
+                                        source,
+                                        password,
+                                        cover.zipRelativeFile,
+                                        pipeline = false,
+                                        yieldable = true,
+                                    )
+                                }
+                            },
                         )
                     }
                 }
                 if (extracted != null) {
+                    SmbCache.markPresent(thumbPath)
                     localPath = extracted
                     fetchFailed = false
                 } else {
@@ -1477,30 +1499,52 @@ fun BrowseCoverThumb(
             }
             is BrowseCover.WebDavZipMember -> {
                 val key = "webdav:${cover.sourceId}:${cover.zipRelativeFile}"
-                val disk = withIOContext {
-                    ZipMemberCover.destFile(key, cover.memberRel).let { f ->
-                        if (f.isFile && f.length() > 0L) f.absolutePath.toPath() else null
-                    }
-                }
-                if (disk != null) {
-                    localPath = disk
+                val thumbPath = WebDavCache.thumbCachePath(
+                    cover.sourceId,
+                    ZipMemberCover.thumbRemote(cover.zipRelativeFile, cover.memberRel),
+                )
+                val onDisk = withIOContext { WebDavCache.isCachedOnDisk(thumbPath) }
+                if (onDisk) {
+                    withIOContext { WebDavCache.touch(thumbPath) }
+                    localPath = thumbPath
                     fetchFailed = false
                     return@LaunchedEffect
                 }
-                if (!allowRemoteFetch || !downloadNetworkArchiveThumbs) return@LaunchedEffect
+                val originOnDisk = withIOContext {
+                    ZipMemberCover.destFile(key, cover.memberRel).let { f ->
+                        f.isFile && f.length() > 0L
+                    }
+                }
+                if (!originOnDisk && (!allowRemoteFetch || !allowNetworkImageDownload)) {
+                    return@LaunchedEffect
+                }
                 val extracted = withIOContext {
-                    val source = WebDavRepository.load(cover.sourceId) ?: return@withIOContext null
-                    val password = WebDavPasswordStore.get(cover.sourceId)
-                    ZipMemberCover.ensure(key, cover.memberRel, notifyTooLarge = false) {
-                        WebDavArchiveByteSource(
-                            source,
-                            password,
-                            cover.zipRelativeFile,
-                            pipeline = false,
+                    WebDavCache.withBrowseThumbFetchSlot {
+                        val source = WebDavRepository.load(cover.sourceId)
+                        val password = source?.let { WebDavPasswordStore.get(it.id) }
+                        ZipMemberCover.ensureBrowseThumb(
+                            zipKey = key,
+                            memberRel = cover.memberRel,
+                            destJpeg = java.io.File(thumbPath.toString()),
+                            cacheOriginal = cacheThumbOriginal,
+                            notifyTooLarge = false,
+                            openSource = {
+                                if (source == null || password == null) {
+                                    null
+                                } else {
+                                    WebDavArchiveByteSource(
+                                        source,
+                                        password,
+                                        cover.zipRelativeFile,
+                                        pipeline = false,
+                                    )
+                                }
+                            },
                         )
                     }
                 }
                 if (extracted != null) {
+                    WebDavCache.markPresent(thumbPath)
                     localPath = extracted
                     fetchFailed = false
                 } else {
@@ -1526,9 +1570,9 @@ fun BrowseCoverThumb(
                 is BrowseCover.LocalArchive ->
                     "arch-thumb:${cover.archivePath}@${ArchiveCoverCache.THUMB_EDGE}"
                 is BrowseCover.SmbZipMember ->
-                    "smbz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}"
+                    "smbz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${SmbCache.THUMB_DISK_EDGE}"
                 is BrowseCover.WebDavZipMember ->
-                    "davz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}"
+                    "davz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${WebDavCache.THUMB_DISK_EDGE}"
                 is BrowseCover.Local -> cover.path.toString()
                 null -> path.toString()
             }

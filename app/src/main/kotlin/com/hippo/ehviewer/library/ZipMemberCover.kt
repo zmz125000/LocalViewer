@@ -4,10 +4,17 @@ import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
 import com.ehviewer.core.i18n.R
+import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import okio.Path
+import okio.Path.Companion.toOkioPath
 import okio.Path.Companion.toPath
 import splitties.init.appCtx
 
@@ -17,15 +24,23 @@ class ZipMemberTooLargeException(val sizeBytes: Long) : IOException("ZIP member 
 fun Throwable.isZipMemberTooLarge(): Boolean = this is ZipMemberTooLargeException || generateSequence(cause) { it.cause }.any { it is ZipMemberTooLargeException }
 
 /**
- * Extract one ZIP/CBZ image or video member to `cache/zip_folder_pages` for
- * covers / [ZipFolderPageLoader]. Other member types are refused so browse
- * cannot dump PDFs or nested archives into cache without an explicit open.
+ * Extract one ZIP/CBZ image or video member.
+ *
+ * - **Reader pages** (`cache/zip_folder_pages`): [ensure] / [ZipFolderPageLoader] when
+ *   [com.hippo.ehviewer.Settings.disableReaderNetworkCache] is off, or
+ *   [com.hippo.ehviewer.Settings.saveThumbOriginalCache] on a zip-as-dir thumb.
+ * - **Browse thumbs**: [ensureBrowseThumb] writes a small JPEG only (same MaxEdge path
+ *   as folder image thumbs). Range-read via [ZipCentralDirectory.extract].
+ *
+ * Other member types are refused so browse cannot dump PDFs or nested archives
+ * into cache without an explicit open.
  */
 object ZipMemberCover {
     /** Cap NAND writes for extracted zip members (open-in-zip / covers / pages). */
     const val MAX_CACHE_BYTES = 100L * 1024L * 1024L
 
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val thumbLocks = ConcurrentHashMap<String, Mutex>()
 
     private fun cacheDir(): File = File(appCtx.applicationInfo.dataDir, "cache/zip_folder_pages").also { it.mkdirs() }
 
@@ -35,6 +50,16 @@ object ZipMemberCover {
         val ext = member.substringAfterLast('.', missingDelimiterValue = "bin").lowercase().ifEmpty { "bin" }
         val zip = sha256(zipKey).take(16)
         return File(cacheDir(), "${zip}_$nameKey.$ext")
+    }
+
+    /**
+     * Synthetic remote used as the SMB/WebDAV thumb-cache key (`zipRel!memberRel`).
+     * `!` is not a share path separator, so it cannot collide with a real file.
+     */
+    fun thumbRemote(zipRel: String, memberRel: String): String {
+        val zip = zipRel.replace('\\', '/').trimStart('/')
+        val member = memberRel.replace('\\', '/').trimStart('/')
+        return "$zip!$member"
     }
 
     fun sha256(s: String): String {
@@ -77,7 +102,12 @@ object ZipMemberCover {
                 tmp.copyTo(dest, overwrite = true)
                 tmp.delete()
             }
-            if (dest.isFile && dest.length() > 0L) dest.absolutePath.toPath() else null
+            if (dest.isFile && dest.length() > 0L) {
+                OriginDiskCache.scheduleTrim()
+                dest.absolutePath.toPath()
+            } else {
+                null
+            }
         } finally {
             if (tmp.exists()) tmp.delete()
         }
@@ -104,11 +134,60 @@ object ZipMemberCover {
         }
     }
 
+    /**
+     * Zip-as-dir browse thumb: small JPEG at [destJpeg] (MaxEdge, same as folder image thumbs).
+     *
+     * 1. Thumb hit → return
+     * 2. Reader original already in [destFile] → subsample, no network
+     * 3. [cacheOriginal] → [ensure] then subsample (save-thumb-original setting)
+     * 4. Else range-extract to RAM → [HdrConvertCache.writeThumbFromBytes]
+     */
+    suspend fun ensureBrowseThumb(
+        zipKey: String,
+        memberRel: String,
+        destJpeg: File,
+        cacheOriginal: Boolean,
+        notifyTooLarge: Boolean = false,
+        openSource: () -> ArchiveByteSource?,
+    ): Path? = withContext(Dispatchers.IO) {
+        if (!isImageFileName(memberRel)) return@withContext null
+        if (destJpeg.isFile && destJpeg.length() > 0L) return@withContext destJpeg.absolutePath.toPath()
+        val mutex = thumbLocks.getOrPut(destJpeg.path) { Mutex() }
+        mutex.withLock {
+            if (destJpeg.isFile && destJpeg.length() > 0L) return@withLock destJpeg.absolutePath.toPath()
+            destJpeg.parentFile?.mkdirs()
+            val origin = destFile(zipKey, memberRel)
+            if (origin.isFile && origin.length() > 0L) {
+                return@withLock encodeThumbFromFile(origin, destJpeg, memberRel)
+            }
+            if (cacheOriginal) {
+                val written = ensure(zipKey, memberRel, notifyTooLarge, openSource) ?: return@withLock null
+                return@withLock encodeThumbFromFile(File(written.toString()), destJpeg, memberRel)
+            }
+            val bytes = extractBytes(zipKey, memberRel, notifyTooLarge, openSource) ?: return@withLock null
+            val ok = HdrConvertCache.writeThumbFromBytes(
+                bytes = bytes,
+                destJpeg = destJpeg,
+                fileNameHint = memberRel.substringAfterLast('/').substringAfterLast('\\'),
+            )
+            if (ok && destJpeg.isFile && destJpeg.length() > 0L) destJpeg.absolutePath.toPath() else null
+        }
+    }
+
     fun ensureLocal(
         zipPath: String,
         memberRel: String,
         notifyTooLarge: Boolean = true,
     ): Path? = ensure(zipPath, memberRel, notifyTooLarge) {
         openLocalArchiveByteSource(zipPath.toPath())
+    }
+
+    private suspend fun encodeThumbFromFile(origin: File, destJpeg: File, memberRel: String): Path? {
+        val ok = HdrConvertCache.writeThumbJpeg(
+            source = origin.toOkioPath(),
+            destJpeg = destJpeg,
+            fileNameHint = memberRel.substringAfterLast('/').substringAfterLast('\\'),
+        )
+        return if (ok && destJpeg.isFile && destJpeg.length() > 0L) destJpeg.absolutePath.toPath() else null
     }
 }

@@ -8,6 +8,7 @@ import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.library.ArchiveByteSource
+import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCentralDirectory
 import com.hippo.ehviewer.library.ZipMemberCover
@@ -22,7 +23,11 @@ import okio.Path.Companion.toPath
 
 /**
  * Reader pages for an image prefix inside a **network** ZIP/CBZ (SMB/WebDAV zip-as-dir).
- * Extracts each member once into `cache/zip_folder_pages/` then presents as [PathSource].
+ *
+ * Each page is a [ZipCentralDirectory] range extract (local header + compressed
+ * payload via [ArchiveByteSource.readAt]), not a sequential walk of the ZIP.
+ * [Settings.disableReaderNetworkCache] keeps the member in RAM ([byteBufferSource]);
+ * otherwise [ZipFolderExtractSession.ensurePage] writes `cache/zip_folder_pages/`.
  *
  * Local on-device zip galleries use mmap [useArchivePageLoader] instead (no page cache).
  *
@@ -194,6 +199,7 @@ internal class ZipFolderExtractSession(
         check(cd.extractToFile(entry, dest, maxBytes = ZipMemberCover.MAX_CACHE_BYTES)) {
             "Extract failed: $member"
         }
+        OriginDiskCache.scheduleTrim()
         return dest.absolutePath.toPath()
     }
 

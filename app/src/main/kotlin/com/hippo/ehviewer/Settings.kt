@@ -293,8 +293,9 @@ object Settings : DataStorePreferences(null) {
     /**
      * When downloading a network image thumb (gallery cover, photo-grid, or Folder-mode
      * image): also store the **original** full file in page cache (`smb_cache` /
-     * `webdav_cache`) as the gallery first pic. Thumbs always go to `*_thumb_cache`.
-     * Independent of the download-thumb toggles. Pref key kept for upgrades.
+     * `webdav_cache` / zip-as-dir `zip_folder_pages`) as the gallery first pic.
+     * Thumbs always go to `*_thumb_cache`. Independent of the download-thumb toggles.
+     * Pref key kept for upgrades.
      */
     val saveThumbOriginalCache = boolPref("save_photo_grid_original_cache", false)
 

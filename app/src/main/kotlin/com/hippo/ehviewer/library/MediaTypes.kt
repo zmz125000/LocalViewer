@@ -152,9 +152,10 @@ fun isVideoFileName(name: String): Boolean {
 }
 
 /**
- * [ZipMemberCover.ensure] / [ZipMemberCover.extractBytes] may write these members.
- * Other zip-as-dir files (PDF, nested archives, docs) stay unextracted until a
- * user-initiated open that does not go through the cover cache.
+ * [ZipMemberCover.ensure] may write these members to `zip_folder_pages`.
+ * [ZipMemberCover.extractBytes] keeps them in RAM. Other zip-as-dir files
+ * (PDF, nested archives, docs) stay unextracted until a user-initiated open
+ * that does not go through the cover cache.
  */
 fun isZipMemberCoverExtractAllowed(name: String): Boolean = isImageFileName(name) || isVideoFileName(name)
 

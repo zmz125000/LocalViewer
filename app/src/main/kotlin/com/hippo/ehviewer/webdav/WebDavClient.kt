@@ -524,10 +524,10 @@ object WebDavClient {
         out: OutputStream,
     ) = withIOContext {
         ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, member) ->
-            val local = ZipMemberCover.ensure("webdav:${source.id}:$zipRel", member) {
+            val bytes = ZipMemberCover.extractBytes("webdav:${source.id}:$zipRel", member) {
                 WebDavArchiveByteSource(source, password, zipRel, pipeline = false)
             } ?: error("Cannot extract ZIP member $member from $zipRel")
-            java.io.File(local.toString()).inputStream().use { it.copyTo(out) }
+            out.write(bytes)
             return@withIOContext
         }
         val downloadContext = coroutineContext

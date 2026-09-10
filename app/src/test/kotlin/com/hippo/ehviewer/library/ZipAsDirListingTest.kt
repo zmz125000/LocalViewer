@@ -475,6 +475,24 @@ class ZipAsDirListingTest {
     }
 
     @Test
+    fun zipAsDirCoverPartsFromInteriorFile() {
+        val parts = ZipAsDirListing.zipAsDirCoverParts(
+            listedDir = "share/pack.zip/Album",
+            relativeName = "",
+            coverFileName = "a.jpg",
+        )
+        assertEquals("share/pack.zip" to "Album/a.jpg", parts)
+    }
+
+    @Test
+    fun zipMemberThumbRemoteUsesBangSeparator() {
+        assertEquals(
+            "share/pack.zip!Album/a.jpg",
+            ZipMemberCover.thumbRemote("share/pack.zip", "Album/a.jpg"),
+        )
+    }
+
+    @Test
     fun ensureZipAsDirDirectoryRowsAddsMissingZipDir() {
         val gal = BrowseEntryRemote.FolderGallery(
             name = "园区.zip",

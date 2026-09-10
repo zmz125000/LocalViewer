@@ -3022,7 +3022,7 @@ object SmbGateway {
         yieldable: Boolean = false,
     ) = withIOContext {
         ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, member) ->
-            val local = ZipMemberCover.ensure("smb:${source.id}:$zipRel", member) {
+            val bytes = ZipMemberCover.extractBytes("smb:${source.id}:$zipRel", member) {
                 SmbArchiveByteSource(
                     source,
                     password,
@@ -3031,7 +3031,7 @@ object SmbGateway {
                     yieldable = yieldable,
                 )
             } ?: error("Cannot extract ZIP member $member from $zipRel")
-            java.io.File(local.toString()).inputStream().use { it.copyTo(out) }
+            out.write(bytes)
             return@withIOContext
         }
         val downloadContext = coroutineContext

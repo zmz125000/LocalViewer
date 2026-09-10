@@ -53,7 +53,7 @@ object HistoryThumbKey {
         return "$DAV_ARCH_PREFIX$sourceId:$remote"
     }
 
-    /** Extracted ZIP member JPEG in [ZipMemberCover] (`smb:{id}:{zipRel}` dest key). */
+    /** Zip-as-dir cover identity (small JPEG in thumb cache; original optional in [ZipMemberCover]). */
     fun smbZip(sourceId: Long, zipRel: String, memberRel: String): String {
         val zip = zipRel.replace('\\', '/').trimStart('/')
         val member = memberRel.replace('\\', '/').trimStart('/')
@@ -132,11 +132,27 @@ object HistoryThumbKey {
             }
             key.startsWith(SMB_ZIP_PREFIX) -> {
                 val parsed = parseZipMemberKey(key, SMB_ZIP_PREFIX) ?: return null
+                val thumb = SmbCache.thumbCachePath(
+                    parsed.first,
+                    ZipMemberCover.thumbRemote(parsed.second, parsed.third),
+                )
+                if (SmbCache.isCachedOnDisk(thumb)) {
+                    SmbCache.touch(thumb)
+                    return thumb.toString()
+                }
                 val dest = ZipMemberCover.destFile("smb:${parsed.first}:${parsed.second}", parsed.third)
                 return dest.takeIf { it.isFile && it.length() > 0L }?.absolutePath
             }
             key.startsWith(DAV_ZIP_PREFIX) -> {
                 val parsed = parseZipMemberKey(key, DAV_ZIP_PREFIX) ?: return null
+                val thumb = WebDavCache.thumbCachePath(
+                    parsed.first,
+                    ZipMemberCover.thumbRemote(parsed.second, parsed.third),
+                )
+                if (WebDavCache.isCachedOnDisk(thumb)) {
+                    WebDavCache.touch(thumb)
+                    return thumb.toString()
+                }
                 val dest = ZipMemberCover.destFile("webdav:${parsed.first}:${parsed.second}", parsed.third)
                 return dest.takeIf { it.isFile && it.length() > 0L }?.absolutePath
             }
@@ -183,13 +199,17 @@ object HistoryThumbKey {
             }
             key.startsWith(SMB_ZIP_PREFIX) -> {
                 val parsed = parseZipMemberKey(key, SMB_ZIP_PREFIX) ?: return null
-                return ZipMemberCover.destFile("smb:${parsed.first}:${parsed.second}", parsed.third)
-                    .absolutePath.toPath()
+                return SmbCache.thumbCachePath(
+                    parsed.first,
+                    ZipMemberCover.thumbRemote(parsed.second, parsed.third),
+                )
             }
             key.startsWith(DAV_ZIP_PREFIX) -> {
                 val parsed = parseZipMemberKey(key, DAV_ZIP_PREFIX) ?: return null
-                return ZipMemberCover.destFile("webdav:${parsed.first}:${parsed.second}", parsed.third)
-                    .absolutePath.toPath()
+                return WebDavCache.thumbCachePath(
+                    parsed.first,
+                    ZipMemberCover.thumbRemote(parsed.second, parsed.third),
+                )
             }
             key.startsWith(VID_LOCAL_PREFIX) -> {
                 val path = key.removePrefix(VID_LOCAL_PREFIX)

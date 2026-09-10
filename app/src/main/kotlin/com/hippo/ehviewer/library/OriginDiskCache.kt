@@ -21,8 +21,8 @@ import splitties.init.appCtx
  *
  * Network folder index metadata is preserved across this image LRU, like archive
  * `index.json` files. Other folder layouts are unchanged (smb_cache, webdav_cache,
- * archive_pages, solid_extract, document_extract, *_thumb_cache, archive_thumb,
- * video_thumb_cache).
+ * zip_folder_pages, archive_pages, solid_extract, document_extract, *_thumb_cache,
+ * archive_thumb, video_thumb_cache).
  *
  * 1. **Origin pics** (reader pages + remote folder/archive files): one shared cap =
  *    [Settings.readCacheSize] (Advanced “image disk cache”). No per-store pool.
@@ -92,6 +92,8 @@ object OriginDiskCache {
         // Flat remote file caches (folder pages + full archive downloads).
         collectFlatOrigin(cacheDir("smb_cache"), candidates)
         collectFlatOrigin(cacheDir("webdav_cache"), candidates)
+        // Zip-as-dir extracted members (reader pages / optional thumb originals).
+        collectFlatOrigin(cacheDir("zip_folder_pages"), candidates)
         // Local-folder HDR → Ultra HDR derivatives (non-destructive).
         collectFlatOrigin(cacheDir("hdr_ultrahdr"), candidates)
 
