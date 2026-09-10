@@ -218,21 +218,25 @@ object LocalLibrary {
         role: Int = LIBRARY_ROOT_ROLE_LIBRARY,
     ): AddRootResult = addRoot(MEDIASTORE_ROOT_URI, displayName, role)
 
-    suspend fun removeRoot(root: LibraryRootEntity) = withIOContext {
-        // Serialize with scanRoot: otherwise a long MediaStore scan can finish after
-        // delete and replaceForRoot() → SQLITE_CONSTRAINT_FOREIGNKEY (orphan ROOT_ID).
-        scanMutex.withLock {
-            if (!isMediaStoreRootUri(root.treeUri)) {
-                runCatching {
-                    appCtx.contentResolver.releasePersistableUriPermission(root.treeUri.toUri(), URI_FLAGS)
-                }.onFailure { logcat(it) }
+    suspend fun removeRoot(root: LibraryRootEntity) = withNonCancellableContext {
+        // NonCancellable: Manage Sources' launchIO is cancelled on back. A startup
+        // scan can hold scanMutex for a long time; without this the delete never runs.
+        withIOContext {
+            // Serialize with scanRoot: otherwise a long MediaStore scan can finish after
+            // delete and replaceForRoot() → SQLITE_CONSTRAINT_FOREIGNKEY (orphan ROOT_ID).
+            scanMutex.withLock {
+                if (!isMediaStoreRootUri(root.treeUri)) {
+                    runCatching {
+                        appCtx.contentResolver.releasePersistableUriPermission(root.treeUri.toUri(), URI_FLAGS)
+                    }.onFailure { logcat(it) }
+                }
+                // CASCADE also clears galleries; explicit delete keeps behavior obvious if FK is off.
+                db.localGalleryDao().deleteByRootId(root.id)
+                db.libraryRootDao().delete(root)
+                BrowseSession.invalidateLocalListing()
+                NetworkFolderIndexCache.deleteLocal(root.id)
+                MediaStoreIndexStamp.clear(root.id)
             }
-            // CASCADE also clears galleries; explicit delete keeps behavior obvious if FK is off.
-            db.localGalleryDao().deleteByRootId(root.id)
-            db.libraryRootDao().delete(root)
-            BrowseSession.invalidateLocalListing()
-            NetworkFolderIndexCache.deleteLocal(root.id)
-            MediaStoreIndexStamp.clear(root.id)
         }
     }
 

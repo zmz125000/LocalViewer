@@ -106,5 +106,4 @@ object CoverPathKeyer : Keyer<CoverPath> {
  * Convert classify uses the zip member leaf (`a.jxl`), not the hashed extract name.
  * ImageDecoder cannot open those codecs — same rule as folder covers / [DisplaySource].
  */
-internal fun coverConvertHint(coverPath: String, resolvedFileName: String): String =
-    ZipPaths.memberLeafName(coverPath) ?: resolvedFileName
+internal fun coverConvertHint(coverPath: String, resolvedFileName: String): String = ZipPaths.memberLeafName(coverPath) ?: resolvedFileName

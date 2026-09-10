@@ -588,7 +588,6 @@ private class KeepOpenSmbFileSource(
             }
             return filled
         }
-
     }
 }
 

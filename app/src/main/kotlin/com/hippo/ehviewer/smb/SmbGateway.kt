@@ -3518,8 +3518,7 @@ private fun isFileHandleAbortError(t: Throwable): Boolean {
 }
 
 /** Share death **or** file-id abort — quiet for archive reads; do not retry. */
-internal fun isSmbExpectedCloseError(t: Throwable): Boolean =
-    isShareClosedError(t) || isFileHandleAbortError(t)
+internal fun isSmbExpectedCloseError(t: Throwable): Boolean = isShareClosedError(t) || isFileHandleAbortError(t)
 
 /** True only for pooled DiskShare/session death (kill TCP). File-id abort is not this. */
 internal fun isSmbShareSessionDeath(t: Throwable): Boolean = isShareClosedError(t)

@@ -33,12 +33,14 @@ class SmbClosedErrorTest {
         )
         val primary = Exception("pipelined read")
         primary.addSuppressed(closed)
-        primary.addSuppressed(SMBApiException(
-            0xC0000128L,
-            SMB2MessageCommandCode.SMB2_READ,
-            "Read failed for SMB2FileId{}",
-            null,
-        ))
+        primary.addSuppressed(
+            SMBApiException(
+                0xC0000128L,
+                SMB2MessageCommandCode.SMB2_READ,
+                "Read failed for SMB2FileId{}",
+                null,
+            ),
+        )
         assertTrue(isSmbExpectedCloseError(primary))
         assertFalse(isSmbShareSessionDeath(primary))
     }
