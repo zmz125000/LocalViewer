@@ -292,8 +292,7 @@ object SmbGateway {
 
     private enum class TransportRole { Browse, List, Video }
 
-    private fun smbConfig(forList: Boolean = false): SmbConfig =
-        smbConfig(if (forList) TransportRole.List else TransportRole.Browse)
+    private fun smbConfig(forList: Boolean = false): SmbConfig = smbConfig(if (forList) TransportRole.List else TransportRole.Browse)
 
     private fun smbConfig(role: TransportRole): SmbConfig {
         peekSmbConfig(role)?.let { return it }
