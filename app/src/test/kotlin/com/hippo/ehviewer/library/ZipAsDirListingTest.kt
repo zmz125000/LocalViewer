@@ -332,6 +332,29 @@ class ZipAsDirListingTest {
         assertTrue(inner.any { it is BrowseEntryRemote.RegularFile && it.name == "scene.json" })
         assertTrue(inner.any { it is BrowseEntryRemote.RegularFile && it.name == "thumb.png" })
         assertTrue(inner.none { it is BrowseEntryRemote.FolderGallery })
+        assertTrue(ZipAsDirListing.parentListingInteriors(mixed, "VaM.zip").isEmpty())
+        assertTrue(ZipAsDirListing.parentListingInteriors(comic, "comic.cbz").isNotEmpty())
+    }
+
+    @Test
+    fun videoFilesCountTowardGalleryZip() {
+        val clips = openZip(
+            "a.mp4" to ByteArray(8),
+            "b.mkv" to ByteArray(8),
+            "notes.txt" to byteArrayOf(1),
+        )
+        assertTrue(ZipAsDirListing.isGalleryZip(clips))
+        assertTrue(ZipAsDirListing.parentListingInteriors(clips, "clips.zip").isNotEmpty())
+
+        val mixed = openZip(
+            "clip.mp4" to ByteArray(8),
+            "a.meta" to byteArrayOf(1),
+            "b.cs" to byteArrayOf(2),
+            "c.bin" to byteArrayOf(3),
+            "d.hash" to byteArrayOf(4),
+        )
+        assertFalse(ZipAsDirListing.isGalleryZip(mixed))
+        assertTrue(ZipAsDirListing.parentListingInteriors(mixed, "pack.zip").isEmpty())
     }
 
     @Test

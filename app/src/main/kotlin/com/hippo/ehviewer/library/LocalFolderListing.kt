@@ -524,7 +524,7 @@ object LocalFolderListing {
         runParallel(zips) { child ->
             withLocalZipCentralDirectory(dir / child.name) { cd ->
                 out[child.name] = ZipAsDirListing.zipRootListingFromCd(cd)
-                zipInteriors?.putAll(ZipAsDirListing.virtualFolderTree(cd, child.name))
+                zipInteriors?.putAll(ZipAsDirListing.parentListingInteriors(cd, child.name))
             }
         }
         return out

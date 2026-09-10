@@ -81,28 +81,41 @@ object ZipAsDirListing {
     }
 
     /**
-     * Image-heavy zip (comics / media samples): FolderGallery classify + promote.
-     * Mixed asset packs (VaM, Unity, …) stay uncategorized dirs/files after the same
-     * full EOCD parse.
+     * Image/video-heavy zip (comics / clips): FolderGallery classify + promote.
+     * Mixed asset packs (VaM, Unity, …) stay a Directory on the parent listing;
+     * the folder index is built only when the user enters ([virtualFolderTree]).
      */
     fun isGalleryZip(cd: ZipCentralDirectory): Boolean {
         var files = 0
-        var images = 0
+        var media = 0
         for (entry in cd.entries) {
             if (entry.isEncrypted || entry.isDirectory) continue
             val name = normalizeMember(entry.name) ?: continue
             val base = name.substringAfterLast('/')
             if (base.isEmpty() || base.startsWith('.')) continue
             files++
-            if (isImageFileName(base)) images++
+            if (isImageFileName(base) || isVideoFileName(base)) media++
         }
-        if (files == 0 || images == 0) return false
-        return images * 2 >= files
+        if (files == 0 || media == 0) return false
+        return media * 2 >= files
+    }
+
+    /**
+     * Parent-listing persist: gallery zips only. Mixed packs skip this so the parent
+     * folder does not index the virtual tree; [listZipVirtualDirectory] builds it on enter.
+     */
+    fun parentListingInteriors(
+        cd: ZipCentralDirectory,
+        zipFileName: String,
+    ): Map<String, List<BrowseEntryRemote>> = if (isGalleryZip(cd)) {
+        classifyAllVirtualFolders(cd, zipFileName)
+    } else {
+        emptyMap()
     }
 
     /**
      * Whole virtual tree after one EOCD/CD parse. Gallery zips use [classifyAllVirtualFolders];
-     * mixed zips use [uncategorizedAllVirtualFolders]. Persist so inner nav / slim skip EOCD.
+     * mixed zips use [uncategorizedAllVirtualFolders]. Called when entering the zip.
      */
     fun virtualFolderTree(
         cd: ZipCentralDirectory,
@@ -335,7 +348,7 @@ object ZipAsDirListing {
         val grandPeeks: Map<String, List<RemoteChild>>,
         /**
          * False for mixed asset zips: parent listing shows a Navigable dir from [children]
-         * without gallery promote. Full EOCD still ran.
+         * without gallery promote and without persisting the virtual folder index.
          */
         val classified: Boolean = true,
     )

@@ -2425,7 +2425,7 @@ object SmbGateway {
                             ).use { src ->
                                 val cd = ZipCentralDirectory.open(src) ?: return@use
                                 out[child.name] = ZipAsDirListing.zipRootListingFromCd(cd)
-                                interiors.putAll(ZipAsDirListing.virtualFolderTree(cd, child.name))
+                                interiors.putAll(ZipAsDirListing.parentListingInteriors(cd, child.name))
                             }
                         }
                     }
