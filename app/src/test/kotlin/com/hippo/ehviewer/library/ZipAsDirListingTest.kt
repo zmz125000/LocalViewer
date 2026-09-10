@@ -325,6 +325,7 @@ class ZipAsDirListingTest {
         )
         assertFalse(ZipAsDirListing.isGalleryZip(mixed))
         assertFalse(ZipAsDirListing.zipRootListingFromCd(mixed).classified)
+        assertTrue(ZipAsDirListing.zipRootListingFromCd(mixed).children.isEmpty())
         val tree = ZipAsDirListing.virtualFolderTree(mixed, "VaM.zip")
         assertEquals(setOf("VaM.zip", "VaM.zip/VaM"), tree.keys)
         assertTrue(tree.getValue("VaM.zip").none { it is BrowseEntryRemote.FolderGallery })
@@ -591,6 +592,78 @@ class ZipAsDirListingTest {
         val expansion = ZipAsDirListing.expandZipFilesAsFakeFolders(children) { null }
         assertTrue(expansion.children.single().let { !it.isDirectory && it.name == "broken.zip" })
         assertTrue(expansion.peeks.isEmpty())
+    }
+
+    @Test
+    fun mixedZipParentExpansionIsNavigableWithoutPeek() {
+        val children = listOf(RemoteChild(name = "pack.zip", isDirectory = false))
+        val expansion = ZipAsDirListing.expandZipFilesAsFakeFolders(children) {
+            ZipAsDirListing.ZipRootListing(
+                children = listOf(RemoteChild(name = "scene.json", isDirectory = false)),
+                grandPeeks = emptyMap(),
+                classified = false,
+            )
+        }
+        assertTrue(expansion.children.single().let { it.isDirectory && it.name == "pack.zip" })
+        assertTrue(expansion.peeks.isEmpty())
+        assertEquals(setOf("pack.zip"), expansion.mixedZipNames)
+        val classified = ZipAsDirListing.classifyListingWithZipAsDirs(
+            currentDirName = "Parent",
+            children = children,
+            childPeeks = emptyMap(),
+            grandPeeks = emptyMap(),
+        ) {
+            ZipAsDirListing.ZipRootListing(emptyList(), emptyMap(), classified = false)
+        }
+        val dir = classified.filterIsInstance<BrowseEntryRemote.Directory>().single()
+        assertEquals("pack.zip", dir.name)
+        assertEquals(DirPresence.Navigable, dir.presence)
+        assertTrue(classified.none { it is BrowseEntryRemote.FolderGallery })
+    }
+
+    @Test
+    fun mixedZipInteriorUsesZipPlainFolderVirtual() {
+        val mixed = listOf(
+            BrowseEntryRemote.Directory(
+                name = "VaM",
+                hasVideo = false,
+                hasGallery = false,
+                presence = DirPresence.Navigable,
+            ),
+            BrowseEntryRemote.RegularFile(name = "readme.txt", fileName = "readme.txt"),
+        )
+        assertTrue(isZipPlainFolderListing("share/pack.zip", mixed))
+        assertTrue(isZipPlainFolderListing("pack.zip/VaM", mixed))
+        assertFalse(isZipPlainFolderListing("share/Album", mixed))
+        assertFalse(isZipPlainFolderListing("share/pack.zip", emptyList()))
+        val gallery = listOf(
+            BrowseEntryRemote.FolderGallery(
+                name = "Album",
+                relativeName = "pack.zip/Album",
+                pageCount = 2,
+                coverFileName = "01.jpg",
+                imageFileNames = listOf("01.jpg", "02.jpg"),
+            ),
+        )
+        assertFalse(isZipPlainFolderListing("share/pack.zip", gallery))
+        assertEquals(
+            BrowseVirtualKind.ZipPlainFolder,
+            smbBrowseVirtual(
+                isServerRootSource = false,
+                relativeDir = "share/pack.zip",
+                photoGridDir = null,
+                zipPlainFolder = true,
+            ),
+        )
+        assertEquals(
+            BrowseVirtualKind.PhotoGrid,
+            smbBrowseVirtual(
+                isServerRootSource = false,
+                relativeDir = "share/pack.zip",
+                photoGridDir = "share/pack.zip",
+                zipPlainFolder = true,
+            ),
+        )
     }
 
     @Test

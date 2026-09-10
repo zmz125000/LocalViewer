@@ -85,20 +85,7 @@ object ZipAsDirListing {
      * Mixed asset packs (VaM, Unity, …) stay a Directory on the parent listing;
      * the folder index is built only when the user enters ([virtualFolderTree]).
      */
-    fun isGalleryZip(cd: ZipCentralDirectory): Boolean {
-        var files = 0
-        var media = 0
-        for (entry in cd.entries) {
-            if (entry.isEncrypted || entry.isDirectory) continue
-            val name = normalizeMember(entry.name) ?: continue
-            val base = name.substringAfterLast('/')
-            if (base.isEmpty() || base.startsWith('.')) continue
-            files++
-            if (isImageFileName(base) || isVideoFileName(base)) media++
-        }
-        if (files == 0 || media == 0) return false
-        return media * 2 >= files
-    }
+    fun isGalleryZip(cd: ZipCentralDirectory): Boolean = cd.gallery
 
     /**
      * Parent-listing persist: gallery zips only. Mixed packs skip this so the parent
@@ -347,8 +334,8 @@ object ZipAsDirListing {
         /** Leaf basename → listing; caller prefixes with `zipName/`. */
         val grandPeeks: Map<String, List<RemoteChild>>,
         /**
-         * False for mixed asset zips: parent listing shows a Navigable dir from [children]
-         * without gallery promote and without persisting the virtual folder index.
+         * False for mixed asset zips: parent listing shows a Navigable dir
+         * without CD peek, gallery promote, or persisting the virtual folder index.
          */
         val classified: Boolean = true,
     )
@@ -363,6 +350,8 @@ object ZipAsDirListing {
         val children: List<RemoteChild>,
         val peeks: Map<String, List<RemoteChild>>,
         val grandPeeks: Map<String, List<RemoteChild>>,
+        /** Mixed zips: Navigable dirs on the parent listing, no CD peek. */
+        val mixedZipNames: Set<String> = emptySet(),
     )
 
     /** Flat images, or exactly one wrapper folder of images — open as a gallery, not a dir. */
@@ -394,10 +383,10 @@ object ZipAsDirListing {
     }
 
     fun zipRootListingFromCd(cd: ZipCentralDirectory, innerPrefix: String = ""): ZipRootListing {
-        val peek = listChildren(cd, innerPrefix)
-        if (!isGalleryZip(cd)) {
-            return ZipRootListing(peek, emptyMap(), classified = false)
+        if (!cd.gallery) {
+            return ZipRootListing(emptyList(), emptyMap(), classified = false)
         }
+        val peek = listChildren(cd, innerPrefix)
         val leaves = peek.filter { it.isDirectory && isPromotableLeafDirName(it.name) }
         val leavesToPeek = if (leaves.size in 1..SMB_PROMOTE_MAX_LEAVES) {
             leaves
@@ -429,6 +418,7 @@ object ZipAsDirListing {
         }
         val peeks = LinkedHashMap<String, List<RemoteChild>>()
         val grandPeeks = LinkedHashMap<String, List<RemoteChild>>()
+        val mixedZipNames = LinkedHashSet<String>()
         val out = ArrayList<RemoteChild>(children.size)
         for (child in children) {
             if (child.isDirectory || !isZipArchiveFileName(child.name)) {
@@ -440,15 +430,17 @@ object ZipAsDirListing {
                 out += child
                 continue
             }
-            peeks[child.name] = listing.children
-            if (listing.classified) {
-                for ((leaf, leafPeek) in listing.grandPeeks) {
-                    grandPeeks["${child.name}/$leaf"] = leafPeek
-                }
-            }
             out += child.copy(isDirectory = true)
+            if (!listing.classified) {
+                mixedZipNames += child.name
+                continue
+            }
+            peeks[child.name] = listing.children
+            for ((leaf, leafPeek) in listing.grandPeeks) {
+                grandPeeks["${child.name}/$leaf"] = leafPeek
+            }
         }
-        return ZipFakeFolderExpansion(out, peeks, grandPeeks)
+        return ZipFakeFolderExpansion(out, peeks, grandPeeks, mixedZipNames)
     }
 
     /**
@@ -470,7 +462,15 @@ object ZipAsDirListing {
         grands.putAll(grandPeeks)
         grands.putAll(expansion.grandPeeks)
         val tagged = expansion.children.withHiddenFlags(peeks)
-        return classifyRemoteListingWithPeeks(currentDirName, tagged, peeks, grands)
+        val classified = classifyRemoteListingWithPeeks(currentDirName, tagged, peeks, grands)
+        if (expansion.mixedZipNames.isEmpty()) return classified
+        return classified.map { entry ->
+            if (entry is BrowseEntryRemote.Directory && entry.name in expansion.mixedZipNames) {
+                entry.copy(presence = DirPresence.Navigable)
+            } else {
+                entry
+            }
+        }
     }
 
     fun folderGalleryForZip(

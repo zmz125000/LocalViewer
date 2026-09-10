@@ -69,6 +69,7 @@ import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseEntry
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
@@ -94,6 +95,7 @@ import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
+import com.hippo.ehviewer.library.isZipPlainFolderListingLocal
 import com.hippo.ehviewer.library.materializeLocalEntries
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
@@ -177,10 +179,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val showHiddenFiles by Settings.browseShowHiddenFiles.collectAsState()
     val showVirtualGalleries by Settings.browseShowVirtualGalleries.collectAsState()
     // Same virtual-layer rules as SMB RPC root / photo grid (not regular folder-view mode).
-    val virtual = if (stack.lastOrNull()?.photoGrid == true) {
-        BrowseVirtualKind.PhotoGrid
-    } else {
-        BrowseVirtualKind.None
+    val relativeDirForMode = stack.lastOrNull()?.relativePath.orEmpty()
+    val virtual = when {
+        stack.lastOrNull()?.photoGrid == true -> BrowseVirtualKind.PhotoGrid
+        isZipPlainFolderListingLocal(relativeDirForMode, displayEntries) ->
+            BrowseVirtualKind.ZipPlainFolder
+        else -> BrowseVirtualKind.None
     }
     val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
     val photoGridMode by Settings.photoGridMode.collectAsState()
@@ -201,7 +205,17 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     .filterIsInstance<BrowseEntry.RegularFile>()
                     .filter { isImageFileName(it.name) }
                     .sortedWith { a, b -> naturalCompare(a.name, b.name) }
-            else ->
+            BrowseVirtualKind.ZipPlainFolder ->
+                displayEntries
+                    .filterByContentMode(
+                        BrowseContentMode.Folder,
+                        showHiddenFiles,
+                        showVirtualGalleries,
+                    )
+                    .filterSmallGalleries(showSmallGalleries, smallGalleryMinPages)
+            BrowseVirtualKind.RpcShareRoot,
+            BrowseVirtualKind.None,
+            ->
                 displayEntries
                     .filterByContentMode(contentMode, showHiddenFiles, showVirtualGalleries)
                     .filterSmallGalleries(showSmallGalleries, smallGalleryMinPages)

@@ -27,6 +27,7 @@ import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.ZipAsDirListing
+import com.hippo.ehviewer.library.ZipCdParse
 import com.hippo.ehviewer.library.ZipCentralDirectory
 import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipMemberCover
@@ -2377,7 +2378,7 @@ object SmbGateway {
                     yieldable = true,
                     readahead = false,
                 ).use { src ->
-                    val cd = ZipCentralDirectory.open(src) ?: return@use emptyList()
+                    val cd = ZipCentralDirectory.open(src, ZipCdParse.Enter) ?: return@use emptyList()
                     persistZipVirtualFolderTree(source, configKey, zipRel, cd)
                     if (stale && parentEntries != null) {
                         clearZipAsDirStaleOnParent(source, configKey, zipRel, zipName, parentEntries)
@@ -2423,7 +2424,7 @@ object SmbGateway {
                                 knownSize = child.size,
                                 readahead = false,
                             ).use { src ->
-                                val cd = ZipCentralDirectory.open(src) ?: return@use
+                                val cd = ZipCentralDirectory.open(src, ZipCdParse.Parent) ?: return@use
                                 out[child.name] = ZipAsDirListing.zipRootListingFromCd(cd)
                                 interiors.putAll(ZipAsDirListing.parentListingInteriors(cd, child.name))
                             }

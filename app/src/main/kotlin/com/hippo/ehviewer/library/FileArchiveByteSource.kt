@@ -73,10 +73,14 @@ fun openLocalArchiveByteSource(path: Path): ArchiveByteSource? = runCatching {
 }.getOrNull()
 
 /** Parse ZIP EOCD+CD then run [block]; always closes the underlying source. */
-fun <T> withLocalZipCentralDirectory(path: Path, block: (ZipCentralDirectory) -> T): T? {
+fun <T> withLocalZipCentralDirectory(
+    path: Path,
+    mode: ZipCdParse = ZipCdParse.Full,
+    block: (ZipCentralDirectory) -> T,
+): T? {
     val source = openLocalArchiveByteSource(path) ?: return null
     return try {
-        val cd = ZipCentralDirectory.open(source) ?: return null
+        val cd = ZipCentralDirectory.open(source, mode) ?: return null
         block(cd)
     } finally {
         runCatching { source.close() }

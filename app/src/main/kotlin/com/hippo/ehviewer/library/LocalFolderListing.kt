@@ -121,7 +121,7 @@ object LocalFolderListing {
             NetworkFolderIndexCache.removeLocalUnder(rootId, zipRel)
         }
 
-        val tree = withLocalZipCentralDirectory(zipPath) { cd ->
+        val tree = withLocalZipCentralDirectory(zipPath, ZipCdParse.Enter) { cd ->
             ZipAsDirListing.virtualFolderTree(cd, zipName)
         } ?: return@withContext null
         val treeKey = ZipAsDirListing.virtualRelativeDir(zipName, inner)
@@ -522,7 +522,7 @@ object LocalFolderListing {
         if (zips.isEmpty()) return emptyMap()
         val out = ConcurrentHashMap<String, ZipAsDirListing.ZipRootListing>()
         runParallel(zips) { child ->
-            withLocalZipCentralDirectory(dir / child.name) { cd ->
+            withLocalZipCentralDirectory(dir / child.name, ZipCdParse.Parent) { cd ->
                 out[child.name] = ZipAsDirListing.zipRootListingFromCd(cd)
                 zipInteriors?.putAll(ZipAsDirListing.parentListingInteriors(cd, child.name))
             }

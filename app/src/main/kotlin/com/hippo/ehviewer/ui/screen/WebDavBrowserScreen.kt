@@ -67,6 +67,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
 import com.hippo.ehviewer.library.ArchiveTooLargeException
+import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
@@ -95,6 +96,7 @@ import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isStreamableArchiveFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.isZipMemberTooLarge
+import com.hippo.ehviewer.library.isZipPlainFolderListing
 import com.hippo.ehviewer.library.joinRemoteArchivePath
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
@@ -213,10 +215,15 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     val browseZipAsDir by Settings.browseZipAsDir.collectAsState()
     val photoGridMode by Settings.photoGridMode.collectAsState()
     val relativeDirForMode = segments.joinToString("/")
-    val virtual = if (photoGridDir == relativeDirForMode) {
-        BrowseVirtualKind.PhotoGrid
-    } else {
-        BrowseVirtualKind.None
+    val zipPlainFolder = isZipPlainFolderListing(
+        relativeDirForMode,
+        hasFolderGallery = entries.any { it is BrowseEntryRemote.FolderGallery },
+        listingReady = listedDir == relativeDirForMode && entries.isNotEmpty(),
+    )
+    val virtual = when {
+        photoGridDir == relativeDirForMode -> BrowseVirtualKind.PhotoGrid
+        zipPlainFolder -> BrowseVirtualKind.ZipPlainFolder
+        else -> BrowseVirtualKind.None
     }
     val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
     val photoGridNow = rememberUpdatedState(photoGrid)
@@ -282,7 +289,17 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     .filterIsInstance<BrowseEntryRemote.RegularFile>()
                     .filter { isImageFileName(it.fileName.substringAfterLast('/')) }
                     .sortedWith { a, b -> naturalCompare(a.name, b.name) }
-            else ->
+            BrowseVirtualKind.ZipPlainFolder ->
+                displayEntries
+                    .filterRemoteByContentMode(
+                        BrowseContentMode.Folder,
+                        showHiddenFiles,
+                        showVirtualGalleries,
+                    )
+                    .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
+            BrowseVirtualKind.RpcShareRoot,
+            BrowseVirtualKind.None,
+            ->
                 displayEntries
                     .filterRemoteByContentMode(contentMode, showHiddenFiles, showVirtualGalleries)
                     .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
