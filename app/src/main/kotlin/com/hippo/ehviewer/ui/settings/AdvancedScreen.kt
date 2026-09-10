@@ -192,11 +192,6 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 entryValueRes = com.hippo.ehviewer.R.array.reader_decode_ahead_entry_values,
                 state = decodeAhead,
             )
-            SwitchPreference(
-                title = stringResource(id = R.string.settings_advanced_auto_decode_ahead),
-                summary = stringResource(id = R.string.settings_advanced_auto_decode_ahead_summary),
-                state = Settings.readerAutoDecodeAhead.asMutableState(),
-            )
             val smbSafeConcurrency = Settings.smbReaderSafeConcurrency.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.pref_smb_reader_safe_concurrency),
