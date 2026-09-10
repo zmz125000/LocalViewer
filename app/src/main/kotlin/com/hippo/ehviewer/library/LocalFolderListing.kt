@@ -2,15 +2,17 @@ package com.hippo.ehviewer.library
 
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
-import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okio.Path
@@ -22,10 +24,8 @@ import okio.Path.Companion.toPath
  * [classifyRemoteListingWithPeeks], optional disk index + slim quick scan.
  */
 object LocalFolderListing {
-    private val peekPool = Executors.newFixedThreadPool(8) { r ->
-        Thread(r, "local-browse-peek-${peekThreadSeq.getAndIncrement()}").apply { isDaemon = true }
-    }
-    private val peekThreadSeq = AtomicInteger(0)
+    /** Same idea as SMB/WebDAV peek gates: cap fan-out on [Dispatchers.IO], no extra pool. */
+    private const val PEEK_PARALLELISM = 8
 
     /** Deep peek/classify budget after shallow paint; keep shallow on expiry. */
     private const val DEEP_CLASSIFY_TIMEOUT_MS = 180_000L
@@ -37,24 +37,24 @@ object LocalFolderListing {
     )
 
     /**
-     * RAM / sync path used by sibling navigation and callers that only need a listing.
+     * RAM / cache path used by sibling navigation and callers that only need a listing.
      * Prefer [listDirectory] from the folder UI when index cache + quick scan matter.
      */
-    fun listDirectorySync(
+    suspend fun listDirectorySync(
         dir: Path,
         useCache: Boolean = true,
         preferMediaStore: Boolean = true,
-    ): List<BrowseEntry> {
+    ): List<BrowseEntry> = withContext(Dispatchers.IO) {
         val effective = resolveBrowsePath(dir, preferMediaStore = preferMediaStore)
         val key = BrowseSession.pathKey(effective)
         if (useCache) {
-            BrowseSession.getLocalListing(key)?.let { return it }
+            BrowseSession.getLocalListing(key)?.let { return@withContext it }
         }
         val remote = listDirectoryUncachedRemote(effective, preferMediaStore)
-        // Not session-current: sync path does not persist to NetworkFolderIndexCache.
+        // Not session-current: this path does not persist to NetworkFolderIndexCache.
         // Leaving current=false lets folder UI listDirectory hydrate/save + quick-scan.
         BrowseSession.putLocalListing(key, remote, sessionCurrent = false)
-        return materializeLocalEntries(effective, remote)
+        materializeLocalEntries(effective, remote)
     }
 
     /**
@@ -342,7 +342,7 @@ object LocalFolderListing {
         }
     }
 
-    fun listDirectoryUncachedRemote(
+    suspend fun listDirectoryUncachedRemote(
         dir: Path,
         preferMediaStore: Boolean,
     ): List<BrowseEntryRemote> {
@@ -429,7 +429,7 @@ object LocalFolderListing {
         )
     }
 
-    private fun classifyDirectoryChildren(
+    private suspend fun classifyDirectoryChildren(
         dir: Path,
         preferMediaStore: Boolean,
         children: List<RemoteChild>,
@@ -495,7 +495,7 @@ object LocalFolderListing {
      * Feed zip EOCD listings as fake folders into [classifyRemoteListingWithPeeks]
      * **before** DirectoryListing sees zip files as archives.
      */
-    private fun classifyChildren(
+    private suspend fun classifyChildren(
         dir: Path,
         dirName: String,
         children: List<RemoteChild>,
@@ -512,7 +512,7 @@ object LocalFolderListing {
         ) { zipListings[it] }
     }
 
-    private fun zipRootListings(
+    private suspend fun zipRootListings(
         dir: Path,
         children: List<RemoteChild>,
         zipInteriors: MutableMap<String, List<BrowseEntryRemote>>? = null,
@@ -605,16 +605,24 @@ object LocalFolderListing {
         }
     }
 
-    private fun <T> runParallel(items: List<T>, block: (T) -> Unit) {
+    private suspend fun <T> runParallel(items: List<T>, block: (T) -> Unit) {
         if (items.isEmpty()) return
         if (items.size == 1) {
+            coroutineContext.ensureActive()
             block(items[0])
             return
         }
-        val futures = items.map { item ->
-            peekPool.submit(Callable { block(item) })
+        coroutineScope {
+            val gate = Semaphore(PEEK_PARALLELISM)
+            items.map { item ->
+                async {
+                    gate.withPermit {
+                        coroutineContext.ensureActive()
+                        block(item)
+                    }
+                }
+            }.awaitAll()
         }
-        futures.forEach { it.get() }
     }
 
     private fun listChildrenRemote(
