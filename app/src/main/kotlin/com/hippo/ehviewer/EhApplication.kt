@@ -102,6 +102,9 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
         // from launchIO (late / wrong thread), which left light-mode status bar icons white.
         applyNightMode(Settings.theme.value)
         launchIO {
+            runCatching { SmbGateway.prewarm() }
+        }
+        launchIO {
             LogcatLogger.loggers += AndroidLogcatLogger(LogPriority.VERBOSE)
             Settings.saveCrashLog.valueFlow().collect {
                 if (it) {
