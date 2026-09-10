@@ -554,8 +554,8 @@ object LocalFolderListing {
         ZipAsDirListing.persistFolderIndexes(
             parentRelativeDir = parentRelativeDir,
             interiors = interiors,
-            save = { dir, entries ->
-                NetworkFolderIndexCache.saveLocal(rootId, configKey, dir, entries)
+            saveAll = { folders ->
+                NetworkFolderIndexCache.saveLocalAll(rootId, configKey, folders)
             },
             putRam = { dir, entries ->
                 BrowseSession.putLocalListing(

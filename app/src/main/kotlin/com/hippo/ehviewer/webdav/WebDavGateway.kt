@@ -628,8 +628,8 @@ object WebDavGateway {
         ZipAsDirListing.persistFolderIndexes(
             parentRelativeDir = parentRelativeDir,
             interiors = interiors,
-            save = { dir, entries ->
-                NetworkFolderIndexCache.saveWebDav(source.id, configKey, dir, entries)
+            saveAll = { folders ->
+                NetworkFolderIndexCache.saveWebDavAll(source.id, configKey, folders)
             },
             putRam = { dir, entries ->
                 BrowseSession.putWebDavListing(source.id, dir, entries, sessionCurrent = true)

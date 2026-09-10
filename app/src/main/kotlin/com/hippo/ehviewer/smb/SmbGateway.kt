@@ -2499,8 +2499,8 @@ object SmbGateway {
         ZipAsDirListing.persistFolderIndexes(
             parentRelativeDir = parentRelativeDir,
             interiors = interiors,
-            save = { dir, entries ->
-                NetworkFolderIndexCache.saveSmb(source.id, configKey, dir, entries)
+            saveAll = { folders ->
+                NetworkFolderIndexCache.saveSmbAll(source.id, configKey, folders)
             },
             putRam = { dir, entries ->
                 BrowseSession.putSmbListing(source.id, dir, entries, sessionCurrent = true)

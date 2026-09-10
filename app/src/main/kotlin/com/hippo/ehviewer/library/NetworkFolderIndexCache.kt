@@ -68,6 +68,16 @@ object NetworkFolderIndexCache {
         removedChildDirs: Set<String> = emptySet(),
     ): List<BrowseEntryRemote> = save("smb", sourceId, configKey, relativeDir, entries, removedChildDirs)
 
+    /**
+     * Apply many SMB folder listings and write the JSON **once**.
+     * Keys not present in [folders] are left unchanged.
+     */
+    suspend fun saveSmbAll(
+        sourceId: Long,
+        configKey: String,
+        folders: Map<String, List<BrowseEntryRemote>>,
+    ): Map<String, List<BrowseEntryRemote>> = saveAll("smb", sourceId, configKey, folders)
+
     suspend fun loadWebDav(
         sourceId: Long,
         configKey: String,
@@ -82,6 +92,16 @@ object NetworkFolderIndexCache {
         entries: List<BrowseEntryRemote>,
         removedChildDirs: Set<String> = emptySet(),
     ): List<BrowseEntryRemote> = save("webdav", sourceId, configKey, relativeDir, entries, removedChildDirs)
+
+    /**
+     * Apply many WebDAV folder listings and write the JSON **once**.
+     * Keys not present in [folders] are left unchanged.
+     */
+    suspend fun saveWebDavAll(
+        sourceId: Long,
+        configKey: String,
+        folders: Map<String, List<BrowseEntryRemote>>,
+    ): Map<String, List<BrowseEntryRemote>> = saveAll("webdav", sourceId, configKey, folders)
 
     suspend fun loadLocal(
         rootId: Long,

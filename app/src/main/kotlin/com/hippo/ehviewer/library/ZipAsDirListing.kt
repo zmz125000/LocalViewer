@@ -39,28 +39,36 @@ object ZipAsDirListing {
      * Persist classified zip-as-dir folders under [parentRelativeDir].
      *
      * [interiors] keys are zip-relative (`pack.zip`, `pack.zip/Album`, …) so one EOCD
-     * parse can store the whole virtual tree. Entering the zip or a subdir then hits
-     * RAM/disk without another CD / quick scan. Zip/cbz only.
+     * parse can store the whole virtual tree. [saveAll] must write every folder in one
+     * pass (one JSON rewrite). Entering the zip or a subdir then hits RAM/disk without
+     * another CD / quick scan. Zip/cbz only.
      *
      * @return saved listings keyed by full relativeDir (`parent/pack.zip/Album`).
      */
     suspend fun persistFolderIndexes(
         parentRelativeDir: String,
         interiors: Map<String, List<BrowseEntryRemote>>,
-        save: suspend (relativeDir: String, entries: List<BrowseEntryRemote>) -> List<BrowseEntryRemote>,
+        saveAll: suspend (folders: Map<String, List<BrowseEntryRemote>>) -> Map<String, List<BrowseEntryRemote>>,
         putRam: (relativeDir: String, entries: List<BrowseEntryRemote>) -> Unit,
     ): Map<String, List<BrowseEntryRemote>> {
         if (interiors.isEmpty()) return emptyMap()
-        val stored = LinkedHashMap<String, List<BrowseEntryRemote>>(interiors.size)
+        val updates = LinkedHashMap<String, List<BrowseEntryRemote>>(interiors.size)
         for ((rel, entries) in interiors) {
             val zipName = rel.substringBefore('/')
             if (!isZipArchiveFileName(zipName)) continue
-            val dir = joinPrefix(parentRelativeDir, rel)
-            val kept = save(dir, entries)
-            putRam(dir, kept)
-            stored[dir] = kept
+            updates[joinPrefix(parentRelativeDir, rel)] = entries
         }
-        return stored
+        if (updates.isEmpty()) return emptyMap()
+        val stored = saveAll(updates)
+        val out = LinkedHashMap<String, List<BrowseEntryRemote>>(updates.size)
+        for ((dir, entries) in updates) {
+            val kept = stored[dir]
+                ?: stored[dir.replace('\\', '/').trim('/')]
+                ?: entries
+            putRam(dir, kept)
+            out[dir] = kept
+        }
+        return out
     }
 
     /**

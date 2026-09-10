@@ -244,24 +244,28 @@ class ZipAsDirListingTest {
     @Test
     fun persistFolderIndexesSkipsNonZipNames() = runBlocking {
         val saved = ArrayList<String>()
+        var saveCalls = 0
         ZipAsDirListing.persistFolderIndexes(
             parentRelativeDir = "share",
             interiors = mapOf(
                 "pack.zip" to listOf(BrowseEntryRemote.RegularFile("a.jpg")),
                 "pack.rar" to listOf(BrowseEntryRemote.RegularFile("b.jpg")),
             ),
-            save = { dir, entries ->
-                saved += dir
-                entries
+            saveAll = { folders ->
+                saveCalls++
+                saved += folders.keys
+                folders
             },
             putRam = { _, _ -> },
         )
+        assertEquals(1, saveCalls)
         assertEquals(listOf("share/pack.zip"), saved)
     }
 
     @Test
     fun persistFolderIndexesSavesNestedVirtualDirs() = runBlocking {
         val saved = ArrayList<String>()
+        var saveCalls = 0
         ZipAsDirListing.persistFolderIndexes(
             parentRelativeDir = "share/comics",
             interiors = mapOf(
@@ -269,12 +273,14 @@ class ZipAsDirListingTest {
                 "pack.zip/Album" to listOf(BrowseEntryRemote.RegularFile("a.jpg")),
                 "notes.txt" to listOf(BrowseEntryRemote.RegularFile("x.txt")),
             ),
-            save = { dir, entries ->
-                saved += dir
-                entries
+            saveAll = { folders ->
+                saveCalls++
+                saved += folders.keys
+                folders
             },
             putRam = { _, _ -> },
         )
+        assertEquals(1, saveCalls)
         assertEquals(listOf("share/comics/pack.zip", "share/comics/pack.zip/Album"), saved)
     }
 
