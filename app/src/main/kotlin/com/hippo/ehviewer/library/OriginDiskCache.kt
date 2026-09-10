@@ -38,7 +38,7 @@ object OriginDiskCache {
     /** Generated browse/cover thumb long edge (px). */
     const val THUMB_EDGE = 768
 
-    /** Canonical on-disk thumb extension. Leftover `.jpg` files stay until LRU. */
+    /** Canonical on-disk thumb extension for platform stills. Lib/HDR thumbs use `.jpg`. */
     const val THUMB_EXT = "webp"
 
     const val THUMB_LEGACY_EXT = "jpg"
@@ -65,7 +65,7 @@ object OriginDiskCache {
     }
 
     /**
-     * Prefer a new WebP thumb; otherwise reuse a leftover JPEG of the same hash.
+     * Prefer WebP if present; otherwise the same-hash JPEG (Ultra HDR lib thumbs, or leftover SDR JPEG).
      * Does not encode. Null if neither file is present.
      */
     fun existingThumb(canonicalWebp: Path): Path? {

@@ -217,7 +217,8 @@ object SmbCache {
      * 2. If page cache already has the file (reader opened first) → MaxEdge/subsample offline
      * 3. Else download to **RAM** → [HdrConvertCache.writeThumbFromBytes] (HDR = MaxEdge only)
      *
-     * New encodes **always** land as WebP in [thumbRoot]. Leftover JPEGs are reused until LRU.
+     * New platform thumbs land as WebP; lib/HDR thumbs stay Ultra HDR JPEG on the
+     * same-hash `.jpg` sibling. Leftover JPEGs are reused until LRU.
      * When [cacheOriginal] is true and page cache is missing, download via [downloadIfNeeded]
      * (same path + HDR convert as the reader), then encode the thumb from that page file.
      */
@@ -254,8 +255,6 @@ object SmbCache {
                             THUMB_DISK_EDGE,
                             THUMB_WEBP_QUALITY,
                         )
-                        markPresent(destPath)
-                        touch(destPath)
                     } catch (e: Throwable) {
                         cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
                         throw e
@@ -271,14 +270,13 @@ object SmbCache {
                         quality = THUMB_WEBP_QUALITY,
                         fileNameHint = pageName,
                     )
-                    if (!ok || !dest.isFile || dest.length() == 0L) {
+                    if (!ok) {
                         error("SMB browse thumb failed for $remoteRelativeFile")
                     }
-                    markPresent(destPath)
-                    touch(destPath)
                 }
                 scheduleTrim()
-                destPath
+                cachedThumbIfPresent(sourceId, remoteRelativeFile)
+                    ?: error("SMB browse thumb missing after write for $remoteRelativeFile")
             }
         }
     }
@@ -386,8 +384,7 @@ object SmbCache {
     ): Path = HdrConvertCache.finalizeNetworkDownload(tmp, primaryPath, originalFileName)
 
     /**
-     * Decode [source] → small WebP at [dest] (same [smb_thumb_cache] key as always).
-     * Convert-path formats: native decode + libultrahdr then WebP; else ImageDecoder subsample.
+     * Decode [source] → small WebP, or Ultra HDR JPEG for lib stills (same thumb-cache key).
      *
      * Must stay suspend (no [runBlocking]): photo-grid leave cancels the parent
      * [ensureBrowseThumb] coroutine — runBlocking would keep encoding at high CPU.
@@ -405,8 +402,8 @@ object SmbCache {
             quality = quality,
             fileNameHint = source.name,
         )
-        if (!ok || !dest.isFile || dest.length() == 0L) {
-            error("Empty WebP thumb for ${source.name}")
+        if (!ok || OriginDiskCache.existingThumb(dest) == null) {
+            error("Empty thumb for ${source.name}")
         }
     }
 

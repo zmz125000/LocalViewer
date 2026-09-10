@@ -241,10 +241,11 @@ object HdrConvertCache {
     }
 
     /**
-     * Write long-edge [maxEdge] **WebP** thumb into caller-owned [dest].
+     * Write a long-edge [maxEdge] browse/cover thumb next to caller-owned [dest]
+     * (canonical `.webp` path, or leftover `.jpg`).
      *
-     * - Lib (JXR/JXL/PQ-AVIF): MaxEdge Ultra HDR JPEG in RAM, then WebP
-     * - Platform: ImageDecoder subsample → WebP
+     * - Lib (JXR/JXL/PQ-AVIF): MaxEdge Ultra HDR JPEG on the `.jpg` sibling — no WebP
+     * - Platform: ImageDecoder subsample → WebP at [dest]
      */
     suspend fun writeThumbJpeg(
         source: Path,
@@ -261,16 +262,16 @@ object HdrConvertCache {
         quality: Int = THUMB_WEBP_QUALITY,
         fileNameHint: String = source.name,
     ): Boolean = withContext(Dispatchers.IO) {
-        if (dest.isFile && dest.length() > 0L) return@withContext true
+        if (OriginDiskCache.existingThumb(dest) != null) return@withContext true
         val edge = maxEdge.coerceIn(64, 2048)
         val route = classifyPath(source, fileNameHint)
         val ok = if (route.needsUhdr) {
             val lib = route as StillRoute.Lib
-            writeConvertThumb(source, dest, edge, quality, fileNameHint, lib.codec)
+            writeConvertThumb(source, dest, edge, fileNameHint, lib.codec)
         } else {
             writePlatformThumb(source, dest, edge, quality)
         }
-        if (ok && dest.isFile && dest.length() > 0L) {
+        if (ok && OriginDiskCache.existingThumb(dest) != null) {
             OriginDiskCache.scheduleTrim()
             true
         } else {
@@ -398,17 +399,17 @@ object HdrConvertCache {
         quality: Int = THUMB_WEBP_QUALITY,
         fileNameHint: String,
     ): Boolean = withContext(Dispatchers.IO) {
-        if (destJpeg.isFile && destJpeg.length() > 0L) return@withContext true
+        if (OriginDiskCache.existingThumb(destJpeg) != null) return@withContext true
         if (bytes.isEmpty()) return@withContext false
         val edge = maxEdge.coerceIn(64, 2048)
         val route = classify(bytes, bytes.size, fileNameHint)
         val ok = if (route.needsUhdr) {
             val lib = route as StillRoute.Lib
-            writeConvertThumbBytes(bytes, destJpeg, edge, quality, lib.codec)
+            writeConvertThumbBytes(bytes, destJpeg, edge, lib.codec)
         } else {
             writePlatformThumbBytes(bytes, destJpeg, edge, quality)
         }
-        if (ok && destJpeg.isFile && destJpeg.length() > 0L) {
+        if (ok && OriginDiskCache.existingThumb(destJpeg) != null) {
             OriginDiskCache.scheduleTrim()
             true
         } else {
@@ -605,7 +606,6 @@ object HdrConvertCache {
         source: Path,
         dest: File,
         maxEdge: Int,
-        quality: Int,
         fileNameHint: String,
         codec: LibCodec,
     ): Boolean {
@@ -614,25 +614,21 @@ object HdrConvertCache {
             Log.e(TAG, "writeConvertThumb: unreadable $fileNameHint")
             return false
         }
-        return writeConvertThumbBytes(bytes, dest, maxEdge, quality, codec)
+        return writeConvertThumbBytes(bytes, dest, maxEdge, codec)
     }
 
-    /** Native MaxEdge still emits Ultra HDR JPEG; transcode to WebP for the thumb cache. */
+    /** Native MaxEdge Ultra HDR JPEG on the `.jpg` sibling — no second encode. */
     private suspend fun writeConvertThumbBytes(
         bytes: ByteArray,
         dest: File,
         maxEdge: Int,
-        quality: Int,
         codec: LibCodec,
-    ): Boolean {
-        val uhdrTmp = File("${dest.absolutePath}.uhdr.${System.nanoTime()}.jpg")
-        return try {
-            if (!convertToUhdr(bytes, uhdrTmp, codec, maxEdge = maxEdge)) return false
-            writePlatformThumb(uhdrTmp.toOkioPath(), dest, maxEdge, quality)
-        } finally {
-            if (uhdrTmp.exists()) uhdrTmp.delete()
-        }
-    }
+    ): Boolean = convertToUhdr(
+        bytes,
+        OriginDiskCache.jpegSibling(dest),
+        codec,
+        maxEdge = maxEdge,
+    )
 
     private fun writePlatformThumb(source: Path, destJpeg: File, maxEdge: Int, quality: Int): Boolean {
         return runCatching {

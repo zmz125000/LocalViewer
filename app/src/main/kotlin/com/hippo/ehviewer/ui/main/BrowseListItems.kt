@@ -1494,7 +1494,7 @@ fun BrowseCoverThumb(
                     }
                 }
                 if (extracted != null) {
-                    SmbCache.markPresent(thumbPath)
+                    SmbCache.markPresent(extracted)
                     localPath = extracted
                     fetchFailed = false
                 } else {
@@ -1552,7 +1552,7 @@ fun BrowseCoverThumb(
                     }
                 }
                 if (extracted != null) {
-                    WebDavCache.markPresent(thumbPath)
+                    WebDavCache.markPresent(extracted)
                     localPath = extracted
                     fetchFailed = false
                 } else {

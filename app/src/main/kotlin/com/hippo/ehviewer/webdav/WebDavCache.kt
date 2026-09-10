@@ -153,9 +153,10 @@ object WebDavCache {
 
     /**
      * Browse thumb: reuse page cache if present; else RAM download → MaxEdge-only thumb.
-     * New encodes land as WebP. Leftover JPEGs are reused until LRU. When [cacheOriginal]
-     * is true and page cache is missing, download via [downloadIfNeeded] (same path + HDR
-     * convert as the reader), then encode the thumb from that page file.
+     * New platform thumbs land as WebP; lib/HDR thumbs stay Ultra HDR JPEG. Leftover JPEGs
+     * are reused until LRU. When [cacheOriginal] is true and page cache is missing, download
+     * via [downloadIfNeeded] (same path + HDR convert as the reader), then encode the thumb
+     * from that page file.
      */
     suspend fun ensureBrowseThumb(
         sourceId: Long,
@@ -190,8 +191,6 @@ object WebDavCache {
                             THUMB_DISK_EDGE,
                             THUMB_WEBP_QUALITY,
                         )
-                        markPresent(destPath)
-                        touch(destPath)
                     } catch (e: Throwable) {
                         cachedThumbIfPresent(sourceId, remoteRelativeFile)?.let { return@withContext it }
                         throw e
@@ -207,14 +206,13 @@ object WebDavCache {
                         quality = THUMB_WEBP_QUALITY,
                         fileNameHint = name,
                     )
-                    if (!ok || !dest.isFile || dest.length() == 0L) {
+                    if (!ok) {
                         error("WebDAV browse thumb failed for $remoteRelativeFile")
                     }
-                    markPresent(destPath)
-                    touch(destPath)
                 }
                 scheduleTrim()
-                destPath
+                cachedThumbIfPresent(sourceId, remoteRelativeFile)
+                    ?: error("WebDAV browse thumb missing after write for $remoteRelativeFile")
             }
         }
     }
@@ -329,8 +327,8 @@ object WebDavCache {
             quality = quality,
             fileNameHint = source.name,
         )
-        check(ok && dest.isFile && dest.length() > 0L) {
-            "WebP thumb failed for ${source.name}"
+        check(ok && OriginDiskCache.existingThumb(dest) != null) {
+            "thumb failed for ${source.name}"
         }
     }
 

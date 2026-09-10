@@ -347,7 +347,7 @@ object ArchiveCoverCache {
         existingCover(dest)?.let { return it }
         return try {
             encodePage0Jpeg(bytes, extHint, dest)
-            dest.takeIf { isCachedOnDisk(it) }
+            existingCover(dest)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -372,13 +372,7 @@ object ArchiveCoverCache {
             File(dest.parent!!.toString()).mkdirs()
             val destFile = File(dest.toString())
             writeSubsampledThumb(src, destFile, THUMB_EDGE, THUMB_WEBP_QUALITY)
-            if (destFile.isFile && destFile.length() > 0L) {
-                markPresent(dest)
-                OriginDiskCache.scheduleTrim()
-                dest
-            } else {
-                null
-            }
+            existingCover(dest)?.also { OriginDiskCache.scheduleTrim() }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -533,7 +527,7 @@ object ArchiveCoverCache {
                 currentCoroutineContext().ensureActive()
                 val thumb = try {
                     encodePage0Jpeg(outcome.bytes, outcome.extHint, dest)
-                    dest.takeIf { isCachedOnDisk(it) }
+                    existingCover(dest)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
@@ -953,8 +947,8 @@ object ArchiveCoverCache {
     }
 
     /**
-     * Page 0 bytes → small WebP under [dest]. Safe outside [ArchiveAccess]
-     * (ImageDecoder / libultrahdr). No full-page dump under archive_thumb.
+     * Page 0 bytes → small WebP, or Ultra HDR JPEG for lib stills, under [dest]'s hash.
+     * Safe outside [ArchiveAccess] (ImageDecoder / libultrahdr). No full-page dump under archive_thumb.
      */
     private suspend fun encodePage0Jpeg(bytes: ByteArray, ext: String, dest: Path) {
         val hint = "page0.$ext"
@@ -967,10 +961,11 @@ object ArchiveCoverCache {
             quality = THUMB_WEBP_QUALITY,
             fileNameHint = hint,
         )
-        check(ok && destFile.isFile && destFile.length() > 0L) {
+        val hit = OriginDiskCache.existingThumb(dest)
+        check(ok && hit != null) {
             "thumb encode failed: $hint size=${bytes.size}"
         }
-        markPresent(dest)
+        markPresent(hit)
         OriginDiskCache.scheduleTrim()
     }
 
@@ -982,7 +977,7 @@ object ArchiveCoverCache {
             quality = quality,
             fileNameHint = source.name,
         )
-        check(ok && dest.isFile && dest.length() > 0L) {
+        check(ok && OriginDiskCache.existingThumb(dest) != null) {
             "thumb encode failed: ${source.name}"
         }
     }
