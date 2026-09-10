@@ -23,21 +23,31 @@ object LibraryScanner {
      * Rules:
      * - Any directory (including root) whose **direct** children include image files is a gallery.
      * - Images in subfolders are **not** part of the parent gallery; subfolders are scanned recursively.
-     * - zip/cbz (and other archive types) in a directory are each a separate gallery.
+     * - zip/cbz (and other archive types) in a directory are each a separate gallery
+     *   when [includeArchives] is true.
      *
      * Directory vs file uses the same listing as browse ([listBrowseChildren] / SAF MIME),
      * not Okio [isFile]/[isDirectory] metadata — providers often mislabel folders whose
      * names end in `.7z` / `.zip` as regular files by extension.
      *
      * SAF roots with media permission list folder galleries from MediaStore first
-     * (including nested dirs), then walk SAF only for archives and unindexed files.
+     * (including nested dirs). A recursive directory walk then runs only when
+     * MediaStore is unavailable **or** [includeArchives] is true (archives are not
+     * in MediaStore). Media-only startup/rescan stays on the single index query.
      */
-    fun scan(rootId: Long, rootPath: Path, rootDisplayName: String = ""): Result {
+    fun scan(
+        rootId: Long,
+        rootPath: Path,
+        rootDisplayName: String = "",
+        includeArchives: Boolean = true,
+        knownArchives: Map<String, List<LocalGalleryEntity>> = emptyMap(),
+    ): Result {
         val results = ArrayList<LocalGalleryEntity>()
         val folderPages = LinkedHashMap<String, List<String>>()
         val indexedFolders = LinkedHashSet<String>()
         val msRoot = tryConvertSafPathToMediaStore(rootPath)
-        if (msRoot != null && MediaPermissions.hasMediaAccess()) {
+        val mediaStoreIndexed = msRoot != null && MediaPermissions.hasMediaAccess()
+        if (mediaStoreIndexed) {
             scanMediaStoreFolderGalleries(
                 rootId = rootId,
                 safRoot = rootPath,
@@ -48,17 +58,27 @@ object LibraryScanner {
                 folderPages = folderPages,
             )
         }
-        scanDir(
-            rootId = rootId,
-            dir = rootPath,
-            relativePath = "",
-            rootDisplayName = rootDisplayName,
-            indexedFolders = indexedFolders,
-            out = results,
-            folderPages = folderPages,
-        )
+        if (needsDirectoryWalk(mediaStoreIndexed, includeArchives)) {
+            scanDir(
+                rootId = rootId,
+                dir = rootPath,
+                relativePath = "",
+                rootDisplayName = rootDisplayName,
+                indexedFolders = indexedFolders,
+                includeArchives = includeArchives,
+                knownArchives = knownArchives,
+                out = results,
+                folderPages = folderPages,
+            )
+        }
         return Result(results, folderPages)
     }
+
+    /**
+     * After a MediaStore folder index, walking the tree is only needed to find
+     * archives (and folders the index never saw).
+     */
+    fun needsDirectoryWalk(mediaStoreIndexed: Boolean, includeArchives: Boolean): Boolean = !mediaStoreIndexed || includeArchives
 
     private fun scanMediaStoreFolderGalleries(
         rootId: Long,
@@ -101,12 +121,35 @@ object LibraryScanner {
         }
     }
 
+    /**
+     * File path for an already-indexed archive / zip-as-dir gallery, used to skip
+     * re-opening the zip on startup. Regular folder galleries return null.
+     */
+    fun archiveFilePath(gallery: LocalGalleryEntity): String? {
+        ZipPaths.parseGallery(gallery.contentPath)?.let { return it.first }
+        if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) return gallery.contentPath
+        return null
+    }
+
+    /** Previous library rows keyed by archive/zip file path. */
+    fun groupKnownArchives(galleries: List<LocalGalleryEntity>): Map<String, List<LocalGalleryEntity>> {
+        if (galleries.isEmpty()) return emptyMap()
+        val out = LinkedHashMap<String, ArrayList<LocalGalleryEntity>>()
+        for (gallery in galleries) {
+            val key = archiveFilePath(gallery) ?: continue
+            out.getOrPut(key) { ArrayList() }.add(gallery)
+        }
+        return out
+    }
+
     private fun scanDir(
         rootId: Long,
         dir: Path,
         relativePath: String,
         rootDisplayName: String,
         indexedFolders: MutableSet<String>,
+        includeArchives: Boolean,
+        knownArchives: Map<String, List<LocalGalleryEntity>>,
         out: MutableList<LocalGalleryEntity>,
         folderPages: MutableMap<String, List<String>>,
     ) {
@@ -133,7 +176,7 @@ object LibraryScanner {
                 child.isDirectory && !isDotHiddenName(child.name) -> subdirs += child
                 child.isDirectory -> Unit
                 isImageFileName(child.name) -> images += child
-                isArchiveFileName(child.name) -> archives += child
+                includeArchives && isArchiveFileName(child.name) -> archives += child
             }
         }
 
@@ -170,6 +213,11 @@ object LibraryScanner {
             val contentPath = archive.path.toString()
             // Skip archives already confirmed empty (lazy cover open / prior hide).
             if (EmptyArchiveRegistry.isMarked(contentPath)) continue
+            knownArchives[contentPath]?.let { existing ->
+                // Startup: keep indexed zip/archive rows; do not re-parse EOCD / page count.
+                out += existing
+                continue
+            }
             val rel = if (relativePath.isEmpty()) {
                 archive.name
             } else {
@@ -212,7 +260,17 @@ object LibraryScanner {
             } else {
                 "$relativePath/${sub.name}"
             }
-            scanDir(rootId, sub.path, rel, rootDisplayName, indexedFolders, out, folderPages)
+            scanDir(
+                rootId,
+                sub.path,
+                rel,
+                rootDisplayName,
+                indexedFolders,
+                includeArchives,
+                knownArchives,
+                out,
+                folderPages,
+            )
         }
     }
 

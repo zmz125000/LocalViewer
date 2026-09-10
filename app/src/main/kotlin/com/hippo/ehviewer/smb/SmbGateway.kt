@@ -2378,12 +2378,12 @@ object SmbGateway {
                     readahead = false,
                 ).use { src ->
                     val cd = ZipCentralDirectory.open(src) ?: return@use emptyList()
-                    persistZipVirtualFolderTree(source, configKey, zipRel, inner, title, cd)
+                    persistZipVirtualFolderTree(source, configKey, zipRel, cd)
                     if (stale && parentEntries != null) {
                         clearZipAsDirStaleOnParent(source, configKey, zipRel, zipName, parentEntries)
                     }
                     BrowseSession.getSmbListing(source.id, relativeDir)
-                        ?: ZipAsDirListing.classifyAt(cd, inner, title)
+                        ?: ZipAsDirListing.listingAt(cd, inner, title)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -2405,6 +2405,7 @@ object SmbGateway {
         val zips = children.filter { !it.isDirectory && isZipArchiveFileName(it.name) }
         if (zips.isEmpty()) return emptyMap()
         val out = ConcurrentHashMap<String, ZipAsDirListing.ZipRootListing>()
+        val interiors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
         val gate = Semaphore(maxConcurrentOpsPerHost().coerceAtLeast(1))
         val t0 = System.nanoTime()
         coroutineScope {
@@ -2424,15 +2425,17 @@ object SmbGateway {
                             ).use { src ->
                                 val cd = ZipCentralDirectory.open(src) ?: return@use
                                 out[child.name] = ZipAsDirListing.zipRootListingFromCd(cd)
+                                interiors.putAll(ZipAsDirListing.virtualFolderTree(cd, child.name))
                             }
                         }
                     }
                 }
             }.awaitAll()
         }
+        persistZipVirtualInteriors(source, sourceConfigKey(source), relativeDir, interiors)
         logcat("FolderIndex") {
             "SMB zip-as-dir EOCD source=${source.id} dir=$relativeDir " +
-                "zips=${zips.size} ok=${out.size} " +
+                "zips=${zips.size} ok=${out.size} interiors=${interiors.size} " +
                 "ms=${(System.nanoTime() - t0) / 1_000_000}"
         }
         return out
@@ -2442,15 +2445,27 @@ object SmbGateway {
         source: SmbSourceEntity,
         configKey: String,
         zipRel: String,
-        inner: String,
-        title: String,
         cd: ZipCentralDirectory,
     ) {
         val zipName = zipRel.substringAfterLast('/').substringAfterLast('\\')
-        val key = if (inner.isEmpty()) zipName else "$zipName/$inner"
+        persistZipVirtualInteriors(
+            source,
+            configKey,
+            ZipAsDirListing.parentRelative(zipRel),
+            ZipAsDirListing.virtualFolderTree(cd, zipName),
+        )
+    }
+
+    private suspend fun persistZipVirtualInteriors(
+        source: SmbSourceEntity,
+        configKey: String,
+        parentRelativeDir: String,
+        interiors: Map<String, List<BrowseEntryRemote>>,
+    ) {
+        if (interiors.isEmpty()) return
         ZipAsDirListing.persistFolderIndexes(
-            parentRelativeDir = ZipAsDirListing.parentRelative(zipRel),
-            interiors = mapOf(key to ZipAsDirListing.classifyAt(cd, inner, title)),
+            parentRelativeDir = parentRelativeDir,
+            interiors = interiors,
             save = { dir, entries ->
                 NetworkFolderIndexCache.saveSmb(source.id, configKey, dir, entries)
             },
@@ -3022,7 +3037,7 @@ object SmbGateway {
         yieldable: Boolean = false,
     ) = withIOContext {
         ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, member) ->
-            val local = ZipMemberCover.ensure("smb:${source.id}:$zipRel", member) {
+            val bytes = ZipMemberCover.extractBytes("smb:${source.id}:$zipRel", member) {
                 SmbArchiveByteSource(
                     source,
                     password,
@@ -3031,7 +3046,7 @@ object SmbGateway {
                     yieldable = yieldable,
                 )
             } ?: error("Cannot extract ZIP member $member from $zipRel")
-            java.io.File(local.toString()).inputStream().use { it.copyTo(out) }
+            out.write(bytes)
             return@withIOContext
         }
         val downloadContext = coroutineContext

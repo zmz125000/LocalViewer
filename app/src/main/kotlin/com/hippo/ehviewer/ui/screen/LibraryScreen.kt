@@ -635,7 +635,13 @@ private fun FavoriteSourceListRow(
     val leadSize = 56.dp
     val listDecodePx = CoverThumb.listDecodePx()
     ListItem(
-        headlineContent = { Text(fav.displayName) },
+        headlineContent = {
+            Text(
+                fav.displayName,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
         supportingContent = {
             // Same type icon idea as favourite grid caption (Lan/Cloud badge / source glyph).
             BrowseListSupportingContent(

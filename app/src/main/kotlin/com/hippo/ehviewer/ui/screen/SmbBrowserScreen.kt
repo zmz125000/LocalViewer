@@ -902,7 +902,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         navToSmbFolderReader(src.id, relativeDir, names, info, page)
     }
 
-    fun imageCoverFor(file: BrowseEntryRemote.RegularFile): BrowseCover.Smb {
+    fun imageCoverFor(file: BrowseEntryRemote.RegularFile): BrowseCover {
+        ZipAsDirListing.zipAsDirCoverParts(relativeDir, "", file.fileName)?.let { (zipRel, member) ->
+            return BrowseCover.SmbZipMember(sourceId, zipRel, member)
+        }
         val remote = if (relativeDir.isEmpty()) {
             file.fileName
         } else {

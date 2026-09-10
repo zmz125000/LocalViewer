@@ -293,8 +293,9 @@ object Settings : DataStorePreferences(null) {
     /**
      * When downloading a network image thumb (gallery cover, photo-grid, or Folder-mode
      * image): also store the **original** full file in page cache (`smb_cache` /
-     * `webdav_cache`) as the gallery first pic. Thumbs always go to `*_thumb_cache`.
-     * Independent of the download-thumb toggles. Pref key kept for upgrades.
+     * `webdav_cache` / zip-as-dir `zip_folder_pages`) as the gallery first pic.
+     * Thumbs always go to `*_thumb_cache`. Independent of the download-thumb toggles.
+     * Pref key kept for upgrades.
      */
     val saveThumbOriginalCache = boolPref("save_photo_grid_original_cache", false)
 
@@ -303,7 +304,7 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * When true (default), app start runs [com.hippo.ehviewer.library.LocalLibrary.startupMaintenance]
-     * (prune inaccessible galleries; MediaStore sources also rescan).
+     * (MediaStore index; archive-mode sources walk for new folders/archives and skip known zips).
      */
     val libraryStartupScan = boolPref("library_startup_scan", true)
 

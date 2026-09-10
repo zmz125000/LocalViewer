@@ -219,7 +219,13 @@ fun LocalGalleryListItem(
         lastModifiedMs = gallery.mtime,
     )
     ListItem(
-        headlineContent = { Text(gallery.title) },
+        headlineContent = {
+            Text(
+                gallery.title,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
         supportingContent = { Text(metaLine) },
         leadingContent = {
             CoverImage(
@@ -298,7 +304,13 @@ fun HistoryListItem(
         historyCoverKey(info)
     }
     ListItem(
-        headlineContent = { Text(info.title.orEmpty()) },
+        headlineContent = {
+            Text(
+                info.title.orEmpty(),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
         supportingContent = {
             // Same type icon as [HistoryGridItem] caption row.
             BrowseListSupportingContent(text = metaLine, typeIcon = placeholderIcon)

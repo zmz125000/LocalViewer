@@ -91,10 +91,11 @@ class ZipCentralDirectory private constructor(
         const val MAX_EXTRACT_BYTES = 64L * 1024L * 1024L
 
         /**
-         * Central-directory payload cap. Gallery zip/cbz CDs are tens of KB.
-         * A 64 MiB CD is one large-object allocation and stalls zip-as-dir listing.
+         * Central-directory payload cap (same as before the 8 MiB listing throttle).
+         * Sample zips and large gallery/media CDs stay well under this; it only
+         * rejects a pathological CD that would allocate tens of megabytes.
          */
-        const val MAX_CD_BYTES = 8L * 1024L * 1024L
+        const val MAX_CD_BYTES = 64L * 1024L * 1024L
 
         fun open(source: ArchiveByteSource): ZipCentralDirectory? {
             val size = runCatching { source.size }.getOrDefault(-1L)

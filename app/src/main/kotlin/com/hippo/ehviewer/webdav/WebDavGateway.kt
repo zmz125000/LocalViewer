@@ -540,12 +540,12 @@ object WebDavGateway {
                     readahead = false,
                 ).use { src ->
                     val cd = ZipCentralDirectory.open(src) ?: return@use emptyList()
-                    persistZipVirtualFolderTree(source, configKey, zipRel, inner, title, cd)
+                    persistZipVirtualFolderTree(source, configKey, zipRel, cd)
                     if (stale && parentEntries != null) {
                         clearZipAsDirStaleOnParent(source, configKey, zipRel, zipName, parentEntries)
                     }
                     BrowseSession.getWebDavListing(source.id, relativeDir)
-                        ?: ZipAsDirListing.classifyAt(cd, inner, title)
+                        ?: ZipAsDirListing.listingAt(cd, inner, title)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -567,6 +567,7 @@ object WebDavGateway {
         val zips = children.filter { !it.isDirectory && isZipArchiveFileName(it.name) }
         if (zips.isEmpty()) return emptyMap()
         val out = ConcurrentHashMap<String, ZipAsDirListing.ZipRootListing>()
+        val interiors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
         val t0 = System.nanoTime()
         val gate = Semaphore(peekConcurrency())
         coroutineScope {
@@ -585,15 +586,17 @@ object WebDavGateway {
                             ).use { src ->
                                 val cd = ZipCentralDirectory.open(src) ?: return@use
                                 out[child.name] = ZipAsDirListing.zipRootListingFromCd(cd)
+                                interiors.putAll(ZipAsDirListing.virtualFolderTree(cd, child.name))
                             }
                         }
                     }
                 }
             }.awaitAll()
         }
+        persistZipVirtualInteriors(source, sourceConfigKey(source), relativeDir, interiors)
         logcat("FolderIndex") {
             "WebDAV zip-as-dir EOCD source=${source.id} dir=$relativeDir " +
-                "zips=${zips.size} ok=${out.size} " +
+                "zips=${zips.size} ok=${out.size} interiors=${interiors.size} " +
                 "ms=${(System.nanoTime() - t0) / 1_000_000}"
         }
         return out
@@ -603,15 +606,27 @@ object WebDavGateway {
         source: WebDavSourceEntity,
         configKey: String,
         zipRel: String,
-        inner: String,
-        title: String,
         cd: ZipCentralDirectory,
     ) {
         val zipName = zipRel.substringAfterLast('/')
-        val key = if (inner.isEmpty()) zipName else "$zipName/$inner"
+        persistZipVirtualInteriors(
+            source,
+            configKey,
+            ZipAsDirListing.parentRelative(zipRel),
+            ZipAsDirListing.virtualFolderTree(cd, zipName),
+        )
+    }
+
+    private suspend fun persistZipVirtualInteriors(
+        source: WebDavSourceEntity,
+        configKey: String,
+        parentRelativeDir: String,
+        interiors: Map<String, List<BrowseEntryRemote>>,
+    ) {
+        if (interiors.isEmpty()) return
         ZipAsDirListing.persistFolderIndexes(
-            parentRelativeDir = ZipAsDirListing.parentRelative(zipRel),
-            interiors = mapOf(key to ZipAsDirListing.classifyAt(cd, inner, title)),
+            parentRelativeDir = parentRelativeDir,
+            interiors = interiors,
             save = { dir, entries ->
                 NetworkFolderIndexCache.saveWebDav(source.id, configKey, dir, entries)
             },

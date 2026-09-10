@@ -81,6 +81,49 @@ object ZipAsDirListing {
     }
 
     /**
+     * Image-heavy zip (comics / media samples): FolderGallery classify + promote.
+     * Mixed asset packs (VaM, Unity, …) stay uncategorized dirs/files after the same
+     * full EOCD parse.
+     */
+    fun isGalleryZip(cd: ZipCentralDirectory): Boolean {
+        var files = 0
+        var images = 0
+        for (entry in cd.entries) {
+            if (entry.isEncrypted || entry.isDirectory) continue
+            val name = normalizeMember(entry.name) ?: continue
+            val base = name.substringAfterLast('/')
+            if (base.isEmpty() || base.startsWith('.')) continue
+            files++
+            if (isImageFileName(base)) images++
+        }
+        if (files == 0 || images == 0) return false
+        return images * 2 >= files
+    }
+
+    /**
+     * Whole virtual tree after one EOCD/CD parse. Gallery zips use [classifyAllVirtualFolders];
+     * mixed zips use [uncategorizedAllVirtualFolders]. Persist so inner nav / slim skip EOCD.
+     */
+    fun virtualFolderTree(
+        cd: ZipCentralDirectory,
+        zipFileName: String,
+    ): Map<String, List<BrowseEntryRemote>> = if (isGalleryZip(cd)) {
+        classifyAllVirtualFolders(cd, zipFileName)
+    } else {
+        uncategorizedAllVirtualFolders(cd, zipFileName)
+    }
+
+    fun listingAt(
+        cd: ZipCentralDirectory,
+        innerPrefix: String,
+        title: String,
+    ): List<BrowseEntryRemote> = if (isGalleryZip(cd)) {
+        classifyAt(cd, innerPrefix, title)
+    } else {
+        uncategorizedAt(cd, innerPrefix)
+    }
+
+    /**
      * Every virtual folder in [cd] (zip root + nested dirs), keyed by zip-relative
      * path (`pack.zip`, `pack.zip/Album`). Cheap: filters the already-parsed CD.
      */
@@ -96,6 +139,80 @@ object ZipAsDirListing {
             out[key] = classifyAt(cd, prefix, title)
         }
         return out
+    }
+
+    /**
+     * Same prefixes as [classifyAllVirtualFolders], but Directory / file rows only
+     * (no FolderGallery / @ promote). Used for large mixed media zips after full EOCD.
+     */
+    fun uncategorizedAllVirtualFolders(
+        cd: ZipCentralDirectory,
+        zipFileName: String,
+    ): Map<String, List<BrowseEntryRemote>> {
+        val prefixes = allDirectoryPrefixes(cd)
+        val out = LinkedHashMap<String, List<BrowseEntryRemote>>(prefixes.size)
+        for (prefix in prefixes) {
+            val key = if (prefix.isEmpty()) zipFileName else "$zipFileName/$prefix"
+            out[key] = uncategorizedAt(cd, prefix)
+        }
+        return out
+    }
+
+    /** Immediate CD children as dirs + files; no gallery classification. */
+    fun uncategorizedAt(
+        cd: ZipCentralDirectory,
+        innerPrefix: String = "",
+    ): List<BrowseEntryRemote> {
+        val children = listChildren(cd, innerPrefix)
+        val dirs = ArrayList<BrowseEntryRemote.Directory>()
+        val archives = ArrayList<BrowseEntryRemote.ArchiveGallery>()
+        val videos = ArrayList<BrowseEntryRemote.VideoFile>()
+        val files = ArrayList<BrowseEntryRemote.RegularFile>()
+        for (child in children) {
+            if (child.isDirectory) {
+                val nested = listChildren(cd, joinPrefix(innerPrefix, child.name))
+                dirs += BrowseEntryRemote.Directory(
+                    name = child.name,
+                    hasVideo = nested.any { !it.isDirectory && isVideoFileName(it.name) },
+                    hasGallery = false,
+                    presence = if (nested.isEmpty()) DirPresence.Empty else DirPresence.Navigable,
+                    lastModifiedMs = child.lastModifiedMs,
+                    size = child.size,
+                    hidden = child.hidden || isDotHiddenName(child.name),
+                )
+                continue
+            }
+            val hidden = child.hidden || isDotHiddenName(child.name)
+            when {
+                isArchiveFileName(child.name) -> archives += BrowseEntryRemote.ArchiveGallery(
+                    name = child.name,
+                    fileName = child.name,
+                    size = child.size,
+                    lastModifiedMs = child.lastModifiedMs,
+                    hidden = hidden,
+                )
+                isVideoFileName(child.name) -> videos += BrowseEntryRemote.VideoFile(
+                    name = child.name,
+                    fileName = child.name,
+                    size = child.size,
+                    lastModifiedMs = child.lastModifiedMs,
+                    hidden = hidden,
+                )
+                else -> files += BrowseEntryRemote.RegularFile(
+                    name = child.name,
+                    fileName = child.name,
+                    size = child.size,
+                    lastModifiedMs = child.lastModifiedMs,
+                    hidden = hidden,
+                )
+            }
+        }
+        return buildList(dirs.size + archives.size + videos.size + files.size) {
+            addAll(dirs)
+            addAll(archives)
+            addAll(videos)
+            addAll(files)
+        }
     }
 
     /** Zip-root `""` plus every nested directory prefix (skips encrypted / dot-hidden). */
@@ -216,6 +333,11 @@ object ZipAsDirListing {
         val children: List<RemoteChild>,
         /** Leaf basename → listing; caller prefixes with `zipName/`. */
         val grandPeeks: Map<String, List<RemoteChild>>,
+        /**
+         * False for mixed asset zips: parent listing shows a Navigable dir from [children]
+         * without gallery promote. Full EOCD still ran.
+         */
+        val classified: Boolean = true,
     )
 
     /**
@@ -260,6 +382,9 @@ object ZipAsDirListing {
 
     fun zipRootListingFromCd(cd: ZipCentralDirectory, innerPrefix: String = ""): ZipRootListing {
         val peek = listChildren(cd, innerPrefix)
+        if (!isGalleryZip(cd)) {
+            return ZipRootListing(peek, emptyMap(), classified = false)
+        }
         val leaves = peek.filter { it.isDirectory && isPromotableLeafDirName(it.name) }
         val leavesToPeek = if (leaves.size in 1..SMB_PROMOTE_MAX_LEAVES) {
             leaves
@@ -272,7 +397,7 @@ object ZipAsDirListing {
         for (leaf in leavesToPeek) {
             grand[leaf.name] = listChildren(cd, joinPrefix(innerPrefix, leaf.name))
         }
-        return ZipRootListing(peek, grand)
+        return ZipRootListing(peek, grand, classified = true)
     }
 
     /**
@@ -303,8 +428,10 @@ object ZipAsDirListing {
                 continue
             }
             peeks[child.name] = listing.children
-            for ((leaf, leafPeek) in listing.grandPeeks) {
-                grandPeeks["${child.name}/$leaf"] = leafPeek
+            if (listing.classified) {
+                for ((leaf, leafPeek) in listing.grandPeeks) {
+                    grandPeeks["${child.name}/$leaf"] = leafPeek
+                }
             }
             out += child.copy(isDirectory = true)
         }
@@ -707,6 +834,20 @@ object ZipAsDirListing {
         cd: ZipCentralDirectory,
         archive: BrowseEntryRemote.ArchiveGallery,
     ): List<BrowseEntryRemote> {
+        if (!isGalleryZip(cd)) {
+            return listOf(
+                BrowseEntryRemote.Directory(
+                    name = archive.fileName,
+                    relativeName = archive.fileName,
+                    hasVideo = false,
+                    hasGallery = false,
+                    presence = DirPresence.Navigable,
+                    lastModifiedMs = archive.lastModifiedMs,
+                    size = archive.size,
+                    hidden = archive.hidden,
+                ),
+            )
+        }
         val listing = zipRootListingFromCd(cd)
         val fake = RemoteChild(
             name = archive.fileName,
