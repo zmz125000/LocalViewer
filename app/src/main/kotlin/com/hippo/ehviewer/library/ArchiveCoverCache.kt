@@ -55,7 +55,7 @@ sealed interface CoverEnsureResult {
 }
 
 /**
- * First-page JPEG thumbs for archive galleries (library + folder / network browse).
+ * First-page WebP thumbs for archive galleries (library + folder / network browse).
  * Long edge [THUMB_EDGE] matches SMB/WebDAV browse thumbs ([OriginDiskCache.THUMB_EDGE]).
  *
  * - Local ZIP/TAR: stream open via [PfdArchiveByteSource] (SAF-safe) + same paths as network
@@ -82,7 +82,7 @@ object ArchiveCoverCache {
     /** Local non-ZIP cover scan budget (mmap-free stream path). */
     const val LOCAL_NON_ZIP_SCAN_CAP = 100L * 1024L * 1024L
 
-    private const val THUMB_JPEG_QUALITY = 85
+    private const val THUMB_WEBP_QUALITY = OriginDiskCache.THUMB_QUALITY
     private const val FORMAT_VERSION = 2
 
     private val extractSlots = Semaphore(1)
@@ -111,12 +111,12 @@ object ArchiveCoverCache {
 
     fun thumbPathFor(archivePath: String, mtimeMs: Long = 0L, sizeBytes: Long = 0L): Path {
         val key = "archthumb:v$FORMAT_VERSION:$archivePath:$mtimeMs:$sizeBytes@$THUMB_EDGE"
-        return thumbRoot / "${sha256Hex(key)}.jpg"
+        return thumbRoot / OriginDiskCache.thumbFileName(sha256Hex(key))
     }
 
     /**
      * Remote stream cache keys (`smb:…`, `webdav:…`) and solid archives always use mtime/size 0
-     * so browse [ensureStreamCover] and the reader share one JPEG path.
+     * so browse [ensureStreamCover] and the reader share one thumb path.
      */
     private fun stableCoverHints(
         archiveKey: String,
@@ -136,7 +136,7 @@ object ArchiveCoverCache {
     }
 
     /**
-     * Final cover JPEG destination for [archiveKey].
+     * Final cover thumb destination for [archiveKey].
      * Solid + remote stream keys force mtime/size = 0 (shared browse/reader path).
      */
     fun resolveCoverDest(
@@ -156,7 +156,7 @@ object ArchiveCoverCache {
         archiveKey: String,
         destHintMtime: Long = 0L,
         destHintSize: Long = 0L,
-    ): Boolean = isCachedOnDisk(resolveCoverDest(archiveKey, destHintMtime, destHintSize))
+    ): Boolean = existingCover(resolveCoverDest(archiveKey, destHintMtime, destHintSize)) != null
 
     /**
      * Encode from a page file already published by the reader. The worker is application-owned:
@@ -170,8 +170,8 @@ object ArchiveCoverCache {
     ) {
         val dest = resolveCoverDest(archiveKey)
         val destKey = dest.toString()
-        if (isCachedOnDisk(dest)) {
-            dispatchEncodeDone(onDone, dest)
+        existingCover(dest)?.let { hit ->
+            dispatchEncodeDone(onDone, hit)
             return
         }
         val start = synchronized(fileEncodeLock) {
@@ -233,6 +233,15 @@ object ArchiveCoverCache {
         val ok = f.isFile && f.length() > 0L
         if (ok) knownPresent.add(key) else knownPresent.remove(key)
         return ok
+    }
+
+    /** WebP cover, else leftover JPEG of the same hash. */
+    fun cachedCoverIfPresent(dest: Path): Path? = existingCover(dest)
+
+    private fun existingCover(dest: Path): Path? {
+        val hit = OriginDiskCache.existingThumb(dest) ?: return null
+        markPresent(hit)
+        return hit
     }
 
     fun markPresent(path: Path) {
@@ -306,7 +315,7 @@ object ArchiveCoverCache {
             val mtime = if (!realFile) 0L else file.lastModified()
             val sizeHint = if (!realFile) 0L else file.length()
             val dest = thumbPathFor(key, mtime, sizeHint)
-            if (isCachedOnDisk(dest)) return@withIOContext CoverEnsureResult.Hit(dest)
+            existingCover(dest)?.let { return@withIOContext CoverEnsureResult.Hit(it) }
 
             ensureStreamCoverInternal(
                 cacheKey = key,
@@ -335,7 +344,7 @@ object ArchiveCoverCache {
         destHintSize: Long = 0L,
     ): Path? {
         val dest = resolveCoverDest(archiveKey, destHintMtime, destHintSize)
-        if (isCachedOnDisk(dest)) return dest
+        existingCover(dest)?.let { return it }
         return try {
             encodePage0Jpeg(bytes, extHint, dest)
             dest.takeIf { isCachedOnDisk(it) }
@@ -356,29 +365,19 @@ object ArchiveCoverCache {
      */
     suspend fun writeCoverFromExtractedPage(archiveKey: String, pageFile: Path): Path? {
         val dest = thumbPathFor(archiveKey, 0L, 0L)
-        if (isCachedOnDisk(dest)) return dest
+        existingCover(dest)?.let { return it }
         return try {
             val src = File(pageFile.toString())
             if (!src.isFile || src.length() == 0L) return null
             File(dest.parent!!.toString()).mkdirs()
-            val jpgTmp = File("$dest.jpg.${System.nanoTime()}")
-            try {
-                // writeThumbJpeg: convert-path → lib+libultrahdr into this dest; else ImageDecoder.
-                writeSubsampledJpeg(src, jpgTmp, THUMB_EDGE, THUMB_JPEG_QUALITY)
-                val destFile = File(dest.toString())
-                if (!jpgTmp.renameTo(destFile)) {
-                    jpgTmp.copyTo(destFile, overwrite = true)
-                    jpgTmp.delete()
-                }
-                if (destFile.isFile && destFile.length() > 0L) {
-                    markPresent(dest)
-                    OriginDiskCache.scheduleTrim()
-                    dest
-                } else {
-                    null
-                }
-            } finally {
-                if (jpgTmp.exists()) jpgTmp.delete()
+            val destFile = File(dest.toString())
+            writeSubsampledThumb(src, destFile, THUMB_EDGE, THUMB_WEBP_QUALITY)
+            if (destFile.isFile && destFile.length() > 0L) {
+                markPresent(dest)
+                OriginDiskCache.scheduleTrim()
+                dest
+            } else {
+                null
             }
         } catch (e: CancellationException) {
             throw e
@@ -441,11 +440,11 @@ object ArchiveCoverCache {
         fileName: String,
     ): CoverEnsureResult {
         val dest = destOverride ?: thumbPathFor(cacheKey, 0L, 0L)
-        if (isCachedOnDisk(dest)) return CoverEnsureResult.Hit(dest)
+        existingCover(dest)?.let { return CoverEnsureResult.Hit(it) }
         val isZip = fileName.isNotEmpty() && isZipArchiveFileName(fileName)
         val outcome = extractSlots.withPermit {
-            if (isCachedOnDisk(dest)) {
-                return@withPermit StreamExtractOutcome.Terminal(CoverEnsureResult.Hit(dest))
+            existingCover(dest)?.let {
+                return@withPermit StreamExtractOutcome.Terminal(CoverEnsureResult.Hit(it))
             }
             // Cached empty ZIP from a prior thumb/reader open — skip re-parse.
             if (isZip) {
@@ -676,10 +675,10 @@ object ArchiveCoverCache {
         openSource: suspend () -> ArchiveByteSource,
     ): CoverEnsureResult = withIOContext {
         val dest = thumbPathFor(cacheKey, 0L, 0L)
-        if (isCachedOnDisk(dest)) return@withIOContext CoverEnsureResult.Hit(dest)
+        existingCover(dest)?.let { return@withIOContext CoverEnsureResult.Hit(it) }
         coverFromDocumentExtractCache(cacheKey)?.let { return@withIOContext CoverEnsureResult.Hit(it) }
         extractSlots.withPermit {
-            if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
+            existingCover(dest)?.let { return@withPermit CoverEnsureResult.Hit(it) }
             coverFromDocumentExtractCache(cacheKey)?.let { return@withPermit CoverEnsureResult.Hit(it) }
             try {
                 openSource().use { source ->
@@ -706,10 +705,10 @@ object ArchiveCoverCache {
 
     private suspend fun ensureLocalDocumentCover(archivePath: Path, key: String): CoverEnsureResult {
         val dest = thumbPathFor(key, 0L, 0L)
-        if (isCachedOnDisk(dest)) return CoverEnsureResult.Hit(dest)
+        existingCover(dest)?.let { return CoverEnsureResult.Hit(it) }
         coverFromDocumentExtractCache(key)?.let { return CoverEnsureResult.Hit(it) }
         return extractSlots.withPermit {
-            if (isCachedOnDisk(dest)) return@withPermit CoverEnsureResult.Hit(dest)
+            existingCover(dest)?.let { return@withPermit CoverEnsureResult.Hit(it) }
             coverFromDocumentExtractCache(key)?.let { return@withPermit CoverEnsureResult.Hit(it) }
             try {
                 archivePath.openFileDescriptor("r").use { pfd ->
@@ -783,14 +782,14 @@ object ArchiveCoverCache {
         scanCap: Long,
     ): CoverEnsureResult {
         val dest = thumbPathFor(cacheKey, 0L, 0L)
-        if (isCachedOnDisk(dest)) return CoverEnsureResult.Hit(dest)
+        existingCover(dest)?.let { return CoverEnsureResult.Hit(it) }
 
         // Prefer page already extracted by a prior solid reader session.
         coverFromSolidExtractCache(cacheKey)?.let { return CoverEnsureResult.Hit(it) }
 
         val outcome = extractSlots.withPermit {
-            if (isCachedOnDisk(dest)) {
-                return@withPermit SolidExtractOutcome.Terminal(CoverEnsureResult.Hit(dest))
+            existingCover(dest)?.let {
+                return@withPermit SolidExtractOutcome.Terminal(CoverEnsureResult.Hit(it))
             }
 
             try {
@@ -904,13 +903,13 @@ object ArchiveCoverCache {
     }
 
     /**
-     * Disk-only cover resolve (no network): existing JPEG thumb, or encode from page 0
+     * Disk-only cover resolve (no network): existing WebP/JPEG thumb, or encode from page 0
      * (solid / document extract cache). Used by browse rows when network covers are off
      * or before extract. May encode a thumb if only the raw page is present.
      */
     suspend fun tryDiskCover(cacheKey: String): Path? {
         val dest = thumbPathFor(cacheKey, 0L, 0L)
-        if (isCachedOnDisk(dest)) return dest
+        existingCover(dest)?.let { return it }
         return coverFromSolidExtractCache(cacheKey) ?: coverFromDocumentExtractCache(cacheKey)
     }
 
@@ -954,49 +953,36 @@ object ArchiveCoverCache {
     }
 
     /**
-     * Page 0 bytes → small JPEG under [dest]. Safe outside [ArchiveAccess]
+     * Page 0 bytes → small WebP under [dest]. Safe outside [ArchiveAccess]
      * (ImageDecoder / libultrahdr). No full-page dump under archive_thumb.
      */
     private suspend fun encodePage0Jpeg(bytes: ByteArray, ext: String, dest: Path) {
         val hint = "page0.$ext"
         File(dest.parent!!.toString()).mkdirs()
-        val jpgTmp = File("$dest.jpg.${System.nanoTime()}")
-        try {
-            val ok = HdrConvertCache.writeThumbFromBytes(
-                bytes = bytes,
-                destJpeg = jpgTmp,
-                maxEdge = THUMB_EDGE,
-                quality = THUMB_JPEG_QUALITY,
-                fileNameHint = hint,
-            )
-            check(ok && jpgTmp.isFile && jpgTmp.length() > 0L) {
-                "thumb encode failed: $hint size=${bytes.size}"
-            }
-            val destFile = File(dest.toString())
-            if (!jpgTmp.renameTo(destFile)) {
-                jpgTmp.copyTo(destFile, overwrite = true)
-                jpgTmp.delete()
-            }
-            if (destFile.isFile && destFile.length() > 0L) {
-                markPresent(dest)
-                OriginDiskCache.scheduleTrim()
-            }
-        } finally {
-            if (jpgTmp.exists()) jpgTmp.delete()
+        val destFile = File(dest.toString())
+        val ok = HdrConvertCache.writeThumbFromBytes(
+            bytes = bytes,
+            destJpeg = destFile,
+            maxEdge = THUMB_EDGE,
+            quality = THUMB_WEBP_QUALITY,
+            fileNameHint = hint,
+        )
+        check(ok && destFile.isFile && destFile.length() > 0L) {
+            "thumb encode failed: $hint size=${bytes.size}"
         }
+        markPresent(dest)
+        OriginDiskCache.scheduleTrim()
     }
 
-    private suspend fun writeSubsampledJpeg(source: File, destJpeg: File, maxEdge: Int, quality: Int) {
-        // Already-on-disk extract page (solid/document cache). Convert-path → lib MaxEdge;
-        // else ImageDecoder. No full re-copy of the source into archive_thumb.
-        val ok = HdrConvertCache.writeThumbJpeg(
+    private suspend fun writeSubsampledThumb(source: File, dest: File, maxEdge: Int, quality: Int) {
+        val ok = HdrConvertCache.writeThumb(
             source = source.toOkioPath(),
-            destJpeg = destJpeg,
+            dest = dest,
             maxEdge = maxEdge,
             quality = quality,
             fileNameHint = source.name,
         )
-        check(ok && destJpeg.isFile && destJpeg.length() > 0L) {
+        check(ok && dest.isFile && dest.length() > 0L) {
             "thumb encode failed: ${source.name}"
         }
     }

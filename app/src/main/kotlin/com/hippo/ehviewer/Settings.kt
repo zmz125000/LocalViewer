@@ -250,7 +250,7 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * When false, SMB/WebDAV **archive/document** browse thumbs are not extracted over the network
-     * (cached JPEG / solid_extract / document_extract page 0 still show). Separate from
+     * (cached thumb / solid_extract / document_extract page 0 still show). Separate from
      * [downloadRemoteThumbs] so first-page extract can stay off without disabling folder image covers.
      * Default true.
      */
@@ -258,7 +258,7 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * When false, SMB/WebDAV **video** browse thumbs are not extracted over the network
-     * (already-cached JPEG in [com.hippo.ehviewer.library.VideoThumbnail] still shows).
+     * (already-cached file in [com.hippo.ehviewer.library.VideoThumbnail] still shows).
      * Local video always uses disk cache extraction. Default true.
      */
     val downloadNetworkVideoThumbs = boolPref("download_network_video_thumbs", true)
