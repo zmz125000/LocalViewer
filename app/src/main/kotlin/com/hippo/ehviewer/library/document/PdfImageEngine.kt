@@ -221,8 +221,8 @@ class PdfImageEngine private constructor(
                     )
                 }
                 if (images.isEmpty()) return null
-                if (images.any { !it.hasSeek } && !parser.bootstrap()) {
-                    logcat("PdfImage") { "openFromIndex legacy bootstrap failed size=$size" }
+                if (!parser.bootstrap()) {
+                    logcat("PdfImage") { "openFromIndex bootstrap failed size=$size" }
                     return null
                 }
                 if (parser.encrypted) {

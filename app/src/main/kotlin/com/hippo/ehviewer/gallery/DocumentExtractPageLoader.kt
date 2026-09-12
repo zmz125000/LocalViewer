@@ -89,23 +89,35 @@ suspend inline fun <T> useDocumentExtractPageLoader(
 
         // Prefer durable page list: skip PDF page-tree / EPUB OPF on reopen.
         val cachedIdx = DocumentExtractCache.loadUsableIndex(cacheKey, remoteSize = sizeHint)
-        // Close engine with the reader session (DocumentImageEngine is AutoCloseable).
-        val engine: DocumentImageEngine = install(
-            {
-                openDocumentEngine(
-                    source = source,
-                    sizeHint = sizeHint,
-                    formatHint = formatHint,
-                    titleHint = titleHint,
-                    cacheKey = cacheKey,
-                    cachedIndex = cachedIdx,
-                    progressivePdf = progressivePdf,
-                )
-            },
-            { value, _ -> value.close() },
-        )
+        val engine: DocumentImageEngine = try {
+            install(
+                {
+                    openDocumentEngine(
+                        source = source,
+                        sizeHint = sizeHint,
+                        formatHint = formatHint,
+                        titleHint = titleHint,
+                        cacheKey = cacheKey,
+                        cachedIndex = cachedIdx,
+                        progressivePdf = progressivePdf,
+                    )
+                },
+                { value, _ -> value.close() },
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (formatHint == "pdf") {
+                return@coroutineScope usePdfiumPageLoader(source, cacheKey, titleHint, info, startPage, remoteSize, block)
+            }
+            throw e
+        }
         val progressiveEngine = engine as? ProgressiveDocumentImageEngine
 
+        if (engine.pageCount <= 0 && formatHint == "pdf") {
+            engine.close()
+            return@coroutineScope usePdfiumPageLoader(source, cacheKey, titleHint, info, startPage, remoteSize, block)
+        }
         check(engine.pageCount > 0) { "Document has no playable images" }
 
         // Persist index early (incomplete until all pages extracted).

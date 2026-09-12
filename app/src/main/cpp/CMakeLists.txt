@@ -379,6 +379,7 @@ endif ()
 
 # Build and link our app's native lib
 add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c
+        pdfium_wrapper.cpp jni_pdfium.cpp
         ${EHVIEWER_HDR_SOURCES})
 if (EHVIEWER_HDR_CODECS)
     # libjpeg-turbo is built as an ExternalProject of libultrahdr (baseline SDR JPEG).
@@ -402,7 +403,7 @@ if (EHVIEWER_HDR_CODECS)
     list(APPEND EHVIEWER_HDR_LIBS ${EH_JPEG_LIB})
 endif ()
 target_link_libraries(
-        ${PROJECT_NAME} archive_static ehviewer_rust z ${EHVIEWER_HDR_LIBS} log
+        ${PROJECT_NAME} archive_static ehviewer_rust z ${EHVIEWER_HDR_LIBS} log jnigraphics
         -Wl,-u,JNI_OnLoad -Wl,--undefined-glob,Java_*
         -Wl,--version-script,${CMAKE_SOURCE_DIR}/libehviewer.map.txt
 )
