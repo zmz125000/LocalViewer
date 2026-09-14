@@ -485,7 +485,10 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 readerPlatformHighDepth.changesFlow(),
                 // ProXDR HEIC → UHDR convert path changes display file.
                 readerOppoProxdr.changesFlow(),
+                // Decode-size uses the downscale kernel when it is not Default.
+                readerDownscaleFilter.changesFlow(),
                 // readerHdrDisplay only toggles window COLOR_MODE_HDR — no page restart.
+                // Upscale filter is draw-time only (BitmapPainter rebuilds).
             ).collect {
                 pageLoader.restart()
             }

@@ -127,4 +127,23 @@ class ReaderResampleKernelTest {
         assertEquals(0f, originX, 0.01f)
         assertEquals(0f, originY, 0.01f)
     }
+
+    @Test
+    fun decodeFillSizeMatchesCoilFillIntoSquare() {
+        // 6000×4000 FILL into 1620×1620 → shorter side 1620 (2430×1620).
+        val (w, h) = readerDecodeFillSize(6000, 4000, 1620)
+        assertEquals(2430, w)
+        assertEquals(1620, h)
+        assertEquals(6000 to 4000, readerDecodeFillSize(6000, 4000, 4000))
+        assertEquals(800 to 600, readerDecodeFillSize(800, 600, 1620))
+    }
+
+    @Test
+    fun decodeMaxEdgeCapsLongSide() {
+        val (w, h) = readerDecodeMaxEdgeSize(6000, 4000, 1620)
+        assertEquals(1620, w)
+        assertEquals(1080, h)
+        assertEquals(800 to 600, readerDecodeMaxEdgeSize(800, 600, 1620))
+        assertEquals(6000 to 4000, readerDecodeMaxEdgeSize(6000, 4000, 0))
+    }
 }
