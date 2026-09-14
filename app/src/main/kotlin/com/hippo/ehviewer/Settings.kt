@@ -590,6 +590,13 @@ object Settings : DataStorePreferences(null) {
     val readerDecodeSize = intPref("pref_reader_decode_size", 0)
 
     /**
+     * Reader stills: Lanczos3 when drawing smaller than the bitmap, Catmull-Rom when
+     * drawing larger. Off = GPU bilinear (current). Coil and lib-direct stills share
+     * [com.hippo.ehviewer.ui.reader.BitmapPainter].
+     */
+    val readerCustomScaler = boolPref("pref_reader_custom_scaler", true)
+
+    /**
      * Prefer GPU hardware bitmaps in the reader.
      *
      * When on: Coil [allowHardware] for decode (no software intermediate for crop/QR —
