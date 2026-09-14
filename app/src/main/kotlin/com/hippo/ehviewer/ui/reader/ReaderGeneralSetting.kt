@@ -47,6 +47,10 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         )
     }
     SwitchChoice(
+        title = stringResource(id = R.string.settings_advanced_disable_reader_network_cache),
+        field = Settings.disableReaderNetworkCache.asMutableState(),
+    )
+    SwitchChoice(
         title = stringResource(id = R.string.pref_reader_lib_direct_bitmap),
         summary = stringResource(id = R.string.pref_reader_lib_direct_bitmap_summary),
         field = Settings.readerLibDirectBitmap.asMutableState(),
@@ -71,10 +75,6 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
     SwitchChoice(
         title = stringResource(id = R.string.pref_double_tap_to_zoom),
         field = Settings.doubleTapToZoom.asMutableState(),
-    )
-    SwitchChoice(
-        title = stringResource(id = R.string.settings_advanced_disable_reader_network_cache),
-        field = Settings.disableReaderNetworkCache.asMutableState(),
     )
     val fullscreen = Settings.fullscreen.asMutableState()
     SwitchChoice(
