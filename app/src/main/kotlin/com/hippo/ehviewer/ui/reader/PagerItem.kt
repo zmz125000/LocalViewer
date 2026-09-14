@@ -110,18 +110,19 @@ fun PagerItem(
         }
         is PageStatus.Ready -> {
             val image = state.image
-            val customScaler by Settings.readerCustomScaler.collectAsState()
+            val upscaleFilter by Settings.readerUpscaleFilter.collectAsState()
+            val downscaleFilter by Settings.readerDownscaleFilter.collectAsState()
             var painter by remember(image) { mutableStateOf<Painter?>(null) }
-            LaunchedEffect(image, customScaler) {
+            LaunchedEffect(image, upscaleFilter, downscaleFilter) {
                 if (!image.pin()) {
                     // Recycled / dead image still marked Ready — force a clean reload.
                     painter = null
                     pageLoader.retryPage(page.index)
                     return@LaunchedEffect
                 }
-                // BitmapPainter follows the scaler toggle. Do not rebuild DrawablePainter
+                // BitmapPainter follows resample prefs. Do not rebuild DrawablePainter
                 // (animated) — a new instance raced with onForgotten(stop) after scroll.
-                val next = image.toPainter(customScaler)
+                val next = image.toPainter(upscaleFilter, downscaleFilter)
                 if (painter == null || next is BitmapPainter) painter = next
                 try {
                     awaitCancellation()
@@ -352,8 +353,13 @@ private fun Modifier.rotate90FitLayout(
     }
 }
 
-private fun Image.toPainter(customScaler: Boolean) = when (val image = innerImage) {
-    is BitmapImage -> BitmapPainter(image.bitmap, intrinsicSize.toSize(), customScaler)
+private fun Image.toPainter(upscale: Int, downscale: Int) = when (val image = innerImage) {
+    is BitmapImage -> BitmapPainter(
+        image.bitmap,
+        intrinsicSize.toSize(),
+        ReaderResampleFilter.fromPref(upscale),
+        ReaderResampleFilter.fromPref(downscale),
+    )
     is DrawableImage -> DrawablePainter(image.drawable)
     else -> unreachable()
 }

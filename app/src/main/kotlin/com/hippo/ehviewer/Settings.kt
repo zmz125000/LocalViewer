@@ -590,11 +590,12 @@ object Settings : DataStorePreferences(null) {
     val readerDecodeSize = intPref("pref_reader_decode_size", 0)
 
     /**
-     * Reader stills: Lanczos3 when drawing smaller than the bitmap, Catmull-Rom when
-     * drawing larger. Off = GPU bilinear (current). Coil and lib-direct stills share
-     * [com.hippo.ehviewer.ui.reader.BitmapPainter].
+     * Reader still upscale / downscale kernels. 0=Default (GPU bilinear), 1=Nearest,
+     * 2=Bilinear, 3=B-Spline, 4=Catmull-Rom, 5=Mitchell-Netravali, 6=Lanczos3.
+     * See [com.hippo.ehviewer.ui.reader.ReaderResampleFilter].
      */
-    val readerCustomScaler = boolPref("pref_reader_custom_scaler", true)
+    val readerUpscaleFilter = intPref("pref_reader_upscale_filter", 0)
+    val readerDownscaleFilter = intPref("pref_reader_downscale_filter", 0)
 
     /**
      * Prefer GPU hardware bitmaps in the reader.

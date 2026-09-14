@@ -14,47 +14,59 @@ import androidx.compose.ui.graphics.toAndroidRectF
 import androidx.compose.ui.util.fastRoundToInt
 
 /**
- * Draws a reader still. Default: [Paint.isFilterBitmap] bilinear (GPU for HARDWARE bitmaps).
- * Optional custom scaler: Lanczos3 down / Catmull-Rom up in [ReaderResampleEffect].
+ * Draws a reader still. [ReaderResampleFilter.Default] is GPU bilinear
+ * ([Paint.isFilterBitmap]). [ReaderResampleFilter.Nearest] turns filtering off.
+ * Other kernels (including explicit bilinear) run in [ReaderResampleEffect] (API 33+).
  */
-class BitmapPainter(
+class BitmapPainter internal constructor(
     private val bitmap: Bitmap,
     override val intrinsicSize: Size,
-    customScaler: Boolean = false,
+    private val upscale: ReaderResampleFilter = ReaderResampleFilter.Default,
+    private val downscale: ReaderResampleFilter = ReaderResampleFilter.Default,
 ) : Painter() {
     private val srcRect = intrinsicSize.toRect().toAndroidRectF()
     private val dstRect = RectF()
     private val matrix = Matrix()
-    private var resample = if (customScaler) readerResampleOrNull(bitmap) else null
+    private var resample = if (upscale.usesGpuShader || downscale.usesGpuShader) {
+        readerResampleOrNull(bitmap)
+    } else {
+        null
+    }
 
     // Use the overload that takes a `Matrix` to bypass the 100 MB size limit
     override fun DrawScope.onDraw() = drawIntoCanvas { canvas ->
         dstRect.right = size.width.fastRoundToInt().toFloat()
         dstRect.bottom = size.height.fastRoundToInt().toFloat()
         val native = canvas.nativeCanvas
+        val filter = readerResampleFilter(
+            srcRect.width(),
+            srcRect.height(),
+            dstRect.width(),
+            dstRect.height(),
+            upscale,
+            downscale,
+        )
         val effect = resample
-        if (effect != null) {
-            val kernel = readerResampleKernel(
-                srcRect.width(),
-                srcRect.height(),
-                dstRect.width(),
-                dstRect.height(),
-            )
-            if (kernel != ReaderResampleKernel.Bilinear) {
-                val drawn = runCatching {
-                    effect.draw(native, srcRect, dstRect, kernel)
-                }.isSuccess
-                if (drawn) return@drawIntoCanvas
-                resample = null
-            }
+        if (filter.usesGpuShader && effect != null) {
+            val drawn = runCatching {
+                effect.draw(native, srcRect, dstRect, filter)
+            }.isSuccess
+            if (drawn) return@drawIntoCanvas
+            resample = null
         }
         matrix.setRectToRect(srcRect, dstRect, Matrix.ScaleToFit.FILL)
-        native.drawBitmap(bitmap, matrix, paint)
+        native.drawBitmap(bitmap, matrix, if (filter == ReaderResampleFilter.Nearest) nearestPaint else paint)
     }
 }
 
 private val paint = Paint().apply {
     isAntiAlias = true
     isFilterBitmap = true
+    isDither = true
+}
+
+private val nearestPaint = Paint().apply {
+    isAntiAlias = true
+    isFilterBitmap = false
     isDither = true
 }
