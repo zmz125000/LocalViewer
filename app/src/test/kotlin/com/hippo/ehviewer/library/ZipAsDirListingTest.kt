@@ -575,6 +575,54 @@ class ZipAsDirListingTest {
     }
 
     @Test
+    fun zipAsDirToggleRequiresForceReloadOnlyOnActualChange() {
+        // Return-from-reader remount observes the same value — must not scan.
+        assertFalse(ZipAsDirListing.zipAsDirToggleRequiresForceReload(false, false))
+        assertFalse(ZipAsDirListing.zipAsDirToggleRequiresForceReload(true, true))
+        // Both directions need a scan (off demotes; on must parse zip CDs).
+        assertTrue(ZipAsDirListing.zipAsDirToggleRequiresForceReload(true, false))
+        assertTrue(ZipAsDirListing.zipAsDirToggleRequiresForceReload(false, true))
+    }
+
+    @Test
+    fun demoteZipFoldersToArchivesCollapsesZipDirAndGallery() {
+        val rows = listOf(
+            BrowseEntryRemote.Directory(
+                name = "flat.cbz",
+                relativeName = "flat.cbz",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.LeafImages,
+            ),
+            BrowseEntryRemote.FolderGallery(
+                name = "flat.cbz",
+                relativeName = "flat.cbz",
+                pageCount = 2,
+                coverFileName = "01.jpg",
+                imageFileNames = listOf("01.jpg", "02.jpg"),
+            ),
+            BrowseEntryRemote.Directory(
+                name = "Comics",
+                hasVideo = false,
+                hasGallery = true,
+                presence = DirPresence.Navigable,
+            ),
+        )
+        val demoted = ZipAsDirListing.demoteZipFoldersToArchives(rows)
+        val archives = demoted.filterIsInstance<BrowseEntryRemote.ArchiveGallery>()
+        assertEquals(listOf("flat.cbz"), archives.map { it.name })
+        assertTrue(demoted.any { it is BrowseEntryRemote.Directory && it.name == "Comics" })
+        assertTrue(demoted.none { it is BrowseEntryRemote.FolderGallery })
+    }
+
+    @Test
+    fun ensureZipAsDirDirectoryRowsLeavesArchiveGalleryUnchanged() {
+        val archive = BrowseEntryRemote.ArchiveGallery(name = "flat.cbz", fileName = "flat.cbz")
+        val upgraded = ZipAsDirListing.ensureZipAsDirDirectoryRows(listOf(archive))
+        assertEquals(listOf(archive), upgraded)
+    }
+
+    @Test
     fun ensureZipAsDirDirectoryRowsAddsMissingZipDir() {
         val gal = BrowseEntryRemote.FolderGallery(
             name = "园区.zip",

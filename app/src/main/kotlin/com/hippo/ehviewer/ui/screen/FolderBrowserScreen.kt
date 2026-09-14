@@ -315,7 +315,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             entries = ZipAsDirListing.materializeLocal(
                 frame.path,
                 frame.zipInnerRel.orEmpty(),
-                cached.entries,
+                ZipAsDirListing.presentCachedListing(cached.entries),
             )
             listedPath = frameListKey(frame)
             loading = false
@@ -328,7 +328,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             preferMediaStore = frame.preferMediaStore,
         )
         val cached = BrowseSession.getLocalCachedListing(BrowseSession.pathKey(effective)) ?: return false
-        entries = materializeLocalEntries(effective, cached.entries)
+        entries = materializeLocalEntries(
+            effective,
+            ZipAsDirListing.presentCachedListing(cached.entries),
+        )
         listedPath = frameListKey(frame)
         loading = false
         refreshing = !cached.sessionCurrent
@@ -498,25 +501,39 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    /** Force the next stack-driven [reload] (zip-as-dir toggle leaving a zip frame). */
+    var forceNextLoad by remember { mutableStateOf(false) }
+
     LaunchedEffect(stack) {
-        if (skipNextListing) {
+        if (skipNextListing && !forceNextLoad) {
             skipNextListing = false
             loading = false
             refreshing = false
             return@LaunchedEffect
         }
-        reload(force = false)
+        skipNextListing = false
+        val force = forceNextLoad
+        forceNextLoad = false
+        reload(force = force)
     }
 
-    // Zip-as-dir toggle: re-materialize so ArchiveGallery ↔ Folder/Directory updates without
-    // waiting for a manual pull-to-refresh (cache still holds the other shape).
+    // Zip-as-dir toggle: force re-list in both directions so ArchiveGallery ↔ Folder/Directory
+    // updates (toggle-on must parse zip CDs; cache cannot invent those rows). Same as SMB/WebDAV:
+    // only on an actual setting change — first composition / return-from-reader remount must
+    // not force-scan (that used to re-list every reader exit when the toggle was off).
+    var prevZipAsDir by remember { mutableStateOf(browseZipAsDir) }
     LaunchedEffect(browseZipAsDir) {
+        if (!ZipAsDirListing.zipAsDirToggleRequiresForceReload(prevZipAsDir, browseZipAsDir)) {
+            return@LaunchedEffect
+        }
+        prevZipAsDir = browseZipAsDir
         if (stack.isEmpty()) return@LaunchedEffect
         if (!browseZipAsDir && stack.last().isZipBrowse) {
+            forceNextLoad = true
             updateStack(stack.dropLastWhile { it.isZipBrowse })
             return@LaunchedEffect
         }
-        reload(force = !browseZipAsDir)
+        reload(force = true)
     }
 
     // Turning Hidden files on: mark listing non-current so slim quick-scan deep-scans

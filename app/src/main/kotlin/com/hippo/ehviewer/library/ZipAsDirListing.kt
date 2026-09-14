@@ -751,6 +751,16 @@ object ZipAsDirListing {
         .toList()
 
     /**
+     * Folder-view zip-as-dir menu: force a re-list only when the setting actually
+     * changed. First composition and return-from-reader remount re-observe the same
+     * value and must not scan.
+     *
+     * Both directions need a scan. Off demotes zip folders; on must parse zip CDs
+     * ([presentCachedListing] cannot invent Folder/Directory rows from ArchiveGallery).
+     */
+    fun zipAsDirToggleRequiresForceReload(previous: Boolean, current: Boolean): Boolean = previous != current
+
+    /**
      * Shape a cached listing for the current zip-as-dir toggle without opening zips.
      * Off: Directory / FolderGallery zip rows → ArchiveGallery.
      */
