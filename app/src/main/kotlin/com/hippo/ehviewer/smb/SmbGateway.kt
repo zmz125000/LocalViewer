@@ -3150,9 +3150,11 @@ object SmbGateway {
 
     /**
      * Open [relativeFilePath] and run [block]. If the caller is cancelled, close the
-     * handle from another thread so a blocking smbj READ unblocks and the host-pool
-     * slot is released. Coroutine cancel alone does not abort AsyncDirectTcp I/O.
-     * The pooled [Connection] is kept unless the socket itself is dead.
+     * handle **as soon as the job enters cancelling** ([Job.closeFileOnCancelling]) so a
+     * blocking smbj READ unblocks and the host-pool slot is released. Default
+     * [Job.invokeOnCompletion] waits until the coroutine body returns — too late inside
+     * [SmbSequentialCopy] `runBlocking`. The pooled [Connection] is kept unless the
+     * socket itself is dead.
      */
     private suspend fun <T> copyOpenFile(
         source: SmbSourceEntity,
@@ -3163,12 +3165,7 @@ object SmbGateway {
         block: (com.hierynomus.smbj.share.File) -> T,
     ): T {
         val activeFile = AtomicReference<com.hierynomus.smbj.share.File?>(null)
-        val cancelClose = downloadContext[Job]?.invokeOnCompletion { cause ->
-            if (cause == null) return@invokeOnCompletion
-            val file = activeFile.getAndSet(null) ?: return@invokeOnCompletion
-            // Bounded pool — do not Thread().start() per cancel (mass leave-folder pile-up).
-            SmbAsyncClose.run { file.close() }
-        }
+        val cancelClose = downloadContext[Job]?.closeFileOnCancelling(activeFile)
         try {
             val loc = resolveLocation(source, relativeFilePath)
             return withShare(source, password, kind, loc.share) { share ->
@@ -3180,7 +3177,8 @@ object SmbGateway {
                     SMB2CreateDisposition.FILE_OPEN,
                     null,
                 ).use { file ->
-                    activeFile.set(file)
+                    armSmbFileForCancelClose(downloadContext[Job], activeFile, file)
+                    downloadContext.ensureActive()
                     try {
                         block(file)
                     } finally {
