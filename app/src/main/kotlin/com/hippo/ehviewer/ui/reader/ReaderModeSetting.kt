@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.integerArrayResource
 import androidx.compose.ui.res.stringArrayResource
@@ -63,10 +64,13 @@ fun ReaderModeSetting(isWebtoon: Boolean) = Column(modifier = Modifier.verticalS
         values = listOf(0, 1, 2, 3, 4),
         field = Settings.readerDecodeSize.asMutableState(),
     )
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_reader_custom_scaler),
-        summary = stringResource(id = R.string.pref_reader_custom_scaler_summary),
-        field = Settings.readerCustomScaler.asMutableState(),
+    ResampleFilterChoice(
+        title = stringResource(id = R.string.pref_reader_upscale_filter),
+        field = Settings.readerUpscaleFilter.asMutableState(),
+    )
+    ResampleFilterChoice(
+        title = stringResource(id = R.string.pref_reader_downscale_filter),
+        field = Settings.readerDownscaleFilter.asMutableState(),
     )
     Spacer(modifier = Modifier.size(16.dp))
     Crossfade(targetState = isWebtoon, label = "Setting") { webtoon ->
@@ -204,5 +208,23 @@ private fun WebtoonSetting() = Column {
     SwitchChoice(
         title = stringResource(id = R.string.pref_crop_borders),
         field = Settings.cropBorder.asMutableState(),
+    )
+}
+
+@Composable
+private fun ResampleFilterChoice(title: String, field: MutableState<Int>) {
+    SpinnerChoice(
+        title = title,
+        entries = arrayOf(
+            stringResource(id = R.string.label_default),
+            stringResource(id = R.string.pref_reader_resample_nearest),
+            stringResource(id = R.string.pref_reader_resample_bilinear),
+            stringResource(id = R.string.pref_reader_resample_bspline),
+            stringResource(id = R.string.pref_reader_resample_catmull),
+            stringResource(id = R.string.pref_reader_resample_mitchell),
+            stringResource(id = R.string.pref_reader_resample_lanczos3),
+        ),
+        values = ReaderResampleFilter.prefValues,
+        field = field,
     )
 }

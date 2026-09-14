@@ -814,8 +814,14 @@
     <string name="pref_decode_size_2_5x">2.5× screen</string>
     <string name="pref_decode_size_3x">3× screen</string>
     <string name="pref_decode_size_origin">Original</string>
-    <string name="pref_reader_custom_scaler">Custom image resizing filters</string>
-    <string name="pref_reader_custom_scaler_summary">Lanczos3 for downscaling and Catmull-Rom for upscaling</string>
+    <string name="pref_reader_upscale_filter">Image upscaling filter</string>
+    <string name="pref_reader_downscale_filter">Image downscaling filter</string>
+    <string name="pref_reader_resample_nearest">Nearest Neighbor</string>
+    <string name="pref_reader_resample_bilinear">Bilinear</string>
+    <string name="pref_reader_resample_bspline">B-Spline</string>
+    <string name="pref_reader_resample_catmull">Catmull-Rom</string>
+    <string name="pref_reader_resample_mitchell">Mitchell-Netravali</string>
+    <string name="pref_reader_resample_lanczos3">Lanczos3</string>
     <string name="pref_reader_original_size">Always load original image size</string>
     <string name="pref_reader_original_size_summary">Decode full resolution (more RAM). Off: downscale to screen. Or use page menu View original once.</string>
     <string name="pref_reader_hardware_bitmap">Hardware bitmap decode</string>
