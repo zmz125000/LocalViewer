@@ -69,6 +69,9 @@ import com.hippo.ehviewer.jni.munmap
 import com.hippo.ehviewer.jni.rewriteGifSource
 import com.hippo.ehviewer.ktbuilder.execute
 import com.hippo.ehviewer.ktbuilder.imageRequest
+import com.hippo.ehviewer.ui.reader.ReaderResampleFilter
+import com.hippo.ehviewer.ui.reader.readerDecodeFillSize
+import com.hippo.ehviewer.ui.reader.resampleDecodedTo
 import com.hippo.ehviewer.util.FileUtils
 import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
 import java.nio.ByteBuffer
@@ -223,10 +226,15 @@ class Image private constructor(
          * Default 1.5x (was 4/3). [DecodeSizeType.ORIGIN] / forceOriginal → full file res.
          */
         private fun sizeResolverFor(mode: DecodeSizeType): SizeResolver {
-            val scale = mode.scale ?: return SizeResolver(Size.ORIGINAL)
+            val target = readerDecodeTargetPx(mode)
+            if (target <= 0) return SizeResolver(Size.ORIGINAL)
+            return SizeResolver(Size(target, target))
+        }
+
+        private fun readerDecodeTargetPx(mode: DecodeSizeType): Int {
+            val scale = mode.scale ?: return 0
             return with(appCtx.resources.displayMetrics) {
-                val targetSize = (minOf(widthPixels, heightPixels) * scale).roundToInt().coerceAtLeast(1)
-                SizeResolver(Size(targetSize, targetSize))
+                (minOf(widthPixels, heightPixels) * scale).roundToInt().coerceAtLeast(1)
             }
         }
 
@@ -481,6 +489,11 @@ class Image private constructor(
             val effectiveMode = if (looksHdr) DecodeSizeType.ORIGIN else mode
             val hdrSafe = looksHdr
             val platformHbd = resolvePlatformHbd(gainMap = looksHdr)
+            val downFilter = ReaderResampleFilter.fromPref(Settings.readerDownscaleFilter.value)
+            // Custom kernel: decode full res then resample. Default keeps Coil subsample
+            // (inSampleSize / ImageDecoder) so peak RAM stays low.
+            val customDown = downFilter != ReaderResampleFilter.Default && !effectiveMode.isOriginal
+            val coilMode = if (customDown) DecodeSizeType.ORIGIN else effectiveMode
 
             suspend fun runDecode(m: DecodeSizeType, hdr: Boolean, hbd: Boolean): CoilImage = if (hbd) {
                 // Full-res F16: share lib-direct serialize lock.
@@ -491,7 +504,7 @@ class Image private constructor(
                 decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = false)
             }
 
-            var image = runDecode(effectiveMode, hdrSafe, platformHbd)
+            var image = runDecode(coilMode, hdrSafe, platformHbd)
 
             // Sniff miss: platform still attached a gain map after a downscale decode → re-do ORIGIN.
             if (isAtLeastU && !effectiveMode.isOriginal) {
@@ -504,6 +517,11 @@ class Image private constructor(
 
             // ProXDR: Coil only sees the SDR HEIC base — attach OEM gain map (platform path).
             image = tryAttachOppoProxdr(this, image)
+
+            if (customDown && image.asBitmapImage()?.detectGainmap() != true) {
+                val targetPx = readerDecodeTargetPx(mode)
+                image = image.downscaleForReaderDecode(targetPx, downFilter)
+            }
 
             if (platformHbd && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 image = image.presentPlatformHbdLikeLibDirect()
@@ -582,13 +600,37 @@ class Image private constructor(
         /**
          * Long-edge target for lib-direct decode (0 = full file resolution).
          */
-        fun maxEdgeForReader(forceOriginal: Boolean): Int {
-            val mode = decodeMode(forceOriginal)
-            if (mode.isOriginal) return 0
-            val scale = mode.scale ?: return 0
-            return with(appCtx.resources.displayMetrics) {
-                (minOf(widthPixels, heightPixels) * scale).roundToInt().coerceAtLeast(1)
+        fun maxEdgeForReader(forceOriginal: Boolean): Int = readerDecodeTargetPx(decodeMode(forceOriginal))
+
+        private fun CoilImage.downscaleForReaderDecode(
+            targetPx: Int,
+            filter: ReaderResampleFilter,
+        ): CoilImage {
+            val bi = asBitmapImage() ?: return this
+            if (bi.detectGainmap()) return this
+            val src = bi.bitmap
+            val (dw, dh) = readerDecodeFillSize(src.width, src.height, targetPx)
+            if (dw >= src.width && dh >= src.height) return this
+            val scaled = src.resampleDecodedTo(dw, dh, filter)
+            if (scaled === src) return this
+            src.recycle()
+            val presented = scaled.upgradeHardwareAfterDecodeDownscale()
+            val wrapped = presented.asImage()
+            return when (this) {
+                is BitmapImageWithExtraInfo -> copy(image = wrapped)
+                else -> wrapped
             }
+        }
+
+        private fun Bitmap.upgradeHardwareAfterDecodeDownscale(): Bitmap {
+            if (config == Bitmap.Config.HARDWARE) return this
+            if (!Settings.readerHardwareBitmap.value) return this
+            // F16 wrap is owned by [presentPlatformHbdLikeLibDirect] / lib-direct.
+            if (config == Bitmap.Config.RGBA_F16) return this
+            if (maxOf(width, height) > Settings.hardwareBitmapThreshold.value) return this
+            val hw = copy(Bitmap.Config.HARDWARE, false) ?: return this
+            recycle()
+            return hw
         }
 
         private val GAINMAP_EXTS = setOf("jpg", "jpeg", "jpe", "jfif", "avif", "heic", "heif", "heics", "heifs", "hif")

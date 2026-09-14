@@ -3,6 +3,7 @@ package com.hippo.ehviewer.ui.reader
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Canvas
+import android.graphics.ColorSpace
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.RuntimeShader
@@ -13,6 +14,7 @@ import com.ehviewer.core.util.isAtLeastT
 import com.ehviewer.core.util.isAtLeastU
 import com.ehviewer.core.util.logcat
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 internal enum class ReaderResampleFilter(val prefValue: Int) {
     Default(0),
@@ -225,4 +227,54 @@ half4 main(float2 fragCoord) {
 }
 """
     }
+}
+
+/**
+ * Coil [coil3.size.Scale.FILL] into a [targetPx]×[targetPx] square: shorter side ≈ target.
+ * Does not crop; used for decode-size downscale.
+ */
+internal fun readerDecodeFillSize(srcW: Int, srcH: Int, targetPx: Int): Pair<Int, Int> {
+    if (targetPx <= 0 || srcW <= 0 || srcH <= 0) return srcW to srcH
+    val scale = maxOf(targetPx.toFloat() / srcW, targetPx.toFloat() / srcH)
+    if (scale >= 0.995f) return srcW to srcH
+    return (srcW * scale).roundToInt().coerceAtLeast(1) to (srcH * scale).roundToInt().coerceAtLeast(1)
+}
+
+/** Long-edge cap used by lib-direct [maxEdge]. */
+internal fun readerDecodeMaxEdgeSize(srcW: Int, srcH: Int, maxEdge: Int): Pair<Int, Int> {
+    val longEdge = maxOf(srcW, srcH)
+    if (maxEdge <= 0 || srcW <= 0 || srcH <= 0 || longEdge <= maxEdge) return srcW to srcH
+    val scale = maxEdge.toFloat() / longEdge
+    return (srcW * scale).roundToInt().coerceAtLeast(1) to (srcH * scale).roundToInt().coerceAtLeast(1)
+}
+
+/**
+ * Decode-time downscale. [ReaderResampleFilter.Default] callers should skip this and keep
+ * Coil / native subsample (lower peak RAM). Output is software (HARDWARE src → 8888).
+ */
+internal fun Bitmap.resampleDecodedTo(dstW: Int, dstH: Int, filter: ReaderResampleFilter): Bitmap {
+    if (isRecycled || dstW < 1 || dstH < 1) return this
+    if (dstW >= width && dstH >= height) return this
+    val srcConfig = config ?: Bitmap.Config.ARGB_8888
+    val outConfig = if (srcConfig == Bitmap.Config.HARDWARE) Bitmap.Config.ARGB_8888 else srcConfig
+    val dst = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val cs = colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)
+        Bitmap.createBitmap(dstW, dstH, outConfig, hasAlpha(), cs)
+    } else {
+        Bitmap.createBitmap(dstW, dstH, outConfig)
+    }
+    val canvas = Canvas(dst)
+    val srcR = RectF(0f, 0f, width.toFloat(), height.toFloat())
+    val dstR = RectF(0f, 0f, dstW.toFloat(), dstH.toFloat())
+    val shaderOk = filter.usesGpuShader &&
+        readerResampleOrNull(this)?.let { effect ->
+            runCatching { effect.draw(canvas, srcR, dstR, filter) }.isSuccess
+        } == true
+    if (!shaderOk) {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG).apply {
+            isFilterBitmap = filter != ReaderResampleFilter.Nearest
+        }
+        canvas.drawBitmap(this, null, dstR, paint)
+    }
+    return dst
 }
