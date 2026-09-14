@@ -814,6 +814,8 @@
     <string name="pref_decode_size_2_5x">2.5× screen</string>
     <string name="pref_decode_size_3x">3× screen</string>
     <string name="pref_decode_size_origin">Original</string>
+    <string name="pref_reader_custom_scaler">Custom image resizing filters</string>
+    <string name="pref_reader_custom_scaler_summary">Lanczos3 for downscaling and Catmull-Rom for upscaling</string>
     <string name="pref_reader_original_size">Always load original image size</string>
     <string name="pref_reader_original_size_summary">Decode full resolution (more RAM). Off: downscale to screen. Or use page menu View original once.</string>
     <string name="pref_reader_hardware_bitmap">Hardware bitmap decode</string>

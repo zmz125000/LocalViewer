@@ -63,6 +63,11 @@ fun ReaderModeSetting(isWebtoon: Boolean) = Column(modifier = Modifier.verticalS
         values = listOf(0, 1, 2, 3, 4),
         field = Settings.readerDecodeSize.asMutableState(),
     )
+    SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_custom_scaler),
+        summary = stringResource(id = R.string.pref_reader_custom_scaler_summary),
+        field = Settings.readerCustomScaler.asMutableState(),
+    )
     Spacer(modifier = Modifier.size(16.dp))
     Crossfade(targetState = isWebtoon, label = "Setting") { webtoon ->
         if (webtoon) {

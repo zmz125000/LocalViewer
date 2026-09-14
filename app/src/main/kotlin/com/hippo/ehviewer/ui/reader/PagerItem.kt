@@ -110,17 +110,19 @@ fun PagerItem(
         }
         is PageStatus.Ready -> {
             val image = state.image
+            val customScaler by Settings.readerCustomScaler.collectAsState()
             var painter by remember(image) { mutableStateOf<Painter?>(null) }
-            LaunchedEffect(image) {
+            LaunchedEffect(image, customScaler) {
                 if (!image.pin()) {
                     // Recycled / dead image still marked Ready — force a clean reload.
                     painter = null
                     pageLoader.retryPage(page.index)
                     return@LaunchedEffect
                 }
-                // Reuse the same painter for this Image. A new DrawablePainter on every
-                // effect start raced with the old onForgotten(stop) after scroll.
-                if (painter == null) painter = image.toPainter()
+                // BitmapPainter follows the scaler toggle. Do not rebuild DrawablePainter
+                // (animated) — a new instance raced with onForgotten(stop) after scroll.
+                val next = image.toPainter(customScaler)
+                if (painter == null || next is BitmapPainter) painter = next
                 try {
                     awaitCancellation()
                 } finally {
@@ -350,8 +352,8 @@ private fun Modifier.rotate90FitLayout(
     }
 }
 
-private fun Image.toPainter() = when (val image = innerImage) {
-    is BitmapImage -> BitmapPainter(image.bitmap, intrinsicSize.toSize())
+private fun Image.toPainter(customScaler: Boolean) = when (val image = innerImage) {
+    is BitmapImage -> BitmapPainter(image.bitmap, intrinsicSize.toSize(), customScaler)
     is DrawableImage -> DrawablePainter(image.drawable)
     else -> unreachable()
 }

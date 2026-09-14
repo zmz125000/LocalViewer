@@ -792,6 +792,8 @@
     <string name="pref_decode_size_2_5x">画面の 2.5×</string>
     <string name="pref_decode_size_3x">画面の 3×</string>
     <string name="pref_decode_size_origin">原寸</string>
+    <string name="pref_reader_custom_scaler">カスタム拡大/縮小フィルター</string>
+    <string name="pref_reader_custom_scaler_summary">縮小は Lanczos3、拡大は Catmull-Rom。オフ時は現行の GPU バイリニア。静止画（JXL/JXR 含む）。HDR ゲインマップはプラットフォーム側。Android 13+。</string>
     <string name="pref_reader_original_size">常に原寸で読み込む</string>
     <string name="pref_reader_original_size_summary">ファイルのフル解像度でデコード（メモリ多め）。オフ時は画面向け縮小。ページメニューの「オリジナルの画像を表示」で1枚だけ原寸も可。</string>
     <string name="pref_custom_brightness">明るさをカスタマイズ</string>

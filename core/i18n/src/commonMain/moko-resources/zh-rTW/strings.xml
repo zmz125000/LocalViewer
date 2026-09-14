@@ -753,6 +753,8 @@
     <string name="pref_decode_size_2_5x">2.5× 螢幕</string>
     <string name="pref_decode_size_3x">3× 螢幕</string>
     <string name="pref_decode_size_origin">原圖</string>
+    <string name="pref_reader_custom_scaler">自訂放大/縮小濾鏡</string>
+    <string name="pref_reader_custom_scaler_summary">縮小時 Lanczos3，放大時 Catmull-Rom。關閉則沿用目前 GPU 雙線性。靜圖（含 JXL/JXR）生效；HDR 增益圖仍走系統濾鏡。需 Android 13+。</string>
     <string name="pref_reader_original_size">一律載入原始影像尺寸</string>
     <string name="pref_reader_original_size_summary">以檔案完整解析度解碼（較占記憶體）。關閉時縮放至螢幕。亦可在頁面選單單次「查看原圖」。</string>
     <string name="pref_reader_hardware_bitmap">硬體點陣圖解碼</string>
