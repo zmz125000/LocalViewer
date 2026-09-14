@@ -1105,6 +1105,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    fun shareWebDavFile(fileName: String, displayName: String = fileName.substringAfterLast('/')) {
+        val src = source ?: return
+        val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
+        launchIO {
+            with(context) { BrowseSaveAs.shareWebDavFile(src.id, remote, displayName) }
+        }
+    }
+
     fun saveWebDavFolder(relativeName: String, displayName: String = relativeName.substringAfterLast('/')) {
         val src = source ?: return
         val remote = if (relativeDir.isEmpty()) relativeName else WebDavGateway.joinRelative(relativeDir, relativeName)
@@ -1142,6 +1150,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 entry.fileName.substringAfterLast('/'),
             )
         },
+        onShare = {
+            shareWebDavFile(
+                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                entry.fileName.substringAfterLast('/'),
+            )
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1152,6 +1166,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onCopyUrl = { copyWebDavVideoUrl(fileName) },
         onOpenWith = { openExternalFile(fileName, usePreferredPlayer = false) },
         onSaveAs = { saveWebDavFile(fileName) },
+        onShare = { shareWebDavFile(fileName) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1163,6 +1178,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             onCopyUrl = { copyWebDavHtmlUrl(fileName) },
             onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveWebDavFile(fileName) },
+            onShare = { shareWebDavFile(fileName) },
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1170,6 +1186,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             kind = BrowseOverflowKind.Common,
             onOpenWith = { openExternalFile(fileName) },
             onSaveAs = { saveWebDavFile(fileName) },
+            onShare = { shareWebDavFile(fileName) },
             onUnsupported = { notSupportedAction() },
         )
     }

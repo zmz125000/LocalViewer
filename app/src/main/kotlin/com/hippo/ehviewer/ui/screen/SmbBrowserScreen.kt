@@ -1229,6 +1229,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    fun shareSmbFile(fileName: String, displayName: String = fileName.substringAfterLast('/')) {
+        val src = source ?: return
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        launchIO {
+            with(context) { BrowseSaveAs.shareSmbFile(src.id, remote, displayName) }
+        }
+    }
+
     fun saveSmbFolder(relativeName: String, displayName: String = relativeName.substringAfterLast('/')) {
         val src = source ?: return
         val remote = if (relativeDir.isEmpty()) relativeName else SmbGateway.joinRelativePath(relativeDir, relativeName)
@@ -1266,6 +1274,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 entry.fileName.substringAfterLast('/'),
             )
         },
+        onShare = {
+            shareSmbFile(
+                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                entry.fileName.substringAfterLast('/'),
+            )
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1276,6 +1290,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onCopyUrl = { copySmbVideoUrl(fileName) },
         onOpenWith = { openExternalFile(fileName, usePreferredPlayer = false) },
         onSaveAs = { saveSmbFile(fileName) },
+        onShare = { shareSmbFile(fileName) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1287,6 +1302,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             onCopyUrl = { copySmbHtmlUrl(fileName) },
             onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveSmbFile(fileName) },
+            onShare = { shareSmbFile(fileName) },
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1294,6 +1310,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             kind = BrowseOverflowKind.Common,
             onOpenWith = { openExternalFile(fileName) },
             onSaveAs = { saveSmbFile(fileName) },
+            onShare = { shareSmbFile(fileName) },
             onUnsupported = { notSupportedAction() },
         )
     }

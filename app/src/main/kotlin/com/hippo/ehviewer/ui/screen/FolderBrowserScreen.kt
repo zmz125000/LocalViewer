@@ -1342,6 +1342,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         launchIO { with(context) { BrowseSaveAs.saveLocalFile(path, name) } }
     }
 
+    fun shareLocalFile(path: okio.Path) {
+        val name = ZipPaths.memberLeafName(path.toString()) ?: path.name
+        launchIO { with(context) { BrowseSaveAs.shareLocalFile(path, name) } }
+    }
+
     fun saveLocalFolder(dir: okio.Path, displayName: String, relativeName: String) {
         val name = relativeName.substringAfterLast('/').ifEmpty { displayName }
         launchIO { with(context) { BrowseSaveAs.saveLocalFolder(dir, name, relativeName) } }
@@ -1370,6 +1375,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onRead = { openArchive(entry) },
         onOpenWith = { openArchiveInOtherApp(entry) },
         onSaveAs = { saveLocalFile(entry.path) },
+        onShare = { shareLocalFile(entry.path) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1380,6 +1386,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onCopyUrl = { copyLocalVideoUrl(path) },
         onOpenWith = { openExternalFile(path, usePreferredPlayer = false) },
         onSaveAs = { saveLocalFile(path) },
+        onShare = { shareLocalFile(path) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1391,6 +1398,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             onCopyUrl = { copyLocalHtmlUrl(path) },
             onOpenWith = { openExternalFile(path, asFile = true) },
             onSaveAs = { saveLocalFile(path) },
+            onShare = { shareLocalFile(path) },
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1398,6 +1406,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             kind = BrowseOverflowKind.Common,
             onOpenWith = { openExternalFile(path) },
             onSaveAs = { saveLocalFile(path) },
+            onShare = { shareLocalFile(path) },
             onUnsupported = { notSupportedAction() },
         )
     }

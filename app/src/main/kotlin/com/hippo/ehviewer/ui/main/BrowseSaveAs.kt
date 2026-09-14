@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.ui.main
 
+import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -8,8 +10,10 @@ import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.SnackbarHostState
+import androidx.core.content.FileProvider
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.database.model.WebDavSourceEntity
+import com.ehviewer.core.files.delete
 import com.ehviewer.core.files.exists
 import com.ehviewer.core.files.isDirectory
 import com.ehviewer.core.files.list
@@ -19,6 +23,7 @@ import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.withIOContext
+import com.hippo.ehviewer.BuildConfig.APPLICATION_ID
 import com.hippo.ehviewer.library.GENERIC_FILE_MIME
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCentralDirectory
@@ -30,6 +35,7 @@ import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.awaitActivityResult
 import com.hippo.ehviewer.util.displayPath
@@ -50,8 +56,12 @@ import okio.Path
 import okio.Path.Companion.toPath
 
 /**
- * Browse overflow **Save to…** — same SAF picker as reader long-press [saveTo].
- * Network copies stream to the destination; they never land in the app cache first.
+ * Browse overflow **Save to…** (SAF picker, same as reader long-press [saveTo]) and
+ * **Share** (copy to [AppConfig.externalTempDir] then ACTION_SEND, same as reader
+ * [com.hippo.ehviewer.ui.reader.shareImage]). Directories stay a stub — only files.
+ *
+ * Network / zip-member shares stream into the temp file first and use
+ * [BrowseSaveTransfers] progress + cancel.
  */
 object BrowseSaveAs {
     private const val SAVE_EXTRACT_MAX_BYTES = 512L * 1024L * 1024L
@@ -150,6 +160,55 @@ object BrowseSaveAs {
         }
     }
 
+    context(_: SnackbarHostState, ctx: Context)
+    suspend fun shareLocalFile(path: Path, displayName: String) = saveCatching {
+        val dest = shareTempPath(displayName)
+        val shareCtx = ctx
+        BrowseSaveTransfers.start(displayName) { counter ->
+            copyThenShare(dest, { writeLocalToPath(path, dest, counter) }) {
+                sendShare(shareCtx, dest, displayName)
+            }
+        }
+    }
+
+    context(_: SnackbarHostState, ctx: Context)
+    suspend fun shareSmbFile(sourceId: Long, relativeFile: String, displayName: String) = saveCatching {
+        val (source, password) = smbCreds(sourceId)
+        val dest = shareTempPath(displayName)
+        val shareCtx = ctx
+        BrowseSaveTransfers.start(displayName) { counter ->
+            copyThenShare(
+                dest,
+                {
+                    dest.sink().use { out ->
+                        writeSmbFile(source, password, relativeFile, CountingOutputStream(out, counter))
+                    }
+                },
+            ) {
+                sendShare(shareCtx, dest, displayName)
+            }
+        }
+    }
+
+    context(_: SnackbarHostState, ctx: Context)
+    suspend fun shareWebDavFile(sourceId: Long, relativeFile: String, displayName: String) = saveCatching {
+        val (source, password) = webDavCreds(sourceId)
+        val dest = shareTempPath(displayName)
+        val shareCtx = ctx
+        BrowseSaveTransfers.start(displayName) { counter ->
+            copyThenShare(
+                dest,
+                {
+                    dest.sink().use { out ->
+                        writeWebDavFile(source, password, relativeFile, CountingOutputStream(out, counter))
+                    }
+                },
+            ) {
+                sendShare(shareCtx, dest, displayName)
+            }
+        }
+    }
+
     context(_: SnackbarHostState, _: Context)
     private suspend inline fun saveCatching(block: suspend () -> Unit) {
         try {
@@ -205,6 +264,72 @@ object BrowseSaveAs {
             return
         }
         copyCounted(path, dest.toOkioPath(), counter)
+    }
+
+    private suspend fun writeLocalToPath(path: Path, dest: Path, counter: ByteCounter) {
+        ZipPaths.parse(path)?.let { (zipAbs, member) ->
+            val bytes = withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
+                val entry = cd.find(member) ?: error("Missing ZIP member $member")
+                cd.extract(entry, SAVE_EXTRACT_MAX_BYTES)
+                    ?: error("Cannot extract $member")
+            } ?: error("Cannot read ZIP")
+            dest.sink().use { it.write(bytes) }
+            counter.add(bytes.size)
+            return
+        }
+        copyCounted(path, dest, counter)
+    }
+
+    private suspend fun copyThenShare(
+        dest: Path,
+        copy: suspend () -> Unit,
+        share: () -> Unit,
+    ) {
+        try {
+            withIOContext { copy() }
+            share()
+        } catch (e: Throwable) {
+            runCatching { dest.delete() }
+            throw e
+        }
+    }
+
+    private fun shareTempPath(displayName: String): Path {
+        val dir = AppConfig.externalTempDir ?: AppConfig.tempDir
+        val base = FileUtils.sanitizeFilename(displayName).ifEmpty { "share" }
+        var dest = dir / base
+        if (!dest.exists()) return dest
+        val ext = FileUtils.getExtensionFromFilename(base)
+        val stem = if (ext.isNullOrEmpty()) base else base.removeSuffix(".$ext")
+        var i = 2
+        while (true) {
+            val name = if (ext.isNullOrEmpty()) "$stem ($i)" else "$stem ($i).$ext"
+            dest = dir / FileUtils.sanitizeFilename(name)
+            if (!dest.exists()) return dest
+            i++
+        }
+    }
+
+    private fun sendShare(ctx: Context, file: Path, displayName: String) {
+        val uri = FileProvider.getUriForFile(ctx, "$APPLICATION_ID.fileprovider", file.toFile())
+        val mime = mimeTypeForFileName(displayName).let { type ->
+            if (type == GENERIC_FILE_MIME || type == "*/*") "application/octet-stream" else type
+        }
+        val send = Intent(Intent.ACTION_SEND).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newUri(ctx.contentResolver, displayName, uri)
+            type = mime
+        }
+        try {
+            ctx.startActivity(
+                Intent.createChooser(send, ctx.getString(R.string.share)).apply {
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+            )
+        } catch (_: ActivityNotFoundException) {
+            error(ctx.getString(R.string.error_cant_find_activity))
+        }
     }
 
     private suspend fun copyLocalDir(src: Path, dest: Path, counter: ByteCounter) {
