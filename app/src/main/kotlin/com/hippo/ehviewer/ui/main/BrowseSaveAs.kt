@@ -23,6 +23,7 @@ import com.ehviewer.core.files.toOkioPath
 import com.ehviewer.core.files.toUri
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.withIOContext
+import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.BuildConfig.APPLICATION_ID
 import com.hippo.ehviewer.library.GENERIC_FILE_MIME
 import com.hippo.ehviewer.library.ZipAsDirListing
@@ -35,6 +36,7 @@ import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.awaitActivityResult
@@ -57,11 +59,12 @@ import okio.Path.Companion.toPath
 
 /**
  * Browse overflow **Save to…** (SAF picker, same as reader long-press [saveTo]) and
- * **Share** (copy to [AppConfig.externalTempDir] then ACTION_SEND, same as reader
- * [com.hippo.ehviewer.ui.reader.shareImage]). Directories stay a stub — only files.
+ * **Share**. Directories stay a stub — only files.
  *
- * Network / zip-member shares stream into the temp file first and use
- * [BrowseSaveTransfers] progress + cancel.
+ * Local files share in place via [OpenFileExternally.shareableLocalUri] (no cache copy).
+ * Network / remote zip-member shares copy into [AppConfig.externalTempDir] first and use
+ * [BrowseSaveTransfers] progress + cancel, then ACTION_SEND like reader
+ * [com.hippo.ehviewer.ui.reader.shareImage].
  */
 object BrowseSaveAs {
     private const val SAVE_EXTRACT_MAX_BYTES = 512L * 1024L * 1024L
@@ -162,13 +165,11 @@ object BrowseSaveAs {
 
     context(_: SnackbarHostState, ctx: Context)
     suspend fun shareLocalFile(path: Path, displayName: String) = saveCatching {
-        val dest = shareTempPath(displayName)
-        val shareCtx = ctx
-        BrowseSaveTransfers.start(displayName) { counter ->
-            copyThenShare(dest, { writeLocalToPath(path, dest, counter) }) {
-                sendShare(shareCtx, dest, displayName)
-            }
+        val mime = shareMime(displayName)
+        val uri = withIOContext {
+            OpenFileExternally.shareableLocalUri(path.toString(), displayName, mime)
         }
+        withUIContext { sendShareUri(ctx, uri, displayName, mime) }
     }
 
     context(_: SnackbarHostState, ctx: Context)
@@ -266,20 +267,6 @@ object BrowseSaveAs {
         copyCounted(path, dest.toOkioPath(), counter)
     }
 
-    private suspend fun writeLocalToPath(path: Path, dest: Path, counter: ByteCounter) {
-        ZipPaths.parse(path)?.let { (zipAbs, member) ->
-            val bytes = withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
-                val entry = cd.find(member) ?: error("Missing ZIP member $member")
-                cd.extract(entry, SAVE_EXTRACT_MAX_BYTES)
-                    ?: error("Cannot extract $member")
-            } ?: error("Cannot read ZIP")
-            dest.sink().use { it.write(bytes) }
-            counter.add(bytes.size)
-            return
-        }
-        copyCounted(path, dest, counter)
-    }
-
     private suspend fun copyThenShare(
         dest: Path,
         copy: suspend () -> Unit,
@@ -312,11 +299,13 @@ object BrowseSaveAs {
 
     private fun sendShare(ctx: Context, file: Path, displayName: String) {
         val uri = FileProvider.getUriForFile(ctx, "$APPLICATION_ID.fileprovider", file.toFile())
-        val mime = mimeTypeForFileName(displayName).let { type ->
-            if (type == GENERIC_FILE_MIME || type == "*/*") "application/octet-stream" else type
-        }
+        sendShareUri(ctx, uri, displayName, shareMime(displayName))
+    }
+
+    private fun sendShareUri(ctx: Context, uri: Uri, displayName: String, mime: String) {
         val send = Intent(Intent.ACTION_SEND).apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             putExtra(Intent.EXTRA_STREAM, uri)
             clipData = ClipData.newUri(ctx.contentResolver, displayName, uri)
             type = mime
@@ -325,11 +314,17 @@ object BrowseSaveAs {
             ctx.startActivity(
                 Intent.createChooser(send, ctx.getString(R.string.share)).apply {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 },
             )
         } catch (_: ActivityNotFoundException) {
             error(ctx.getString(R.string.error_cant_find_activity))
         }
+    }
+
+    private fun shareMime(displayName: String): String {
+        val type = mimeTypeForFileName(displayName)
+        return if (type == GENERIC_FILE_MIME || type == "*/*") "application/octet-stream" else type
     }
 
     private suspend fun copyLocalDir(src: Path, dest: Path, counter: ByteCounter) {
