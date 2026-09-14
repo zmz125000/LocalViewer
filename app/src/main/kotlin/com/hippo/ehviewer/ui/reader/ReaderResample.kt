@@ -255,26 +255,35 @@ internal fun readerDecodeMaxEdgeSize(srcW: Int, srcH: Int, maxEdge: Int): Pair<I
 internal fun Bitmap.resampleDecodedTo(dstW: Int, dstH: Int, filter: ReaderResampleFilter): Bitmap {
     if (isRecycled || dstW < 1 || dstH < 1) return this
     if (dstW >= width && dstH >= height) return this
-    val srcConfig = config ?: Bitmap.Config.ARGB_8888
-    val outConfig = if (srcConfig == Bitmap.Config.HARDWARE) Bitmap.Config.ARGB_8888 else srcConfig
-    val dst = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val cs = colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)
-        Bitmap.createBitmap(dstW, dstH, outConfig, hasAlpha(), cs)
+    // Software Canvas cannot draw HARDWARE bitmaps (ImageDecoder / interceptor wrap).
+    val software = if (config == Bitmap.Config.HARDWARE) {
+        copy(Bitmap.Config.ARGB_8888, false) ?: return this
     } else {
-        Bitmap.createBitmap(dstW, dstH, outConfig)
+        this
     }
-    val canvas = Canvas(dst)
-    val srcR = RectF(0f, 0f, width.toFloat(), height.toFloat())
-    val dstR = RectF(0f, 0f, dstW.toFloat(), dstH.toFloat())
-    val shaderOk = filter.usesGpuShader &&
-        readerResampleOrNull(this)?.let { effect ->
-            runCatching { effect.draw(canvas, srcR, dstR, filter) }.isSuccess
-        } == true
-    if (!shaderOk) {
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG).apply {
-            isFilterBitmap = filter != ReaderResampleFilter.Nearest
+    try {
+        val srcConfig = software.config ?: Bitmap.Config.ARGB_8888
+        val dst = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val cs = software.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)
+            Bitmap.createBitmap(dstW, dstH, srcConfig, software.hasAlpha(), cs)
+        } else {
+            Bitmap.createBitmap(dstW, dstH, srcConfig)
         }
-        canvas.drawBitmap(this, null, dstR, paint)
+        val canvas = Canvas(dst)
+        val srcR = RectF(0f, 0f, software.width.toFloat(), software.height.toFloat())
+        val dstR = RectF(0f, 0f, dstW.toFloat(), dstH.toFloat())
+        val shaderOk = filter.usesGpuShader &&
+            readerResampleOrNull(software)?.let { effect ->
+                runCatching { effect.draw(canvas, srcR, dstR, filter) }.isSuccess
+            } == true
+        if (!shaderOk) {
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG).apply {
+                isFilterBitmap = filter != ReaderResampleFilter.Nearest
+            }
+            canvas.drawBitmap(software, null, dstR, paint)
+        }
+        return dst
+    } finally {
+        if (software !== this) software.recycle()
     }
-    return dst
 }

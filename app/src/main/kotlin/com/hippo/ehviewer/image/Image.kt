@@ -55,6 +55,7 @@ import com.hippo.ehviewer.coil.detectGainmap
 import com.hippo.ehviewer.coil.detectQrCode
 import com.hippo.ehviewer.coil.hardwareThreshold
 import com.hippo.ehviewer.coil.maybeCropBorder
+import com.hippo.ehviewer.coil.skipHardwareUpgrade
 import com.hippo.ehviewer.image.hdr.BitDepthClass
 import com.hippo.ehviewer.image.hdr.HdrGainmapConvert
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
@@ -343,8 +344,15 @@ class Image private constructor(
              * without a slow post-decode transfer pass. Crop/QR off; present may AHB-wrap.
              */
             platformHbd: Boolean = false,
+            /**
+             * Custom decode-size kernel: software pixels so [Canvas] can resample.
+             * HARDWARE src + software dest throws "Software rendering doesn't support hardware bitmaps".
+             */
+            softwareForResample: Boolean = false,
         ): CoilImage {
-            val hardwareDirect = !platformHbd && (Settings.readerHardwareBitmap.value || hdrSafe)
+            val hardwareDirect = !platformHbd &&
+                !softwareForResample &&
+                (Settings.readerHardwareBitmap.value || hdrSafe)
             val request = with(appCtx) {
                 imageRequest {
                     onLeft { data(it.source) }
@@ -369,6 +377,13 @@ class Image private constructor(
                                 bitmapConfig(Bitmap.Config.RGBA_F16)
                                 colorSpace(ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB))
                             }
+                            hardwareThreshold(Settings.hardwareBitmapThreshold.value)
+                            maybeCropBorder(false)
+                            detectQrCode(false)
+                        }
+                        softwareForResample -> {
+                            allowHardware(false)
+                            skipHardwareUpgrade()
                             hardwareThreshold(Settings.hardwareBitmapThreshold.value)
                             maybeCropBorder(false)
                             detectQrCode(false)
@@ -495,16 +510,33 @@ class Image private constructor(
             val customDown = downFilter != ReaderResampleFilter.Default && !effectiveMode.isOriginal
             val coilMode = if (customDown) DecodeSizeType.ORIGIN else effectiveMode
 
-            suspend fun runDecode(m: DecodeSizeType, hdr: Boolean, hbd: Boolean): CoilImage = if (hbd) {
+            suspend fun runDecode(
+                m: DecodeSizeType,
+                hdr: Boolean,
+                hbd: Boolean,
+                softwareForResample: Boolean = false,
+            ): CoilImage = if (hbd) {
                 // Full-res F16: share lib-direct serialize lock.
                 LibDirectDecode.heavyDecode.withPermit {
-                    decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = true)
+                    decodeCoilOnce(
+                        m,
+                        checkExtraneousAds,
+                        hdrSafe = hdr,
+                        platformHbd = true,
+                        softwareForResample = softwareForResample,
+                    )
                 }
             } else {
-                decodeCoilOnce(m, checkExtraneousAds, hdrSafe = hdr, platformHbd = false)
+                decodeCoilOnce(
+                    m,
+                    checkExtraneousAds,
+                    hdrSafe = hdr,
+                    platformHbd = false,
+                    softwareForResample = softwareForResample,
+                )
             }
 
-            var image = runDecode(coilMode, hdrSafe, platformHbd)
+            var image = runDecode(coilMode, hdrSafe, platformHbd, softwareForResample = customDown)
 
             // Sniff miss: platform still attached a gain map after a downscale decode → re-do ORIGIN.
             if (isAtLeastU && !effectiveMode.isOriginal) {

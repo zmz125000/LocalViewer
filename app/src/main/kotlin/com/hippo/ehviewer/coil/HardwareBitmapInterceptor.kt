@@ -13,6 +13,7 @@ import coil3.request.ImageResult
 import coil3.request.SuccessResult
 
 private val hardwareThresholdKey = Extras.Key(default = 16384)
+private val skipHardwareUpgradeKey = Extras.Key(default = false)
 
 fun ImageRequest.Builder.hardwareThreshold(size: Int) = apply {
     extras[hardwareThresholdKey] = size
@@ -20,6 +21,14 @@ fun ImageRequest.Builder.hardwareThreshold(size: Int) = apply {
 
 val ImageRequest.hardwareThreshold: Int
     get() = getExtra(hardwareThresholdKey)
+
+/** Keep software pixels so a later software [Canvas] can resample (HARDWARE cannot). */
+fun ImageRequest.Builder.skipHardwareUpgrade(skip: Boolean = true) = apply {
+    extras[skipHardwareUpgradeKey] = skip
+}
+
+val ImageRequest.skipHardwareUpgrade: Boolean
+    get() = getExtra(skipHardwareUpgradeKey)
 
 /**
  * Prefer a GPU [Bitmap.Config.HARDWARE] buffer when possible.
@@ -39,6 +48,7 @@ object HardwareBitmapInterceptor : Interceptor {
         val result = chain.proceed()
         if (result !is SuccessResult) return result
         val request = result.request
+        if (request.skipHardwareUpgrade) return result
         return when (val image = result.image) {
             is BitmapImageWithExtraInfo -> {
                 // Bitmap.copy drops gain maps — keep software bitmap for Ultra HDR.
