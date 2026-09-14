@@ -76,10 +76,6 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         title = stringResource(id = R.string.settings_advanced_disable_reader_network_cache),
         field = Settings.disableReaderNetworkCache.asMutableState(),
     )
-    SwitchChoice(
-        title = stringResource(id = R.string.pref_smb_reader_safe_concurrency),
-        field = Settings.smbReaderSafeConcurrency.asMutableState(),
-    )
     val fullscreen = Settings.fullscreen.asMutableState()
     SwitchChoice(
         title = stringResource(id = R.string.pref_fullscreen),

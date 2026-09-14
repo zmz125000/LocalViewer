@@ -536,6 +536,7 @@
     <string name="settings_download_concurrency_summary">Up to %s images</string>
     <string name="settings_smb_concurrency">SMB concurrent connections</string>
     <string name="settings_smb_concurrency_summary">Up to %s sessions per host (shared by all shares on that server; seek + prefetch)</string>
+    <string name="settings_smb_multiplex">SMB multiplex</string>
     <string name="settings_smb3_only">SMB 3 only</string>
     <string name="settings_smb3_only_summary">Disable SMB 2 dialects (negotiate 3.0 / 3.0.2 / 3.1.1 only). Resets active SMB connections.</string>
     <string name="settings_smb_encrypt">Allow SMB 3 encryption</string>
@@ -815,8 +816,6 @@
     <string name="pref_decode_size_origin">Original</string>
     <string name="pref_reader_original_size">Always load original image size</string>
     <string name="pref_reader_original_size_summary">Decode full resolution (more RAM). Off: downscale to screen. Or use page menu View original once.</string>
-    <string name="pref_smb_reader_safe_concurrency">Limit SMB concurrency (safer original size)</string>
-    <string name="pref_smb_reader_safe_concurrency_summary">Force 3 connections and 1 transfer per connection. Reduces OOM when loading large images over SMB.</string>
     <string name="pref_reader_hardware_bitmap">Hardware bitmap decode</string>
     <string name="pref_reader_hardware_bitmap_summary">Disables crop borders and QR ad detection to avoid a software copy.</string>
     <string name="pref_reader_lib_direct_bitmap">Bypass UHDR conversion</string>

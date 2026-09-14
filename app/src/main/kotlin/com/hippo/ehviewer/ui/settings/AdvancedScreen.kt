@@ -192,22 +192,20 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 entryValueRes = com.hippo.ehviewer.R.array.reader_decode_ahead_entry_values,
                 state = decodeAhead,
             )
-            val smbSafeConcurrency = Settings.smbReaderSafeConcurrency.asMutableState()
-            SwitchPreference(
-                title = stringResource(id = R.string.pref_smb_reader_safe_concurrency),
-                summary = stringResource(id = R.string.pref_smb_reader_safe_concurrency_summary),
-                state = smbSafeConcurrency,
+            val smbConnections = Settings.multiThreadDownload.asMutableState()
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.settings_smb_concurrency),
+                summary = stringResource(id = R.string.settings_smb_concurrency_summary, smbConnections.value),
+                entry = com.hippo.ehviewer.R.array.multi_thread_download_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.multi_thread_download_entry_values,
+                state = smbConnections,
             )
-            AnimatedVisibility(visible = !smbSafeConcurrency.value) {
-                val smbConnections = Settings.multiThreadDownload.asMutableState()
-                SimpleMenuPreferenceInt(
-                    title = stringResource(id = R.string.settings_smb_concurrency),
-                    summary = stringResource(id = R.string.settings_smb_concurrency_summary, smbConnections.value),
-                    entry = com.hippo.ehviewer.R.array.multi_thread_download_entries,
-                    entryValueRes = com.hippo.ehviewer.R.array.multi_thread_download_entry_values,
-                    state = smbConnections,
-                )
-            }
+            IntSliderPreference(
+                maxValue = 20,
+                minValue = 1,
+                title = stringResource(id = R.string.settings_smb_multiplex),
+                state = Settings.smbOpsPerSession.asMutableState(),
+            )
             SwitchPreference(
                 title = stringResource(id = R.string.settings_smb3_only),
                 state = Settings.smb3Only.asMutableState(),

@@ -189,6 +189,7 @@
     <string name="settings_eh_show_reading_progress_summary">ギャラリー一覧に読書進捗を表示</string>
     <string name="settings_smb_concurrency">SMB 同時接続数</string>
     <string name="settings_smb_concurrency_summary">ホストあたり最大 %s セッション（同一サーバー上の共有で共有；シークと先読み）</string>
+    <string name="settings_smb_multiplex">SMB 多重化</string>
     <string name="settings_smb3_only">SMB 3 のみ</string>
     <string name="settings_smb3_only_summary">SMB 2 を無効化（3.0 / 3.0.2 / 3.1.1 のみ交渉）。有効な SMB 接続をリセットします。</string>
     <string name="settings_smb_encrypt">SMB 3 暗号化</string>
@@ -793,8 +794,6 @@
     <string name="pref_decode_size_origin">原寸</string>
     <string name="pref_reader_original_size">常に原寸で読み込む</string>
     <string name="pref_reader_original_size_summary">ファイルのフル解像度でデコード（メモリ多め）。オフ時は画面向け縮小。ページメニューの「オリジナルの画像を表示」で1枚だけ原寸も可。</string>
-    <string name="pref_smb_reader_safe_concurrency">SMB同時接続を制限（原寸向け）</string>
-    <string name="pref_smb_reader_safe_concurrency_summary">接続3本・各1転送に固定。原寸/大画像時のOOMを抑えます。</string>
     <string name="pref_custom_brightness">明るさをカスタマイズ</string>
     <string name="pref_grayscale">グレースケール</string>
     <string name="pref_inverted_colors">色の反転</string>

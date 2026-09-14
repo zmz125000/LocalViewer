@@ -201,6 +201,7 @@
     <string name="settings_eh_show_reading_progress_summary">在圖庫列表中顯示閱讀進度</string>
     <string name="settings_smb_concurrency">SMB 並行連線數</string>
     <string name="settings_smb_concurrency_summary">每個主機最多 %s 個工作階段（該伺服器上所有共享共用；用於定位與預取）</string>
+    <string name="settings_smb_multiplex">SMB 多路復用</string>
     <string name="settings_smb3_only">僅 SMB 3</string>
     <string name="settings_smb3_only_summary">停用 SMB 2 方言（僅協商 3.0 / 3.0.2 / 3.1.1）。會重設使用中的 SMB 連線。</string>
     <string name="settings_smb_encrypt">允許 SMB 3 加密</string>
@@ -754,8 +755,6 @@
     <string name="pref_decode_size_origin">原圖</string>
     <string name="pref_reader_original_size">一律載入原始影像尺寸</string>
     <string name="pref_reader_original_size_summary">以檔案完整解析度解碼（較占記憶體）。關閉時縮放至螢幕。亦可在頁面選單單次「查看原圖」。</string>
-    <string name="pref_smb_reader_safe_concurrency">限制 SMB 並行（原圖更穩）</string>
-    <string name="pref_smb_reader_safe_concurrency_summary">強制 3 條連線、每連線 1 個傳輸。降低原圖／大圖閱讀時的 OOM 風險。</string>
     <string name="pref_reader_hardware_bitmap">硬體點陣圖解碼</string>
     <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路徑（GPU 點陣圖）。會關閉裁邊與 QR 廣告偵測，避免先軟體解碼再拷貝。</string>
     <string name="pref_reader_lib_direct_bitmap">原生直出點陣圖（實驗）</string>
