@@ -3,7 +3,6 @@ package com.hippo.ehviewer.ui.reader
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Canvas
-import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.RuntimeShader
@@ -34,6 +33,22 @@ internal fun readerResampleKernel(srcW: Float, srcH: Float, dstW: Float, dstH: F
     }
 }
 
+/** Dest fragment → source texel. Matches the AGSL uv * texSize mapping. */
+internal fun readerResampleSrcCoord(
+    fragX: Float,
+    fragY: Float,
+    dstLeft: Float,
+    dstTop: Float,
+    dstW: Float,
+    dstH: Float,
+    texW: Float,
+    texH: Float,
+): Pair<Float, Float> {
+    val uvx = (fragX - dstLeft) / dstW
+    val uvy = (fragY - dstTop) / dstH
+    return uvx * texW to uvy * texH
+}
+
 internal fun Bitmap.skipReaderResample(): Boolean {
     if (isRecycled) return true
     if (isAtLeastU && hasGainmap()) return true
@@ -55,8 +70,9 @@ internal fun readerResampleOrNull(bitmap: Bitmap): ReaderResampleEffect? {
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 internal class ReaderResampleEffect(bitmap: Bitmap) {
     private val runtime = RuntimeShader(AGSL)
+    // Identity local matrix: RuntimeShader child eval() ignores BitmapShader.setLocalMatrix
+    // on several API 33/34 builds, which cropped large pages to the dest-pixel tile.
     private val bitmapShader = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-    private val shaderMatrix = Matrix()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         isFilterBitmap = false
         isDither = true
@@ -70,8 +86,7 @@ internal class ReaderResampleEffect(bitmap: Bitmap) {
 
     fun draw(canvas: Canvas, src: RectF, dst: RectF, kernel: ReaderResampleKernel) {
         if (kernel == ReaderResampleKernel.Bilinear) return
-        shaderMatrix.setRectToRect(dst, src, Matrix.ScaleToFit.FILL)
-        bitmapShader.setLocalMatrix(shaderMatrix)
+        runtime.setFloatUniform("texSize", src.width(), src.height())
         runtime.setFloatUniform("dstOrigin", dst.left, dst.top)
         runtime.setFloatUniform("dstSize", dst.width(), dst.height())
         runtime.setFloatUniform("kernel", if (kernel == ReaderResampleKernel.Lanczos3) 0f else 1f)
@@ -79,8 +94,9 @@ internal class ReaderResampleEffect(bitmap: Bitmap) {
     }
 
     private companion object {
-        // Child shader shares canvas space; BitmapShader local matrix maps dest→src so
-        // eval(canvas) is a bitmap sample. Taps convert bitmap pixels back to canvas.
+        // eval() in *bitmap texel* space (identity BitmapShader). Do not eval(canvas)
+        // coords: child local matrices are ignored and 6000×4000 pages showed the
+        // top-left dest-sized crop.
         const val AGSL = """
 uniform shader image;
 uniform float2 texSize;
@@ -110,8 +126,9 @@ float catmull(float x) {
     return 0.0;
 }
 
-float2 canvasOf(float2 srcPx) {
-    return dstOrigin + srcPx / texSize * dstSize;
+half4 tap(float2 p) {
+    float2 sp = clamp(p + 0.5, float2(0.5), texSize - 0.5);
+    return image.eval(sp);
 }
 
 half4 main(float2 fragCoord) {
@@ -125,7 +142,7 @@ half4 main(float2 fragCoord) {
             for (int i = -2; i <= 3; i += 1) {
                 float2 p = base + float2(float(i), float(j));
                 float w = lanczos3(src.x - p.x) * lanczos3(src.y - p.y);
-                acc += float4(image.eval(canvasOf(p + 0.5))) * w;
+                acc += float4(tap(p)) * w;
                 wsum += w;
             }
         }
@@ -137,7 +154,7 @@ half4 main(float2 fragCoord) {
             for (int i = -1; i <= 2; i += 1) {
                 float w = catmull(float(i) - f.x) * catmull(float(j) - f.y);
                 float2 p = base + float2(float(i), float(j));
-                acc += float4(image.eval(canvasOf(p + 0.5))) * w;
+                acc += float4(tap(p)) * w;
                 wsum += w;
             }
         }

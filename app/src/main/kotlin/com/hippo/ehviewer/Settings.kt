@@ -594,7 +594,7 @@ object Settings : DataStorePreferences(null) {
      * drawing larger. Off = GPU bilinear (current). Coil and lib-direct stills share
      * [com.hippo.ehviewer.ui.reader.BitmapPainter].
      */
-    val readerCustomScaler = boolPref("pref_reader_custom_scaler", false)
+    val readerCustomScaler = boolPref("pref_reader_custom_scaler", true)
 
     /**
      * Prefer GPU hardware bitmaps in the reader.
