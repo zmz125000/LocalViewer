@@ -353,6 +353,14 @@ object Settings : DataStorePreferences(null) {
      */
     val multiThreadDownload = intPref("download_thread_2", 3)
 
+    /**
+     * SMB multiplex: overlapping file/list ops per TCP session (smbj message IDs).
+     * Advanced slider 1–20, default 10. Changing drops pools so new sessions pick up the budget.
+     */
+    val smbOpsPerSession = intPref("smb_ops_per_session", 10).observed {
+        com.hippo.ehviewer.smb.SmbGateway.onPoolBudgetChanged()
+    }
+
     /** Prefer SMB 3.x only (disable SMB 2.0.2 / 2.1 dialects). Default off. */
     val smb3Only = boolPref("smb3_only", false).observed {
         com.hippo.ehviewer.smb.SmbGateway.onProtocolSettingsChanged()
@@ -580,14 +588,6 @@ object Settings : DataStorePreferences(null) {
      * One-shot full-res: page menu "View original image".
      */
     val readerDecodeSize = intPref("pref_reader_decode_size", 0)
-
-    /**
-     * Cap SMB pool for safer original-size reading: 3 TCP sessions, 1 op/session.
-     * Overrides Advanced concurrent-connection count while enabled.
-     */
-    val smbReaderSafeConcurrency = boolPref("pref_smb_reader_safe_concurrency", false).observed {
-        runCatching { com.hippo.ehviewer.smb.SmbGateway.onReaderSafeConcurrencyChanged() }
-    }
 
     /**
      * Prefer GPU hardware bitmaps in the reader.

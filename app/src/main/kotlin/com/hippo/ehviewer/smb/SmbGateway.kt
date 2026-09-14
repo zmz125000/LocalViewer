@@ -151,18 +151,19 @@ object SmbGateway {
 
     /**
      * Concurrent file/list ops multiplexed on one TCP session (smbj message IDs).
-     * Default 3; reduced to 1 when [Settings.smbReaderSafeConcurrency] (original-size RAM).
+     * Range matches Advanced → SMB multiplex slider (1–20, default 10).
      */
-    private const val OPS_PER_SESSION_DEFAULT = 3
-    private const val OPS_PER_SESSION_SAFE = 1
-    private const val CONNECTIONS_SAFE = 3
+    private const val OPS_PER_SESSION_MIN = 1
+    private const val OPS_PER_SESSION_MAX = 20
+
+    /** Extra TCP per host used only for folder list/peek. Not counted in [maxConnectionsPerHost]. */
+    private const val LIST_RESERVED_SESSIONS = 1
 
     /**
-     * Hard cap on simultaneous ops **per host** (all sessions).
-     * 5×3=15 concurrent ~20MB page downloads OOMs / races Android mid-flight;
-     * 3×3=9 is the largest configuration confirmed stable on device.
+     * Hard cap on simultaneous ops **per host** (all sessions including the list TCP).
+     * Sized for the slider max so [hostOpSlots] does not silently clip the user budget.
      */
-    private const val MAX_SAFE_HOST_OPS = 18
+    private const val MAX_SAFE_HOST_OPS = (POOL_CAPACITY + LIST_RESERVED_SESSIONS) * OPS_PER_SESSION_MAX
 
     private const val KEEPALIVE_INTERVAL_MS = 40_000L
 
@@ -177,9 +178,6 @@ object SmbGateway {
     private const val IDLE_RELEASE_MS = 90_000L
     private const val MIN_WARM_DATA_SESSIONS = 1
     private const val ACQUIRE_WAIT_MS = 12_000L
-
-    /** Extra TCP per host used only for folder list/peek. Not counted in [maxConnectionsPerHost]. */
-    private const val LIST_RESERVED_SESSIONS = 1
 
     /** Long enough for large comic page transfers on a busy LAN. */
     private const val SMB_IO_TIMEOUT_SEC = 120L
@@ -210,30 +208,23 @@ object SmbGateway {
     private const val PATH_CHANGE_DEBOUNCE_MS = 1_000L
 
     /** Ops multiplexed per TCP session (fixed when the session is opened). */
-    fun opsPerSession(): Int = if (Settings.smbReaderSafeConcurrency.value) OPS_PER_SESSION_SAFE else OPS_PER_SESSION_DEFAULT
+    fun opsPerSession(): Int = Settings.smbOpsPerSession.value.coerceIn(OPS_PER_SESSION_MIN, OPS_PER_SESSION_MAX)
 
     /**
-     * Max TCP sessions per host. Safe mode forces [CONNECTIONS_SAFE] (3).
-     * Otherwise uses Advanced → SMB concurrent connections.
+     * Max TCP sessions per host. Advanced → SMB concurrent connections.
      */
-    fun maxConnectionsPerHost(): Int = if (Settings.smbReaderSafeConcurrency.value) {
-        CONNECTIONS_SAFE
-    } else {
-        Settings.multiThreadDownload.value.coerceIn(1, POOL_CAPACITY)
-    }
+    fun maxConnectionsPerHost(): Int = Settings.multiThreadDownload.value.coerceIn(1, POOL_CAPACITY)
 
     fun maxConnectionsPerSource(): Int = maxConnectionsPerHost()
 
     /**
-     * App-level download/list gate. Always ≤ [MAX_SAFE_HOST_OPS] so raising session count
-     * does not explode concurrent 20MB transfers (OOM) or smbj mid-close races.
-     * Safe mode: 3 sessions × 1 op = 3 concurrent transfers.
+     * App-level download/list gate. sessions × multiplex, bounded by [MAX_SAFE_HOST_OPS].
      */
     fun maxConcurrentOpsPerHost(): Int = (maxConnectionsPerHost() * opsPerSession()).coerceIn(1, MAX_SAFE_HOST_OPS)
 
-    /** Reader toggle changed — drop pools so new sessions use the new op/session budget. */
-    fun onReaderSafeConcurrencyChanged() {
-        logcat { "SmbGateway: reader safe concurrency → connections=${maxConnectionsPerHost()} ops/session=${opsPerSession()}" }
+    /** Multiplex slider changed — drop pools so new sessions use the new op/session budget. */
+    fun onPoolBudgetChanged() {
+        logcat { "SmbGateway: pool budget → connections=${maxConnectionsPerHost()} ops/session=${opsPerSession()}" }
         // Never close smbj sockets on the UI thread (see [dropAllSessions]).
         dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
     }
@@ -737,8 +728,8 @@ object SmbGateway {
         private val closed = AtomicBoolean(false)
 
         /**
-         * Host-wide op gate (≤ [MAX_SAFE_HOST_OPS]). Prevents 5×3 / 7×3 concurrent large
-         * reads from OOMing or racing session teardown under high throughput.
+         * Host-wide op gate (≤ [MAX_SAFE_HOST_OPS]). Matches the Advanced multiplex
+         * slider max so high-throughput configs are not silently clipped.
          */
         private val hostOpSlots = Semaphore(MAX_SAFE_HOST_OPS)
 
@@ -3159,9 +3150,11 @@ object SmbGateway {
 
     /**
      * Open [relativeFilePath] and run [block]. If the caller is cancelled, close the
-     * handle from another thread so a blocking smbj READ unblocks and the host-pool
-     * slot is released. Coroutine cancel alone does not abort AsyncDirectTcp I/O.
-     * The pooled [Connection] is kept unless the socket itself is dead.
+     * handle **as soon as the job enters cancelling** ([Job.closeFileOnCancelling]) so a
+     * blocking smbj READ unblocks and the host-pool slot is released. Default
+     * [Job.invokeOnCompletion] waits until the coroutine body returns — too late inside
+     * [SmbSequentialCopy] `runBlocking`. The pooled [Connection] is kept unless the
+     * socket itself is dead.
      */
     private suspend fun <T> copyOpenFile(
         source: SmbSourceEntity,
@@ -3172,12 +3165,7 @@ object SmbGateway {
         block: (com.hierynomus.smbj.share.File) -> T,
     ): T {
         val activeFile = AtomicReference<com.hierynomus.smbj.share.File?>(null)
-        val cancelClose = downloadContext[Job]?.invokeOnCompletion { cause ->
-            if (cause == null) return@invokeOnCompletion
-            val file = activeFile.getAndSet(null) ?: return@invokeOnCompletion
-            // Bounded pool — do not Thread().start() per cancel (mass leave-folder pile-up).
-            SmbAsyncClose.run { file.close() }
-        }
+        val cancelClose = downloadContext[Job]?.closeFileOnCancelling(activeFile)
         try {
             val loc = resolveLocation(source, relativeFilePath)
             return withShare(source, password, kind, loc.share) { share ->
@@ -3189,7 +3177,8 @@ object SmbGateway {
                     SMB2CreateDisposition.FILE_OPEN,
                     null,
                 ).use { file ->
-                    activeFile.set(file)
+                    armSmbFileForCancelClose(downloadContext[Job], activeFile, file)
+                    downloadContext.ensureActive()
                     try {
                         block(file)
                     } finally {

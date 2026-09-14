@@ -57,6 +57,7 @@ class SmbHostPoolPolicyTest {
     fun leftoverOpsMultiplexOnlyAfterBudgetIsFull() {
         assertEquals(listOf(2, 2, 1), smbSpreadDataOps(opCount = 5, maxConnections = 3, opsPerSession = 3))
         assertEquals(listOf(1, 1, 1, 1, 1), smbSpreadDataOps(opCount = 5, maxConnections = 5, opsPerSession = 3))
+        assertEquals(listOf(4, 3, 3), smbSpreadDataOps(opCount = 10, maxConnections = 3, opsPerSession = 10))
     }
 
     @Test
