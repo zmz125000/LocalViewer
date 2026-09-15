@@ -436,8 +436,9 @@ object SmbGateway {
     }
 
     private fun availableCredits(connection: Connection): String = runCatching {
-        val window = sequenceWindowField.get(connection)
-        window.javaClass.getMethod("available").invoke(window).toString()
+        val window = sequenceWindowField.get(connection) ?: return@runCatching "?"
+        val credits = window.javaClass.getMethod("available").invoke(window) ?: return@runCatching "?"
+        credits.toString()
     }.getOrDefault("?")
 
     private fun roleTransportName(role: String): String {
