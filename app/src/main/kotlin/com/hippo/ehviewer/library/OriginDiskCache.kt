@@ -4,6 +4,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.webdav.WebDavCache
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -92,6 +93,8 @@ object OriginDiskCache {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lock = Mutex()
     private val scheduled = AtomicBoolean(false)
+    /** Absolute paths of origin files a share/open is still handing to another app. */
+    private val pinnedOriginFiles = ConcurrentHashMap.newKeySet<String>()
 
     private val dataDir: String
         get() = appCtx.applicationInfo.dataDir
@@ -99,6 +102,23 @@ object OriginDiskCache {
     private fun cacheDir(name: String): File = File(dataDir, "cache/$name")
 
     fun originBudgetBytes(): Long = Settings.readCacheSize.value.coerceIn(320, 5120).toLong() * 1024L * 1024L
+
+    fun pinOriginFile(file: File) {
+        pinnedOriginFiles.add(file.absolutePath)
+    }
+
+    fun unpinOriginFile(file: File) {
+        pinnedOriginFiles.remove(file.absolutePath)
+    }
+
+    fun isOriginFilePinned(file: File): Boolean = pinnedOriginFiles.contains(file.absolutePath)
+
+    /** Leftover ACTION_SEND staging from a previous process. */
+    fun clearShareSendDir() {
+        val dir = cacheDir("share_send")
+        if (!dir.isDirectory) return
+        dir.listFiles()?.forEach { runCatching { it.deleteRecursively() } }
+    }
 
     fun scheduleTrim() {
         if (!scheduled.compareAndSet(false, true)) return
@@ -134,12 +154,12 @@ object OriginDiskCache {
         var pinnedBytes = 0L
 
         // Flat remote file caches (folder pages + full archive downloads).
-        collectFlatOrigin(cacheDir("smb_cache"), candidates)
-        collectFlatOrigin(cacheDir("webdav_cache"), candidates)
+        pinnedBytes += collectFlatOrigin(cacheDir("smb_cache"), candidates)
+        pinnedBytes += collectFlatOrigin(cacheDir("webdav_cache"), candidates)
         // Zip-as-dir extracted members (reader pages / optional thumb originals).
-        collectFlatOrigin(cacheDir("zip_folder_pages"), candidates)
+        pinnedBytes += collectFlatOrigin(cacheDir("zip_folder_pages"), candidates)
         // Local-folder HDR → Ultra HDR derivatives (non-destructive).
-        collectFlatOrigin(cacheDir("hdr_ultrahdr"), candidates)
+        pinnedBytes += collectFlatOrigin(cacheDir("hdr_ultrahdr"), candidates)
 
         // Extracted page caches — skip index.json; skip currently open galleries.
         pinnedBytes += collectExtractOrigin(
@@ -168,6 +188,7 @@ object OriginDiskCache {
         for (e in candidates) {
             if (total <= budget) break
             if (!e.file.isFile) continue
+            if (isOriginFilePinned(e.file)) continue
             if (e.file.delete()) {
                 total -= e.size
                 onOriginDeleted(e.file)
@@ -179,17 +200,23 @@ object OriginDiskCache {
         }
     }
 
-    private fun collectFlatOrigin(dir: File, out: MutableList<OriginEntry>) {
-        if (!dir.isDirectory) return
-        val files = dir.listFiles() ?: return
+    /** @return bytes in pinned files (count toward budget, not evictable). */
+    private fun collectFlatOrigin(dir: File, out: MutableList<OriginEntry>): Long {
+        if (!dir.isDirectory) return 0L
+        val files = dir.listFiles() ?: return 0L
+        var pinnedBytes = 0L
         for (f in files) {
             if (!f.isFile) continue
-            val name = f.name
-            if (name.contains(".tmp.") || name.contains(".full.") || name.contains(".jpg.")) continue
+            if (!originFlatFileTrimEligible(f.name)) continue
             val size = f.length()
             if (size <= 0L) continue
-            out += OriginEntry(f, f.lastModified(), size)
+            if (isOriginFilePinned(f)) {
+                pinnedBytes += size
+            } else {
+                out += OriginEntry(f, f.lastModified(), size)
+            }
         }
+        return pinnedBytes
     }
 
     /**
@@ -335,3 +362,7 @@ object OriginDiskCache {
         }
     }
 }
+
+/** In-flight tmp / convert siblings are not origin LRU candidates. */
+internal fun originFlatFileTrimEligible(name: String): Boolean =
+    !name.contains(".tmp.") && !name.contains(".full.") && !name.contains(".jpg.")

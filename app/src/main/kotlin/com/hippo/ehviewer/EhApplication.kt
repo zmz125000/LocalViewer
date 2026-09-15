@@ -68,6 +68,7 @@ import com.hippo.ehviewer.ktor.configureClient
 import com.hippo.ehviewer.ktor.configureCommon
 import com.hippo.ehviewer.ktor.isCronetAvailable
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
 import com.hippo.ehviewer.smb.SmbGateway
@@ -184,6 +185,7 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
     private fun clearTempDir() {
         AppConfig.tempDir.deleteContent()
         AppConfig.externalTempDir?.deleteContent()
+        OriginDiskCache.clearShareSendDir()
     }
 
     /**
