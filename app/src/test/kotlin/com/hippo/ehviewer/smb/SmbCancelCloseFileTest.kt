@@ -59,4 +59,30 @@ class SmbCancelCloseFileTest {
         assertTrue(closed.await(1, TimeUnit.SECONDS))
         closer.dispose()
     }
+
+    @Test
+    fun workerCancelClosesHandleArmedDuringBlockingDrain() = runBlocking {
+        val closed = CountDownLatch(1)
+        val file = AtomicReference<AutoCloseable?>(null)
+        val job = launch(Dispatchers.IO) {
+            val closer = coroutineContext.job.closeFileOnCancelling(file)
+            try {
+                armSmbFileForCancelClose(
+                    coroutineContext.job,
+                    file,
+                    AutoCloseable { closed.countDown() },
+                )
+                Thread.sleep(10_000)
+            } finally {
+                closer.dispose()
+            }
+        }
+        delay(50)
+        job.cancel()
+        assertTrue(
+            "keep-open drain must close the handle on worker cancel, not after sleep",
+            closed.await(1, TimeUnit.SECONDS),
+        )
+        job.join()
+    }
 }

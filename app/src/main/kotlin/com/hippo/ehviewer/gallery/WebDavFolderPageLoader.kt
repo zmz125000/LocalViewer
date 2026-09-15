@@ -19,10 +19,12 @@ import com.hippo.ehviewer.webdav.WebDavPasswordStore
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -52,6 +54,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         // Cap concurrent lib downloads; full UHDR convert is serial in HdrConvertCache.
         val libHdrPrefetchSlots = Semaphore(2)
         val downloadJobs = KeyedJobRegistry<Int>()
+        val closed = AtomicBoolean(false)
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         val ramPages = ConcurrentHashMap<Int, ByteArray>()
 
@@ -119,6 +122,8 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 }
 
                 override fun close() {
+                    closed.set(true)
+                    readyWaiters.clear()
                     downloadJobs.cancelAll()
                     super.close()
                 }
@@ -154,7 +159,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     interactive: Boolean,
                     onReady: (() -> Unit)? = null,
                 ) {
-                    if (index !in 0 until size) return
+                    if (closed.get() || index !in 0 until size) return
                     val name = imageFileNames[index]
                     val cache = WebDavCache.cachePath(source.id, remoteDir, name)
                     val skipDisk = Settings.disableReaderNetworkCache.value
@@ -224,7 +229,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             val runningJob = coroutineContext[Job]
                             val owns = downloadJobs.owns(index, runningJob)
-                            if (owns) {
+                            if (retryFolderDownloadAfterCancel(closed.get(), scope.isActive, owns)) {
                                 val waiters = takeReadyWaiters(index)
                                 if (waiters.isNotEmpty()) {
                                     waiters.forEach { addReadyWaiter(index, it) }

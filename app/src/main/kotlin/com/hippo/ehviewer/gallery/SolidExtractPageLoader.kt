@@ -83,6 +83,8 @@ suspend inline fun <T> useSolidExtractPageLoader(
             SolidExtractCache.invalidateIfRemoteSizeMismatch(cacheKey, sizeHint)
             SolidExtractCache.pin(cacheKey)
             install({ }, { _, _ -> SolidExtractCache.unpin(cacheKey) })
+            // Own the transport from entry (cached resume still stats size).
+            install({ source }, { s, _ -> s.close() })
 
             val ready = SolidExtractCache.isCompleteAndReady(cacheKey, remoteSize = sizeHint)
             if (ready != null) {
@@ -237,6 +239,9 @@ suspend inline fun <T> useSolidExtractPageLoader(
                         readyWaiters.clear()
                         // Sync-enough flush via cache scope (outlives hostScope cancel).
                         engine.persistIndex(complete = engine.isComplete, async = true)
+                        // Unblock any JNI/smbj read waiting on the network source.
+                        // autoCloseScope close waits until awaitCancellation; back/hop is now.
+                        runCatching { source.close() }
                         super.close()
                     }
 

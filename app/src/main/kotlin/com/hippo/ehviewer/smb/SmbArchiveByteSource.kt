@@ -210,6 +210,9 @@ private class KeepOpenSmbFileSource(
 
     init {
         worker = scope.launch {
+            val job = coroutineContext[Job]!!
+            val cancelClose = job.closeFileOnCancelling(activeFile)
+            try {
             while (isActive && !closed.get()) {
                 if (demand.receiveCatching().getOrNull() == null) break
                 var openAttempts = 0
@@ -220,11 +223,13 @@ private class KeepOpenSmbFileSource(
                             // Sticky: dedicated TCP for FUSE/external viewers (not ON_STOP pool).
                             // Default: shared host pool for in-app reader/cover.
                             fun drain(file: com.hierynomus.smbj.share.File, fileSize: Long) {
-                                activeFile.set(file)
+                                armSmbFileForCancelClose(job, activeFile, file)
                                 opened = true
                                 try {
-                                    if (closed.get()) {
-                                        runCatching { file.close() }
+                                    if (closed.get() || !job.isActive) {
+                                        activeFile.getAndSet(null)?.let { leftover ->
+                                            SmbAsyncClose.run { leftover.close() }
+                                        }
                                         return
                                     }
                                     if (!sizeReady.isCompleted) sizeReady.complete(fileSize)
@@ -399,6 +404,9 @@ private class KeepOpenSmbFileSource(
             // Source closed or worker ending: fail anything still waiting.
             for (op in ops) {
                 op.result.complete(-1)
+            }
+            } finally {
+                cancelClose.dispose()
             }
         }
     }

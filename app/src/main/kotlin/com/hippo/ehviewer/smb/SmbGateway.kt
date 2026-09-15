@@ -1521,6 +1521,8 @@ object SmbGateway {
         trackSource(source)
         // Dedicated 64 KiB-transact client — see [smbConfigForShareEnum].
         val smbClient = SMBClient(smbConfigForShareEnum())
+        val connecting = AtomicReference<SMBClient?>(smbClient)
+        val cancelClose = coroutineContext[Job]?.closeFileOnCancelling(connecting)
         val t0 = System.nanoTime()
         fun elapsedMs() = (System.nanoTime() - t0) / 1_000_000L
         try {
@@ -1539,11 +1541,14 @@ object SmbGateway {
                 runCatching { connection.close(true) }
             }
         } catch (e: Throwable) {
+            if (e is CancellationException) throw e
             logcat {
                 "SmbGateway: share-enum failed host=$host ${elapsedMs()}ms: ${e.message}"
             }
             throw e
         } finally {
+            cancelClose?.dispose()
+            connecting.set(null)
             runCatching { smbClient.close() }
         }
     }
@@ -1774,6 +1779,8 @@ object SmbGateway {
             val fixed = fixedShare(source)
             // Empty share uses share-enum config (64 KiB transact); fixed share uses browse config.
             val smbClient = SMBClient(if (fixed.isEmpty()) smbConfigForShareEnum() else smbConfig())
+            val connecting = AtomicReference<SMBClient?>(smbClient)
+            val cancelClose = coroutineContext[Job]?.closeFileOnCancelling(connecting)
             try {
                 val connection = smbClient.connect(host, source.port)
                 try {
@@ -1791,6 +1798,8 @@ object SmbGateway {
                     runCatching { connection.close(true) }
                 }
             } finally {
+                cancelClose?.dispose()
+                connecting.set(null)
                 runCatching { smbClient.close() }
             }
             clearHostCircuit(host, source.port)
@@ -2719,25 +2728,20 @@ object SmbGateway {
                     ZipMemberByteSource.uncompressedSize(zip, member)
                 }
             }.getOrElse { e ->
+                if (e is CancellationException) throw e
                 if (e is ZipMemberTooLargeException) throw e
                 null
             }
         }
-        runCatching {
-            val loc = resolveLocation(source, relativeFilePath)
-            withShare(source, password, shareName = loc.share) { share ->
-                share.openFile(
-                    loc.pathInShare,
-                    EnumSet.of(AccessMask.GENERIC_READ),
-                    null,
-                    SMB2ShareAccess.ALL,
-                    SMB2CreateDisposition.FILE_OPEN,
-                    null,
-                ).use { file ->
-                    file.fileInformation.standardInformation.endOfFile
-                }
+        try {
+            copyOpenFile(source, password, relativeFilePath, coroutineContext) { file ->
+                file.fileInformation.standardInformation.endOfFile
             }
-        }.getOrNull()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     /**
@@ -2753,18 +2757,8 @@ object SmbGateway {
         off: Int,
         len: Int,
     ): Int = withIOContext {
-        val loc = resolveLocation(source, relativeFilePath)
-        withShare(source, password, shareName = loc.share) { share ->
-            share.openFile(
-                loc.pathInShare,
-                EnumSet.of(AccessMask.GENERIC_READ),
-                null,
-                SMB2ShareAccess.ALL,
-                SMB2CreateDisposition.FILE_OPEN,
-                null,
-            ).use { file ->
-                file.read(buf, fileOffset, off, len)
-            }
+        copyOpenFile(source, password, relativeFilePath, coroutineContext) { file ->
+            file.read(buf, fileOffset, off, len)
         }
     }
 
@@ -3341,15 +3335,10 @@ object SmbGateway {
             val smbClient = SMBClient(smbConfig(forList = reservedForList))
             // Socket.connect is not a cancellation point. Hop / source.close()
             // cancel this Job while we still hold growLock + a hostOpSlot;
-            // close the client from another thread so connect unblocks now
-            // instead of after SMB_IO_TIMEOUT_SEC.
-            val connecting = AtomicReference(smbClient)
-            val cancelClose = coroutineContext[Job]?.invokeOnCompletion { cause ->
-                if (cause == null) return@invokeOnCompletion
-                connecting.getAndSet(null)?.let { client ->
-                    SmbAsyncClose.run { client.close() }
-                }
-            }
+            // close the client as soon as the job enters cancelling so connect
+            // unblocks now instead of after SMB_IO_TIMEOUT_SEC.
+            val connecting = AtomicReference<SMBClient?>(smbClient)
+            val cancelClose = coroutineContext[Job]?.closeFileOnCancelling(connecting)
             val prevTag = TrafficStats.getThreadStatsTag()
             TrafficStats.setThreadStatsTag(KeepAliveSocketFactory.SMB_TRAFFIC_TAG)
             try {

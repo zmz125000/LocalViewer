@@ -262,6 +262,8 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     DocumentExtractCache.saveIndexAsync(
                         engine.toIndex(cacheKey, complete = complete),
                     )
+                    // Unblock any smbj read waiting on the network source (back / hop).
+                    runCatching { source.close() }
                     super.close()
                 }
 

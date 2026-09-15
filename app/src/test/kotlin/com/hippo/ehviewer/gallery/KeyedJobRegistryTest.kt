@@ -55,4 +55,12 @@ class KeyedJobRegistryTest {
 
         replacement.cancel()
     }
+
+    @Test
+    fun `retry after cancel is in-session only`() {
+        assertTrue(retryFolderDownloadAfterCancel(closed = false, scopeActive = true, ownsJob = true))
+        assertFalse(retryFolderDownloadAfterCancel(closed = true, scopeActive = true, ownsJob = true))
+        assertFalse(retryFolderDownloadAfterCancel(closed = false, scopeActive = false, ownsJob = true))
+        assertFalse(retryFolderDownloadAfterCancel(closed = false, scopeActive = true, ownsJob = false))
+    }
 }
