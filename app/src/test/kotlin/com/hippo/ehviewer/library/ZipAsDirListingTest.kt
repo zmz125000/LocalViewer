@@ -33,14 +33,23 @@ class ZipAsDirListingTest {
             "002.jpg" to byteArrayOf(2),
         )
         val cd = ZipCentralDirectory.open(FileArchiveByteSource(file))!!
-        val archive = BrowseEntryRemote.ArchiveGallery(name = "flat.cbz", fileName = "flat.cbz")
+        val archive = BrowseEntryRemote.ArchiveGallery(
+            name = "flat.cbz",
+            fileName = "flat.cbz",
+            size = 4096L,
+            lastModifiedMs = 1_700_000_000_000L,
+        )
         val rows = ZipAsDirListing.classifyZipFileAsFolderRows(cd, archive)
         val dir = rows.filterIsInstance<BrowseEntryRemote.Directory>().single()
         assertEquals("flat.cbz", dir.name)
         assertEquals(DirPresence.LeafImages, dir.presence)
+        assertEquals(4096L, dir.size)
+        assertEquals(1_700_000_000_000L, dir.lastModifiedMs)
         val gal = rows.filterIsInstance<BrowseEntryRemote.FolderGallery>().single()
         assertEquals("flat.cbz", gal.relativeName)
         assertEquals(2, gal.pageCount)
+        assertEquals(4096L, gal.size)
+        assertEquals(1_700_000_000_000L, gal.lastModifiedMs)
     }
 
     @Test

@@ -480,6 +480,8 @@ object NetworkFolderIndexCache {
                             put("pageCountCapped", entry.pageCountCapped)
                             entry.coverFileName?.let { put("coverFileName", it) }
                             put("imageFileNames", JSONArray(entry.imageFileNames))
+                            if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
+                            if (entry.size > 0L) put("size", entry.size)
                         }
                         is BrowseEntryRemote.ArchiveGallery -> {
                             put("kind", KIND_ARCHIVE)
@@ -536,6 +538,8 @@ object NetworkFolderIndexCache {
                         pageCountCapped = item.optBoolean("pageCountCapped"),
                         coverFileName = item.optNullableString("coverFileName"),
                         imageFileNames = item.optJSONArray("imageFileNames").toStringList(),
+                        lastModifiedMs = item.optLong("lastModifiedMs"),
+                        size = item.optLong("size"),
                         hidden = hidden,
                         virtual = virtual,
                     )

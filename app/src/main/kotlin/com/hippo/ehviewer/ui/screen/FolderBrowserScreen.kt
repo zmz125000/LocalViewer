@@ -129,6 +129,7 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToLocalZipFolderReader
@@ -1806,6 +1807,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             cover = dir.coverPath?.let { BrowseCover.Local(it) },
                                             showFolderThumb = browseFolderThumbs,
                                             lastModifiedMs = dir.lastModifiedMs,
+                                            sizeBytes = dir.size,
+                                            typeLabel = browseZipAsDirTypeLabel(dir.relativeName, dir.name) ?: "Dir",
                                             overflow = dirOverflow(dir),
                                             showFavoriteStar = isDirFavorite(dir),
                                         )
@@ -1844,6 +1847,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 onClick = { openFolderGalleryPrimary(entry) },
                                                 onLongClick = { openFolderGallerySecondary(entry) },
                                                 lastModifiedMs = entry.lastModifiedMs,
+                                                sizeBytes = entry.size,
+                                                typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
                                                 overflow = folderGalleryOverflow(entry),
                                             )
                                             is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(

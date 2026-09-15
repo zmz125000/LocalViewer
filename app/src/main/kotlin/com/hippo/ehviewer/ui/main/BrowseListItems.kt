@@ -77,6 +77,7 @@ import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
+import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
@@ -108,6 +109,18 @@ fun browseFileExtensionLabel(fileName: String): String {
     val dot = base.lastIndexOf('.')
     if (dot <= 0 || dot >= base.length - 1) return "FILE"
     return base.substring(dot + 1).uppercase(Locale.US)
+}
+
+/**
+ * Zip-as-dir row that *is* the zip/cbz file (`comic.cbz`), not an interior
+ * (`comic.cbz/Album`). Null → keep Dir/Folder.
+ */
+fun browseZipAsDirTypeLabel(relativeName: String, name: String): String? {
+    val rel = relativeName.replace('\\', '/').trim('/')
+    val base = rel.ifEmpty { name }
+    if ('/' in base) return null
+    if (!isZipArchiveFileName(base)) return null
+    return browseFileExtensionLabel(base)
 }
 
 /** Compact size for list meta (`340 KB`, `1.2 MB`); empty when unknown. */
@@ -162,9 +175,25 @@ fun browseListDateLabel(lastModifiedMs: Long): String {
 }
 
 /**
- * Folder list second line: `ext|Dir|Folder|SMB|WebDAV` · size|xxP · date
- * (segments with empty values are omitted).
+ * Folder list second line: `ext|Dir|Folder|SMB|WebDAV` · xxP · size · date
+ * (segments with empty values are omitted). Pages and size both show when known
+ * so archive/PDF galleries keep file size next to page count.
  */
+fun browseListMetaSegments(
+    typeLabel: String,
+    sizeBytes: Long = 0L,
+    pageCount: Int = 0,
+    pageCountCapped: Boolean = false,
+    dateLabel: String = "",
+): String = buildList {
+    add(typeLabel)
+    val pages = browseListPagesLabel(pageCount, pageCountCapped)
+    if (pages.isNotEmpty()) add(pages)
+    val size = browseListSizeLabel(sizeBytes)
+    if (size.isNotEmpty()) add(size)
+    if (dateLabel.isNotEmpty()) add(dateLabel)
+}.joinToString(BROWSE_LIST_SEP)
+
 @Composable
 fun browseListSupportingLine(
     typeLabel: String,
@@ -172,19 +201,13 @@ fun browseListSupportingLine(
     pageCount: Int = 0,
     pageCountCapped: Boolean = false,
     lastModifiedMs: Long = 0L,
-): String {
-    val mid = if (pageCount > 0 || pageCountCapped) {
-        browseListPagesLabel(pageCount, pageCountCapped)
-    } else {
-        browseListSizeLabel(sizeBytes)
-    }
-    val date = browseListDateLabel(lastModifiedMs)
-    return buildList {
-        add(typeLabel)
-        if (mid.isNotEmpty()) add(mid)
-        if (date.isNotEmpty()) add(date)
-    }.joinToString(BROWSE_LIST_SEP)
-}
+): String = browseListMetaSegments(
+    typeLabel = typeLabel,
+    sizeBytes = sizeBytes,
+    pageCount = pageCount,
+    pageCountCapped = pageCountCapped,
+    dateLabel = browseListDateLabel(lastModifiedMs),
+)
 
 /**
  * List-row supporting content: optional type icon (same idea as favourite / history
@@ -353,6 +376,9 @@ fun BrowseDirectoryRow(
     thumbRetryKey: Any? = null,
     allowRemoteFetch: Boolean = true,
     lastModifiedMs: Long = 0L,
+    sizeBytes: Long = 0L,
+    /** Zip-as-dir uses ZIP/CBZ; real folders stay `Dir`. */
+    typeLabel: String = "Dir",
     overflow: BrowseOverflowActions? = null,
     /** Inline star after the name — same as Browse source list. */
     showFavoriteStar: Boolean = false,
@@ -363,7 +389,8 @@ fun BrowseDirectoryRow(
         supportingContent = {
             Text(
                 browseListSupportingLine(
-                    typeLabel = "Dir",
+                    typeLabel = typeLabel,
+                    sizeBytes = sizeBytes,
                     lastModifiedMs = lastModifiedMs,
                 ),
             )
@@ -419,6 +446,9 @@ fun BrowseFolderGalleryRow(
     /** Long-press → photo-grid virtual folder; null keeps click-only. */
     onLongClick: (() -> Unit)? = null,
     lastModifiedMs: Long = 0L,
+    sizeBytes: Long = 0L,
+    /** Zip-as-dir uses ZIP/CBZ; real folders stay `Folder`. */
+    typeLabel: String = "Folder",
     overflow: BrowseOverflowActions? = null,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -428,7 +458,8 @@ fun BrowseFolderGalleryRow(
         supportingContent = {
             Text(
                 browseListSupportingLine(
-                    typeLabel = "Folder",
+                    typeLabel = typeLabel,
+                    sizeBytes = sizeBytes,
                     pageCount = if (showPages) pageCount else 0,
                     pageCountCapped = showPages && pageCountCapped,
                     lastModifiedMs = lastModifiedMs,

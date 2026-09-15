@@ -93,6 +93,7 @@ object OriginDiskCache {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lock = Mutex()
     private val scheduled = AtomicBoolean(false)
+
     /** Absolute paths of origin files a share/open is still handing to another app. */
     private val pinnedOriginFiles = ConcurrentHashMap.newKeySet<String>()
 
@@ -364,5 +365,4 @@ object OriginDiskCache {
 }
 
 /** In-flight tmp / convert siblings are not origin LRU candidates. */
-internal fun originFlatFileTrimEligible(name: String): Boolean =
-    !name.contains(".tmp.") && !name.contains(".full.") && !name.contains(".jpg.")
+internal fun originFlatFileTrimEligible(name: String): Boolean = !name.contains(".tmp.") && !name.contains(".full.") && !name.contains(".jpg.")

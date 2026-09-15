@@ -633,7 +633,9 @@ object LocalFolderListing {
         return BrowseSession.rememberLocalRawChildren(BrowseSession.pathKey(path)) {
             // Raw list: `.nomedia` dirs are tagged after child peeks (same as SMB),
             // so we do not SAF-list every subdirectory twice.
-            path.listBrowseChildrenRaw().map { it.toRemoteChild() }
+            // Full SIZE/LAST_MODIFIED on SAF remainder so archive/PDF list cells
+            // keep mtime/size when MediaStore overlay already listed images.
+            path.listBrowseChildrenRaw(lightSafMeta = false).map { it.toRemoteChild() }
         }
     }
 
@@ -707,6 +709,7 @@ fun materializeLocalEntries(
                     presence = entry.presence,
                     coverPath = cover,
                     lastModifiedMs = entry.lastModifiedMs,
+                    size = entry.size,
                     hidden = entry.hidden,
                     virtual = entry.virtual,
                 )
@@ -740,6 +743,8 @@ fun materializeLocalEntries(
                     pageCount = entry.pageCount,
                     pageCountCapped = entry.pageCountCapped,
                     coverPath = cover,
+                    lastModifiedMs = entry.lastModifiedMs,
+                    size = entry.size,
                     hidden = entry.hidden,
                     virtual = entry.virtual,
                 )
