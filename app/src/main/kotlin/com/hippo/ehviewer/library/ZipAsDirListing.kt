@@ -498,6 +498,8 @@ object ZipAsDirListing {
             pageCountCapped = false,
             coverFileName = simple.imageNames.first(),
             imageFileNames = simple.imageNames,
+            lastModifiedMs = archive.lastModifiedMs,
+            size = archive.size,
             hidden = archive.hidden,
             virtual = false,
         )
@@ -751,6 +753,16 @@ object ZipAsDirListing {
         .toList()
 
     /**
+     * Folder-view zip-as-dir menu: force a re-list only when the setting actually
+     * changed. First composition and return-from-reader remount re-observe the same
+     * value and must not scan.
+     *
+     * Both directions need a scan. Off demotes zip folders; on must parse zip CDs
+     * ([presentCachedListing] cannot invent Folder/Directory rows from ArchiveGallery).
+     */
+    fun zipAsDirToggleRequiresForceReload(previous: Boolean, current: Boolean): Boolean = previous != current
+
+    /**
      * Shape a cached listing for the current zip-as-dir toggle without opening zips.
      * Off: Directory / FolderGallery zip rows → ArchiveGallery.
      */
@@ -840,7 +852,16 @@ object ZipAsDirListing {
                 name = zipSeg,
                 fileName = zipSeg,
                 parentRelativeName = "",
-                lastModifiedMs = (entry as? BrowseEntryRemote.Directory)?.lastModifiedMs ?: 0L,
+                size = when (entry) {
+                    is BrowseEntryRemote.Directory -> entry.size
+                    is BrowseEntryRemote.FolderGallery -> entry.size
+                    else -> 0L
+                },
+                lastModifiedMs = when (entry) {
+                    is BrowseEntryRemote.Directory -> entry.lastModifiedMs
+                    is BrowseEntryRemote.FolderGallery -> entry.lastModifiedMs
+                    else -> 0L
+                },
                 hidden = entry.hidden,
             )
         }
@@ -873,6 +894,7 @@ object ZipAsDirListing {
         val fake = RemoteChild(
             name = archive.fileName,
             isDirectory = true,
+            size = archive.size,
             lastModifiedMs = archive.lastModifiedMs,
             hidden = archive.hidden,
         )
@@ -924,6 +946,8 @@ object ZipAsDirListing {
                 // Inner albums: store `Album/01.jpg` so parent-listing dir thumbs
                 // resolve via [zipAsDirCoverParts] (basename alone misses the prefix).
                 coverFileName = entry.coverFileName?.let { joinPrefix(inner, it) },
+                lastModifiedMs = entry.lastModifiedMs,
+                size = entry.size,
                 hidden = entry.hidden,
             )
             if (extra == null) extra = ArrayList()
@@ -987,6 +1011,7 @@ object ZipAsDirListing {
                             ZipPaths.encodePath(zipAbsolutePath, joinPrefix(childInner, cover))
                         },
                         lastModifiedMs = entry.lastModifiedMs,
+                        size = entry.size,
                         hidden = entry.hidden,
                         virtual = entry.virtual,
                     )
@@ -1005,6 +1030,8 @@ object ZipAsDirListing {
                         pageCount = entry.pageCount,
                         pageCountCapped = entry.pageCountCapped,
                         coverPath = coverMember?.let { ZipPaths.encodePath(zipAbsolutePath, it) },
+                        lastModifiedMs = entry.lastModifiedMs,
+                        size = entry.size,
                         hidden = entry.hidden,
                         virtual = entry.virtual,
                     )

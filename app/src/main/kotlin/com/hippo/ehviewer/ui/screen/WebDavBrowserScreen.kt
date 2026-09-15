@@ -130,6 +130,7 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToWebDavFolderReader
@@ -1105,6 +1106,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    fun shareWebDavFile(fileName: String, displayName: String = fileName.substringAfterLast('/')) {
+        val src = source ?: return
+        val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
+        launchIO {
+            with(context) { BrowseSaveAs.shareWebDavFile(src.id, remote, displayName) }
+        }
+    }
+
     fun saveWebDavFolder(relativeName: String, displayName: String = relativeName.substringAfterLast('/')) {
         val src = source ?: return
         val remote = if (relativeDir.isEmpty()) relativeName else WebDavGateway.joinRelative(relativeDir, relativeName)
@@ -1142,6 +1151,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 entry.fileName.substringAfterLast('/'),
             )
         },
+        onShare = {
+            shareWebDavFile(
+                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                entry.fileName.substringAfterLast('/'),
+            )
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1152,6 +1167,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onCopyUrl = { copyWebDavVideoUrl(fileName) },
         onOpenWith = { openExternalFile(fileName, usePreferredPlayer = false) },
         onSaveAs = { saveWebDavFile(fileName) },
+        onShare = { shareWebDavFile(fileName) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1163,6 +1179,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             onCopyUrl = { copyWebDavHtmlUrl(fileName) },
             onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveWebDavFile(fileName) },
+            onShare = { shareWebDavFile(fileName) },
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1170,6 +1187,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             kind = BrowseOverflowKind.Common,
             onOpenWith = { openExternalFile(fileName) },
             onSaveAs = { saveWebDavFile(fileName) },
+            onShare = { shareWebDavFile(fileName) },
             onUnsupported = { notSupportedAction() },
         )
     }
@@ -1602,6 +1620,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             thumbRetryKey = refreshToken,
                                             allowRemoteFetch = allowRemoteThumbs,
                                             lastModifiedMs = dir.lastModifiedMs,
+                                            sizeBytes = dir.size,
+                                            typeLabel = browseZipAsDirTypeLabel(dir.relativeName, dir.name) ?: "Dir",
                                             overflow = dirOverflow(dir.relativeName, dir.coverFileName),
                                             showFavoriteStar = isDirFavorite(dir.relativeName),
                                         )
@@ -1634,6 +1654,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     onClick = { openFolderGalleryPrimary(entry) },
                                                     onLongClick = { openFolderGallerySecondary(entry) },
                                                     lastModifiedMs = entry.lastModifiedMs,
+                                                    sizeBytes = entry.size,
+                                                    typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
                                                     overflow = folderGalleryOverflow(entry),
                                                 )
                                             is BrowseEntryRemote.ArchiveGallery ->
@@ -1648,6 +1670,8 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     fileName = entry.fileName,
                                                     sizeBytes = entry.size,
                                                     lastModifiedMs = entry.lastModifiedMs,
+                                                    pageCount = entry.pageCount,
+                                                    showPages = showGalleryPages,
                                                     overflow = archiveOverflow(entry),
                                                 )
                                             else -> Unit

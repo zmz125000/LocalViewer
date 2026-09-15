@@ -15,7 +15,7 @@
 </p>
 
 <h1 align="center">
-  <img src="https://github.com/zmz125000/LocalViewer-art/blob/master/launcher_icon-web.svg" width="200" alt="EhViewer">
+  <img src="https://github.com/zmz125000/LocalViewer-art/blob/master/ic_launcher-playstore.webp" width="200" alt="EhViewer">
   <br>LocalViewer<br>
 </h1>
 

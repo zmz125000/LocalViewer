@@ -212,6 +212,8 @@ suspend inline fun <T> useTarChunkPageLoader(
                     ArchiveStreamPageCache.saveIndexAsync(
                         engine.toIndex(completePages = complete),
                     )
+                    // Unblock any JNI/smbj read waiting on the network source.
+                    runCatching { source.close() }
                     super.close()
                 }
 

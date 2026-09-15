@@ -89,6 +89,8 @@ sealed interface BrowseEntry {
          */
         val coverPath: Path? = null,
         override val lastModifiedMs: Long = 0L,
+        /** Zip-as-dir: live zip file size. 0 for real directories. */
+        override val size: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntry
@@ -104,6 +106,9 @@ sealed interface BrowseEntry {
         val pageCount: Int,
         val pageCountCapped: Boolean = false,
         val coverPath: Path?,
+        override val lastModifiedMs: Long = 0L,
+        /** Zip-as-dir: live zip file size. 0 for real folders. */
+        override val size: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntry
@@ -310,6 +315,9 @@ sealed interface BrowseEntryRemote {
         val pageCountCapped: Boolean = false,
         val coverFileName: String?,
         val imageFileNames: List<String>,
+        override val lastModifiedMs: Long = 0L,
+        /** Zip-as-dir: live zip file size. 0 for real folders. */
+        override val size: Long = 0L,
         override val hidden: Boolean = false,
         override val virtual: Boolean = false,
     ) : BrowseEntryRemote
@@ -782,7 +790,19 @@ fun replaceSlimDirectFilesFromLive(
             is BrowseEntryRemote.FolderGallery -> {
                 val rel = norm(entry.relativeName)
                 if (rel.isNotEmpty()) {
-                    promotedGalleries += entry
+                    val zipName = ZipAsDirListing.zipFileSegment(rel, entry.name)
+                        ?.takeIf { '/' !in rel }
+                    val live = zipName?.let { liveByName[it] }
+                    if (live != null) {
+                        seenDirectNames += zipName
+                        promotedGalleries += entry.copy(
+                            size = live.size.takeIf { it > 0L } ?: entry.size,
+                            lastModifiedMs = live.lastModifiedMs.takeIf { it > 0L }
+                                ?: entry.lastModifiedMs,
+                        )
+                    } else {
+                        promotedGalleries += entry
+                    }
                 }
                 // relativeName "" rebuilt from live images below.
             }
@@ -963,6 +983,7 @@ fun classifyRemoteListingWithPeeks(
                         hasGallery = false,
                         presence = if (hidden) DirPresence.Empty else DirPresence.Pending,
                         lastModifiedMs = e.lastModifiedMs,
+                        size = e.size,
                         hidden = hidden,
                     )
                     continue
@@ -977,6 +998,7 @@ fun classifyRemoteListingWithPeeks(
                         hasGallery = false,
                         presence = DirPresence.Empty,
                         lastModifiedMs = e.lastModifiedMs,
+                        size = e.size,
                         hidden = true,
                     )
                     continue
@@ -1139,6 +1161,8 @@ fun classifyRemoteListingWithPeeks(
                                 displayName = promotedSubGalleryName(e.name),
                                 hidden = entryHidden,
                                 virtual = true,
+                                lastModifiedMs = e.lastModifiedMs,
+                                size = e.size,
                             )?.let { leafGalleries += it }
                         } else if (sHasImages && galleryLeaves.isEmpty()) {
                             // Video-only promote under S that also has direct images: list dual gallery
@@ -1148,6 +1172,8 @@ fun classifyRemoteListingWithPeeks(
                                 peek = peek,
                                 displayName = e.name,
                                 hidden = entryHidden,
+                                lastModifiedMs = e.lastModifiedMs,
+                                size = e.size,
                             )?.let { leafGalleries += it }
                         }
 
@@ -1206,6 +1232,7 @@ fun classifyRemoteListingWithPeeks(
                             presence = presence,
                             coverFileName = sCoverFileName,
                             lastModifiedMs = e.lastModifiedMs,
+                            size = e.size,
                             hidden = entryHidden,
                         )
                         continue
@@ -1220,6 +1247,8 @@ fun classifyRemoteListingWithPeeks(
                                 peek = peek,
                                 displayName = e.name,
                                 hidden = entryHidden,
+                                lastModifiedMs = e.lastModifiedMs,
+                                size = e.size,
                             )?.let { leafGalleries += it }
                             dirs += BrowseEntryRemote.Directory(
                                 name = e.name,
@@ -1229,6 +1258,7 @@ fun classifyRemoteListingWithPeeks(
                                 presence = DirPresence.LeafImages,
                                 coverFileName = sCoverFileName,
                                 lastModifiedMs = e.lastModifiedMs,
+                                size = e.size,
                                 hidden = entryHidden,
                             )
                         } else if (sHasVideoFlag) {
@@ -1240,6 +1270,7 @@ fun classifyRemoteListingWithPeeks(
                                 presence = DirPresence.VideoOnly,
                                 coverFileName = sCoverFileName,
                                 lastModifiedMs = e.lastModifiedMs,
+                                size = e.size,
                                 hidden = entryHidden,
                             )
                         } else {
@@ -1251,6 +1282,7 @@ fun classifyRemoteListingWithPeeks(
                                 presence = DirPresence.Empty,
                                 coverFileName = sCoverFileName,
                                 lastModifiedMs = e.lastModifiedMs,
+                                size = e.size,
                                 hidden = entryHidden,
                             )
                         }
@@ -1267,6 +1299,8 @@ fun classifyRemoteListingWithPeeks(
                             peek = peek,
                             displayName = e.name,
                             hidden = entryHidden,
+                            lastModifiedMs = e.lastModifiedMs,
+                            size = e.size,
                         )?.let { leafGalleries += it }
                     }
                     dirs += BrowseEntryRemote.Directory(
@@ -1277,6 +1311,7 @@ fun classifyRemoteListingWithPeeks(
                         presence = DirPresence.Navigable,
                         coverFileName = sCoverFileName,
                         lastModifiedMs = e.lastModifiedMs,
+                        size = e.size,
                         hidden = entryHidden,
                     )
                     continue
@@ -1293,6 +1328,7 @@ fun classifyRemoteListingWithPeeks(
                             presence = DirPresence.Navigable,
                             coverFileName = navCover,
                             lastModifiedMs = e.lastModifiedMs,
+                            size = e.size,
                             hidden = entryHidden,
                         )
                         // Mixed folder: also list as gallery for direct images.
@@ -1304,6 +1340,8 @@ fun classifyRemoteListingWithPeeks(
                                 pageCountCapped = false,
                                 coverFileName = g.coverFileName,
                                 imageFileNames = g.imageFileNames,
+                                lastModifiedMs = e.lastModifiedMs,
+                                size = e.size,
                                 hidden = entryHidden,
                             )
                         }
@@ -1330,6 +1368,7 @@ fun classifyRemoteListingWithPeeks(
                             presence = DirPresence.LeafImages,
                             coverFileName = kind.coverFileName,
                             lastModifiedMs = e.lastModifiedMs,
+                            size = e.size,
                             hidden = entryHidden,
                         )
                         leafGalleries += BrowseEntryRemote.FolderGallery(
@@ -1339,6 +1378,8 @@ fun classifyRemoteListingWithPeeks(
                             pageCountCapped = false,
                             coverFileName = kind.coverFileName,
                             imageFileNames = kind.imageFileNames,
+                            lastModifiedMs = e.lastModifiedMs,
+                            size = e.size,
                             hidden = entryHidden,
                         )
                     }
@@ -1352,6 +1393,7 @@ fun classifyRemoteListingWithPeeks(
                                     hasGallery = false,
                                     presence = DirPresence.Empty,
                                     lastModifiedMs = e.lastModifiedMs,
+                                    size = e.size,
                                     hidden = entryHidden,
                                 )
                             single != null -> {
@@ -1371,6 +1413,7 @@ fun classifyRemoteListingWithPeeks(
                                     hasGallery = false,
                                     presence = DirPresence.PromotedShell,
                                     lastModifiedMs = e.lastModifiedMs,
+                                    size = e.size,
                                     hidden = entryHidden,
                                 )
                             }
@@ -1381,6 +1424,7 @@ fun classifyRemoteListingWithPeeks(
                                     hasGallery = false,
                                     presence = DirPresence.VideoOnly,
                                     lastModifiedMs = e.lastModifiedMs,
+                                    size = e.size,
                                     hidden = entryHidden,
                                 )
                         }
@@ -1392,6 +1436,7 @@ fun classifyRemoteListingWithPeeks(
                             hasGallery = false,
                             presence = DirPresence.Empty,
                             lastModifiedMs = e.lastModifiedMs,
+                            size = e.size,
                             hidden = entryHidden,
                         )
                 }
@@ -1489,6 +1534,8 @@ private fun imagesInPeekAsGallery(
     displayName: String,
     hidden: Boolean = false,
     virtual: Boolean = false,
+    lastModifiedMs: Long = 0L,
+    size: Long = 0L,
 ): BrowseEntryRemote.FolderGallery? {
     val images = ArrayList<String>()
     for (c in peek) {
@@ -1505,6 +1552,8 @@ private fun imagesInPeekAsGallery(
         pageCountCapped = false,
         coverFileName = images.first(),
         imageFileNames = images,
+        lastModifiedMs = lastModifiedMs,
+        size = size,
         hidden = hidden,
         virtual = virtual,
     )

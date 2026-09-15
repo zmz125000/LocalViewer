@@ -129,6 +129,7 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToLocalFolderReader
 import com.hippo.ehviewer.ui.navToLocalZipFolderReader
@@ -315,7 +316,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             entries = ZipAsDirListing.materializeLocal(
                 frame.path,
                 frame.zipInnerRel.orEmpty(),
-                cached.entries,
+                ZipAsDirListing.presentCachedListing(cached.entries),
             )
             listedPath = frameListKey(frame)
             loading = false
@@ -328,7 +329,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             preferMediaStore = frame.preferMediaStore,
         )
         val cached = BrowseSession.getLocalCachedListing(BrowseSession.pathKey(effective)) ?: return false
-        entries = materializeLocalEntries(effective, cached.entries)
+        entries = materializeLocalEntries(
+            effective,
+            ZipAsDirListing.presentCachedListing(cached.entries),
+        )
         listedPath = frameListKey(frame)
         loading = false
         refreshing = !cached.sessionCurrent
@@ -498,25 +502,39 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    /** Force the next stack-driven [reload] (zip-as-dir toggle leaving a zip frame). */
+    var forceNextLoad by remember { mutableStateOf(false) }
+
     LaunchedEffect(stack) {
-        if (skipNextListing) {
+        if (skipNextListing && !forceNextLoad) {
             skipNextListing = false
             loading = false
             refreshing = false
             return@LaunchedEffect
         }
-        reload(force = false)
+        skipNextListing = false
+        val force = forceNextLoad
+        forceNextLoad = false
+        reload(force = force)
     }
 
-    // Zip-as-dir toggle: re-materialize so ArchiveGallery ↔ Folder/Directory updates without
-    // waiting for a manual pull-to-refresh (cache still holds the other shape).
+    // Zip-as-dir toggle: force re-list in both directions so ArchiveGallery ↔ Folder/Directory
+    // updates (toggle-on must parse zip CDs; cache cannot invent those rows). Same as SMB/WebDAV:
+    // only on an actual setting change — first composition / return-from-reader remount must
+    // not force-scan (that used to re-list every reader exit when the toggle was off).
+    var prevZipAsDir by remember { mutableStateOf(browseZipAsDir) }
     LaunchedEffect(browseZipAsDir) {
+        if (!ZipAsDirListing.zipAsDirToggleRequiresForceReload(prevZipAsDir, browseZipAsDir)) {
+            return@LaunchedEffect
+        }
+        prevZipAsDir = browseZipAsDir
         if (stack.isEmpty()) return@LaunchedEffect
         if (!browseZipAsDir && stack.last().isZipBrowse) {
+            forceNextLoad = true
             updateStack(stack.dropLastWhile { it.isZipBrowse })
             return@LaunchedEffect
         }
-        reload(force = !browseZipAsDir)
+        reload(force = true)
     }
 
     // Turning Hidden files on: mark listing non-current so slim quick-scan deep-scans
@@ -1325,6 +1343,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         launchIO { with(context) { BrowseSaveAs.saveLocalFile(path, name) } }
     }
 
+    fun shareLocalFile(path: okio.Path) {
+        val name = ZipPaths.memberLeafName(path.toString()) ?: path.name
+        launchIO { with(context) { BrowseSaveAs.shareLocalFile(path, name) } }
+    }
+
     fun saveLocalFolder(dir: okio.Path, displayName: String, relativeName: String) {
         val name = relativeName.substringAfterLast('/').ifEmpty { displayName }
         launchIO { with(context) { BrowseSaveAs.saveLocalFolder(dir, name, relativeName) } }
@@ -1353,6 +1376,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onRead = { openArchive(entry) },
         onOpenWith = { openArchiveInOtherApp(entry) },
         onSaveAs = { saveLocalFile(entry.path) },
+        onShare = { shareLocalFile(entry.path) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1363,6 +1387,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onCopyUrl = { copyLocalVideoUrl(path) },
         onOpenWith = { openExternalFile(path, usePreferredPlayer = false) },
         onSaveAs = { saveLocalFile(path) },
+        onShare = { shareLocalFile(path) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1374,6 +1399,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             onCopyUrl = { copyLocalHtmlUrl(path) },
             onOpenWith = { openExternalFile(path, asFile = true) },
             onSaveAs = { saveLocalFile(path) },
+            onShare = { shareLocalFile(path) },
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1381,6 +1407,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             kind = BrowseOverflowKind.Common,
             onOpenWith = { openExternalFile(path) },
             onSaveAs = { saveLocalFile(path) },
+            onShare = { shareLocalFile(path) },
             onUnsupported = { notSupportedAction() },
         )
     }
@@ -1780,6 +1807,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             cover = dir.coverPath?.let { BrowseCover.Local(it) },
                                             showFolderThumb = browseFolderThumbs,
                                             lastModifiedMs = dir.lastModifiedMs,
+                                            sizeBytes = dir.size,
+                                            typeLabel = browseZipAsDirTypeLabel(dir.relativeName, dir.name) ?: "Dir",
                                             overflow = dirOverflow(dir),
                                             showFavoriteStar = isDirFavorite(dir),
                                         )
@@ -1818,6 +1847,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 onClick = { openFolderGalleryPrimary(entry) },
                                                 onLongClick = { openFolderGallerySecondary(entry) },
                                                 lastModifiedMs = entry.lastModifiedMs,
+                                                sizeBytes = entry.size,
+                                                typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
                                                 overflow = folderGalleryOverflow(entry),
                                             )
                                             is BrowseEntry.ArchiveGallery -> BrowseArchiveGalleryRow(

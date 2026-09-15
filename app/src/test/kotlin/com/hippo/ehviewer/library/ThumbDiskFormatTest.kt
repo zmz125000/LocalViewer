@@ -2,6 +2,7 @@ package com.hippo.ehviewer.library
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -29,5 +30,14 @@ class ThumbDiskFormatTest {
         val jpg = OriginDiskCache.jpegSibling(webp)
         assertEquals("deadbeef.jpg", jpg.name)
         assertTrue(OriginDiskCache.thumbFileName("deadbeef").endsWith(".webp"))
+    }
+
+    @Test
+    fun originFlatTrimSkipsInFlightConvertSiblings() {
+        assertTrue(originFlatFileTrimEligible("abc.jpg"))
+        assertTrue(originFlatFileTrimEligible("deadbeef.bin"))
+        assertFalse(originFlatFileTrimEligible("deadbeef.tmp.123"))
+        assertFalse(originFlatFileTrimEligible("deadbeef.full.1"))
+        assertFalse(originFlatFileTrimEligible("deadbeef.jpg.partial"))
     }
 }

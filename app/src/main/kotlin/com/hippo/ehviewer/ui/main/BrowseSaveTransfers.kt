@@ -33,14 +33,22 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import splitties.init.appCtx
 
-/** One snackbar per Save-to… transfer: downloaded size, speed, cancel. */
+/** One snackbar per Save-to… / Share transfer: downloaded size, speed, cancel. */
 object BrowseSaveTransfers {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val ids = AtomicLong(1)
     private val _items = MutableStateFlow<List<SaveTransfer>>(emptyList())
     val items: StateFlow<List<SaveTransfer>> = _items
 
-    fun start(name: String, successMessage: String, block: suspend (ByteCounter) -> Unit) {
+    /**
+     * @param successMessage Shown after [block] succeeds. Null dismisses immediately
+     *   (share: chooser is the success UI).
+     */
+    fun start(
+        name: String,
+        successMessage: String? = null,
+        block: suspend (ByteCounter) -> Unit,
+    ) {
         val id = ids.getAndIncrement()
         val counter = ByteCounter()
         val job = scope.launch(start = CoroutineStart.LAZY) {
@@ -61,14 +69,16 @@ object BrowseSaveTransfers {
             try {
                 block(counter)
                 ticker.cancel()
-                patch(id) {
-                    copy(
-                        bytes = counter.bytes,
-                        speedBps = 0L,
-                        status = SaveTransferStatus.Success(successMessage),
-                    )
+                if (successMessage != null) {
+                    patch(id) {
+                        copy(
+                            bytes = counter.bytes,
+                            speedBps = 0L,
+                            status = SaveTransferStatus.Success(successMessage),
+                        )
+                    }
+                    delay(2500)
                 }
-                delay(2500)
             } catch (e: CancellationException) {
                 ticker.cancel()
                 if (_items.value.none { it.id == id && it.status is SaveTransferStatus.Success }) {

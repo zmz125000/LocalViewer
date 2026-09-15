@@ -44,3 +44,15 @@ internal class KeyedJobRegistry<K> {
         return jobs.toList()
     }
 }
+
+/**
+ * In-session seek may restart a cancelled page download (prefetch → interactive).
+ * Reader exit / sibling hop must not: [PageLoader.close] runs while the VM scope
+ * is still alive, so [scopeActive] alone is not enough.
+ */
+@PublishedApi
+internal fun retryFolderDownloadAfterCancel(
+    closed: Boolean,
+    scopeActive: Boolean,
+    ownsJob: Boolean,
+): Boolean = !closed && scopeActive && ownsJob

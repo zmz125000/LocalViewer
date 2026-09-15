@@ -1428,6 +1428,19 @@ object OpenFileExternally {
 
     // region streamdoc (in-app Media3 + non-video external)
 
+    /**
+     * Grantable `content://` URI for a local file, SAF document, or zip member.
+     * Hands through the real descriptor — no copy into app cache.
+     */
+    suspend fun shareableLocalUri(
+        pathStr: String,
+        displayName: String,
+        mimeType: String,
+    ): Uri {
+        val token = registerLocalStreamdoc(pathStr, displayName, mimeType)
+        return StreamDocumentProvider.uriFor(token, displayName)
+    }
+
     private suspend fun registerLocalStreamdoc(
         pathStr: String,
         displayName: String,

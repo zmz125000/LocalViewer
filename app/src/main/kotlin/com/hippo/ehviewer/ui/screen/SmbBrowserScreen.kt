@@ -135,6 +135,7 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.navToSmbFolderReader
@@ -1229,6 +1230,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    fun shareSmbFile(fileName: String, displayName: String = fileName.substringAfterLast('/')) {
+        val src = source ?: return
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        launchIO {
+            with(context) { BrowseSaveAs.shareSmbFile(src.id, remote, displayName) }
+        }
+    }
+
     fun saveSmbFolder(relativeName: String, displayName: String = relativeName.substringAfterLast('/')) {
         val src = source ?: return
         val remote = if (relativeDir.isEmpty()) relativeName else SmbGateway.joinRelativePath(relativeDir, relativeName)
@@ -1266,6 +1275,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 entry.fileName.substringAfterLast('/'),
             )
         },
+        onShare = {
+            shareSmbFile(
+                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                entry.fileName.substringAfterLast('/'),
+            )
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1276,6 +1291,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onCopyUrl = { copySmbVideoUrl(fileName) },
         onOpenWith = { openExternalFile(fileName, usePreferredPlayer = false) },
         onSaveAs = { saveSmbFile(fileName) },
+        onShare = { shareSmbFile(fileName) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1287,6 +1303,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             onCopyUrl = { copySmbHtmlUrl(fileName) },
             onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveSmbFile(fileName) },
+            onShare = { shareSmbFile(fileName) },
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1294,6 +1311,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             kind = BrowseOverflowKind.Common,
             onOpenWith = { openExternalFile(fileName) },
             onSaveAs = { saveSmbFile(fileName) },
+            onShare = { shareSmbFile(fileName) },
             onUnsupported = { notSupportedAction() },
         )
     }
@@ -1732,6 +1750,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                             thumbRetryKey = refreshToken,
                                             allowRemoteFetch = allowRemoteThumbs,
                                             lastModifiedMs = dir.lastModifiedMs,
+                                            sizeBytes = dir.size,
+                                            typeLabel = browseZipAsDirTypeLabel(dir.relativeName, dir.name) ?: "Dir",
                                             overflow = dirOverflow(dir.relativeName, dir.coverFileName),
                                             showFavoriteStar = isDirFavorite(dir.relativeName),
                                         )
@@ -1764,6 +1784,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                     onClick = { openFolderGalleryPrimary(entry) },
                                                     onLongClick = { openFolderGallerySecondary(entry) },
                                                     lastModifiedMs = entry.lastModifiedMs,
+                                                    sizeBytes = entry.size,
+                                                    typeLabel = browseZipAsDirTypeLabel(entry.relativeName, entry.name) ?: "Folder",
                                                     overflow = folderGalleryOverflow(entry),
                                                 )
                                             is BrowseEntryRemote.ArchiveGallery ->
@@ -1778,6 +1800,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                     fileName = entry.fileName,
                                                     sizeBytes = entry.size,
                                                     lastModifiedMs = entry.lastModifiedMs,
+                                                    pageCount = entry.pageCount,
+                                                    showPages = showGalleryPages,
                                                     overflow = archiveOverflow(entry),
                                                 )
                                             else -> Unit

@@ -185,6 +185,7 @@
     <string name="settings_save_photo_grid_original_cache_summary">下载网络画廊封面或照片缩略图时，同时把原图写入页面缓存（与阅读器相同路径）。关闭则只保留小 JPEG 缩略图。</string>
     <string name="settings_smb_concurrency">SMB 并发连接数</string>
     <string name="settings_smb_concurrency_summary">每个主机最多 %s 个会话（该服务器上所有共享共用；用于定位与预取）</string>
+    <string name="settings_smb_multiplex">SMB 多路复用</string>
     <string name="settings_smb3_only">仅 SMB 3</string>
     <string name="settings_smb3_only_summary">禁用 SMB 2 方言（仅协商 3.0 / 3.0.2 / 3.1.1）。会重置活动 SMB 连接。</string>
     <string name="settings_smb_encrypt">允许 SMB 3 加密</string>
@@ -775,8 +776,6 @@
     <string name="settings_privacy_scan_hidden_files_summary">在本地图库扫描中包含以点开头的名称以及含 .nomedia 的文件夹。关闭时跳过这些目录。更改后会重新扫描图库根目录。</string>
     <string name="browse_menu_hidden_files">隐藏文件</string>
     <string name="browse_menu_virtual_galleries">虚拟图库</string>
-    <string name="pref_smb_reader_safe_concurrency">限制 SMB 并发（原图更稳）</string>
-    <string name="pref_smb_reader_safe_concurrency_summary">强制 3 条连接、每连接 1 个传输。降低原图/大图阅读时的 OOM 风险。</string>
     <string name="pref_reader_hardware_bitmap">硬件位图解码</string>
     <string name="pref_reader_hardware_bitmap_summary">更快的 Coil 路径（GPU 位图）。会关闭裁边与二维码广告检测，避免先软件解码再拷贝。</string>
     <string name="pref_reader_lib_direct_bitmap">解码直出位图</string>
