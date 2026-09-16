@@ -106,6 +106,8 @@
     <string name="settings_browse_small_gallery_min_pages">最少画廊页数</string>
     <string name="settings_browse_small_gallery_min_pages_summary">关闭小图库时，隐藏页数少于此值的文件夹画廊。</string>
     <string name="browse_open_failed">没有可打开此文件的应用。</string>
+    <string name="browse_open_large_message">此文件约 %1$d MB（超过 %2$d MB）。是否下载并打开？</string>
+    <string name="browse_open_large_continue">打开</string>
     <string name="folder_empty">此文件夹为空。</string>
     <string name="folder_no_roots">暂无图库文件夹。请到设置 → 图库 添加。</string>
     <string name="folder_open_gallery">打开图库</string>

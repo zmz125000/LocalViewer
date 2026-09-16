@@ -104,6 +104,8 @@
     <string name="settings_browse_small_gallery_min_pages">最小ギャラリーページ数</string>
     <string name="settings_browse_small_gallery_min_pages_summary">小さいギャラリーがオフのとき、このページ数未満のフォルダギャラリーを隠します。</string>
     <string name="browse_open_failed">このファイルを開くアプリが見つかりません。</string>
+    <string name="browse_open_large_message">このファイルは約 %1$d MB（%2$d MB 超）です。ダウンロードして開きますか？</string>
+    <string name="browse_open_large_continue">開く</string>
     <string name="folder_empty">このフォルダは空です。</string>
     <string name="folder_no_roots">ライブラリフォルダがありません。設定 → ライブラリ で追加してください。</string>
     <string name="folder_open_gallery">ギャラリーを開く</string>

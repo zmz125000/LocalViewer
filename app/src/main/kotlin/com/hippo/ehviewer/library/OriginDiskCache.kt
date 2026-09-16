@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -113,6 +114,15 @@ object OriginDiskCache {
     }
 
     fun isOriginFilePinned(file: File): Boolean = pinnedOriginFiles.contains(file.absolutePath)
+
+    /** Keep [file] off the origin LRU while another app may still be reading it. */
+    fun pinOriginFileTemporarily(file: File, ttlMs: Long = 10 * 60 * 1000L) {
+        pinOriginFile(file)
+        scope.launch {
+            delay(ttlMs)
+            unpinOriginFile(file)
+        }
+    }
 
     /** Leftover ACTION_SEND staging from a previous process. */
     fun clearShareSendDir() {

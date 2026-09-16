@@ -15,24 +15,15 @@ import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
 import com.hippo.ehviewer.provider.requestStreamNotificationPermission
-import com.hippo.ehviewer.smb.SmbArchiveByteSource
-import com.hippo.ehviewer.smb.SmbGateway
-import com.hippo.ehviewer.smb.SmbPasswordStore
-import com.hippo.ehviewer.smb.SmbRepository
-import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
-import com.hippo.ehviewer.webdav.WebDavClient
-import com.hippo.ehviewer.webdav.WebDavPasswordStore
-import com.hippo.ehviewer.webdav.WebDavRepository
 import java.io.File
-import java.io.IOException
 import okio.Path.Companion.toPath
 
 /**
  * Open a PDF in an external app (system / third-party reader).
  *
- * Local + network always use a grantable [StreamDocumentProvider] URI. Local and SAF
- * documents pass their real seekable descriptor through the provider; SMB/WebDAV use
- * range I/O with a bounded sparse block cache — **no full download** when the viewer seeks.
+ * Local and SAF documents pass their real seekable descriptor through
+ * [StreamDocumentProvider]. Network PDFs (including zip-as-dir members) use the
+ * same origin-cache + transfer snackbar path as [OpenFileExternally].
  *
  * SAF tree document URIs (`content://…externalstorage…/tree/…/document/…`) are **not**
  * passed through: the grant lives on LocalViewer; chooser + Drive often cannot open them
@@ -99,39 +90,14 @@ object OpenPdfExternally {
         remoteRelativeFile: String,
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
     ) {
-        val source = withIOContext {
-            SmbRepository.load(sourceId) ?: throw IOException("SMB source missing")
-        }
-        val password = SmbPasswordStore.get(sourceId)
-        // Cheap size probe (open+stat+close on the browse pool) — do not spin a sticky
-        // keep-open ArchiveByteSource only to throw it away before the viewer attaches.
-        val sizeBytes = withIOContext {
-            SmbGateway.fileSizeOrNull(source, password, remoteRelativeFile)
-                ?.takeIf { it > 0L }
-                ?: error("empty or unreachable PDF")
-        }
-        val token = StreamDocumentRegistry.register(
+        OpenFileExternally.openSmb(
+            context = context,
+            sourceId = sourceId,
+            remoteRelativeFile = remoteRelativeFile,
             displayName = displayName,
             mimeType = "application/pdf",
-            sizeBytes = sizeBytes,
-            openSource = {
-                // stickySession: dedicated TCP outside the browse/reader pool so ON_STOP
-                // (user switched to Drive) does not kill the FUSE stream mid-read.
-                // readahead off: BlockCacheArchiveByteSource owns multi-region caching.
-                // knownSize: no second size open on first Fuse read.
-                SmbArchiveByteSource(
-                    source = source,
-                    password = password,
-                    remoteRelativeFile = remoteRelativeFile,
-                    preferSequential = false,
-                    pipeline = false,
-                    stickySession = true,
-                    knownSize = sizeBytes,
-                    readahead = false,
-                )
-            },
+            asFile = true,
         )
-        launchRegistered(context, token, displayName, networkStream = true)
     }
 
     suspend fun openWebDav(
@@ -140,37 +106,14 @@ object OpenPdfExternally {
         remoteRelativeFile: String,
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
     ) {
-        val source = withIOContext {
-            WebDavRepository.load(sourceId) ?: throw IOException("WebDAV source missing")
-        }
-        val password = WebDavPasswordStore.get(sourceId)
-        // One sticky HEAD (or 0–0 Range) for size; seed knownSize so first readAt never re-HEADs.
-        val sizeBytes = withIOContext {
-            WebDavClient.fileSizeOrNull(
-                source,
-                password,
-                remoteRelativeFile,
-                sticky = true,
-            )?.takeIf { it > 0L } ?: error("empty or unreachable PDF")
-        }
-        val token = StreamDocumentRegistry.register(
+        OpenFileExternally.openWebDav(
+            context = context,
+            sourceId = sourceId,
+            remoteRelativeFile = remoteRelativeFile,
             displayName = displayName,
             mimeType = "application/pdf",
-            sizeBytes = sizeBytes,
-            openSource = {
-                WebDavArchiveByteSource(
-                    source = source,
-                    password = password,
-                    remoteRelativeFile = remoteRelativeFile,
-                    preferSequential = false,
-                    pipeline = false,
-                    stickySession = true,
-                    knownSize = sizeBytes,
-                    readahead = false,
-                )
-            },
+            asFile = true,
         )
-        launchRegistered(context, token, displayName, networkStream = true)
     }
 
     private suspend fun launchView(context: Context, uri: Uri, displayName: String) {

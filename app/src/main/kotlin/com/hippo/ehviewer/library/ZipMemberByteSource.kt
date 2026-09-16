@@ -159,9 +159,9 @@ class ZipMemberByteSource private constructor(
 }
 
 /**
- * Video members are ranged/prefix-read. Image members used by FUSE / explicit open
- * extract into [ZipMemberCover] (NAND). Browse thumbs use [ZipMemberCover.ensureBrowseThumb]
- * (RAM extract → small JPEG). Other formats are not cached.
+ * Video members are ranged/prefix-read. Image members used by FUSE / reader extract
+ * into [ZipMemberCover] (NAND). Explicit Open / Share uses [ZipMemberCover.materialize]
+ * (any member type, origin LRU). Browse thumbs use [ZipMemberCover.ensureBrowseThumb].
  */
 fun openZipContainedFileSource(
     zipKey: String,

@@ -6,6 +6,7 @@ import android.widget.Toast
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -36,7 +37,7 @@ fun Throwable.isZipMemberTooLarge(): Boolean = this is ZipMemberTooLargeExceptio
  * into cache without an explicit open.
  */
 object ZipMemberCover {
-    /** Cap NAND writes for extracted zip members (open-in-zip / covers / pages). */
+    /** Cap NAND writes for reader/cover extracts. Explicit Open/Share uses [materialize]. */
     const val MAX_CACHE_BYTES = 100L * 1024L * 1024L
 
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
@@ -110,6 +111,79 @@ object ZipMemberCover {
             }
         } finally {
             if (tmp.exists()) tmp.delete()
+        }
+    }
+
+    /**
+     * Explicit Open / Share: write **any** zip member into [destFile] (not just
+     * image/video covers). Streams so a confirmed large file is not held as one
+     * ByteArray. Cache hit returns immediately.
+     *
+     * @throws ZipMemberTooLargeException when uncompressed size exceeds [maxBytes]
+     */
+    fun materialize(
+        zipKey: String,
+        memberRel: String,
+        maxBytes: Long = MAX_CACHE_BYTES,
+        onBytes: ((Int) -> Unit)? = null,
+        openSource: () -> ArchiveByteSource?,
+    ): Path {
+        val dest = destFile(zipKey, memberRel)
+        if (dest.isFile && dest.length() > 0L) {
+            dest.setLastModified(System.currentTimeMillis())
+            val n = dest.length().coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+            if (n > 0) onBytes?.invoke(n)
+            return dest.absolutePath.toPath()
+        }
+        val source = openSource() ?: error("Cannot open ZIP")
+        try {
+            val cd = ZipCentralDirectory.open(source) ?: error("Cannot read ZIP")
+            val entry = cd.find(memberRel) ?: error("Missing ZIP member $memberRel")
+            if (entry.isDirectory || entry.isEncrypted) error("Cannot extract $memberRel")
+            if (entry.uncompressedSize > maxBytes) throw ZipMemberTooLargeException(entry.uncompressedSize)
+            dest.parentFile?.mkdirs()
+            val tmp = File("${dest.path}.tmp.${System.nanoTime()}")
+            try {
+                val member = ZipMemberByteSource.open(source, memberRel, ownsZip = false)
+                    ?: error("Cannot stream ZIP member $memberRel")
+                member.use {
+                    FileOutputStream(tmp).use { out ->
+                        val buf = ByteArray(256 * 1024)
+                        var offset = 0L
+                        while (true) {
+                            val n = it.readAt(offset, buf, 0, buf.size)
+                            if (n <= 0) break
+                            out.write(buf, 0, n)
+                            onBytes?.invoke(n)
+                            offset += n
+                            if (offset > maxBytes) throw ZipMemberTooLargeException(offset)
+                        }
+                    }
+                }
+                if (!tmp.renameTo(dest)) {
+                    tmp.copyTo(dest, overwrite = true)
+                    tmp.delete()
+                }
+            } finally {
+                if (tmp.exists()) tmp.delete()
+            }
+            check(dest.isFile && dest.length() > 0L) { "Extract failed: $memberRel" }
+            OriginDiskCache.scheduleTrim()
+            return dest.absolutePath.toPath()
+        } finally {
+            runCatching { source.close() }
+        }
+    }
+
+    fun memberUncompressedSize(
+        memberRel: String,
+        openSource: () -> ArchiveByteSource?,
+    ): Long? {
+        val source = openSource() ?: return null
+        return try {
+            ZipCentralDirectory.open(source)?.find(memberRel)?.uncompressedSize?.takeIf { it >= 0L }
+        } finally {
+            runCatching { source.close() }
         }
     }
 
