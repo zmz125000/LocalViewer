@@ -708,6 +708,13 @@ abstract class PageLoader(
     /** True while [index] is in the current viewport + decode-ahead window. */
     protected fun isDecodedDemand(index: Int): Boolean = index in desiredDecodedPages
 
-    /** Viewport anchor of the last [navigate], or [startPage] before the first plan. */
-    protected fun isAnchorPage(index: Int): Boolean = (lastNavigation?.anchor ?: startPage) == index
+    /**
+     * Viewport anchor of the last [navigate], or [startPage] before the first plan.
+     *
+     * Public to inline folder loaders: their download jobs are inlined as
+     * ReaderScreen lambdas, which cannot call a [protected] PageLoader method
+     * (ART InaccessibleObject / "method is inaccessible").
+     */
+    @PublishedApi
+    internal fun isAnchorPage(index: Int): Boolean = (lastNavigation?.anchor ?: startPage) == index
 }
