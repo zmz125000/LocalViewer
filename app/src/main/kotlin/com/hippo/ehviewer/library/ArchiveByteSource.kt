@@ -31,6 +31,9 @@ interface ArchiveByteSource : AutoCloseable {
      */
     fun dropQueuedReads() = Unit
 
+    /** Re-open a dead remote handle (SMB sticky). Default no-op. */
+    fun requestReconnect() = Unit
+
     override fun close()
 }
 

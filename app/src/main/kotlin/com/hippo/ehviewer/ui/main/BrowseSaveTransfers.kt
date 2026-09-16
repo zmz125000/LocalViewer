@@ -20,6 +20,7 @@ import java.io.FilterOutputStream
 import java.io.OutputStream
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +34,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import splitties.init.appCtx
 
-/** One snackbar per Save-to… / Share transfer: downloaded size, speed, cancel. */
+/** One snackbar per Save-to… / Share / Open transfer: downloaded size, speed, cancel. */
 object BrowseSaveTransfers {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val ids = AtomicLong(1)
@@ -42,16 +43,39 @@ object BrowseSaveTransfers {
 
     /**
      * @param successMessage Shown after [block] succeeds. Null dismisses immediately
-     *   (share: chooser is the success UI).
+     *   (share / open: chooser is the success UI).
+     * @param confirmMessage When set, the snackbar asks before [block] runs
+     *   (large-file Open). [confirm] continues; [cancel] aborts.
      */
     fun start(
         name: String,
         successMessage: String? = null,
+        confirmMessage: String? = null,
         block: suspend (ByteCounter) -> Unit,
     ) {
         val id = ids.getAndIncrement()
         val counter = ByteCounter()
+        val gate = if (confirmMessage != null) CompletableDeferred<Boolean>() else null
+        val initial = if (confirmMessage != null) {
+            SaveTransferStatus.Confirming(confirmMessage)
+        } else {
+            SaveTransferStatus.Running
+        }
         val job = scope.launch(start = CoroutineStart.LAZY) {
+            if (gate != null) {
+                val go = try {
+                    gate.await()
+                } catch (_: CancellationException) {
+                    false
+                }
+                if (!go) {
+                    patch(id) { copy(status = SaveTransferStatus.Cancelled) }
+                    delay(1500)
+                    _items.update { list -> list.filterNot { it.id == id } }
+                    return@launch
+                }
+                patch(id) { copy(status = SaveTransferStatus.Running) }
+            }
             val ticker = launch {
                 var lastBytes = 0L
                 var lastAt = SystemClock.elapsedRealtime()
@@ -95,12 +119,20 @@ object BrowseSaveTransfers {
                 _items.update { list -> list.filterNot { it.id == id } }
             }
         }
-        _items.update { it + SaveTransfer(id, name, 0L, 0L, SaveTransferStatus.Running, job) }
+        _items.update {
+            it + SaveTransfer(id, name, 0L, 0L, initial, job, gate)
+        }
         job.start()
     }
 
+    fun confirm(id: Long) {
+        _items.value.find { it.id == id }?.confirmGate?.complete(true)
+    }
+
     fun cancel(id: Long) {
-        _items.value.find { it.id == id }?.job?.cancel()
+        val item = _items.value.find { it.id == id } ?: return
+        item.confirmGate?.complete(false)
+        item.job.cancel()
     }
 
     private fun patch(id: Long, transform: SaveTransfer.() -> SaveTransfer) {
@@ -142,10 +174,12 @@ data class SaveTransfer(
     val speedBps: Long,
     val status: SaveTransferStatus,
     val job: Job,
+    val confirmGate: CompletableDeferred<Boolean>? = null,
 )
 
 sealed interface SaveTransferStatus {
     data object Running : SaveTransferStatus
+    data class Confirming(val message: String) : SaveTransferStatus
     data class Success(val message: String) : SaveTransferStatus
     data class Failed(val message: String) : SaveTransferStatus
     data object Cancelled : SaveTransferStatus
@@ -165,11 +199,28 @@ fun BrowseSaveSnackbars(modifier: Modifier = Modifier) {
             Snackbar(
                 modifier = Modifier.padding(bottom = 8.dp),
                 action = {
-                    if (item.status is SaveTransferStatus.Running) {
+                    when (item.status) {
+                        is SaveTransferStatus.Confirming -> {
+                            TextButton(onClick = { BrowseSaveTransfers.confirm(item.id) }) {
+                                Text(stringResource(R.string.browse_open_large_continue))
+                            }
+                        }
+                        is SaveTransferStatus.Running -> {
+                            TextButton(onClick = { BrowseSaveTransfers.cancel(item.id) }) {
+                                Text(stringResource(android.R.string.cancel))
+                            }
+                        }
+                        else -> Unit
+                    }
+                },
+                dismissAction = if (item.status is SaveTransferStatus.Confirming) {
+                    {
                         TextButton(onClick = { BrowseSaveTransfers.cancel(item.id) }) {
                             Text(stringResource(android.R.string.cancel))
                         }
                     }
+                } else {
+                    null
                 },
             ) {
                 Text(text = item.label())
@@ -186,6 +237,7 @@ private fun SaveTransfer.label(): String = when (val st = status) {
         FileUtils.humanReadableByteCount(bytes),
         FileUtils.humanReadableByteCount(speedBps),
     )
+    is SaveTransferStatus.Confirming -> st.message
     is SaveTransferStatus.Success -> st.message
     is SaveTransferStatus.Failed -> st.message
     SaveTransferStatus.Cancelled -> stringResource(R.string.browse_save_cancelled)

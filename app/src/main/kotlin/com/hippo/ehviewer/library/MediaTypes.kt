@@ -61,6 +61,14 @@ val SOLID_ARCHIVE_EXTENSIONS = setOf("7z", "rar", "cbr")
 /** Warn before downloading a remote archive larger than this (128 MiB). */
 const val ARCHIVE_DOWNLOAD_WARN_BYTES = 128L * 1024L * 1024L
 
+/**
+ * Ask before caching a remote file (or zip-as-dir member) for Open / Share.
+ * Same 100 MiB threshold the zip-member NAND path used to hard-block.
+ */
+const val OPEN_CACHE_WARN_BYTES = 100L * 1024L * 1024L
+
+fun needsOpenCacheConfirm(sizeBytes: Long?): Boolean = sizeBytes != null && sizeBytes > OPEN_CACHE_WARN_BYTES
+
 fun isSolidArchiveFileName(name: String): Boolean {
     if (name.startsWith('.')) return false
     val ext = FileUtils.getExtensionFromFilename(name)?.lowercase() ?: return false

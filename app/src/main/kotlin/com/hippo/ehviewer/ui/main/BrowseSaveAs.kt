@@ -29,23 +29,19 @@ import com.hippo.ehviewer.library.GENERIC_FILE_MIME
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCentralDirectory
-import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
-import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.OpenFileExternally
-import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.awaitActivityResult
 import com.hippo.ehviewer.util.displayPath
 import com.hippo.ehviewer.webdav.WebDavArchiveByteSource
-import com.hippo.ehviewer.webdav.WebDavCache
 import com.hippo.ehviewer.webdav.WebDavClient
 import com.hippo.ehviewer.webdav.WebDavGateway
 import com.hippo.ehviewer.webdav.WebDavPasswordStore
@@ -72,10 +68,10 @@ import okio.Path.Companion.toPath
  * **Share**. Directories stay a stub — only files.
  *
  * Local files share in place via [OpenFileExternally.shareableLocalUri] (no cache copy).
- * Network / remote zip-member shares land in the origin disk cache ([SmbCache] /
- * [WebDavCache] / [ZipMemberCover]) — a hit skips the download — then a display-name
- * staging copy under `cache/share_send` is handed to ACTION_SEND. The origin file is
- * pinned so [OriginDiskCache] LRU cannot delete it while the share target still reads.
+ * Network / remote zip-member shares land in the origin disk cache via
+ * [BrowseOriginCache] — a hit skips the download — then a display-name staging copy
+ * under `cache/share_send` is handed to ACTION_SEND. The origin file is pinned so
+ * [OriginDiskCache] LRU cannot delete it while the share target still reads.
  */
 object BrowseSaveAs {
     private const val SAVE_EXTRACT_MAX_BYTES = 512L * 1024L * 1024L
@@ -189,14 +185,14 @@ object BrowseSaveAs {
     suspend fun shareSmbFile(sourceId: Long, relativeFile: String, displayName: String) = saveCatching {
         val (source, password) = smbCreds(sourceId)
         val shareCtx = ctx
-        val hit = withIOContext { smbShareCacheHit(source.id, relativeFile) }
+        val hit = withIOContext { BrowseOriginCache.smbHit(source.id, relativeFile) }
         if (hit != null) {
             shareCachedFile(shareCtx, hit, displayName)
             return@saveCatching
         }
         BrowseSaveTransfers.start(displayName) { counter ->
             val cached = withIOContext {
-                ensureSmbOriginForShare(source, password, relativeFile, displayName, counter)
+                BrowseOriginCache.ensureSmb(source, password, relativeFile, displayName, counter)
             }
             shareCachedFile(shareCtx, cached, displayName)
         }
@@ -206,14 +202,14 @@ object BrowseSaveAs {
     suspend fun shareWebDavFile(sourceId: Long, relativeFile: String, displayName: String) = saveCatching {
         val (source, password) = webDavCreds(sourceId)
         val shareCtx = ctx
-        val hit = withIOContext { webDavShareCacheHit(source.id, relativeFile) }
+        val hit = withIOContext { BrowseOriginCache.webDavHit(source.id, relativeFile) }
         if (hit != null) {
             shareCachedFile(shareCtx, hit, displayName)
             return@saveCatching
         }
         BrowseSaveTransfers.start(displayName) { counter ->
             val cached = withIOContext {
-                ensureWebDavOriginForShare(source, password, relativeFile, displayName, counter)
+                BrowseOriginCache.ensureWebDav(source, password, relativeFile, displayName, counter)
             }
             shareCachedFile(shareCtx, cached, displayName)
         }
@@ -276,105 +272,6 @@ object BrowseSaveAs {
         copyCounted(path, dest.toOkioPath(), counter)
     }
 
-    private fun smbShareCacheHit(sourceId: Long, relativeFile: String): Path? {
-        ZipAsDirListing.zipMemberPath(relativeFile)?.let { (zipRel, member) ->
-            val dest = ZipMemberCover.destFile("smb:$sourceId:$zipRel", member)
-            if (dest.isFile && dest.length() > 0L) {
-                dest.setLastModified(System.currentTimeMillis())
-                return dest.absolutePath.toPath()
-            }
-            return null
-        }
-        val path = SmbCache.cachePathForRemoteFile(sourceId, relativeFile)
-        val resolved = SmbCache.resolveReaderPath(path)
-        return resolved.takeIf { SmbCache.isPageCachedOnDisk(it) }
-    }
-
-    private fun webDavShareCacheHit(sourceId: Long, relativeFile: String): Path? {
-        ZipAsDirListing.zipMemberPath(relativeFile)?.let { (zipRel, member) ->
-            val dest = ZipMemberCover.destFile("webdav:$sourceId:$zipRel", member)
-            if (dest.isFile && dest.length() > 0L) {
-                dest.setLastModified(System.currentTimeMillis())
-                return dest.absolutePath.toPath()
-            }
-            return null
-        }
-        val path = WebDavCache.cachePathForRemoteFile(sourceId, relativeFile)
-        val resolved = WebDavCache.resolveReaderPath(path)
-        return resolved.takeIf { WebDavCache.isPageCachedOnDisk(it) }
-    }
-
-    private suspend fun ensureSmbOriginForShare(
-        source: SmbSourceEntity,
-        password: String,
-        relativeFile: String,
-        displayName: String,
-        counter: ByteCounter,
-    ): Path {
-        ZipAsDirListing.zipMemberPath(relativeFile)?.let { (zipRel, member) ->
-            return ensureZipMemberOriginForShare(
-                zipKey = "smb:${source.id}:$zipRel",
-                member = member,
-                counter = counter,
-            ) { SmbArchiveByteSource(source, password, zipRel, pipeline = false, yieldable = true) }
-        }
-        val path = SmbCache.cachePathForRemoteFile(source.id, relativeFile)
-        SmbCache.downloadIfNeeded(path, originalFileName = displayName) { out ->
-            SmbGateway.downloadFile(source, password, relativeFile, CountingOutputStream(out, counter))
-        }
-        return SmbCache.resolveReaderPath(path)
-    }
-
-    private suspend fun ensureWebDavOriginForShare(
-        source: WebDavSourceEntity,
-        password: String,
-        relativeFile: String,
-        displayName: String,
-        counter: ByteCounter,
-    ): Path {
-        ZipAsDirListing.zipMemberPath(relativeFile)?.let { (zipRel, member) ->
-            return ensureZipMemberOriginForShare(
-                zipKey = "webdav:${source.id}:$zipRel",
-                member = member,
-                counter = counter,
-            ) { WebDavArchiveByteSource(source, password, zipRel, pipeline = false) }
-        }
-        val path = WebDavCache.cachePathForRemoteFile(source.id, relativeFile)
-        WebDavCache.downloadIfNeeded(path, originalFileName = displayName) { out ->
-            WebDavClient.downloadFile(source, password, relativeFile, CountingOutputStream(out, counter))
-        }
-        return WebDavCache.resolveReaderPath(path)
-    }
-
-    private fun ensureZipMemberOriginForShare(
-        zipKey: String,
-        member: String,
-        counter: ByteCounter,
-        openSource: () -> com.hippo.ehviewer.library.ArchiveByteSource,
-    ): Path {
-        val dest = ZipMemberCover.destFile(zipKey, member)
-        if (dest.isFile && dest.length() > 0L) {
-            dest.setLastModified(System.currentTimeMillis())
-            addFileSize(counter, dest.length())
-            return dest.absolutePath.toPath()
-        }
-        val written = try {
-            ZipMemberCover.ensure(zipKey, member, notifyTooLarge = true, openSource)
-        } catch (e: com.hippo.ehviewer.library.ZipMemberTooLargeException) {
-            null
-        }
-        if (written == null) {
-            val fallback = shareTempPath(member.substringAfterLast('/').ifEmpty { "share" })
-            fallback.sink().use { out ->
-                extractRemoteZipMember(openSource, member, CountingOutputStream(out, counter))
-            }
-            return fallback
-        }
-        val f = File(written.toString())
-        if (f.isFile) addFileSize(counter, f.length())
-        return written
-    }
-
     private fun shareCachedFile(ctx: Context, origin: Path, displayName: String) {
         val originFile = File(origin.toString())
         check(originFile.isFile && originFile.length() > 0L) { "Share cache missing" }
@@ -421,22 +318,6 @@ object BrowseSaveAs {
         }
         check(dest.isFile && dest.length() > 0L) { "Share staging failed" }
         return dest
-    }
-
-    private fun shareTempPath(displayName: String): Path {
-        val dir = AppConfig.externalTempDir ?: AppConfig.tempDir
-        val base = FileUtils.sanitizeFilename(displayName).ifEmpty { "share" }
-        var dest = dir / base
-        if (!dest.exists()) return dest
-        val ext = FileUtils.getExtensionFromFilename(base)
-        val stem = if (ext.isNullOrEmpty()) base else base.removeSuffix(".$ext")
-        var i = 2
-        while (true) {
-            val name = if (ext.isNullOrEmpty()) "$stem ($i)" else "$stem ($i).$ext"
-            dest = dir / FileUtils.sanitizeFilename(name)
-            if (!dest.exists()) return dest
-            i++
-        }
     }
 
     private fun sendShare(ctx: Context, file: Path, displayName: String) {
@@ -724,11 +605,6 @@ object BrowseSaveAs {
     }
 
     private fun skipChildName(name: String): Boolean = name.startsWith('.') || isProtectedSystemName(name)
-
-    private fun addFileSize(counter: ByteCounter, size: Long) {
-        val n = size.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
-        if (n > 0) counter.add(n)
-    }
 
     private fun createDocumentMime(name: String): String {
         val mime = mimeTypeForFileName(name)

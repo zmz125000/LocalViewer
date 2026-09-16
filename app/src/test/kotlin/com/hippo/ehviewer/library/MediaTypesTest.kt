@@ -42,6 +42,15 @@ class MediaTypesTest {
     }
 
     @Test
+    fun openCacheConfirmIsOver100MiB() {
+        assertFalse(needsOpenCacheConfirm(null))
+        assertFalse(needsOpenCacheConfirm(OPEN_CACHE_WARN_BYTES))
+        assertFalse(needsOpenCacheConfirm(OPEN_CACHE_WARN_BYTES - 1))
+        assertTrue(needsOpenCacheConfirm(OPEN_CACHE_WARN_BYTES + 1))
+        assertEquals(100L * 1024L * 1024L, OPEN_CACHE_WARN_BYTES)
+    }
+
+    @Test
     fun zipMemberCoverExtractIsImageAndVideoOnly() {
         assertTrue(isZipMemberCoverExtractAllowed("Album/a.jpg"))
         assertTrue(isZipMemberCoverExtractAllowed("clip.MP4"))

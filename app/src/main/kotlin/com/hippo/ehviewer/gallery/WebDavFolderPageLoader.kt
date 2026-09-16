@@ -27,15 +27,17 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import moe.tarsin.kt.install
 import okio.Path
 
 /**
  * WebDAV folder reader — same waiter/prefetch shape as SMB, without TCP pool.
  * HTTP client multiplexes; download fan-out is capped inside [WebDavClient].
- * Convert-mode lib-HDR/avif: interactive + 1 prefetch (B1 depth 2).
- * Direct-Bitmap mode: same prefetch slots as non-lib (cache original only).
+ * Viewport anchor prefers one reserved slot; mate / decode-ahead use a bounded
+ * lane ([RAM_PREFETCH_PERMITS] when cache-off) so decode-demand does not
+ * serialize on the reserved slot.
+ * Convert-mode lib-HDR/avif: cache-on prefetch capped at 2 (B1). Direct-Bitmap
+ * uses the normal prefetch slots.
  */
 suspend inline fun <T> useWebDavFolderPageLoader(
     source: WebDavSourceEntity,
@@ -51,6 +53,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         val size = imageFileNames.size
         val interactiveSlots = Semaphore(1)
         val prefetchSlots = Semaphore(3)
+        val ramPrefetchSlots = Semaphore(RAM_PREFETCH_PERMITS)
         // Cap concurrent lib downloads; full UHDR convert is serial in HdrConvertCache.
         val libHdrPrefetchSlots = Semaphore(2)
         val downloadJobs = KeyedJobRegistry<Int>()
@@ -103,11 +106,11 @@ suspend inline fun <T> useWebDavFolderPageLoader(
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
                     if (Settings.disableReaderNetworkCache.value) return
-                    pages.forEach { ensureDownload(it, interactive = false) }
+                    pages.forEach { ensureDownload(it) }
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
-                    ensureDownload(index, interactive = true) {
+                    ensureDownload(index) {
                         notifySourceReady(index, orgImg)
                     }
                 }
@@ -156,7 +159,6 @@ suspend inline fun <T> useWebDavFolderPageLoader(
 
                 private fun ensureDownload(
                     index: Int,
-                    interactive: Boolean,
                     onReady: (() -> Unit)? = null,
                 ) {
                     if (closed.get() || index !in 0 until size) return
@@ -191,16 +193,19 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                 dispatchReady(index)
                                 return@launch
                             }
-                            val slots = when {
-                                interactive || readyWaiters[index]?.isNotEmpty() == true -> interactiveSlots
-                                isLibHdrCandidate(name) -> libHdrPrefetchSlots
-                                else -> prefetchSlots
-                            }
-                            slots.withPermit {
+                            withFolderNetworkPermit(
+                                isAnchor = isAnchorPage(index),
+                                cacheOff = skipDisk,
+                                libHdr = isLibHdrCandidate(name),
+                                interactiveSlots = interactiveSlots,
+                                ramPrefetchSlots = ramPrefetchSlots,
+                                libHdrPrefetchSlots = libHdrPrefetchSlots,
+                                prefetchSlots = prefetchSlots,
+                            ) {
                                 if (skipDisk) {
                                     if (ramPages.containsKey(index) || WebDavCache.isPageCachedOnDisk(cache)) {
                                         dispatchReady(index)
-                                        return@withPermit
+                                        return@withFolderNetworkPermit
                                     }
                                     downloadToRam(index)
                                     if (ramPages.containsKey(index) || WebDavCache.isPageCachedOnDisk(cache)) {
@@ -212,7 +217,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                 } else {
                                     if (WebDavCache.isPageCachedOnDisk(cache)) {
                                         dispatchReady(index)
-                                        return@withPermit
+                                        return@withFolderNetworkPermit
                                     }
                                     val remote = if (remoteDir.isEmpty()) name else "$remoteDir/$name"
                                     WebDavCache.downloadIfNeeded(cache, originalFileName = name) { out ->
@@ -234,7 +239,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                 if (waiters.isNotEmpty()) {
                                     waiters.forEach { addReadyWaiter(index, it) }
                                     downloadJobs.release(index, runningJob)
-                                    ensureDownload(index, interactive = true)
+                                    ensureDownload(index)
                                 }
                             }
                             throw e

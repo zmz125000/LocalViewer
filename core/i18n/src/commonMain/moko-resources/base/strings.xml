@@ -112,6 +112,8 @@
     <string name="settings_browse_small_gallery_min_pages">Minimum gallery pages</string>
     <string name="settings_browse_small_gallery_min_pages_summary">Hide folder galleries with fewer pages when Small galleries is off.</string>
     <string name="browse_open_failed">No app found to open this file.</string>
+    <string name="browse_open_large_message">This file is about %1$d MB (over %2$d MB). Download and open it?</string>
+    <string name="browse_open_large_continue">Open</string>
     <string name="folder_empty">This folder is empty.</string>
     <string name="folder_no_roots">No library folders. Add one in Settings → Library.</string>
     <string name="folder_open_gallery">Open gallery</string>

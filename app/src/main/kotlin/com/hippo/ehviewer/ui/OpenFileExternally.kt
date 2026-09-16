@@ -21,6 +21,8 @@ import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
+import com.hippo.ehviewer.library.OPEN_CACHE_WARN_BYTES
+import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.SidecarSubtitles
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
 import com.hippo.ehviewer.library.ZipMemberByteSource
@@ -28,6 +30,7 @@ import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isBrowseVideoFileName
 import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.mimeTypeForFileName
+import com.hippo.ehviewer.library.needsOpenCacheConfirm
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.provider.ExternalHttpStreamServer
@@ -38,6 +41,9 @@ import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
+import com.hippo.ehviewer.ui.main.BrowseOriginCache
+import com.hippo.ehviewer.ui.main.BrowseSaveTransfers
+import com.hippo.ehviewer.ui.main.ByteCounter
 import com.hippo.ehviewer.ui.player.InternalVideoPlaylistRegistry
 import com.hippo.ehviewer.ui.player.InternalVideoSource
 import com.hippo.ehviewer.ui.player.PreparedInternalVideo
@@ -54,6 +60,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import okio.Path
 import okio.Path.Companion.toPath
 
 /**
@@ -174,14 +181,25 @@ object OpenFileExternally {
             )
             return
         }
-        val token = registerSmbStreamdoc(sourceId, remoteRelativeFile, displayName, mimeType)
-        launchStreamdoc(
+        val source = withIOContext {
+            SmbRepository.load(sourceId) ?: throw IOException("SMB source missing")
+        }
+        val password = SmbPasswordStore.get(sourceId)
+        openRemoteCached(
             context = context,
-            token = token,
             displayName = displayName,
             mimeType = mimeType,
-            networkStream = true,
-            internalPlayer = false,
+            hit = { BrowseOriginCache.smbHit(sourceId, remoteRelativeFile) },
+            size = { BrowseOriginCache.smbSize(source, password, remoteRelativeFile) },
+            ensure = { counter ->
+                BrowseOriginCache.ensureSmb(
+                    source,
+                    password,
+                    remoteRelativeFile,
+                    displayName,
+                    counter,
+                )
+            },
         )
     }
 
@@ -229,14 +247,25 @@ object OpenFileExternally {
             )
             return
         }
-        val token = registerWebDavStreamdoc(sourceId, remoteRelativeFile, displayName, mimeType)
-        launchStreamdoc(
+        val source = withIOContext {
+            WebDavRepository.load(sourceId) ?: throw IOException("WebDAV source missing")
+        }
+        val password = WebDavPasswordStore.get(sourceId)
+        openRemoteCached(
             context = context,
-            token = token,
             displayName = displayName,
             mimeType = mimeType,
-            networkStream = true,
-            internalPlayer = false,
+            hit = { BrowseOriginCache.webDavHit(sourceId, remoteRelativeFile) },
+            size = { BrowseOriginCache.webDavSize(source, password, remoteRelativeFile) },
+            ensure = { counter ->
+                BrowseOriginCache.ensureWebDav(
+                    source,
+                    password,
+                    remoteRelativeFile,
+                    displayName,
+                    counter,
+                )
+            },
         )
     }
 
@@ -1667,6 +1696,68 @@ object OpenFileExternally {
         val normalized = remoteRelativeFile.replace('\\', '/').trim('/')
         val slash = normalized.lastIndexOf('/')
         return if (slash <= 0) "" else normalized.substring(0, slash)
+    }
+
+    /**
+     * Network Open (non-video): same origin cache as Share.
+     * Hit skips the download. Miss shows the transfer snackbar (and a confirm
+     * snackbar when the file is over [OPEN_CACHE_WARN_BYTES]). Local files never
+     * go through here.
+     */
+    private suspend fun openRemoteCached(
+        context: Context,
+        displayName: String,
+        mimeType: String,
+        hit: () -> Path?,
+        size: suspend () -> Long?,
+        ensure: suspend (ByteCounter) -> Path,
+    ) {
+        val cached = withIOContext { hit() }
+        if (cached != null) {
+            openCachedOrigin(context, cached, displayName, mimeType)
+            return
+        }
+        val bytes = withIOContext { size() }
+        val confirm = if (needsOpenCacheConfirm(bytes)) {
+            val mb = ((bytes!! + 1024L * 1024L - 1) / (1024L * 1024L)).toInt()
+            val limit = (OPEN_CACHE_WARN_BYTES / (1024L * 1024L)).toInt()
+            context.getString(R.string.browse_open_large_message, mb, limit)
+        } else {
+            null
+        }
+        BrowseSaveTransfers.start(displayName, confirmMessage = confirm) { counter ->
+            val path = withIOContext { ensure(counter) }
+            openCachedOrigin(context, path, displayName, mimeType)
+        }
+    }
+
+    private suspend fun openCachedOrigin(
+        context: Context,
+        path: Path,
+        displayName: String,
+        mimeType: String,
+    ) {
+        val file = File(path.toString())
+        check(file.isFile && file.length() > 0L) { "Open cache missing" }
+        OriginDiskCache.pinOriginFileTemporarily(file)
+        val token = withIOContext {
+            StreamDocumentRegistry.registerDirect(
+                displayName = displayName,
+                mimeType = mimeType,
+                sizeBytes = file.length(),
+                openFileDescriptor = {
+                    ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                },
+            )
+        }
+        launchStreamdoc(
+            context = context,
+            token = token,
+            displayName = displayName,
+            mimeType = mimeType,
+            networkStream = false,
+            internalPlayer = false,
+        )
     }
 
     private suspend fun launchStreamdoc(

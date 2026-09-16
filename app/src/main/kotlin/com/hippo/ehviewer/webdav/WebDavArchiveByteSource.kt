@@ -93,6 +93,10 @@ class WebDavArchiveByteSource(
 
     override fun warm(offset: Long, length: Int) = inner.warm(offset, length)
 
+    override fun dropQueuedReads() = inner.dropQueuedReads()
+
+    override fun requestReconnect() = inner.requestReconnect()
+
     override fun close() = inner.close()
 }
 
