@@ -27,15 +27,18 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import moe.tarsin.kt.install
 import okio.Path
 
 /**
  * SMB folder reader with seek-friendly downloads:
  * - Host pool multiplexes ops ([SmbGateway.maxConcurrentOpsPerHost] ≈ sessions × ops/session).
- * - One reserved interactive slot for [onRequest]; prefetch uses the remaining slots
- *   so a seek does not wait behind every prefetch transfer.
+ * - Viewport anchor prefers one reserved interactive slot so a seek does not wait
+ *   behind mate / decode-ahead / source-only transfers. If that slot is still held
+ *   by the previous page, the anchor falls through to the bounded prefetch lane.
+ * - Cache-off keeps compressed bytes on the heap: non-anchor copies are capped at
+ *   [RAM_PREFETCH_PERMITS] (plus the reserved slot when free) — browse-thumb width,
+ *   not the full pool.
  * - Per-file mutex in [SmbCache] joins overlapping downloads (small jump / prefetch race).
  * - Large jumps cancel far-away prefetch jobs so they stop holding pool op slots.
  * - UI waiters ([onReady] / notifySourceReady) are registered on a list so cancel/join
@@ -55,13 +58,16 @@ suspend inline fun <T> useSmbFolderPageLoader(
         val password = SmbPasswordStore.get(source.id)
         val size = imageFileNames.size
         val maxOps = SmbGateway.maxConcurrentOpsPerHost().coerceAtLeast(1)
-        // Reserve 1 op for the page the user is looking at / just seeked to.
+        // Reserve 1 op for the viewport anchor / just-seeked page.
         val interactiveSlots = Semaphore(1)
         val prefetchSlots = if (maxOps <= 1) {
             interactiveSlots
         } else {
             Semaphore(maxOps - 1)
         }
+        // Cache-off: bounded extra copies so decode-ahead does not serialize on the
+        // reserved slot and does not open the full pool onto the Java heap.
+        val ramPrefetchSlots = Semaphore(RAM_PREFETCH_PERMITS)
         // B1 convert mode: cap concurrent lib downloads (full convert is serial in
         // HdrConvertCache.fullConvertSlots). Direct-Bitmap uses normal prefetchSlots.
         val libHdrPrefetchSlots = Semaphore(2)
@@ -122,12 +128,12 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
                     if (Settings.disableReaderNetworkCache.value) return
                     pages.forEach { index ->
-                        ensureDownload(index, interactive = false)
+                        ensureDownload(index)
                     }
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
-                    ensureDownload(index, interactive = true) {
+                    ensureDownload(index) {
                         notifySourceReady(index, orgImg)
                     }
                 }
@@ -189,13 +195,13 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 /**
                  * Start or join a download for [index].
                  * - Small jump / same page: reuses the existing job; [onReady] is queued.
-                 * - Interactive: uses reserved pool capacity so seek does not queue behind prefetch.
+                 * - Slot is chosen at copy time via [withFolderNetworkPermit] (anchor vs
+                 *   cache-off RAM cap vs cache-on prefetch).
                  * - Always completes waiters: success → notifySourceReady; fail/cancel with waiters
                  *   → retry once or [notifyPageFailed] (never silent forever-spinner).
                  */
                 private fun ensureDownload(
                     index: Int,
-                    interactive: Boolean,
                     onReady: (() -> Unit)? = null,
                 ) {
                     if (closed.get() || index !in 0 until size) return
@@ -219,7 +225,6 @@ suspend inline fun <T> useSmbFolderPageLoader(
                         return
                     }
                     val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
-                        var needsInteractive = interactive
                         try {
                             val skipDisk = Settings.disableReaderNetworkCache.value
                             if (skipDisk && ramPages.containsKey(index)) {
@@ -236,17 +241,16 @@ suspend inline fun <T> useSmbFolderPageLoader(
                                 dispatchReady(index)
                                 return@launch
                             }
-                            // Promote to interactive slot if the UI is waiting (joined mid-prefetch).
-                            if (readyWaiters[index]?.isNotEmpty() == true) {
-                                needsInteractive = true
-                            }
                             val nameForSlot = imageFileNames[index]
-                            val slots = when {
-                                needsInteractive -> interactiveSlots
-                                isLibHdrCandidate(nameForSlot) -> libHdrPrefetchSlots
-                                else -> prefetchSlots
-                            }
-                            slots.withPermit {
+                            withFolderNetworkPermit(
+                                isAnchor = isAnchorPage(index),
+                                cacheOff = skipDisk,
+                                libHdr = isLibHdrCandidate(nameForSlot),
+                                interactiveSlots = interactiveSlots,
+                                ramPrefetchSlots = ramPrefetchSlots,
+                                libHdrPrefetchSlots = libHdrPrefetchSlots,
+                                prefetchSlots = prefetchSlots,
+                            ) {
                                 if (skipDisk) {
                                     downloadToRam(index)
                                 } else {
@@ -278,7 +282,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                                     waiters.forEach { addReadyWaiter(index, it) }
                                     // Release the cancelled owner before registering its retry.
                                     downloadJobs.release(index, runningJob)
-                                    ensureDownload(index, interactive = true)
+                                    ensureDownload(index)
                                 }
                             }
                             throw e
@@ -286,7 +290,7 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             // Never rethrow: a failed child would cancel the whole reader scope.
                             if (downloadJobs.owns(index, coroutineContext[Job])) {
                                 val waiters = takeReadyWaiters(index)
-                                if (waiters.isNotEmpty() || needsInteractive) {
+                                if (waiters.isNotEmpty()) {
                                     notifyPageFailed(index, e.message)
                                 }
                             }

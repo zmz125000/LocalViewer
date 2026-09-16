@@ -707,4 +707,7 @@ abstract class PageLoader(
 
     /** True while [index] is in the current viewport + decode-ahead window. */
     protected fun isDecodedDemand(index: Int): Boolean = index in desiredDecodedPages
+
+    /** Viewport anchor of the last [navigate], or [startPage] before the first plan. */
+    protected fun isAnchorPage(index: Int): Boolean = (lastNavigation?.anchor ?: startPage) == index
 }
