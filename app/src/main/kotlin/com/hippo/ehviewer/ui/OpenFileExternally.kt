@@ -1719,9 +1719,7 @@ object OpenFileExternally {
         }
         val bytes = withIOContext { size() }
         val confirm = if (needsOpenCacheConfirm(bytes)) {
-            val mb = ((bytes!! + 1024L * 1024L - 1) / (1024L * 1024L)).toInt()
-            val limit = (OPEN_CACHE_WARN_BYTES / (1024L * 1024L)).toInt()
-            context.getString(R.string.browse_open_large_message, mb, limit)
+            BrowseSaveTransfers.confirmMessage(bytes!!, R.string.browse_open_large_message)
         } else {
             null
         }

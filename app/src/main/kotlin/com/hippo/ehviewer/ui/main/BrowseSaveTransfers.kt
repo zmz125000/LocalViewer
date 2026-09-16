@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
+import com.hippo.ehviewer.library.OPEN_CACHE_WARN_BYTES
 import com.hippo.ehviewer.util.FileUtils
 import java.io.FilterOutputStream
 import java.io.OutputStream
@@ -25,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import splitties.init.appCtx
 
 /** One snackbar per Save-to… / Share / Open transfer: downloaded size, speed, cancel. */
@@ -45,52 +48,52 @@ object BrowseSaveTransfers {
      * @param successMessage Shown after [block] succeeds. Null dismisses immediately
      *   (share / open: chooser is the success UI).
      * @param confirmMessage When set, the snackbar asks before [block] runs
-     *   (large-file Open). [confirm] continues; [cancel] aborts.
+     *   (large-file Open / Share). [confirm] continues; [cancel] aborts.
+     * @param confirmAction Label for the confirm button. Defaults to Open.
      */
     fun start(
         name: String,
         successMessage: String? = null,
         confirmMessage: String? = null,
+        confirmAction: String? = null,
         block: suspend (ByteCounter) -> Unit,
     ) {
         val id = ids.getAndIncrement()
         val counter = ByteCounter()
         val gate = if (confirmMessage != null) CompletableDeferred<Boolean>() else null
         val initial = if (confirmMessage != null) {
-            SaveTransferStatus.Confirming(confirmMessage)
+            SaveTransferStatus.Confirming(
+                confirmMessage,
+                confirmAction ?: appCtx.getString(R.string.browse_open_large_continue),
+            )
         } else {
             SaveTransferStatus.Running
         }
         val job = scope.launch(start = CoroutineStart.LAZY) {
-            if (gate != null) {
-                val go = try {
-                    gate.await()
-                } catch (_: CancellationException) {
-                    false
-                }
-                if (!go) {
-                    patch(id) { copy(status = SaveTransferStatus.Cancelled) }
-                    delay(1500)
-                    _items.update { list -> list.filterNot { it.id == id } }
-                    return@launch
-                }
-                patch(id) { copy(status = SaveTransferStatus.Running) }
-            }
-            val ticker = launch {
-                var lastBytes = 0L
-                var lastAt = SystemClock.elapsedRealtime()
-                while (isActive) {
-                    delay(250)
-                    val now = SystemClock.elapsedRealtime()
-                    val bytes = counter.bytes
-                    val dt = (now - lastAt).coerceAtLeast(1L)
-                    val speed = (bytes - lastBytes) * 1000L / dt
-                    lastBytes = bytes
-                    lastAt = now
-                    patch(id) { copy(bytes = bytes, speedBps = speed) }
-                }
-            }
+            var ticker: Job? = null
             try {
+                if (gate != null) {
+                    if (!gate.await()) {
+                        patch(id) { copy(status = SaveTransferStatus.Cancelled) }
+                        withContext(NonCancellable) { delay(1500) }
+                        return@launch
+                    }
+                    patch(id) { copy(status = SaveTransferStatus.Running) }
+                }
+                ticker = launch {
+                    var lastBytes = 0L
+                    var lastAt = SystemClock.elapsedRealtime()
+                    while (isActive) {
+                        delay(250)
+                        val now = SystemClock.elapsedRealtime()
+                        val bytes = counter.bytes
+                        val dt = (now - lastAt).coerceAtLeast(1L)
+                        val speed = (bytes - lastBytes) * 1000L / dt
+                        lastBytes = bytes
+                        lastAt = now
+                        patch(id) { copy(bytes = bytes, speedBps = speed) }
+                    }
+                }
                 block(counter)
                 ticker.cancel()
                 if (successMessage != null) {
@@ -104,18 +107,23 @@ object BrowseSaveTransfers {
                     delay(2500)
                 }
             } catch (e: CancellationException) {
-                ticker.cancel()
-                if (_items.value.none { it.id == id && it.status is SaveTransferStatus.Success }) {
-                    patch(id) { copy(status = SaveTransferStatus.Cancelled) }
-                    delay(1500)
+                ticker?.cancel()
+                val current = _items.value.find { it.id == id }?.status
+                if (current !is SaveTransferStatus.Success) {
+                    if (current !is SaveTransferStatus.Cancelled) {
+                        patch(id) { copy(status = SaveTransferStatus.Cancelled) }
+                    }
+                    withContext(NonCancellable) { delay(1500) }
                 }
+                throw e
             } catch (e: Throwable) {
-                ticker.cancel()
+                ticker?.cancel()
                 val msg = appCtx.getString(R.string.browse_save_failed) +
                     " " + (e.message ?: e.toString())
                 patch(id) { copy(status = SaveTransferStatus.Failed(msg)) }
                 delay(3000)
             } finally {
+                ticker?.cancel()
                 _items.update { list -> list.filterNot { it.id == id } }
             }
         }
@@ -131,8 +139,17 @@ object BrowseSaveTransfers {
 
     fun cancel(id: Long) {
         val item = _items.value.find { it.id == id } ?: return
-        item.confirmGate?.complete(false)
-        item.job.cancel()
+        when (item.status) {
+            is SaveTransferStatus.Confirming -> item.confirmGate?.complete(false)
+            is SaveTransferStatus.Running -> item.job.cancel()
+            else -> Unit
+        }
+    }
+
+    fun confirmMessage(sizeBytes: Long, messageRes: Int): String {
+        val mb = ((sizeBytes + 1024L * 1024L - 1) / (1024L * 1024L)).toInt()
+        val limit = (OPEN_CACHE_WARN_BYTES / (1024L * 1024L)).toInt()
+        return appCtx.getString(messageRes, mb, limit)
     }
 
     private fun patch(id: Long, transform: SaveTransfer.() -> SaveTransfer) {
@@ -179,7 +196,7 @@ data class SaveTransfer(
 
 sealed interface SaveTransferStatus {
     data object Running : SaveTransferStatus
-    data class Confirming(val message: String) : SaveTransferStatus
+    data class Confirming(val message: String, val action: String) : SaveTransferStatus
     data class Success(val message: String) : SaveTransferStatus
     data class Failed(val message: String) : SaveTransferStatus
     data object Cancelled : SaveTransferStatus
@@ -199,10 +216,10 @@ fun BrowseSaveSnackbars(modifier: Modifier = Modifier) {
             Snackbar(
                 modifier = Modifier.padding(bottom = 8.dp),
                 action = {
-                    when (item.status) {
+                    when (val st = item.status) {
                         is SaveTransferStatus.Confirming -> {
                             TextButton(onClick = { BrowseSaveTransfers.confirm(item.id) }) {
-                                Text(stringResource(R.string.browse_open_large_continue))
+                                Text(st.action)
                             }
                         }
                         is SaveTransferStatus.Running -> {
