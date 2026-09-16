@@ -20,6 +20,7 @@ class ZipMemberByteSource private constructor(
 ) : ArchiveByteSource {
     private val inflater: Inflater? =
         if (entry.method == ZipCentralDirectory.METHOD_DEFLATE) Inflater(true) else null
+    private val deflateLock = Any()
     private var inflatedTo = 0L
     private var compressedAt = 0L
 
@@ -32,17 +33,29 @@ class ZipMemberByteSource private constructor(
     override val isRandomAccess: Boolean
         get() = entry.method == ZipCentralDirectory.METHOD_STORE && !entry.isEncrypted
 
-    @Synchronized
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
         if (len <= 0) return 0
         if (offset < 0L || offset >= size) return 0
         val want = minOf(len.toLong(), size - offset).toInt()
         return when (entry.method) {
+            // STORE is a pure offset translate. Do **not** lock: video prefetch
+            // pipelines 4 SMB/WebDAV reads on one zip handle. A class-level lock
+            // made zip-as-dir 4K serial (folder video multiplexes).
             ZipCentralDirectory.METHOD_STORE ->
                 zip.readAt(payloadOffset + offset, buf, off, want)
-            ZipCentralDirectory.METHOD_DEFLATE -> readDeflatePrefix(offset, buf, off, want)
+            ZipCentralDirectory.METHOD_DEFLATE ->
+                synchronized(deflateLock) { readDeflatePrefix(offset, buf, off, want) }
             else -> -1
         }
+    }
+
+    override fun dropQueuedReads() = zip.dropQueuedReads()
+
+    override fun requestReconnect() = zip.requestReconnect()
+
+    override fun warm(offset: Long, length: Int) {
+        if (offset < 0L || length <= 0 || offset >= size) return
+        zip.warm(payloadOffset + offset, length)
     }
 
     private fun readDeflatePrefix(offset: Long, buf: ByteArray, off: Int, want: Int): Int {
@@ -103,7 +116,9 @@ class ZipMemberByteSource private constructor(
     }
 
     override fun close() {
-        inflater?.end()
+        synchronized(deflateLock) {
+            inflater?.end()
+        }
         if (ownsZip) runCatching { zip.close() }
     }
 

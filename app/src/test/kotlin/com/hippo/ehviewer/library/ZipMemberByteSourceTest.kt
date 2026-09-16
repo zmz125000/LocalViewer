@@ -1,6 +1,9 @@
 package com.hippo.ehviewer.library
 
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -56,6 +59,48 @@ class ZipMemberByteSourceTest {
     }
 
     @Test
+    fun storeMemberAllowsConcurrentReads() {
+        val payload = ByteArray(32 * 1024) { i -> i.toByte() }
+        val zipBytes = writeZip(stored = true, "clip.mp4" to payload).readBytes()
+        val container = ConcurrentProbeSource(zipBytes)
+        container.use {
+            ZipMemberByteSource.open(container, "clip.mp4", ownsZip = false)!!.use { src ->
+                val start = CountDownLatch(1)
+                val done = CountDownLatch(2)
+                repeat(2) { i ->
+                    Thread {
+                        start.await(2, TimeUnit.SECONDS)
+                        val buf = ByteArray(1024)
+                        src.readAt((i * 2048).toLong(), buf, 0, buf.size)
+                        done.countDown()
+                    }.start()
+                }
+                start.countDown()
+                assertTrue(done.await(3, TimeUnit.SECONDS))
+                assertTrue(
+                    "STORE zip-member reads must overlap so SMB/WebDAV can pipeline",
+                    container.maxInFlight.get() >= 2,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun dropQueuedReadsForwardsToContainer() {
+        val payload = ByteArray(1024) { 1 }
+        val zipBytes = writeZip(stored = true, "clip.mp4" to payload).readBytes()
+        val container = ConcurrentProbeSource(zipBytes)
+        container.use {
+            ZipMemberByteSource.open(container, "clip.mp4", ownsZip = false)!!.use { src ->
+                src.dropQueuedReads()
+                src.requestReconnect()
+                assertEquals(1, container.drops.get())
+                assertEquals(1, container.reconnects.get())
+            }
+        }
+    }
+
+    @Test
     fun uncompressedSizeReadsCentralDirectory() {
         val payload = ByteArray(1234) { 7 }
         val zip = writeZip(stored = true, "a.mp4" to payload)
@@ -83,5 +128,38 @@ class ZipMemberByteSourceTest {
             }
         }
         return file
+    }
+
+    private class ConcurrentProbeSource(private val data: ByteArray) : ArchiveByteSource {
+        val inFlight = AtomicInteger(0)
+        val maxInFlight = AtomicInteger(0)
+        val drops = AtomicInteger(0)
+        val reconnects = AtomicInteger(0)
+
+        override val size: Long get() = data.size.toLong()
+
+        override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+            val n = inFlight.incrementAndGet()
+            maxInFlight.updateAndGet { maxOf(it, n) }
+            try {
+                Thread.sleep(40)
+                if (offset < 0L || offset >= data.size) return 0
+                val count = minOf(len, data.size - offset.toInt())
+                System.arraycopy(data, offset.toInt(), buf, off, count)
+                return count
+            } finally {
+                inFlight.decrementAndGet()
+            }
+        }
+
+        override fun dropQueuedReads() {
+            drops.incrementAndGet()
+        }
+
+        override fun requestReconnect() {
+            reconnects.incrementAndGet()
+        }
+
+        override fun close() = Unit
     }
 }

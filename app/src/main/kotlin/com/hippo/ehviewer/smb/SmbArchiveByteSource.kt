@@ -150,13 +150,15 @@ class SmbArchiveByteSource(
 
     override fun dropQueuedReads() {
         raw?.dropQueuedReads()
+        // Zip-as-dir: [raw] is null; the keep-open handle lives under [inner]
+        // ([ZipMemberByteSource] → nested [SmbArchiveByteSource]).
+        if (raw == null) inner.dropQueuedReads()
     }
 
     /** Re-open the remote handle after the browse pool's TCP died in the background. */
-    fun requestReconnect() {
+    override fun requestReconnect() {
         raw?.requestReconnect()
-        val nested = inner as? SmbArchiveByteSource
-        if (nested != null && nested !== this) nested.requestReconnect()
+        if (raw == null) inner.requestReconnect()
     }
 
     override fun close() = inner.close()
@@ -412,7 +414,7 @@ private class KeepOpenSmbFileSource(
     }
 
     /** Re-open the remote handle after the browse pool's TCP died in the background. */
-    fun requestReconnect() {
+    override fun requestReconnect() {
         if (!closed.get()) demand.trySend(Unit)
     }
 
