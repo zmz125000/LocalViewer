@@ -114,6 +114,7 @@
     <string name="browse_open_failed">No app found to open this file.</string>
     <string name="browse_open_large_message">This file is about %1$d MB (over %2$d MB). Download and open it?</string>
     <string name="browse_open_large_continue">Open</string>
+    <string name="browse_share_large_message">This file is about %1$d MB (over %2$d MB). Download and share it?</string>
     <string name="folder_empty">This folder is empty.</string>
     <string name="folder_no_roots">No library folders. Add one in Settings → Library.</string>
     <string name="folder_open_gallery">Open gallery</string>

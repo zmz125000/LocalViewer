@@ -32,6 +32,7 @@ import com.hippo.ehviewer.library.ZipCentralDirectory
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isProtectedSystemName
 import com.hippo.ehviewer.library.mimeTypeForFileName
+import com.hippo.ehviewer.library.needsOpenCacheConfirm
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbGateway
@@ -184,34 +185,56 @@ object BrowseSaveAs {
     context(_: SnackbarHostState, ctx: Context)
     suspend fun shareSmbFile(sourceId: Long, relativeFile: String, displayName: String) = saveCatching {
         val (source, password) = smbCreds(sourceId)
-        val shareCtx = ctx
-        val hit = withIOContext { BrowseOriginCache.smbHit(source.id, relativeFile) }
-        if (hit != null) {
-            shareCachedFile(shareCtx, hit, displayName)
-            return@saveCatching
-        }
-        BrowseSaveTransfers.start(displayName) { counter ->
-            val cached = withIOContext {
+        shareRemote(
+            ctx,
+            displayName,
+            hit = { BrowseOriginCache.smbHit(source.id, relativeFile) },
+            size = { BrowseOriginCache.smbSize(source, password, relativeFile) },
+            ensure = { counter ->
                 BrowseOriginCache.ensureSmb(source, password, relativeFile, displayName, counter)
-            }
-            shareCachedFile(shareCtx, cached, displayName)
-        }
+            },
+        )
     }
 
     context(_: SnackbarHostState, ctx: Context)
     suspend fun shareWebDavFile(sourceId: Long, relativeFile: String, displayName: String) = saveCatching {
         val (source, password) = webDavCreds(sourceId)
-        val shareCtx = ctx
-        val hit = withIOContext { BrowseOriginCache.webDavHit(source.id, relativeFile) }
-        if (hit != null) {
-            shareCachedFile(shareCtx, hit, displayName)
-            return@saveCatching
-        }
-        BrowseSaveTransfers.start(displayName) { counter ->
-            val cached = withIOContext {
+        shareRemote(
+            ctx,
+            displayName,
+            hit = { BrowseOriginCache.webDavHit(source.id, relativeFile) },
+            size = { BrowseOriginCache.webDavSize(source, password, relativeFile) },
+            ensure = { counter ->
                 BrowseOriginCache.ensureWebDav(source, password, relativeFile, displayName, counter)
-            }
-            shareCachedFile(shareCtx, cached, displayName)
+            },
+        )
+    }
+
+    private suspend fun shareRemote(
+        ctx: Context,
+        displayName: String,
+        hit: () -> Path?,
+        size: suspend () -> Long?,
+        ensure: suspend (ByteCounter) -> Path,
+    ) {
+        val cached = withIOContext { hit() }
+        if (cached != null) {
+            shareCachedFile(ctx, cached, displayName)
+            return
+        }
+        val bytes = withIOContext { size() }
+        val confirm = if (needsOpenCacheConfirm(bytes)) {
+            BrowseSaveTransfers.confirmMessage(bytes!!, R.string.browse_share_large_message)
+        } else {
+            null
+        }
+        BrowseSaveTransfers.start(
+            displayName,
+            confirmMessage = confirm,
+            confirmAction = ctx.getString(R.string.share),
+        ) { counter ->
+            val path = withIOContext { ensure(counter) }
+            shareCachedFile(ctx, path, displayName)
         }
     }
 
