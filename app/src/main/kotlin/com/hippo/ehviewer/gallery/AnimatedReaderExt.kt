@@ -1,6 +1,5 @@
 package com.hippo.ehviewer.gallery
 
-internal fun isAnimatedReaderExtension(ext: String?): Boolean {
-    val e = ext?.lowercase()?.removePrefix(".") ?: return false
-    return e == "gif" || e == "webp" || e == "awebp" || e == "apng"
-}
+import com.hippo.ehviewer.image.isAnimatedReaderExtension as imageIsAnimatedReaderExtension
+
+internal fun isAnimatedReaderExtension(ext: String?): Boolean = imageIsAnimatedReaderExtension(ext)
