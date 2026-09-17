@@ -89,11 +89,9 @@ class DrawablePainter(val drawable: Drawable) : Painter(), RememberObserver {
         // Read tick so Compose invalidates when the drawable animates.
         @Suppress("UNUSED_EXPRESSION")
         invalidateTick
-        // onVisibilityChanged(false) during scroll can stick. If Compose is painting
-        // this node, the image is on screen — resume even if the fraction callback lagged.
-        if (!drawable.isVisible) {
-            drawable.setVisible(true, false)
-        }
+        // Do not setVisible(true) here. Pager/webtoon draw off-screen neighbours;
+        // forcing visible kept every decoded GIF/WebP running (~200% CPU).
+        // Playback is started from PagerItem onVisibilityChanged.
         drawIntoCanvas { canvas ->
             canvas.withSave {
                 drawable.setBounds(0, 0, size.width.roundToInt(), size.height.roundToInt())
@@ -104,7 +102,8 @@ class DrawablePainter(val drawable: Drawable) : Painter(), RememberObserver {
 
     override fun onRemembered() {
         drawable.callback = callback
-        (drawable as? Animatable)?.start()
+        // Do not start() here. Pager/webtoon compose off-screen neighbours;
+        // PagerItem onVisibilityChanged starts only when actually on screen.
     }
 
     override fun onForgotten() {

@@ -53,7 +53,6 @@ import com.ehviewer.core.files.deleteContent
 import com.ehviewer.core.ui.util.initSETConnection
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.logcat
-import com.hippo.ehviewer.coil.AnimatedWebPDecoder
 import com.hippo.ehviewer.coil.CoverPathFetcher
 import com.hippo.ehviewer.coil.CoverPathKeyer
 import com.hippo.ehviewer.coil.CropBorderInterceptor
@@ -304,7 +303,9 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             add(CropBorderInterceptor)
             add(DetectBorderInterceptor)
             add(QrCodeInterceptor)
-            add(AnimatedWebPDecoder.Factory)
+            // GIF / animated WebP / animated HEIF: platform ImageDecoder (setTargetSize
+            // for folder thumbs). The custom libwebp drawable always decoded at file
+            // resolution and pegged CPU on a single cover thumb.
             add(AnimatedImageDecoder.Factory(false))
             // serviceLoaderEnabled(false): register SVG explicitly (coil-svg).
             add(SvgDecoder.Factory())

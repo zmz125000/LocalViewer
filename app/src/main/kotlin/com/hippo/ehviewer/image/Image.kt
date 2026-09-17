@@ -475,12 +475,18 @@ class Image private constructor(
             checkExtraneousAds: Boolean,
             forceOriginal: Boolean,
         ): CoilImage {
-            // Gain-map Ultra HDR: always ORIGIN + no crop/QR strip (pref only gates window HDR).
+            // Gain-map Ultra HDR + animated GIF/WebP/APNG: always ORIGIN.
             val mode = decodeMode(forceOriginal)
             val looksHdr = isAtLeastU && sourceLooksLikeHdrGainMap(this)
-            val effectiveMode = if (looksHdr) DecodeSizeType.ORIGIN else mode
+            val looksAnimated = sourceLooksLikeAnimated()
+            val effectiveMode = if (readerShouldDecodeOriginal(forceOriginal, looksHdr, looksAnimated)) {
+                DecodeSizeType.ORIGIN
+            } else {
+                mode
+            }
             val hdrSafe = looksHdr
-            val platformHbd = resolvePlatformHbd(gainMap = looksHdr)
+            // APNG must not take the still PNG F16 BitmapFactory path.
+            val platformHbd = !looksAnimated && resolvePlatformHbd(gainMap = looksHdr)
 
             suspend fun runDecode(m: DecodeSizeType, hdr: Boolean, hbd: Boolean): CoilImage = if (hbd) {
                 // Full-res F16: share lib-direct serialize lock.
@@ -519,7 +525,8 @@ class Image private constructor(
 
         /**
          * @param forceOriginal if true (page menu "View original"), decode at file resolution;
-         *   otherwise use [Settings.readerDecodeSize]. Gain-map Ultra HDR always ORIGIN.
+         *   otherwise use [Settings.readerDecodeSize]. Gain-map Ultra HDR and animated
+         *   GIF/WebP/APNG always ORIGIN (stills still honor decode size; thumbs size via Coil).
          *
          * Prefer Coil-ready [PathSource] from [com.hippo.ehviewer.image.hdr.DisplaySource];
          * [ByteBufferSource] still supported (GIF rewrite / callers that skip prepare).
@@ -593,6 +600,40 @@ class Image private constructor(
 
         private val GAINMAP_EXTS = setOf("jpg", "jpeg", "jpe", "jfif", "avif", "heic", "heif", "heics", "heifs", "hif")
         private const val GAINMAP_SNIFF_BYTES = 64 * 1024
+        private val ANIM_SNIFF_EXTS = setOf("gif", "webp", "awebp", "png", "apng")
+        private const val ANIM_SNIFF_BYTES = 4 * 1024
+
+        /**
+         * GIF / animated WebP / APNG: decode at file resolution. Coil's platform
+         * [coil3.gif.AnimatedImageDecoder] would otherwise [android.graphics.ImageDecoder.setTargetSize]
+         * to [DecodeSizeType] (stills only).
+         */
+        private fun Either<ByteBufferSource, PathSource>.sourceLooksLikeAnimated(): Boolean {
+            return runCatching {
+                when (this) {
+                    is Either.Left -> {
+                        val dup = value.source.asReadOnlyBuffer()
+                        val n = minOf(dup.remaining(), ANIM_SNIFF_BYTES)
+                        if (n <= 0) return@runCatching false
+                        val bytes = ByteArray(n)
+                        dup.get(bytes)
+                        looksLikeAnimatedImageHeader(bytes, n)
+                    }
+                    is Either.Right -> {
+                        val path = value.source
+                        val ext = FileUtils.getExtensionFromFilename(path.name)?.lowercase()
+                            ?: FileUtils.getExtensionFromFilename(value.type)?.lowercase()
+                        if (ext == "gif" || ext == "awebp" || ext == "apng") return@runCatching true
+                        if (ext != null && ext !in ANIM_SNIFF_EXTS) return@runCatching false
+                        path.read {
+                            val bytes = ByteArray(ANIM_SNIFF_BYTES)
+                            val n = readAtMostTo(bytes)
+                            n > 0 && looksLikeAnimatedImageHeader(bytes, n)
+                        }
+                    }
+                }
+            }.getOrDefault(false)
+        }
     }
 }
 
