@@ -16,6 +16,10 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import okio.FileSystem
 
+/**
+ * Software libwebp playback. Not registered on the ImageLoader — folder thumbs
+ * and the reader use [coil3.gif.AnimatedImageDecoder] so decode honors request size.
+ */
 class AnimatedWebPDecoder(private val source: ByteBuffer) : Decoder {
     override suspend fun decode() = DecodeResult(AnimatedWebPDrawable(source).asImage(), false)
 
