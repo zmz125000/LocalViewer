@@ -181,7 +181,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         EmptyArchiveRegistry.filterLocalEntries(entries)
     }
     val search = rememberBrowseFolderSearchState()
-    var searchHits by remember { mutableStateOf<List<BrowseEntry>>(emptyList()) }
+    val searchFolderKey = stack.lastOrNull()?.path?.let { BrowseSession.localFolderSearchKey(it) }.orEmpty()
+    var searchHits by remember(searchFolderKey) {
+        mutableStateOf(BrowseSession.peekFolderSearchHits<BrowseEntry>(searchFolderKey))
+    }
     var searching by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val folderId = stack.lastOrNull()?.let { BrowseFolderId.local(it.rootId, it.relativePath) }
@@ -294,22 +297,33 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     // Per-folder search: restore when climbing back / returning from reader.
     BindBrowseFolderSearch(
-        folderKey = currentPath?.let { BrowseSession.localFolderSearchKey(it) },
+        folderKey = searchFolderKey.ifEmpty { null },
         search = search,
         onPathChange = { scrollBehavior.state.heightOffset = 0f },
     )
 
     LaunchedEffect(
-        currentPath,
-        current?.zipInnerRel,
+        searchFolderKey,
         search.submittedKeyword,
         search.submitGeneration,
         showHiddenFiles,
     ) {
         val q = search.submittedKeyword
         val frame = stack.lastOrNull()
-        if (q.isEmpty() || frame == null) {
+        if (q.isEmpty() || frame == null || searchFolderKey.isEmpty()) {
             searchHits = emptyList()
+            searching = false
+            if (searchFolderKey.isNotEmpty()) BrowseSession.clearFolderSearchHits(searchFolderKey)
+            return@LaunchedEffect
+        }
+        val cached = BrowseSession.cachedFolderSearchHits<BrowseEntry>(
+            searchFolderKey,
+            q,
+            search.submitGeneration,
+            showHiddenFiles,
+        )
+        if (cached != null) {
+            searchHits = cached
             searching = false
             return@LaunchedEffect
         }
@@ -324,9 +338,27 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 preferMediaStore = frame.preferMediaStore,
                 zipInnerRel = frame.zipInnerRel,
             ) { searchHits = it }
+            BrowseSession.putFolderSearchHits(
+                searchFolderKey,
+                BrowseSession.FolderSearchHits(
+                    submittedKeyword = q,
+                    submitGeneration = search.submitGeneration,
+                    includeHidden = showHiddenFiles,
+                    hits = searchHits,
+                ),
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (_: Throwable) {
+            BrowseSession.putFolderSearchHits(
+                searchFolderKey,
+                BrowseSession.FolderSearchHits(
+                    submittedKeyword = q,
+                    submitGeneration = search.submitGeneration,
+                    includeHidden = showHiddenFiles,
+                    hits = searchHits,
+                ),
+            )
         } finally {
             searching = false
         }

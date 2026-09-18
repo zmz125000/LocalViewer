@@ -308,7 +308,10 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
     val search = rememberBrowseFolderSearchState()
-    var searchHits by remember { mutableStateOf<List<BrowseEntryRemote>>(emptyList()) }
+    val searchFolderKey = BrowseSession.smbFolderSearchKey(sourceId, relativeDir)
+    var searchHits by remember(searchFolderKey) {
+        mutableStateOf(BrowseSession.peekFolderSearchHits<BrowseEntryRemote>(searchFolderKey))
+    }
     var searching by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
@@ -371,14 +374,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     // Per-folder search: restore when climbing back / returning from reader.
     BindBrowseFolderSearch(
-        folderKey = BrowseSession.smbFolderSearchKey(sourceId, relativeDir),
+        folderKey = searchFolderKey,
         search = search,
         onPathChange = { scrollBehavior.state.heightOffset = 0f },
     )
 
     LaunchedEffect(
-        sourceId,
-        relativeDir,
+        searchFolderKey,
         search.submittedKeyword,
         search.submitGeneration,
         showHiddenFiles,
@@ -386,6 +388,18 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val q = search.submittedKeyword
         if (q.isEmpty()) {
             searchHits = emptyList()
+            searching = false
+            BrowseSession.clearFolderSearchHits(searchFolderKey)
+            return@LaunchedEffect
+        }
+        val cached = BrowseSession.cachedFolderSearchHits<BrowseEntryRemote>(
+            searchFolderKey,
+            q,
+            search.submitGeneration,
+            showHiddenFiles,
+        )
+        if (cached != null) {
+            searchHits = cached
             searching = false
             return@LaunchedEffect
         }
@@ -403,10 +417,27 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 q,
                 includeHidden = showHiddenFiles,
             ) { searchHits = it }
+            BrowseSession.putFolderSearchHits(
+                searchFolderKey,
+                BrowseSession.FolderSearchHits(
+                    submittedKeyword = q,
+                    submitGeneration = search.submitGeneration,
+                    includeHidden = showHiddenFiles,
+                    hits = searchHits,
+                ),
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (_: Throwable) {
-            // Keep partial hits from onHits.
+            BrowseSession.putFolderSearchHits(
+                searchFolderKey,
+                BrowseSession.FolderSearchHits(
+                    submittedKeyword = q,
+                    submitGeneration = search.submitGeneration,
+                    includeHidden = showHiddenFiles,
+                    hits = searchHits,
+                ),
+            )
         } finally {
             searching = false
         }
