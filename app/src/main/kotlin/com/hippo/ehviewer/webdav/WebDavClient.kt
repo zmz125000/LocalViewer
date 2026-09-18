@@ -731,6 +731,95 @@ object WebDavClient {
         }.getOrNull()
     }
 
+    /**
+     * Remote last-write time in epoch ms, or null if unavailable.
+     *
+     * HEAD `Last-Modified`, then PROPFIND Depth 0 `getlastmodified`. Browse HTTP
+     * client (not the sticky FUSE client unless [sticky]). Zip-as-dir members use
+     * the zip file's mtime. Transport blips return null.
+     */
+    suspend fun fileMtimeOrNull(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        sticky: Boolean = false,
+    ): Long? = withIOContext {
+        ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, _) ->
+            return@withIOContext fileMtimeOrNull(source, password, zipRel, sticky)
+        }
+        runCatching {
+            listSlots.withPermit {
+                withTransportRetry(sticky) {
+                    val url = absoluteUrl(source, relativeFilePath)
+                    val auth = basicAuthHeader(source.username, password)
+                    val fromHead = runCatching {
+                        val response = http(sticky).request(url) {
+                            method = HttpMethod.Head
+                            timeout {
+                                connectTimeoutMillis = LIST_CONNECT_MS
+                                requestTimeoutMillis = LIST_REQUEST_MS
+                                socketTimeoutMillis = LIST_SOCKET_MS
+                            }
+                            auth?.let { header(HttpHeaders.Authorization, it) }
+                        }
+                        if (response.status.value in 200..299) {
+                            headerLastModifiedMs(response.headers)
+                        } else {
+                            null
+                        }
+                    }.getOrNull()
+                    if (fromHead != null) return@withTransportRetry fromHead
+
+                    val response = http(sticky).request(url) {
+                        method = PropFind
+                        timeout {
+                            connectTimeoutMillis = LIST_CONNECT_MS
+                            requestTimeoutMillis = LIST_REQUEST_MS
+                            socketTimeoutMillis = LIST_SOCKET_MS
+                        }
+                        header("Depth", "0")
+                        auth?.let { header(HttpHeaders.Authorization, it) }
+                        contentType(ContentType.Application.Xml)
+                        setBody(PropfindBody)
+                    }
+                    val code = response.status
+                    if (code != HttpStatusCode.fromValue(207) && code.value !in 200..299) {
+                        return@withTransportRetry null
+                    }
+                    parseFirstLastModified(response.bodyAsText()).takeIf { it > 0L }
+                }
+            }
+        }.onFailure {
+            if (it is kotlinx.coroutines.CancellationException) throw it
+            logcat("WebDavMtime", it)
+        }.getOrNull()
+    }
+
+    private fun headerLastModifiedMs(headers: io.ktor.http.Headers): Long? {
+        val raw = headers[HttpHeaders.LastModified] ?: headers["Last-Modified"]
+        return parseHttpDateMs(raw.orEmpty()).takeIf { it > 0L }
+    }
+
+    /** First DAV:getlastmodified in a PROPFIND multistatus (Depth 0 file). */
+    private fun parseFirstLastModified(xml: String): Long {
+        val parser = XmlPullParserFactory.newInstance().newPullParser().apply {
+            setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
+            setInput(xml.reader())
+        }
+        var event = parser.eventType
+        while (event != XmlPullParser.END_DOCUMENT) {
+            if (event == XmlPullParser.START_TAG) {
+                val local = parser.name?.substringAfterLast(':').orEmpty()
+                if (local.equals("getlastmodified", ignoreCase = true)) {
+                    val ms = parseHttpDateMs(parser.nextText().trim())
+                    if (ms > 0L) return ms
+                }
+            }
+            event = parser.next()
+        }
+        return 0L
+    }
+
     /** Parse Content-Range total length (RFC 7233 complete-length after the slash). */
     private fun parseContentRangeTotal(header: String?): Long? {
         if (header.isNullOrBlank()) return null

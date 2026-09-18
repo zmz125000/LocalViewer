@@ -70,9 +70,11 @@ import okio.Path.Companion.toPath
  *
  * Local files share in place via [OpenFileExternally.shareableLocalUri] (no cache copy).
  * Network / remote zip-member shares land in the origin disk cache via
- * [BrowseOriginCache] — a hit skips the download — then a display-name staging copy
- * under `cache/share_send` is handed to ACTION_SEND. The origin file is pinned so
- * [OriginDiskCache] LRU cannot delete it while the share target still reads.
+ * [BrowseOriginCache] (same file and download as Open). A fresh hit skips the
+ * download; a remote last-write newer than the cache mtime re-downloads. Then a
+ * display-name staging copy under `cache/share_send` is handed to ACTION_SEND.
+ * The origin file is pinned so [OriginDiskCache] LRU cannot delete it while the
+ * share target still reads.
  */
 object BrowseSaveAs {
     private const val SAVE_EXTRACT_MAX_BYTES = 512L * 1024L * 1024L
@@ -188,7 +190,7 @@ object BrowseSaveAs {
         shareRemote(
             ctx,
             displayName,
-            hit = { BrowseOriginCache.smbHit(source.id, relativeFile) },
+            hit = { BrowseOriginCache.smbFreshHit(source, password, relativeFile) },
             size = { BrowseOriginCache.smbSize(source, password, relativeFile) },
             ensure = { counter ->
                 BrowseOriginCache.ensureSmb(source, password, relativeFile, displayName, counter)
@@ -202,7 +204,7 @@ object BrowseSaveAs {
         shareRemote(
             ctx,
             displayName,
-            hit = { BrowseOriginCache.webDavHit(source.id, relativeFile) },
+            hit = { BrowseOriginCache.webDavFreshHit(source, password, relativeFile) },
             size = { BrowseOriginCache.webDavSize(source, password, relativeFile) },
             ensure = { counter ->
                 BrowseOriginCache.ensureWebDav(source, password, relativeFile, displayName, counter)
@@ -213,7 +215,7 @@ object BrowseSaveAs {
     private suspend fun shareRemote(
         ctx: Context,
         displayName: String,
-        hit: () -> Path?,
+        hit: suspend () -> Path?,
         size: suspend () -> Long?,
         ensure: suspend (ByteCounter) -> Path,
     ) {
