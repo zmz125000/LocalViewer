@@ -291,6 +291,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         showVirtualGalleries,
         virtual,
     ) {
+        val liveSearch = search.keyword.trim().isNotEmpty()
         val base = when (virtual) {
             BrowseVirtualKind.PhotoGrid ->
                 displayEntries
@@ -303,13 +304,19 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         BrowseContentMode.Folder,
                         showHiddenFiles,
                         showVirtualGalleries,
+                        allTypes = liveSearch,
                     )
                     .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
             BrowseVirtualKind.RpcShareRoot,
             BrowseVirtualKind.None,
             ->
                 displayEntries
-                    .filterRemoteByContentMode(contentMode, showHiddenFiles, showVirtualGalleries)
+                    .filterRemoteByContentMode(
+                        contentMode,
+                        showHiddenFiles,
+                        showVirtualGalleries,
+                        allTypes = liveSearch,
+                    )
                     .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
         }
         base.filterByBrowseSearch(search.keyword) { it.name }
