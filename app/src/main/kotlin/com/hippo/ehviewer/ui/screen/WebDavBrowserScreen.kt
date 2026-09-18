@@ -78,6 +78,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.FolderGalleryIndex
+import com.hippo.ehviewer.library.FolderSearch
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
@@ -624,6 +625,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    /** Overflow "Open folder". No-op when the target is already this listing. */
+    fun openBrowseFolder(targetRel: String) {
+        if (targetRel.isEmpty()) return
+        enterDir(targetRel)
+    }
+
     /** Same jump as the Back-to Browse/History/Library FAB. */
     fun jumpBackToOrigin() {
         when {
@@ -792,23 +799,82 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         if (photoGridMode) openFolderGallery(entry) else openFolderGalleryPhotoGrid(entry)
     }
 
+    fun openNestedFolderImage(parentRel: String, fileName: String) {
+        val src = source ?: return
+        val remote = if (relativeDir.isEmpty()) {
+            parentRel
+        } else {
+            WebDavGateway.joinRelative(relativeDir, parentRel)
+        }
+        launchIO {
+            val password = WebDavPasswordStore.get(src.id)
+            val names = runCatching {
+                WebDavGateway.listImageFileNames(src, password, remote)
+            }.getOrDefault(emptyList())
+            if (names.isEmpty()) return@launchIO
+            val page = names.indexOfFirst { it.equals(fileName, ignoreCase = true) }.coerceAtLeast(0)
+            val coverKey = names.firstOrNull()?.let { coverName ->
+                LocalHistory.zipOrRemoteThumbKey(
+                    sourceId = src.id,
+                    listedDir = remote,
+                    relativeName = "",
+                    coverFileName = coverName,
+                    smb = false,
+                )
+            }
+            val galleryTitle = FolderSearch.baseName(parentRel).ifEmpty { title }
+            val gid = stableGalleryId(src.id, "webdav:$remote")
+            val info = BaseGalleryInfo(
+                gid = gid,
+                token = WEBDAV_FOLDER_TOKEN,
+                title = galleryTitle,
+                pages = names.size,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = coverKey,
+                uploader = "${src.id}\u0000${remote.trim('/')}",
+                category = 3,
+            )
+            recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordWebDavFolderGallery(
+                sourceId = src.id,
+                remoteDir = remote,
+                title = galleryTitle,
+                thumbKey = coverKey,
+                pages = names.size,
+                info = info,
+            )
+            withUIContext {
+                navToWebDavFolderReader(src.id, remote, names, info, page)
+            }
+        }
+    }
+
     /**
      * Tap an image (photo-grid virtual folder **or** Folder-mode file row) → reader at that page.
      * Same page list / [HistoryThumbKey] cover path as the photo-grid path.
      */
     fun openFolderImage(file: BrowseEntryRemote.RegularFile) {
         val src = source ?: return
-        if (!isImageFileName(file.fileName.substringAfterLast('/'))) return
+        val rel = file.fileName.replace('\\', '/').trim('/')
+        val fileName = FolderSearch.baseName(rel)
+        if (!isImageFileName(fileName)) return
+        val parentRel = FolderSearch.parentRelative(rel)
+        val inListing = parentRel.isEmpty() &&
+            folderImages.any { it.fileName == file.fileName }
+        if (!inListing) {
+            openNestedFolderImage(parentRel, fileName)
+            return
+        }
         val images = folderImages
-        if (images.isEmpty()) return
         val page = images.indexOfFirst { it.fileName == file.fileName }.coerceAtLeast(0)
         val names = images.map { it.fileName }
-        val coverKey = names.firstOrNull()?.let { fileName ->
+        val coverKey = names.firstOrNull()?.let { coverName ->
             LocalHistory.zipOrRemoteThumbKey(
                 sourceId = src.id,
                 listedDir = relativeDir,
                 relativeName = "",
-                coverFileName = fileName,
+                coverFileName = coverName,
                 smb = false,
             )
         }
@@ -1169,6 +1235,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         favorited = isDirFavorite(name),
         onFavorite = { toggleDirFavorite(name, coverFileName) },
         onSaveAs = { saveWebDavFolder(name) },
+        onOpenFolder = { openBrowseFolder(FolderSearch.openFolderTarget(name, isDirectory = true)) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1179,6 +1246,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onRead = { openFolderGallery(entry) },
         onPhotoGrid = { openFolderGalleryPhotoGrid(entry) },
         onSaveAs = { saveWebDavFolder(entry.relativeName, entry.name) },
+        onOpenFolder = {
+            openBrowseFolder(FolderSearch.openFolderTarget(entry.relativeName, isDirectory = true))
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1198,6 +1268,14 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 entry.fileName.substringAfterLast('/'),
             )
         },
+        onOpenFolder = {
+            openBrowseFolder(
+                FolderSearch.openFolderTarget(
+                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                    isDirectory = false,
+                ),
+            )
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1209,6 +1287,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onOpenWith = { openExternalFile(fileName, usePreferredPlayer = false) },
         onSaveAs = { saveWebDavFile(fileName) },
         onShare = { shareWebDavFile(fileName) },
+        onOpenFolder = {
+            openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1221,6 +1302,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveWebDavFile(fileName) },
             onShare = { shareWebDavFile(fileName) },
+            onOpenFolder = {
+                openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+            },
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1229,6 +1313,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             onOpenWith = { openExternalFile(fileName) },
             onSaveAs = { saveWebDavFile(fileName) },
             onShare = { shareWebDavFile(fileName) },
+            onOpenFolder = {
+                openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+            },
             onUnsupported = { notSupportedAction() },
         )
     }
@@ -1636,13 +1723,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                 showPhotoThumb = true,
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
-                                                onClick = {
-                                                    if (folderImages.any { it.fileName == entry.fileName }) {
-                                                        openFolderImage(entry)
-                                                    } else {
-                                                        openExternalFile(entry.fileName)
-                                                    }
-                                                },
+                                                onClick = { openFolderImage(entry) },
                                                 onLongClick = { openExternalFile(entry.fileName) },
                                                 overflow = fileOverflow(entry.fileName),
                                             )
@@ -1664,9 +1745,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             thumbRetryKey = refreshToken,
                                             allowRemoteFetch = allowRemoteThumbs,
                                             onClick = {
-                                                if (isImage &&
-                                                    folderImages.any { it.fileName == entry.fileName }
-                                                ) {
+                                                if (isImage) {
                                                     openFolderImage(entry)
                                                 } else {
                                                     openExternalFile(entry.fileName)

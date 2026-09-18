@@ -93,6 +93,7 @@
     <string name="browse_item_more">更多</string>
     <string name="browse_action_not_supported">不支援此操作</string>
     <string name="browse_item_info">資訊</string>
+    <string name="browse_open_folder">開啟資料夾</string>
     <string name="browse_play">播放</string>
     <string name="browse_external_player">外部播放器</string>
     <string name="browse_copy_url">複製連結</string>

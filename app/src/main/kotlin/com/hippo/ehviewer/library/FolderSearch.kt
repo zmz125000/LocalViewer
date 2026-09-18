@@ -66,6 +66,28 @@ object FolderSearch {
         }
     }
 
+    fun parentRelative(path: String): String {
+        val rel = path.replace('\\', '/').trim('/')
+        if (rel.isEmpty()) return ""
+        val slash = rel.lastIndexOf('/')
+        return if (slash < 0) "" else rel.substring(0, slash)
+    }
+
+    fun baseName(path: String): String = path.replace('\\', '/').trim('/').substringAfterLast('/')
+
+    /**
+     * Folder to enter for overflow "Open folder", relative to the current listing.
+     * Empty means the item already lives in this folder — caller must no-op.
+     *
+     * Directories / folder galleries: the item itself. Files / videos / archives:
+     * the parent of [relativePath].
+     */
+    fun openFolderTarget(relativePath: String, isDirectory: Boolean): String {
+        val rel = relativePath.replace('\\', '/').trim('/')
+        if (rel.isEmpty()) return ""
+        return if (isDirectory) rel else parentRelative(rel)
+    }
+
     fun relativeFromRoot(searchRoot: String, childRel: String): String {
         val root = searchRoot.replace('\\', '/').trim('/')
         val child = childRel.replace('\\', '/').trim('/')

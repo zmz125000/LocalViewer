@@ -47,6 +47,7 @@ data class BrowseOverflowActions(
     val onSaveAs: (() -> Unit)? = null,
     val onShare: (() -> Unit)? = null,
     val onOpenWith: (() -> Unit)? = null,
+    val onOpenFolder: (() -> Unit)? = null,
     val onInfo: (() -> Unit)? = null,
     val onRead: (() -> Unit)? = null,
     val onPhotoGrid: (() -> Unit)? = null,
@@ -164,6 +165,13 @@ fun BrowseItemOverflowButton(
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.share)) },
                 onClick = { run(actions.onShare) },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.browse_open_folder)) },
+                onClick = {
+                    expanded = false
+                    actions.onOpenFolder?.invoke()
+                },
             )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.open_in_other_app)) },
