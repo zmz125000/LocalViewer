@@ -71,14 +71,15 @@ import okio.Path.Companion.toPath
  * Local files share in place via [OpenFileExternally.shareableLocalUri] (no cache copy).
  * Network / remote zip-member shares land in the origin disk cache via
  * [BrowseOriginCache] (same file and download as Open). A fresh hit skips the
- * download; a remote last-write newer than the cache mtime re-downloads. Then a
- * display-name staging copy under `cache/share_send` is handed to ACTION_SEND.
+ * download; a size mismatch or remote last-write newer than the cache mtime
+ * re-downloads. Then a display-name staging copy under `cache/share_send` is
+ * handed to ACTION_SEND.
  * The origin file is pinned so [OriginDiskCache] LRU cannot delete it while the
  * share target still reads.
  *
  * Save to… uses that same origin file: a fresh Open/Share hit is copied to the
- * SAF destination instead of downloading again. Miss / stale remote last-write
- * still streams from the server (and does not populate the origin cache).
+ * SAF destination instead of downloading again. Miss / stale size or mtime still
+ * streams from the server (and does not populate the origin cache).
  */
 object BrowseSaveAs {
     private const val SAVE_EXTRACT_MAX_BYTES = 512L * 1024L * 1024L
@@ -499,9 +500,9 @@ object BrowseSaveAs {
     }
 
     /**
-     * Copy an Open/Share origin-cache file to [out] when present and not older
-     * than the remote last-write. Cheap disk check first so a miss does not
-     * query remote mtime. Pin the origin file for the copy so LRU cannot
+     * Copy an Open/Share origin-cache file to [out] when present and still
+     * matching remote size + mtime. Cheap disk check first so a miss does not
+     * query remote stats. Pin the origin file for the copy so LRU cannot
      * delete it mid-write.
      */
     private suspend fun writeFromOriginCacheIfFresh(

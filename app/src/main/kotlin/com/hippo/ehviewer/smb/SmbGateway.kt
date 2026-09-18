@@ -29,6 +29,7 @@ import com.hippo.ehviewer.library.FolderSearch
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
+import com.hippo.ehviewer.library.RemoteFileStat
 import com.hippo.ehviewer.library.SMB_PROMOTE_MAX_LEAVES
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipCdParse
@@ -3066,35 +3067,42 @@ object SmbGateway {
                 null
             }
         }
-        try {
-            copyOpenFile(source, password, relativeFilePath, coroutineContext) { file ->
-                file.fileInformation.standardInformation.endOfFile
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Throwable) {
-            null
-        }
+        fileStatOrNull(source, password, relativeFilePath)?.size
     }
 
     /**
      * Remote last-write time in epoch ms, or null if unavailable.
      *
      * Host-pool [copyOpenFile] + QUERY_INFO — same session as listing/size, not a
-     * sticky/orphan TCP. Zip-as-dir members use the zip file's mtime.
+     * sticky/orphan TCP. Zip-as-dir members use the zip file's mtime, not a
+     * central-directory walk of that member.
      */
     suspend fun fileMtimeOrNull(
         source: SmbSourceEntity,
         password: String,
         relativeFilePath: String,
-    ): Long? = withIOContext {
+    ): Long? = fileStatOrNull(source, password, relativeFilePath)?.mtimeMs
+
+    /**
+     * Remote size and last-write in one host-pool QUERY_INFO.
+     *
+     * Zip-as-dir members stat the zip file itself — no CD listing.
+     */
+    suspend fun fileStatOrNull(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+    ): RemoteFileStat? = withIOContext {
         ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, _) ->
-            return@withIOContext fileMtimeOrNull(source, password, zipRel)
+            return@withIOContext fileStatOrNull(source, password, zipRel)
         }
         try {
             copyOpenFile(source, password, relativeFilePath, coroutineContext) { file ->
-                file.fileInformation.basicInformation.lastWriteTime.toEpochMillis()
-                    .takeIf { it > 0L }
+                val info = file.fileInformation
+                RemoteFileStat(
+                    size = info.standardInformation.endOfFile.takeIf { it >= 0L },
+                    mtimeMs = info.basicInformation.lastWriteTime.toEpochMillis().takeIf { it > 0L },
+                )
             }
         } catch (e: CancellationException) {
             throw e

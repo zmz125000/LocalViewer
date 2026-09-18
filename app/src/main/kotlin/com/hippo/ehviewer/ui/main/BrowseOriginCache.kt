@@ -4,6 +4,7 @@ import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.database.model.WebDavSourceEntity
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.library.OriginCacheFresh
+import com.hippo.ehviewer.library.RemoteFileStat
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
@@ -20,9 +21,11 @@ import okio.Path.Companion.toPath
  * Origin-disk cache used by Share, Open, and Save to… for network files
  * (including zip-as-dir members). Same cache file and [ensureSmb] /
  * [ensureWebDav] download for Share and Open. Hits skip the download when the
- * remote last-write is not newer than the cache mtime. Save to… copies a fresh
- * hit to the SAF destination and does not write this cache on a miss. Writes
- * land in [SmbCache] / [WebDavCache] / [ZipMemberCover] so
+ * remote size matches the cache length and the remote last-write is not newer
+ * than the cache mtime. Zip-as-dir members check the zip file's mtime (and
+ * skip size vs the extracted member). Save to… copies a fresh hit to the SAF
+ * destination and does not write this cache on a miss. Writes land in
+ * [SmbCache] / [WebDavCache] / [ZipMemberCover] so
  * [com.hippo.ehviewer.library.OriginDiskCache] LRU trims them.
  */
 object BrowseOriginCache {
@@ -45,7 +48,7 @@ object BrowseOriginCache {
     }
 
     /**
-     * Existing origin file if present and not older than the remote last-write.
+     * Existing origin file if present and still matching remote size + mtime.
      * Stale files are deleted so [ensureSmb] re-downloads. LRU touch only on keep.
      */
     suspend fun smbFreshHit(
@@ -54,7 +57,8 @@ object BrowseOriginCache {
         relativeFile: String,
     ): Path? = takeFreshHit(
         cached = smbHit(source.id, relativeFile),
-        remoteMtime = { SmbGateway.fileMtimeOrNull(source, password, relativeFile) },
+        remoteStat = { SmbGateway.fileStatOrNull(source, password, relativeFile) },
+        compareSize = ZipAsDirListing.zipMemberPath(relativeFile) == null,
         evict = { evictCached(source.id, relativeFile, smb = true) },
     )
 
@@ -65,7 +69,8 @@ object BrowseOriginCache {
         relativeFile: String,
     ): Path? = takeFreshHit(
         cached = webDavHit(source.id, relativeFile),
-        remoteMtime = { WebDavClient.fileMtimeOrNull(source, password, relativeFile) },
+        remoteStat = { WebDavClient.fileStatOrNull(source, password, relativeFile) },
+        compareSize = ZipAsDirListing.zipMemberPath(relativeFile) == null,
         evict = { evictCached(source.id, relativeFile, smb = false) },
     )
 
@@ -147,16 +152,19 @@ object BrowseOriginCache {
 
     private suspend fun takeFreshHit(
         cached: Path?,
-        remoteMtime: suspend () -> Long?,
+        remoteStat: suspend () -> RemoteFileStat?,
+        compareSize: Boolean,
         evict: () -> Unit,
     ): Path? {
         if (cached == null) return null
-        val cacheMs = File(cached.toString()).lastModified()
-        if (OriginCacheFresh.remoteNewerThanCache(remoteMtime(), cacheMs)) {
+        val file = File(cached.toString())
+        val cacheMs = file.lastModified()
+        val cacheSize = file.length()
+        if (OriginCacheFresh.isStale(remoteStat(), cacheSize, cacheMs, compareSize)) {
             evict()
             return null
         }
-        File(cached.toString()).takeIf { it.isFile }?.setLastModified(System.currentTimeMillis())
+        file.takeIf { it.isFile }?.setLastModified(System.currentTimeMillis())
         return cached
     }
 
