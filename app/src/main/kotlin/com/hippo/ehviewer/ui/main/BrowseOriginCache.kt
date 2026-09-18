@@ -17,10 +17,12 @@ import okio.Path
 import okio.Path.Companion.toPath
 
 /**
- * Origin-disk cache used by Share and Open for network files (including zip-as-dir
- * members). Same cache file and [ensureSmb] / [ensureWebDav] download for both.
- * Hits skip the download when the remote last-write is not newer than the cache
- * mtime. Writes land in [SmbCache] / [WebDavCache] / [ZipMemberCover] so
+ * Origin-disk cache used by Share, Open, and Save to… for network files
+ * (including zip-as-dir members). Same cache file and [ensureSmb] /
+ * [ensureWebDav] download for Share and Open. Hits skip the download when the
+ * remote last-write is not newer than the cache mtime. Save to… copies a fresh
+ * hit to the SAF destination and does not write this cache on a miss. Writes
+ * land in [SmbCache] / [WebDavCache] / [ZipMemberCover] so
  * [com.hippo.ehviewer.library.OriginDiskCache] LRU trims them.
  */
 object BrowseOriginCache {

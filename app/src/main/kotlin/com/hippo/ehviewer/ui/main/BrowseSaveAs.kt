@@ -75,6 +75,10 @@ import okio.Path.Companion.toPath
  * display-name staging copy under `cache/share_send` is handed to ACTION_SEND.
  * The origin file is pinned so [OriginDiskCache] LRU cannot delete it while the
  * share target still reads.
+ *
+ * Save to… uses that same origin file: a fresh Open/Share hit is copied to the
+ * SAF destination instead of downloading again. Miss / stale remote last-write
+ * still streams from the server (and does not populate the origin cache).
  */
 object BrowseSaveAs {
     private const val SAVE_EXTRACT_MAX_BYTES = 512L * 1024L * 1024L
@@ -394,7 +398,7 @@ object BrowseSaveAs {
         dest.sink().use { output -> copyCounted(src, output, counter) }
     }
 
-    private suspend fun copyCounted(src: Path, dest: OutputStream, counter: ByteCounter) {
+    private suspend fun copyCounted(src: Path, dest: OutputStream, counter: ByteCounter? = null) {
         ParcelFileDescriptor.AutoCloseInputStream(src.openFileDescriptor("r")).use { input ->
             val buf = ByteArray(256 * 1024)
             while (true) {
@@ -402,7 +406,7 @@ object BrowseSaveAs {
                 val n = input.read(buf)
                 if (n <= 0) break
                 dest.write(buf, 0, n)
-                counter.add(n)
+                counter?.add(n)
             }
         }
     }
@@ -413,6 +417,14 @@ object BrowseSaveAs {
         relativeFile: String,
         out: OutputStream,
     ) {
+        if (writeFromOriginCacheIfFresh(
+                cheapHit = BrowseOriginCache.smbHit(source.id, relativeFile),
+                freshHit = { BrowseOriginCache.smbFreshHit(source, password, relativeFile) },
+                out,
+            )
+        ) {
+            return
+        }
         ZipAsDirListing.zipMemberPath(relativeFile)?.let { (zipRel, member) ->
             extractRemoteZipMember(
                 { SmbArchiveByteSource(source, password, zipRel, pipeline = false, yieldable = true) },
@@ -467,6 +479,14 @@ object BrowseSaveAs {
         relativeFile: String,
         out: OutputStream,
     ) {
+        if (writeFromOriginCacheIfFresh(
+                cheapHit = BrowseOriginCache.webDavHit(source.id, relativeFile),
+                freshHit = { BrowseOriginCache.webDavFreshHit(source, password, relativeFile) },
+                out,
+            )
+        ) {
+            return
+        }
         ZipAsDirListing.zipMemberPath(relativeFile)?.let { (zipRel, member) ->
             extractRemoteZipMember(
                 { WebDavArchiveByteSource(source, password, zipRel, pipeline = false) },
@@ -476,6 +496,29 @@ object BrowseSaveAs {
             return
         }
         WebDavClient.downloadFile(source, password, relativeFile, out)
+    }
+
+    /**
+     * Copy an Open/Share origin-cache file to [out] when present and not older
+     * than the remote last-write. Cheap disk check first so a miss does not
+     * query remote mtime. Pin the origin file for the copy so LRU cannot
+     * delete it mid-write.
+     */
+    private suspend fun writeFromOriginCacheIfFresh(
+        cheapHit: Path?,
+        freshHit: suspend () -> Path?,
+        out: OutputStream,
+    ): Boolean {
+        if (cheapHit == null) return false
+        val path = freshHit() ?: return false
+        val file = File(path.toString())
+        OriginDiskCache.pinOriginFile(file)
+        try {
+            copyCounted(path, out)
+        } finally {
+            OriginDiskCache.unpinOriginFile(file)
+        }
+        return true
     }
 
     private suspend fun copyWebDavDir(
