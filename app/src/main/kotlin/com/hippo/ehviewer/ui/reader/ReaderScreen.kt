@@ -1185,9 +1185,11 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                             fun dispose() {
                                 if (cont.isActive) cont.resume(Unit)
                             }
+                            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
                             ModalBottomSheet(
                                 onDismissRequest = { dispose() },
                                 modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+                                sheetState = sheetState,
                                 scrimColor = Color.Transparent,
                                 dragHandle = null,
                                 contentWindowInsets = { WindowInsets() },
