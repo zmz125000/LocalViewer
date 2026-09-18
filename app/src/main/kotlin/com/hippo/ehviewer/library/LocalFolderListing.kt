@@ -30,6 +30,71 @@ object LocalFolderListing {
     /** Deep peek/classify budget after shallow paint; keep shallow on expiry. */
     private const val DEEP_CLASSIFY_TIMEOUT_MS = 180_000L
 
+    /**
+     * Folder-bar submit search. Walk the local tree ourselves and abort on
+     * coroutine cancel ([ensureActive] between directories).
+     */
+    suspend fun searchDirectory(
+        listedPath: Path,
+        relativeDir: String,
+        query: String,
+        includeHidden: Boolean = false,
+        preferMediaStore: Boolean = true,
+        zipInnerRel: String? = null,
+        onHits: suspend (List<BrowseEntry>) -> Unit = {},
+    ): List<BrowseEntry> = withContext(Dispatchers.IO) {
+        val q = query.trim()
+        if (q.isEmpty()) return@withContext emptyList()
+        suspend fun emitZip(inner: String, remote: List<BrowseEntryRemote>): List<BrowseEntry> {
+            val local = ZipAsDirListing.materializeLocal(listedPath.toString(), inner, remote)
+            onHits(local)
+            return local
+        }
+        if (zipInnerRel != null) {
+            val remote = searchLocalZip(listedPath, zipInnerRel, q, includeHidden) { r ->
+                emitZip(zipInnerRel, r)
+            }
+            return@withContext ZipAsDirListing.materializeLocal(
+                listedPath.toString(),
+                zipInnerRel,
+                remote,
+            )
+        }
+        if (Settings.browseZipAsDir.value) {
+            ZipAsDirListing.splitZipBrowsePath(relativeDir)?.let { (_, inner) ->
+                val remote = searchLocalZip(listedPath, inner, q, includeHidden) { r ->
+                    emitZip(inner, r)
+                }
+                return@withContext ZipAsDirListing.materializeLocal(
+                    listedPath.toString(),
+                    inner,
+                    remote,
+                )
+            }
+        }
+        val zipAsDir = Settings.browseZipAsDir.value
+        val remote = FolderSearch.deepSearch(
+            searchRoot = "",
+            query = q,
+            includeHidden = includeHidden,
+            zipAsDir = zipAsDir,
+            parallelism = PEEK_PARALLELISM,
+            listChildren = { dir ->
+                val path = if (dir.isEmpty()) listedPath else listedPath.resolveRelative(dir)
+                try {
+                    listChildrenRemote(path, preferMediaStore)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    logcat { "LocalFolderListing: search skip dir=$dir ${e.message}" }
+                    emptyList()
+                }
+            },
+            onHits = { r -> onHits(materializeLocalEntries(listedPath, r)) },
+        )
+        materializeLocalEntries(listedPath, remote)
+    }
+
     data class SlimRefresh(
         val entries: List<BrowseEntryRemote>,
         val removedDirectoryNames: Set<String>,
@@ -682,6 +747,22 @@ object LocalFolderListing {
         readOnly = readOnly,
         mimeType = mimeType,
     )
+
+    private suspend fun searchLocalZip(
+        zipPath: Path,
+        inner: String,
+        query: String,
+        includeHidden: Boolean,
+        onHits: suspend (List<BrowseEntryRemote>) -> Unit,
+    ): List<BrowseEntryRemote> {
+        val src = openLocalArchiveByteSource(zipPath) ?: return emptyList()
+        return try {
+            val cd = ZipCentralDirectory.open(src, ZipCdParse.Enter) ?: return emptyList()
+            FolderSearch.searchZipCentralDirectory(cd, inner, query, includeHidden, onHits)
+        } finally {
+            runCatching { src.close() }
+        }
+    }
 
     fun rootConfigKey(rootPath: Path, preferMediaStore: Boolean): String {
         val effective = resolveBrowsePath(rootPath, preferMediaStore = preferMediaStore)

@@ -61,6 +61,8 @@
     <string name="browse_galleries">圖庫</string>
     <string name="browse_videos">影片</string>
     <string name="browse_files">檔案</string>
+    <string name="browse_search">搜尋</string>
+    <string name="browse_search_empty">沒有符合的檔案</string>
     <string name="browse_video">影片</string>
     <string name="browse_file">檔案</string>
     <string name="browse_mode_galleries">圖庫</string>

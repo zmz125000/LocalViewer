@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
@@ -53,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -125,6 +128,7 @@ import com.hippo.ehviewer.ui.main.BrowseOverflowActions
 import com.hippo.ehviewer.ui.main.BrowseOverflowKind
 import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.BrowseSaveAs
+import com.hippo.ehviewer.ui.main.BrowseSearchSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
@@ -138,6 +142,7 @@ import com.hippo.ehviewer.util.addTextToClipboard
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import moe.tarsin.snackbar
 import okio.Path
@@ -172,6 +177,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         EmptyArchiveRegistry.filterLocalEntries(entries)
     }
     val search = rememberBrowseFolderSearchState()
+    var searchHits by remember { mutableStateOf<List<BrowseEntry>>(emptyList()) }
+    var searching by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val folderId = stack.lastOrNull()?.let { BrowseFolderId.local(it.rootId, it.relativePath) }
     val contentMode = rememberEffectiveBrowseContentMode(folderId)
@@ -280,6 +287,39 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         search = search,
         onPathChange = { scrollBehavior.state.heightOffset = 0f },
     )
+
+    LaunchedEffect(
+        currentPath,
+        current?.zipInnerRel,
+        search.submittedKeyword,
+        search.submitGeneration,
+        showHiddenFiles,
+    ) {
+        val q = search.submittedKeyword
+        val frame = stack.lastOrNull()
+        if (q.isEmpty() || frame == null) {
+            searchHits = emptyList()
+            searching = false
+            return@LaunchedEffect
+        }
+        searching = true
+        searchHits = emptyList()
+        try {
+            searchHits = LocalFolderListing.searchDirectory(
+                listedPath = frame.path.toPath(),
+                relativeDir = frame.relativePath,
+                query = q,
+                includeHidden = showHiddenFiles,
+                preferMediaStore = frame.preferMediaStore,
+                zipInnerRel = frame.zipInnerRel,
+            ) { searchHits = it }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+        } finally {
+            searching = false
+        }
+    }
 
     fun frameListKey(frame: BrowseSession.LocalFrame): String = if (frame.zipInnerRel != null) "${frame.path}|${frame.zipInnerRel}" else frame.path
 
@@ -1534,10 +1574,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 error != null && displayEntries.isEmpty() -> {
                     BrowseEmptyHint(error!!)
                 }
-                displayEntries.isEmpty() -> {
+                displayEntries.isEmpty() && searchHits.isEmpty() && !searching -> {
                     BrowseEmptyHint(stringResource(R.string.folder_empty))
                 }
-                filteredEntries.isEmpty() -> {
+                filteredEntries.isEmpty() && searchHits.isEmpty() && !searching &&
+                    search.submittedKeyword.isEmpty() -> {
                     BrowseEmptyHint(stringResource(R.string.folder_empty))
                 }
                 else -> {
@@ -1589,6 +1630,206 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     // In-memory only; resets when path/layout key changes. No prefs.
                     val animateItems by Settings.animateItems.collectAsState()
                     val (collapsedSections, toggleSection) = rememberBrowseSectionCollapse(pathKey)
+                    fun searchHitKey(entry: BrowseEntry): String = when (entry) {
+                        is BrowseEntry.Directory -> "d-${entry.path}|${entry.relativeName}"
+                        is BrowseEntry.FolderGallery -> "g-${entry.path}|${entry.relativeName}"
+                        is BrowseEntry.ArchiveGallery -> "a-${entry.path}"
+                        is BrowseEntry.VideoFile -> "v-${entry.path}"
+                        is BrowseEntry.RegularFile -> "f-${entry.path}"
+                    }
+                    fun LazyGridScope.searchSection(grid: Boolean) {
+                        if (search.submittedKeyword.isEmpty() && !searching) return
+                        item(key = "hdr-search", span = { GridItemSpan(maxLineSpan) }) {
+                            BrowseSearchSectionHeader(
+                                searching = searching,
+                                onClick = { toggleSection(BrowseFolderSection.Search) },
+                            )
+                        }
+                        if (BrowseFolderSection.Search in collapsedSections) return
+                        if (searchHits.isEmpty()) {
+                            item(key = "search-status", span = { GridItemSpan(maxLineSpan) }) {
+                                if (searching) {
+                                    Box(
+                                        Modifier.fillMaxWidth().padding(24.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        CircularWavyProgressIndicator()
+                                    }
+                                } else {
+                                    BrowseEmptyHint(stringResource(R.string.browse_search_empty))
+                                }
+                            }
+                            return
+                        }
+                        items(searchHits, key = { "s-${searchHitKey(it)}" }) { entry ->
+                            val itemMod = Modifier.thenIf(animateItems) { animateItem() }
+                            when (entry) {
+                                is BrowseEntry.Directory -> if (grid) {
+                                    BrowseDirectoryGridItem(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        onClick = { enterDir(entry) },
+                                        onLongClick = { toggleDirFavorite(entry) },
+                                        showFavoriteStar = isDirFavorite(entry),
+                                        cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                        showFolderThumb = browseFolderThumbs,
+                                        overflow = dirOverflow(entry),
+                                    )
+                                } else {
+                                    BrowseDirectoryRow(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        onClick = { enterDir(entry) },
+                                        onLongClick = { toggleDirFavorite(entry) },
+                                        cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                        showFolderThumb = browseFolderThumbs,
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                        sizeBytes = entry.size,
+                                        typeLabel = browseZipAsDirTypeLabel(
+                                            entry.relativeName,
+                                            entry.name,
+                                        ) ?: "Dir",
+                                        overflow = dirOverflow(entry),
+                                        showFavoriteStar = isDirFavorite(entry),
+                                    )
+                                }
+                                is BrowseEntry.FolderGallery -> if (grid) {
+                                    BrowseFolderGalleryGridItem(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        pageCount = entry.pageCount,
+                                        pageCountCapped = entry.pageCountCapped,
+                                        cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                        showPages = showGalleryPages,
+                                        onClick = { openFolderGalleryPrimary(entry) },
+                                        onLongClick = { openFolderGallerySecondary(entry) },
+                                        overflow = folderGalleryOverflow(entry),
+                                    )
+                                } else {
+                                    BrowseFolderGalleryRow(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        pageCount = entry.pageCount,
+                                        pageCountCapped = entry.pageCountCapped,
+                                        cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                        showPages = showGalleryPages,
+                                        onClick = { openFolderGalleryPrimary(entry) },
+                                        onLongClick = { openFolderGallerySecondary(entry) },
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                        sizeBytes = entry.size,
+                                        typeLabel = browseZipAsDirTypeLabel(
+                                            entry.relativeName,
+                                            entry.name,
+                                        ) ?: "Folder",
+                                        overflow = folderGalleryOverflow(entry),
+                                    )
+                                }
+                                is BrowseEntry.ArchiveGallery -> if (grid) {
+                                    BrowseArchiveGridItem(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        cover = BrowseCover.LocalArchive(entry.path),
+                                        onClick = { openArchive(entry) },
+                                        onLongClick = { openArchiveInOtherApp(entry) },
+                                        pageCount = entry.pageCount,
+                                        showPages = showGalleryPages,
+                                        overflow = archiveOverflow(entry),
+                                    )
+                                } else {
+                                    BrowseArchiveGalleryRow(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        cover = BrowseCover.LocalArchive(entry.path),
+                                        onClick = { openArchive(entry) },
+                                        onLongClick = { openArchiveInOtherApp(entry) },
+                                        fileName = entry.name,
+                                        sizeBytes = entry.size,
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                        pageCount = entry.pageCount,
+                                        showPages = showGalleryPages,
+                                        overflow = archiveOverflow(entry),
+                                    )
+                                }
+                                is BrowseEntry.VideoFile -> if (grid) {
+                                    BrowseVideoGridItem(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        thumbnailSource = VideoThumbnailSource.Local(
+                                            path = entry.path.toString(),
+                                            knownSizeBytes = entry.size,
+                                        ),
+                                        onClick = { openVideoPrimary(entry.path) },
+                                        onLongClick = { openVideoSecondary(entry.path) },
+                                        overflow = videoOverflow(entry.path),
+                                    )
+                                } else {
+                                    BrowseVideoRow(
+                                        modifier = itemMod,
+                                        name = entry.name,
+                                        thumbnailSource = VideoThumbnailSource.Local(
+                                            path = entry.path.toString(),
+                                            knownSizeBytes = entry.size,
+                                        ),
+                                        onClick = { openVideoPrimary(entry.path) },
+                                        onLongClick = { openVideoSecondary(entry.path) },
+                                        fileName = entry.name,
+                                        sizeBytes = entry.size,
+                                        lastModifiedMs = entry.lastModifiedMs,
+                                        overflow = videoOverflow(entry.path),
+                                    )
+                                }
+                                is BrowseEntry.RegularFile -> {
+                                    val isImage = isImageFileName(entry.name.substringAfterLast('/'))
+                                    if (grid) {
+                                        if (isImage) {
+                                            BrowsePhotoGridImageItem(
+                                                modifier = itemMod,
+                                                name = entry.name,
+                                                cover = BrowseCover.Local(entry.path),
+                                                showPhotoThumb = true,
+                                                onClick = {
+                                                    if (folderImages.any { it.path == entry.path }) {
+                                                        openFolderImage(entry)
+                                                    } else {
+                                                        openExternalFile(entry.path)
+                                                    }
+                                                },
+                                                onLongClick = { openExternalFile(entry.path) },
+                                                overflow = fileOverflow(entry.path),
+                                            )
+                                        } else {
+                                            BrowseFileGridItem(
+                                                modifier = itemMod,
+                                                name = entry.name,
+                                                onClick = { openExternalFile(entry.path) },
+                                                onLongClick = { openExternalFile(entry.path) },
+                                                overflow = fileOverflow(entry.path),
+                                            )
+                                        }
+                                    } else {
+                                        BrowseFileRow(
+                                            modifier = itemMod,
+                                            name = entry.name,
+                                            cover = if (isImage) BrowseCover.Local(entry.path) else null,
+                                            showPhotoThumb = isImage,
+                                            onClick = {
+                                                if (isImage && folderImages.any { it.path == entry.path }) {
+                                                    openFolderImage(entry)
+                                                } else {
+                                                    openExternalFile(entry.path)
+                                                }
+                                            },
+                                            onLongClick = { openExternalFile(entry.path) },
+                                            fileName = entry.name,
+                                            sizeBytes = entry.size,
+                                            lastModifiedMs = entry.lastModifiedMs,
+                                            overflow = fileOverflow(entry.path),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if (photoGrid) {
                         // Virtual image-only grid for a folder gallery (long-press).
                         val frame = stack.lastOrNull()
@@ -1620,6 +1861,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             horizontalArrangement = gridSpacing,
                             verticalArrangement = gridSpacing,
                         ) {
+                            searchSection(grid = true)
                             items(folderImages, key = { "pg-${it.path}" }) { file ->
                                 BrowsePhotoGridImageItem(
                                     modifier = Modifier.thenIf(animateItems) { animateItem() },
@@ -1645,6 +1887,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             horizontalArrangement = gridSpacing,
                             verticalArrangement = gridSpacing,
                         ) {
+                            searchSection(grid = true)
                             if (dirs.isNotEmpty()) {
                                 item(
                                     key = "hdr-dirs",
@@ -1787,6 +2030,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             state = listState,
                             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).fillMaxSize(),
                         ) {
+                            searchSection(grid = false)
                             if (dirs.isNotEmpty()) {
                                 item(
                                     key = "hdr-dirs",
