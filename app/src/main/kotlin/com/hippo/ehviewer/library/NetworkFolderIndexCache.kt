@@ -30,6 +30,10 @@ import splitties.init.appCtx
  * Saves for a key run through [preferCompleteFolderGalleries] against any prior value
  * so a poorer re-list cannot wipe complete page names.
  *
+ * The parsed JSON document for each source stays in process RAM after the first
+ * load/save so browsing sibling folders does not re-read and re-parse the whole
+ * file. [saveAll] still writes once per batch (zip interiors, parent+zips).
+ *
  * Disk loads hydrate into [BrowseSession] as **non-current**. Only a successful full/slim
  * list for that exact directory marks the RAM entry current; quick scan then skips
  * current dirs and re-runs for every old dir (including subfolders).
@@ -48,10 +52,22 @@ object NetworkFolderIndexCache {
     private const val KIND_FILE = "file"
 
     private val lock = Mutex()
+    private val memory = HashMap<String, MemoryIndex>()
     private val cacheDir: File
         get() = File(appCtx.noBackupFilesDir, "network_folder_index")
     private val legacyCacheDir: File
         get() = File(appCtx.cacheDir, "network_folder_index")
+
+    private class MemoryIndex(
+        val root: JSONObject,
+        val decoded: HashMap<String, List<BrowseEntryRemote>> = HashMap(),
+    ) {
+        val folders: JSONObject
+            get() {
+                if (!root.has("folders")) root.put("folders", JSONObject())
+                return root.getJSONObject("folders")
+            }
+    }
 
     suspend fun loadSmb(
         sourceId: Long,
@@ -149,6 +165,7 @@ object NetworkFolderIndexCache {
     /** Drop every protocol file (current + legacy cacheDir) and process RAM listings. */
     suspend fun clearAll() = withContext(Dispatchers.IO) {
         lock.withLock {
+            memory.clear()
             deleteDirContents(cacheDir)
             deleteDirContents(legacyCacheDir)
         }
@@ -165,25 +182,15 @@ object NetworkFolderIndexCache {
     ): List<BrowseEntryRemote>? = withContext(Dispatchers.IO) {
         if (!Settings.networkFolderIndexCache.value) return@withContext null
         lock.withLock {
-            val file = fileFor(protocol, sourceId)
-            val root = readRoot(file) ?: return@withLock null
-            // File identity is protocol+sourceId only. configKey mismatch (edited host/
-            // share/user) must not discard the index — slim cleans stale paths later.
-            if (!matchesVersion(root)) return@withLock null
-            val storedKey = root.optString("configKey")
-            if (storedKey.isNotEmpty() && storedKey != configKey) {
-                logcat("FolderIndex") {
-                    "Keeping $protocol/$sourceId index after source edit (configKey stamp differs)"
-                }
-            }
-            val array = root.optJSONObject("folders")
-                ?.optJSONArray(normalizeDir(relativeDir))
-                ?: return@withLock null
+            val idx = existingMemory(protocol, sourceId, configKey) ?: return@withLock null
+            val key = normalizeDir(relativeDir)
+            idx.decoded[key]?.let { return@withLock it }
+            val array = idx.folders.optJSONArray(key) ?: return@withLock null
             val decoded = runCatching { decodeEntries(array) }
                 .onFailure { logcat("FolderIndex", it) }
                 .getOrNull()
                 ?: return@withLock null
-            file.setLastModified(System.currentTimeMillis())
+            idx.decoded[key] = decoded
             decoded
         }
     }
@@ -195,27 +202,20 @@ object NetworkFolderIndexCache {
     ): Map<String, List<BrowseEntryRemote>> = withContext(Dispatchers.IO) {
         if (!Settings.networkFolderIndexCache.value) return@withContext emptyMap()
         lock.withLock {
-            val file = fileFor(protocol, sourceId)
-            val root = readRoot(file) ?: return@withLock emptyMap()
-            if (!matchesVersion(root)) return@withLock emptyMap()
-            val storedKey = root.optString("configKey")
-            if (storedKey.isNotEmpty() && storedKey != configKey) {
-                logcat("FolderIndex") {
-                    "Keeping $protocol/$sourceId index after source edit (configKey stamp differs)"
-                }
-            }
-            val array = root.optJSONObject("folders") ?: return@withLock emptyMap()
+            val idx = existingMemory(protocol, sourceId, configKey) ?: return@withLock emptyMap()
+            val array = idx.folders
             val out = LinkedHashMap<String, List<BrowseEntryRemote>>()
             val keys = array.keys()
             while (keys.hasNext()) {
                 val keyName = keys.next()
-                val decoded = runCatching { decodeEntries(array.getJSONArray(keyName)) }
-                    .onFailure { logcat("FolderIndex", it) }
-                    .getOrNull()
-                    ?: continue
-                out[keyName] = decoded
+                val decoded = idx.decoded[keyName] ?: runCatching {
+                    decodeEntries(array.getJSONArray(keyName))
+                }.onFailure { logcat("FolderIndex", it) }.getOrNull()
+                if (decoded != null) {
+                    idx.decoded[keyName] = decoded
+                    out[keyName] = decoded
+                }
             }
-            if (out.isNotEmpty()) file.setLastModified(System.currentTimeMillis())
             out
         }
     }
@@ -231,19 +231,19 @@ object NetworkFolderIndexCache {
         if (!Settings.networkFolderIndexCache.value) return@withContext entries
         lock.withLock {
             val file = fileFor(protocol, sourceId)
-            val root = mutableRoot(file, configKey)
-            val folders = root.getJSONObject("folders")
-            val zipAsDir = Settings.browseZipAsDir.value
-            val (toStore, dirty) = mergeFolderEntry(
-                folders,
+            val idx = writableMemory(protocol, sourceId, configKey, file)
+            val merge = mergeFolderEntry(
+                idx,
                 relativeDir,
                 entries,
                 removedChildDirs,
-                zipAsDir,
+                Settings.browseZipAsDir.value,
                 logKeep = "$protocol/$sourceId",
             )
-            if (dirty) writeRootFile(file, root)
-            toStore
+            if (merge.dirty && !writeRootFile(file, idx.root)) {
+                dropMemory(protocol, sourceId)
+            }
+            merge.stored
         }
     }
 
@@ -257,56 +257,113 @@ object NetworkFolderIndexCache {
         if (!Settings.networkFolderIndexCache.value) return@withContext updates
         lock.withLock {
             val file = fileFor(protocol, sourceId)
-            val root = mutableRoot(file, configKey)
-            val folders = root.getJSONObject("folders")
+            val idx = writableMemory(protocol, sourceId, configKey, file)
             val zipAsDir = Settings.browseZipAsDir.value
             val stored = LinkedHashMap<String, List<BrowseEntryRemote>>(updates.size)
             var dirty = false
             for ((relativeDir, entries) in updates) {
-                val (toStore, changed) = mergeFolderEntry(
-                    folders,
+                val merge = mergeFolderEntry(
+                    idx,
                     relativeDir,
                     entries,
                     removedChildDirs = emptySet(),
                     zipAsDir = zipAsDir,
                     logKeep = "$protocol/$sourceId",
                 )
-                stored[normalizeDir(relativeDir)] = toStore
-                dirty = dirty || changed
+                stored[normalizeDir(relativeDir)] = merge.stored
+                dirty = dirty || merge.dirty
             }
-            if (dirty) writeRootFile(file, root)
+            if (dirty && !writeRootFile(file, idx.root)) {
+                dropMemory(protocol, sourceId)
+            }
             stored
         }
     }
 
-    private fun mutableRoot(file: File, configKey: String): JSONObject {
-        // Reuse folders JSON across source edits (same id); only VERSION must match.
+    private fun memoryKey(protocol: String, sourceId: Long) = "$protocol:$sourceId"
+
+    private fun dropMemory(protocol: String, sourceId: Long) {
+        memory.remove(memoryKey(protocol, sourceId))
+    }
+
+    private fun logConfigKeyMismatch(
+        protocol: String,
+        sourceId: Long,
+        storedKey: String,
+        configKey: String,
+    ) {
+        if (storedKey.isNotEmpty() && storedKey != configKey) {
+            logcat("FolderIndex") {
+                "Keeping $protocol/$sourceId index after source edit (configKey stamp differs)"
+            }
+        }
+    }
+
+    /** Parsed document already in RAM, or loaded once from disk. Null when no file. */
+    private fun existingMemory(
+        protocol: String,
+        sourceId: Long,
+        configKey: String,
+    ): MemoryIndex? {
+        val key = memoryKey(protocol, sourceId)
+        memory[key]?.let { return it }
+        val file = fileFor(protocol, sourceId)
+        val root = readRoot(file)?.takeIf { matchesVersion(it) } ?: return null
+        logConfigKeyMismatch(protocol, sourceId, root.optString("configKey"), configKey)
+        val idx = MemoryIndex(root)
+        memory[key] = idx
+        return idx
+    }
+
+    /** Parsed document, creating an empty one when the file is missing. */
+    private fun writableMemory(
+        protocol: String,
+        sourceId: Long,
+        configKey: String,
+        file: File,
+    ): MemoryIndex {
+        val key = memoryKey(protocol, sourceId)
+        memory[key]?.let { idx ->
+            idx.root.put("version", VERSION)
+            idx.root.put("configKey", configKey)
+            return idx
+        }
         val existing = readRoot(file)?.takeIf { matchesVersion(it) }
+        logConfigKeyMismatch(protocol, sourceId, existing?.optString("configKey").orEmpty(), configKey)
         val root = existing ?: JSONObject().apply {
             put("version", VERSION)
             put("folders", JSONObject())
         }
         root.put("version", VERSION)
-        root.put("configKey", configKey) // stamp only — not a load gate
+        root.put("configKey", configKey)
         if (!root.has("folders")) root.put("folders", JSONObject())
-        return root
+        val idx = MemoryIndex(root)
+        memory[key] = idx
+        return idx
     }
 
+    private data class FolderMerge(
+        val stored: List<BrowseEntryRemote>,
+        val dirty: Boolean,
+    )
+
     /**
-     * @return stored listing and whether [folders] changed enough to rewrite the file.
+     * @return stored listing and whether [MemoryIndex.folders] changed enough to rewrite.
      */
     private fun mergeFolderEntry(
-        folders: JSONObject,
+        idx: MemoryIndex,
         relativeDir: String,
         entries: List<BrowseEntryRemote>,
         removedChildDirs: Set<String>,
         zipAsDir: Boolean,
         logKeep: String,
-    ): Pair<List<BrowseEntryRemote>, Boolean> {
+    ): FolderMerge {
+        val folders = idx.folders
         val key = normalizeDir(relativeDir)
-        val previous = folders.optJSONArray(key)?.let { array ->
+        val previous = idx.decoded[key] ?: folders.optJSONArray(key)?.let { array ->
             runCatching { decodeEntries(array) }.getOrNull()
         }
+        if (previous != null) idx.decoded[key] = previous
         val keepPrevious = previous != null &&
             shouldKeepPreviousFolderIndex(previous, entries, zipAsDir)
         var removed = false
@@ -328,7 +385,10 @@ object NetworkFolderIndexCache {
                 }
             }
             if (staleKeys.isNotEmpty()) {
-                staleKeys.forEach { folders.remove(it) }
+                staleKeys.forEach {
+                    folders.remove(it)
+                    idx.decoded.remove(it)
+                }
                 removed = true
             }
         }
@@ -347,20 +407,25 @@ object NetworkFolderIndexCache {
         if (!unchanged) {
             folders.put(key, encodeEntries(toStore))
         }
-        return toStore to (removed || !unchanged)
+        idx.decoded[key] = toStore
+        return FolderMerge(toStore, removed || !unchanged)
     }
 
-    private fun writeRootFile(file: File, root: JSONObject) {
+    private fun writeRootFile(file: File, root: JSONObject): Boolean {
         cacheDir.mkdirs()
         val tmp = File(cacheDir, "${file.name}.tmp.${System.nanoTime()}")
-        try {
+        return try {
             tmp.writeText(root.toString())
             if (CachePagePublish.atomicReplaceFile(tmp, file)) {
                 file.setLastModified(System.currentTimeMillis())
                 File(legacyCacheDir, file.name).delete()
+                true
+            } else {
+                false
             }
         } catch (e: Throwable) {
             logcat("FolderIndex", e)
+            false
         } finally {
             tmp.delete()
         }
@@ -380,8 +445,8 @@ object NetworkFolderIndexCache {
         if (!Settings.networkFolderIndexCache.value) return@withContext
         lock.withLock {
             val file = fileFor(protocol, sourceId)
-            val root = readRoot(file)?.takeIf { matchesVersion(it) } ?: return@withLock
-            val folders = root.optJSONObject("folders") ?: return@withLock
+            val idx = existingMemory(protocol, sourceId, configKey = "") ?: return@withLock
+            val folders = idx.folders
             val stale = buildList {
                 val keys = folders.keys()
                 while (keys.hasNext()) {
@@ -390,25 +455,17 @@ object NetworkFolderIndexCache {
                 }
             }
             if (stale.isEmpty()) return@withLock
-            stale.forEach { folders.remove(it) }
-            cacheDir.mkdirs()
-            val tmp = File(cacheDir, "${file.name}.tmp.${System.nanoTime()}")
-            try {
-                tmp.writeText(root.toString())
-                if (CachePagePublish.atomicReplaceFile(tmp, file)) {
-                    file.setLastModified(System.currentTimeMillis())
-                    File(legacyCacheDir, file.name).delete()
-                }
-            } catch (e: Throwable) {
-                logcat("FolderIndex", e)
-            } finally {
-                tmp.delete()
+            stale.forEach {
+                folders.remove(it)
+                idx.decoded.remove(it)
             }
+            if (!writeRootFile(file, idx.root)) dropMemory(protocol, sourceId)
         }
     }
 
     private suspend fun delete(protocol: String, sourceId: Long) = withContext(Dispatchers.IO) {
         lock.withLock {
+            dropMemory(protocol, sourceId)
             val name = "${protocol}_$sourceId.json"
             File(cacheDir, name).delete()
             File(legacyCacheDir, name).delete()
