@@ -7,6 +7,7 @@ import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.RemoteChild
+import com.hippo.ehviewer.library.RemoteFileStat
 import com.hippo.ehviewer.library.RemoteRangeNotSupportedException
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipMemberByteSource
@@ -677,34 +678,18 @@ object WebDavClient {
                     ZipMemberByteSource.uncompressedSize(zip, member)
                 }
             }.getOrElse { e ->
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 if (e is ZipMemberTooLargeException) throw e
                 null
             }
         }
+        fileStatOrNull(source, password, relativeFilePath, sticky)?.size?.takeIf { it > 0L }
+            ?.let { return@withIOContext it }
         runCatching {
             downloadGate().withPermit {
                 withTransportRetry(sticky) {
                     val url = absoluteUrl(source, relativeFilePath)
                     val auth = basicAuthHeader(source.username, password)
-                    // HEAD first (cheap).
-                    runCatching {
-                        val response = http(sticky).request(url) {
-                            method = HttpMethod.Head
-                            timeout {
-                                connectTimeoutMillis = LIST_CONNECT_MS
-                                requestTimeoutMillis = LIST_REQUEST_MS
-                                socketTimeoutMillis = LIST_SOCKET_MS
-                            }
-                            auth?.let { header(HttpHeaders.Authorization, it) }
-                        }
-                        if (response.status.value in 200..299) {
-                            response.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-                                ?: response.headers["Content-Length"]?.toLongOrNull()
-                        } else {
-                            null
-                        }
-                    }.getOrNull()?.takeIf { it > 0L }?.let { return@withTransportRetry it }
-
                     // Fallback: 1-byte Range — works when HEAD is unsupported/broken after restart.
                     val response = http(sticky).prepareGet(url) {
                         timeout {
@@ -734,25 +719,38 @@ object WebDavClient {
     /**
      * Remote last-write time in epoch ms, or null if unavailable.
      *
-     * HEAD `Last-Modified`, then PROPFIND Depth 0 `getlastmodified`. Browse HTTP
-     * client (not the sticky FUSE client unless [sticky]). Zip-as-dir members use
-     * the zip file's mtime. Transport blips return null.
+     * Zip-as-dir members use the zip file's mtime, not a central-directory walk.
      */
     suspend fun fileMtimeOrNull(
         source: WebDavSourceEntity,
         password: String,
         relativeFilePath: String,
         sticky: Boolean = false,
-    ): Long? = withIOContext {
+    ): Long? = fileStatOrNull(source, password, relativeFilePath, sticky)?.mtimeMs
+
+    /**
+     * Remote size and last-write in one HEAD, then PROPFIND Depth 0 to fill gaps.
+     *
+     * Browse HTTP client (not the sticky FUSE client unless [sticky]). Zip-as-dir
+     * members stat the zip file itself — no CD listing. Transport blips return null.
+     */
+    suspend fun fileStatOrNull(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        sticky: Boolean = false,
+    ): RemoteFileStat? = withIOContext {
         ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, _) ->
-            return@withIOContext fileMtimeOrNull(source, password, zipRel, sticky)
+            return@withIOContext fileStatOrNull(source, password, zipRel, sticky)
         }
         runCatching {
             listSlots.withPermit {
                 withTransportRetry(sticky) {
                     val url = absoluteUrl(source, relativeFilePath)
                     val auth = basicAuthHeader(source.username, password)
-                    val fromHead = runCatching {
+                    var size: Long? = null
+                    var mtime: Long? = null
+                    runCatching {
                         val response = http(sticky).request(url) {
                             method = HttpMethod.Head
                             timeout {
@@ -763,12 +761,14 @@ object WebDavClient {
                             auth?.let { header(HttpHeaders.Authorization, it) }
                         }
                         if (response.status.value in 200..299) {
-                            headerLastModifiedMs(response.headers)
-                        } else {
-                            null
+                            size = (
+                                response.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+                                    ?: response.headers["Content-Length"]?.toLongOrNull()
+                                )?.takeIf { it >= 0L }
+                            mtime = headerLastModifiedMs(response.headers)
                         }
-                    }.getOrNull()
-                    if (fromHead != null) return@withTransportRetry fromHead
+                    }
+                    if (size != null && mtime != null) return@withTransportRetry RemoteFileStat(size, mtime)
 
                     val response = http(sticky).request(url) {
                         method = PropFind
@@ -784,14 +784,20 @@ object WebDavClient {
                     }
                     val code = response.status
                     if (code != HttpStatusCode.fromValue(207) && code.value !in 200..299) {
-                        return@withTransportRetry null
+                        return@withTransportRetry RemoteFileStat(size, mtime).takeIf {
+                            it.size != null || it.mtimeMs != null
+                        }
                     }
-                    parseFirstLastModified(response.bodyAsText()).takeIf { it > 0L }
+                    val parsed = parseFirstStat(response.bodyAsText())
+                    RemoteFileStat(
+                        size = size ?: parsed.size,
+                        mtimeMs = mtime ?: parsed.mtimeMs,
+                    ).takeIf { it.size != null || it.mtimeMs != null }
                 }
             }
         }.onFailure {
             if (it is kotlinx.coroutines.CancellationException) throw it
-            logcat("WebDavMtime", it)
+            logcat("WebDavStat", it)
         }.getOrNull()
     }
 
@@ -800,24 +806,32 @@ object WebDavClient {
         return parseHttpDateMs(raw.orEmpty()).takeIf { it > 0L }
     }
 
-    /** First DAV:getlastmodified in a PROPFIND multistatus (Depth 0 file). */
-    private fun parseFirstLastModified(xml: String): Long {
+    /** First DAV:getcontentlength / getlastmodified in a PROPFIND multistatus. */
+    private fun parseFirstStat(xml: String): RemoteFileStat {
         val parser = XmlPullParserFactory.newInstance().newPullParser().apply {
             setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
             setInput(xml.reader())
         }
+        var size: Long? = null
+        var mtime: Long? = null
         var event = parser.eventType
         while (event != XmlPullParser.END_DOCUMENT) {
             if (event == XmlPullParser.START_TAG) {
                 val local = parser.name?.substringAfterLast(':').orEmpty()
-                if (local.equals("getlastmodified", ignoreCase = true)) {
-                    val ms = parseHttpDateMs(parser.nextText().trim())
-                    if (ms > 0L) return ms
+                when {
+                    local.equals("getcontentlength", ignoreCase = true) -> {
+                        size = parser.nextText().trim().toLongOrNull()?.takeIf { it >= 0L } ?: size
+                    }
+                    local.equals("getlastmodified", ignoreCase = true) -> {
+                        val ms = parseHttpDateMs(parser.nextText().trim())
+                        if (ms > 0L) mtime = ms
+                    }
                 }
+                if (size != null && mtime != null) return RemoteFileStat(size, mtime)
             }
             event = parser.next()
         }
-        return 0L
+        return RemoteFileStat(size, mtime)
     }
 
     /** Parse Content-Range total length (RFC 7233 complete-length after the slash). */
