@@ -42,6 +42,17 @@ class FolderSearchTest {
     }
 
     @Test
+    fun openFolderTargetSkipsCurrentFolder() {
+        assertEquals("", FolderSearch.openFolderTarget("a.jpg", isDirectory = false))
+        assertEquals("", FolderSearch.openFolderTarget("", isDirectory = true))
+        assertEquals("Album", FolderSearch.openFolderTarget("Album", isDirectory = true))
+        assertEquals("Album", FolderSearch.openFolderTarget("Album/a.jpg", isDirectory = false))
+        assertEquals("S/leaf", FolderSearch.openFolderTarget("S/leaf", isDirectory = true))
+        assertEquals("S", FolderSearch.openFolderTarget("S/clip.mp4", isDirectory = false))
+        assertEquals("docs", FolderSearch.openFolderTarget("docs/a.pdf", isDirectory = false))
+    }
+
+    @Test
     fun relativeFromRootStripsSearchPrefix() {
         assertEquals("a.jpg", FolderSearch.relativeFromRoot("", "a.jpg"))
         assertEquals("Album/a.jpg", FolderSearch.relativeFromRoot("Share", "Share/Album/a.jpg"))

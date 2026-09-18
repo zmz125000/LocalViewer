@@ -78,8 +78,10 @@ import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.BrowseFolderId
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseVirtualKind
+import com.hippo.ehviewer.library.DirPresence
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.FolderGalleryIndex
+import com.hippo.ehviewer.library.FolderSearch
 import com.hippo.ehviewer.library.LOCAL_FOLDER_TOKEN
 import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalFolderListing
@@ -99,10 +101,12 @@ import com.hippo.ehviewer.library.isImageFileName
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.isZipPlainFolderListingLocal
+import com.hippo.ehviewer.library.listBrowseChildrenRaw
 import com.hippo.ehviewer.library.materializeLocalEntries
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
 import com.hippo.ehviewer.library.resolveBrowsePath
+import com.hippo.ehviewer.library.resolveRelative
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.library.toBrowseSections
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
@@ -670,6 +674,27 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         )
     }
 
+    /** Overflow "Open folder". No-op when the target is already this listing. */
+    fun openBrowseFolder(targetRel: String) {
+        if (targetRel.isEmpty()) return
+        val frame = stack.lastOrNull() ?: return
+        val path = if (frame.isZipBrowse) {
+            frame.path.toPath()
+        } else {
+            frame.path.toPath().resolveRelative(targetRel)
+        }
+        enterDir(
+            BrowseEntry.Directory(
+                name = FolderSearch.baseName(targetRel),
+                path = path,
+                relativeName = targetRel,
+                hasVideo = false,
+                hasGallery = false,
+                presence = DirPresence.Navigable,
+            ),
+        )
+    }
+
     fun folderArchiveRelative(entry: BrowseEntry.ArchiveGallery, frame: BrowseSession.LocalFrame): String = when {
         frame.relativePath.isEmpty() -> entry.name
         else -> "${frame.relativePath.trimEnd('/')}/${entry.name}"
@@ -1062,15 +1087,125 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         if (photoGridMode) openFolderGallery(entry) else openFolderGalleryPhotoGrid(entry)
     }
 
+    fun openNestedFolderImage(
+        frame: BrowseSession.LocalFrame,
+        parentRel: String,
+        fileName: String,
+        file: BrowseEntry.RegularFile,
+    ) {
+        launchIO {
+            if (frame.isZipBrowse) {
+                val inner = ZipAsDirListing.joinPrefix(frame.zipInnerRel.orEmpty(), parentRel)
+                val names = localZipGalleryNames(
+                    frame,
+                    frame.relativePath,
+                    inner,
+                    frame.path.toPath(),
+                ).ifEmpty {
+                    withLocalZipCentralDirectory(frame.path.toPath()) { cd ->
+                        ZipAsDirListing.directImageNames(cd, inner)
+                    }.orEmpty()
+                }
+                if (names.isEmpty()) return@launchIO
+                val page = names.indexOfFirst { it.equals(fileName, ignoreCase = true) }
+                    .coerceAtLeast(0)
+                val histRel = ZipAsDirListing.historyGalleryRelative(frame.relativePath, inner)
+                val coverKey = ZipPaths.encodePath(
+                    frame.path,
+                    ZipAsDirListing.joinPrefix(inner, names.first()),
+                ).toString()
+                val galleryTitle = FolderSearch.baseName(parentRel).ifEmpty { frame.title }
+                val gid = stableGalleryId(frame.rootId, "zip:$histRel")
+                val info = BaseGalleryInfo(
+                    gid = gid,
+                    token = LOCAL_FOLDER_TOKEN,
+                    title = galleryTitle,
+                    pages = names.size,
+                    favoriteSlot = NOT_FAVORITED,
+                    rating = -1f,
+                    thumbKey = coverKey,
+                    uploader = "${frame.rootId}\u0000$histRel",
+                    category = 0,
+                )
+                recordCurrentBrowseFolderHistory()
+                LocalHistory.recordLocalFolderGallery(
+                    rootId = frame.rootId,
+                    relativePath = histRel,
+                    title = galleryTitle,
+                    thumbKey = coverKey,
+                    pages = names.size,
+                    info = info,
+                )
+                withUIContext {
+                    navToLocalZipFolderReader(
+                        zipPath = frame.path,
+                        innerRel = inner,
+                        imageNames = names,
+                        info = info,
+                        page = page,
+                    )
+                }
+                return@launchIO
+            }
+            val galleryRel = when {
+                parentRel.isEmpty() -> frame.relativePath
+                frame.relativePath.isEmpty() -> parentRel
+                else -> "${frame.relativePath.trimEnd('/')}/$parentRel"
+            }
+            val parentPath = file.path.parent ?: frame.path.toPath().resolveRelative(parentRel)
+            val names = localPhotoGridNames(frame, galleryRel)
+                ?: parentPath.listBrowseChildrenRaw()
+                    .filter { !it.isDirectory && isImageFileName(it.name) }
+                    .map { it.name }
+                    .sortedWith { a, b -> naturalCompare(a, b) }
+            if (names.isEmpty()) return@launchIO
+            val page = names.indexOfFirst { it.equals(fileName, ignoreCase = true) }
+                .coerceAtLeast(0)
+            val coverKey = (parentPath / names.first()).toString()
+            val galleryTitle = FolderSearch.baseName(parentRel).ifEmpty { frame.title }
+            val gid = stableGalleryId(frame.rootId, galleryRel.ifEmpty { "." })
+            val info = BaseGalleryInfo(
+                gid = gid,
+                token = LOCAL_FOLDER_TOKEN,
+                title = galleryTitle,
+                pages = names.size,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = coverKey,
+                uploader = "${frame.rootId}\u0000${galleryRel.trim('/')}",
+                category = 0,
+            )
+            recordCurrentBrowseFolderHistory()
+            LocalHistory.recordLocalFolderGallery(
+                rootId = frame.rootId,
+                relativePath = galleryRel,
+                title = galleryTitle,
+                thumbKey = coverKey,
+                pages = names.size,
+                info = info,
+            )
+            withUIContext {
+                navToLocalFolderReader(parentPath.toString(), info, page, names)
+            }
+        }
+    }
+
     /**
      * Tap an image (photo-grid virtual folder **or** Folder-mode file row) → reader at that page.
      * Same page list / cover keys as the photo-grid path.
      */
     fun openFolderImage(file: BrowseEntry.RegularFile) {
         val frame = stack.lastOrNull() ?: return
-        if (!isImageFileName(file.name)) return
+        val rel = file.name.replace('\\', '/').trim('/')
+        val fileName = FolderSearch.baseName(rel).ifEmpty { file.path.name }
+        if (!isImageFileName(fileName)) return
+        val parentRel = FolderSearch.parentRelative(rel)
+        val inListing = parentRel.isEmpty() && folderImages.any { it.path == file.path }
+        if (!inListing) {
+            openNestedFolderImage(frame, parentRel, fileName, file)
+            return
+        }
         val images = folderImages
-        if (images.isEmpty()) return
         val page = images.indexOfFirst { it.path == file.path }.coerceAtLeast(0)
         if (frame.isZipBrowse) {
             val inner = frame.zipInnerRel.orEmpty()
@@ -1398,6 +1533,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         favorited = isDirFavorite(dir),
         onFavorite = { toggleDirFavorite(dir) },
         onSaveAs = { saveLocalFolder(dir.path, dir.name, dir.relativeName) },
+        onOpenFolder = {
+            openBrowseFolder(FolderSearch.openFolderTarget(dir.relativeName, isDirectory = true))
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1408,6 +1546,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onRead = { openFolderGallery(entry) },
         onPhotoGrid = { openFolderGalleryPhotoGrid(entry) },
         onSaveAs = { saveLocalFolder(entry.path, entry.name, entry.relativeName) },
+        onOpenFolder = {
+            openBrowseFolder(FolderSearch.openFolderTarget(entry.relativeName, isDirectory = true))
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1417,10 +1558,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onOpenWith = { openArchiveInOtherApp(entry) },
         onSaveAs = { saveLocalFile(entry.path) },
         onShare = { shareLocalFile(entry.path) },
+        onOpenFolder = {
+            openBrowseFolder(FolderSearch.openFolderTarget(entry.name, isDirectory = false))
+        },
         onUnsupported = { notSupportedAction() },
     )
 
-    fun videoOverflow(path: okio.Path) = BrowseOverflowActions(
+    fun videoOverflow(path: okio.Path, relativeName: String = path.name) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Video,
         onPlay = { playVideo(path) },
         onExternalPlayer = { openExternalFile(path) },
@@ -1428,10 +1572,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onOpenWith = { openExternalFile(path, usePreferredPlayer = false) },
         onSaveAs = { saveLocalFile(path) },
         onShare = { shareLocalFile(path) },
+        onOpenFolder = {
+            openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
+        },
         onUnsupported = { notSupportedAction() },
     )
 
-    fun fileOverflow(path: okio.Path) = if (isHtmlFileName(path.name)) {
+    fun fileOverflow(path: okio.Path, relativeName: String = path.name) = if (isHtmlFileName(path.name)) {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Webpage,
             onOpenInBrowser = { openLocalHtml(path, incognito = false) },
@@ -1440,6 +1587,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             onOpenWith = { openExternalFile(path, asFile = true) },
             onSaveAs = { saveLocalFile(path) },
             onShare = { shareLocalFile(path) },
+            onOpenFolder = {
+                openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
+            },
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1448,6 +1598,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             onOpenWith = { openExternalFile(path) },
             onSaveAs = { saveLocalFile(path) },
             onShare = { shareLocalFile(path) },
+            onOpenFolder = {
+                openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
+            },
             onUnsupported = { notSupportedAction() },
         )
     }
@@ -1760,7 +1913,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         ),
                                         onClick = { openVideoPrimary(entry.path) },
                                         onLongClick = { openVideoSecondary(entry.path) },
-                                        overflow = videoOverflow(entry.path),
+                                        overflow = videoOverflow(entry.path, entry.name),
                                     )
                                 } else {
                                     BrowseVideoRow(
@@ -1775,7 +1928,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         fileName = entry.name,
                                         sizeBytes = entry.size,
                                         lastModifiedMs = entry.lastModifiedMs,
-                                        overflow = videoOverflow(entry.path),
+                                        overflow = videoOverflow(entry.path, entry.name),
                                     )
                                 }
                                 is BrowseEntry.RegularFile -> {
@@ -1787,15 +1940,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 name = entry.name,
                                                 cover = BrowseCover.Local(entry.path),
                                                 showPhotoThumb = true,
-                                                onClick = {
-                                                    if (folderImages.any { it.path == entry.path }) {
-                                                        openFolderImage(entry)
-                                                    } else {
-                                                        openExternalFile(entry.path)
-                                                    }
-                                                },
+                                                onClick = { openFolderImage(entry) },
                                                 onLongClick = { openExternalFile(entry.path) },
-                                                overflow = fileOverflow(entry.path),
+                                                overflow = fileOverflow(entry.path, entry.name),
                                             )
                                         } else {
                                             BrowseFileGridItem(
@@ -1803,7 +1950,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 name = entry.name,
                                                 onClick = { openExternalFile(entry.path) },
                                                 onLongClick = { openExternalFile(entry.path) },
-                                                overflow = fileOverflow(entry.path),
+                                                overflow = fileOverflow(entry.path, entry.name),
                                             )
                                         }
                                     } else {
@@ -1813,7 +1960,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             cover = if (isImage) BrowseCover.Local(entry.path) else null,
                                             showPhotoThumb = isImage,
                                             onClick = {
-                                                if (isImage && folderImages.any { it.path == entry.path }) {
+                                                if (isImage) {
                                                     openFolderImage(entry)
                                                 } else {
                                                     openExternalFile(entry.path)
@@ -1823,7 +1970,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             fileName = entry.name,
                                             sizeBytes = entry.size,
                                             lastModifiedMs = entry.lastModifiedMs,
-                                            overflow = fileOverflow(entry.path),
+                                            overflow = fileOverflow(entry.path, entry.name),
                                         )
                                     }
                                 }

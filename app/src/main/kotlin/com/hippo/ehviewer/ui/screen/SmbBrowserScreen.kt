@@ -78,6 +78,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.BrowseVirtualKind
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.FolderGalleryIndex
+import com.hippo.ehviewer.library.FolderSearch
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
@@ -740,6 +741,12 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    /** Overflow "Open folder". No-op when the target is already this listing. */
+    fun openBrowseFolder(targetRel: String) {
+        if (targetRel.isEmpty()) return
+        enterDir(targetRel)
+    }
+
     /** Same jump as the Back-to Browse/History/Library FAB. */
     fun jumpBackToOrigin() {
         when {
@@ -914,23 +921,82 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         if (photoGridMode) openFolderGallery(entry) else openFolderGalleryPhotoGrid(entry)
     }
 
+    fun openNestedFolderImage(parentRel: String, fileName: String) {
+        val src = source ?: return
+        val remote = if (relativeDir.isEmpty()) {
+            parentRel
+        } else {
+            SmbGateway.joinRelativePath(relativeDir, parentRel)
+        }
+        launchIO {
+            val password = SmbPasswordStore.get(src.id)
+            val names = runCatching {
+                SmbGateway.listImageFileNames(src, password, remote)
+            }.getOrDefault(emptyList())
+            if (names.isEmpty()) return@launchIO
+            val page = names.indexOfFirst { it.equals(fileName, ignoreCase = true) }.coerceAtLeast(0)
+            val coverKey = names.firstOrNull()?.let { coverName ->
+                LocalHistory.zipOrRemoteThumbKey(
+                    sourceId = src.id,
+                    listedDir = remote,
+                    relativeName = "",
+                    coverFileName = coverName,
+                    smb = true,
+                )
+            }
+            val galleryTitle = FolderSearch.baseName(parentRel).ifEmpty { title }
+            val gid = stableGalleryId(src.id, "smb:$remote")
+            val info = BaseGalleryInfo(
+                gid = gid,
+                token = SMB_FOLDER_TOKEN,
+                title = galleryTitle,
+                pages = names.size,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = coverKey,
+                uploader = "${src.id}\u0000${remote.trim('/')}",
+                category = 2,
+            )
+            recordCurrentBrowseFolderHistory(src.id)
+            LocalHistory.recordSmbFolderGallery(
+                sourceId = src.id,
+                remoteDir = remote,
+                title = galleryTitle,
+                thumbKey = coverKey,
+                pages = names.size,
+                info = info,
+            )
+            withUIContext {
+                navToSmbFolderReader(src.id, remote, names, info, page)
+            }
+        }
+    }
+
     /**
      * Tap an image (photo-grid virtual folder **or** Folder-mode file row) → reader at that page.
      * Same page list / [HistoryThumbKey] cover path as the photo-grid path.
      */
     fun openFolderImage(file: BrowseEntryRemote.RegularFile) {
         val src = source ?: return
-        if (!isImageFileName(file.fileName.substringAfterLast('/'))) return
+        val rel = file.fileName.replace('\\', '/').trim('/')
+        val fileName = FolderSearch.baseName(rel)
+        if (!isImageFileName(fileName)) return
+        val parentRel = FolderSearch.parentRelative(rel)
+        val inListing = parentRel.isEmpty() &&
+            folderImages.any { it.fileName == file.fileName }
+        if (!inListing) {
+            openNestedFolderImage(parentRel, fileName)
+            return
+        }
         val images = folderImages
-        if (images.isEmpty()) return
         val page = images.indexOfFirst { it.fileName == file.fileName }.coerceAtLeast(0)
         val names = images.map { it.fileName }
-        val coverKey = names.firstOrNull()?.let { fileName ->
+        val coverKey = names.firstOrNull()?.let { coverName ->
             LocalHistory.zipOrRemoteThumbKey(
                 sourceId = src.id,
                 listedDir = relativeDir,
                 relativeName = "",
-                coverFileName = fileName,
+                coverFileName = coverName,
                 smb = true,
             )
         }
@@ -1294,6 +1360,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         favorited = isDirFavorite(name),
         onFavorite = { toggleDirFavorite(name, coverFileName) },
         onSaveAs = { saveSmbFolder(name) },
+        onOpenFolder = { openBrowseFolder(FolderSearch.openFolderTarget(name, isDirectory = true)) },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1304,6 +1371,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onRead = { openFolderGallery(entry) },
         onPhotoGrid = { openFolderGalleryPhotoGrid(entry) },
         onSaveAs = { saveSmbFolder(entry.relativeName, entry.name) },
+        onOpenFolder = {
+            openBrowseFolder(FolderSearch.openFolderTarget(entry.relativeName, isDirectory = true))
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1323,6 +1393,14 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 entry.fileName.substringAfterLast('/'),
             )
         },
+        onOpenFolder = {
+            openBrowseFolder(
+                FolderSearch.openFolderTarget(
+                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                    isDirectory = false,
+                ),
+            )
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1334,6 +1412,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onOpenWith = { openExternalFile(fileName, usePreferredPlayer = false) },
         onSaveAs = { saveSmbFile(fileName) },
         onShare = { shareSmbFile(fileName) },
+        onOpenFolder = {
+            openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1346,6 +1427,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveSmbFile(fileName) },
             onShare = { shareSmbFile(fileName) },
+            onOpenFolder = {
+                openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+            },
             onUnsupported = { notSupportedAction() },
         )
     } else {
@@ -1354,6 +1438,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             onOpenWith = { openExternalFile(fileName) },
             onSaveAs = { saveSmbFile(fileName) },
             onShare = { shareSmbFile(fileName) },
+            onOpenFolder = {
+                openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+            },
             onUnsupported = { notSupportedAction() },
         )
     }
@@ -1765,13 +1852,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                 showPhotoThumb = true,
                                                 thumbRetryKey = refreshToken,
                                                 allowRemoteFetch = allowRemoteThumbs,
-                                                onClick = {
-                                                    if (folderImages.any { it.fileName == entry.fileName }) {
-                                                        openFolderImage(entry)
-                                                    } else {
-                                                        openExternalFile(entry.fileName)
-                                                    }
-                                                },
+                                                onClick = { openFolderImage(entry) },
                                                 onLongClick = { openExternalFile(entry.fileName) },
                                                 overflow = fileOverflow(entry.fileName),
                                             )
@@ -1793,9 +1874,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                             thumbRetryKey = refreshToken,
                                             allowRemoteFetch = allowRemoteThumbs,
                                             onClick = {
-                                                if (isImage &&
-                                                    folderImages.any { it.fileName == entry.fileName }
-                                                ) {
+                                                if (isImage) {
                                                     openFolderImage(entry)
                                                 } else {
                                                     openExternalFile(entry.fileName)
