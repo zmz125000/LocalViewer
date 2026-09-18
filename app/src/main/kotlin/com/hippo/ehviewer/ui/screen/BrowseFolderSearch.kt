@@ -135,7 +135,12 @@ class BrowseFolderSearchState internal constructor(
         return true
     }
 
-    fun snapshot(): BrowseSession.FolderSearchUi = BrowseSession.FolderSearchUi(active = active, keyword = keyword)
+    fun snapshot(): BrowseSession.FolderSearchUi = BrowseSession.FolderSearchUi(
+        active = active,
+        keyword = keyword,
+        submittedKeyword = submittedKeyword,
+        submitGeneration = submitGeneration,
+    )
 
     /**
      * Restore a previously saved filter for this folder.
@@ -148,11 +153,12 @@ class BrowseFolderSearchState internal constructor(
             return
         }
         val k = normalizeBrowseSearchQuery(saved.keyword)
-        submittedKeyword = ""
+        submittedKeyword = saved.submittedKeyword
+        submitGeneration = saved.submitGeneration
         if (k.isEmpty()) {
             textFieldState.clearText()
             keyword = ""
-            active = saved.active
+            active = saved.active || saved.submittedKeyword.isNotEmpty()
             focused = false
             return
         }
@@ -160,8 +166,8 @@ class BrowseFolderSearchState internal constructor(
             textFieldState.setTextAndPlaceCursorAtEnd(k)
         }
         keyword = k
-        // Keep the search field visible when a filter is restored.
-        active = saved.active || k.isNotEmpty()
+        // Keep the search field visible when a filter or Search-section query is restored.
+        active = saved.active || k.isNotEmpty() || saved.submittedKeyword.isNotEmpty()
         focused = false
     }
 
@@ -217,8 +223,15 @@ fun BindBrowseFolderSearch(
             search.restore(BrowseSession.getFolderSearch(folderKey))
         }
     }
-    // Persist while typing / closing search so X-clear is not re-applied after reader.
-    LaunchedEffect(folderKey, search.keyword, search.active) {
+    // Persist while typing / submitting / closing so reader return restores both
+    // the live filter and the Search-section query.
+    LaunchedEffect(
+        folderKey,
+        search.keyword,
+        search.active,
+        search.submittedKeyword,
+        search.submitGeneration,
+    ) {
         if (folderKey != null) {
             BrowseSession.putFolderSearch(folderKey, search.snapshot())
         }

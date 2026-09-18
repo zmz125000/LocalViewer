@@ -103,4 +103,54 @@ class FolderSearchTest {
         assertEquals("Album/a.jpg", (file as BrowseEntryRemote.RegularFile).fileName)
         assertEquals("Album/a.jpg", file.name)
     }
+
+    @Test
+    fun folderSearchSessionKeepsSubmittedHits() {
+        val key = "test:deep-search-hits"
+        try {
+            val ui = BrowseSession.FolderSearchUi(
+                active = true,
+                keyword = "album",
+                submittedKeyword = "album",
+                submitGeneration = 2,
+            )
+            assertFalse(ui.isEmpty)
+            BrowseSession.putFolderSearch(key, ui)
+            val got = BrowseSession.getFolderSearch(key)
+            assertEquals("album", got.submittedKeyword)
+            assertEquals(2, got.submitGeneration)
+
+            val hits = listOf(BrowseEntryRemote.RegularFile(name = "Album/a.jpg", fileName = "Album/a.jpg"))
+            BrowseSession.putFolderSearchHits(
+                key,
+                BrowseSession.FolderSearchHits(
+                    submittedKeyword = "album",
+                    submitGeneration = 2,
+                    includeHidden = false,
+                    hits = hits,
+                ),
+            )
+            val cached = BrowseSession.cachedFolderSearchHits<BrowseEntryRemote>(
+                key,
+                submittedKeyword = "album",
+                submitGeneration = 2,
+                includeHidden = false,
+            )
+            assertEquals(listOf("Album/a.jpg"), cached?.map { it.name })
+            assertEquals(
+                null,
+                BrowseSession.cachedFolderSearchHits<BrowseEntryRemote>(
+                    key,
+                    submittedKeyword = "album",
+                    submitGeneration = 3,
+                    includeHidden = false,
+                ),
+            )
+            BrowseSession.putFolderSearch(key, BrowseSession.FolderSearchUi())
+            assertTrue(BrowseSession.peekFolderSearchHits<BrowseEntryRemote>(key).isEmpty())
+        } finally {
+            BrowseSession.putFolderSearch(key, BrowseSession.FolderSearchUi())
+            BrowseSession.clearFolderSearchHits(key)
+        }
+    }
 }

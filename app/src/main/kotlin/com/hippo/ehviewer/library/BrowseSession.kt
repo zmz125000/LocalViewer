@@ -474,11 +474,26 @@ object BrowseSession {
     data class FolderSearchUi(
         val active: Boolean = false,
         val keyword: String = "",
+        /** Last IME Search query for the Search section (independent of [keyword]). */
+        val submittedKeyword: String = "",
+        val submitGeneration: Int = 0,
     ) {
-        val isEmpty: Boolean get() = !active && keyword.isEmpty()
+        val isEmpty: Boolean get() = !active && keyword.isEmpty() && submittedKeyword.isEmpty()
     }
 
+    /**
+     * Completed deep-search hits for a folder. Same lifetime as [FolderSearchUi];
+     * returning from the reader must not re-walk the tree.
+     */
+    data class FolderSearchHits(
+        val submittedKeyword: String,
+        val submitGeneration: Int,
+        val includeHidden: Boolean,
+        val hits: List<Any>,
+    )
+
     private val folderSearch = ConcurrentHashMap<String, FolderSearchUi>()
+    private val folderSearchHits = ConcurrentHashMap<String, FolderSearchHits>()
 
     fun localFolderSearchKey(path: String) = "local:$path"
 
@@ -490,7 +505,52 @@ object BrowseSession {
 
     fun putFolderSearch(key: String, ui: FolderSearchUi) {
         if (key.isEmpty()) return
-        if (ui.isEmpty) folderSearch.remove(key) else folderSearch[key] = ui
+        if (ui.isEmpty) {
+            folderSearch.remove(key)
+            folderSearchHits.remove(key)
+        } else {
+            folderSearch[key] = ui
+            if (ui.submittedKeyword.isEmpty()) folderSearchHits.remove(key)
+        }
+    }
+
+    fun putFolderSearchHits(key: String, hits: FolderSearchHits) {
+        if (key.isEmpty() || hits.submittedKeyword.isEmpty()) {
+            folderSearchHits.remove(key)
+            return
+        }
+        folderSearchHits[key] = hits
+    }
+
+    fun clearFolderSearchHits(key: String) {
+        if (key.isNotEmpty()) folderSearchHits.remove(key)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    fun <T> peekFolderSearchHits(key: String): List<T> {
+        if (key.isEmpty()) return emptyList()
+        return folderSearchHits[key]?.hits as? List<T> ?: emptyList()
+    }
+
+    /**
+     * Hits that match this submit. Null means the Search section should run again.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <T> cachedFolderSearchHits(
+        key: String,
+        submittedKeyword: String,
+        submitGeneration: Int,
+        includeHidden: Boolean,
+    ): List<T>? {
+        if (key.isEmpty() || submittedKeyword.isEmpty()) return null
+        val rec = folderSearchHits[key] ?: return null
+        if (rec.submittedKeyword != submittedKeyword ||
+            rec.submitGeneration != submitGeneration ||
+            rec.includeHidden != includeHidden
+        ) {
+            return null
+        }
+        return rec.hits as List<T>
     }
 
     // --- Browse list scroll (per directory; process lifetime) ---
