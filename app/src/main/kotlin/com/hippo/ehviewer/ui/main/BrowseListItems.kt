@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Badge
+import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
@@ -1683,8 +1685,38 @@ fun BrowseSectionHeader(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BrowseSearchSectionHeader(
+    searching: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                interactionSource = null,
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.browse_search),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f),
+        )
+        if (searching) {
+            CircularWavyProgressIndicator(modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
 /** In-memory collapse keys for folder-view section headers (not disk-persisted). */
 enum class BrowseFolderSection {
+    Search,
     Directories,
     Galleries,
     Videos,

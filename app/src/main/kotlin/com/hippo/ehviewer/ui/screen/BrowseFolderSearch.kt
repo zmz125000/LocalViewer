@@ -74,6 +74,17 @@ class BrowseFolderSearchState internal constructor(
         private set
 
     /**
+     * Last IME Search / submit query. Drives the Search section; independent of
+     * [keyword] so typing still filters Directories/Galleries/Videos/Files live.
+     */
+    var submittedKeyword by mutableStateOf("")
+        private set
+
+    /** Bumped on every submit so the same query can be run again. */
+    var submitGeneration by mutableStateOf(0)
+        private set
+
+    /**
      * One-shot: request keyboard focus when the search field composes.
      * Set by [open] only — [restore] keeps the filter without focusing.
      */
@@ -91,12 +102,23 @@ class BrowseFolderSearchState internal constructor(
     fun clearFilter() {
         textFieldState.clearText()
         keyword = ""
+        submittedKeyword = ""
+        submitGeneration++
+    }
+
+    /** Commit the current field as a Search-section query (IME Search). */
+    fun submit() {
+        syncKeywordFromField()
+        submittedKeyword = keyword
+        submitGeneration++
     }
 
     /** Exit search mode and clear the filter. */
     fun close() {
         textFieldState.clearText()
         keyword = ""
+        submittedKeyword = ""
+        submitGeneration++
         active = false
         focused = false
         wantFocus = false
@@ -126,6 +148,7 @@ class BrowseFolderSearchState internal constructor(
             return
         }
         val k = normalizeBrowseSearchQuery(saved.keyword)
+        submittedKeyword = ""
         if (k.isEmpty()) {
             textFieldState.clearText()
             keyword = ""
@@ -278,7 +301,10 @@ fun BrowseTopBarSearchField(
         // Match TopAppBar title text origin — default TextField has 16.dp start inset.
         contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        onKeyboardAction = { focusManager.clearFocus() },
+        onKeyboardAction = {
+            state.submit()
+            focusManager.clearFocus()
+        },
         colors = TextFieldDefaults.colors(
             focusedContainerColor = Color.Transparent,
             unfocusedContainerColor = Color.Transparent,

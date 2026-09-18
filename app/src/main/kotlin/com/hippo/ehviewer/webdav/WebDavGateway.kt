@@ -7,6 +7,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.FolderGalleryIndex
+import com.hippo.ehviewer.library.FolderSearch
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.RemoteDirectorySlimPlan
@@ -769,6 +770,58 @@ object WebDavGateway {
             BrowseSession.invalidateWebDavListingsUnder(source.id, joinRelative(relativeDir, name))
         }
         return stored
+    }
+
+    /**
+     * Folder-bar submit search. WebDAV has no SEARCH we rely on; walk PROPFIND
+     * ourselves and abort on coroutine cancel (in-flight HTTP is cancelled).
+     */
+    suspend fun searchDirectory(
+        source: WebDavSourceEntity,
+        password: String,
+        relativeDir: String,
+        query: String,
+        includeHidden: Boolean = false,
+        onHits: suspend (List<BrowseEntryRemote>) -> Unit = {},
+    ): List<BrowseEntryRemote> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        if (Settings.browseZipAsDir.value) {
+            ZipAsDirListing.splitZipBrowsePath(relativeDir)?.let { (zipRel, inner) ->
+                return withIOContext {
+                    WebDavArchiveByteSource(source, password, zipRel, pipeline = false).use { src ->
+                        val cd = ZipCentralDirectory.open(src, ZipCdParse.Enter)
+                            ?: return@use emptyList()
+                        FolderSearch.searchZipCentralDirectory(
+                            cd,
+                            inner,
+                            q,
+                            includeHidden,
+                            onHits,
+                        )
+                    }
+                }
+            }
+        }
+        val zipAsDir = Settings.browseZipAsDir.value
+        return FolderSearch.deepSearch(
+            searchRoot = relativeDir,
+            query = q,
+            includeHidden = includeHidden,
+            zipAsDir = zipAsDir,
+            parallelism = peekConcurrency(),
+            listChildren = { dir ->
+                try {
+                    listChildrenForRelativeDir(source, password, dir)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    logcat { "WebDavGateway: search skip dir=$dir ${e.message}" }
+                    emptyList()
+                }
+            },
+            onHits = onHits,
+        )
     }
 
     /** One PROPFIND, reused when a parent peek already listed this relative path. */

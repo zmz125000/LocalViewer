@@ -57,6 +57,8 @@
     <string name="browse_galleries">图库</string>
     <string name="browse_videos">视频</string>
     <string name="browse_files">文件</string>
+    <string name="browse_search">搜索</string>
+    <string name="browse_search_empty">没有匹配的文件</string>
     <string name="browse_video">视频</string>
     <string name="browse_file">文件</string>
     <string name="browse_mode_galleries">图库</string>

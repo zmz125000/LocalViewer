@@ -61,6 +61,8 @@
     <string name="browse_galleries">Galleries</string>
     <string name="browse_videos">Videos</string>
     <string name="browse_files">Files</string>
+    <string name="browse_search">Search</string>
+    <string name="browse_search_empty">No matching files</string>
     <string name="browse_video">Video</string>
     <string name="browse_file">File</string>
     <string name="browse_mode_galleries">Photo</string>
