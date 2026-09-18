@@ -76,9 +76,16 @@ fun List<BrowseEntry>.filterByContentMode(
     mode: BrowseContentMode,
     showHiddenFiles: Boolean = true,
     showVirtualGalleries: Boolean = true,
+    /**
+     * Live folder search: keep hidden/virtual filters but do not hide types the
+     * current Photo/Media/Video/Folder mode would drop (e.g. files in Media).
+     * Photo-grid and SMB share-root listings do not use this.
+     */
+    allTypes: Boolean = false,
 ): List<BrowseEntry> = filter { e ->
     if (!showHiddenFiles && e.hidden) return@filter false
     if (!showVirtualGalleries && e.virtual) return@filter false
+    if (allTypes) return@filter true
     when (mode) {
         BrowseContentMode.Galleries -> when (e) {
             is BrowseEntry.Directory -> {
@@ -161,12 +168,19 @@ fun List<BrowseEntryRemote>.filterRemoteByContentMode(
     mode: BrowseContentMode,
     showHiddenFiles: Boolean = true,
     showVirtualGalleries: Boolean = true,
+    /**
+     * Live folder search: keep hidden/virtual/unreachable filters but do not hide
+     * types the current Photo/Media/Video/Folder mode would drop (e.g. files in Media).
+     * Photo-grid and SMB share-root listings do not use this.
+     */
+    allTypes: Boolean = false,
 ): List<BrowseEntryRemote> {
     val unreachable = cachedUnreachableDirectoryNames(this)
     return filter { e ->
         if (e.isUnderUnreachableFolder(unreachable)) return@filter false
         if (!showHiddenFiles && e.hidden) return@filter false
         if (!showVirtualGalleries && e.virtual) return@filter false
+        if (allTypes) return@filter true
         when (mode) {
             BrowseContentMode.Galleries -> when (e) {
                 is BrowseEntryRemote.Directory -> {
