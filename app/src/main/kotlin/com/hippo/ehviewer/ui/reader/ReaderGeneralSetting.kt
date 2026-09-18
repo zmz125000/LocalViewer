@@ -61,6 +61,10 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         field = Settings.readerHardwareBitmap.asMutableState(),
     )
     SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_photo_grid),
+        field = Settings.readerPhotoGrid.asMutableState(),
+    )
+    SwitchChoice(
         title = stringResource(id = R.string.pref_show_page_number),
         field = Settings.showPageNumber.asMutableState(),
     )

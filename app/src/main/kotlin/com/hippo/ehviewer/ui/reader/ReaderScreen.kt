@@ -513,6 +513,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     }
     val showSeekbar by Settings.showReaderSeekbar.collectAsState()
     val hideTopBar by Settings.readerHideTopBar.collectAsState()
+    val readerPhotoGrid by Settings.readerPhotoGrid.collectAsState()
     val readingMode by Settings.readingMode.collectAsState {
         when (val mode = ReadingModeType.fromPreference(it)) {
             ReadingModeType.DEFAULT -> if (webtoon) ReadingModeType.WEBTOON else ReadingModeType.RIGHT_TO_LEFT
@@ -1176,6 +1177,36 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                         }
                     }
                 }
+            },
+            onClickPhotoGrid = if (readerPhotoGrid && readerGallerySupportsPhotoGrid(args)) {
+                {
+                    launch {
+                        dialog { cont ->
+                            fun dispose() {
+                                if (cont.isActive) cont.resume(Unit)
+                            }
+                            ModalBottomSheet(
+                                onDismissRequest = { dispose() },
+                                modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+                                scrimColor = Color.Transparent,
+                                dragHandle = null,
+                                contentWindowInsets = { WindowInsets() },
+                            ) {
+                                ReaderPhotoGridSheet(
+                                    args = args,
+                                    pageLoader = pageLoader,
+                                    currentPage = syncState.sliderValue,
+                                    onJumpToPage = { page ->
+                                        syncState.sliderScrollTo(page)
+                                        dispose()
+                                    },
+                                )
+                            }
+                        }
+                    }
+                } as () -> Unit
+            } else {
+                null
             },
         )
     }

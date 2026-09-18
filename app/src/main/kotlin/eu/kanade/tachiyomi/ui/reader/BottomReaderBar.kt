@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -35,7 +36,11 @@ import eu.kanade.tachiyomi.ui.reader.setting.PreferenceType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 
 @Composable
-fun BottomReaderBar(onClickSettings: () -> Unit, containerColor: Color) = FlexibleBottomAppBar(
+fun BottomReaderBar(
+    onClickSettings: () -> Unit,
+    containerColor: Color,
+    onClickPhotoGrid: (() -> Unit)? = null,
+) = FlexibleBottomAppBar(
     containerColor = containerColor,
     contentPadding = PaddingValues.Zero,
     horizontalArrangement = Arrangement.SpaceEvenly,
@@ -62,17 +67,25 @@ fun BottomReaderBar(onClickSettings: () -> Unit, containerColor: Color) = Flexib
         imageVector = autoRotate.icon,
         contentDescription = stringResource(autoRotate.stringRes),
     )
-    // 3. Decode size (1.5x … origin)
-    val decodeSize by Settings.readerDecodeSize.collectAsState { DecodeSizeType.fromPreference(it) }
-    DropdownIconButton(
-        label = stringResource(R.string.pref_decode_size),
-        menuItems = DecodeSizeType.entries,
-        selectedItem = decodeSize,
-        onSelectedItemChange = {
-            Settings.readerDecodeSize.value = it.prefValue
-        },
-        minMenuWidth = 160.dp,
-    )
+    // 3. Photo grid (folder / ZIP) or decode size
+    if (onClickPhotoGrid != null) {
+        ActionButton(
+            onClick = onClickPhotoGrid,
+            imageVector = Icons.Default.GridView,
+            contentDescription = stringResource(R.string.browse_menu_photo_grid),
+        )
+    } else {
+        val decodeSize by Settings.readerDecodeSize.collectAsState { DecodeSizeType.fromPreference(it) }
+        DropdownIconButton(
+            label = stringResource(R.string.pref_decode_size),
+            menuItems = DecodeSizeType.entries,
+            selectedItem = decodeSize,
+            onSelectedItemChange = {
+                Settings.readerDecodeSize.value = it.prefValue
+            },
+            minMenuWidth = 160.dp,
+        )
+    }
     // 4. Settings
     ActionButton(
         onClick = onClickSettings,

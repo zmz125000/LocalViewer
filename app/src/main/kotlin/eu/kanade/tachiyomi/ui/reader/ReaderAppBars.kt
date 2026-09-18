@@ -41,6 +41,7 @@ fun BoxScope.ReaderAppBars(
     totalPages: Int,
     onSliderValueChange: (Int) -> Unit,
     onClickSettings: () -> Unit,
+    onClickPhotoGrid: (() -> Unit)? = null,
 ) {
     // Dark already reads as translucent grey; light used near-opaque white (0.95).
     // Match the glass look so the page shows through in both themes.
@@ -78,7 +79,11 @@ fun BoxScope.ReaderAppBars(
                     containerColor = backgroundColor,
                 )
             }
-            BottomReaderBar(onClickSettings = onClickSettings, containerColor = backgroundColor)
+            BottomReaderBar(
+                onClickSettings = onClickSettings,
+                containerColor = backgroundColor,
+                onClickPhotoGrid = onClickPhotoGrid,
+            )
         }
     }
 }
