@@ -189,7 +189,7 @@ object OpenFileExternally {
             context = context,
             displayName = displayName,
             mimeType = mimeType,
-            hit = { BrowseOriginCache.smbHit(sourceId, remoteRelativeFile) },
+            hit = { BrowseOriginCache.smbFreshHit(source, password, remoteRelativeFile) },
             size = { BrowseOriginCache.smbSize(source, password, remoteRelativeFile) },
             ensure = { counter ->
                 BrowseOriginCache.ensureSmb(
@@ -255,7 +255,7 @@ object OpenFileExternally {
             context = context,
             displayName = displayName,
             mimeType = mimeType,
-            hit = { BrowseOriginCache.webDavHit(sourceId, remoteRelativeFile) },
+            hit = { BrowseOriginCache.webDavFreshHit(source, password, remoteRelativeFile) },
             size = { BrowseOriginCache.webDavSize(source, password, remoteRelativeFile) },
             ensure = { counter ->
                 BrowseOriginCache.ensureWebDav(
@@ -1699,16 +1699,17 @@ object OpenFileExternally {
     }
 
     /**
-     * Network Open (non-video): same origin cache as Share.
-     * Hit skips the download. Miss shows the transfer snackbar (and a confirm
-     * snackbar when the file is over [OPEN_CACHE_WARN_BYTES]). Local files never
-     * go through here.
+     * Network Open (non-video): same origin cache and download as Share
+     * ([BrowseOriginCache]). Fresh hit skips the download. Stale remote
+     * last-write (mtime newer than the cache file) re-downloads. Miss shows
+     * the transfer snackbar (and a confirm snackbar when the file is over
+     * [OPEN_CACHE_WARN_BYTES]). Local files never go through here.
      */
     private suspend fun openRemoteCached(
         context: Context,
         displayName: String,
         mimeType: String,
-        hit: () -> Path?,
+        hit: suspend () -> Path?,
         size: suspend () -> Long?,
         ensure: suspend (ByteCounter) -> Path,
     ) {

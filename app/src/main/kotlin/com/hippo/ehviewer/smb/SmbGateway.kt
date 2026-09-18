@@ -3078,6 +3078,32 @@ object SmbGateway {
     }
 
     /**
+     * Remote last-write time in epoch ms, or null if unavailable.
+     *
+     * Host-pool [copyOpenFile] + QUERY_INFO — same session as listing/size, not a
+     * sticky/orphan TCP. Zip-as-dir members use the zip file's mtime.
+     */
+    suspend fun fileMtimeOrNull(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+    ): Long? = withIOContext {
+        ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, _) ->
+            return@withIOContext fileMtimeOrNull(source, password, zipRel)
+        }
+        try {
+            copyOpenFile(source, password, relativeFilePath, coroutineContext) { file ->
+                file.fileInformation.basicInformation.lastWriteTime.toEpochMillis()
+                    .takeIf { it > 0L }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
      * One-shot random-access read (open → read → close). Prefer [withOpenFile] when
      * issuing many ranges (stream archives).
      */
