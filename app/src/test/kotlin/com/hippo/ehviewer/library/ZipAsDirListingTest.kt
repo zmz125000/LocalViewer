@@ -294,6 +294,31 @@ class ZipAsDirListingTest {
     }
 
     @Test
+    fun persistFolderIndexesBatchesParentWithInteriors() = runBlocking {
+        val saved = ArrayList<String>()
+        var saveCalls = 0
+        val parent = listOf(BrowseEntryRemote.Directory("comics", presence = DirPresence.Navigable, hasVideo = false, hasGallery = false))
+        val ram = ArrayList<String>()
+        val stored = ZipAsDirListing.persistFolderIndexes(
+            parentRelativeDir = "share/comics",
+            interiors = mapOf(
+                "pack.zip" to listOf(BrowseEntryRemote.RegularFile("a.jpg")),
+            ),
+            saveAll = { folders ->
+                saveCalls++
+                saved += folders.keys
+                folders
+            },
+            putRam = { dir, _ -> ram += dir },
+            parentEntries = parent,
+        )
+        assertEquals(1, saveCalls)
+        assertEquals(listOf("share/comics", "share/comics/pack.zip"), saved)
+        assertEquals(listOf("share/comics/pack.zip"), ram)
+        assertEquals(parent, stored["share/comics"])
+    }
+
+    @Test
     fun classifyAllVirtualFoldersStoresRootAndNestedDirs() {
         val cd = openZip(
             "Album/ch1/01.jpg" to byteArrayOf(1),
