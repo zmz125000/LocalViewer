@@ -753,6 +753,7 @@
     <string name="pref_auto_rotate_off">關閉</string>
     <string name="pref_auto_rotate_cw">順時針 90°</string>
     <string name="pref_auto_rotate_ccw">逆時針 90°</string>
+    <string name="pref_reader_photo_grid">照片牆</string>
     <string name="pref_decode_size">解碼尺寸</string>
     <string name="pref_decode_size_1_5x">1.5× 螢幕</string>
     <string name="pref_decode_size_2x">2× 螢幕</string>

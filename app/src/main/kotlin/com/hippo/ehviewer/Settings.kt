@@ -569,6 +569,12 @@ object Settings : DataStorePreferences(null) {
     /** Hide reader title/top app bar (bottom bar + seekbar still show when chrome is visible). Default on. */
     val readerHideTopBar = boolPref("pref_reader_hide_top_bar", true)
 
+    /**
+     * Reader bottom bar: photo-grid button instead of decode size.
+     * Default on. Non-ZIP archives keep decode size either way.
+     */
+    val readerPhotoGrid = boolPref("pref_reader_photo_grid", true)
+
     /** Last open tab in the reader settings bottom sheet (0=mode, 1=general, 2=filter). */
     val readerSettingsTab = intPref("pref_reader_settings_tab", 0)
     val readerTheme = intPref("pref_reader_theme_key", 1)
