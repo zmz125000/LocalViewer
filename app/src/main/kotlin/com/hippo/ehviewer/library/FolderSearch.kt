@@ -88,6 +88,21 @@ object FolderSearch {
         return if (isDirectory) rel else parentRelative(rel)
     }
 
+    /**
+     * Folder to restore when backing out of a dir entered from the Search section.
+     * Null means [currentRel] is already [originRel] or not a descendant — caller
+     * should fall through to normal goUp.
+     *
+     * Empty origin is the listing root. Not [com.hippo.ehviewer.Settings.alwaysExitToDir].
+     */
+    fun searchReturnDir(originRel: String, currentRel: String): String? {
+        val origin = originRel.replace('\\', '/').trim('/')
+        val current = currentRel.replace('\\', '/').trim('/')
+        if (current == origin) return null
+        if (origin.isEmpty()) return ""
+        return if (current.startsWith("$origin/")) origin else null
+    }
+
     fun relativeFromRoot(searchRoot: String, childRel: String): String {
         val root = searchRoot.replace('\\', '/').trim('/')
         val child = childRel.replace('\\', '/').trim('/')
