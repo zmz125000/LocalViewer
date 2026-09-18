@@ -594,7 +594,7 @@ object Settings : DataStorePreferences(null) {
      * ([eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType]). Default 1.5x.
      * One-shot full-res: page menu "View original image".
      */
-    val readerDecodeSize = intPref("pref_reader_decode_size", 0)
+    val readerDecodeSize = intPref("pref_reader_decode_size", 4)
 
     /**
      * Prefer GPU hardware bitmaps in the reader.
