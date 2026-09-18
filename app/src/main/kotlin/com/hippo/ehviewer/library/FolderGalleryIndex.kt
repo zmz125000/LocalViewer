@@ -83,7 +83,7 @@ object FolderGalleryIndex {
     /**
      * Write library-scan page lists into the same folder index browse/photo-grid/reader use.
      * Zip interiors go under the zip RAM key; real folders under the absolute path key.
-     * Disk JSON is rewritten **once** for the whole [pages] map.
+     * Only the folders in [pages] are read and rewritten (one file per folder).
      */
     suspend fun persistLocalFolderPages(
         rootId: Long,
@@ -92,7 +92,6 @@ object FolderGalleryIndex {
         pages: Map<String, List<String>>,
     ) {
         if (pages.isEmpty()) return
-        val disk = NetworkFolderIndexCache.loadLocalFolders(rootId, configKey)
         val updates = LinkedHashMap<String, List<BrowseEntryRemote>>()
         val ram = ArrayList<Triple<String, List<BrowseEntryRemote>, Boolean>>()
         for ((rel, names) in pages) {
@@ -106,7 +105,8 @@ object FolderGalleryIndex {
                 BrowseSession.pathKey(abs)
             }
             val previousRam = BrowseSession.getLocalCachedListing(ramKey)
-            val previous = previousRam?.entries ?: disk[dir]
+            val previous = previousRam?.entries
+                ?: NetworkFolderIndexCache.loadLocal(rootId, configKey, dir)
             val entries = mergeLibraryFolderPages(previous, title, names)
             val sessionCurrent = previousRam?.sessionCurrent == true &&
                 !isImagePagesOnlyListing(entries)

@@ -2566,7 +2566,7 @@ object SmbGateway {
         )
     }
 
-    /** One JSON rewrite for the listed parent plus any zip-as-dir interiors. */
+    /** One saveAll for the listed parent plus any zip-as-dir interiors. */
     private suspend fun persistParentAndZipInteriors(
         source: SmbSourceEntity,
         configKey: String,

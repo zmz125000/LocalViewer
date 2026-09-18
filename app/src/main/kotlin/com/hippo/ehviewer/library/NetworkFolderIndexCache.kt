@@ -7,32 +7,29 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 import splitties.init.appCtx
 
 /**
  * Persistent mirror of process-scoped browse listings (SMB / WebDAV / local folder roots).
  *
- * **Identity:** one JSON file per source — `{protocol}_{sourceId}.json`
- * (e.g. `smb_7.json`). Editing host / share / user / URL on the **same** row keeps
- * this file. Stored `configKey` is only a stamp (updated on save); it must **not**
+ * **Identity:** one directory per source — `{protocol}_{sourceId}/`
+ * (e.g. `smb_7/`). Editing host / share / user / URL on the **same** row keeps
+ * this directory. Stored `configKey` is only a stamp (updated on save); it must **not**
  * invalidate the whole index — slim quick scan marks stale dirs unreachable as the user
  * re-enters folders (descendant keys stay until a later slim hit recovers them).
  *
- * `folders[relativeDir]` holds the lazy scanner’s [BrowseEntryRemote] rows, including
- * embedded [BrowseEntryRemote.FolderGallery.imageFileNames] and local
- * [BrowseEntryRemote.ArchiveGallery.pageCount]. Zip/cbz-as-dir interiors
- * use the same keys (`dir/file.zip`, `dir/file.zip/Album`). [FolderGalleryIndex] only
+ * Each relativeDir is its own JSON listing file under that directory. Saving one
+ * folder does not rewrite or re-parse sibling folders. Zip/cbz-as-dir interiors use
+ * the same keys (`dir/file.zip`, `dir/file.zip/Album`). [FolderGalleryIndex] only
  * *reads* these listings (and RAM) — it does not write a separate gallery cache.
  *
  * A cache hit returns the scanner's final values; this layer never re-classifies.
  * Saves for a key run through [preferCompleteFolderGalleries] against any prior value
  * so a poorer re-list cannot wipe complete page names.
  *
- * The parsed JSON document for each source stays in process RAM after the first
- * load/save so browsing sibling folders does not re-read and re-parse the whole
- * file. [saveAll] still writes once per batch (zip interiors, parent+zips).
+ * Decoded listings stay in process RAM after the first load/save of that folder.
+ * [saveAll] still batches zip interiors + parent under one lock; each key writes its
+ * own file.
  *
  * Disk loads hydrate into [BrowseSession] as **non-current**. Only a successful full/slim
  * list for that exact directory marks the RAM entry current; quick scan then skips
@@ -40,17 +37,10 @@ import splitties.init.appCtx
  *
  * Local folder roots use protocol `local` with [LibraryRootEntity.id] as [sourceId].
  * Lives under [appCtx.noBackupFilesDir] so Android cache GC / [OriginDiskCache] trim
- * cannot delete it. Legacy files under [appCtx.cacheDir] are copied on first load/save.
+ * cannot delete it. Legacy v5 `{protocol}_{id}.json` blobs (current + [appCtx.cacheDir])
+ * are split into per-folder files on first load/save.
  */
 object NetworkFolderIndexCache {
-    /** Bump when on-disk entry shape changes — old JSON is ignored (no migration). */
-    private const val VERSION = 5
-    private const val KIND_DIRECTORY = "directory"
-    private const val KIND_FOLDER_GALLERY = "folder_gallery"
-    private const val KIND_ARCHIVE = "archive"
-    private const val KIND_VIDEO = "video"
-    private const val KIND_FILE = "file"
-
     private val lock = Mutex()
     private val memory = HashMap<String, MemoryIndex>()
     private val cacheDir: File
@@ -59,14 +49,15 @@ object NetworkFolderIndexCache {
         get() = File(appCtx.cacheDir, "network_folder_index")
 
     private class MemoryIndex(
-        val root: JSONObject,
+        val disk: FolderIndexDisk,
+        var configKey: String,
         val decoded: HashMap<String, List<BrowseEntryRemote>> = HashMap(),
     ) {
-        val folders: JSONObject
-            get() {
-                if (!root.has("folders")) root.put("folders", JSONObject())
-                return root.getJSONObject("folders")
-            }
+        fun dropDecodedUnder(prefix: String) {
+            if (prefix.isEmpty()) return
+            val stale = decoded.keys.filter { it == prefix || it.startsWith("$prefix/") }
+            stale.forEach { decoded.remove(it) }
+        }
     }
 
     suspend fun loadSmb(
@@ -85,8 +76,8 @@ object NetworkFolderIndexCache {
     ): List<BrowseEntryRemote> = save("smb", sourceId, configKey, relativeDir, entries, removedChildDirs)
 
     /**
-     * Apply many SMB folder listings and write the JSON **once**.
-     * Keys not present in [folders] are left unchanged.
+     * Apply many SMB folder listings. Each key writes its own file; other folders
+     * are left unchanged.
      */
     suspend fun saveSmbAll(
         sourceId: Long,
@@ -110,8 +101,8 @@ object NetworkFolderIndexCache {
     ): List<BrowseEntryRemote> = save("webdav", sourceId, configKey, relativeDir, entries, removedChildDirs)
 
     /**
-     * Apply many WebDAV folder listings and write the JSON **once**.
-     * Keys not present in [folders] are left unchanged.
+     * Apply many WebDAV folder listings. Each key writes its own file; other folders
+     * are left unchanged.
      */
     suspend fun saveWebDavAll(
         sourceId: Long,
@@ -134,15 +125,15 @@ object NetworkFolderIndexCache {
         removedChildDirs: Set<String> = emptySet(),
     ): List<BrowseEntryRemote> = save("local", rootId, configKey, relativeDir, entries, removedChildDirs)
 
-    /** All folder keys currently stored for a local root (one JSON parse). */
+    /** All folder keys currently stored for a local root (walks per-folder files). */
     suspend fun loadLocalFolders(
         rootId: Long,
         configKey: String,
     ): Map<String, List<BrowseEntryRemote>> = loadAllFolders("local", rootId, configKey)
 
     /**
-     * Apply many local folder listings and write the JSON **once**.
-     * Keys not present in [folders] are left unchanged.
+     * Apply many local folder listings. Each key writes its own file; other folders
+     * are left unchanged.
      */
     suspend fun saveLocalAll(
         rootId: Long,
@@ -183,13 +174,9 @@ object NetworkFolderIndexCache {
         if (!Settings.networkFolderIndexCache.value) return@withContext null
         lock.withLock {
             val idx = existingMemory(protocol, sourceId, configKey) ?: return@withLock null
-            val key = normalizeDir(relativeDir)
+            val key = FolderIndexDisk.normalizeDir(relativeDir)
             idx.decoded[key]?.let { return@withLock it }
-            val array = idx.folders.optJSONArray(key) ?: return@withLock null
-            val decoded = runCatching { decodeEntries(array) }
-                .onFailure { logcat("FolderIndex", it) }
-                .getOrNull()
-                ?: return@withLock null
+            val decoded = idx.disk.readListing(key) ?: return@withLock null
             idx.decoded[key] = decoded
             decoded
         }
@@ -203,20 +190,9 @@ object NetworkFolderIndexCache {
         if (!Settings.networkFolderIndexCache.value) return@withContext emptyMap()
         lock.withLock {
             val idx = existingMemory(protocol, sourceId, configKey) ?: return@withLock emptyMap()
-            val array = idx.folders
-            val out = LinkedHashMap<String, List<BrowseEntryRemote>>()
-            val keys = array.keys()
-            while (keys.hasNext()) {
-                val keyName = keys.next()
-                val decoded = idx.decoded[keyName] ?: runCatching {
-                    decodeEntries(array.getJSONArray(keyName))
-                }.onFailure { logcat("FolderIndex", it) }.getOrNull()
-                if (decoded != null) {
-                    idx.decoded[keyName] = decoded
-                    out[keyName] = decoded
-                }
-            }
-            out
+            val disk = idx.disk.loadAllListings()
+            idx.decoded.putAll(disk)
+            disk
         }
     }
 
@@ -230,9 +206,8 @@ object NetworkFolderIndexCache {
     ): List<BrowseEntryRemote> = withContext(Dispatchers.IO) {
         if (!Settings.networkFolderIndexCache.value) return@withContext entries
         lock.withLock {
-            val file = fileFor(protocol, sourceId)
-            val idx = writableMemory(protocol, sourceId, configKey, file)
-            val merge = mergeFolderEntry(
+            val idx = writableMemory(protocol, sourceId, configKey)
+            persistFolder(
                 idx,
                 relativeDir,
                 entries,
@@ -240,10 +215,6 @@ object NetworkFolderIndexCache {
                 Settings.browseZipAsDir.value,
                 logKeep = "$protocol/$sourceId",
             )
-            if (merge.dirty && !writeRootFile(file, idx.root)) {
-                dropMemory(protocol, sourceId)
-            }
-            merge.stored
         }
     }
 
@@ -256,13 +227,11 @@ object NetworkFolderIndexCache {
         if (updates.isEmpty()) return@withContext emptyMap()
         if (!Settings.networkFolderIndexCache.value) return@withContext updates
         lock.withLock {
-            val file = fileFor(protocol, sourceId)
-            val idx = writableMemory(protocol, sourceId, configKey, file)
+            val idx = writableMemory(protocol, sourceId, configKey)
             val zipAsDir = Settings.browseZipAsDir.value
             val stored = LinkedHashMap<String, List<BrowseEntryRemote>>(updates.size)
-            var dirty = false
             for ((relativeDir, entries) in updates) {
-                val merge = mergeFolderEntry(
+                stored[FolderIndexDisk.normalizeDir(relativeDir)] = persistFolder(
                     idx,
                     relativeDir,
                     entries,
@@ -270,11 +239,6 @@ object NetworkFolderIndexCache {
                     zipAsDir = zipAsDir,
                     logKeep = "$protocol/$sourceId",
                 )
-                stored[normalizeDir(relativeDir)] = merge.stored
-                dirty = dirty || merge.dirty
-            }
-            if (dirty && !writeRootFile(file, idx.root)) {
-                dropMemory(protocol, sourceId)
             }
             stored
         }
@@ -299,7 +263,7 @@ object NetworkFolderIndexCache {
         }
     }
 
-    /** Parsed document already in RAM, or loaded once from disk. Null when no file. */
+    /** Source already on disk (v6 dir or migrated v5 blob). Null when nothing stored. */
     private fun existingMemory(
         protocol: String,
         sourceId: Long,
@@ -307,91 +271,88 @@ object NetworkFolderIndexCache {
     ): MemoryIndex? {
         val key = memoryKey(protocol, sourceId)
         memory[key]?.let { return it }
-        val file = fileFor(protocol, sourceId)
-        val root = readRoot(file)?.takeIf { matchesVersion(it) } ?: return null
-        logConfigKeyMismatch(protocol, sourceId, root.optString("configKey"), configKey)
-        val idx = MemoryIndex(root)
+        val disk = openDisk(protocol, sourceId, create = false) ?: return null
+        val meta = disk.readMeta() ?: return null
+        logConfigKeyMismatch(protocol, sourceId, meta.configKey, configKey)
+        val idx = MemoryIndex(disk, meta.configKey)
         memory[key] = idx
         return idx
     }
 
-    /** Parsed document, creating an empty one when the file is missing. */
+    /** Source directory, creating it (and migrating a v5 blob) when missing. */
     private fun writableMemory(
         protocol: String,
         sourceId: Long,
         configKey: String,
-        file: File,
     ): MemoryIndex {
         val key = memoryKey(protocol, sourceId)
         memory[key]?.let { idx ->
-            idx.root.put("version", VERSION)
-            idx.root.put("configKey", configKey)
+            if (idx.configKey != configKey) {
+                idx.disk.writeMeta(configKey)
+                idx.configKey = configKey
+            }
             return idx
         }
-        val existing = readRoot(file)?.takeIf { matchesVersion(it) }
-        logConfigKeyMismatch(protocol, sourceId, existing?.optString("configKey").orEmpty(), configKey)
-        val root = existing ?: JSONObject().apply {
-            put("version", VERSION)
-            put("folders", JSONObject())
+        val disk = openDisk(protocol, sourceId, create = true)!!
+        val meta = disk.readMeta()
+        logConfigKeyMismatch(protocol, sourceId, meta?.configKey.orEmpty(), configKey)
+        val blobPending = meta == null && legacyBlobFile(protocol, sourceId) != null
+        if (!blobPending && (meta == null || meta.configKey != configKey)) {
+            disk.writeMeta(configKey)
         }
-        root.put("version", VERSION)
-        root.put("configKey", configKey)
-        if (!root.has("folders")) root.put("folders", JSONObject())
-        val idx = MemoryIndex(root)
+        val idx = MemoryIndex(disk, configKey)
         memory[key] = idx
         return idx
     }
 
     private data class FolderMerge(
         val stored: List<BrowseEntryRemote>,
-        val dirty: Boolean,
+        val keepPrevious: Boolean,
+        val unchanged: Boolean,
     )
 
-    /**
-     * @return stored listing and whether [MemoryIndex.folders] changed enough to rewrite.
-     */
-    private fun mergeFolderEntry(
+    private fun persistFolder(
         idx: MemoryIndex,
         relativeDir: String,
         entries: List<BrowseEntryRemote>,
         removedChildDirs: Set<String>,
         zipAsDir: Boolean,
         logKeep: String,
-    ): FolderMerge {
-        val folders = idx.folders
-        val key = normalizeDir(relativeDir)
-        val previous = idx.decoded[key] ?: folders.optJSONArray(key)?.let { array ->
-            runCatching { decodeEntries(array) }.getOrNull()
-        }
+    ): List<BrowseEntryRemote> {
+        val key = FolderIndexDisk.normalizeDir(relativeDir)
+        val previous = idx.decoded[key] ?: idx.disk.readListing(key)
         if (previous != null) idx.decoded[key] = previous
+        val merge = mergeFolderEntry(previous, entries, zipAsDir, logKeep, key)
+        if (!merge.keepPrevious && removedChildDirs.isNotEmpty()) {
+            val parent = key
+            for (child in removedChildDirs) {
+                val prefix = listOf(parent, FolderIndexDisk.normalizeDir(child))
+                    .filter { it.isNotEmpty() }
+                    .joinToString("/")
+                if (prefix.isEmpty()) continue
+                idx.disk.removeUnder(prefix)
+                idx.dropDecodedUnder(prefix)
+            }
+        }
+        if (!merge.unchanged) {
+            if (!idx.disk.writeListing(key, merge.stored)) {
+                idx.decoded.remove(key)
+                return merge.stored
+            }
+        }
+        idx.decoded[key] = merge.stored
+        return merge.stored
+    }
+
+    private fun mergeFolderEntry(
+        previous: List<BrowseEntryRemote>?,
+        entries: List<BrowseEntryRemote>,
+        zipAsDir: Boolean,
+        logKeep: String,
+        key: String,
+    ): FolderMerge {
         val keepPrevious = previous != null &&
             shouldKeepPreviousFolderIndex(previous, entries, zipAsDir)
-        var removed = false
-        if (!keepPrevious && removedChildDirs.isNotEmpty()) {
-            val parent = normalizeDir(relativeDir)
-            val removedPrefixes = removedChildDirs.map { child ->
-                listOf(parent, normalizeDir(child)).filter { it.isNotEmpty() }.joinToString("/")
-            }
-            val staleKeys = buildList {
-                val keys = folders.keys()
-                while (keys.hasNext()) {
-                    val keyName = keys.next()
-                    if (removedPrefixes.any { prefix ->
-                            keyName == prefix || keyName.startsWith("$prefix/")
-                        }
-                    ) {
-                        add(keyName)
-                    }
-                }
-            }
-            if (staleKeys.isNotEmpty()) {
-                staleKeys.forEach {
-                    folders.remove(it)
-                    idx.decoded.remove(it)
-                }
-                removed = true
-            }
-        }
         val toStore = if (keepPrevious) {
             logcat("FolderIndex") {
                 "Keeping $logKeep dir=$key index " +
@@ -404,31 +365,7 @@ object NetworkFolderIndexCache {
             entries
         }
         val unchanged = previous != null && toStore == previous
-        if (!unchanged) {
-            folders.put(key, encodeEntries(toStore))
-        }
-        idx.decoded[key] = toStore
-        return FolderMerge(toStore, removed || !unchanged)
-    }
-
-    private fun writeRootFile(file: File, root: JSONObject): Boolean {
-        cacheDir.mkdirs()
-        val tmp = File(cacheDir, "${file.name}.tmp.${System.nanoTime()}")
-        return try {
-            tmp.writeText(root.toString())
-            if (CachePagePublish.atomicReplaceFile(tmp, file)) {
-                file.setLastModified(System.currentTimeMillis())
-                File(legacyCacheDir, file.name).delete()
-                true
-            } else {
-                false
-            }
-        } catch (e: Throwable) {
-            logcat("FolderIndex", e)
-            false
-        } finally {
-            tmp.delete()
-        }
+        return FolderMerge(toStore, keepPrevious, unchanged)
     }
 
     /**
@@ -440,43 +377,75 @@ object NetworkFolderIndexCache {
         sourceId: Long,
         relativeDir: String,
     ) = withContext(Dispatchers.IO) {
-        val prefix = normalizeDir(relativeDir)
+        val prefix = FolderIndexDisk.normalizeDir(relativeDir)
         if (prefix.isEmpty()) return@withContext
         if (!Settings.networkFolderIndexCache.value) return@withContext
         lock.withLock {
-            val file = fileFor(protocol, sourceId)
             val idx = existingMemory(protocol, sourceId, configKey = "") ?: return@withLock
-            val folders = idx.folders
-            val stale = buildList {
-                val keys = folders.keys()
-                while (keys.hasNext()) {
-                    val keyName = keys.next()
-                    if (keyName == prefix || keyName.startsWith("$prefix/")) add(keyName)
-                }
-            }
-            if (stale.isEmpty()) return@withLock
-            stale.forEach {
-                folders.remove(it)
-                idx.decoded.remove(it)
-            }
-            if (!writeRootFile(file, idx.root)) dropMemory(protocol, sourceId)
+            idx.disk.removeUnder(prefix)
+            idx.dropDecodedUnder(prefix)
         }
     }
 
     private suspend fun delete(protocol: String, sourceId: Long) = withContext(Dispatchers.IO) {
         lock.withLock {
             dropMemory(protocol, sourceId)
-            val name = "${protocol}_$sourceId.json"
-            File(cacheDir, name).delete()
-            File(legacyCacheDir, name).delete()
-            deleteTmpFiles(cacheDir, name)
-            deleteTmpFiles(legacyCacheDir, name)
+            FolderIndexDisk(sourceDir(protocol, sourceId)).deleteSource()
+            deleteLegacyBlobs(protocol, sourceId)
         }
+    }
+
+    private fun openDisk(protocol: String, sourceId: Long, create: Boolean): FolderIndexDisk? {
+        cacheDir.mkdirs()
+        val dir = sourceDir(protocol, sourceId)
+        val disk = FolderIndexDisk(dir)
+        val meta = disk.readMeta()
+        if (meta != null) {
+            deleteLegacyBlobs(protocol, sourceId)
+            return disk
+        }
+        val blob = legacyBlobFile(protocol, sourceId)
+        if (blob != null) {
+            if (FolderIndexDisk.parseV5Blob(blob) == null) {
+                deleteLegacyBlobs(protocol, sourceId)
+            } else if (FolderIndexDisk.migrateFromV5Blob(blob, dir) && disk.readMeta() != null) {
+                deleteLegacyBlobs(protocol, sourceId)
+                return disk
+            } else if (!create) {
+                return null
+            } else {
+                return disk
+            }
+        }
+        if (!create) return null
+        dir.mkdirs()
+        return disk
+    }
+
+    private fun sourceDir(protocol: String, sourceId: Long) = File(cacheDir, FolderIndexDisk.sourceDirName(protocol, sourceId))
+
+    private fun legacyBlobFile(protocol: String, sourceId: Long): File? {
+        val name = FolderIndexDisk.legacyBlobName(protocol, sourceId)
+        val current = File(cacheDir, name)
+        if (current.isFile && current.length() > 0L) return current
+        val legacy = File(legacyCacheDir, name)
+        if (legacy.isFile && legacy.length() > 0L) return legacy
+        return null
+    }
+
+    private fun deleteLegacyBlobs(protocol: String, sourceId: Long) {
+        val name = FolderIndexDisk.legacyBlobName(protocol, sourceId)
+        File(cacheDir, name).delete()
+        File(legacyCacheDir, name).delete()
+        deleteTmpFiles(cacheDir, name)
+        deleteTmpFiles(legacyCacheDir, name)
     }
 
     private fun deleteDirContents(dir: File) {
         if (!dir.isDirectory) return
-        dir.listFiles()?.forEach { it.delete() }
+        dir.listFiles()?.forEach { f ->
+            if (f.isDirectory) f.deleteRecursively() else f.delete()
+        }
     }
 
     private fun deleteTmpFiles(dir: File, jsonName: String) {
@@ -485,157 +454,5 @@ object NetworkFolderIndexCache {
         dir.listFiles()?.forEach { f ->
             if (f.name.startsWith(prefix)) f.delete()
         }
-    }
-
-    private fun fileFor(protocol: String, sourceId: Long): File {
-        val dest = File(cacheDir, "${protocol}_$sourceId.json")
-        if (dest.isFile && dest.length() > 0L) return dest
-        val legacy = File(legacyCacheDir, "${protocol}_$sourceId.json")
-        if (legacy.isFile && legacy.length() > 0L) {
-            cacheDir.mkdirs()
-            runCatching { legacy.copyTo(dest, overwrite = false) }
-                .onFailure { logcat("FolderIndex", it) }
-        }
-        return dest
-    }
-
-    private fun normalizeDir(relativeDir: String) = relativeDir.replace('\\', '/').trim('/')
-
-    private fun readRoot(file: File): JSONObject? {
-        if (!file.isFile || file.length() <= 0L) return null
-        return runCatching { JSONObject(file.readText()) }
-            .onFailure { logcat("FolderIndex", it) }
-            .getOrNull()
-    }
-
-    private fun matchesVersion(root: JSONObject): Boolean = root.optInt("version", -1) == VERSION
-
-    private fun encodeEntries(entries: List<BrowseEntryRemote>) = JSONArray().apply {
-        entries.forEach { entry ->
-            put(
-                JSONObject().apply {
-                    put("name", entry.name)
-                    put("hidden", entry.hidden)
-                    put("virtual", entry.virtual)
-                    when (entry) {
-                        is BrowseEntryRemote.Directory -> {
-                            put("kind", KIND_DIRECTORY)
-                            put("relativeName", entry.relativeName)
-                            put("hasVideo", entry.hasVideo)
-                            put("hasGallery", entry.hasGallery)
-                            put("presence", entry.presence.name)
-                            entry.coverFileName?.let { put("coverFileName", it) }
-                            if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                            if (entry.size > 0L) put("size", entry.size)
-                            if (entry.unreachable) put("unreachable", true)
-                            if (entry.zipStale) put("zipStale", true)
-                        }
-                        is BrowseEntryRemote.FolderGallery -> {
-                            put("kind", KIND_FOLDER_GALLERY)
-                            put("relativeName", entry.relativeName)
-                            put("pageCount", entry.pageCount)
-                            put("pageCountCapped", entry.pageCountCapped)
-                            entry.coverFileName?.let { put("coverFileName", it) }
-                            put("imageFileNames", JSONArray(entry.imageFileNames))
-                            if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                            if (entry.size > 0L) put("size", entry.size)
-                        }
-                        is BrowseEntryRemote.ArchiveGallery -> {
-                            put("kind", KIND_ARCHIVE)
-                            put("fileName", entry.fileName)
-                            put("parentRelativeName", entry.parentRelativeName)
-                            if (entry.size > 0L) put("size", entry.size)
-                            if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                            if (entry.pageCount > 0) put("pageCount", entry.pageCount)
-                        }
-                        is BrowseEntryRemote.VideoFile -> {
-                            put("kind", KIND_VIDEO)
-                            put("fileName", entry.fileName)
-                            if (entry.size > 0L) put("size", entry.size)
-                            if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                        }
-                        is BrowseEntryRemote.RegularFile -> {
-                            put("kind", KIND_FILE)
-                            put("fileName", entry.fileName)
-                            if (entry.size > 0L) put("size", entry.size)
-                            if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                        }
-                    }
-                },
-            )
-        }
-    }
-
-    private fun decodeEntries(array: JSONArray): List<BrowseEntryRemote> = buildList(array.length()) {
-        for (i in 0 until array.length()) {
-            val item = array.getJSONObject(i)
-            val name = item.getString("name")
-            val hidden = item.optBoolean("hidden")
-            val virtual = item.optBoolean("virtual")
-            add(
-                when (item.getString("kind")) {
-                    KIND_DIRECTORY -> BrowseEntryRemote.Directory(
-                        name = name,
-                        relativeName = item.optString("relativeName", name),
-                        hasVideo = item.optBoolean("hasVideo"),
-                        hasGallery = item.optBoolean("hasGallery"),
-                        presence = DirPresence.valueOf(item.getString("presence")),
-                        coverFileName = item.optNullableString("coverFileName"),
-                        lastModifiedMs = item.optLong("lastModifiedMs"),
-                        size = item.optLong("size"),
-                        hidden = hidden,
-                        virtual = virtual,
-                        unreachable = item.optBoolean("unreachable"),
-                        zipStale = item.optBoolean("zipStale"),
-                    )
-                    KIND_FOLDER_GALLERY -> BrowseEntryRemote.FolderGallery(
-                        name = name,
-                        relativeName = item.getString("relativeName"),
-                        pageCount = item.getInt("pageCount"),
-                        pageCountCapped = item.optBoolean("pageCountCapped"),
-                        coverFileName = item.optNullableString("coverFileName"),
-                        imageFileNames = item.optJSONArray("imageFileNames").toStringList(),
-                        lastModifiedMs = item.optLong("lastModifiedMs"),
-                        size = item.optLong("size"),
-                        hidden = hidden,
-                        virtual = virtual,
-                    )
-                    KIND_ARCHIVE -> BrowseEntryRemote.ArchiveGallery(
-                        name = name,
-                        fileName = item.getString("fileName"),
-                        parentRelativeName = item.optString("parentRelativeName"),
-                        size = item.optLong("size"),
-                        lastModifiedMs = item.optLong("lastModifiedMs"),
-                        pageCount = item.optInt("pageCount"),
-                        hidden = hidden,
-                        virtual = virtual,
-                    )
-                    KIND_VIDEO -> BrowseEntryRemote.VideoFile(
-                        name = name,
-                        fileName = item.optString("fileName", name),
-                        size = item.optLong("size"),
-                        lastModifiedMs = item.optLong("lastModifiedMs"),
-                        hidden = hidden,
-                        virtual = virtual,
-                    )
-                    KIND_FILE -> BrowseEntryRemote.RegularFile(
-                        name = name,
-                        fileName = item.optString("fileName", name),
-                        size = item.optLong("size"),
-                        lastModifiedMs = item.optLong("lastModifiedMs"),
-                        hidden = hidden,
-                        virtual = virtual,
-                    )
-                    else -> error("Unknown network folder index entry")
-                },
-            )
-        }
-    }
-
-    private fun JSONObject.optNullableString(name: String): String? = if (has(name) && !isNull(name)) getString(name) else null
-
-    private fun JSONArray?.toStringList(): List<String> {
-        if (this == null) return emptyList()
-        return List(length()) { getString(it) }
     }
 }

@@ -40,8 +40,8 @@ object ZipAsDirListing {
      *
      * [interiors] keys are zip-relative (`pack.zip`, `pack.zip/Album`, …) so one EOCD
      * parse can store the whole virtual tree. [parentEntries] (the listed parent
-     * folder) is written in the **same** [saveAll] pass so mixed zip folders do not
-     * rewrite the JSON twice. Zip/cbz only.
+     * folder) is written in the **same** [saveAll] pass so parent and interiors share
+     * one lock. Zip/cbz only.
      *
      * @return saved listings keyed by full relativeDir (`parent/pack.zip/Album`).
      */

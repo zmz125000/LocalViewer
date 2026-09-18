@@ -103,8 +103,9 @@ object Settings : DataStorePreferences(null) {
     val browseFolderThumbs = boolPref("browse_folder_thumbs", true)
 
     /**
-     * Persist completed SMB/WebDAV/local-folder lazy-scan listings, one JSON index per source.
-     * Off keeps listings in RAM only; on also restores them from disk across app restarts.
+     * Persist completed SMB/WebDAV/local-folder lazy-scan listings, one JSON file per folder
+     * under a per-source directory. Off keeps listings in RAM only; on also restores them
+     * from disk across app restarts.
      */
     val networkFolderIndexCache = boolPref("network_folder_index_cache", true)
 
