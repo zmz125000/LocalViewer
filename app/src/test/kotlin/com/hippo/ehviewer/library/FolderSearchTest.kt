@@ -42,6 +42,17 @@ class FolderSearchTest {
     }
 
     @Test
+    fun searchReturnDirJumpsToOrigin() {
+        assertEquals("", FolderSearch.searchReturnDir("", "Album/Sub"))
+        assertEquals("Share", FolderSearch.searchReturnDir("Share", "Share/Album/Sub"))
+        assertEquals("A/B", FolderSearch.searchReturnDir("A/B", "A/B/C"))
+        assertEquals(null, FolderSearch.searchReturnDir("Share", "Share"))
+        assertEquals(null, FolderSearch.searchReturnDir("", ""))
+        assertEquals(null, FolderSearch.searchReturnDir("Share", "Other"))
+        assertEquals(null, FolderSearch.searchReturnDir("Share/Album", "Share"))
+    }
+
+    @Test
     fun openFolderTargetSkipsCurrentFolder() {
         assertEquals("", FolderSearch.openFolderTarget("a.jpg", isDirectory = false))
         assertEquals("", FolderSearch.openFolderTarget("", isDirectory = true))

@@ -174,6 +174,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         BrowseSession.localStack = newStack
     }
 
+    /**
+     * Stack size of the listing that owned the Search section when a dir was opened
+     * from that section. Next goUp jumps there. Overflow Open folder leaves this -1.
+     */
+    var searchReturnStackSize by remember { mutableIntStateOf(-1) }
+
     var entries by remember { mutableStateOf<List<BrowseEntry>>(emptyList()) }
     // Lazy-drop non-image archives when cover open reports 0 pages (EmptyArchiveRegistry).
     val emptyArchiveRev by EmptyArchiveRegistry.revision.collectAsState()
@@ -187,6 +193,18 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
     var searching by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
+    // Scroll down hides the top bar; scroll up brings it back (enterAlways).
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    // FAB tracks the same enterAlways state (hide when bar collapses, show when it reappears).
+    val showScrollFab by remember {
+        derivedStateOf { scrollBehavior.state.collapsedFraction < 0.5f }
+    }
+    // Restore before filteredEntries / list so Search-section items exist when scroll applies.
+    BindBrowseFolderSearch(
+        folderKey = searchFolderKey.ifEmpty { null },
+        search = search,
+        onPathChange = { scrollBehavior.state.heightOffset = 0f },
+    )
     val folderId = stack.lastOrNull()?.let { BrowseFolderId.local(it.rootId, it.relativePath) }
     val contentMode = rememberEffectiveBrowseContentMode(folderId)
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
@@ -288,19 +306,6 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val rel = if (frame.relativePath.isEmpty()) dir.name else "${frame.relativePath}/${dir.name}"
         return BrowseFavorites.localFolderKey(frame.rootId, rel) in favoriteKeys
     }
-    // Scroll down hides the top bar; scroll up brings it back (enterAlways).
-    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
-    // FAB tracks the same enterAlways state (hide when bar collapses, show when it reappears).
-    val showScrollFab by remember {
-        derivedStateOf { scrollBehavior.state.collapsedFraction < 0.5f }
-    }
-
-    // Per-folder search: restore when climbing back / returning from reader.
-    BindBrowseFolderSearch(
-        folderKey = searchFolderKey.ifEmpty { null },
-        search = search,
-        onPathChange = { scrollBehavior.state.heightOffset = 0f },
-    )
 
     LaunchedEffect(
         searchFolderKey,
@@ -652,8 +657,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         )
     }
 
-    fun enterDir(entry: BrowseEntry.Directory) {
+    fun enterDir(entry: BrowseEntry.Directory, fromSearch: Boolean = false) {
         val frame = stack.lastOrNull() ?: return
+        if (fromSearch) {
+            if (searchReturnStackSize < 0) searchReturnStackSize = stack.size
+        } else {
+            searchReturnStackSize = -1
+        }
         if (frame.isZipBrowse) {
             val childInner = ZipAsDirListing.joinPrefix(
                 frame.zipInnerRel.orEmpty(),
@@ -716,6 +726,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     /** Overflow "Open folder". No-op when the target is already this listing. */
     fun openBrowseFolder(targetRel: String) {
         if (targetRel.isEmpty()) return
+        searchReturnStackSize = -1
+        search.close()
+        if (searchFolderKey.isNotEmpty()) {
+            BrowseSession.putFolderSearch(searchFolderKey, search.snapshot())
+        }
         val frame = stack.lastOrNull() ?: return
         val path = if (frame.isZipBrowse) {
             frame.path.toPath()
@@ -756,6 +771,18 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     fun goUp() {
+        val originSize = searchReturnStackSize
+        if (originSize >= 0 && stack.size > originSize) {
+            searchReturnStackSize = -1
+            if (originSize <= 0) {
+                updateStack(emptyList())
+                navigator.popBackStack()
+            } else {
+                updateStack(stack.take(originSize))
+            }
+            return
+        }
+        searchReturnStackSize = -1
         if (stack.size > 1) {
             updateStack(stack.dropLast(1))
         } else {
@@ -792,9 +819,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     BackHandler {
-        if (!search.handleBack { focusManager.clearFocus() }) {
-            goUp()
+        // Search-section dir enter: first back returns to search, not close-search-in-child.
+        if (searchReturnStackSize < 0 && search.handleBack { focusManager.clearFocus() }) {
+            return@BackHandler
         }
+        goUp()
     }
 
     /** History path link for the folder currently listed (parent of the opened file). */
@@ -1860,7 +1889,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseDirectoryGridItem(
                                         modifier = itemMod,
                                         name = entry.name,
-                                        onClick = { enterDir(entry) },
+                                        onClick = { enterDir(entry, fromSearch = true) },
                                         onLongClick = { toggleDirFavorite(entry) },
                                         showFavoriteStar = isDirFavorite(entry),
                                         cover = entry.coverPath?.let { BrowseCover.Local(it) },
@@ -1871,7 +1900,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                     BrowseDirectoryRow(
                                         modifier = itemMod,
                                         name = entry.name,
-                                        onClick = { enterDir(entry) },
+                                        onClick = { enterDir(entry, fromSearch = true) },
                                         onLongClick = { toggleDirFavorite(entry) },
                                         cover = entry.coverPath?.let { BrowseCover.Local(it) },
                                         showFolderThumb = browseFolderThumbs,

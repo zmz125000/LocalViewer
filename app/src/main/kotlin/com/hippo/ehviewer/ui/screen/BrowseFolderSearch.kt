@@ -204,24 +204,35 @@ fun BindBrowseFolderSearch(
 ) {
     val focusManager = LocalFocusManager.current
     val latestSearch = rememberUpdatedState(search)
-    // Save on leave (path change / reader / screen dispose).
-    DisposableEffect(folderKey) {
-        onDispose {
-            if (folderKey != null) {
-                BrowseSession.putFolderSearch(folderKey, latestSearch.value.snapshot())
-            }
+    // Restore in this composition — not LaunchedEffect — so the Search section is
+    // already in the list when scroll restores after goUp. Save the leaving folder
+    // first; DisposableEffect(folderKey) would snapshot the restored state onto the
+    // old key if restore ran during composition.
+    var bound by remember { mutableStateOf(false) }
+    var boundKey by remember { mutableStateOf<String?>(null) }
+    if (!bound || boundKey != folderKey) {
+        if (bound && boundKey != null) {
+            BrowseSession.putFolderSearch(boundKey!!, search.snapshot())
         }
-    }
-    // Restore for the destination folder (or clear). Declared before the persist
-    // effect so a same-frame path change restores first, then persists the result.
-    LaunchedEffect(folderKey) {
-        onPathChange()
-        focusManager.clearFocus()
+        bound = true
+        boundKey = folderKey
         if (folderKey == null) {
             search.close()
         } else {
             search.restore(BrowseSession.getFolderSearch(folderKey))
         }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            val key = boundKey
+            if (bound && key != null) {
+                BrowseSession.putFolderSearch(key, latestSearch.value.snapshot())
+            }
+        }
+    }
+    LaunchedEffect(folderKey) {
+        onPathChange()
+        focusManager.clearFocus()
     }
     // Persist while typing / submitting / closing so reader return restores both
     // the live filter and the Search-section query.

@@ -186,6 +186,13 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
      */
     var enterHopStack by remember { mutableStateOf(emptyList<Int>()) }
 
+    /**
+     * Listing that owned the Search section when a dir was opened from that section.
+     * Next goUp jumps here in one hop (does not walk Album → …). Overflow Open folder
+     * leaves this null. Independent of [BrowseSession.webDavExitToOrigin].
+     */
+    var searchReturnRel by remember { mutableStateOf<String?>(null) }
+
     fun updateSegments(new: List<String>) {
         segments = new
         BrowseSession.setWebDavSegments(sourceId, new)
@@ -280,6 +287,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     }
     var searching by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
+    // Restore before filteredEntries / list so Search-section items exist when scroll applies.
+    BindBrowseFolderSearch(
+        folderKey = searchFolderKey,
+        search = search,
+        onPathChange = { scrollBehavior.state.heightOffset = 0f },
+    )
     val showSmallGalleries by Settings.browseShowSmallGalleries.collectAsState()
     val smallGalleryMinPages by Settings.browseSmallGalleryMinPages.collectAsState()
     val showHiddenFiles by Settings.browseShowHiddenFiles.collectAsState()
@@ -336,13 +349,6 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             .sortedWith { a, b -> naturalCompare(a.name, b.name) }
     }
     val searchHint = stringResource(R.string.search_bar_hint, title)
-
-    // Per-folder search: restore when climbing back / returning from reader.
-    BindBrowseFolderSearch(
-        folderKey = searchFolderKey,
-        search = search,
-        onPathChange = { scrollBehavior.state.heightOffset = 0f },
-    )
 
     LaunchedEffect(
         searchFolderKey,
@@ -646,12 +652,17 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
      * [relativeName] may be multi-segment for promoted video leaves (`S/leaf`) —
      * never use display names like `@S-leaf` as path segments.
      */
-    fun enterDir(relativeName: String) {
+    fun enterDir(relativeName: String, fromSearch: Boolean = false) {
         val parts = relativeName.split('/').filter { it.isNotEmpty() }
         if (parts.isEmpty()) return
         setPhotoGrid(null)
-        // Deeper navigation owns the stack; do not jump back to History/Library on goUp.
-        BrowseSession.setWebDavExitToOrigin(sourceId, false)
+        if (fromSearch) {
+            if (searchReturnRel == null) searchReturnRel = relativeDir
+        } else {
+            searchReturnRel = null
+            // Deeper navigation owns the stack; do not jump back to History/Library on goUp.
+            BrowseSession.setWebDavExitToOrigin(sourceId, false)
+        }
         val next = segments + parts
         val nextDir = next.joinToString("/")
         enterHopStack = enterHopStack + parts.size
@@ -667,6 +678,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
     /** Overflow "Open folder". No-op when the target is already this listing. */
     fun openBrowseFolder(targetRel: String) {
         if (targetRel.isEmpty()) return
+        searchReturnRel = null
+        search.close()
+        BrowseSession.putFolderSearch(searchFolderKey, search.snapshot())
         enterDir(targetRel)
     }
 
@@ -708,10 +722,26 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             }
         }
         // Dir pin from History/Library/Fav with alwaysExitToDir off: leave immediately.
-        if (BrowseSession.webDavExitToOrigin(sourceId)) {
+        if (BrowseSession.webDavExitToOrigin(sourceId) && searchReturnRel == null) {
             BrowseSession.setWebDavExitToOrigin(sourceId, false)
             jumpBackToOrigin()
             return
+        }
+        val searchOrigin = searchReturnRel
+        if (searchOrigin != null) {
+            searchReturnRel = null
+            val target = FolderSearch.searchReturnDir(searchOrigin, relativeDir)
+            if (target != null) {
+                val originSegs = target.split('/').filter { it.isNotEmpty() }
+                enterHopStack = emptyList()
+                updateSegments(originSegs)
+                if (!applyCachedListing(target)) {
+                    entries = emptyList()
+                    listedDir = null
+                    loading = true
+                }
+                return
+            }
         }
         if (segments.isNotEmpty()) {
             val hop = (enterHopStack.lastOrNull() ?: 1).coerceIn(1, segments.size)
@@ -736,10 +766,12 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         if (hideBackToFab) jumpBackToOrigin() else goUp()
     }
 
-    BackHandler(enabled = search.active || segments.isNotEmpty() || photoGrid) {
-        if (!search.handleBack { focusManager.clearFocus() }) {
-            goUp()
+    BackHandler(enabled = searchReturnRel != null || search.active || segments.isNotEmpty() || photoGrid) {
+        // Search-section dir enter: first back returns to search, not close-search-in-child.
+        if (searchReturnRel == null && search.handleBack { focusManager.clearFocus() }) {
+            return@BackHandler
         }
+        goUp()
     }
 
     /** History path link for the folder currently listed (parent of the opened file). */
@@ -1613,7 +1645,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     BrowseDirectoryGridItem(
                                         modifier = itemMod,
                                         name = entry.name,
-                                        onClick = { enterDir(entry.relativeName) },
+                                        onClick = { enterDir(entry.relativeName, fromSearch = true) },
                                         onLongClick = {
                                             toggleDirFavorite(entry.relativeName, entry.coverFileName)
                                         },
@@ -1628,7 +1660,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     BrowseDirectoryRow(
                                         modifier = itemMod,
                                         name = entry.name,
-                                        onClick = { enterDir(entry.relativeName) },
+                                        onClick = { enterDir(entry.relativeName, fromSearch = true) },
                                         onLongClick = {
                                             toggleDirFavorite(entry.relativeName, entry.coverFileName)
                                         },
