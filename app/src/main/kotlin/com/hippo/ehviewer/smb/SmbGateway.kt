@@ -1837,8 +1837,7 @@ object SmbGateway {
         }
     }
 
-    fun isListing(sourceId: Long, relativeDir: String): Boolean =
-        isListJobActive(BrowseSession.smbListingKey(sourceId, relativeDir))
+    fun isListing(sourceId: Long, relativeDir: String): Boolean = isListJobActive(BrowseSession.smbListingKey(sourceId, relativeDir))
 
     suspend fun listDirectory(
         source: SmbSourceEntity,
