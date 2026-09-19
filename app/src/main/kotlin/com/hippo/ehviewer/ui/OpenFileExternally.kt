@@ -33,10 +33,12 @@ import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isBrowseVideoFileName
 import com.hippo.ehviewer.library.isHtmlFileName
 import com.hippo.ehviewer.library.isMediaStorePath
+import com.hippo.ehviewer.library.listBrowseChildrenRaw
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.needsOpenCacheConfirm
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.library.resolveBrowsePath
+import com.hippo.ehviewer.library.resolveRelative
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.provider.ExternalHttpStreamServer
 import com.hippo.ehviewer.provider.StreamDocumentProvider
@@ -747,7 +749,7 @@ object OpenFileExternally {
         }
     }
 
-    private fun localFileEntry(
+    internal fun localFileEntry(
         pathStr: String,
         displayName: String,
         mimeType: String,
@@ -808,7 +810,7 @@ object OpenFileExternally {
         )
     }
 
-    private fun smbFileEntry(
+    internal fun smbFileEntry(
         source: SmbSourceEntity,
         password: String,
         remoteRelativeFile: String,
@@ -864,7 +866,7 @@ object OpenFileExternally {
         )
     }
 
-    private fun webDavFileEntry(
+    internal fun webDavFileEntry(
         source: WebDavSourceEntity,
         password: String,
         remoteRelativeFile: String,
@@ -1336,7 +1338,7 @@ object OpenFileExternally {
         return runCatching { pathStr.toPath().parent?.toString() }.getOrNull()
     }
 
-    private fun localHtmlDirSource(parentPathStr: String): ExternalHttpStreamServer.HttpDirSource {
+    internal fun localHtmlDirSource(parentPathStr: String): ExternalHttpStreamServer.HttpDirSource {
         val parentFile = File(parentPathStr)
         val parentCanonical = runCatching { parentFile.canonicalFile }.getOrNull()
         return object : ExternalHttpStreamServer.HttpDirSource {
@@ -1380,7 +1382,48 @@ object OpenFileExternally {
         }
     }
 
-    private fun smbHtmlDirSource(
+    /** Folder share root (MediaStore / SAF / File) — not the parent of an HTML file. */
+    internal fun localShareDirSource(rootPathStr: String): ExternalHttpStreamServer.HttpDirSource {
+        val root = rootPathStr.toPath()
+        val rootFile = File(rootPathStr)
+        val rootCanonical = runCatching { rootFile.canonicalFile }.getOrNull()
+        return object : ExternalHttpStreamServer.HttpDirSource {
+            override fun list(relativeDir: String): ExternalHttpStreamServer.HttpDirIndex {
+                val dir = if (relativeDir.isEmpty()) root else root.resolveRelative(relativeDir)
+                if (!isUnderRoot(dir)) return ExternalHttpStreamServer.HttpDirIndex()
+                val children = runCatching { dir.listBrowseChildrenRaw(lightSafMeta = true) }
+                    .getOrDefault(emptyList())
+                val files = ArrayList<String>()
+                val dirs = ArrayList<String>()
+                for (child in children) {
+                    val name = child.name
+                    if (!ExternalHttpStreamServer.isSafeFileName(name)) continue
+                    if (child.isDirectory) dirs += name else files += name
+                }
+                return ExternalHttpStreamServer.HttpDirIndex(files.sorted(), dirs.sorted())
+            }
+
+            override fun open(relativeFile: String): ExternalHttpStreamServer.FileEntry? {
+                if (!ExternalHttpStreamServer.isSafeRelativePath(relativeFile)) return null
+                val path = root.resolveRelative(relativeFile)
+                if (!isUnderRoot(path)) return null
+                return runCatching {
+                    localFileEntry(path.toString(), relativeFile, mimeTypeForFileName(relativeFile))
+                }.getOrNull()
+            }
+
+            private fun isUnderRoot(path: okio.Path): Boolean {
+                val childStr = path.toString()
+                val rootStr = root.toString()
+                if (childStr == rootStr || childStr.startsWith("$rootStr/")) return true
+                val canon = rootCanonical ?: return false
+                val child = runCatching { File(childStr).canonicalFile }.getOrNull() ?: return false
+                return child == canon || child.path.startsWith(canon.path + File.separator)
+            }
+        }
+    }
+
+    internal fun smbHtmlDirSource(
         source: SmbSourceEntity,
         password: String,
         parentDir: String,
@@ -1407,7 +1450,7 @@ object OpenFileExternally {
         }
     }
 
-    private fun webDavHtmlDirSource(
+    internal fun webDavHtmlDirSource(
         source: WebDavSourceEntity,
         password: String,
         parentDir: String,

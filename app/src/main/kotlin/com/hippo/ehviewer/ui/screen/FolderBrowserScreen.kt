@@ -139,6 +139,9 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.HttpShare
+import com.hippo.ehviewer.ui.main.HttpShareItem
+import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToLocalFolderReader
@@ -1658,6 +1661,44 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         launchIO { with(context) { BrowseSaveAs.shareLocalFile(path, name) } }
     }
 
+    fun shareLocalViaHttp(block: suspend () -> HttpShareItem) {
+        launchIO {
+            try {
+                val item = block()
+                withUIContext { awaitHttpShareQr(item.url, item.title) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_http_share_failed) + " " +
+                        (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
+    fun localHttpShareFile(path: okio.Path): (() -> Unit)? {
+        val pathStr = path.toString()
+        if (!HttpShare.canShareLocal(pathStr, stack.lastOrNull()?.isZipBrowse == true)) return null
+        val name = path.name
+        return {
+            shareLocalViaHttp {
+                HttpShare.startLocalFile(context, pathStr, name, mimeTypeForFileName(name))
+            }
+        }
+    }
+
+    fun localHttpShareFolder(dir: okio.Path, displayName: String, relativeName: String): (() -> Unit)? {
+        if (!HttpShare.canShareLocalFolder(relativeName, stack.lastOrNull()?.isZipBrowse == true)) {
+            return null
+        }
+        return {
+            shareLocalViaHttp {
+                HttpShare.startLocalFolder(context, dir.toString(), displayName)
+            }
+        }
+    }
+
     fun saveLocalFolder(dir: okio.Path, displayName: String, relativeName: String) {
         val name = relativeName.substringAfterLast('/').ifEmpty { displayName }
         launchIO { with(context) { BrowseSaveAs.saveLocalFolder(dir, name, relativeName) } }
@@ -1668,6 +1709,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         favorited = isDirFavorite(dir),
         onFavorite = { toggleDirFavorite(dir) },
         onSaveAs = { saveLocalFolder(dir.path, dir.name, dir.relativeName) },
+        onShareViaHttp = localHttpShareFolder(dir.path, dir.name, dir.relativeName),
         onOpenFolder = {
             openBrowseFolder(FolderSearch.openFolderTarget(dir.relativeName, isDirectory = true))
         },
@@ -1681,6 +1723,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onRead = { openFolderGallery(entry) },
         onPhotoGrid = { openFolderGalleryPhotoGrid(entry) },
         onSaveAs = { saveLocalFolder(entry.path, entry.name, entry.relativeName) },
+        onShareViaHttp = localHttpShareFolder(entry.path, entry.name, entry.relativeName),
         onOpenFolder = {
             openBrowseFolder(FolderSearch.openFolderTarget(entry.relativeName, isDirectory = true))
         },
@@ -1693,6 +1736,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onOpenWith = { openArchiveInOtherApp(entry) },
         onSaveAs = { saveLocalFile(entry.path) },
         onShare = { shareLocalFile(entry.path) },
+        onShareViaHttp = localHttpShareFile(entry.path),
         onOpenFolder = {
             openBrowseFolder(FolderSearch.openFolderTarget(entry.name, isDirectory = false))
         },
@@ -1707,6 +1751,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onOpenWith = { openExternalFile(path, usePreferredPlayer = false) },
         onSaveAs = { saveLocalFile(path) },
         onShare = { shareLocalFile(path) },
+        onShareViaHttp = localHttpShareFile(path),
         onOpenFolder = {
             openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
         },
@@ -1722,6 +1767,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             onOpenWith = { openExternalFile(path, asFile = true) },
             onSaveAs = { saveLocalFile(path) },
             onShare = { shareLocalFile(path) },
+            onShareViaHttp = localHttpShareFile(path),
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
             },
@@ -1733,6 +1779,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             onOpenWith = { openExternalFile(path) },
             onSaveAs = { saveLocalFile(path) },
             onShare = { shareLocalFile(path) },
+            onShareViaHttp = localHttpShareFile(path),
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
             },

@@ -141,6 +141,9 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.HttpShare
+import com.hippo.ehviewer.ui.main.HttpShareItem
+import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToReader
@@ -1436,11 +1439,56 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    fun shareSmbViaHttp(block: suspend () -> HttpShareItem) {
+        launchIO {
+            try {
+                val item = block()
+                withUIContext { awaitHttpShareQr(item.url, item.title) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_http_share_failed) + " " +
+                        (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
+    fun smbHttpShareFile(fileName: String): (() -> Unit)? {
+        val src = source ?: return null
+        if (!HttpShare.canShareRemote(relativeDir, fileName, folderLike = false)) return null
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
+        return {
+            shareSmbViaHttp {
+                HttpShare.startSmbFile(
+                    context,
+                    src.id,
+                    remote,
+                    actualName,
+                    mimeTypeForFileName(actualName),
+                )
+            }
+        }
+    }
+
+    fun smbHttpShareFolder(relativeName: String, displayName: String = relativeName.substringAfterLast('/')): (() -> Unit)? {
+        val src = source ?: return null
+        if (!HttpShare.canShareRemote(relativeDir, relativeName, folderLike = true)) return null
+        val remote = if (relativeDir.isEmpty()) relativeName else SmbGateway.joinRelativePath(relativeDir, relativeName)
+        val name = displayName.ifEmpty { relativeName.substringAfterLast('/') }
+        return {
+            shareSmbViaHttp { HttpShare.startSmbFolder(context, src.id, remote, name) }
+        }
+    }
+
     fun dirOverflow(name: String, coverFileName: String? = null) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(name),
         onFavorite = { toggleDirFavorite(name, coverFileName) },
         onSaveAs = { saveSmbFolder(name) },
+        onShareViaHttp = smbHttpShareFolder(name),
         onOpenFolder = { openBrowseFolder(FolderSearch.openFolderTarget(name, isDirectory = true)) },
         onUnsupported = { notSupportedAction() },
     )
@@ -1452,6 +1500,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onRead = { openFolderGallery(entry) },
         onPhotoGrid = { openFolderGalleryPhotoGrid(entry) },
         onSaveAs = { saveSmbFolder(entry.relativeName, entry.name) },
+        onShareViaHttp = smbHttpShareFolder(entry.relativeName, entry.name),
         onOpenFolder = {
             openBrowseFolder(FolderSearch.openFolderTarget(entry.relativeName, isDirectory = true))
         },
@@ -1474,6 +1523,9 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                 entry.fileName.substringAfterLast('/'),
             )
         },
+        onShareViaHttp = smbHttpShareFile(
+            joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+        ),
         onOpenFolder = {
             openBrowseFolder(
                 FolderSearch.openFolderTarget(
@@ -1493,6 +1545,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         onOpenWith = { openExternalFile(fileName, usePreferredPlayer = false) },
         onSaveAs = { saveSmbFile(fileName) },
         onShare = { shareSmbFile(fileName) },
+        onShareViaHttp = smbHttpShareFile(fileName),
         onOpenFolder = {
             openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
         },
@@ -1508,6 +1561,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveSmbFile(fileName) },
             onShare = { shareSmbFile(fileName) },
+            onShareViaHttp = smbHttpShareFile(fileName),
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
             },
@@ -1519,6 +1573,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             onOpenWith = { openExternalFile(fileName) },
             onSaveAs = { saveSmbFile(fileName) },
             onShare = { shareSmbFile(fileName) },
+            onShareViaHttp = smbHttpShareFile(fileName),
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
             },

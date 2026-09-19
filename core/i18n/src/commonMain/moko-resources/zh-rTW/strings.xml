@@ -100,6 +100,12 @@
     <string name="browse_play">播放</string>
     <string name="browse_external_player">外部播放器</string>
     <string name="browse_copy_url">複製連結</string>
+    <string name="browse_share_via_http">透過 HTTP 分享</string>
+    <string name="browse_http_share_copy">複製</string>
+    <string name="browse_http_share_stop">停止</string>
+    <string name="browse_http_share_snackbar">正在分享 %s</string>
+    <string name="browse_http_share_no_address">找不到區網位址</string>
+    <string name="browse_http_share_failed">無法啟動 HTTP 分享</string>
     <string name="browse_open_in_browser">用瀏覽器開啟</string>
     <string name="browse_open_in_incognito">無痕模式開啟</string>
     <string name="browse_chrome_incognito_failed">無痕瀏覽需要 Chrome 136 或更高版本</string>
