@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.ui.reader
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.BottomSheetDefaults
@@ -35,30 +37,32 @@ fun SettingsPager(isWebtoon: Boolean, modifier: Modifier = Modifier) {
         }
     }
     val scope = rememberCoroutineScope()
-    PrimaryTabRow(
-        selectedTabIndex = pagerState.currentPage,
-        containerColor = BottomSheetDefaults.ContainerColor,
-    ) {
-        tabs.forEachIndexed { index, res ->
-            Tab(
-                selected = pagerState.currentPage == index,
-                onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
-                text = { Text(text = stringResource(id = res)) },
-                unselectedContentColor = MaterialTheme.colorScheme.onSurface,
-            )
+    Column(modifier) {
+        PrimaryTabRow(
+            selectedTabIndex = pagerState.currentPage,
+            containerColor = BottomSheetDefaults.ContainerColor,
+        ) {
+            tabs.forEachIndexed { index, res ->
+                Tab(
+                    selected = pagerState.currentPage == index,
+                    onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
+                    text = { Text(text = stringResource(id = res)) },
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurface,
+                )
+            }
         }
-    }
-    HorizontalPager(
-        modifier = modifier,
-        state = pagerState,
-        verticalAlignment = Alignment.Top,
-        overscrollEffect = null,
-    ) { page ->
-        ProvideTextStyle(value = MaterialTheme.typography.labelLarge) {
-            when (page) {
-                0 -> ReaderModeSetting(isWebtoon)
-                1 -> ReaderGeneralSetting()
-                2 -> ColorFilterSetting()
+        HorizontalPager(
+            modifier = Modifier.fillMaxSize().weight(1f),
+            state = pagerState,
+            verticalAlignment = Alignment.Top,
+            overscrollEffect = null,
+        ) { page ->
+            ProvideTextStyle(value = MaterialTheme.typography.labelLarge) {
+                when (page) {
+                    0 -> ReaderModeSetting(isWebtoon)
+                    1 -> ReaderGeneralSetting()
+                    2 -> ColorFilterSetting()
+                }
             }
         }
     }

@@ -38,7 +38,7 @@ class ReaderPhotoGridTest {
     }
 
     @Test
-    fun smallGalleriesUseHalfScreenSheet() {
+    fun smallGalleriesUseCappedSheet() {
         assertTrue(readerPhotoGridHalfScreen(0))
         assertTrue(readerPhotoGridHalfScreen(1))
         assertTrue(readerPhotoGridHalfScreen(49))
