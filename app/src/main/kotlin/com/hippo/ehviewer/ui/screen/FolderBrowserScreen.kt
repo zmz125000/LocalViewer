@@ -409,12 +409,16 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             frame.path.toPath(),
             preferMediaStore = frame.preferMediaStore,
         )
-        val key = BrowseSession.pathKey(effective)
-        val previous = BrowseSession.getLocalCachedListing(key)?.entries
-        BrowseSession.putLocalListing(
-            key,
+        val previous = BrowseSession.getLocalFolderCachedListing(
+            frame.rootId,
+            frame.relativePath,
+        )?.entries
+        BrowseSession.putLocalFolderListing(
+            frame.rootId,
+            frame.relativePath,
             FolderGalleryIndex.mergeLibraryFolderVideos(previous, names),
             sessionCurrent = false,
+            pathAlias = effective,
         )
         entries = FolderGalleryIndex.videoFolderLocalFiles(frame.path, names)
         listedPath = frameListKey(frame)
@@ -449,7 +453,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             frame.path.toPath(),
             preferMediaStore = frame.preferMediaStore,
         )
-        val cached = BrowseSession.getLocalCachedListing(BrowseSession.pathKey(effective)) ?: return false
+        val cached = BrowseSession.getLocalFolderCachedListing(
+            frame.rootId,
+            frame.relativePath,
+        ) ?: return false
         entries = materializeLocalEntries(
             effective,
             ZipAsDirListing.presentCachedListing(cached.entries),
@@ -471,11 +478,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 BrowseSession.localZipListingKey(frame.rootId, virtualDir),
             )
         }
-        val effective = resolveBrowsePath(
-            frame.path.toPath(),
-            preferMediaStore = frame.preferMediaStore,
-        )
-        return BrowseSession.isLocalListingSessionCurrent(BrowseSession.pathKey(effective))
+        return BrowseSession.isLocalFolderListingSessionCurrent(frame.rootId, frame.relativePath)
     }
 
     suspend fun reload(force: Boolean = false) {
@@ -695,10 +698,19 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         if (showHiddenFiles && !prevShowHidden) {
             val frame = stack.lastOrNull()
             if (frame != null) {
-                val key = BrowseSession.pathKey(frame.path.toPath())
-                BrowseSession.getLocalCachedListing(key)?.let { cached ->
-                    BrowseSession.putLocalListing(key, cached.entries, sessionCurrent = false)
-                }
+                BrowseSession.getLocalFolderCachedListing(frame.rootId, frame.relativePath)
+                    ?.let { cached ->
+                        BrowseSession.putLocalFolderListing(
+                            frame.rootId,
+                            frame.relativePath,
+                            cached.entries,
+                            sessionCurrent = false,
+                            pathAlias = resolveBrowsePath(
+                                frame.path.toPath(),
+                                preferMediaStore = frame.preferMediaStore,
+                            ),
+                        )
+                    }
                 reload(force = false)
             }
         }

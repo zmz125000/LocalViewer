@@ -281,10 +281,12 @@ class FolderGalleryIndexTest {
         val names = listOf("01.jpg", "02.jpg")
         val listing = listOf(gallery(relativeName = "gal", names = names))
         val parent = "/tmp/share".toPath()
-        BrowseSession.putLocalListing(
-            BrowseSession.pathKey(parent),
-            listing,
+        BrowseSession.putLocalFolderListing(
+            rootId = 1L,
+            relativeDir = "share",
+            entries = listing,
             sessionCurrent = true,
+            pathAlias = parent,
         )
         assertEquals(
             names,

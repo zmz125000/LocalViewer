@@ -170,6 +170,27 @@ object BrowseSession {
         localListings[pathKey] = CachedLocalListing(entries = entries, sessionCurrent = sessionCurrent)
     }
 
+    fun getLocalFolderCachedListing(rootId: Long, relativeDir: String): CachedLocalListing? = getLocalCachedListing(localFolderListingKey(rootId, relativeDir))
+
+    fun isLocalFolderListingSessionCurrent(rootId: Long, relativeDir: String): Boolean = isLocalListingSessionCurrent(localFolderListingKey(rootId, relativeDir))
+
+    /**
+     * Write the per-source folder listing. [pathAlias] is an optional absolute-path
+     * mirror for callers that only have a Path (siblings / [LocalFolderListing.listDirectorySync]).
+     */
+    fun putLocalFolderListing(
+        rootId: Long,
+        relativeDir: String,
+        entries: List<BrowseEntryRemote>,
+        sessionCurrent: Boolean,
+        pathAlias: Path? = null,
+    ) {
+        putLocalListing(localFolderListingKey(rootId, relativeDir), entries, sessionCurrent)
+        if (pathAlias != null) {
+            putLocalListing(pathKey(pathAlias), entries, sessionCurrent)
+        }
+    }
+
     fun invalidateLocalListing(pathKey: String? = null) {
         if (pathKey == null) {
             localListings.clear()
@@ -178,6 +199,11 @@ object BrowseSession {
             localListings.remove(pathKey)
             invalidatePrefixed(localRawChildren, pathKey, "$pathKey/")
         }
+    }
+
+    fun invalidateLocalFolderListing(rootId: Long, relativeDir: String, pathAlias: Path? = null) {
+        invalidateLocalListing(localFolderListingKey(rootId, relativeDir))
+        if (pathAlias != null) invalidateLocalListing(pathKey(pathAlias))
     }
 
     /**
@@ -391,10 +417,18 @@ object BrowseSession {
     fun pathKey(path: Path): String = path.toString()
 
     /**
+     * RAM key for a real local folder listing. Same identity as disk
+     * (`local_{rootId}` + relativeDir) — not the SAF / MediaStore absolute path.
+     * SAF document URIs and `mediastore:/…` for the same folder must not miss
+     * each other, and two library roots must not share one listing.
+     */
+    fun localFolderListingKey(rootId: Long, relativeDir: String): String = "local:$rootId|${normalizeLocalRelativeDir(relativeDir)}"
+
+    /**
      * RAM key for a local zip/cbz virtual directory listing. Not a filesystem path —
      * use [getLocalCachedListing], never [getLocalListing] (that materializes via [Path]).
      */
-    fun localZipListingKey(rootId: Long, relativeDir: String): String = "zipasdir:$rootId|${normalizeBrowseRelativeDir(relativeDir)}"
+    fun localZipListingKey(rootId: Long, relativeDir: String): String = "zipasdir:$rootId|${normalizeLocalRelativeDir(relativeDir)}"
 
     /** Drop [relativeDir] and nested zip-as-dir interiors (`dir/file.zip`, `dir/file.zip/Album`). */
     fun invalidateLocalZipListingsUnder(rootId: Long, relativeDir: String) {
@@ -406,6 +440,12 @@ object BrowseSession {
     }
 
     fun normalizeBrowseRelativeDir(relativeDir: String): String = relativeDir.replace('\\', '/').trim('/')
+
+    /** Library DB uses `"."` for the source root; browse / disk listings use `""`. */
+    fun normalizeLocalRelativeDir(relativeDir: String): String {
+        val n = normalizeBrowseRelativeDir(relativeDir)
+        return if (n == ".") "" else n
+    }
 
     /**
      * Reuse a parent-folder peek when entering that child. [load] runs only on miss.

@@ -210,10 +210,12 @@ object LocalFolderListing {
         if (clearedParent != null && clearedParent !== parentEntries && rootPath != null) {
             val parent = ZipAsDirListing.parentRelative(zipRel)
             val parentPath = if (parent.isEmpty()) rootPath else rootPath.resolveRelative(parent)
-            BrowseSession.putLocalListing(
-                BrowseSession.pathKey(parentPath),
+            BrowseSession.putLocalFolderListing(
+                rootId,
+                parent,
                 clearedParent,
                 sessionCurrent = true,
+                pathAlias = parentPath,
             )
         }
         val remote = BrowseSession.getLocalCachedListing(ramKey)?.entries
@@ -261,16 +263,16 @@ object LocalFolderListing {
             }
         }
         val effective = resolveBrowsePath(listedPath, preferMediaStore = preferMediaStore)
-        val pathKey = BrowseSession.pathKey(effective)
+        val dirKey = BrowseSession.normalizeLocalRelativeDir(relativeDir)
         val configKey = rootConfigKey(rootPath, preferMediaStore)
 
         if (useCache) {
-            val ram = BrowseSession.getLocalCachedListing(pathKey)
+            val ram = BrowseSession.getLocalFolderCachedListing(rootId, dirKey)
             val needDisk = ram == null ||
                 !ram.sessionCurrent ||
                 isShallowIncompleteListing(ram.entries)
             val disk = if (needDisk) {
-                NetworkFolderIndexCache.loadLocal(rootId, configKey, relativeDir)
+                NetworkFolderIndexCache.loadLocal(rootId, configKey, dirKey)
             } else {
                 null
             }
@@ -281,7 +283,13 @@ object LocalFolderListing {
             )
             val cached = selected?.let { (entries, sessionCurrent) ->
                 if (ram == null || ram.entries !== entries || ram.sessionCurrent != sessionCurrent) {
-                    BrowseSession.putLocalListing(pathKey, entries, sessionCurrent = sessionCurrent)
+                    BrowseSession.putLocalFolderListing(
+                        rootId,
+                        dirKey,
+                        entries,
+                        sessionCurrent = sessionCurrent,
+                        pathAlias = effective,
+                    )
                 }
                 BrowseSession.CachedLocalListing(entries = entries, sessionCurrent = sessionCurrent)
             }
@@ -295,13 +303,15 @@ object LocalFolderListing {
                     NetworkFolderIndexCache.saveLocal(
                         rootId,
                         configKey,
-                        relativeDir,
+                        dirKey,
                         filledRemote,
                     )
-                    BrowseSession.putLocalListing(
-                        pathKey,
+                    BrowseSession.putLocalFolderListing(
+                        rootId,
+                        dirKey,
                         filledRemote,
                         sessionCurrent = cached.sessionCurrent,
+                        pathAlias = effective,
                     )
                 }
                 val materialized = materializeLocalEntries(effective, filledRemote)
@@ -317,12 +327,12 @@ object LocalFolderListing {
                             filledRemote,
                             rootId,
                             configKey,
-                            relativeDir,
+                            dirKey,
                         )
                         if (!refresh.persist) {
                             logcat("FolderIndex") {
                                 "Local slim ignored untrusted listing for root=$rootId " +
-                                    "dir=$relativeDir; keeping cache"
+                                    "dir=$dirKey; keeping cache"
                             }
                             return@withContext materialized
                         }
@@ -332,24 +342,26 @@ object LocalFolderListing {
                             persistParentAndZipInteriors(
                                 rootId,
                                 configKey,
-                                relativeDir,
+                                dirKey,
                                 refresh.entries,
                                 refresh.zipInteriors,
                             )
                         } else {
                             refresh.entries
                         }
-                        BrowseSession.putLocalListing(
-                            pathKey,
+                        BrowseSession.putLocalFolderListing(
+                            rootId,
+                            dirKey,
                             toKeep,
                             sessionCurrent = true,
+                            pathAlias = effective,
                         )
                         materializeLocalEntries(effective, toKeep)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {
                         logcat("FolderIndex") {
-                            "Local slim refresh failed for root=$rootId dir=$relativeDir " +
+                            "Local slim refresh failed for root=$rootId dir=$dirKey " +
                                 "(${e.message}); keeping cache"
                         }
                         materialized
@@ -357,16 +369,16 @@ object LocalFolderListing {
                 }
             }
         } else {
-            BrowseSession.invalidateLocalListing(pathKey)
+            BrowseSession.invalidateLocalFolderListing(rootId, dirKey, effective)
         }
 
-        BrowseSession.getLocalListing(pathKey)?.let { listed ->
-            if (BrowseSession.isLocalListingSessionCurrent(pathKey)) {
-                return@withContext listed
+        BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.let { listed ->
+            if (listed.sessionCurrent) {
+                return@withContext materializeLocalEntries(effective, listed.entries)
             }
         }
         // Cold miss: shallow-first (one list → paint), then deferred peeks.
-        val previous = BrowseSession.getLocalCachedListing(pathKey)?.entries
+        val previous = BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.entries
         val t0 = System.nanoTime()
         val children = listChildrenRemote(effective, preferMediaStore)
         val dirName = effective.name.ifEmpty { "Gallery" }
@@ -377,16 +389,22 @@ object LocalFolderListing {
         val shallowMerged =
             if (previous != null) preferCompleteFolderGalleries(previous, shallow) else shallow
         // RAM-only until deep succeeds (avoid slim treating Empty shells as final).
-        BrowseSession.putLocalListing(pathKey, shallowMerged, sessionCurrent = false)
+        BrowseSession.putLocalFolderListing(
+            rootId,
+            dirKey,
+            shallowMerged,
+            sessionCurrent = false,
+            pathAlias = effective,
+        )
         val shallowMaterialized = materializeLocalEntries(effective, shallowMerged)
         logcat("FolderIndex") {
-            "Local shallow list root=$rootId dir=$relativeDir " +
+            "Local shallow list root=$rootId dir=$dirKey " +
                 "children=${children.size} entries=${shallowMerged.size} " +
                 "ms=${(System.nanoTime() - t0) / 1_000_000}"
         }
         onCached?.invoke(shallowMaterialized)
 
-        BrowseSession.getLocalCachedListing(pathKey)?.let { cached ->
+        BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.let { cached ->
             if (cached.sessionCurrent) {
                 return@withContext materializeLocalEntries(effective, cached.entries)
             }
@@ -407,13 +425,19 @@ object LocalFolderListing {
                 val stored = persistParentAndZipInteriors(
                     rootId,
                     configKey,
-                    relativeDir,
+                    dirKey,
                     fromRam,
                     zipInteriors,
                 )
-                BrowseSession.putLocalListing(pathKey, stored, sessionCurrent = true)
+                BrowseSession.putLocalFolderListing(
+                    rootId,
+                    dirKey,
+                    stored,
+                    sessionCurrent = true,
+                    pathAlias = effective,
+                )
                 logcat("FolderIndex") {
-                    "Local deep classify root=$rootId dir=$relativeDir " +
+                    "Local deep classify root=$rootId dir=$dirKey " +
                         "entries=${stored.size} ms=${(System.nanoTime() - t1) / 1_000_000}"
                 }
                 materializeLocalEntries(effective, stored)
@@ -698,6 +722,7 @@ object LocalFolderListing {
         zipRel: String,
     ): List<BrowseEntryRemote>? {
         val parent = ZipAsDirListing.parentRelative(zipRel)
+        BrowseSession.getLocalFolderCachedListing(rootId, parent)?.entries?.let { return it }
         if (rootPath != null) {
             val parentPath = if (parent.isEmpty()) rootPath else rootPath.resolveRelative(parent)
             BrowseSession.getLocalCachedListing(BrowseSession.pathKey(parentPath))?.entries?.let { return it }

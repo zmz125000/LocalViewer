@@ -120,7 +120,7 @@ object FolderGalleryIndex {
 
     /**
      * Write library-scan page lists into the same folder index browse/photo-grid/reader use.
-     * Zip interiors go under the zip RAM key; real folders under the absolute path key.
+     * Zip interiors go under the zip RAM key; real folders under [BrowseSession.localFolderListingKey].
      * Only the folders in [pages] / [videos] are read and rewritten (one file per folder).
      */
     suspend fun persistLocalFolderPages(
@@ -142,11 +142,11 @@ object FolderGalleryIndex {
             if (imageNames.isEmpty() && videoNames.isEmpty()) continue
             val dir = normalizeGalleryRelativeDir(rel)
             val title = dir.substringAfterLast('/').ifEmpty { "Gallery" }
-            val ramKey = if (ZipAsDirListing.splitZipBrowsePath(dir) != null) {
+            val zip = ZipAsDirListing.splitZipBrowsePath(dir) != null
+            val ramKey = if (zip) {
                 BrowseSession.localZipListingKey(rootId, dir)
             } else {
-                val abs = if (dir.isEmpty()) rootAbs else rootAbs.resolveRelative(dir)
-                BrowseSession.pathKey(abs)
+                BrowseSession.localFolderListingKey(rootId, dir)
             }
             val previousRam = BrowseSession.getLocalCachedListing(ramKey)
             val previous = previousRam?.entries
@@ -164,6 +164,10 @@ object FolderGalleryIndex {
                 !isImagePagesOnlyListing(listing)
             updates[dir] = listing
             ram += Triple(ramKey, listing, sessionCurrent)
+            if (!zip) {
+                val abs = if (dir.isEmpty()) rootAbs else rootAbs.resolveRelative(dir)
+                ram += Triple(BrowseSession.pathKey(abs), listing, sessionCurrent)
+            }
         }
         if (updates.isNotEmpty()) {
             NetworkFolderIndexCache.saveLocalAll(rootId, configKey, updates)
@@ -278,7 +282,7 @@ object FolderGalleryIndex {
         val ramKey = if (zipInnerRel != null) {
             BrowseSession.localZipListingKey(rootId, listedDir)
         } else {
-            BrowseSession.pathKey(parentPath.toPath())
+            BrowseSession.localFolderListingKey(rootId, listedDir)
         }
         val remote = BrowseSession.getLocalCachedListing(ramKey)?.entries ?: return null
         return namesFromListing(listedDir, remote, galleryDir)
@@ -509,10 +513,11 @@ object FolderGalleryIndex {
         dir: String,
         rootAbs: Path? = null,
     ): List<BrowseEntryRemote>? {
-        val normalized = BrowseSession.normalizeBrowseRelativeDir(dir)
+        val normalized = BrowseSession.normalizeLocalRelativeDir(dir)
         BrowseSession.getLocalCachedListing(
             BrowseSession.localZipListingKey(rootId, normalized),
         )?.entries?.let { return it }
+        BrowseSession.getLocalFolderCachedListing(rootId, normalized)?.entries?.let { return it }
         if (rootAbs != null) {
             val abs = if (normalized.isEmpty()) rootAbs else rootAbs.resolveRelative(normalized)
             BrowseSession.getLocalCachedListing(BrowseSession.pathKey(abs))?.entries?.let { return it }

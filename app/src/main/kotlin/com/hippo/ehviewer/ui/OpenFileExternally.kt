@@ -997,11 +997,12 @@ object OpenFileExternally {
         val root = LocalLibrary.loadRoot(frame.rootId) ?: return emptyList()
         val rootPath = LocalLibrary.rootPath(root) ?: return emptyList()
         return siblingNamesFromListing(
-            NetworkFolderIndexCache.loadLocal(
-                frame.rootId,
-                LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
-                frame.relativePath,
-            ),
+            BrowseSession.getLocalFolderCachedListing(frame.rootId, frame.relativePath)?.entries
+                ?: NetworkFolderIndexCache.loadLocal(
+                    frame.rootId,
+                    LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
+                    frame.relativePath,
+                ),
         )
     }
 
@@ -1028,6 +1029,7 @@ object OpenFileExternally {
         runCatching { add(resolveBrowsePath(dir, preferMediaStore = false)) }
         val frame = matchingLocalFrame(dir)
         if (frame != null) {
+            keys += BrowseSession.localFolderListingKey(frame.rootId, frame.relativePath)
             add(frame.path.toPath())
             runCatching {
                 add(resolveBrowsePath(frame.path.toPath(), preferMediaStore = frame.preferMediaStore))
