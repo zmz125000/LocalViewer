@@ -136,6 +136,9 @@ import com.hippo.ehviewer.ui.main.BrowseSectionHeader
 import com.hippo.ehviewer.ui.main.BrowseVideoGridItem
 import com.hippo.ehviewer.ui.main.BrowseVideoRow
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.HttpShare
+import com.hippo.ehviewer.ui.main.HttpShareItem
+import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.main.browseZipAsDirTypeLabel
 import com.hippo.ehviewer.ui.main.rememberBrowseSectionCollapse
 import com.hippo.ehviewer.ui.navToReader
@@ -1312,11 +1315,56 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    fun shareWebDavViaHttp(block: suspend () -> HttpShareItem) {
+        launchIO {
+            try {
+                val item = block()
+                withUIContext { awaitHttpShareQr(item.url, item.title) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_http_share_failed) + " " +
+                        (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
+    fun webDavHttpShareFile(fileName: String): (() -> Unit)? {
+        val src = source ?: return null
+        if (!HttpShare.canShareRemote(relativeDir, fileName, folderLike = false)) return null
+        val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
+        return {
+            shareWebDavViaHttp {
+                HttpShare.startWebDavFile(
+                    context,
+                    src.id,
+                    remote,
+                    actualName,
+                    mimeTypeForFileName(actualName),
+                )
+            }
+        }
+    }
+
+    fun webDavHttpShareFolder(relativeName: String, displayName: String = relativeName.substringAfterLast('/')): (() -> Unit)? {
+        val src = source ?: return null
+        if (!HttpShare.canShareRemote(relativeDir, relativeName, folderLike = true)) return null
+        val remote = if (relativeDir.isEmpty()) relativeName else WebDavGateway.joinRelative(relativeDir, relativeName)
+        val name = displayName.ifEmpty { relativeName.substringAfterLast('/') }
+        return {
+            shareWebDavViaHttp { HttpShare.startWebDavFolder(context, src.id, remote, name) }
+        }
+    }
+
     fun dirOverflow(name: String, coverFileName: String? = null) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(name),
         onFavorite = { toggleDirFavorite(name, coverFileName) },
         onSaveAs = { saveWebDavFolder(name) },
+        onShareViaHttp = webDavHttpShareFolder(name),
         onOpenFolder = { openBrowseFolder(FolderSearch.openFolderTarget(name, isDirectory = true)) },
         onUnsupported = { notSupportedAction() },
     )
@@ -1328,6 +1376,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onRead = { openFolderGallery(entry) },
         onPhotoGrid = { openFolderGalleryPhotoGrid(entry) },
         onSaveAs = { saveWebDavFolder(entry.relativeName, entry.name) },
+        onShareViaHttp = webDavHttpShareFolder(entry.relativeName, entry.name),
         onOpenFolder = {
             openBrowseFolder(FolderSearch.openFolderTarget(entry.relativeName, isDirectory = true))
         },
@@ -1350,6 +1399,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 entry.fileName.substringAfterLast('/'),
             )
         },
+        onShareViaHttp = webDavHttpShareFile(
+            joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+        ),
         onOpenFolder = {
             openBrowseFolder(
                 FolderSearch.openFolderTarget(
@@ -1369,6 +1421,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onOpenWith = { openExternalFile(fileName, usePreferredPlayer = false) },
         onSaveAs = { saveWebDavFile(fileName) },
         onShare = { shareWebDavFile(fileName) },
+        onShareViaHttp = webDavHttpShareFile(fileName),
         onOpenFolder = {
             openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
         },
@@ -1384,6 +1437,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             onOpenWith = { openExternalFile(fileName, asFile = true) },
             onSaveAs = { saveWebDavFile(fileName) },
             onShare = { shareWebDavFile(fileName) },
+            onShareViaHttp = webDavHttpShareFile(fileName),
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
             },
@@ -1395,6 +1449,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             onOpenWith = { openExternalFile(fileName) },
             onSaveAs = { saveWebDavFile(fileName) },
             onShare = { shareWebDavFile(fileName) },
+            onShareViaHttp = webDavHttpShareFile(fileName),
             onOpenFolder = {
                 openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
             },

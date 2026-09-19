@@ -197,6 +197,31 @@ class FolderGalleryIndexTest {
         )
         assertTrue(mediaOnly.any { it is BrowseEntryRemote.VideoFile && it.name == "a.mp4" })
         assertTrue(FolderGalleryIndex.isImagePagesOnlyListing(mediaOnly))
+        val withSidecar = FolderGalleryIndex.mergeLibraryFolderVideos(
+            listOf(BrowseEntryRemote.RegularFile(name = "a.srt", fileName = "a.srt")),
+            names,
+        )
+        assertTrue(withSidecar.any { it is BrowseEntryRemote.RegularFile && it.name == "a.srt" })
+        assertEquals(names, withSidecar.filterIsInstance<BrowseEntryRemote.VideoFile>().map { it.name })
+    }
+
+    @Test
+    fun peekLocalRawChildrenReturnsRememberedFolderFiles() {
+        val key = "/tmp/Shows"
+        BrowseSession.invalidateLocalListing(key)
+        BrowseSession.rememberLocalRawChildren(key) {
+            listOf(
+                RemoteChild(name = "a.mp4", isDirectory = false),
+                RemoteChild(name = "a.srt", isDirectory = false),
+                RemoteChild(name = "Extra", isDirectory = true),
+            )
+        }
+        assertEquals(
+            listOf("a.mp4", "a.srt", "Extra"),
+            BrowseSession.peekLocalRawChildren(key)?.map { it.name },
+        )
+        BrowseSession.invalidateLocalListing(key)
+        assertNull(BrowseSession.peekLocalRawChildren(key))
     }
 
     @Test
