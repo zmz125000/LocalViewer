@@ -164,6 +164,7 @@ object NetworkFolderIndexCache {
             deleteDirContents(cacheDir)
             deleteDirContents(legacyCacheDir)
         }
+        LocalFolderListing.cancelListingJobs()
         BrowseSession.invalidateLocalListing()
         BrowseSession.invalidateAllSmbListings()
         BrowseSession.invalidateAllWebDavListings()

@@ -5,7 +5,11 @@ import com.hippo.ehviewer.Settings
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -29,6 +33,14 @@ object LocalFolderListing {
 
     /** Deep peek/classify budget after shallow paint; keep shallow on expiry. */
     private const val DEEP_CLASSIFY_TIMEOUT_MS = 180_000L
+
+    /**
+     * Drop in-flight slim/deep jobs for [rootId] (or every local root).
+     * Access-mode change / source delete must not let a stale job rewrite the index.
+     */
+    fun cancelListingJobs(rootId: Long? = null) {
+        LocalListingJobs.cancelAll(rootId)
+    }
 
     /**
      * Folder-bar submit search. Walk the local tree ourselves and abort on
@@ -265,6 +277,16 @@ object LocalFolderListing {
         val effective = resolveBrowsePath(listedPath, preferMediaStore = preferMediaStore)
         val dirKey = BrowseSession.normalizeLocalRelativeDir(relativeDir)
         val configKey = rootConfigKey(rootPath, preferMediaStore)
+        val jobKey = BrowseSession.localFolderListingKey(rootId, dirKey)
+
+        if (useCache && LocalListingJobs.isActive(jobKey)) {
+            BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.let { ram ->
+                onCached?.invoke(materializeLocalEntries(effective, ram.entries))
+            }
+            return@withContext LocalListingJobs.await(jobKey) {
+                error("joined in-flight local list job")
+            }
+        }
 
         if (useCache) {
             val ram = BrowseSession.getLocalFolderCachedListing(rootId, dirKey)
@@ -320,55 +342,31 @@ object LocalFolderListing {
                     Settings.networkFolderIndexQuickScan.value && !cached.sessionCurrent
                 if (!shouldQuickScan) return@withContext materialized
                 if (!isShallowIncompleteListing(filledRemote)) {
-                    return@withContext try {
-                        val refresh = listDirectorySlim(
-                            effective,
-                            preferMediaStore,
-                            filledRemote,
-                            rootId,
-                            configKey,
-                            dirKey,
-                        )
-                        if (!refresh.persist) {
-                            logcat("FolderIndex") {
-                                "Local slim ignored untrusted listing for root=$rootId " +
-                                    "dir=$dirKey; keeping cache"
-                            }
-                            return@withContext materialized
-                        }
-                        val toKeep = if (refresh.persist &&
-                            (refresh.entries != filledRemote || refresh.zipInteriors.isNotEmpty())
-                        ) {
-                            persistParentAndZipInteriors(
+                    return@withContext LocalListingJobs.await(jobKey) {
+                        try {
+                            runLocalSlimAndPersist(
+                                effective,
+                                preferMediaStore,
+                                filledRemote,
                                 rootId,
                                 configKey,
                                 dirKey,
-                                refresh.entries,
-                                refresh.zipInteriors,
+                                materialized,
                             )
-                        } else {
-                            refresh.entries
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Throwable) {
+                            logcat("FolderIndex") {
+                                "Local slim refresh failed for root=$rootId dir=$dirKey " +
+                                    "(${e.message}); keeping cache"
+                            }
+                            materialized
                         }
-                        BrowseSession.putLocalFolderListing(
-                            rootId,
-                            dirKey,
-                            toKeep,
-                            sessionCurrent = true,
-                            pathAlias = effective,
-                        )
-                        materializeLocalEntries(effective, toKeep)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Throwable) {
-                        logcat("FolderIndex") {
-                            "Local slim refresh failed for root=$rootId dir=$dirKey " +
-                                "(${e.message}); keeping cache"
-                        }
-                        materialized
                     }
                 }
             }
         } else {
+            LocalListingJobs.cancel(jobKey)
             BrowseSession.invalidateLocalFolderListing(rootId, dirKey, effective)
         }
 
@@ -377,84 +375,47 @@ object LocalFolderListing {
                 return@withContext materializeLocalEntries(effective, listed.entries)
             }
         }
-        // Cold miss: shallow-first (one list → paint), then deferred peeks.
-        val previous = BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.entries
-        val t0 = System.nanoTime()
-        val children = listChildrenRemote(effective, preferMediaStore)
-        val dirName = effective.name.ifEmpty { "Gallery" }
-        val shallow = ZipAsDirListing.applyZipAsDirPreferenceLocal(
-            classifyChildren(effective, dirName, children, emptyMap(), emptyMap()),
-            effective,
-        )
-        val shallowMerged =
-            if (previous != null) preferCompleteFolderGalleries(previous, shallow) else shallow
-        // RAM-only until deep succeeds (avoid slim treating Empty shells as final).
-        BrowseSession.putLocalFolderListing(
-            rootId,
-            dirKey,
-            shallowMerged,
-            sessionCurrent = false,
-            pathAlias = effective,
-        )
-        val shallowMaterialized = materializeLocalEntries(effective, shallowMerged)
-        logcat("FolderIndex") {
-            "Local shallow list root=$rootId dir=$dirKey " +
-                "children=${children.size} entries=${shallowMerged.size} " +
-                "ms=${(System.nanoTime() - t0) / 1_000_000}"
-        }
-        onCached?.invoke(shallowMaterialized)
-
-        BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.let { cached ->
-            if (cached.sessionCurrent) {
-                return@withContext materializeLocalEntries(effective, cached.entries)
-            }
-        }
-
-        return@withContext try {
-            withTimeout(DEEP_CLASSIFY_TIMEOUT_MS) {
-                coroutineContext.ensureActive()
-                val t1 = System.nanoTime()
-                val zipInteriors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
-                val deep = classifyDirectoryChildren(
-                    effective,
-                    preferMediaStore,
-                    children,
-                    zipInteriors,
-                )
-                val fromRam = preferCompleteFolderGalleries(shallowMerged, deep)
-                val stored = persistParentAndZipInteriors(
-                    rootId,
-                    configKey,
-                    dirKey,
-                    fromRam,
-                    zipInteriors,
-                )
-                BrowseSession.putLocalFolderListing(
-                    rootId,
-                    dirKey,
-                    stored,
-                    sessionCurrent = true,
-                    pathAlias = effective,
-                )
-                logcat("FolderIndex") {
-                    "Local deep classify root=$rootId dir=$dirKey " +
-                        "entries=${stored.size} ms=${(System.nanoTime() - t1) / 1_000_000}"
-                }
-                materializeLocalEntries(effective, stored)
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: TimeoutCancellationException) {
+        // Cold miss: shallow-first paint, then deep persist. Both run on a process
+        // job so enter/back cannot cancel the index write.
+        return@withContext LocalListingJobs.await(jobKey) {
+            val previous = BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.entries
+            val t0 = System.nanoTime()
+            val children = listChildrenRemote(effective, preferMediaStore)
+            val dirName = effective.name.ifEmpty { "Gallery" }
+            val shallow = ZipAsDirListing.applyZipAsDirPreferenceLocal(
+                classifyChildren(effective, dirName, children, emptyMap(), emptyMap()),
+                effective,
+            )
+            val shallowMerged =
+                if (previous != null) preferCompleteFolderGalleries(previous, shallow) else shallow
+            BrowseSession.putLocalFolderListing(
+                rootId,
+                dirKey,
+                shallowMerged,
+                sessionCurrent = false,
+                pathAlias = effective,
+            )
+            val shallowMaterialized = materializeLocalEntries(effective, shallowMerged)
             logcat("FolderIndex") {
-                "Local deep classify timed out root=$rootId dir=$relativeDir; keeping shallow"
+                "Local shallow list root=$rootId dir=$dirKey " +
+                    "children=${children.size} entries=${shallowMerged.size} " +
+                    "ms=${(System.nanoTime() - t0) / 1_000_000}"
             }
-            shallowMaterialized
-        } catch (e: Throwable) {
-            logcat("FolderIndex") {
-                "Local deep classify failed root=$rootId dir=$relativeDir " +
-                    "(${e.message}); keeping shallow"
+            onCached?.invoke(shallowMaterialized)
+            val alreadyCurrent = BrowseSession.getLocalFolderCachedListing(rootId, dirKey)
+            if (alreadyCurrent?.sessionCurrent == true) {
+                return@await materializeLocalEntries(effective, alreadyCurrent.entries)
             }
-            shallowMaterialized
+            runLocalDeepClassifyAndPersist(
+                effective,
+                preferMediaStore,
+                children,
+                shallowMerged,
+                rootId,
+                configKey,
+                dirKey,
+                shallowMaterialized,
+            )
         }
     }
 
@@ -646,6 +607,127 @@ object LocalFolderListing {
         return out
     }
 
+    private suspend fun runLocalSlimAndPersist(
+        effective: Path,
+        preferMediaStore: Boolean,
+        filledRemote: List<BrowseEntryRemote>,
+        rootId: Long,
+        configKey: String,
+        dirKey: String,
+        materialized: List<BrowseEntry>,
+    ): List<BrowseEntry> {
+        val refresh = listDirectorySlim(
+            effective,
+            preferMediaStore,
+            filledRemote,
+            rootId,
+            configKey,
+            dirKey,
+        )
+        if (!refresh.persist) {
+            logcat("FolderIndex") {
+                "Local slim ignored untrusted listing for root=$rootId " +
+                    "dir=$dirKey; keeping cache"
+            }
+            return materialized
+        }
+        val toKeep = persistFinishedListing(
+            rootId,
+            configKey,
+            dirKey,
+            effective,
+            refresh.entries,
+            refresh.zipInteriors,
+            persistEntries = refresh.entries != filledRemote || refresh.zipInteriors.isNotEmpty(),
+        )
+        return materializeLocalEntries(effective, toKeep)
+    }
+
+    private suspend fun runLocalDeepClassifyAndPersist(
+        effective: Path,
+        preferMediaStore: Boolean,
+        children: List<RemoteChild>,
+        shallowMerged: List<BrowseEntryRemote>,
+        rootId: Long,
+        configKey: String,
+        dirKey: String,
+        shallowMaterialized: List<BrowseEntry>,
+    ): List<BrowseEntry> = try {
+        withTimeout(DEEP_CLASSIFY_TIMEOUT_MS) {
+            coroutineContext.ensureActive()
+            val t1 = System.nanoTime()
+            val zipInteriors = ConcurrentHashMap<String, List<BrowseEntryRemote>>()
+            val deep = classifyDirectoryChildren(
+                effective,
+                preferMediaStore,
+                children,
+                zipInteriors,
+            )
+            val fromRam = preferCompleteFolderGalleries(shallowMerged, deep)
+            val stored = persistFinishedListing(
+                rootId,
+                configKey,
+                dirKey,
+                effective,
+                fromRam,
+                zipInteriors,
+                persistEntries = true,
+            )
+            logcat("FolderIndex") {
+                "Local deep classify root=$rootId dir=$dirKey " +
+                    "entries=${stored.size} ms=${(System.nanoTime() - t1) / 1_000_000}"
+            }
+            materializeLocalEntries(effective, stored)
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: TimeoutCancellationException) {
+        logcat("FolderIndex") {
+            "Local deep classify timed out root=$rootId dir=$dirKey; keeping shallow"
+        }
+        shallowMaterialized
+    } catch (e: Throwable) {
+        logcat("FolderIndex") {
+            "Local deep classify failed root=$rootId dir=$dirKey " +
+                "(${e.message}); keeping shallow"
+        }
+        shallowMaterialized
+    }
+
+    /**
+     * Disk + RAM write after slim/deep. [NonCancellable] so a late UI cancel cannot
+     * drop the listing we already classified.
+     */
+    private suspend fun persistFinishedListing(
+        rootId: Long,
+        configKey: String,
+        dirKey: String,
+        effective: Path,
+        entries: List<BrowseEntryRemote>,
+        zipInteriors: Map<String, List<BrowseEntryRemote>>,
+        persistEntries: Boolean,
+    ): List<BrowseEntryRemote> = withContext(NonCancellable) {
+        val stored = if (persistEntries) {
+            persistParentAndZipInteriors(
+                rootId,
+                configKey,
+                dirKey,
+                entries,
+                zipInteriors,
+            )
+        } else {
+            entries
+        }
+        BrowseSession.putLocalFolderListing(
+            rootId,
+            dirKey,
+            stored,
+            sessionCurrent = true,
+            pathAlias = effective,
+        )
+        stored
+    }
+
     private suspend fun persistZipVirtualFolderTree(
         rootId: Long,
         configKey: String,
@@ -670,21 +752,23 @@ object LocalFolderListing {
         parentEntries: List<BrowseEntryRemote>? = null,
     ) {
         if (interiors.isEmpty() && parentEntries == null) return
-        ZipAsDirListing.persistFolderIndexes(
-            parentRelativeDir = parentRelativeDir,
-            interiors = interiors,
-            saveAll = { folders ->
-                NetworkFolderIndexCache.saveLocalAll(rootId, configKey, folders)
-            },
-            putRam = { dir, entries ->
-                BrowseSession.putLocalListing(
-                    BrowseSession.localZipListingKey(rootId, dir),
-                    entries,
-                    sessionCurrent = true,
-                )
-            },
-            parentEntries = parentEntries,
-        )
+        withContext(NonCancellable) {
+            ZipAsDirListing.persistFolderIndexes(
+                parentRelativeDir = parentRelativeDir,
+                interiors = interiors,
+                saveAll = { folders ->
+                    NetworkFolderIndexCache.saveLocalAll(rootId, configKey, folders)
+                },
+                putRam = { dir, entries ->
+                    BrowseSession.putLocalListing(
+                        BrowseSession.localZipListingKey(rootId, dir),
+                        entries,
+                        sessionCurrent = true,
+                    )
+                },
+                parentEntries = parentEntries,
+            )
+        }
     }
 
     private suspend fun persistParentAndZipInteriors(
@@ -794,6 +878,59 @@ object LocalFolderListing {
     fun rootConfigKey(rootPath: Path, preferMediaStore: Boolean): String {
         val effective = resolveBrowsePath(rootPath, preferMediaStore = preferMediaStore)
         return "local|$effective|ms=$preferMediaStore"
+    }
+}
+
+/**
+ * Process-scoped local list jobs. UI [LaunchedEffect] cancel (enter/back) only
+ * drops the await — slim/deep + index persist keep running.
+ */
+internal object LocalListingJobs {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val jobs = ConcurrentHashMap<String, Deferred<List<BrowseEntry>>>()
+
+    fun isActive(key: String): Boolean = jobs[key]?.isActive == true
+
+    fun cancel(key: String) {
+        jobs.remove(key)?.cancel()
+    }
+
+    fun cancelAll(rootId: Long? = null) {
+        if (rootId == null) {
+            jobs.values.forEach { it.cancel() }
+            jobs.clear()
+            return
+        }
+        val prefixes = arrayOf("local:$rootId|", "zipasdir:$rootId|")
+        jobs.entries.toList().forEach { (key, job) ->
+            if (prefixes.any { key.startsWith(it) }) {
+                if (jobs.remove(key, job)) job.cancel()
+            }
+        }
+    }
+
+    suspend fun await(
+        key: String,
+        restart: Boolean = false,
+        loader: suspend () -> List<BrowseEntry>,
+    ): List<BrowseEntry> {
+        val deferred = jobs.compute(key) { _, existing ->
+            if (!restart && existing != null && existing.isActive) {
+                existing
+            } else {
+                existing?.cancel()
+                scope.async { loader() }.also { job ->
+                    job.invokeOnCompletion { jobs.remove(key, job) }
+                }
+            }
+        }!!
+        return try {
+            deferred.await()
+        } catch (e: CancellationException) {
+            // Caller left this folder. The process job is still running.
+            coroutineContext.ensureActive()
+            throw e
+        }
     }
 }
 
