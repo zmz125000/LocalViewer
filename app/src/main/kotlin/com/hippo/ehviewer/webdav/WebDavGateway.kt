@@ -34,7 +34,10 @@ import com.hippo.ehviewer.library.withHiddenFlags
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -92,6 +95,25 @@ object WebDavGateway {
             }
         }
         val configKey = sourceConfigKey(source)
+        val jobKey = BrowseSession.webDavListingKey(source.id, relativeDir)
+        if (useCache && isListJobActive(jobKey)) {
+            BrowseSession.getWebDavCachedListing(source.id, relativeDir)?.let { ram ->
+                val painted = presentListingForZipAsDirToggle(
+                    source,
+                    configKey,
+                    relativeDir,
+                    ram.entries,
+                    ram.sessionCurrent,
+                )
+                publishCachedOnMain(painted, onCached)
+                if (!isShallowIncompleteListing(ram.entries)) {
+                    return painted
+                }
+            }
+            return awaitListJob(jobKey) {
+                error("joined in-flight WebDAV list job")
+            }
+        }
         if (useCache) {
             val ram = BrowseSession.getWebDavCachedListing(source.id, relativeDir)
             val needDisk = ram == null ||
@@ -126,10 +148,9 @@ object WebDavGateway {
                     cached.entries,
                     cached.sessionCurrent,
                 )
-                onCached?.invoke(presented)
+                publishCachedOnMain(presented, onCached)
                 val shouldQuickScan =
-                    com.hippo.ehviewer.Settings.networkFolderIndexQuickScan.value &&
-                        !cached.sessionCurrent
+                    Settings.networkFolderIndexQuickScan.value && !cached.sessionCurrent
                 if (!shouldQuickScan) return presented
                 if (isShallowIncompleteListing(cached.entries)) {
                     return listDirectoryShallowThenDeep(
@@ -140,50 +161,109 @@ object WebDavGateway {
                         onCached,
                     )
                 }
-                return try {
-                    val refresh = withIOContext {
-                        listDirectorySlim(source, password, relativeDir, cached.entries, configKey)
-                    }
-                    if (!refresh.persist) {
-                        logcat("FolderIndex") {
-                            "WebDAV slim ignored untrusted listing for source=${source.id} " +
-                                "dir=$relativeDir; keeping cache"
+                startListJob(jobKey) {
+                    try {
+                        val refresh = listDirectorySlim(
+                            source,
+                            password,
+                            relativeDir,
+                            cached.entries,
+                            configKey,
+                        )
+                        if (!refresh.persist) {
+                            logcat("FolderIndex") {
+                                "WebDAV slim ignored untrusted listing for source=${source.id} " +
+                                    "dir=$relativeDir; keeping cache"
+                            }
+                            return@startListJob presented
                         }
-                        return presented
-                    }
-                    val toKeep = if (refresh.persist &&
-                        (refresh.entries != cached.entries || refresh.zipInteriors.isNotEmpty())
-                    ) {
-                        persistParentAndZipInteriors(
+                        val toKeep = if (refresh.persist &&
+                            (refresh.entries != cached.entries || refresh.zipInteriors.isNotEmpty())
+                        ) {
+                            persistParentAndZipInteriors(
+                                source,
+                                configKey,
+                                relativeDir,
+                                refresh.entries,
+                                refresh.zipInteriors,
+                            )
+                        } else {
+                            refresh.entries
+                        }
+                        val slimmed = presentListingForZipAsDirToggle(
                             source,
                             configKey,
                             relativeDir,
-                            refresh.entries,
-                            refresh.zipInteriors,
+                            toKeep,
+                            sessionCurrent = true,
+                            previousForZipNames = cached.entries,
                         )
-                    } else {
-                        refresh.entries
+                        publishCachedOnMain(slimmed, onCached)
+                        slimmed
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                        // Leave non-current so a later visit can retry quick scan.
+                        presented
                     }
-                    presentListingForZipAsDirToggle(
-                        source,
-                        configKey,
-                        relativeDir,
-                        toKeep,
-                        sessionCurrent = true,
-                        previousForZipNames = cached.entries,
-                    )
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (_: Throwable) {
-                    // Leave non-current so a later visit can retry quick scan.
-                    presented
                 }
+                return presented
             }
         } else {
+            listJobs.remove(jobKey)?.cancel()
             BrowseSession.invalidateWebDavListing(source.id, relativeDir)
         }
         // Cold miss: shallow-first (one PROPFIND → paint), then deferred peeks.
         return listDirectoryShallowThenDeep(source, password, relativeDir, configKey, onCached)
+    }
+
+    private val listingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val listJobs = ConcurrentHashMap<String, Deferred<List<BrowseEntryRemote>>>()
+
+    private fun isListJobActive(key: String): Boolean = listJobs[key]?.isActive == true
+
+    private fun startListJob(
+        key: String,
+        loader: suspend () -> List<BrowseEntryRemote>,
+    ) {
+        ensureListJob(key, loader)
+    }
+
+    private suspend fun awaitListJob(
+        key: String,
+        loader: suspend () -> List<BrowseEntryRemote>,
+    ): List<BrowseEntryRemote> {
+        val deferred = ensureListJob(key, loader)
+        return try {
+            deferred.await()
+        } catch (e: CancellationException) {
+            coroutineContext.ensureActive()
+            throw e
+        }
+    }
+
+    private fun ensureListJob(
+        key: String,
+        loader: suspend () -> List<BrowseEntryRemote>,
+    ): Deferred<List<BrowseEntryRemote>> = listJobs.compute(key) { _, existing ->
+        if (existing != null && existing.isActive) {
+            existing
+        } else {
+            existing?.cancel()
+            listingScope.async { loader() }.also { job ->
+                job.invokeOnCompletion { listJobs.remove(key, job) }
+            }
+        }
+    }!!
+
+    private suspend fun publishCachedOnMain(
+        entries: List<BrowseEntryRemote>,
+        onCached: ((List<BrowseEntryRemote>) -> Unit)?,
+    ) {
+        if (onCached == null) return
+        withContext(Dispatchers.Main.immediate) {
+            onCached(entries)
+        }
     }
 
     /**
@@ -226,7 +306,7 @@ object WebDavGateway {
                 "children=${children.size} entries=${shallowMerged.size} " +
                 "ms=${(System.nanoTime() - t0) / 1_000_000}"
         }
-        onCached?.invoke(shallowMerged)
+        publishCachedOnMain(shallowMerged, onCached)
 
         BrowseSession.getWebDavCachedListing(source.id, relativeDir)?.let { cached ->
             if (cached.sessionCurrent) return cached.entries
