@@ -2,7 +2,11 @@ package com.hippo.ehviewer.library
 
 import java.io.File
 import kotlin.io.path.createTempDirectory
-import org.json.JSONObject
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -140,6 +144,56 @@ class FolderIndexDiskTest {
             names.size,
             read?.filterIsInstance<BrowseEntryRemote.RegularFile>()?.size,
         )
+        val raw = FolderIndexDisk.listingFile(disk.sourceDir, "photos/huge").readText()
+        assertFalse(raw.contains("\"kind\":\"file\""))
+        assertTrue(raw.contains("\"imageFileNames\""))
+    }
+
+    @Test
+    fun compactOmitsCurrentDirImageFilesAndKeepsOthers() {
+        val listing = comics + BrowseEntryRemote.RegularFile(name = "note.txt", fileName = "note.txt") +
+            BrowseEntryRemote.RegularFile(name = "hidden.jpg", fileName = "hidden.jpg", hidden = true) +
+            BrowseEntryRemote.FolderGallery(
+                name = "@S",
+                relativeName = "S/leaf",
+                pageCount = 1,
+                coverFileName = "c.jpg",
+                imageFileNames = listOf("c.jpg"),
+            )
+        val compact = FolderIndexDisk.compactListingEntries(listing)
+        assertTrue(compact.none { it is BrowseEntryRemote.RegularFile && it.name == "a.jpg" })
+        assertTrue(compact.any { it is BrowseEntryRemote.RegularFile && it.name == "note.txt" })
+        assertTrue(compact.any { it is BrowseEntryRemote.RegularFile && it.name == "hidden.jpg" })
+        assertEquals(
+            comics,
+            FolderIndexDisk.expandListingEntries(
+                FolderIndexDisk.compactListingEntries(comics),
+            ),
+        )
+    }
+
+    @Test
+    fun legacyDuplicateImageFilesStillLoad() = withDisk { disk ->
+        val file = FolderIndexDisk.listingFile(disk.sourceDir, "legacy")
+        file.parentFile?.mkdirs()
+        file.writeText(
+            """
+            {"version":6,"dir":"legacy","entries":[
+              {"kind":"folder_gallery","name":"Gal","relativeName":"","pageCount":2,
+               "coverFileName":"a.jpg","imageFileNames":["a.jpg","b.jpg"]},
+              {"kind":"file","name":"a.jpg","fileName":"a.jpg","size":11},
+              {"kind":"file","name":"b.jpg","fileName":"b.jpg"}
+            ]}
+            """.trimIndent(),
+        )
+        val read = disk.readListing("legacy")!!
+        val files = read.filterIsInstance<BrowseEntryRemote.RegularFile>()
+        assertEquals(2, files.size)
+        assertEquals(11L, files.single { it.name == "a.jpg" }.size)
+        assertEquals(
+            listOf("a.jpg", "b.jpg"),
+            read.filterIsInstance<BrowseEntryRemote.FolderGallery>().single().imageFileNames,
+        )
     }
 
     @Test
@@ -157,13 +211,18 @@ class FolderIndexDiskTest {
     fun v5EmptyRootKeyParses() {
         val blob = File.createTempFile("legacy", ".json")
         try {
-            val folders = JSONObject()
-            folders.put("", FolderIndexDisk.encodeEntries(photos))
-            val root = JSONObject()
-            root.put("version", 5)
-            root.put("configKey", "k")
-            root.put("folders", folders)
-            blob.writeText(root.toString())
+            blob.writeText(
+                buildJsonObject {
+                    put("version", 5)
+                    put("configKey", "k")
+                    put(
+                        "folders",
+                        buildJsonObject {
+                            put("", v5Entries(photos))
+                        },
+                    )
+                }.toString(),
+            )
             val parsed = FolderIndexDisk.parseV5Blob(blob)!!
             assertEquals(photos, parsed.folders[""])
             assertEquals("k", parsed.configKey)
@@ -172,16 +231,56 @@ class FolderIndexDiskTest {
         }
     }
 
-    private fun v5BlobJson(folders: Map<String, List<BrowseEntryRemote>>): String {
-        val root = JSONObject()
-        root.put("version", 5)
-        root.put("configKey", "host|share")
-        val obj = JSONObject()
-        for ((dir, entries) in folders) {
-            obj.put(dir, FolderIndexDisk.encodeEntries(entries))
+    private fun v5BlobJson(folders: Map<String, List<BrowseEntryRemote>>): String = buildJsonObject {
+        put("version", 5)
+        put("configKey", "host|share")
+        put(
+            "folders",
+            buildJsonObject {
+                for ((dir, entries) in folders) {
+                    put(dir, v5Entries(entries))
+                }
+            },
+        )
+    }.toString()
+
+    private fun v5Entries(entries: List<BrowseEntryRemote>): JsonArray {
+        val objects = FolderIndexDisk.compactListingEntries(entries).map { entry ->
+            when (entry) {
+                is BrowseEntryRemote.Directory -> JsonObject(
+                    buildMap {
+                        put("kind", JsonPrimitive("directory"))
+                        put("name", JsonPrimitive(entry.name))
+                        put("relativeName", JsonPrimitive(entry.relativeName))
+                        put("hasVideo", JsonPrimitive(entry.hasVideo))
+                        put("hasGallery", JsonPrimitive(entry.hasGallery))
+                        put("presence", JsonPrimitive(entry.presence.name))
+                    },
+                )
+                is BrowseEntryRemote.FolderGallery -> JsonObject(
+                    buildMap {
+                        put("kind", JsonPrimitive("folder_gallery"))
+                        put("name", JsonPrimitive(entry.name))
+                        put("relativeName", JsonPrimitive(entry.relativeName))
+                        put("pageCount", JsonPrimitive(entry.pageCount))
+                        put("coverFileName", JsonPrimitive(entry.coverFileName.orEmpty()))
+                        put(
+                            "imageFileNames",
+                            JsonArray(entry.imageFileNames.map { JsonPrimitive(it) }),
+                        )
+                    },
+                )
+                is BrowseEntryRemote.RegularFile -> JsonObject(
+                    mapOf(
+                        "kind" to JsonPrimitive("file"),
+                        "name" to JsonPrimitive(entry.name),
+                        "fileName" to JsonPrimitive(entry.fileName),
+                    ),
+                )
+                else -> error(entry)
+            }
         }
-        root.put("folders", obj)
-        return root.toString()
+        return JsonArray(objects)
     }
 
     private fun withDisk(block: (FolderIndexDisk) -> Unit) {
