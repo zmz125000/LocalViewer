@@ -370,7 +370,11 @@ abstract class PageLoader(
     protected open fun onNavigation(demand: ReaderDemand) = Unit
 
     fun notifyPageWait(index: Int) {
-        pages[index].reset()
+        // In-progress work must be Loading so the reader can show a spinner. Queued is
+        // reserved for undemanded cache-window leftovers (static placeholder, no animation).
+        pages[index].statusFlow.update { current ->
+            if (current is PageStatus.Loading) current else PageStatus.Loading(MutableStateFlow(0f))
+        }
     }
 
     fun notifyPagePercent(index: Int, percent: Float) {
