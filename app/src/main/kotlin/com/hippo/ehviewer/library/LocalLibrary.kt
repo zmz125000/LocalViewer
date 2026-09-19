@@ -204,6 +204,7 @@ object LocalLibrary {
             }
             if (root.accessMode == mode) return@withIOContext
             db.libraryRootDao().updateAccessMode(rootId, mode)
+            LocalFolderListing.cancelListingJobs(rootId)
             NetworkFolderIndexCache.deleteLocal(rootId)
             MediaStoreIndexStamp.clear(rootId)
             BrowseSession.invalidateLocalListing()
@@ -242,6 +243,7 @@ object LocalLibrary {
                 // CASCADE also clears galleries; explicit delete keeps behavior obvious if FK is off.
                 db.localGalleryDao().deleteByRootId(root.id)
                 db.libraryRootDao().delete(root)
+                LocalFolderListing.cancelListingJobs(root.id)
                 BrowseSession.invalidateLocalListing()
                 NetworkFolderIndexCache.deleteLocal(root.id)
                 MediaStoreIndexStamp.clear(root.id)

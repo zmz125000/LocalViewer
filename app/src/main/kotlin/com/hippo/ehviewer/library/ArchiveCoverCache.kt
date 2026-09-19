@@ -115,6 +115,17 @@ object ArchiveCoverCache {
     }
 
     /**
+     * Screen dispose / empty stack. Only cancels if this screen still owns the extract
+     * generation — otherwise Library `onDispose` would wipe a folder we just entered.
+     */
+    fun onBrowseFolderLeft(ownerPrefix: String) {
+        val current = browseFolderKey.get() ?: return
+        if (current.startsWith(ownerPrefix)) {
+            onBrowseFolderChanged("")
+        }
+    }
+
+    /**
      * One-at-a-time cover extract. Folder change cancels waiters and the holder so the
      * next listing is not stuck behind a leftover RAR/ZIP page-0.
      */

@@ -67,6 +67,7 @@ import com.hippo.ehviewer.ktor.Cronet
 import com.hippo.ehviewer.ktor.configureClient
 import com.hippo.ehviewer.ktor.configureCommon
 import com.hippo.ehviewer.ktor.isCronetAvailable
+import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.VideoThumbnail
@@ -125,9 +126,10 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             LifecycleEventObserver { _, event ->
                 when (event) {
                     Lifecycle.Event.ON_STOP -> {
-                        // Pause network thumbs so MMR is never left reading a live handle
-                        // (sticks media.extractor at 100%). Browse sockets stay pooled.
+                        // Pause all thumbs (local library included) so MMR is never left
+                        // in media.extractor at 100% after the UI is gone. Browse sockets stay pooled.
                         VideoThumbnail.onAppBackgrounded()
+                        LocalFolderListing.cancelListingJobs()
                         SmbGateway.onAppBackgrounded()
                         WebDavClient.onAppBackgrounded()
                     }

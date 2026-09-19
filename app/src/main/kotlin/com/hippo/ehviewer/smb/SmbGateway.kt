@@ -1837,12 +1837,16 @@ object SmbGateway {
         }
     }
 
+    fun isListing(sourceId: Long, relativeDir: String): Boolean =
+        isListJobActive(BrowseSession.smbListingKey(sourceId, relativeDir))
+
     suspend fun listDirectory(
         source: SmbSourceEntity,
         password: String,
         relativeDir: String,
         useCache: Boolean = true,
         onCached: ((List<BrowseEntryRemote>) -> Unit)? = null,
+        onRefreshDone: (() -> Unit)? = null,
     ): List<BrowseEntryRemote> {
         if (Settings.browseZipAsDir.value) {
             ZipAsDirListing.splitZipBrowsePath(relativeDir)?.let { (zipRel, inner) ->
@@ -1859,6 +1863,24 @@ object SmbGateway {
         }
         val cacheKey = BrowseSession.smbListingKey(source.id, relativeDir)
         val configKey = sourceConfigKey(source)
+        if (useCache && isListJobActive(cacheKey)) {
+            BrowseSession.getSmbCachedListing(source.id, relativeDir)?.let { ram ->
+                val painted = presentListingForZipAsDirToggle(
+                    source,
+                    configKey,
+                    relativeDir,
+                    ram.entries,
+                    ram.sessionCurrent,
+                )
+                publishCachedOnMain(painted, onCached)
+                if (!isShallowIncompleteListing(ram.entries)) {
+                    return painted
+                }
+            }
+            return awaitListJob(cacheKey) {
+                error("joined in-flight SMB list job")
+            }
+        }
         if (useCache) {
             // RAM hit keeps its generation unless it is a shallow stub hiding a complete disk index.
             val ram = BrowseSession.getSmbCachedListing(source.id, relativeDir)
@@ -1894,7 +1916,7 @@ object SmbGateway {
                     cached.entries,
                     cached.sessionCurrent,
                 )
-                onCached?.invoke(presented)
+                publishCachedOnMain(presented, onCached)
                 // Quick scan only for old (non-current) listings — every directory independently,
                 // including subfolders hydrated from disk later in the same process.
                 val shouldQuickScan = Settings.networkFolderIndexQuickScan.value &&
@@ -1914,63 +1936,60 @@ object SmbGateway {
                         )
                     }
                 }
-                return try {
-                    awaitListJob(cacheKey) {
-                        try {
-                            val refresh = listDirectorySlim(
-                                source,
-                                password,
-                                relativeDir,
-                                cached.entries,
-                                configKey,
-                            )
-                            if (!refresh.persist) {
-                                logcat("FolderIndex") {
-                                    "SMB slim ignored untrusted listing for source=${source.id} " +
-                                        "dir=$relativeDir; keeping cache"
-                                }
-                                return@awaitListJob presented
-                            }
-                            // Successful slim marks this exact directory current (even if unchanged).
-                            val toKeep = if (refresh.persist &&
-                                (refresh.entries != cached.entries || refresh.zipInteriors.isNotEmpty())
-                            ) {
-                                persistParentAndZipInteriors(
-                                    source,
-                                    configKey,
-                                    relativeDir,
-                                    refresh.entries,
-                                    refresh.zipInteriors,
-                                )
-                            } else {
-                                refresh.entries
-                            }
-                            presentListingForZipAsDirToggle(
-                                source,
-                                configKey,
-                                relativeDir,
-                                toKeep,
-                                sessionCurrent = true,
-                                previousForZipNames = cached.entries,
-                            )
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            throw e
-                        } catch (e: Throwable) {
-                            // Leave sessionCurrent false so a later visit can retry quick scan.
+                startListJob(cacheKey) {
+                    try {
+                        val refresh = listDirectorySlim(
+                            source,
+                            password,
+                            relativeDir,
+                            cached.entries,
+                            configKey,
+                        )
+                        if (!refresh.persist) {
                             logcat("FolderIndex") {
-                                "SMB slim refresh failed for source=${source.id} dir=$relativeDir " +
-                                    "(${e.message}); keeping cache"
+                                "SMB slim ignored untrusted listing for source=${source.id} " +
+                                    "dir=$relativeDir; keeping cache"
                             }
-                            presented
+                            return@startListJob presented
                         }
+                        // Successful slim marks this exact directory current (even if unchanged).
+                        val toKeep = if (refresh.persist &&
+                            (refresh.entries != cached.entries || refresh.zipInteriors.isNotEmpty())
+                        ) {
+                            persistParentAndZipInteriors(
+                                source,
+                                configKey,
+                                relativeDir,
+                                refresh.entries,
+                                refresh.zipInteriors,
+                            )
+                        } else {
+                            refresh.entries
+                        }
+                        val slimmed = presentListingForZipAsDirToggle(
+                            source,
+                            configKey,
+                            relativeDir,
+                            toKeep,
+                            sessionCurrent = true,
+                            previousForZipNames = cached.entries,
+                        )
+                        publishCachedOnMain(slimmed, onCached)
+                        slimmed
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        // Leave sessionCurrent false so a later visit can retry quick scan.
+                        logcat("FolderIndex") {
+                            "SMB slim refresh failed for source=${source.id} dir=$relativeDir " +
+                                "(${e.message}); keeping cache"
+                        }
+                        presented
+                    } finally {
+                        publishRefreshDoneOnMain(onRefreshDone)
                     }
-                } catch (e: IOException) {
-                    logcat("FolderIndex") {
-                        "SMB slim refresh cancelled for source=${source.id} dir=$relativeDir " +
-                            "(${e.message}); keeping cache"
-                    }
-                    presented
                 }
+                return presented
             }
         } else {
             BrowseSession.invalidateSmbListing(source.id, relativeDir)
@@ -2048,9 +2067,7 @@ object SmbGateway {
                 "ms=${(System.nanoTime() - t0) / 1_000_000}"
         }
         // Compose state must update on Main (loader runs on gatewayScope IO).
-        withContext(Dispatchers.Main.immediate) {
-            onCached?.invoke(shallowMerged)
-        }
+        publishCachedOnMain(shallowMerged, onCached)
 
         // Another waiter may have finished deep classify while we painted shallow.
         BrowseSession.getSmbCachedListing(source.id, relativeDir)?.let { cached ->
@@ -2145,26 +2162,38 @@ object SmbGateway {
         }
     }
 
+    private fun isListJobActive(cacheKey: String): Boolean = listJobs[cacheKey]?.isActive == true
+
+    /** Start [loader] if none is running. Does not wait — cache paint is not blocked by slim. */
+    private fun startListJob(
+        cacheKey: String,
+        loader: suspend () -> List<BrowseEntryRemote>,
+    ) {
+        ensureListJob(cacheKey, loader)
+    }
+
+    private suspend fun publishCachedOnMain(
+        entries: List<BrowseEntryRemote>,
+        onCached: ((List<BrowseEntryRemote>) -> Unit)?,
+    ) {
+        if (onCached == null) return
+        withContext(Dispatchers.Main.immediate) {
+            onCached(entries)
+        }
+    }
+
+    private suspend fun publishRefreshDoneOnMain(onRefreshDone: (() -> Unit)?) {
+        if (onRefreshDone == null) return
+        withContext(Dispatchers.Main.immediate) {
+            onRefreshDone()
+        }
+    }
+
     private suspend fun awaitListJob(
         cacheKey: String,
         loader: suspend () -> List<BrowseEntryRemote>,
     ): List<BrowseEntryRemote> {
-        val pipe = cacheKey.indexOf('|')
-        val sourceId = if (pipe > 0) cacheKey.substring(0, pipe).toLongOrNull() else null
-        if (sourceId != null) {
-            cancelSiblingListJobs(sourceId, keepKey = cacheKey)
-        }
-        val deferred = listJobs.compute(cacheKey) { _, existing ->
-            if (existing != null && existing.isActive) {
-                existing
-            } else {
-                // Drop completed/cancelled leftovers so a hung prior job cannot stick forever.
-                existing?.cancel()
-                gatewayScope.async { loader() }.also { job ->
-                    job.invokeOnCompletion { listJobs.remove(cacheKey, job) }
-                }
-            }
-        }!!
+        val deferred = ensureListJob(cacheKey, loader)
         return try {
             withTimeout(LIST_AWAIT_TIMEOUT_MS) {
                 deferred.await()
@@ -2173,6 +2202,8 @@ object SmbGateway {
             if (listJobs.remove(cacheKey, deferred)) {
                 deferred.cancel()
             }
+            val pipe = cacheKey.indexOf('|')
+            val sourceId = if (pipe > 0) cacheKey.substring(0, pipe).toLongOrNull() else null
             val cached = if (sourceId != null && pipe > 0) {
                 BrowseSession.getSmbListing(sourceId, cacheKey.substring(pipe + 1))
             } else {
@@ -2188,6 +2219,28 @@ object SmbGateway {
             coroutineContext.ensureActive()
             throw IOException("SMB list cancelled (network lost or refresh)", e)
         }
+    }
+
+    private fun ensureListJob(
+        cacheKey: String,
+        loader: suspend () -> List<BrowseEntryRemote>,
+    ): Deferred<List<BrowseEntryRemote>> {
+        val pipe = cacheKey.indexOf('|')
+        val sourceId = if (pipe > 0) cacheKey.substring(0, pipe).toLongOrNull() else null
+        if (sourceId != null) {
+            cancelSiblingListJobs(sourceId, keepKey = cacheKey)
+        }
+        return listJobs.compute(cacheKey) { _, existing ->
+            if (existing != null && existing.isActive) {
+                existing
+            } else {
+                // Drop completed/cancelled leftovers so a hung prior job cannot stick forever.
+                existing?.cancel()
+                gatewayScope.async { loader() }.also { job ->
+                    job.invokeOnCompletion { listJobs.remove(cacheKey, job) }
+                }
+            }
+        }!!
     }
 
     private data class SlimDirectoryRefresh(

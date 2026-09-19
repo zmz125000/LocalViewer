@@ -35,7 +35,11 @@ import splitties.init.appCtx
  * list for that exact directory marks the RAM entry current; quick scan then skips
  * current dirs and re-runs for every old dir (including subfolders).
  *
- * Local folder roots use protocol `local` with [LibraryRootEntity.id] as [sourceId].
+ * Local folder roots use protocol `local` with [LibraryRootEntity.id] as [sourceId]
+ * (`local_{id}/` on disk). Each SAF-picked folder is its own root id — listings
+ * never share a directory across local sources. [BrowseSession.localFolderListingKey]
+ * uses the same `rootId` + relativeDir identity so SAF document URIs and
+ * `mediastore:/…` paths cannot miss or overwrite each other.
  * Lives under [appCtx.noBackupFilesDir] so Android cache GC / [OriginDiskCache] trim
  * cannot delete it. Legacy v5 `{protocol}_{id}.json` blobs (current + [appCtx.cacheDir])
  * are split into per-folder files on first load/save.
@@ -160,6 +164,7 @@ object NetworkFolderIndexCache {
             deleteDirContents(cacheDir)
             deleteDirContents(legacyCacheDir)
         }
+        LocalFolderListing.cancelListingJobs()
         BrowseSession.invalidateLocalListing()
         BrowseSession.invalidateAllSmbListings()
         BrowseSession.invalidateAllWebDavListings()

@@ -27,6 +27,9 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -109,7 +112,10 @@ sealed interface VideoThumbnailSource {
  * - MMR runs on [decodePool]. Waiter uses [withTimeout] only — **never**
  *   [MediaMetadataRetriever.release] from the waiter. Worker releases after native returns.
  * - Probe I/O on [probePool]; timeout/cancel closes [ArchiveByteSource] (safe: not under MMR).
- * - [onAppBackgrounded] rejects new network thumbs so ON_STOP cannot race decode.
+ * - [onAppBackgrounded] rejects **all** new extracts (local library included) so ON_STOP
+ *   cannot leave `media.extractor` spinning after the UI is gone.
+ * - [onBrowseFolderChanged] rotates decode/probe pools when the visible folder (or library
+ *   section) changes, including leave (`""`) — waiters cancel; native MMR is not interrupted.
  *
  * Disk: `cache/video_thumb_cache/` under [OriginDiskCache.THUMB_BUDGET_BYTES].
  */
@@ -149,8 +155,15 @@ object VideoThumbnail {
     /** Leave room for release after last seek inside the decode budget. */
     private const val SEEK_BUDGET_MS = 2_400L
 
-    /** When true, skip new network extract (app background / pool teardown). */
-    private val networkPaused = AtomicBoolean(false)
+    /**
+     * When true, skip **all** new extracts (local + network). App background / pool
+     * teardown — library video thumbs used to keep starting MMR after ON_STOP.
+     */
+    private val extractPaused = AtomicBoolean(false)
+    private val extractEnabledState = MutableStateFlow(true)
+
+    /** Compose [LaunchedEffect] key: false while the app is backgrounded. */
+    val extractEnabled: StateFlow<Boolean> = extractEnabledState.asStateFlow()
 
     private const val PROBE_HEAD_BYTES = 2 * 1024 * 1024
     private const val PROBE_TAIL_BYTES = 2 * 1024 * 1024
@@ -174,7 +187,9 @@ object VideoThumbnail {
     private val pathLocks = ConcurrentHashMap<String, Mutex>()
     private val leftoverMarkersCleared = AtomicBoolean(false)
     private val poolLock = Any()
-    private val browseFolderKey = AtomicReference<String?>(null)
+
+    /** Empty string = no visible folder (root picker / screen disposed / library left). */
+    private val browseFolderKey = AtomicReference("")
 
     /**
      * Hard-capped MMR threads. SynchronousQueue: never queue behind cancelled zombies.
@@ -210,30 +225,57 @@ object VideoThumbnail {
     fun cacheDirectory(): File = File(appCtx.applicationInfo.dataDir, "cache/video_thumb_cache").apply { mkdirs() }
 
     /**
-     * Call when the visible browse folder changes (SMB/WebDAV/local path).
-     * Rotates thumb pools so leave→enter folder is not blocked by abandoned MMR threads.
+     * Call when the visible browse folder / library section changes.
+     * [folderKey] empty = left the folder (root picker, screen dispose). Rotates thumb
+     * pools so leave→enter is not blocked by abandoned MMR threads and `media.extractor`
+     * is not kept busy on the previous folder’s files. Does **not** interrupt native.
      */
     fun onBrowseFolderChanged(folderKey: String) {
         val prev = browseFolderKey.getAndSet(folderKey)
-        if (prev != null && prev != folderKey) {
-            rotatePools("browse $prev → $folderKey")
+        if (prev != folderKey) {
+            rotatePools(
+                "browse ${prev.ifEmpty { "none" }} → ${folderKey.ifEmpty { "none" }}",
+            )
         }
     }
 
     /**
-     * App [Lifecycle.Event.ON_STOP]: reject new network thumbs. In-flight probes still
-     * close their [ArchiveByteSource]; in-flight MMR only touches closed snapshots so
-     * a later screen-off pool drop cannot wedge `media.extractor`.
+     * Screen dispose / empty stack. Only clears if this screen still owns the extract
+     * generation — otherwise Library `onDispose` would wipe a folder we just entered.
+     */
+    fun onBrowseFolderLeft(ownerPrefix: String) {
+        val current = browseFolderKey.get()
+        if (current.startsWith(ownerPrefix)) {
+            onBrowseFolderChanged("")
+        }
+    }
+
+    internal fun browseFolderKeyForTest(): String = browseFolderKey.get()
+
+    /**
+     * App [Lifecycle.Event.ON_STOP]: reject new local **and** network thumbs. In-flight
+     * probes still close their [ArchiveByteSource]; in-flight MMR is not [release]d from
+     * the waiter. Rotate pools so abandoned `getFrameAtTime` workers drain off-thread.
      */
     fun onAppBackgrounded() {
-        networkPaused.set(true)
+        extractPaused.set(true)
+        extractEnabledState.value = false
         // Drop zombies from the previous foreground session before pool teardown races.
         rotatePools("app-background")
-        logcat("VideoThumb") { "app background — pause new network thumbs" }
+        logcat("VideoThumb") { "app background — pause all thumbs" }
     }
 
     fun onAppForegrounded() {
-        networkPaused.set(false)
+        extractPaused.set(false)
+        extractEnabledState.value = true
+    }
+
+    private fun skipIfPaused(label: String? = null): Boolean {
+        if (!extractPaused.get()) return false
+        logcat("VideoThumb") {
+            if (label != null) "skip thumb ($label): app background" else "skip thumb: app background"
+        }
+        return true
     }
 
     private fun rotatePools(reason: String) {
@@ -295,6 +337,7 @@ object VideoThumbnail {
         if (source.isNetwork && !Settings.downloadNetworkVideoThumbs.value) {
             return@withIOContext null
         }
+        if (skipIfPaused(privacyLogLabel(source))) return@withIOContext null
 
         val mutex = pathLocks.getOrPut(source.cacheIdentity) { Mutex() }
         mutex.withLock {
@@ -303,10 +346,7 @@ object VideoThumbnail {
             if (source.isNetwork && !Settings.downloadNetworkVideoThumbs.value) {
                 return@withLock null
             }
-            if (source.isNetwork && networkPaused.get()) {
-                logcat("VideoThumb") { "skip network thumb: app background" }
-                return@withLock null
-            }
+            if (skipIfPaused(privacyLogLabel(source))) return@withLock null
             val frame = try {
                 extractThumbnailFrame(source, persistTarget = target)
             } catch (e: CancellationException) {
@@ -382,6 +422,7 @@ object VideoThumbnail {
         persistTarget: File,
     ): Bitmap? = when (source) {
         is VideoThumbnailSource.Local -> {
+            if (skipIfPaused(privacyLogLabel(source))) return null
             val zipMember = ZipPaths.parse(source.path)
             if (zipMember != null) {
                 probeSemaphore.withPermit {
@@ -406,10 +447,10 @@ object VideoThumbnail {
             }
         }
         is VideoThumbnailSource.Smb -> {
-            if (networkPaused.get()) return null
+            if (skipIfPaused(privacyLogLabel(source))) return null
             val smb = SmbRepository.load(source.sourceId) ?: error("SMB source missing")
             probeSemaphore.withPermit {
-                if (networkPaused.get()) return@withPermit null
+                if (skipIfPaused(privacyLogLabel(source))) return@withPermit null
                 SmbCache.withBrowseThumbFetchSlot {
                     val raw = SmbArchiveByteSource(
                         source = smb,
@@ -424,10 +465,10 @@ object VideoThumbnail {
             }
         }
         is VideoThumbnailSource.WebDav -> {
-            if (networkPaused.get()) return null
+            if (skipIfPaused(privacyLogLabel(source))) return null
             val webDav = WebDavRepository.load(source.sourceId) ?: error("WebDAV source missing")
             probeSemaphore.withPermit {
-                if (networkPaused.get()) return@withPermit null
+                if (skipIfPaused(privacyLogLabel(source))) return@withPermit null
                 WebDavCache.withBrowseThumbFetchSlot {
                     val raw = WebDavArchiveByteSource(
                         source = webDav,
@@ -669,6 +710,7 @@ object VideoThumbnail {
         persistTarget: File,
     ): Bitmap? {
         val label = privacyLogLabel(source)
+        if (skipIfPaused(label)) return null
         val file = File(source.path)
         if (source.path.startsWith('/') && file.isFile) {
             return decodeFrameWatchdog(

@@ -715,10 +715,11 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                     listingSessionCurrent =
                         BrowseSession.isSmbListingSessionCurrent(sourceId, loadDir)
                     error = null
-                    // Paint rows now, but keep PullToRefresh indicator until
-                    // listDirectory returns (deferred deep / slim still running).
-                    // Full-screen spinner only when entries empty or path mismatch.
+                    loading = false
                     refreshing = true
+                },
+                onRefreshDone = {
+                    if (listedDir == loadDir) refreshing = false
                 },
             )
             // Still the active effect for this path (not cancelled) → safe to commit.
@@ -729,7 +730,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             SmbRepository.markOk(src.id)
             error = null
             loading = false
-            refreshing = false
+            refreshing = SmbGateway.isListing(sourceId, loadDir)
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Path changed or refreshToken bumped — new effect owns loading state.
             throw e
@@ -747,6 +748,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
             }
             loading = false
             refreshing = false
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            VideoThumbnail.onBrowseFolderLeft("smb:")
+            ArchiveCoverCache.onBrowseFolderLeft("smb:")
         }
     }
 

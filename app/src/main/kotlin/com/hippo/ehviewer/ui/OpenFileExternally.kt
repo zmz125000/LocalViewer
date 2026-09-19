@@ -536,12 +536,12 @@ object OpenFileExternally {
                 } else {
                     findLocalSidecarNames(pathStr, displayName)
                 }
+                // Names only — do not stat / open PFD here. localFileEntry used to
+                // openFileDescriptor+statSize every sibling (SAF/MediaStore ≈ 10s for 400 videos).
                 for (name in extras) {
                     if (session.files.containsKey(ExternalHttpStreamServer.pathKey(name))) continue
                     val subPath = siblingPath(pathStr, name) ?: continue
-                    runCatching {
-                        session.put(localFileEntry(subPath, name, mediaMimeForName(name)))
-                    }.onFailure { logcat("OpenFileExternally", it) }
+                    session.put(localFileEntry(subPath, name, mediaMimeForName(name)))
                 }
                 logcat("OpenFileExternally") {
                     "HTTP local video session=${session.id} file=${PrivacyLog.file(displayName)} " +
@@ -751,10 +751,15 @@ object OpenFileExternally {
         }
     }
 
+    /**
+     * @param sizeBytes known length, or **−1** (resolved on first HTTP GET). Never stat or
+     *   open a PFD here — folder access registers every sibling before launch.
+     */
     internal fun localFileEntry(
         pathStr: String,
         displayName: String,
         mimeType: String,
+        sizeBytes: Long = -1L,
     ): ExternalHttpStreamServer.FileEntry {
         val video = DefaultVideoPlayer.isVideoMime(mimeType) || isBrowseVideoFileName(displayName)
         val onPlay = if (video) {
@@ -766,13 +771,10 @@ object OpenFileExternally {
         }
         ZipPaths.parse(pathStr)?.let { (zipAbs, member) ->
             val zipPath = zipAbs.toPath()
-            val size = openLocalArchiveByteSource(zipPath)?.use { zip ->
-                ZipMemberByteSource.uncompressedSize(zip, member)
-            }?.takeIf { it > 0L } ?: error("empty zip member")
             return ExternalHttpStreamServer.FileEntry(
                 displayName = displayName,
                 mimeType = mimeType,
-                sizeBytes = size,
+                sizeBytes = sizeBytes,
                 cacheBody = video,
                 onPlaybackStart = onPlay,
                 open = {
@@ -788,26 +790,23 @@ object OpenFileExternally {
                 },
             )
         }
-        val file = File(pathStr)
-        if (pathStr.startsWith('/') && file.isFile) {
-            val size = file.length().takeIf { it > 0L } ?: error("empty file")
+        if (pathStr.startsWith('/')) {
+            val file = File(pathStr)
             return ExternalHttpStreamServer.FileEntry(
                 displayName = displayName,
                 mimeType = mimeType,
-                sizeBytes = size,
+                sizeBytes = sizeBytes,
                 onPlaybackStart = onPlay,
                 open = { ExternalHttpStreamServer.LocalFileBody(file) },
             )
         }
-        val openPfd: () -> ParcelFileDescriptor = { pathStr.toPath().openFileDescriptor("r") }
-        val size = openPfd().use { it.statSize.takeIf { s -> s > 0L } ?: error("empty file") }
         return ExternalHttpStreamServer.FileEntry(
             displayName = displayName,
             mimeType = mimeType,
-            sizeBytes = size,
+            sizeBytes = sizeBytes,
             onPlaybackStart = onPlay,
             open = {
-                ExternalHttpStreamServer.PfdBody(openPfd())
+                ExternalHttpStreamServer.PfdBody(pathStr.toPath().openFileDescriptor("r"))
             },
         )
     }
@@ -997,11 +996,12 @@ object OpenFileExternally {
         val root = LocalLibrary.loadRoot(frame.rootId) ?: return emptyList()
         val rootPath = LocalLibrary.rootPath(root) ?: return emptyList()
         return siblingNamesFromListing(
-            NetworkFolderIndexCache.loadLocal(
-                frame.rootId,
-                LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
-                frame.relativePath,
-            ),
+            BrowseSession.getLocalFolderCachedListing(frame.rootId, frame.relativePath)?.entries
+                ?: NetworkFolderIndexCache.loadLocal(
+                    frame.rootId,
+                    LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
+                    frame.relativePath,
+                ),
         )
     }
 
@@ -1028,6 +1028,7 @@ object OpenFileExternally {
         runCatching { add(resolveBrowsePath(dir, preferMediaStore = false)) }
         val frame = matchingLocalFrame(dir)
         if (frame != null) {
+            keys += BrowseSession.localFolderListingKey(frame.rootId, frame.relativePath)
             add(frame.path.toPath())
             runCatching {
                 add(resolveBrowsePath(frame.path.toPath(), preferMediaStore = frame.preferMediaStore))

@@ -88,6 +88,7 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.LocalListingJobs
 import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.VideoThumbnail
@@ -409,12 +410,16 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             frame.path.toPath(),
             preferMediaStore = frame.preferMediaStore,
         )
-        val key = BrowseSession.pathKey(effective)
-        val previous = BrowseSession.getLocalCachedListing(key)?.entries
-        BrowseSession.putLocalListing(
-            key,
+        val previous = BrowseSession.getLocalFolderCachedListing(
+            frame.rootId,
+            frame.relativePath,
+        )?.entries
+        BrowseSession.putLocalFolderListing(
+            frame.rootId,
+            frame.relativePath,
             FolderGalleryIndex.mergeLibraryFolderVideos(previous, names),
             sessionCurrent = false,
+            pathAlias = effective,
         )
         entries = FolderGalleryIndex.videoFolderLocalFiles(frame.path, names)
         listedPath = frameListKey(frame)
@@ -449,7 +454,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             frame.path.toPath(),
             preferMediaStore = frame.preferMediaStore,
         )
-        val cached = BrowseSession.getLocalCachedListing(BrowseSession.pathKey(effective)) ?: return false
+        val cached = BrowseSession.getLocalFolderCachedListing(
+            frame.rootId,
+            frame.relativePath,
+        ) ?: return false
         entries = materializeLocalEntries(
             effective,
             ZipAsDirListing.presentCachedListing(cached.entries),
@@ -471,28 +479,31 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 BrowseSession.localZipListingKey(frame.rootId, virtualDir),
             )
         }
-        val effective = resolveBrowsePath(
-            frame.path.toPath(),
-            preferMediaStore = frame.preferMediaStore,
-        )
-        return BrowseSession.isLocalListingSessionCurrent(BrowseSession.pathKey(effective))
+        return BrowseSession.isLocalFolderListingSessionCurrent(frame.rootId, frame.relativePath)
+    }
+
+    fun notifyLocalThumbFolder(frame: BrowseSession.LocalFrame?) {
+        if (frame == null) {
+            VideoThumbnail.onBrowseFolderLeft("local:")
+            ArchiveCoverCache.onBrowseFolderLeft("local:")
+            return
+        }
+        val key = "local:${frame.rootId}:${frame.relativePath}:${frame.zipInnerRel.orEmpty()}"
+        VideoThumbnail.onBrowseFolderChanged(key)
+        ArchiveCoverCache.onBrowseFolderChanged(key)
     }
 
     suspend fun reload(force: Boolean = false) {
         val frame = stack.lastOrNull()
         if (frame == null) {
+            notifyLocalThumbFolder(null)
             entries = emptyList()
             listedPath = null
             error = null
             return
         }
         // Leave→enter folder must not wait on previous path’s stuck MMR workers.
-        VideoThumbnail.onBrowseFolderChanged(
-            "local:${frame.rootId}:${frame.relativePath}:${frame.zipInnerRel.orEmpty()}",
-        )
-        ArchiveCoverCache.onBrowseFolderChanged(
-            "local:${frame.rootId}:${frame.relativePath}:${frame.zipInnerRel.orEmpty()}",
-        )
+        notifyLocalThumbFolder(frame)
         val targetPath = frameListKey(frame)
         // Photo-grid open: same complete index the reader uses — no directory scan.
         if (!force && frame.photoGrid) {
@@ -585,7 +596,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             entries = cached
                             listedPath = targetPath
                             error = null
-                            refreshing = true
+                            loading = false
                         }
                     },
                 ) ?: error("Cannot read ZIP central directory")
@@ -627,9 +638,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         entries = cached
                         listedPath = targetPath
                         error = null
-                        // Rows visible; keep refresh indicator until listDirectory returns
-                        // (deferred deep / slim still running). Match SMB/WebDAV.
+                        loading = false
                         refreshing = true
+                    }
+                },
+                onRefreshDone = {
+                    if (stack.lastOrNull()?.let { frameListKey(it) } == targetPath) {
+                        refreshing = false
                     }
                 },
             )
@@ -639,7 +654,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             listedPath = targetPath
             error = null
             loading = false
-            refreshing = false
+            refreshing = LocalListingJobs.isActive(
+                BrowseSession.localFolderListingKey(frame.rootId, frame.relativePath),
+            )
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Path change / new reload owns loading — do not clear here (same as SMB).
             throw e
@@ -661,12 +678,17 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             skipNextListing = false
             loading = false
             refreshing = false
+            notifyLocalThumbFolder(stack.lastOrNull())
             return@LaunchedEffect
         }
         skipNextListing = false
         val force = forceNextLoad
         forceNextLoad = false
         reload(force = force)
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { notifyLocalThumbFolder(null) }
     }
 
     // Zip-as-dir toggle: force re-list in both directions so ArchiveGallery ↔ Folder/Directory
@@ -695,10 +717,19 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         if (showHiddenFiles && !prevShowHidden) {
             val frame = stack.lastOrNull()
             if (frame != null) {
-                val key = BrowseSession.pathKey(frame.path.toPath())
-                BrowseSession.getLocalCachedListing(key)?.let { cached ->
-                    BrowseSession.putLocalListing(key, cached.entries, sessionCurrent = false)
-                }
+                BrowseSession.getLocalFolderCachedListing(frame.rootId, frame.relativePath)
+                    ?.let { cached ->
+                        BrowseSession.putLocalFolderListing(
+                            frame.rootId,
+                            frame.relativePath,
+                            cached.entries,
+                            sessionCurrent = false,
+                            pathAlias = resolveBrowsePath(
+                                frame.path.toPath(),
+                                preferMediaStore = frame.preferMediaStore,
+                            ),
+                        )
+                    }
                 reload(force = false)
             }
         }
