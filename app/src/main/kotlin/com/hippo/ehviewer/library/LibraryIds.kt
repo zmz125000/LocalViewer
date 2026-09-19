@@ -13,3 +13,10 @@ fun stableGalleryId(rootId: Long, relativePath: String): Long {
     // Avoid 0 which is unused/invalid in some call sites
     return if (h == 0L) 1L else h
 }
+
+/** Library folder key `.` (scan) is browse relative `` (root). */
+fun libraryBrowseRelative(relativePath: String): String = if (relativePath.isEmpty() || relativePath == ".") "" else relativePath
+
+fun libraryVideoFolderId(rootId: Long, folderKey: String): Long = stableGalleryId(rootId, "v:$folderKey")
+
+fun libraryVideoFileId(rootId: Long, fileRel: String): Long = stableGalleryId(rootId, "vf:$fileRel")

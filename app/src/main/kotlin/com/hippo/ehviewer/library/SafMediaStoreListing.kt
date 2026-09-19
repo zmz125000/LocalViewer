@@ -55,12 +55,25 @@ object SafMediaStoreListing {
     fun imageFoldersUnderRoot(
         rootRelativeDir: String,
         files: List<ImageFile>,
+    ): Map<String, ImageFolder> = mediaFoldersUnderRoot(rootRelativeDir, files, ::isImageFileName)
+
+    fun videoFoldersUnderRoot(
+        rootRelativeDir: String,
+        files: List<ImageFile>,
+    ): Map<String, ImageFolder> = mediaFoldersUnderRoot(rootRelativeDir, files) { name ->
+        isVideoFileName(name) && !isSampleVideoFileName(name)
+    }
+
+    private fun mediaFoldersUnderRoot(
+        rootRelativeDir: String,
+        files: List<ImageFile>,
+        acceptName: (String) -> Boolean,
     ): Map<String, ImageFolder> {
         val root = rootRelativeDir.replace('\\', '/').trim('/')
         val namesByRel = LinkedHashMap<String, ArrayList<String>>()
         val latestByRel = HashMap<String, Long>()
         for (file in files) {
-            if (!isImageFileName(file.name)) continue
+            if (!acceptName(file.name)) continue
             val parent = file.parentRelativePath.replace('\\', '/').trim('/')
             val rel = relativeUnderRoot(root, parent) ?: continue
             namesByRel.getOrPut(rel) { ArrayList() }.add(file.name)

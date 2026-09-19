@@ -24,6 +24,8 @@ class MediaStoreIndexStampTest {
     fun `parse rejects malformed`() {
         assertNull(MediaStoreIndexStamp.parse("7:1:2"))
         assertNull(MediaStoreIndexStamp.parse("x:1:2:3:4"))
+        // Pre-video 5-field stamps must not skip the first images+video scan.
+        assertNull(MediaStoreIndexStamp.parse("7:42:1200:1700000000:43981"))
     }
 
     @Test

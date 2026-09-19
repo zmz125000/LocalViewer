@@ -1023,7 +1023,7 @@ fun BrowseVideoGridItem(
 }
 
 @Composable
-private fun BrowseVideoThumbnail(
+internal fun BrowseVideoThumbnail(
     source: VideoThumbnailSource?,
     modifier: Modifier,
     iconSize: Dp,

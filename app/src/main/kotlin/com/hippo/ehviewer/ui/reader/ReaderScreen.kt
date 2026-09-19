@@ -125,6 +125,7 @@ import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.MainActivity
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
+import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.theme.EhTheme
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitInputText
@@ -1176,7 +1177,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                             dragHandle = null,
                             contentWindowInsets = { WindowInsets() },
                         ) {
-                            Box(Modifier.readerSheetBox(readerSheetCapHeight(isLandscape))) {
+                            Box(Modifier.readerSheetBox(GalleryGridDefaults.capReaderSheet())) {
                                 SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize())
                             }
                         }

@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.ehviewer.core.database.model.GalleryEntity
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FOLDER
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
@@ -79,6 +81,7 @@ import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.buildLocalBrowseStack
 import com.hippo.ehviewer.library.isVideoFileName
+import com.hippo.ehviewer.library.libraryBrowseRelative
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.parentRelativeOfFile
 import com.hippo.ehviewer.library.resolveRelative
@@ -204,6 +207,35 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     if (local == null) {
                         snackbar(string(R.string.history_unavailable))
                         withIOContext { EhDB.deleteHistoryInfo(info) }
+                        return@launch
+                    }
+                    if (local.kind == LOCAL_GALLERY_KIND_VIDEO_FILE) {
+                        val path = local.contentPath
+                        val name = local.title
+                        val mime = mimeTypeForFileName(name)
+                        if (Settings.useMedia3Player.value) {
+                            OpenFileExternally.playLocal(context, path, displayName = name, mimeType = mime)
+                        } else {
+                            OpenFileExternally.openLocal(context, path, displayName = name, mimeType = mime)
+                        }
+                        return@launch
+                    }
+                    if (local.kind == LOCAL_GALLERY_KIND_VIDEO_FOLDER) {
+                        val root = withIOContext { LocalLibrary.loadRoot(local.rootId) }
+                        val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                        if (root == null || rootPath == null) {
+                            snackbar(string(R.string.history_unavailable))
+                            withIOContext { EhDB.deleteHistoryInfo(info) }
+                            return@launch
+                        }
+                        openLocalBrowseDir(
+                            rootId = root.id,
+                            rootDisplayName = root.displayName,
+                            rootPath = rootPath,
+                            relativePath = libraryBrowseRelative(local.relativePath),
+                            preferMediaStore = root.prefersMediaStore,
+                            fromHistory = true,
+                        )
                         return@launch
                     }
                     if (local.kind == LOCAL_GALLERY_KIND_ARCHIVE) {

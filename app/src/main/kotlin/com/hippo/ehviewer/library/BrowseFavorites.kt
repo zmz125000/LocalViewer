@@ -4,6 +4,7 @@ import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.database.model.WebDavSourceEntity
+import com.ehviewer.core.database.model.isLibraryGalleryKind
 import com.hippo.ehviewer.Settings
 
 /**
@@ -216,7 +217,9 @@ fun resolveFavoriteBrowseSources(
     }
     for (key in favoriteKeys) {
         BrowseFavorites.parseGalleryId(key)?.let { id ->
-            galleryById[id]?.let { out += FavoriteBrowseSource.Gallery(it) }
+            galleryById[id]?.takeIf { isLibraryGalleryKind(it.kind) }?.let {
+                out += FavoriteBrowseSource.Gallery(it)
+            }
         }
         BrowseFavorites.parseLocalFolder(key)?.let { (rootId, rel) ->
             rootById[rootId]?.let {

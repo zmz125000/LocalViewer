@@ -40,21 +40,25 @@ object GalleryGridDefaults {
     fun columns(): GridCells = GridCells.Fixed(columnCount())
 
     /**
-     * List-mode columns from [Configuration.smallestScreenWidthDp] (stable across
-     * rotation) plus orientation:
-     * phone portrait 1, phone landscape 2, tablet 3, tablet landscape 4.
-     * Tablet = sw ≥ 600dp ([WIDTH_DP_MEDIUM_LOWER_BOUND] / `sw600dp`).
+     * Phone/tablet × portrait/landscape from [Configuration.smallestScreenWidthDp]
+     * (stable across rotation) plus orientation. Tablet = sw ≥ 600dp.
      */
     @Composable
-    fun listColumnCount(): Int {
+    private fun listLayout(): WindowListLayout {
         val configuration = LocalConfiguration.current
         val smallestWidthDp = configuration.smallestScreenWidthDp
         val landscape =
             configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         return remember(smallestWidthDp, landscape) {
-            effectiveListColumnCount(smallestWidthDp, landscape)
+            windowListLayout(smallestWidthDp, landscape)
         }
     }
+
+    @Composable
+    fun listColumnCount(): Int = listLayout().columns
+
+    @Composable
+    fun capReaderSheet(): Boolean = listLayout().capReaderSheet
 
     @Composable
     fun listColumns(): GridCells = GridCells.Fixed(listColumnCount())
@@ -91,13 +95,21 @@ internal fun effectiveColumnCount(thumbColumns: Int, landscape: Boolean): Int {
     return ceil(base * 1.5).toInt().coerceAtLeast(1)
 }
 
-/** Phone 1 / phone landscape 2 / tablet 3 / tablet landscape 4. */
-internal fun effectiveListColumnCount(smallestWidthDp: Int, landscape: Boolean): Int {
+/**
+ * Phone portrait 1 col / phone landscape 2 / tablet 2 / tablet landscape 3.
+ * Reader sheets cap at 0.7 except phone landscape, which fills the screen.
+ */
+internal data class WindowListLayout(
+    val columns: Int,
+    val capReaderSheet: Boolean,
+)
+
+internal fun windowListLayout(smallestWidthDp: Int, landscape: Boolean): WindowListLayout {
     val tablet = smallestWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
     return when {
-        tablet && landscape -> 3
-        tablet -> 2
-        landscape -> 2
-        else -> 1
+        tablet && landscape -> WindowListLayout(columns = 3, capReaderSheet = true)
+        tablet -> WindowListLayout(columns = 2, capReaderSheet = true)
+        landscape -> WindowListLayout(columns = 2, capReaderSheet = false)
+        else -> WindowListLayout(columns = 1, capReaderSheet = true)
     }
 }

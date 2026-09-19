@@ -24,6 +24,9 @@
     <string name="browse_manage_sources_short">來源</string>
     <string name="network_duplicate_smb">複製</string>
     <string name="library_empty">尚無圖庫。請從瀏覽頁頂部列新增圖庫來源。</string>
+    <string name="library_empty_videos">尚無影片。請從瀏覽頁頂部列新增圖庫來源。</string>
+    <string name="library_video_folders">影片資料夾</string>
+    <string name="library_video_all">全部影片</string>
     <string name="library_add_root">新增圖庫資料夾</string>
     <string name="library_add_library_source">新增圖庫來源</string>
     <string name="library_add_folder_source">新增瀏覽資料夾</string>

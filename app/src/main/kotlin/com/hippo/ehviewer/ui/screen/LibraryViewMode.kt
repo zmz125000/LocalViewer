@@ -29,10 +29,15 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FOLDER
+import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.libraryBrowseRelative
+import com.hippo.ehviewer.library.stableGalleryId
 
 /** Library gallery secondary sort ([Settings.librarySortMode]). */
 enum class LibrarySortMode(val prefValue: Int) {
@@ -46,6 +51,73 @@ enum class LibrarySortMode(val prefValue: Int) {
             else -> Name // includes legacy exclusive Last-open (=2)
         }
     }
+}
+
+/** Library screen section ([Settings.librarySection]). Tap the section header to swap. */
+enum class LibrarySection(val prefValue: Int) {
+    Galleries(0),
+    Videos(1),
+    ;
+
+    companion object {
+        fun fromPref(value: Int): LibrarySection = when (value) {
+            Videos.prefValue -> Videos
+            else -> Galleries
+        }
+    }
+}
+
+/** Video library listing ([Settings.libraryVideoMode]). */
+enum class LibraryVideoMode(val prefValue: Int) {
+    Folders(0),
+    Files(1),
+    ;
+
+    companion object {
+        fun fromPref(value: Int): LibraryVideoMode = when (value) {
+            Files.prefValue -> Files
+            else -> Folders
+        }
+    }
+}
+
+fun libraryItemLastOpenTime(item: LocalGalleryEntity, historyTimeByGid: Map<Long, Long>): Long {
+    historyTimeByGid[item.id]?.takeIf { it > 0L }?.let { return it }
+    return when (item.kind) {
+        LOCAL_GALLERY_KIND_VIDEO_FILE ->
+            historyTimeByGid[stableGalleryId(0L, "local-file:${item.contentPath}")] ?: 0L
+        LOCAL_GALLERY_KIND_VIDEO_FOLDER -> {
+            val rel = libraryBrowseRelative(item.relativePath)
+            historyTimeByGid[stableGalleryId(item.rootId, "browse:$rel")] ?: 0L
+        }
+        else -> 0L
+    }
+}
+
+fun sortLibraryItems(
+    items: List<LocalGalleryEntity>,
+    sortMode: LibrarySortMode,
+    recentOpen: Boolean,
+    historyTimeByGid: Map<Long, Long>,
+): List<LocalGalleryEntity> = when {
+    sortMode == LibrarySortMode.Date && recentOpen ->
+        items.sortedWith(
+            compareByDescending<LocalGalleryEntity> {
+                maxOf(libraryItemLastOpenTime(it, historyTimeByGid), it.mtime)
+            }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+        )
+    sortMode == LibrarySortMode.Date ->
+        items.sortedWith(
+            compareByDescending<LocalGalleryEntity> { it.mtime }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+        )
+    recentOpen ->
+        items.sortedWith(
+            compareByDescending<LocalGalleryEntity> { libraryItemLastOpenTime(it, historyTimeByGid) }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+        )
+    else ->
+        items.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
 }
 
 /**
@@ -65,6 +137,8 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
     var sortModePref by Settings.librarySortMode.asMutableState()
     val sortMode = LibrarySortMode.fromPref(sortModePref)
     var libraryRecentOpen by Settings.libraryRecentOpen.asMutableState()
+    var videoModePref by Settings.libraryVideoMode.asMutableState()
+    val videoMode = LibraryVideoMode.fromPref(videoModePref)
     val useGrid = listMode == 1
     var photoGridMode by Settings.photoGridMode.asMutableState()
     var browseZipAsDir by Settings.browseZipAsDir.asMutableState()
@@ -117,6 +191,23 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 label = stringResource(R.string.library_sort_last_open),
                 checked = libraryRecentOpen,
                 onClick = { libraryRecentOpen = !libraryRecentOpen },
+            )
+            HorizontalDivider()
+            LibraryMenuSelectItem(
+                label = stringResource(R.string.library_video_folders),
+                selected = videoMode == LibraryVideoMode.Folders,
+                onClick = {
+                    videoModePref = LibraryVideoMode.Folders.prefValue
+                    expanded = false
+                },
+            )
+            LibraryMenuSelectItem(
+                label = stringResource(R.string.library_video_all),
+                selected = videoMode == LibraryVideoMode.Files,
+                onClick = {
+                    videoModePref = LibraryVideoMode.Files.prefValue
+                    expanded = false
+                },
             )
             HorizontalDivider()
             LibraryMenuSelectItem(

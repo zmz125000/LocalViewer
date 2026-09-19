@@ -52,6 +52,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.dimensionResource
@@ -61,10 +62,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FOLDER
 import com.ehviewer.core.database.model.LibraryRootEntity
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.database.model.SmbSourceEntity
 import com.ehviewer.core.database.model.WebDavSourceEntity
+import com.ehviewer.core.database.model.isLibraryGalleryKind
+import com.ehviewer.core.database.model.isLibraryVideoKind
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.ui.component.ElevatedCard
@@ -76,6 +81,7 @@ import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.BrowseFavorites
@@ -89,11 +95,14 @@ import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
+import com.hippo.ehviewer.library.libraryBrowseRelative
+import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
 import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.DrawerHandle
+import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.EasyTierScreenDestination
 import com.hippo.ehviewer.ui.easytier.EasyTierDialog
@@ -128,6 +137,7 @@ import okio.Path.Companion.toPath
 @Destination<RootGraph>(start = true)
 @Composable
 fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Screen(navigator) {
+    val context = LocalContext.current
     val title = stringResource(id = R.string.library)
     val hint = stringResource(R.string.search_bar_hint, title)
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
@@ -186,6 +196,10 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val libraryRecentOpen by Settings.libraryRecentOpen.collectAsState()
     val librarySortModePref by Settings.librarySortMode.collectAsState()
     val librarySortMode = LibrarySortMode.fromPref(librarySortModePref)
+    var librarySectionPref by Settings.librarySection.asMutableState()
+    val librarySection = LibrarySection.fromPref(librarySectionPref)
+    val libraryVideoModePref by Settings.libraryVideoMode.collectAsState()
+    val libraryVideoMode = LibraryVideoMode.fromPref(libraryVideoModePref)
     // HISTORY.TIME by gallery gid — Last open pin floats recently opened above Name/Date.
     val historyTimeByGid by rememberInVM {
         mutableStateOf(emptyMap<Long, Long>()).also { state ->
@@ -196,6 +210,12 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
     }
+    val hasGalleries = remember(allVisibleGalleries) {
+        allVisibleGalleries.any { isLibraryGalleryKind(it.kind) }
+    }
+    val hasVideos = remember(allVisibleGalleries) {
+        allVisibleGalleries.any { isLibraryVideoKind(it.kind) }
+    }
     // Live in-list filter.
     // Name + Last open: HISTORY pin then title (old recent-open toggle).
     // Date + Last open: blend max(last-open time, scan mtime), then title.
@@ -205,33 +225,25 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         historyTimeByGid,
         libraryRecentOpen,
         librarySortMode,
+        librarySection,
+        libraryVideoMode,
     ) {
         val q = keyword.trim()
+        val kindFiltered = when (librarySection) {
+            LibrarySection.Galleries -> allVisibleGalleries.filter { isLibraryGalleryKind(it.kind) }
+            LibrarySection.Videos -> allVisibleGalleries.filter { item ->
+                when (libraryVideoMode) {
+                    LibraryVideoMode.Folders -> item.kind == LOCAL_GALLERY_KIND_VIDEO_FOLDER
+                    LibraryVideoMode.Files -> item.kind == LOCAL_GALLERY_KIND_VIDEO_FILE
+                }
+            }
+        }
         val filtered = if (q.isEmpty()) {
-            allVisibleGalleries
+            kindFiltered
         } else {
-            allVisibleGalleries.filter { it.title.contains(q, ignoreCase = true) }
+            kindFiltered.filter { it.title.contains(q, ignoreCase = true) }
         }
-        when {
-            librarySortMode == LibrarySortMode.Date && libraryRecentOpen ->
-                filtered.sortedWith(
-                    compareByDescending<LocalGalleryEntity> {
-                        maxOf(historyTimeByGid[it.id] ?: 0L, it.mtime)
-                    }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
-                )
-            librarySortMode == LibrarySortMode.Date ->
-                filtered.sortedWith(
-                    compareByDescending<LocalGalleryEntity> { it.mtime }
-                        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
-                )
-            libraryRecentOpen ->
-                filtered.sortedWith(
-                    compareByDescending<LocalGalleryEntity> { historyTimeByGid[it.id] ?: 0L }
-                        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
-                )
-            else ->
-                filtered.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
-        }
+        sortLibraryItems(filtered, librarySortMode, libraryRecentOpen, historyTimeByGid)
     }
 
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
@@ -240,6 +252,12 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     }
     // Hide favourites section while filtering.
     val showFavorites = keyword.isBlank() && favorites.isNotEmpty()
+    val showSectionHeader = showFavorites || hasGalleries || hasVideos
+    val sectionHeaderText = if (librarySection == LibrarySection.Videos) {
+        stringResource(R.string.browse_videos)
+    } else {
+        stringResource(R.string.library)
+    }
 
     val listMode by Settings.listMode.collectAsState()
     val showPages by Settings.showGalleryPages.collectAsState()
@@ -282,7 +300,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         // Playlist = visible library list so double-tap prev/next walks that order,
         // not filesystem parent siblings (often only one folder under a path).
         if (keyword.isNotBlank()) launchIO { recordDeviceSearchHistory(keyword) }
-        ReaderGalleryPlaylist.setFromLibrary(galleries)
+        ReaderGalleryPlaylist.setFromLibrary(
+            sortLibraryItems(
+                allVisibleGalleries.filter { isLibraryGalleryKind(it.kind) },
+                librarySortMode,
+                libraryRecentOpen,
+                historyTimeByGid,
+            ),
+        )
         val info = gallery.toBaseGalleryInfo()
         launchIO { LocalHistory.recordLibraryGallery(gallery) }
         if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
@@ -351,6 +376,90 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             return
         }
         openGallery(gallery, photoGrid = !Settings.photoGridMode.value)
+    }
+
+    fun openVideoFolder(item: LocalGalleryEntity) {
+        val root = roots.firstOrNull { it.id == item.rootId } ?: return
+        val rootPath = LocalLibrary.rootPath(root) ?: return
+        val rel = libraryBrowseRelative(item.relativePath)
+        if (keyword.isNotBlank()) launchIO { recordDeviceSearchHistory(keyword) }
+        launchIO {
+            LocalHistory.recordLocalBrowseFolder(
+                rootId = root.id,
+                relativePath = rel,
+                title = item.title,
+                thumbKey = item.coverPath,
+                pages = item.pageCount,
+            )
+        }
+        openLocalBrowseDir(
+            rootId = root.id,
+            rootDisplayName = root.displayName,
+            rootPath = rootPath,
+            relativePath = rel,
+            preferMediaStore = root.prefersMediaStore,
+            fromLibrary = true,
+        )
+    }
+
+    fun openVideoFile(item: LocalGalleryEntity, inApp: Boolean) {
+        val path = item.contentPath
+        val name = item.title
+        val mime = mimeTypeForFileName(name)
+        val playlist = galleries
+            .filter { it.kind == LOCAL_GALLERY_KIND_VIDEO_FILE }
+            .map { it.contentPath }
+            .ifEmpty { listOf(path) }
+        if (keyword.isNotBlank()) launchIO { recordDeviceSearchHistory(keyword) }
+        launchIO {
+            LocalHistory.recordLocalFile(path, title = name)
+            try {
+                if (inApp) {
+                    OpenFileExternally.playLocal(
+                        context,
+                        path,
+                        displayName = name,
+                        mimeType = mime,
+                        playlistPaths = playlist,
+                    )
+                } else {
+                    OpenFileExternally.openLocal(
+                        context,
+                        path,
+                        displayName = name,
+                        mimeType = mime,
+                    )
+                }
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(R.string.browse_open_failed) +
+                        " " + (e.message ?: e.toString()),
+                )
+            }
+        }
+    }
+
+    fun openLibraryItemPrimary(item: LocalGalleryEntity) {
+        when (item.kind) {
+            LOCAL_GALLERY_KIND_VIDEO_FILE -> openVideoFile(item, inApp = Settings.useMedia3Player.value)
+            LOCAL_GALLERY_KIND_VIDEO_FOLDER -> openVideoFolder(item)
+            else -> openGalleryPrimary(item)
+        }
+    }
+
+    fun openLibraryItemSecondary(item: LocalGalleryEntity) {
+        when (item.kind) {
+            LOCAL_GALLERY_KIND_VIDEO_FILE -> openVideoFile(item, inApp = !Settings.useMedia3Player.value)
+            LOCAL_GALLERY_KIND_VIDEO_FOLDER -> openVideoFolder(item)
+            else -> openGallerySecondary(item)
+        }
+    }
+
+    fun toggleLibrarySection() {
+        librarySectionPref = when (librarySection) {
+            LibrarySection.Galleries -> LibrarySection.Videos.prefValue
+            LibrarySection.Videos -> LibrarySection.Galleries.prefValue
+        }
     }
 
     /** Favourites strip: long-press always unfavourites (toggle on a pin removes it). */
@@ -466,7 +575,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
             }
         }
 
-        val isEmpty = galleries.isEmpty() && !showFavorites
+        val isEmpty = galleries.isEmpty() && !showFavorites && !hasGalleries && !hasVideos
         Box(Modifier.fillMaxSize()) {
             // Always keep the Lazy list/grid mounted so scroll state is not recreated when
             // empty ↔ non-empty briefly flips (e.g. re-subscribe after pop back).
@@ -513,23 +622,24 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                 )
                             }
                         }
-                        if (galleries.isNotEmpty()) {
-                            item(
-                                key = "gal-hdr",
-                                span = { GridItemSpan(maxLineSpan) },
-                            ) {
-                                BrowseSectionHeader(
-                                    stringResource(R.string.library),
-                                    modifier = Modifier.padding(horizontal = marginH),
-                                )
-                            }
+                    }
+                    if (showSectionHeader) {
+                        item(
+                            key = "gal-hdr",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
+                            BrowseSectionHeader(
+                                sectionHeaderText,
+                                modifier = Modifier.padding(horizontal = marginH),
+                                onClick = { toggleLibrarySection() },
+                            )
                         }
                     }
                     items(galleries, key = { it.id }) { gallery ->
                         LocalGalleryListItem(
                             gallery = gallery,
-                            onClick = { openGalleryPrimary(gallery) },
-                            onLongClick = { openGallerySecondary(gallery) },
+                            onClick = { openLibraryItemPrimary(gallery) },
+                            onLongClick = { openLibraryItemSecondary(gallery) },
                             showPages = showPages,
                             showProgress = showProgress,
                             modifier = Modifier.fillMaxWidth(),
@@ -563,20 +673,23 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                 onLongClick = { toggleFavorite(fav) },
                             )
                         }
-                        if (galleries.isNotEmpty()) {
-                            item(
-                                key = "gal-hdr",
-                                span = { GridItemSpan(maxLineSpan) },
-                            ) {
-                                BrowseSectionHeader(stringResource(R.string.library))
-                            }
+                    }
+                    if (showSectionHeader) {
+                        item(
+                            key = "gal-hdr",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
+                            BrowseSectionHeader(
+                                sectionHeaderText,
+                                onClick = { toggleLibrarySection() },
+                            )
                         }
                     }
                     items(galleries, key = { it.id }) { gallery ->
                         LocalGalleryGridItem(
                             gallery = gallery,
-                            onClick = { openGalleryPrimary(gallery) },
-                            onLongClick = { openGallerySecondary(gallery) },
+                            onClick = { openLibraryItemPrimary(gallery) },
+                            onLongClick = { openLibraryItemSecondary(gallery) },
                             showPages = showPages,
                             showProgress = showProgress,
                         )
@@ -594,7 +707,13 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
-                        text = stringResource(R.string.library_empty),
+                        text = stringResource(
+                            if (librarySection == LibrarySection.Videos) {
+                                R.string.library_empty_videos
+                            } else {
+                                R.string.library_empty
+                            },
+                        ),
                         style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
