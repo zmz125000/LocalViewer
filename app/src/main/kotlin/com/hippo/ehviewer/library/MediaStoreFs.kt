@@ -248,6 +248,26 @@ object MediaStoreFs {
     }
 
     /**
+     * Direct video basenames from MediaStore (no SAF children query).
+     * Same path mapping as [imageFileNames] so library/SAF-mode video folders
+     * reuse the index the scanner already built.
+     */
+    fun videoFileNames(dir: Path): List<String>? {
+        val ms = when {
+            dir.isMediaStorePath() -> dir
+            else -> tryConvertSafPathToMediaStore(dir)
+        } ?: return null
+        val names = listChildren(ms)
+            .mapNotNull { child ->
+                child.name.takeIf {
+                    !child.isDirectory && isVideoFileName(it) && !isSampleVideoFileName(it)
+                }
+            }
+            .sortedWith { a, b -> naturalCompare(a, b) }
+        return names.takeIf { it.isNotEmpty() }
+    }
+
+    /**
      * Direct image files under [relativeDir] and every descendant folder.
      * Includes [SafMediaStoreListing.ImageFile.lastModifiedMs] from DATE_MODIFIED.
      *

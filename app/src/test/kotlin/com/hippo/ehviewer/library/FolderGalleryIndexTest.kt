@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.library
 
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
+import com.ehviewer.core.database.model.LocalGalleryEntity
 import kotlinx.coroutines.runBlocking
 import okio.Path.Companion.toPath
 import org.junit.Assert.assertEquals
@@ -198,6 +200,58 @@ class FolderGalleryIndexTest {
     }
 
     @Test
+    fun `video names from listing skip promoted and other dirs`() {
+        val listing = listOf(
+            BrowseEntryRemote.VideoFile(name = "b.mkv", fileName = "b.mkv"),
+            BrowseEntryRemote.VideoFile(name = "a.mp4", fileName = "a.mp4"),
+            BrowseEntryRemote.VideoFile(name = "@S-leaf", fileName = "S/leaf/x.mp4"),
+            BrowseEntryRemote.RegularFile(name = "cover.jpg", fileName = "cover.jpg"),
+        )
+        assertEquals(
+            listOf("a.mp4", "b.mkv"),
+            FolderGalleryIndex.videoNamesFromListing("Shows", listing, "Shows"),
+        )
+        assertNull(FolderGalleryIndex.videoNamesFromListing("Shows", listing, "Shows/S"))
+        val files = FolderGalleryIndex.videoFolderLocalFiles("/tmp/Shows", listOf("a.mp4"))
+        assertEquals("a.mp4", files.single().name)
+        assertEquals("/tmp/Shows/a.mp4", files.single().path.toString())
+    }
+
+    @Test
+    fun `library db video rows map to folder overlay names`() {
+        val rows = listOf(
+            libVideoFile(id = 1, relativePath = "Shows/b.mkv", title = "b.mkv"),
+            libVideoFile(id = 2, relativePath = "Shows/a.mp4", title = "a.mp4"),
+            libVideoFile(id = 3, relativePath = "Shows/S/x.mp4", title = "x.mp4"),
+            libVideoFile(id = 4, relativePath = "a.mp4", title = "root.mp4"),
+            LocalGalleryEntity(
+                id = 5,
+                rootId = 1L,
+                relativePath = "Shows",
+                title = "Shows",
+                kind = com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FOLDER,
+                pageCount = 2,
+                coverPath = null,
+                contentPath = "/tmp/Shows",
+                mtime = 0L,
+            ),
+        )
+        assertEquals(
+            listOf("a.mp4", "b.mkv"),
+            FolderGalleryIndex.videoFileNamesFromLibraryRows("Shows", rows),
+        )
+        assertEquals(
+            listOf("a.mp4"),
+            FolderGalleryIndex.videoFileNamesFromLibraryRows(".", rows),
+        )
+        assertEquals(
+            listOf("x.mp4"),
+            FolderGalleryIndex.videoFileNamesFromLibraryRows("Shows/S", rows),
+        )
+        assertNull(FolderGalleryIndex.videoFileNamesFromLibraryRows("Other", rows))
+    }
+
+    @Test
     fun `names from local parent ram listing match photo grid`() {
         val names = listOf("01.jpg", "02.jpg")
         val listing = listOf(gallery(relativeName = "gal", names = names))
@@ -229,5 +283,21 @@ class FolderGalleryIndexTest {
         pageCountCapped = capped,
         coverFileName = names.firstOrNull(),
         imageFileNames = names,
+    )
+
+    private fun libVideoFile(
+        id: Long,
+        relativePath: String,
+        title: String,
+    ) = LocalGalleryEntity(
+        id = id,
+        rootId = 1L,
+        relativePath = relativePath,
+        title = title,
+        kind = LOCAL_GALLERY_KIND_VIDEO_FILE,
+        pageCount = 0,
+        coverPath = null,
+        contentPath = "/tmp/$relativePath",
+        mtime = 0L,
     )
 }
