@@ -281,7 +281,11 @@ object LocalFolderListing {
 
         if (useCache && LocalListingJobs.isActive(jobKey)) {
             BrowseSession.getLocalFolderCachedListing(rootId, dirKey)?.let { ram ->
-                onCached?.invoke(materializeLocalEntries(effective, ram.entries))
+                val painted = materializeLocalEntries(effective, ram.entries)
+                publishListingOnMain(painted, onCached)
+                if (!isShallowIncompleteListing(ram.entries)) {
+                    return@withContext painted
+                }
             }
             return@withContext LocalListingJobs.await(jobKey) {
                 error("joined in-flight local list job")
@@ -316,43 +320,27 @@ object LocalFolderListing {
                 BrowseSession.CachedLocalListing(entries = entries, sessionCurrent = sessionCurrent)
             }
             if (cached != null) {
-                val filledRemote = if (cached.sessionCurrent) {
-                    cached.entries
-                } else {
-                    withLocalArchivePageCounts(effective, cached.entries)
-                }
-                if (filledRemote !== cached.entries) {
-                    NetworkFolderIndexCache.saveLocal(
-                        rootId,
-                        configKey,
-                        dirKey,
-                        filledRemote,
-                    )
-                    BrowseSession.putLocalFolderListing(
-                        rootId,
-                        dirKey,
-                        filledRemote,
-                        sessionCurrent = cached.sessionCurrent,
-                        pathAlias = effective,
-                    )
-                }
-                val materialized = materializeLocalEntries(effective, filledRemote)
-                onCached?.invoke(materialized)
+                // Paint cache first. Slim live-lists every child (~2s for thousands of
+                // files) and must not block the folder view.
+                val materialized = materializeLocalEntries(effective, cached.entries)
+                publishListingOnMain(materialized, onCached)
                 val shouldQuickScan =
                     Settings.networkFolderIndexQuickScan.value && !cached.sessionCurrent
                 if (!shouldQuickScan) return@withContext materialized
-                if (!isShallowIncompleteListing(filledRemote)) {
-                    return@withContext LocalListingJobs.await(jobKey) {
+                if (!isShallowIncompleteListing(cached.entries)) {
+                    LocalListingJobs.start(jobKey) {
                         try {
-                            runLocalSlimAndPersist(
+                            val slim = runLocalSlimAndPersist(
                                 effective,
                                 preferMediaStore,
-                                filledRemote,
+                                cached.entries,
                                 rootId,
                                 configKey,
                                 dirKey,
                                 materialized,
                             )
+                            publishListingOnMain(slim, onCached)
+                            slim
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
@@ -363,6 +351,7 @@ object LocalFolderListing {
                             materialized
                         }
                     }
+                    return@withContext materialized
                 }
             }
         } else {
@@ -401,7 +390,7 @@ object LocalFolderListing {
                     "children=${children.size} entries=${shallowMerged.size} " +
                     "ms=${(System.nanoTime() - t0) / 1_000_000}"
             }
-            onCached?.invoke(shallowMaterialized)
+            publishListingOnMain(shallowMaterialized, onCached)
             val alreadyCurrent = BrowseSession.getLocalFolderCachedListing(rootId, dirKey)
             if (alreadyCurrent?.sessionCurrent == true) {
                 return@await materializeLocalEntries(effective, alreadyCurrent.entries)
@@ -605,6 +594,20 @@ object LocalFolderListing {
             }
         }
         return out
+    }
+
+    /**
+     * Snapshot writes from [Dispatchers.IO] often do not recompose until the Main
+     * caller resumes. Hop so cache rows paint before slim/deep work.
+     */
+    private suspend fun publishListingOnMain(
+        entries: List<BrowseEntry>,
+        onCached: ((List<BrowseEntry>) -> Unit)?,
+    ) {
+        if (onCached == null) return
+        withContext(Dispatchers.Main.immediate) {
+            onCached(entries)
+        }
     }
 
     private suspend fun runLocalSlimAndPersist(
@@ -891,6 +894,14 @@ internal object LocalListingJobs {
 
     fun isActive(key: String): Boolean = jobs[key]?.isActive == true
 
+    /** Start [loader] if none is running. Does not wait — used so cache paint is not blocked by slim. */
+    fun start(
+        key: String,
+        loader: suspend () -> List<BrowseEntry>,
+    ) {
+        ensure(key, restart = false, loader)
+    }
+
     fun cancel(key: String) {
         jobs.remove(key)?.cancel()
     }
@@ -914,16 +925,7 @@ internal object LocalListingJobs {
         restart: Boolean = false,
         loader: suspend () -> List<BrowseEntry>,
     ): List<BrowseEntry> {
-        val deferred = jobs.compute(key) { _, existing ->
-            if (!restart && existing != null && existing.isActive) {
-                existing
-            } else {
-                existing?.cancel()
-                scope.async { loader() }.also { job ->
-                    job.invokeOnCompletion { jobs.remove(key, job) }
-                }
-            }
-        }!!
+        val deferred = ensure(key, restart, loader)
         return try {
             deferred.await()
         } catch (e: CancellationException) {
@@ -932,6 +934,21 @@ internal object LocalListingJobs {
             throw e
         }
     }
+
+    private fun ensure(
+        key: String,
+        restart: Boolean,
+        loader: suspend () -> List<BrowseEntry>,
+    ): Deferred<List<BrowseEntry>> = jobs.compute(key) { _, existing ->
+        if (!restart && existing != null && existing.isActive) {
+            existing
+        } else {
+            existing?.cancel()
+            scope.async { loader() }.also { job ->
+                job.invokeOnCompletion { jobs.remove(key, job) }
+            }
+        }
+    }!!
 }
 
 /** Join relative segments onto [base] (accepts `/` or `\`). */

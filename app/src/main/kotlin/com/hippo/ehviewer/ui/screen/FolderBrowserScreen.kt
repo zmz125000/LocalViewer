@@ -595,7 +595,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                             entries = cached
                             listedPath = targetPath
                             error = null
-                            refreshing = true
+                            loading = false
                         }
                     },
                 ) ?: error("Cannot read ZIP central directory")
@@ -637,9 +637,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         entries = cached
                         listedPath = targetPath
                         error = null
-                        // Rows visible; keep refresh indicator until listDirectory returns
-                        // (deferred deep / slim still running). Match SMB/WebDAV.
-                        refreshing = true
+                        loading = false
                     }
                 },
             )

@@ -52,4 +52,19 @@ class LocalListingJobsTest {
         first.await()
         assertTrue(second.isEmpty())
     }
+
+    @Test
+    fun startDoesNotWaitForLoader() = runBlocking {
+        val started = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        LocalListingJobs.start("local:3|") {
+            started.complete(Unit)
+            gate.await()
+            emptyList()
+        }
+        withTimeout(1_000) { started.await() }
+        assertTrue(LocalListingJobs.isActive("local:3|"))
+        gate.complete(Unit)
+        Unit
+    }
 }
