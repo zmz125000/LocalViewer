@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -13,6 +14,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOWER_BOUND
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.library.FolderSearch
@@ -35,6 +40,31 @@ fun Modifier.readerSheetBox(capHeight: Boolean): Modifier = if (capHeight) reade
 const val READER_PHOTO_GRID_FULL_EXPAND_MIN = 40
 
 fun readerPhotoGridHalfScreen(pageCount: Int, capHeight: Boolean): Boolean = capHeight && pageCount < READER_PHOTO_GRID_FULL_EXPAND_MIN
+
+/**
+ * Material3 sheets default to 640dp. Phone already fills that; tablet landscape
+ * is ~⅓ of the screen, so the shared grid column count makes cells tiny.
+ * Tablets (sw ≥ 600dp) use most of the current width in both orientations.
+ */
+const val READER_PHOTO_GRID_TABLET_WIDTH_FRACTION = 0.9f
+
+fun readerPhotoGridSheetMaxWidth(smallestWidthDp: Int, screenWidthDp: Int): Dp {
+    val tablet = smallestWidthDp >= WIDTH_DP_MEDIUM_LOWER_BOUND
+    if (!tablet) return BottomSheetDefaults.SheetMaxWidth
+    val target = (screenWidthDp.coerceAtLeast(0) * READER_PHOTO_GRID_TABLET_WIDTH_FRACTION).dp
+    return maxOf(target, BottomSheetDefaults.SheetMaxWidth)
+}
+
+@Composable
+fun readerPhotoGridSheetMaxWidth(): Dp {
+    val configuration = LocalConfiguration.current
+    return remember(configuration.smallestScreenWidthDp, configuration.screenWidthDp) {
+        readerPhotoGridSheetMaxWidth(
+            smallestWidthDp = configuration.smallestScreenWidthDp,
+            screenWidthDp = configuration.screenWidthDp,
+        )
+    }
+}
 
 /**
  * Folder galleries and ZIP/CBZ (zip-as-dir) can open a reader photo grid.

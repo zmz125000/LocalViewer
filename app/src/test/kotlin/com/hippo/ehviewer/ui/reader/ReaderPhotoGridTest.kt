@@ -1,5 +1,7 @@
 package com.hippo.ehviewer.ui.reader
 
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.ui.unit.dp
 import com.hippo.ehviewer.library.ZipPaths
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,6 +37,29 @@ class ReaderPhotoGridTest {
         assertFalse(readerGallerySupportsPhotoGrid(ReaderScreenArgs.Archive("/sdcard/book.7z")))
         assertFalse(readerGallerySupportsPhotoGrid(ReaderScreenArgs.SmbStreamArchive(1L, "Share/book.tar")))
         assertFalse(readerGallerySupportsPhotoGrid(ReaderScreenArgs.WebDavStreamArchive(2L, "book.cbr")))
+    }
+
+    @Test
+    fun phonePhotoGridSheetKeepsMaterialMaxWidth() {
+        assertEquals(
+            BottomSheetDefaults.SheetMaxWidth,
+            readerPhotoGridSheetMaxWidth(smallestWidthDp = 411, screenWidthDp = 411),
+        )
+        assertEquals(
+            BottomSheetDefaults.SheetMaxWidth,
+            readerPhotoGridSheetMaxWidth(smallestWidthDp = 411, screenWidthDp = 891),
+        )
+    }
+
+    @Test
+    fun tabletPhotoGridSheetUsesMostOfScreenWidth() {
+        val portrait = readerPhotoGridSheetMaxWidth(smallestWidthDp = 800, screenWidthDp = 800)
+        assertEquals((800 * READER_PHOTO_GRID_TABLET_WIDTH_FRACTION).dp, portrait)
+        assertTrue(portrait > BottomSheetDefaults.SheetMaxWidth)
+
+        val landscape = readerPhotoGridSheetMaxWidth(smallestWidthDp = 800, screenWidthDp = 1280)
+        assertEquals((1280 * READER_PHOTO_GRID_TABLET_WIDTH_FRACTION).dp, landscape)
+        assertTrue(landscape > portrait)
     }
 
     @Test
