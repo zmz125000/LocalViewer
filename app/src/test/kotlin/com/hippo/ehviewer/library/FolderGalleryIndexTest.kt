@@ -3,7 +3,9 @@ package com.hippo.ehviewer.library
 import kotlinx.coroutines.runBlocking
 import okio.Path.Companion.toPath
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FolderGalleryIndexTest {
@@ -150,6 +152,49 @@ class FolderGalleryIndexTest {
         val listing = FolderGalleryIndex.listingFromImageNames("gal", names)
         assertEquals(names, FolderGalleryIndex.namesFromListing("gal", listing, "gal"))
         assertEquals(names, FolderGalleryIndex.completeNames(listing.filterIsInstance<BrowseEntryRemote.FolderGallery>().single()))
+    }
+
+    @Test
+    fun `video names overlay classified listing and stay media-pages-only`() {
+        val names = listOf("a.mp4", "b.mkv")
+        val listing = FolderGalleryIndex.listingFromVideoNames(names)
+        assertEquals(names, listing.map { it.name })
+        assertTrue(listing.all { it is BrowseEntryRemote.VideoFile })
+        assertTrue(FolderGalleryIndex.isImagePagesOnlyListing(listing))
+        val previous = listOf(
+            BrowseEntryRemote.Directory(
+                name = "Shows",
+                hasVideo = true,
+                hasGallery = false,
+                presence = DirPresence.Navigable,
+            ),
+            BrowseEntryRemote.VideoFile(name = "old.mp4", fileName = "old.mp4"),
+            BrowseEntryRemote.FolderGallery(
+                name = "gal",
+                relativeName = "",
+                pageCount = 1,
+                coverFileName = "cover.jpg",
+                imageFileNames = listOf("cover.jpg"),
+            ),
+        )
+        val merged = FolderGalleryIndex.mergeLibraryFolderVideos(previous, names)
+        assertEquals(names, merged.filterIsInstance<BrowseEntryRemote.VideoFile>().map { it.name })
+        assertTrue(merged.any { it is BrowseEntryRemote.Directory && it.name == "Shows" })
+        assertTrue(merged.any { it is BrowseEntryRemote.FolderGallery })
+        assertFalse(FolderGalleryIndex.isImagePagesOnlyListing(merged))
+        val both = FolderGalleryIndex.mergeLibraryFolderPages(merged, "gal", listOf("cover.jpg"))
+        assertTrue(both.any { it is BrowseEntryRemote.VideoFile && it.name == "a.mp4" })
+        assertEquals(
+            listOf("cover.jpg"),
+            both.filterIsInstance<BrowseEntryRemote.FolderGallery>().single().imageFileNames,
+        )
+        assertFalse(FolderGalleryIndex.isImagePagesOnlyListing(both))
+        val mediaOnly = FolderGalleryIndex.mergeLibraryFolderVideos(
+            FolderGalleryIndex.listingFromImageNames("gal", listOf("cover.jpg")),
+            names,
+        )
+        assertTrue(mediaOnly.any { it is BrowseEntryRemote.VideoFile && it.name == "a.mp4" })
+        assertTrue(FolderGalleryIndex.isImagePagesOnlyListing(mediaOnly))
     }
 
     @Test

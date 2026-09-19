@@ -80,22 +80,64 @@ object FolderGalleryIndex {
         return pages
     }
 
+    /** Self-listing shape the video-folder overlay reads: playable [BrowseEntryRemote.VideoFile] rows. */
+    fun listingFromVideoNames(names: List<String>): List<BrowseEntryRemote> {
+        if (names.isEmpty()) return emptyList()
+        return names.map { name -> BrowseEntryRemote.VideoFile(name = name, fileName = name) }
+    }
+
+    /**
+     * Library MediaStore video files overlay a classified listing the same way
+     * [mergeLibraryFolderPages] overlays images — keep child dirs / archives / galleries.
+     */
+    fun mergeLibraryFolderVideos(
+        previous: List<BrowseEntryRemote>?,
+        names: List<String>,
+    ): List<BrowseEntryRemote> {
+        val videos = listingFromVideoNames(names)
+        if (videos.isEmpty()) return previous.orEmpty()
+        if (previous.isNullOrEmpty()) return videos
+        if (shouldKeepPreviousFolderIndex(previous, videos) || !isShallowIncompleteListing(previous)) {
+            val kept = previous.filter { entry ->
+                when (entry) {
+                    is BrowseEntryRemote.VideoFile -> {
+                        val path = entry.fileName.replace('\\', '/').trim('/')
+                        path.isEmpty() || '/' in path
+                    }
+                    is BrowseEntryRemote.RegularFile -> {
+                        val path = entry.fileName.replace('\\', '/').trim('/')
+                        path.isEmpty() || '/' in path || !isVideoFileName(entry.name)
+                    }
+                    else -> true
+                }
+            }
+            return videos + kept
+        }
+        return videos
+    }
+
     /**
      * Write library-scan page lists into the same folder index browse/photo-grid/reader use.
      * Zip interiors go under the zip RAM key; real folders under the absolute path key.
-     * Only the folders in [pages] are read and rewritten (one file per folder).
+     * Only the folders in [pages] / [videos] are read and rewritten (one file per folder).
      */
     suspend fun persistLocalFolderPages(
         rootId: Long,
         configKey: String,
         rootAbs: Path,
         pages: Map<String, List<String>>,
+        videos: Map<String, List<String>> = emptyMap(),
     ) {
-        if (pages.isEmpty()) return
+        if (pages.isEmpty() && videos.isEmpty()) return
+        val dirs = LinkedHashSet<String>(pages.size + videos.size)
+        dirs.addAll(pages.keys)
+        dirs.addAll(videos.keys)
         val updates = LinkedHashMap<String, List<BrowseEntryRemote>>()
         val ram = ArrayList<Triple<String, List<BrowseEntryRemote>, Boolean>>()
-        for ((rel, names) in pages) {
-            if (names.isEmpty()) continue
+        for (rel in dirs) {
+            val imageNames = pages[rel].orEmpty()
+            val videoNames = videos[rel].orEmpty()
+            if (imageNames.isEmpty() && videoNames.isEmpty()) continue
             val dir = normalizeGalleryRelativeDir(rel)
             val title = dir.substringAfterLast('/').ifEmpty { "Gallery" }
             val ramKey = if (ZipAsDirListing.splitZipBrowsePath(dir) != null) {
@@ -107,11 +149,19 @@ object FolderGalleryIndex {
             val previousRam = BrowseSession.getLocalCachedListing(ramKey)
             val previous = previousRam?.entries
                 ?: NetworkFolderIndexCache.loadLocal(rootId, configKey, dir)
-            val entries = mergeLibraryFolderPages(previous, title, names)
+            var entries = previous
+            if (imageNames.isNotEmpty()) {
+                entries = mergeLibraryFolderPages(entries, title, imageNames)
+            }
+            if (videoNames.isNotEmpty()) {
+                entries = mergeLibraryFolderVideos(entries, videoNames)
+            }
+            val listing = entries.orEmpty()
+            if (listing.isEmpty()) continue
             val sessionCurrent = previousRam?.sessionCurrent == true &&
-                !isImagePagesOnlyListing(entries)
-            updates[dir] = entries
-            ram += Triple(ramKey, entries, sessionCurrent)
+                !isImagePagesOnlyListing(listing)
+            updates[dir] = listing
+            ram += Triple(ramKey, listing, sessionCurrent)
         }
         if (updates.isNotEmpty()) {
             NetworkFolderIndexCache.saveLocalAll(rootId, configKey, updates)
@@ -121,13 +171,21 @@ object FolderGalleryIndex {
         }
     }
 
-    /** True when the listing has no child folders/archives — library MediaStore pages only. */
+    /**
+     * True when the listing has no child folders/archives — library MediaStore
+     * image and/or video pages only. Persist must not mark these session-current
+     * or SAF never walks for dirs/archives.
+     */
     fun isImagePagesOnlyListing(entries: List<BrowseEntryRemote>): Boolean {
         if (entries.isEmpty()) return true
         return entries.all { entry ->
             when (entry) {
                 is BrowseEntryRemote.FolderGallery -> entry.relativeName.isEmpty()
                 is BrowseEntryRemote.RegularFile -> isImageFileName(entry.name)
+                is BrowseEntryRemote.VideoFile -> {
+                    val path = entry.fileName.replace('\\', '/').trim('/')
+                    path.isNotEmpty() && '/' !in path && isVideoFileName(entry.name)
+                }
                 else -> false
             }
         }

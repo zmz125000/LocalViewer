@@ -20,6 +20,8 @@ object LibraryScanner {
         val galleries: List<LocalGalleryEntity>,
         /** Image basenames keyed by browse relativeDir (`""` = root, `dir/file.zip/Album`). */
         val folderPages: Map<String, List<String>>,
+        /** Video basenames keyed by browse relativeDir (`""` = root). */
+        val folderVideos: Map<String, List<String>>,
     )
 
     /**
@@ -54,6 +56,7 @@ object LibraryScanner {
     ): Result {
         val results = ArrayList<LocalGalleryEntity>()
         val folderPages = LinkedHashMap<String, List<String>>()
+        val folderVideos = LinkedHashMap<String, List<String>>()
         val indexedFolders = LinkedHashSet<String>()
         val indexedVideoFolders = LinkedHashSet<String>()
         val indexedVideoFiles = LinkedHashSet<String>()
@@ -77,6 +80,7 @@ object LibraryScanner {
                 indexedVideoFolders = indexedVideoFolders,
                 indexedVideoFiles = indexedVideoFiles,
                 out = results,
+                folderVideos = folderVideos,
             )
         }
         if (shouldWalkDirectories(mediaStoreIndexed, includeArchives, walkDirectories)) {
@@ -93,11 +97,12 @@ object LibraryScanner {
                 mediaStoreIndexed = mediaStoreIndexed,
                 out = results,
                 folderPages = folderPages,
+                folderVideos = folderVideos,
             )
         } else if (includeArchives && knownArchives.isNotEmpty()) {
             results += keepExistingArchives(knownArchives)
         }
-        return Result(results, folderPages)
+        return Result(results, folderPages, folderVideos)
     }
 
     /**
@@ -173,6 +178,7 @@ object LibraryScanner {
         indexedVideoFolders: MutableSet<String>,
         indexedVideoFiles: MutableSet<String>,
         out: MutableList<LocalGalleryEntity>,
+        folderVideos: MutableMap<String, List<String>>,
     ) {
         val files = MediaStoreFs.listDescendantVideoFiles(msRoot.mediaStoreRelativeDir())
         val folders = SafMediaStoreListing.videoFoldersUnderRoot(
@@ -192,6 +198,7 @@ object LibraryScanner {
                 mtime = folder.latestImageMs,
                 indexedVideoFolders = indexedVideoFolders,
                 out = out,
+                folderVideos = folderVideos,
             )
         }
         val root = msRoot.mediaStoreRelativeDir()
@@ -270,6 +277,7 @@ object LibraryScanner {
         mediaStoreIndexed: Boolean,
         out: MutableList<LocalGalleryEntity>,
         folderPages: MutableMap<String, List<String>>,
+        folderVideos: MutableMap<String, List<String>>,
     ) {
         val children = runCatching {
             // Overlay re-queries MediaStore in every folder; the library scan already
@@ -348,6 +356,7 @@ object LibraryScanner {
                 mtime = latestChildMtime(videos),
                 indexedVideoFolders = indexedVideoFolders,
                 out = out,
+                folderVideos = folderVideos,
                 coverPath = videos.first().path,
             )
             for (video in videos) {
@@ -428,6 +437,7 @@ object LibraryScanner {
                 mediaStoreIndexed,
                 out,
                 folderPages,
+                folderVideos,
             )
         }
     }
@@ -489,10 +499,12 @@ object LibraryScanner {
         mtime: Long,
         indexedVideoFolders: MutableSet<String>,
         out: MutableList<LocalGalleryEntity>,
+        folderVideos: MutableMap<String, List<String>>,
         coverPath: Path? = null,
     ) {
         val folderKey = relativePath.ifEmpty { "." }
         if (!indexedVideoFolders.add(folderKey)) return
+        folderVideos[relativePath] = names
         val title = when {
             relativePath.isEmpty() ->
                 rootDisplayName.ifBlank { humanizePathName(dir.name) }.ifBlank { "Library" }

@@ -266,6 +266,7 @@ class SlimIndexWipeTest {
         val previous = listOf(
             comics,
             BrowseEntryRemote.ArchiveGallery(name = "vol1.cbz", fileName = "vol1.cbz", size = 9L),
+            BrowseEntryRemote.VideoFile(name = "clip.mp4", fileName = "clip.mp4"),
             BrowseEntryRemote.RegularFile(name = "old.jpg", fileName = "old.jpg"),
             BrowseEntryRemote.FolderGallery(
                 name = "Parent",
@@ -286,7 +287,49 @@ class SlimIndexWipeTest {
             .single { it.relativeName.isEmpty() }
         assertEquals(listOf("01.jpg", "02.jpg"), gallery.imageFileNames)
         assertFalse(merged.any { it.name == "old.jpg" })
+        assertTrue(merged.any { it is BrowseEntryRemote.VideoFile && it.name == "clip.mp4" })
         assertTrue(FolderGalleryIndex.isImagePagesOnlyListing(FolderGalleryIndex.listingFromImageNames("P", listOf("a.jpg"))))
         assertFalse(FolderGalleryIndex.isImagePagesOnlyListing(merged))
+        assertTrue(
+            FolderGalleryIndex.isImagePagesOnlyListing(
+                FolderGalleryIndex.listingFromVideoNames(listOf("a.mp4", "b.mkv")),
+            ),
+        )
+    }
+
+    @Test
+    fun libraryMediaStoreVideosDoNotDropDirsOrGalleries() {
+        val previous = listOf(
+            comics,
+            BrowseEntryRemote.ArchiveGallery(name = "vol1.cbz", fileName = "vol1.cbz", size = 9L),
+            BrowseEntryRemote.VideoFile(name = "old.mp4", fileName = "old.mp4"),
+            BrowseEntryRemote.VideoFile(name = "@S-leaf", fileName = "S/leaf/a.mp4"),
+            BrowseEntryRemote.RegularFile(name = "note.txt", fileName = "note.txt"),
+            BrowseEntryRemote.FolderGallery(
+                name = "Parent",
+                relativeName = "",
+                pageCount = 1,
+                coverFileName = "cover.jpg",
+                imageFileNames = listOf("cover.jpg"),
+            ),
+            BrowseEntryRemote.RegularFile(name = "cover.jpg", fileName = "cover.jpg"),
+        )
+        val merged = FolderGalleryIndex.mergeLibraryFolderVideos(
+            previous,
+            listOf("01.mp4", "02.mkv"),
+        )
+        assertTrue(merged.any { it is BrowseEntryRemote.Directory && it.name == "Comics" })
+        assertTrue(merged.any { it is BrowseEntryRemote.ArchiveGallery && it.name == "vol1.cbz" })
+        assertTrue(merged.any { it is BrowseEntryRemote.FolderGallery && it.relativeName.isEmpty() })
+        assertTrue(merged.any { it is BrowseEntryRemote.RegularFile && it.name == "cover.jpg" })
+        assertTrue(merged.any { it is BrowseEntryRemote.RegularFile && it.name == "note.txt" })
+        assertTrue(merged.any { it is BrowseEntryRemote.VideoFile && it.fileName == "S/leaf/a.mp4" })
+        assertEquals(
+            listOf("01.mp4", "02.mkv"),
+            merged.filterIsInstance<BrowseEntryRemote.VideoFile>()
+                .filter { '/' !in it.fileName }
+                .map { it.name },
+        )
+        assertFalse(merged.any { it.name == "old.mp4" })
     }
 }

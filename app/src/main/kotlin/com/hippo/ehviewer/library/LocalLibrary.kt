@@ -413,6 +413,7 @@ object LocalLibrary {
                 configKey = LocalFolderListing.rootConfigKey(path, root.prefersMediaStore),
                 rootAbs = path,
                 pages = scanned.folderPages,
+                videos = scanned.folderVideos,
             )
         }.onFailure {
             logcat(it)
