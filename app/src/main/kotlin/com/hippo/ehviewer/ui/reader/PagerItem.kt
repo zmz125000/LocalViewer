@@ -1,11 +1,7 @@
 package com.hippo.ehviewer.ui.reader
 
 import android.graphics.drawable.Animatable
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -85,22 +81,26 @@ fun PagerItem(
         modifier.fillMaxWidth().aspectRatio(aspect)
     }
     when (val state = page.statusObserved) {
-        is PageStatus.Queued, is PageStatus.Loading -> {
+        // Cache-window / pager-neighbour items stay composed after a scroll. They are
+        // Queued (no work) — an indeterminate wavy indicator is an InfiniteTransition
+        // that keeps running off-screen (~17% CPU at 60fps). Keep the aspect box only.
+        is PageStatus.Queued -> Spacer(modifier = placeholderMod)
+        is PageStatus.Loading -> {
+            var spinnerVisible by remember { mutableStateOf(true) }
             Box(
-                modifier = placeholderMod,
+                modifier = placeholderMod.onVisibilityChanged(
+                    minDurationMs = 0,
+                    minFractionVisible = MIN_ONSCREEN_FRACTION,
+                ) { spinnerVisible = it },
                 contentAlignment = Alignment.Center,
             ) {
-                AnimatedContent(
-                    targetState = state is PageStatus.Loading,
-                    transitionSpec = { fadeIn() togetherWith fadeOut() },
-                    label = "progressState",
-                ) { determinate ->
+                if (spinnerVisible) {
                     val animatedProgress by animateFloatAsState(
                         targetValue = state.progressObserved,
                         animationSpec = WavyProgressIndicatorDefaults.ProgressAnimationSpec,
                         label = "progress",
                     )
-                    if (determinate) {
+                    if (animatedProgress > 0f) {
                         CircularWavyProgressIndicator(progress = { animatedProgress })
                     } else {
                         CircularWavyProgressIndicator()
@@ -153,10 +153,13 @@ fun PagerItem(
                     colorFilter = colorFilter,
                     horizontalStrip = horizontalStrip,
                     modifier = Modifier.thenIf(drawable is Animatable) {
-                        // Any on-screen pixel is enough. Off-screen pager/webtoon
-                        // neighbours are still composed — stop() so they do not keep
-                        // decoding (GIF and WebP).
-                        onVisibilityChanged(minDurationMs = 0, minFractionVisible = 0f) { visible ->
+                        // Any on-screen pixel is enough. minFractionVisible = 0 treats a
+                        // fully off-screen cache-window item as visible and keeps GIF/WebP
+                        // decoding. Off-screen pager/webtoon neighbours stay composed.
+                        onVisibilityChanged(
+                            minDurationMs = 0,
+                            minFractionVisible = MIN_ONSCREEN_FRACTION,
+                        ) { visible ->
                             drawable!!.setVisible(visible, false)
                             val anim = drawable as Animatable
                             if (visible) anim.start() else anim.stop()
@@ -359,6 +362,9 @@ private fun Image.toPainter() = when (val image = innerImage) {
 }
 
 private const val DEFAULT_ASPECT = 1 / 1.4125f
+
+/** > 0 so fully off-screen composed items are not treated as visible. */
+private const val MIN_ONSCREEN_FRACTION = 0.01f
 
 private val invertMatrix = ColorMatrix(
     floatArrayOf(
