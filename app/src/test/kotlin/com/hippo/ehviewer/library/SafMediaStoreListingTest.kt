@@ -51,6 +51,26 @@ class SafMediaStoreListingTest {
     }
 
     @Test
+    fun `video folders group nested MediaStore rows and skip samples`() {
+        val folders = SafMediaStoreListing.videoFoldersUnderRoot(
+            rootRelativeDir = "Movies",
+            files = listOf(
+                img("Movies", "intro.mp4", 1000L),
+                img("Movies/Show", "02.mkv", 3000L),
+                img("Movies/Show", "01.mkv", 2000L),
+                img("Movies/Show", "sample-clip.mp4", 9000L),
+                img("Movies/Other", "skip.jpg", 8000L),
+                img("Pictures", "outside.mp4", 5000L),
+            ),
+        )
+        assertEquals(listOf("intro.mp4"), folders[""]?.names)
+        assertEquals(1000L, folders[""]?.latestImageMs)
+        assertEquals(listOf("01.mkv", "02.mkv"), folders["Show"]?.names)
+        assertEquals(3000L, folders["Show"]?.latestImageMs)
+        assertEquals(setOf("", "Show"), folders.keys)
+    }
+
+    @Test
     fun `relativeUnderRoot rejects paths outside the source`() {
         assertEquals("", SafMediaStoreListing.relativeUnderRoot("Pictures", "Pictures"))
         assertEquals("Comics", SafMediaStoreListing.relativeUnderRoot("Pictures", "Pictures/Comics"))

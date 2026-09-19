@@ -51,6 +51,8 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FOLDER
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.GalleryInfo
@@ -66,6 +68,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.SMB_BROWSE_TOKEN
+import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.WEBDAV_BROWSE_TOKEN
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isVideoFileName
@@ -198,9 +201,11 @@ fun LocalGalleryListItem(
     val haptic = LocalHapticFeedback.current
     val listDecodePx = CoverThumb.listDecodePx()
     val isArchive = gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
-    // Best-effort local size for archive rows (folder list uses listing size).
-    val archiveSizeBytes = remember(gallery.contentPath, isArchive) {
-        if (!isArchive) {
+    val isVideoFolder = gallery.kind == LOCAL_GALLERY_KIND_VIDEO_FOLDER
+    val isVideoFile = gallery.kind == LOCAL_GALLERY_KIND_VIDEO_FILE
+    // Best-effort local size for archive / video-file rows (folder list uses listing size).
+    val archiveSizeBytes = remember(gallery.contentPath, isArchive, isVideoFile) {
+        if (!isArchive && !isVideoFile) {
             0L
         } else {
             runCatching {
@@ -209,15 +214,16 @@ fun LocalGalleryListItem(
         }
     }
     val metaLine = browseListSupportingLine(
-        typeLabel = if (isArchive) {
-            browseFileExtensionLabel(gallery.contentPath)
-        } else {
-            "Folder"
+        typeLabel = when {
+            isArchive -> browseFileExtensionLabel(gallery.contentPath)
+            isVideoFile -> browseFileExtensionLabel(gallery.title)
+            else -> "Folder"
         },
         sizeBytes = archiveSizeBytes,
-        pageCount = if (showPages) gallery.pageCount else 0,
+        pageCount = if (showPages && !isVideoFile) gallery.pageCount else 0,
         lastModifiedMs = gallery.mtime,
     )
+    val videoThumbPath = gallery.coverPath ?: gallery.contentPath.takeIf { isVideoFile || isVideoFolder }
     ListItem(
         headlineContent = {
             Text(
@@ -228,19 +234,29 @@ fun LocalGalleryListItem(
         },
         supportingContent = { Text(metaLine) },
         leadingContent = {
-            CoverImage(
-                coverPath = gallery.coverPath,
-                sizePx = listDecodePx,
-                placeholder = if (isArchive) {
-                    Icons.Default.Inventory2
-                } else {
-                    Icons.Default.Folder
-                },
-                archiveContentPath = gallery.contentPath.takeIf { isArchive },
-                modifier = Modifier
-                    .size(LibraryListLeadSize)
-                    .clip(ShapeDefaults.Medium),
-            )
+            if (isVideoFile || isVideoFolder) {
+                BrowseVideoThumbnail(
+                    source = videoThumbPath?.let { VideoThumbnailSource.Local(it) },
+                    modifier = Modifier
+                        .size(LibraryListLeadSize)
+                        .clip(ShapeDefaults.Medium),
+                    iconSize = BrowseListLeadingIconSize,
+                )
+            } else {
+                CoverImage(
+                    coverPath = gallery.coverPath,
+                    sizePx = listDecodePx,
+                    placeholder = if (isArchive) {
+                        Icons.Default.Inventory2
+                    } else {
+                        Icons.Default.Folder
+                    },
+                    archiveContentPath = gallery.contentPath.takeIf { isArchive },
+                    modifier = Modifier
+                        .size(LibraryListLeadSize)
+                        .clip(ShapeDefaults.Medium),
+                )
+            }
         },
         modifier = modifier
             .fillMaxWidth()
@@ -588,20 +604,31 @@ fun LocalGalleryGridItem(
                     .aspectRatio(1f)
                     .clip(ShapeDefaults.Medium),
             ) {
-                CoverImage(
-                    coverPath = gallery.coverPath,
-                    sizePx = gridDecodePx,
-                    archiveContentPath = gallery.contentPath.takeIf {
-                        gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
-                    },
-                    placeholder = if (gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE) {
-                        Icons.Default.Inventory2
-                    } else {
-                        Icons.Default.Folder
-                    },
-                    placeholderSize = BrowseGridPlaceholderIconSize,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                val isArchive = gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
+                val isVideo = gallery.kind == LOCAL_GALLERY_KIND_VIDEO_FILE ||
+                    gallery.kind == LOCAL_GALLERY_KIND_VIDEO_FOLDER
+                if (isVideo) {
+                    BrowseVideoThumbnail(
+                        source = (gallery.coverPath ?: gallery.contentPath)
+                            .takeIf { it.isNotBlank() }
+                            ?.let { VideoThumbnailSource.Local(it) },
+                        modifier = Modifier.fillMaxSize(),
+                        iconSize = BrowseGridPlaceholderIconSize,
+                    )
+                } else {
+                    CoverImage(
+                        coverPath = gallery.coverPath,
+                        sizePx = gridDecodePx,
+                        archiveContentPath = gallery.contentPath.takeIf { isArchive },
+                        placeholder = if (isArchive) {
+                            Icons.Default.Inventory2
+                        } else {
+                            Icons.Default.Folder
+                        },
+                        placeholderSize = BrowseGridPlaceholderIconSize,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
                 if (showPages && gallery.pageCount > 0) {
                     Badge(
                         modifier = Modifier

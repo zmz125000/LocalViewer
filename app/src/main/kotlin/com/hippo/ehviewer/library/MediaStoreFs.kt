@@ -291,12 +291,57 @@ object MediaStoreFs {
     }
 
     /**
-     * Cheap Images fingerprint for startup skip: [_ID, DATE_MODIFIED] with the same
-     * RELATIVE_PATH prefix as [listDescendantImageFiles] (no DATA).
+     * Direct video files under [relativeDir] and every descendant folder.
+     * Same RELATIVE_PATH + empty-path DATA fill as [listDescendantImageFiles].
+     */
+    fun listDescendantVideoFiles(relativeDir: String): List<SafMediaStoreListing.ImageFile> {
+        if (!MediaPermissions.hasVideoPermission()) return emptyList()
+        val root = relativeDir.replace('\\', '/').trim('/')
+        val out = ArrayList<SafMediaStoreListing.ImageFile>()
+        val seen = HashSet<String>()
+        val pathFilter = MediaStorePathQuery.descendantRelativePathSelection(root)
+        val collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        absorbImageFiles(
+            collection = collection,
+            projection = arrayOf(
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+            ),
+            selection = pathFilter?.first,
+            selectionArgs = pathFilter?.second,
+            includeData = false,
+            root = root,
+            out = out,
+            seen = seen,
+        )
+        absorbImageFiles(
+            collection = collection,
+            projection = arrayOf(
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                MediaStore.MediaColumns.DATA,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+            ),
+            selection = MediaStorePathQuery.emptyRelativePathSelection(),
+            selectionArgs = null,
+            includeData = true,
+            root = root,
+            out = out,
+            seen = seen,
+        )
+        return out
+    }
+
+    /**
+     * Cheap Images+Video fingerprint for startup skip: [_ID, DATE_MODIFIED] with the
+     * same RELATIVE_PATH prefix as [listDescendantImageFiles] (no DATA).
      */
     fun imageIndexStamp(relativeDir: String): MediaStoreIndexStamp {
         val generation = volumeGeneration()
-        if (!MediaPermissions.hasImagePermission()) {
+        val hasImages = MediaPermissions.hasImagePermission()
+        val hasVideos = MediaPermissions.hasVideoPermission()
+        if (!hasImages && !hasVideos) {
             return MediaStoreIndexStamp(generation, 0, 0L, 0L)
         }
         val root = relativeDir.replace('\\', '/').trim('/')
@@ -304,25 +349,33 @@ object MediaStoreFs {
         var count = 0
         var maxDate = 0L
         var idXor = 0L
-        runCatching {
-            appCtx.contentResolver.query(
-                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
-                arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_MODIFIED),
-                pathFilter?.first,
-                pathFilter?.second,
-                null,
-            )?.use { c ->
-                val idIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
-                val modIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
-                while (c.moveToNext()) {
-                    count++
-                    idXor = idXor xor c.getLong(idIdx)
-                    if (!c.isNull(modIdx)) {
-                        val date = c.getLong(modIdx).coerceAtLeast(0L)
-                        if (date > maxDate) maxDate = date
+        fun absorbStamp(collection: Uri) {
+            runCatching {
+                appCtx.contentResolver.query(
+                    collection,
+                    arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_MODIFIED),
+                    pathFilter?.first,
+                    pathFilter?.second,
+                    null,
+                )?.use { c ->
+                    val idIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                    val modIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
+                    while (c.moveToNext()) {
+                        count++
+                        idXor = idXor xor c.getLong(idIdx)
+                        if (!c.isNull(modIdx)) {
+                            val date = c.getLong(modIdx).coerceAtLeast(0L)
+                            if (date > maxDate) maxDate = date
+                        }
                     }
                 }
             }
+        }
+        if (hasImages) {
+            absorbStamp(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))
+        }
+        if (hasVideos) {
+            absorbStamp(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL))
         }
         return MediaStoreIndexStamp(generation, count, maxDate, idXor)
     }
@@ -345,10 +398,11 @@ object MediaStoreFs {
         root: String,
         out: MutableList<SafMediaStoreListing.ImageFile>,
         seen: MutableSet<String>,
+        collection: Uri = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
     ) {
         runCatching {
             appCtx.contentResolver.query(
-                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
+                collection,
                 projection,
                 selection,
                 selectionArgs,

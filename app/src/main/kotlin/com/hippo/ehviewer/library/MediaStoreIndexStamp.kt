@@ -23,15 +23,18 @@ data class MediaStoreIndexStamp(
         maxDateModifiedSecs == other.maxDateModifiedSecs &&
         idXor == other.idXor
 
-    fun encode(rootId: Long): String = "$rootId$SEP$generation$SEP$count$SEP$maxDateModifiedSecs$SEP$idXor"
+    fun encode(rootId: Long): String = "$rootId$SEP$generation$SEP$count$SEP$maxDateModifiedSecs$SEP$idXor$SEP$VERSION"
 
     companion object {
         const val GENERATION_UNKNOWN = -1L
         private const val SEP = ':'
 
+        /** Images+video fingerprint. Old 5-field stamps fail [parse] so startup rescans. */
+        private const val VERSION = "2"
+
         fun parse(encoded: String): Pair<Long, MediaStoreIndexStamp>? {
             val parts = encoded.split(SEP)
-            if (parts.size != 5) return null
+            if (parts.size != 6 || parts[5] != VERSION) return null
             val rootId = parts[0].toLongOrNull() ?: return null
             val generation = parts[1].toLongOrNull() ?: return null
             val count = parts[2].toIntOrNull() ?: return null

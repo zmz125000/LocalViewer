@@ -34,8 +34,7 @@ fun Modifier.readerSheetBox(capHeight: Boolean): Modifier = if (capHeight) reade
 /** Photo grid uses the capped box below this page count; larger galleries fill the screen. */
 const val READER_PHOTO_GRID_FULL_EXPAND_MIN = 40
 
-fun readerPhotoGridHalfScreen(pageCount: Int, capHeight: Boolean): Boolean =
-    capHeight && pageCount < READER_PHOTO_GRID_FULL_EXPAND_MIN
+fun readerPhotoGridHalfScreen(pageCount: Int, capHeight: Boolean): Boolean = capHeight && pageCount < READER_PHOTO_GRID_FULL_EXPAND_MIN
 
 /**
  * Folder galleries and ZIP/CBZ (zip-as-dir) can open a reader photo grid.

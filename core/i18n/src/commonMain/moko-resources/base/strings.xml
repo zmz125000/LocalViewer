@@ -24,6 +24,9 @@
     <string name="browse_manage_sources_short">Sources</string>
     <string name="network_duplicate_smb">Duplicate</string>
     <string name="library_empty">No galleries yet. Add a library source from the Browse top bar.</string>
+    <string name="library_empty_videos">No videos yet. Add a library source from the Browse top bar.</string>
+    <string name="library_video_folders">Video folders</string>
+    <string name="library_video_all">All videos</string>
     <string name="library_add_root">Add library folder</string>
     <string name="library_add_library_source">Add Library Source</string>
     <string name="library_add_folder_source">Add Folder Source</string>

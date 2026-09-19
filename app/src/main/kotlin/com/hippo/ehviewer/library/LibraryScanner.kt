@@ -2,6 +2,8 @@ package com.hippo.ehviewer.library
 
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_FOLDER
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FOLDER
 import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.files.exists
 import com.ehviewer.core.files.isDirectory
@@ -25,7 +27,8 @@ object LibraryScanner {
      *
      * Rules:
      * - Any directory (including root) whose **direct** children include image files is a gallery.
-     * - Images in subfolders are **not** part of the parent gallery; subfolders are scanned recursively.
+     * - Direct video files in a directory become a video-folder row plus per-file rows.
+     * - Images/videos in subfolders are **not** part of the parent; subfolders are scanned recursively.
      * - zip/cbz (and other archive types) in a directory are each a separate gallery
      *   when [includeArchives] is true.
      *
@@ -52,6 +55,8 @@ object LibraryScanner {
         val results = ArrayList<LocalGalleryEntity>()
         val folderPages = LinkedHashMap<String, List<String>>()
         val indexedFolders = LinkedHashSet<String>()
+        val indexedVideoFolders = LinkedHashSet<String>()
+        val indexedVideoFiles = LinkedHashSet<String>()
         val msRoot = mediaStoreRootForScan(rootPath)
         val mediaStoreIndexed = msRoot != null && MediaPermissions.hasMediaAccess()
         if (mediaStoreIndexed) {
@@ -64,6 +69,15 @@ object LibraryScanner {
                 out = results,
                 folderPages = folderPages,
             )
+            scanMediaStoreVideos(
+                rootId = rootId,
+                safRoot = rootPath,
+                msRoot = msRoot,
+                rootDisplayName = rootDisplayName,
+                indexedVideoFolders = indexedVideoFolders,
+                indexedVideoFiles = indexedVideoFiles,
+                out = results,
+            )
         }
         if (shouldWalkDirectories(mediaStoreIndexed, includeArchives, walkDirectories)) {
             scanDir(
@@ -72,6 +86,8 @@ object LibraryScanner {
                 relativePath = "",
                 rootDisplayName = rootDisplayName,
                 indexedFolders = indexedFolders,
+                indexedVideoFolders = indexedVideoFolders,
+                indexedVideoFiles = indexedVideoFiles,
                 includeArchives = includeArchives,
                 knownArchives = knownArchives,
                 mediaStoreIndexed = mediaStoreIndexed,
@@ -149,6 +165,52 @@ object LibraryScanner {
         }
     }
 
+    private fun scanMediaStoreVideos(
+        rootId: Long,
+        safRoot: Path,
+        msRoot: Path,
+        rootDisplayName: String,
+        indexedVideoFolders: MutableSet<String>,
+        indexedVideoFiles: MutableSet<String>,
+        out: MutableList<LocalGalleryEntity>,
+    ) {
+        val files = MediaStoreFs.listDescendantVideoFiles(msRoot.mediaStoreRelativeDir())
+        val folders = SafMediaStoreListing.videoFoldersUnderRoot(
+            rootRelativeDir = msRoot.mediaStoreRelativeDir(),
+            files = files,
+        )
+        for ((rel, folder) in folders) {
+            if (folder.names.isEmpty()) continue
+            val dir = if (rel.isEmpty()) safRoot else safRoot.resolveRelative(rel)
+            emitVideoFolder(
+                rootId = rootId,
+                dir = dir,
+                relativePath = rel,
+                rootDisplayName = rootDisplayName,
+                names = folder.names,
+                coverName = folder.names.first(),
+                mtime = folder.latestImageMs,
+                indexedVideoFolders = indexedVideoFolders,
+                out = out,
+            )
+        }
+        val root = msRoot.mediaStoreRelativeDir()
+        for (file in files) {
+            if (!isVideoFileName(file.name) || isSampleVideoFileName(file.name)) continue
+            val parent = SafMediaStoreListing.relativeUnderRoot(root, file.parentRelativePath) ?: continue
+            val dir = if (parent.isEmpty()) safRoot else safRoot.resolveRelative(parent)
+            emitVideoFile(
+                rootId = rootId,
+                parentRel = parent,
+                name = file.name,
+                path = dir / file.name,
+                mtime = file.lastModifiedMs,
+                indexedVideoFiles = indexedVideoFiles,
+                out = out,
+            )
+        }
+    }
+
     /**
      * File path for an already-indexed archive / zip-as-dir gallery, used to skip
      * re-opening the zip on startup. Regular folder galleries return null.
@@ -201,6 +263,8 @@ object LibraryScanner {
         relativePath: String,
         rootDisplayName: String,
         indexedFolders: MutableSet<String>,
+        indexedVideoFolders: MutableSet<String>,
+        indexedVideoFiles: MutableSet<String>,
         includeArchives: Boolean,
         knownArchives: Map<String, List<LocalGalleryEntity>>,
         mediaStoreIndexed: Boolean,
@@ -229,6 +293,7 @@ object LibraryScanner {
         // Privacy off: skip dot / `.nomedia`-marked children (same tags as folder browse).
         val visible = if (scanHidden) children else children.filterNot { it.hidden }
         val images = ArrayList<BrowseChild>()
+        val videos = ArrayList<BrowseChild>()
         val subdirs = ArrayList<BrowseChild>()
         val archives = ArrayList<BrowseChild>()
 
@@ -238,6 +303,7 @@ object LibraryScanner {
                 child.isDirectory && !isDotHiddenName(child.name) -> subdirs += child
                 child.isDirectory -> Unit
                 isImageFileName(child.name) -> images += child
+                isVideoFileName(child.name) && !isSampleVideoFileName(child.name) -> videos += child
                 includeArchives && isArchiveFileName(child.name) -> archives += child
             }
         }
@@ -267,6 +333,33 @@ object LibraryScanner {
                     mtime = mtime,
                 )
                 folderPages[relativePath] = images.map { it.name }
+            }
+        }
+
+        if (videos.isNotEmpty()) {
+            videos.sortWith { a, b -> naturalCompare(a.name, b.name) }
+            emitVideoFolder(
+                rootId = rootId,
+                dir = dir,
+                relativePath = relativePath,
+                rootDisplayName = rootDisplayName,
+                names = videos.map { it.name },
+                coverName = videos.first().name,
+                mtime = latestChildMtime(videos),
+                indexedVideoFolders = indexedVideoFolders,
+                out = out,
+                coverPath = videos.first().path,
+            )
+            for (video in videos) {
+                emitVideoFile(
+                    rootId = rootId,
+                    parentRel = relativePath,
+                    name = video.name,
+                    path = video.path,
+                    mtime = childMtime(video),
+                    indexedVideoFiles = indexedVideoFiles,
+                    out = out,
+                )
             }
         }
 
@@ -328,6 +421,8 @@ object LibraryScanner {
                 rel,
                 rootDisplayName,
                 indexedFolders,
+                indexedVideoFolders,
+                indexedVideoFiles,
                 includeArchives,
                 knownArchives,
                 mediaStoreIndexed,
@@ -382,6 +477,63 @@ object LibraryScanner {
             }
             added
         } ?: false
+    }
+
+    private fun emitVideoFolder(
+        rootId: Long,
+        dir: Path,
+        relativePath: String,
+        rootDisplayName: String,
+        names: List<String>,
+        coverName: String,
+        mtime: Long,
+        indexedVideoFolders: MutableSet<String>,
+        out: MutableList<LocalGalleryEntity>,
+        coverPath: Path? = null,
+    ) {
+        val folderKey = relativePath.ifEmpty { "." }
+        if (!indexedVideoFolders.add(folderKey)) return
+        val title = when {
+            relativePath.isEmpty() ->
+                rootDisplayName.ifBlank { humanizePathName(dir.name) }.ifBlank { "Library" }
+            else ->
+                humanizePathName(dir.name).ifEmpty { relativePath.substringAfterLast('/') }
+        }
+        out += LocalGalleryEntity(
+            id = libraryVideoFolderId(rootId, folderKey),
+            rootId = rootId,
+            relativePath = folderKey,
+            title = title,
+            kind = LOCAL_GALLERY_KIND_VIDEO_FOLDER,
+            pageCount = names.size,
+            coverPath = (coverPath ?: (dir / coverName)).toString(),
+            contentPath = dir.toString(),
+            mtime = mtime,
+        )
+    }
+
+    private fun emitVideoFile(
+        rootId: Long,
+        parentRel: String,
+        name: String,
+        path: Path,
+        mtime: Long,
+        indexedVideoFiles: MutableSet<String>,
+        out: MutableList<LocalGalleryEntity>,
+    ) {
+        val fileRel = if (parentRel.isEmpty()) name else "$parentRel/$name"
+        if (!indexedVideoFiles.add(fileRel)) return
+        out += LocalGalleryEntity(
+            id = libraryVideoFileId(rootId, fileRel),
+            rootId = rootId,
+            relativePath = fileRel,
+            title = name,
+            kind = LOCAL_GALLERY_KIND_VIDEO_FILE,
+            pageCount = 0,
+            coverPath = path.toString(),
+            contentPath = path.toString(),
+            mtime = mtime,
+        )
     }
 
     /** Prefer listing [BrowseChild.lastModifiedMs]; fall back to path metadata (SAF/physical). */

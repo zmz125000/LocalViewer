@@ -8,6 +8,12 @@ import androidx.room.PrimaryKey
 
 const val LOCAL_GALLERY_KIND_FOLDER = 0
 const val LOCAL_GALLERY_KIND_ARCHIVE = 1
+const val LOCAL_GALLERY_KIND_VIDEO_FOLDER = 2
+const val LOCAL_GALLERY_KIND_VIDEO_FILE = 3
+
+fun isLibraryGalleryKind(kind: Int): Boolean = kind == LOCAL_GALLERY_KIND_FOLDER || kind == LOCAL_GALLERY_KIND_ARCHIVE
+
+fun isLibraryVideoKind(kind: Int): Boolean = kind == LOCAL_GALLERY_KIND_VIDEO_FOLDER || kind == LOCAL_GALLERY_KIND_VIDEO_FILE
 
 @Entity(
     tableName = "LOCAL_GALLERIES",
@@ -20,7 +26,7 @@ const val LOCAL_GALLERY_KIND_ARCHIVE = 1
         ),
     ],
     indices = [
-        Index(value = ["ROOT_ID", "RELATIVE_PATH"], unique = true),
+        Index(value = ["ROOT_ID", "RELATIVE_PATH", "KIND"], unique = true),
         Index(value = ["TITLE"]),
     ],
 )

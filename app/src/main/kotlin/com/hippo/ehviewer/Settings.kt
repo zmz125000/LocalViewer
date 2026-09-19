@@ -453,6 +453,18 @@ object Settings : DataStorePreferences(null) {
     val librarySortMode = intPref("library_sort_mode", 0)
 
     /**
+     * Library screen section: 0 = galleries (default), 1 = videos.
+     * Toggled by tapping the Library / Videos section header.
+     */
+    val librarySection = intPref("library_section", 0)
+
+    /**
+     * Video library listing: 0 = folders that contain videos (default),
+     * 1 = flat list of every video file.
+     */
+    val libraryVideoMode = intPref("library_video_mode", 0)
+
+    /**
      * Per-file skip / failure notes (video thumb `.failed` and similar sidecars).
      * Lives in app data, not [android.content.Context.getCacheDir]. Default off.
      * Turning this off deletes existing markers.
