@@ -119,4 +119,16 @@ object ArchiveAccess {
             mutex.unlock()
         }
     }
+
+    /**
+     * Folder leave/enter: abort an in-flight **cover** extract so the JNI mutex and
+     * [com.hippo.ehviewer.library.ArchiveCoverCache] extract slot are not held by a
+     * stale browse cell. No-op while a reader is pending or holding ([withArchive]).
+     */
+    fun abortInFlightCover() {
+        if (pendingReaders.get() > 0) return
+        runCatching { requestArchiveAbort() }
+        abortAction.getAndSet(null)?.invoke()
+        holderJob.get()?.cancel(CancellationException("archive cover folder changed"))
+    }
 }

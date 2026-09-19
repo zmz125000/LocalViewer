@@ -69,6 +69,7 @@ import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
+import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.ArchiveTooLargeException
 import com.hippo.ehviewer.library.BrowseContentMode
 import com.hippo.ehviewer.library.BrowseEntryRemote
@@ -610,6 +611,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
     LaunchedEffect(sourceId, relativeDir, refreshToken) {
         // New folder must not wait on previous folder's stuck MMR pool threads.
         VideoThumbnail.onBrowseFolderChanged("smb:$sourceId:$relativeDir")
+        ArchiveCoverCache.onBrowseFolderChanged("smb:$sourceId:$relativeDir")
         val targetDir = relativeDir
         val force = forceNextLoad
         forceNextLoad = false
