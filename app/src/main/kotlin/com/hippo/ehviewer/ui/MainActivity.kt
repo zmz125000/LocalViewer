@@ -142,6 +142,7 @@ import com.hippo.ehviewer.ui.settings.showNewVersion
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.ui.tools.awaitInputText
+import com.hippo.ehviewer.ui.screen.toggleLibrarySection
 import com.hippo.ehviewer.updater.AppUpdater
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.addTextToClipboard
@@ -285,7 +286,19 @@ private fun shouldShowMainNav(
     return false
 }
 
-private fun navigateMainTab(navigator: DestinationsNavigator, item: MainNavItem, selectedTab: Direction?) {
+private fun navigateMainTab(
+    navigator: DestinationsNavigator,
+    item: MainNavItem,
+    selectedTab: Direction?,
+    currentDestination: DestinationSpec?,
+) {
+    // Already on Library root: cycle Galleries ↔ Videos (same as the section header).
+    if (item.direction == LibraryScreenDestination &&
+        currentDestination == LibraryScreenDestination
+    ) {
+        toggleLibrarySection()
+        return
+    }
     // Re-tap active tab (including while nested under it) → pop to that tab root.
     if (selectedTab == item.direction) {
         navigator.popBackStack(item.direction, inclusive = false)
@@ -520,7 +533,7 @@ class MainActivity : AppCompatActivity() {
                                     NavigationBarItem(
                                         selected = selected,
                                         onClick = {
-                                            navigateMainTab(navigator, item, selectedTab)
+                                            navigateMainTab(navigator, item, selectedTab, currentDestination)
                                         },
                                         icon = {
                                             Icon(
@@ -565,7 +578,7 @@ class MainActivity : AppCompatActivity() {
                                         NavigationRailItem(
                                             selected = selected,
                                             onClick = {
-                                                navigateMainTab(navigator, item, selectedTab)
+                                                navigateMainTab(navigator, item, selectedTab, currentDestination)
                                             },
                                             icon = {
                                                 Icon(

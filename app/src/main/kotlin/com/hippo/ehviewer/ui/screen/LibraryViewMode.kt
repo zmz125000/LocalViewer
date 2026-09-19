@@ -67,6 +67,14 @@ enum class LibrarySection(val prefValue: Int) {
     }
 }
 
+/** Swap Library ↔ Videos. Same action as tapping the library section header. */
+fun toggleLibrarySection() {
+    Settings.librarySection.value = when (LibrarySection.fromPref(Settings.librarySection.value)) {
+        LibrarySection.Galleries -> LibrarySection.Videos.prefValue
+        LibrarySection.Videos -> LibrarySection.Galleries.prefValue
+    }
+}
+
 /** Video library listing ([Settings.libraryVideoMode]). */
 enum class LibraryVideoMode(val prefValue: Int) {
     Folders(0),

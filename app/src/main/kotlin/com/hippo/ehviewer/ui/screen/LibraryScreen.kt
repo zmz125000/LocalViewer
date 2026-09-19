@@ -468,13 +468,6 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
     }
 
-    fun toggleLibrarySection() {
-        librarySectionPref = when (librarySection) {
-            LibrarySection.Galleries -> LibrarySection.Videos.prefValue
-            LibrarySection.Videos -> LibrarySection.Galleries.prefValue
-        }
-    }
-
     /** Favourites strip: long-press always unfavourites (toggle on a pin removes it). */
     fun toggleFavorite(fav: FavoriteBrowseSource) {
         notifyFavoriteToggle(
