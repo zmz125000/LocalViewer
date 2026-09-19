@@ -69,6 +69,16 @@ object HistoryThumbKey {
     /** Local video frame in [VideoThumbnail] cache (path may be absolute or content URI). */
     fun videoLocal(path: String): String = "$VID_LOCAL_PREFIX$path"
 
+    /**
+     * History/favourite cover for a local file. Video paths become [videoLocal] so
+     * [resolveReadablePath] hits [VideoThumbnail] instead of decoding the media file.
+     */
+    fun coerceVideoCoverKey(path: String): String {
+        if (path.isBlank() || isLogicalKey(path)) return path
+        val name = path.substringAfterLast('/').substringAfterLast('\\')
+        return if (isVideoFileName(name) || isVideoFileName(path)) videoLocal(path) else path
+    }
+
     fun videoSmb(sourceId: Long, remoteRelativeFile: String): String {
         val remote = remoteRelativeFile.replace('\\', '/').trimStart('/')
         return "$VID_SMB_PREFIX$sourceId:$remote"

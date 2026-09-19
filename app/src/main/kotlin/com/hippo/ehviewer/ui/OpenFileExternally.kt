@@ -19,7 +19,10 @@ import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.BrowseEntryRemote
 import com.hippo.ehviewer.library.BrowseSession
+import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.OPEN_CACHE_WARN_BYTES
 import com.hippo.ehviewer.library.OriginDiskCache
@@ -29,9 +32,11 @@ import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isBrowseVideoFileName
 import com.hippo.ehviewer.library.isHtmlFileName
+import com.hippo.ehviewer.library.isMediaStorePath
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.needsOpenCacheConfirm
 import com.hippo.ehviewer.library.openLocalArchiveByteSource
+import com.hippo.ehviewer.library.resolveBrowsePath
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.provider.ExternalHttpStreamServer
 import com.hippo.ehviewer.provider.StreamDocumentProvider
@@ -516,12 +521,15 @@ object OpenFileExternally {
                 val skipLiveList = accessDir && sessionHasFolderPlaylist(session)
                 session.put(localFileEntry(pathStr, displayName, mimeType))
                 val extras = if (accessDir) {
-                    if (skipLiveList) {
+                    val cached = siblingMediaNamesFromCacheLocal(pathStr)
+                        .filterNot { it.equals(displayName, ignoreCase = true) }
+                    val live = if (skipLiveList) {
                         emptyList()
                     } else {
                         listLocalDirMediaNames(pathStr)
                             .filterNot { it.equals(displayName, ignoreCase = true) }
                     }
+                    (cached + live).distinct()
                 } else {
                     findLocalSidecarNames(pathStr, displayName)
                 }
@@ -927,6 +935,39 @@ object OpenFileExternally {
         .distinct()
         .sorted()
         .take(MAX_DIR_MEDIA_FILES)
+
+    /**
+     * Prefer BrowseSession / folder-index names (folder view, library overlay) so HTTP
+     * access-dir works for SAF/MediaStore paths that [File.list] cannot see.
+     */
+    private suspend fun siblingMediaNamesFromCacheLocal(videoPathStr: String): List<String> {
+        if (ZipPaths.parse(videoPathStr) != null) return emptyList()
+        val parent = videoPathStr.toPath().parent ?: return emptyList()
+        val parentKey = BrowseSession.pathKey(parent)
+        var listing = BrowseSession.getLocalCachedListing(parentKey)?.entries
+        if (listing.isNullOrEmpty()) {
+            val frame = BrowseSession.localStack.lastOrNull()
+            if (frame != null && !frame.isZipBrowse) {
+                val framePath = runCatching {
+                    resolveBrowsePath(frame.path.toPath(), preferMediaStore = frame.preferMediaStore)
+                }.getOrNull() ?: frame.path.toPath()
+                if (BrowseSession.pathKey(framePath) == parentKey || frame.path == parent.toString()) {
+                    val root = LocalLibrary.loadRoot(frame.rootId)
+                    val rootPath = root?.let { LocalLibrary.rootPath(it) }
+                    listing = if (rootPath != null) {
+                        NetworkFolderIndexCache.loadLocal(
+                            frame.rootId,
+                            LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
+                            frame.relativePath,
+                        )
+                    } else {
+                        null
+                    }
+                }
+            }
+        }
+        return siblingNamesFromListing(listing).filter { isHttpExposedMediaName(it) }
+    }
 
     private suspend fun findSmbSidecarNames(
         sourceId: Long,
@@ -1619,6 +1660,11 @@ object OpenFileExternally {
         return runCatching {
             val path = videoPathStr.toPath()
             val parent = path.parent ?: return@runCatching emptyList()
+            if (parent.isMediaStorePath()) {
+                return@runCatching MediaStoreFs.listChildren(parent).mapNotNull { child ->
+                    child.name.takeIf { !child.isDirectory && isHttpExposedMediaName(it) }
+                }
+            }
             val parentFile = File(parent.toString())
             if (parentFile.isDirectory) {
                 parentFile.list()?.toList().orEmpty()
