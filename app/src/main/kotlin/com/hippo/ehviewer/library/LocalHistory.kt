@@ -469,6 +469,12 @@ object LocalHistory {
             .firstOrNull()
             ?.let { return it }
 
+        entries.asSequence()
+            .filterIsInstance<BrowseEntry.VideoFile>()
+            .mapNotNull { it.path.toString().takeIf { path -> path.isNotBlank() } }
+            .firstOrNull()
+            ?.let { return HistoryThumbKey.videoLocal(it) }
+
         val rel = normalizeRel(relativePath)
         if (rel.isNotEmpty() && !parentPath.isNullOrEmpty()) {
             val dirName = rel.substringAfterLast('/')

@@ -76,7 +76,7 @@ import okio.Path.Companion.toPath
 
 /** Prefer stored [GalleryInfo.thumbKey]; for network archives / videos derive the logical cover key. */
 private fun historyCoverKey(info: GalleryInfo): String? {
-    info.thumbKey?.takeIf { it.isNotBlank() }?.let { return it }
+    info.thumbKey?.takeIf { it.isNotBlank() }?.let { return HistoryThumbKey.coerceVideoCoverKey(it) }
     return when (val target = LocalHistory.parse(info)) {
         is LocalHistoryTarget.SmbStreamArchive ->
             HistoryThumbKey.smbArchive(target.sourceId, target.remotePath)

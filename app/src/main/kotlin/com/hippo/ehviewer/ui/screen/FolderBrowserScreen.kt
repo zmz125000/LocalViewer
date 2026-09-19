@@ -402,6 +402,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     }
 
     fun applyLocalVideoFolderFiles(frame: BrowseSession.LocalFrame, names: List<String>) {
+        val effective = resolveBrowsePath(
+            frame.path.toPath(),
+            preferMediaStore = frame.preferMediaStore,
+        )
+        BrowseSession.putLocalListing(
+            BrowseSession.pathKey(effective),
+            FolderGalleryIndex.listingFromVideoNames(names),
+            sessionCurrent = false,
+        )
         entries = FolderGalleryIndex.videoFolderLocalFiles(frame.path, names)
         listedPath = frameListKey(frame)
         loading = false
