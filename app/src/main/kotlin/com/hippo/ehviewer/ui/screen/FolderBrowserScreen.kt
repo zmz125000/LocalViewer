@@ -89,6 +89,7 @@ import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipAsDirListing
@@ -455,6 +456,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
         // Leave→enter folder must not wait on previous path’s stuck MMR workers.
         VideoThumbnail.onBrowseFolderChanged(
+            "local:${frame.rootId}:${frame.relativePath}:${frame.zipInnerRel.orEmpty()}",
+        )
+        ArchiveCoverCache.onBrowseFolderChanged(
             "local:${frame.rootId}:${frame.relativePath}:${frame.zipInnerRel.orEmpty()}",
         )
         val targetPath = frameListKey(frame)

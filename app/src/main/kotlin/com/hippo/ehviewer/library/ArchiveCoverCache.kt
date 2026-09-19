@@ -27,12 +27,16 @@ import com.hippo.ehviewer.jni.solidNextPlayable
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -86,6 +90,57 @@ object ArchiveCoverCache {
     private const val FORMAT_VERSION = 2
 
     private val extractSlots = Semaphore(1)
+
+    /**
+     * Browse folder identity. [onBrowseFolderChanged] cancels cover jobs from the previous
+     * folder so a RAR/7z page-0 extract (semaphore 1 + [ArchiveAccess]) cannot block the
+     * next folder's archives — same idea as [VideoThumbnail.onBrowseFolderChanged].
+     */
+    private val browseFolderKey = AtomicReference<String?>(null)
+    private val browseGeneration = AtomicLong(0L)
+    private val extractJobs = ConcurrentHashMap<Job, Long>()
+
+    /**
+     * Call when the visible browse folder changes (SMB/WebDAV/local path).
+     * Cancels stale cover extracts and aborts native/network work immediately.
+     */
+    fun onBrowseFolderChanged(folderKey: String) {
+        val prev = browseFolderKey.getAndSet(folderKey)
+        if (prev == null || prev == folderKey) return
+        val gen = browseGeneration.incrementAndGet()
+        val stale = ArrayList<Job>()
+        extractJobs.forEach { job, jobGen -> if (jobGen < gen) stale += job }
+        stale.forEach { it.cancel(CancellationException("archive cover $prev → $folderKey")) }
+        ArchiveAccess.abortInFlightCover()
+    }
+
+    /**
+     * One-at-a-time cover extract. Folder change cancels waiters and the holder so the
+     * next listing is not stuck behind a leftover RAR/ZIP page-0.
+     */
+    private suspend fun <T> withCoverExtractSlot(block: suspend () -> T): T {
+        val gen = browseGeneration.get()
+        val job = currentCoroutineContext().job
+        extractJobs[job] = gen
+        try {
+            currentCoroutineContext().ensureActive()
+            if (browseGeneration.get() != gen) {
+                throw CancellationException("archive cover folder changed")
+            }
+            return extractSlots.withPermit {
+                currentCoroutineContext().ensureActive()
+                if (browseGeneration.get() != gen) {
+                    throw CancellationException("archive cover folder changed")
+                }
+                block()
+            }
+        } finally {
+            extractJobs.remove(job, gen)
+        }
+    }
+
+    /** Test hook: same slot + folder-generation cancel as live cover extract. */
+    internal suspend fun runCoverExtractForTest(block: suspend () -> Unit) = withCoverExtractSlot(block)
 
     /**
      * JPEG/UHDR cover encode runs here — **not** as a child of [ArchiveAccess.withArchive].
@@ -436,16 +491,16 @@ object ArchiveCoverCache {
         val dest = destOverride ?: thumbPathFor(cacheKey, 0L, 0L)
         existingCover(dest)?.let { return CoverEnsureResult.Hit(it) }
         val isZip = fileName.isNotEmpty() && isZipArchiveFileName(fileName)
-        val outcome = extractSlots.withPermit {
+        val outcome = withCoverExtractSlot {
             existingCover(dest)?.let {
-                return@withPermit StreamExtractOutcome.Terminal(CoverEnsureResult.Hit(it))
+                return@withCoverExtractSlot StreamExtractOutcome.Terminal(CoverEnsureResult.Hit(it))
             }
             // Cached empty ZIP from a prior thumb/reader open — skip re-parse.
             if (isZip) {
                 val cachedEmpty = ArchiveStreamPageCache.loadIndex(cacheKey)
                     ?.takeIf { it.format == "zip" && it.members.isEmpty() && it.complete }
                 if (cachedEmpty != null) {
-                    return@withPermit StreamExtractOutcome.Terminal(CoverEnsureResult.NoImages)
+                    return@withCoverExtractSlot StreamExtractOutcome.Terminal(CoverEnsureResult.NoImages)
                 }
             }
             // Hold ArchiveAccess only for open + page-0 extract; encode outside.
@@ -671,22 +726,26 @@ object ArchiveCoverCache {
         val dest = thumbPathFor(cacheKey, 0L, 0L)
         existingCover(dest)?.let { return@withIOContext CoverEnsureResult.Hit(it) }
         coverFromDocumentExtractCache(cacheKey)?.let { return@withIOContext CoverEnsureResult.Hit(it) }
-        extractSlots.withPermit {
-            existingCover(dest)?.let { return@withPermit CoverEnsureResult.Hit(it) }
-            coverFromDocumentExtractCache(cacheKey)?.let { return@withPermit CoverEnsureResult.Hit(it) }
+        withCoverExtractSlot {
+            existingCover(dest)?.let { return@withCoverExtractSlot CoverEnsureResult.Hit(it) }
+            coverFromDocumentExtractCache(cacheKey)?.let { return@withCoverExtractSlot CoverEnsureResult.Hit(it) }
             try {
                 openSource().use { source ->
-                    val size = runCatching { source.size }.getOrDefault(0L)
-                    val engine = openDocumentCoverEngine(cacheKey, source, size)
-                        ?: return@use CoverEnsureResult.Skip
-                    if (engine.pageCount <= 0) return@use CoverEnsureResult.NoImages
-                    // Extract page 0 only (coverOnly engine). Do **not** saveIndex:
-                    // a 1-member incomplete index is treated as a full page list by
-                    // openFromIndex and makes multi-page PDFs/EPUBs open as 1 page.
-                    val page = engine.extractToCache(cacheKey, 0)
-                        ?: return@use CoverEnsureResult.Skip
-                    val thumb = writeCoverFromExtractedPage(cacheKey, page)
-                    if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
+                    ArchiveAccess.registerAbortAction {
+                        runCatching { source.close() }
+                    }.use {
+                        val size = runCatching { source.size }.getOrDefault(0L)
+                        val engine = openDocumentCoverEngine(cacheKey, source, size)
+                            ?: return@use CoverEnsureResult.Skip
+                        if (engine.pageCount <= 0) return@use CoverEnsureResult.NoImages
+                        // Extract page 0 only (coverOnly engine). Do **not** saveIndex:
+                        // a 1-member incomplete index is treated as a full page list by
+                        // openFromIndex and makes multi-page PDFs/EPUBs open as 1 page.
+                        val page = engine.extractToCache(cacheKey, 0)
+                            ?: return@use CoverEnsureResult.Skip
+                        val thumb = writeCoverFromExtractedPage(cacheKey, page)
+                        if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -701,19 +760,19 @@ object ArchiveCoverCache {
         val dest = thumbPathFor(key, 0L, 0L)
         existingCover(dest)?.let { return CoverEnsureResult.Hit(it) }
         coverFromDocumentExtractCache(key)?.let { return CoverEnsureResult.Hit(it) }
-        return extractSlots.withPermit {
-            existingCover(dest)?.let { return@withPermit CoverEnsureResult.Hit(it) }
-            coverFromDocumentExtractCache(key)?.let { return@withPermit CoverEnsureResult.Hit(it) }
+        return withCoverExtractSlot {
+            existingCover(dest)?.let { return@withCoverExtractSlot CoverEnsureResult.Hit(it) }
+            coverFromDocumentExtractCache(key)?.let { return@withCoverExtractSlot CoverEnsureResult.Hit(it) }
             try {
                 archivePath.openFileDescriptor("r").use { pfd ->
                     PfdArchiveByteSource(pfd, ownsPfd = false).use { source ->
                         val engine = openDocumentCoverEngine(key, source, pfd.statSize)
-                            ?: return@withPermit CoverEnsureResult.Skip
-                        if (engine.pageCount <= 0) return@withPermit CoverEnsureResult.NoImages
+                            ?: return@withCoverExtractSlot CoverEnsureResult.Skip
+                        if (engine.pageCount <= 0) return@withCoverExtractSlot CoverEnsureResult.NoImages
                         // Extract page 0 only; never persist coverOnly as document index
                         // (would pin multi-page docs to 1 page via openFromIndex).
                         val page = engine.extractToCache(key, 0)
-                            ?: return@withPermit CoverEnsureResult.Skip
+                            ?: return@withCoverExtractSlot CoverEnsureResult.Skip
                         val thumb = writeCoverFromExtractedPage(key, page)
                         if (thumb != null) CoverEnsureResult.Hit(thumb) else CoverEnsureResult.Skip
                     }
@@ -781,9 +840,9 @@ object ArchiveCoverCache {
         // Prefer page already extracted by a prior solid reader session.
         coverFromSolidExtractCache(cacheKey)?.let { return CoverEnsureResult.Hit(it) }
 
-        val outcome = extractSlots.withPermit {
+        val outcome = withCoverExtractSlot {
             existingCover(dest)?.let {
-                return@withPermit SolidExtractOutcome.Terminal(CoverEnsureResult.Hit(it))
+                return@withCoverExtractSlot SolidExtractOutcome.Terminal(CoverEnsureResult.Hit(it))
             }
 
             try {
