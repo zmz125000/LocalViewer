@@ -750,6 +750,13 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         }
     }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            VideoThumbnail.onBrowseFolderLeft("smb:")
+            ArchiveCoverCache.onBrowseFolderLeft("smb:")
+        }
+    }
+
     // Resume after Manage-sources edit or a real pool drop: soft refresh current path only.
     // Returning from the in-app reader / external player with a live pool keeps the listing.
     // Must not call a free-floating reload that races path changes (see LaunchedEffect above).

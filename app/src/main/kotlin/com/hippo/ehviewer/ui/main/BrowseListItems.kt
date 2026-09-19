@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -1031,17 +1032,19 @@ internal fun BrowseVideoThumbnail(
 ) {
     val context = LocalContext.current
     val downloadNetworkVideoThumbs by Settings.downloadNetworkVideoThumbs.collectAsState()
+    val extractEnabled by VideoThumbnail.extractEnabled.collectAsState()
     var thumbnail by remember(source) { mutableStateOf<java.io.File?>(null) }
-    // Disk first (same as gallery covers). Extract only on a live listing when
-    // network video thumbs are enabled.
-    LaunchedEffect(source, downloadNetworkVideoThumbs, allowRemoteFetch) {
+    // Disk first (same as gallery covers). Extract only while the app is foreground
+    // and (for network) when video thumbs are enabled. extractEnabled is the ON_STOP
+    // cancel: leaving Recents must not keep starting local library MMR.
+    LaunchedEffect(source, downloadNetworkVideoThumbs, allowRemoteFetch, extractEnabled) {
         val src = source ?: run {
             thumbnail = null
             return@LaunchedEffect
         }
         thumbnail = withIOContext {
             VideoThumbnail.cachedJpegIfPresent(src)
-                ?: if (allowRemoteFetch) {
+                ?: if (allowRemoteFetch && extractEnabled) {
                     VideoThumbnail.getOrCreate(context, src)
                 } else {
                     null

@@ -481,21 +481,28 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         return BrowseSession.isLocalFolderListingSessionCurrent(frame.rootId, frame.relativePath)
     }
 
+    fun notifyLocalThumbFolder(frame: BrowseSession.LocalFrame?) {
+        if (frame == null) {
+            VideoThumbnail.onBrowseFolderLeft("local:")
+            ArchiveCoverCache.onBrowseFolderLeft("local:")
+            return
+        }
+        val key = "local:${frame.rootId}:${frame.relativePath}:${frame.zipInnerRel.orEmpty()}"
+        VideoThumbnail.onBrowseFolderChanged(key)
+        ArchiveCoverCache.onBrowseFolderChanged(key)
+    }
+
     suspend fun reload(force: Boolean = false) {
         val frame = stack.lastOrNull()
         if (frame == null) {
+            notifyLocalThumbFolder(null)
             entries = emptyList()
             listedPath = null
             error = null
             return
         }
         // Leave→enter folder must not wait on previous path’s stuck MMR workers.
-        VideoThumbnail.onBrowseFolderChanged(
-            "local:${frame.rootId}:${frame.relativePath}:${frame.zipInnerRel.orEmpty()}",
-        )
-        ArchiveCoverCache.onBrowseFolderChanged(
-            "local:${frame.rootId}:${frame.relativePath}:${frame.zipInnerRel.orEmpty()}",
-        )
+        notifyLocalThumbFolder(frame)
         val targetPath = frameListKey(frame)
         // Photo-grid open: same complete index the reader uses — no directory scan.
         if (!force && frame.photoGrid) {
@@ -664,12 +671,17 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             skipNextListing = false
             loading = false
             refreshing = false
+            notifyLocalThumbFolder(stack.lastOrNull())
             return@LaunchedEffect
         }
         skipNextListing = false
         val force = forceNextLoad
         forceNextLoad = false
         reload(force = force)
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { notifyLocalThumbFolder(null) }
     }
 
     // Zip-as-dir toggle: force re-list in both directions so ArchiveGallery ↔ Folder/Directory

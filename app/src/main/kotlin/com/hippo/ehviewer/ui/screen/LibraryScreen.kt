@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShapeDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -84,6 +85,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.coil.CoverThumb
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.BrowseFavorites
 import com.hippo.ehviewer.library.FavoriteBrowseSource
 import com.hippo.ehviewer.library.FolderGalleryIndex
@@ -92,6 +94,7 @@ import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
@@ -198,6 +201,17 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val librarySection = LibrarySection.fromPref(librarySectionPref)
     val libraryVideoModePref by Settings.libraryVideoMode.collectAsState()
     val libraryVideoMode = LibraryVideoMode.fromPref(libraryVideoModePref)
+    LaunchedEffect(librarySection, libraryVideoMode) {
+        val key = "library:${librarySection.name}:${libraryVideoMode.name}"
+        VideoThumbnail.onBrowseFolderChanged(key)
+        ArchiveCoverCache.onBrowseFolderChanged(key)
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            VideoThumbnail.onBrowseFolderLeft("library:")
+            ArchiveCoverCache.onBrowseFolderLeft("library:")
+        }
+    }
     // HISTORY.TIME by gallery gid — Last open pin floats recently opened above Name/Date.
     val historyTimeByGid by rememberInVM {
         mutableStateOf(emptyMap<Long, Long>()).also { state ->

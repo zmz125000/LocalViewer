@@ -647,6 +647,13 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            VideoThumbnail.onBrowseFolderLeft("dav:")
+            ArchiveCoverCache.onBrowseFolderLeft("dav:")
+        }
+    }
+
     // Resume after Manage-sources edit or app background: soft refresh current path only.
     // Must not call a free-floating reload that races path changes (see LaunchedEffect above).
     val lifecycleOwner = LocalLifecycleOwner.current
