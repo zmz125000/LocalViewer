@@ -25,7 +25,7 @@ import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import okio.Path.Companion.toPath
 
 /** Galleries this small open the sheet at half screen; grid scroll does not grow it. */
-const val READER_PHOTO_GRID_FULL_EXPAND_MIN = 50
+const val READER_PHOTO_GRID_FULL_EXPAND_MIN = 40
 
 fun readerPhotoGridHalfScreen(pageCount: Int): Boolean = pageCount < READER_PHOTO_GRID_FULL_EXPAND_MIN
 
@@ -115,7 +115,7 @@ fun ReaderPhotoGridSheet(
     val sheetModifier = if (halfScreen) {
         // Cap measured sheet height at 50% so Expanded is the bottom half.
         // fillMaxSize() would make the sheet full-screen with empty space below.
-        Modifier.fillMaxWidth().fillMaxHeight(0.5f)
+        Modifier.fillMaxWidth().fillMaxHeight(0.7f)
     } else {
         Modifier.fillMaxSize()
     }
