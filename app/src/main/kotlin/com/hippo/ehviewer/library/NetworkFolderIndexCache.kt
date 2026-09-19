@@ -336,7 +336,9 @@ object NetworkFolderIndexCache {
         }
         if (!merge.unchanged) {
             if (!idx.disk.writeListing(key, merge.stored)) {
-                idx.decoded.remove(key)
+                // Keep RAM so a large-folder write failure does not drop the listing
+                // we just merged. Disk stays at the previous file (if any).
+                idx.decoded[key] = merge.stored
                 return merge.stored
             }
         }

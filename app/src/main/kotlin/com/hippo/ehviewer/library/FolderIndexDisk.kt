@@ -44,12 +44,7 @@ internal class FolderIndexDisk(val sourceDir: File) {
     fun writeListing(relativeDir: String, entries: List<BrowseEntryRemote>): Boolean {
         val key = normalizeDir(relativeDir)
         val file = listingFile(sourceDir, key)
-        val root = JSONObject().apply {
-            put("version", LAYOUT_VERSION)
-            put("dir", key)
-            put("entries", encodeEntries(entries))
-        }
-        return writeJsonFile(file, root)
+        return writeListingFile(file, key, entries)
     }
 
     /**
@@ -193,58 +188,56 @@ internal class FolderIndexDisk(val sourceDir: File) {
         )
 
         internal fun encodeEntries(entries: List<BrowseEntryRemote>) = JSONArray().apply {
-            entries.forEach { entry ->
-                put(
-                    JSONObject().apply {
-                        put("name", entry.name)
-                        put("hidden", entry.hidden)
-                        put("virtual", entry.virtual)
-                        when (entry) {
-                            is BrowseEntryRemote.Directory -> {
-                                put("kind", KIND_DIRECTORY)
-                                put("relativeName", entry.relativeName)
-                                put("hasVideo", entry.hasVideo)
-                                put("hasGallery", entry.hasGallery)
-                                put("presence", entry.presence.name)
-                                entry.coverFileName?.let { put("coverFileName", it) }
-                                if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                                if (entry.size > 0L) put("size", entry.size)
-                                if (entry.unreachable) put("unreachable", true)
-                                if (entry.zipStale) put("zipStale", true)
-                            }
-                            is BrowseEntryRemote.FolderGallery -> {
-                                put("kind", KIND_FOLDER_GALLERY)
-                                put("relativeName", entry.relativeName)
-                                put("pageCount", entry.pageCount)
-                                put("pageCountCapped", entry.pageCountCapped)
-                                entry.coverFileName?.let { put("coverFileName", it) }
-                                put("imageFileNames", JSONArray(entry.imageFileNames))
-                                if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                                if (entry.size > 0L) put("size", entry.size)
-                            }
-                            is BrowseEntryRemote.ArchiveGallery -> {
-                                put("kind", KIND_ARCHIVE)
-                                put("fileName", entry.fileName)
-                                put("parentRelativeName", entry.parentRelativeName)
-                                if (entry.size > 0L) put("size", entry.size)
-                                if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                                if (entry.pageCount > 0) put("pageCount", entry.pageCount)
-                            }
-                            is BrowseEntryRemote.VideoFile -> {
-                                put("kind", KIND_VIDEO)
-                                put("fileName", entry.fileName)
-                                if (entry.size > 0L) put("size", entry.size)
-                                if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                            }
-                            is BrowseEntryRemote.RegularFile -> {
-                                put("kind", KIND_FILE)
-                                put("fileName", entry.fileName)
-                                if (entry.size > 0L) put("size", entry.size)
-                                if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                            }
-                        }
-                    },
-                )
+            entries.forEach { put(encodeEntry(it)) }
+        }
+
+        internal fun encodeEntry(entry: BrowseEntryRemote) = JSONObject().apply {
+            put("name", entry.name)
+            put("hidden", entry.hidden)
+            put("virtual", entry.virtual)
+            when (entry) {
+                is BrowseEntryRemote.Directory -> {
+                    put("kind", KIND_DIRECTORY)
+                    put("relativeName", entry.relativeName)
+                    put("hasVideo", entry.hasVideo)
+                    put("hasGallery", entry.hasGallery)
+                    put("presence", entry.presence.name)
+                    entry.coverFileName?.let { put("coverFileName", it) }
+                    if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
+                    if (entry.size > 0L) put("size", entry.size)
+                    if (entry.unreachable) put("unreachable", true)
+                    if (entry.zipStale) put("zipStale", true)
+                }
+                is BrowseEntryRemote.FolderGallery -> {
+                    put("kind", KIND_FOLDER_GALLERY)
+                    put("relativeName", entry.relativeName)
+                    put("pageCount", entry.pageCount)
+                    put("pageCountCapped", entry.pageCountCapped)
+                    entry.coverFileName?.let { put("coverFileName", it) }
+                    put("imageFileNames", JSONArray(entry.imageFileNames))
+                    if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
+                    if (entry.size > 0L) put("size", entry.size)
+                }
+                is BrowseEntryRemote.ArchiveGallery -> {
+                    put("kind", KIND_ARCHIVE)
+                    put("fileName", entry.fileName)
+                    put("parentRelativeName", entry.parentRelativeName)
+                    if (entry.size > 0L) put("size", entry.size)
+                    if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
+                    if (entry.pageCount > 0) put("pageCount", entry.pageCount)
+                }
+                is BrowseEntryRemote.VideoFile -> {
+                    put("kind", KIND_VIDEO)
+                    put("fileName", entry.fileName)
+                    if (entry.size > 0L) put("size", entry.size)
+                    if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
+                }
+                is BrowseEntryRemote.RegularFile -> {
+                    put("kind", KIND_FILE)
+                    put("fileName", entry.fileName)
+                    if (entry.size > 0L) put("size", entry.size)
+                    if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
+                }
             }
         }
 
@@ -356,11 +349,32 @@ internal class FolderIndexDisk(val sourceDir: File) {
                 .getOrNull()
         }
 
-        private fun writeJsonFile(file: File, root: JSONObject): Boolean {
+        /**
+         * Stream one listing so a 5 000-file folder does not build a single giant
+         * [JSONObject.toString] in RAM (that OOM / cancel drops the cache).
+         */
+        private fun writeListingFile(
+            file: File,
+            dir: String,
+            entries: List<BrowseEntryRemote>,
+        ): Boolean = writeJsonBytes(file) { writer ->
+            writer.append("{\"version\":").append(LAYOUT_VERSION.toString())
+            writer.append(",\"dir\":").append(JSONObject.quote(dir))
+            writer.append(",\"entries\":[")
+            entries.forEachIndexed { i, entry ->
+                if (i > 0) writer.append(',')
+                writer.append(encodeEntry(entry).toString())
+            }
+            writer.append("]}")
+        }
+
+        private fun writeJsonFile(file: File, root: JSONObject): Boolean = writeJsonBytes(file) { it.append(root.toString()) }
+
+        private fun writeJsonBytes(file: File, write: (Appendable) -> Unit): Boolean {
             file.parentFile?.mkdirs()
             val tmp = File(file.parentFile, "${file.name}.tmp.${System.nanoTime()}")
             return try {
-                tmp.writeText(root.toString())
+                tmp.bufferedWriter().use { write(it) }
                 if (CachePagePublish.atomicReplaceFile(tmp, file)) {
                     file.setLastModified(System.currentTimeMillis())
                     true

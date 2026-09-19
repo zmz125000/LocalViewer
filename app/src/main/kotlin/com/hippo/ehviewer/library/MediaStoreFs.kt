@@ -1,10 +1,13 @@
 package com.hippo.ehviewer.library
 
 import android.Manifest
+import android.content.ContentResolver
 import android.content.Context
 import android.content.pm.PackageManager
+import android.database.Cursor
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
@@ -370,25 +373,23 @@ object MediaStoreFs {
         var maxDate = 0L
         var idXor = 0L
         fun absorbStamp(collection: Uri) {
-            runCatching {
-                appCtx.contentResolver.query(
-                    collection,
-                    arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_MODIFIED),
-                    pathFilter?.first,
-                    pathFilter?.second,
-                    null,
-                )?.use { c ->
-                    val idIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
-                    val modIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
-                    while (c.moveToNext()) {
-                        count++
-                        idXor = idXor xor c.getLong(idIdx)
-                        if (!c.isNull(modIdx)) {
-                            val date = c.getLong(modIdx).coerceAtLeast(0L)
-                            if (date > maxDate) maxDate = date
-                        }
-                    }
+            val seenIds = HashSet<Long>()
+            queryMediaPaged(
+                collection = collection,
+                projection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_MODIFIED),
+                selection = pathFilter?.first,
+                selectionArgs = pathFilter?.second,
+                sortOrder = "${MediaStore.MediaColumns._ID} ASC",
+            ) { c ->
+                val id = c.getLong(0)
+                if (!seenIds.add(id)) return@queryMediaPaged false
+                count++
+                idXor = idXor xor id
+                if (!c.isNull(1)) {
+                    val date = c.getLong(1).coerceAtLeast(0L)
+                    if (date > maxDate) maxDate = date
                 }
+                true
             }
         }
         if (hasImages) {
@@ -420,41 +421,38 @@ object MediaStoreFs {
         seen: MutableSet<String>,
         collection: Uri = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
     ) {
-        runCatching {
-            appCtx.contentResolver.query(
-                collection,
-                projection,
-                selection,
-                selectionArgs,
-                null,
-            )?.use { c ->
-                val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
-                val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
-                val dataIdx = if (includeData) c.getColumnIndex(MediaStore.MediaColumns.DATA) else -1
-                val modIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
-                while (c.moveToNext()) {
-                    val name = c.getString(nameIdx) ?: continue
-                    val relCol = c.getString(pathIdx)
-                    if (!includeData && relCol.isNullOrBlank()) continue
-                    val relPath = mediaStoreParentRelativeDir(
-                        relCol,
-                        if (dataIdx < 0) null else c.getString(dataIdx),
-                    )
-                    if (SafMediaStoreListing.relativeUnderRoot(root, relPath) == null) continue
-                    val key = "$relPath/$name"
-                    if (!seen.add(key)) continue
-                    val lastMod = if (modIdx < 0 || c.isNull(modIdx)) {
-                        0L
-                    } else {
-                        c.getLong(modIdx).coerceAtLeast(0L) * 1000L
-                    }
-                    out += SafMediaStoreListing.ImageFile(
-                        parentRelativePath = relPath,
-                        name = name,
-                        lastModifiedMs = lastMod,
-                    )
-                }
+        queryMediaPaged(
+            collection = collection,
+            projection = projection,
+            selection = selection,
+            selectionArgs = selectionArgs,
+            sortOrder = "${MediaStore.MediaColumns.DISPLAY_NAME} ASC",
+        ) { c ->
+            val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+            val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+            val dataIdx = if (includeData) c.getColumnIndex(MediaStore.MediaColumns.DATA) else -1
+            val modIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
+            val name = c.getString(nameIdx) ?: return@queryMediaPaged false
+            val relCol = c.getString(pathIdx)
+            if (!includeData && relCol.isNullOrBlank()) return@queryMediaPaged false
+            val relPath = mediaStoreParentRelativeDir(
+                relCol,
+                if (dataIdx < 0) null else c.getString(dataIdx),
+            )
+            if (SafMediaStoreListing.relativeUnderRoot(root, relPath) == null) return@queryMediaPaged false
+            val key = "$relPath/$name"
+            if (!seen.add(key)) return@queryMediaPaged false
+            val lastMod = if (modIdx < 0 || c.isNull(modIdx)) {
+                0L
+            } else {
+                c.getLong(modIdx).coerceAtLeast(0L) * 1000L
             }
+            out += SafMediaStoreListing.ImageFile(
+                parentRelativePath = relPath,
+                name = name,
+                lastModifiedMs = lastMod,
+            )
+            true
         }
     }
 
@@ -601,38 +599,38 @@ object MediaStoreFs {
                 extraSelection != null -> extraSelection
                 else -> null
             }
-            runCatching {
-                appCtx.contentResolver.query(
-                    collection,
-                    projection,
-                    selection,
-                    pathArgs,
-                    "${MediaStore.MediaColumns.DISPLAY_NAME} ASC",
-                )?.use { c ->
-                    val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
-                    val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
-                    val dataIdx = if (includeData) c.getColumnIndex(MediaStore.MediaColumns.DATA) else -1
-                    val sizeIdx = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
-                    val modIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
-                    val mimeIdx = c.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
-                    while (c.moveToNext()) {
-                        val displayName = c.getString(nameIdx) ?: continue
-                        val relCol = c.getString(pathIdx)
-                        if (!includeData && relCol.isNullOrBlank()) continue
-                        val relPath = mediaStoreParentRelativeDir(
-                            relCol,
-                            if (dataIdx < 0) null else c.getString(dataIdx),
-                        )
-                        val size = if (sizeIdx < 0 || c.isNull(sizeIdx)) 0L else c.getLong(sizeIdx).coerceAtLeast(0L)
-                        val lastMod = if (modIdx < 0 || c.isNull(modIdx)) {
-                            0L
-                        } else {
-                            (c.getLong(modIdx) * 1000L).coerceAtLeast(0L)
-                        }
-                        val mime = if (mimeIdx < 0) null else c.getString(mimeIdx)
-                        placeChild(displayName, relPath, size, lastMod, mime)
-                    }
+            val seen = HashSet<String>()
+            queryMediaPaged(
+                collection = collection,
+                projection = projection,
+                selection = selection,
+                selectionArgs = pathArgs,
+                sortOrder = "${MediaStore.MediaColumns.DISPLAY_NAME} ASC",
+            ) { c ->
+                val nameIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                val pathIdx = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+                val dataIdx = if (includeData) c.getColumnIndex(MediaStore.MediaColumns.DATA) else -1
+                val sizeIdx = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
+                val modIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
+                val mimeIdx = c.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
+                val displayName = c.getString(nameIdx) ?: return@queryMediaPaged false
+                val relCol = c.getString(pathIdx)
+                if (!includeData && relCol.isNullOrBlank()) return@queryMediaPaged false
+                val relPath = mediaStoreParentRelativeDir(
+                    relCol,
+                    if (dataIdx < 0) null else c.getString(dataIdx),
+                )
+                val key = "$relPath/$displayName"
+                if (!seen.add(key)) return@queryMediaPaged false
+                val size = if (sizeIdx < 0 || c.isNull(sizeIdx)) 0L else c.getLong(sizeIdx).coerceAtLeast(0L)
+                val lastMod = if (modIdx < 0 || c.isNull(modIdx)) {
+                    0L
+                } else {
+                    (c.getLong(modIdx) * 1000L).coerceAtLeast(0L)
                 }
+                val mime = if (mimeIdx < 0) null else c.getString(mimeIdx)
+                placeChild(displayName, relPath, size, lastMod, mime)
+                true
             }
         }
 
@@ -681,4 +679,54 @@ object MediaStoreFs {
             .also { it.sortWith { a, b -> naturalCompare(a.name, b.name) } }
         return dirChildren + fileChildren
     }
+
+    /**
+     * Page through MediaStore so a folder with thousands of files is not truncated
+     * by the ~2 MB cursor window. [onRow] returns true when the row was new.
+     * Stops when a page is short, empty of new rows (OEM ignored OFFSET), or
+     * the provider returned more than [MEDIA_QUERY_PAGE] (LIMIT ignored).
+     */
+    private fun queryMediaPaged(
+        collection: Uri,
+        projection: Array<String>,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        sortOrder: String?,
+        onRow: (Cursor) -> Boolean,
+    ) {
+        var offset = 0
+        while (offset < MEDIA_QUERY_MAX_ROWS) {
+            val extras = Bundle().apply {
+                if (selection != null) {
+                    putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                    if (selectionArgs != null) {
+                        putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+                    }
+                }
+                if (sortOrder != null) {
+                    putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder)
+                }
+                putInt(ContentResolver.QUERY_ARG_LIMIT, MEDIA_QUERY_PAGE)
+                putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
+            }
+            var pageRows = 0
+            var newRows = 0
+            runCatching {
+                appCtx.contentResolver.query(collection, projection, extras, null)?.use { c ->
+                    while (c.moveToNext()) {
+                        pageRows++
+                        if (onRow(c)) newRows++
+                    }
+                }
+            }
+            if (pageRows == 0 || newRows == 0) break
+            if (pageRows < MEDIA_QUERY_PAGE) break
+            if (pageRows > MEDIA_QUERY_PAGE) break
+            offset += pageRows
+        }
+    }
 }
+
+/** Rows per MediaStore page — stays under the cursor-window size for wide projections. */
+private const val MEDIA_QUERY_PAGE = 800
+private const val MEDIA_QUERY_MAX_ROWS = 500_000

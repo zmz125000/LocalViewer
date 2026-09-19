@@ -426,12 +426,17 @@ fun planRemoteDirectorySlimRefresh(
 }
 
 /**
- * True when a slim live listing is too sparse to treat as missing folders.
+ * True when a slim live listing is too sparse to treat as missing folders
+ * **or** as a complete file list.
  *
  * `listChildrenLenient` maps ACCESS_DENIED / PATH_NOT_FOUND to an empty list, and
  * EasyTier/VPN reconnect can PROPFIND/QUERY_DIRECTORY a share that is not ready yet.
  * Applying [RemoteDirectorySlimPlan.unreachableDirectoryNames] would then hide every
  * child folder until they reappear in a later listing.
+ *
+ * MediaStore / SAF cursors also stop early on large folders (cursor window ~2 MB).
+ * A prefix of a 5 000-file listing must not [replaceSlimDirectFilesFromLive] the
+ * complete folder index.
  */
 fun isUntrustedSlimLiveListing(
     cachedEntries: List<BrowseEntryRemote>,
@@ -439,6 +444,7 @@ fun isUntrustedSlimLiveListing(
 ): Boolean {
     if (cachedEntries.isEmpty()) return false
     if (liveChildren.isEmpty()) return true
+    if (isUntrustedSlimLiveFileListing(cachedEntries, liveChildren)) return true
     val cachedDirs = cachedDirectDirectoryNames(cachedEntries)
     if (cachedDirs.isEmpty()) return false
     val liveDirs = liveChildren.count { it.isDirectory && !isProtectedSystemName(it.name) }
@@ -449,6 +455,26 @@ fun isUntrustedSlimLiveListing(
     }.toSet()
     if (liveZipNames.isNotEmpty() && cachedDirs.all { it in liveZipNames }) return false
     return true
+}
+
+/** Keep a large cached file list when live looks like a truncated subset, not a real delete. */
+const val UNTRUSTED_SLIM_FILE_MIN_CACHED = 64
+const val UNTRUSTED_SLIM_FILE_MIN_DROPPED = 32
+
+fun isUntrustedSlimLiveFileListing(
+    cachedEntries: List<BrowseEntryRemote>,
+    liveChildren: List<RemoteChild>,
+): Boolean {
+    val cachedFiles = cachedDirectFileNames(cachedEntries)
+    if (cachedFiles.size < UNTRUSTED_SLIM_FILE_MIN_CACHED) return false
+    val liveFiles = liveDirectFileNames(liveChildren)
+    if (liveFiles.isEmpty()) return true
+    if (liveFiles.size >= cachedFiles.size) return false
+    val retained = liveFiles.count { it in cachedFiles }
+    val added = liveFiles.size - retained
+    val dropped = cachedFiles.size - retained
+    if (dropped < UNTRUSTED_SLIM_FILE_MIN_DROPPED) return false
+    return added * 2 < dropped && liveFiles.size * 2 < cachedFiles.size
 }
 
 /**

@@ -25,6 +25,39 @@ class SlimIndexWipeTest {
     )
 
     @Test
+    fun truncatedLiveFiles_againstLargeCachedFolder_isUntrusted() {
+        val cached = (1..200).map { i ->
+            BrowseEntryRemote.RegularFile(
+                name = "img%03d.jpg".format(i),
+                fileName = "img%03d.jpg".format(i),
+            )
+        }
+        val live = (1..40).map { i ->
+            RemoteChild(name = "img%03d.jpg".format(i), isDirectory = false)
+        }
+        assertTrue(isUntrustedSlimLiveFileListing(cached, live))
+        assertTrue(isUntrustedSlimLiveListing(cached, live))
+        val withDir = cached + comics
+        val liveWithDir = live + RemoteChild(name = "Comics", isDirectory = true)
+        assertTrue(isUntrustedSlimLiveListing(withDir, liveWithDir))
+    }
+
+    @Test
+    fun smallFileDelete_isTrustedSlimRefresh() {
+        val cached = (1..80).map { i ->
+            BrowseEntryRemote.RegularFile(
+                name = "clip%02d.mp4".format(i),
+                fileName = "clip%02d.mp4".format(i),
+            )
+        }
+        val live = (1..70).map { i ->
+            RemoteChild(name = "clip%02d.mp4".format(i), isDirectory = false)
+        }
+        assertFalse(isUntrustedSlimLiveFileListing(cached, live))
+        assertFalse(isUntrustedSlimLiveListing(cached, live))
+    }
+
+    @Test
     fun emptyLiveListing_againstCachedDirs_isUntrusted() {
         assertTrue(isUntrustedSlimLiveListing(cached, emptyList()))
         val plan = planRemoteDirectorySlimRefresh(cached, emptyList())
