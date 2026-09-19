@@ -126,7 +126,8 @@ fun sortLibraryItems(
  *   - Name + Last open: HISTORY pin, then title
  *   - Date + Last open: blend max(last-open, scan mtime), then title
  * - Mid: List / Grid layout
- * - Bottom: Photo grid, zip as folder, back to dir, page count, reading progress, startup scan
+ * - Bottom: Photo grid, All videos, zip as folder, back to dir, page count,
+ *   reading progress, startup scan
  *
  * Tap icon → menu. Long-press → toggle list ↔ grid.
  */
@@ -194,23 +195,6 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
             )
             HorizontalDivider()
             LibraryMenuSelectItem(
-                label = stringResource(R.string.library_video_folders),
-                selected = videoMode == LibraryVideoMode.Folders,
-                onClick = {
-                    videoModePref = LibraryVideoMode.Folders.prefValue
-                    expanded = false
-                },
-            )
-            LibraryMenuSelectItem(
-                label = stringResource(R.string.library_video_all),
-                selected = videoMode == LibraryVideoMode.Files,
-                onClick = {
-                    videoModePref = LibraryVideoMode.Files.prefValue
-                    expanded = false
-                },
-            )
-            HorizontalDivider()
-            LibraryMenuSelectItem(
                 label = stringResource(R.string.browse_layout_list),
                 selected = !useGrid,
                 onClick = {
@@ -231,6 +215,17 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 label = stringResource(R.string.browse_menu_photo_grid),
                 checked = photoGridMode,
                 onClick = { photoGridMode = !photoGridMode },
+            )
+            LibraryMenuToggleItem(
+                label = stringResource(R.string.library_video_all),
+                checked = videoMode == LibraryVideoMode.Files,
+                onClick = {
+                    videoModePref = if (videoMode == LibraryVideoMode.Files) {
+                        LibraryVideoMode.Folders.prefValue
+                    } else {
+                        LibraryVideoMode.Files.prefValue
+                    }
+                },
             )
             LibraryMenuToggleItem(
                 label = stringResource(R.string.browse_menu_zip_as_dir),

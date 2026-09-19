@@ -103,6 +103,7 @@ import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.library.isZipPlainFolderListingLocal
 import com.hippo.ehviewer.library.listBrowseChildrenRaw
+import com.hippo.ehviewer.library.localBrowseVirtual
 import com.hippo.ehviewer.library.materializeLocalEntries
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.naturalCompare
@@ -214,13 +215,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     val showVirtualGalleries by Settings.browseShowVirtualGalleries.collectAsState()
     // Same virtual-layer rules as SMB RPC root / photo grid (not regular folder-view mode).
     val relativeDirForMode = stack.lastOrNull()?.relativePath.orEmpty()
-    val virtual = when {
-        stack.lastOrNull()?.photoGrid == true -> BrowseVirtualKind.PhotoGrid
-        isZipPlainFolderListingLocal(relativeDirForMode, displayEntries) ->
-            BrowseVirtualKind.ZipPlainFolder
-        else -> BrowseVirtualKind.None
-    }
+    val virtual = localBrowseVirtual(
+        photoGrid = stack.lastOrNull()?.photoGrid == true,
+        videoFolder = stack.lastOrNull()?.videoFolder == true,
+        zipPlainFolder = isZipPlainFolderListingLocal(relativeDirForMode, displayEntries),
+    )
     val photoGrid = virtual == BrowseVirtualKind.PhotoGrid
+    val videoFolder = virtual == BrowseVirtualKind.VideoFolder
     val photoGridMode by Settings.photoGridMode.collectAsState()
     val browseZipAsDir by Settings.browseZipAsDir.collectAsState()
     val filteredEntries = remember(
@@ -240,6 +241,15 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     .filterIsInstance<BrowseEntry.RegularFile>()
                     .filter { isImageFileName(it.name) }
                     .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+            BrowseVirtualKind.VideoFolder ->
+                displayEntries
+                    .filterByContentMode(
+                        BrowseContentMode.Video,
+                        showHiddenFiles,
+                        showVirtualGalleries,
+                        allTypes = liveSearch,
+                    )
+                    .filterSmallGalleries(showSmallGalleries, smallGalleryMinPages)
             BrowseVirtualKind.ZipPlainFolder ->
                 displayEntries
                     .filterByContentMode(
@@ -661,13 +671,18 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         )
     }
 
-    fun enterDir(entry: BrowseEntry.Directory, fromSearch: Boolean = false) {
+    fun enterDir(
+        entry: BrowseEntry.Directory,
+        fromSearch: Boolean = false,
+        keepVideoOverlay: Boolean = true,
+    ) {
         val frame = stack.lastOrNull() ?: return
         if (fromSearch) {
             if (searchReturnStackSize < 0) searchReturnStackSize = stack.size
         } else {
             searchReturnStackSize = -1
         }
+        val videoOverlay = keepVideoOverlay && frame.videoFolder
         if (frame.isZipBrowse) {
             val childInner = ZipAsDirListing.joinPrefix(
                 frame.zipInnerRel.orEmpty(),
@@ -680,6 +695,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     title = entry.name,
                     relativePath = frame.relativePath,
                     preferMediaStore = frame.preferMediaStore,
+                    videoFolder = videoOverlay,
                     zipInnerRel = childInner,
                 ),
             )
@@ -703,6 +719,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     title = entry.name,
                     relativePath = zipRel,
                     preferMediaStore = frame.preferMediaStore,
+                    videoFolder = videoOverlay,
                     zipInnerRel = ZipAsDirListing.zipInnerPrefix(entry.relativeName),
                 ),
             )
@@ -723,6 +740,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 title = entry.name,
                 relativePath = rel,
                 preferMediaStore = frame.preferMediaStore,
+                videoFolder = videoOverlay,
             ),
         )
     }
@@ -750,6 +768,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 hasGallery = false,
                 presence = DirPresence.Navigable,
             ),
+            keepVideoOverlay = false,
         )
     }
 
@@ -1809,7 +1828,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 else -> {
                     // List only composes when this path's entries are ready. State is keyed by
                     // path+layout so parent/child never share one LazyList scroll index.
-                    val pathKey = (listedPath ?: currentPath!!) + if (photoGrid) "#pg" else ""
+                    val pathKey = (listedPath ?: currentPath!!) + when {
+                        photoGrid -> "#pg"
+                        videoFolder -> "#vf"
+                        else -> ""
+                    }
                     val favoritesOnTop by Settings.browseFavoritesOnTop.collectAsState()
                     val browseSortModePref by Settings.browseSortMode.collectAsState()
                     val browseSortMode = BrowseSortMode.fromPref(browseSortModePref)

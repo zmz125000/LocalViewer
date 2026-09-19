@@ -324,6 +324,15 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         allTypes = liveSearch,
                     )
                     .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
+            BrowseVirtualKind.VideoFolder ->
+                displayEntries
+                    .filterRemoteByContentMode(
+                        BrowseContentMode.Video,
+                        showHiddenFiles,
+                        showVirtualGalleries,
+                        allTypes = liveSearch,
+                    )
+                    .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
             BrowseVirtualKind.RpcShareRoot,
             BrowseVirtualKind.None,
             ->
