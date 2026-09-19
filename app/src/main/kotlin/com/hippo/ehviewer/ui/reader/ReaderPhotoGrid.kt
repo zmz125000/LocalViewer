@@ -4,7 +4,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.hippo.ehviewer.gallery.ReaderSession
@@ -94,9 +98,10 @@ fun ReaderPhotoGridSheet(
     val gridState = rememberLazyGridState(
         initialFirstVisibleItemIndex = (currentPage - 1).coerceIn(0, (pageCount - 1).coerceAtLeast(0)),
     )
-    val names = remember(args, pageLoader, pageCount) {
-        List(pageCount) { index -> readerPageFileName(args, pageLoader, index) }
-    }
+    // First frame is placeholders only so the sheet can paint immediately; SMB/WebDAV
+    // thumb IO starts on the next frame (folder photo-grid already has those cached).
+    var allowRemoteFetch by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { allowRemoteFetch = true }
     val gridSpacing = GalleryGridDefaults.spacedBy()
     FastScrollLazyVerticalGrid(
         columns = GalleryGridDefaults.columns(),
@@ -107,11 +112,12 @@ fun ReaderPhotoGridSheet(
         verticalArrangement = gridSpacing,
     ) {
         items(count = pageCount, key = { it }) { index ->
-            val name = names[index]
+            val name = readerPageFileName(args, pageLoader, index)
             BrowsePhotoGridImageItem(
                 name = name,
                 cover = readerPageCover(args, name),
                 showPhotoThumb = true,
+                allowRemoteFetch = allowRemoteFetch,
                 onClick = { onJumpToPage(index + 1) },
                 onLongClick = { onJumpToPage(index + 1) },
             )
