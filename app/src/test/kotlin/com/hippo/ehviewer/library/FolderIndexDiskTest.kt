@@ -126,6 +126,23 @@ class FolderIndexDiskTest {
     }
 
     @Test
+    fun largeFolderListingRoundTripsWithoutDroppingFiles() = withDisk { disk ->
+        val names = (1..2500).map { i -> "page-%04d.jpg".format(i) }
+        val listing = FolderGalleryIndex.listingFromImageNames("Huge", names)
+        assertTrue(disk.writeListing("photos/huge", listing))
+        val read = disk.readListing("photos/huge")
+        assertEquals(listing.size, read?.size)
+        assertEquals(
+            names,
+            read?.filterIsInstance<BrowseEntryRemote.FolderGallery>()?.single()?.imageFileNames,
+        )
+        assertEquals(
+            names.size,
+            read?.filterIsInstance<BrowseEntryRemote.RegularFile>()?.size,
+        )
+    }
+
+    @Test
     fun longFolderNameStillRoundTripsViaHashSuffix() = withDisk { disk ->
         val name = "n".repeat(300)
         val encoded = FolderIndexDisk.encodeSegment(name)
