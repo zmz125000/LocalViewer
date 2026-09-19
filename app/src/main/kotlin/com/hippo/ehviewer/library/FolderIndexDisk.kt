@@ -3,8 +3,17 @@ package com.hippo.ehviewer.library
 import com.ehviewer.core.util.logcat
 import java.io.File
 import java.security.MessageDigest
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.decodeFromStream
+import kotlinx.serialization.json.encodeToStream
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * On-disk layout for one source's folder listings.
@@ -15,25 +24,23 @@ import org.json.JSONObject
  *
  * Saving a folder writes only that listing file. Sibling folders are not rewritten
  * or re-parsed. Legacy v5 `{protocol}_{id}.json` blobs are split by [migrateFromV5Blob].
+ *
+ * Current-dir gallery images are stored once ([BrowseEntryRemote.FolderGallery.imageFileNames]);
+ * matching [BrowseEntryRemote.RegularFile] rows are rebuilt on load.
  */
 internal class FolderIndexDisk(val sourceDir: File) {
     data class Meta(val version: Int, val configKey: String)
 
     fun readMeta(): Meta? {
         val file = metaFile(sourceDir)
-        val root = readJsonObject(file) ?: return null
-        val version = root.optInt("version", -1)
-        if (version != LAYOUT_VERSION) return null
-        return Meta(version, root.optString("configKey"))
+        val parsed = decodeFile<FolderIndexMetaFile>(file) ?: return null
+        if (parsed.version != LAYOUT_VERSION) return null
+        return Meta(parsed.version, parsed.configKey)
     }
 
     fun writeMeta(configKey: String): Boolean {
         sourceDir.mkdirs()
-        val root = JSONObject().apply {
-            put("version", LAYOUT_VERSION)
-            put("configKey", configKey)
-        }
-        return writeJsonFile(metaFile(sourceDir), root)
+        return encodeFile(metaFile(sourceDir), FolderIndexMetaFile(LAYOUT_VERSION, configKey))
     }
 
     fun readListing(relativeDir: String): List<BrowseEntryRemote>? {
@@ -44,7 +51,12 @@ internal class FolderIndexDisk(val sourceDir: File) {
     fun writeListing(relativeDir: String, entries: List<BrowseEntryRemote>): Boolean {
         val key = normalizeDir(relativeDir)
         val file = listingFile(sourceDir, key)
-        return writeListingFile(file, key, entries)
+        val dto = FolderIndexListingFile(
+            version = LAYOUT_VERSION,
+            dir = key,
+            entries = compactListingEntries(entries).map(FolderIndexEntryFile::fromRemote),
+        )
+        return encodeFile(file, dto)
     }
 
     /**
@@ -84,15 +96,16 @@ internal class FolderIndexDisk(val sourceDir: File) {
         const val LAYOUT_VERSION = 6
         const val LEGACY_BLOB_VERSION = 5
 
-        private const val KIND_DIRECTORY = "directory"
-        private const val KIND_FOLDER_GALLERY = "folder_gallery"
-        private const val KIND_ARCHIVE = "archive"
-        private const val KIND_VIDEO = "video"
-        private const val KIND_FILE = "file"
         private const val MAX_SEGMENT_LEN = 200
         private const val ROOT_LISTING_NAME = "@.json"
         private const val LISTINGS_DIR = "d"
         private const val META_NAME = "meta.json"
+
+        private val json = Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = false
+            explicitNulls = false
+        }
 
         fun sourceDirName(protocol: String, sourceId: Long) = "${protocol}_$sourceId"
 
@@ -165,21 +178,25 @@ internal class FolderIndexDisk(val sourceDir: File) {
         }
 
         fun parseV5Blob(blob: File): V5Blob? {
-            val root = readJsonObject(blob) ?: return null
-            if (root.optInt("version", -1) != LEGACY_BLOB_VERSION) return null
-            val folders = root.optJSONObject("folders") ?: return V5Blob(root.optString("configKey"), emptyMap())
+            if (!blob.isFile || blob.length() <= 0L) return null
+            val root = runCatching { json.parseToJsonElement(blob.readText()).jsonObject }
+                .onFailure { logcat("FolderIndex", it) }
+                .getOrNull() ?: return null
+            if (root["version"]?.jsonPrimitive?.intOrNull != LEGACY_BLOB_VERSION) return null
+            val configKey = root["configKey"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val foldersEl = root["folders"]?.jsonObject
+                ?: return V5Blob(configKey, emptyMap())
             val out = LinkedHashMap<String, List<BrowseEntryRemote>>()
-            val keys = folders.keys()
-            while (keys.hasNext()) {
-                val keyName = keys.next()
-                val array = folders.optJSONArray(keyName) ?: continue
-                val decoded = runCatching { decodeEntries(array) }
-                    .onFailure { logcat("FolderIndex", it) }
-                    .getOrNull()
-                    ?: continue
+            for ((keyName, value) in foldersEl) {
+                val array = runCatching { value.jsonArray }.getOrNull() ?: continue
+                val decoded = runCatching {
+                    json.decodeFromJsonElement<List<FolderIndexEntryFile>>(array)
+                        .map { it.toRemote() }
+                        .let(::expandListingEntries)
+                }.onFailure { logcat("FolderIndex", it) }.getOrNull() ?: continue
                 out[normalizeDir(keyName)] = decoded
             }
-            return V5Blob(root.optString("configKey"), out)
+            return V5Blob(configKey, out)
         }
 
         data class V5Blob(
@@ -187,124 +204,49 @@ internal class FolderIndexDisk(val sourceDir: File) {
             val folders: Map<String, List<BrowseEntryRemote>>,
         )
 
-        internal fun encodeEntries(entries: List<BrowseEntryRemote>) = JSONArray().apply {
-            entries.forEach { put(encodeEntry(it)) }
-        }
-
-        internal fun encodeEntry(entry: BrowseEntryRemote) = JSONObject().apply {
-            put("name", entry.name)
-            put("hidden", entry.hidden)
-            put("virtual", entry.virtual)
-            when (entry) {
-                is BrowseEntryRemote.Directory -> {
-                    put("kind", KIND_DIRECTORY)
-                    put("relativeName", entry.relativeName)
-                    put("hasVideo", entry.hasVideo)
-                    put("hasGallery", entry.hasGallery)
-                    put("presence", entry.presence.name)
-                    entry.coverFileName?.let { put("coverFileName", it) }
-                    if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                    if (entry.size > 0L) put("size", entry.size)
-                    if (entry.unreachable) put("unreachable", true)
-                    if (entry.zipStale) put("zipStale", true)
-                }
-                is BrowseEntryRemote.FolderGallery -> {
-                    put("kind", KIND_FOLDER_GALLERY)
-                    put("relativeName", entry.relativeName)
-                    put("pageCount", entry.pageCount)
-                    put("pageCountCapped", entry.pageCountCapped)
-                    entry.coverFileName?.let { put("coverFileName", it) }
-                    put("imageFileNames", JSONArray(entry.imageFileNames))
-                    if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                    if (entry.size > 0L) put("size", entry.size)
-                }
-                is BrowseEntryRemote.ArchiveGallery -> {
-                    put("kind", KIND_ARCHIVE)
-                    put("fileName", entry.fileName)
-                    put("parentRelativeName", entry.parentRelativeName)
-                    if (entry.size > 0L) put("size", entry.size)
-                    if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                    if (entry.pageCount > 0) put("pageCount", entry.pageCount)
-                }
-                is BrowseEntryRemote.VideoFile -> {
-                    put("kind", KIND_VIDEO)
-                    put("fileName", entry.fileName)
-                    if (entry.size > 0L) put("size", entry.size)
-                    if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                }
-                is BrowseEntryRemote.RegularFile -> {
-                    put("kind", KIND_FILE)
-                    put("fileName", entry.fileName)
-                    if (entry.size > 0L) put("size", entry.size)
-                    if (entry.lastModifiedMs > 0L) put("lastModifiedMs", entry.lastModifiedMs)
-                }
+        /**
+         * Drop current-dir image [BrowseEntryRemote.RegularFile] rows that are already
+         * listed on the self [BrowseEntryRemote.FolderGallery.imageFileNames].
+         */
+        internal fun compactListingEntries(entries: List<BrowseEntryRemote>): List<BrowseEntryRemote> {
+            val galleryNames = HashSet<String>()
+            for (entry in entries) {
+                if (entry !is BrowseEntryRemote.FolderGallery) continue
+                if (normalizeRel(entry.relativeName).isNotEmpty()) continue
+                if (entry.imageFileNames.isEmpty()) continue
+                galleryNames.addAll(entry.imageFileNames)
+            }
+            if (galleryNames.isEmpty()) return entries
+            return entries.filterNot { entry ->
+                entry is BrowseEntryRemote.RegularFile &&
+                    !entry.hidden &&
+                    !entry.virtual &&
+                    directChildName(entry.fileName) in galleryNames
             }
         }
 
-        internal fun decodeEntries(array: JSONArray): List<BrowseEntryRemote> = buildList(array.length()) {
-            for (i in 0 until array.length()) {
-                val item = array.getJSONObject(i)
-                val name = item.getString("name")
-                val hidden = item.optBoolean("hidden")
-                val virtual = item.optBoolean("virtual")
-                add(
-                    when (item.getString("kind")) {
-                        KIND_DIRECTORY -> BrowseEntryRemote.Directory(
-                            name = name,
-                            relativeName = item.optString("relativeName", name),
-                            hasVideo = item.optBoolean("hasVideo"),
-                            hasGallery = item.optBoolean("hasGallery"),
-                            presence = DirPresence.valueOf(item.getString("presence")),
-                            coverFileName = item.optNullableString("coverFileName"),
-                            lastModifiedMs = item.optLong("lastModifiedMs"),
-                            size = item.optLong("size"),
-                            hidden = hidden,
-                            virtual = virtual,
-                            unreachable = item.optBoolean("unreachable"),
-                            zipStale = item.optBoolean("zipStale"),
-                        )
-                        KIND_FOLDER_GALLERY -> BrowseEntryRemote.FolderGallery(
-                            name = name,
-                            relativeName = item.getString("relativeName"),
-                            pageCount = item.getInt("pageCount"),
-                            pageCountCapped = item.optBoolean("pageCountCapped"),
-                            coverFileName = item.optNullableString("coverFileName"),
-                            imageFileNames = item.optJSONArray("imageFileNames").toStringList(),
-                            lastModifiedMs = item.optLong("lastModifiedMs"),
-                            size = item.optLong("size"),
-                            hidden = hidden,
-                            virtual = virtual,
-                        )
-                        KIND_ARCHIVE -> BrowseEntryRemote.ArchiveGallery(
-                            name = name,
-                            fileName = item.getString("fileName"),
-                            parentRelativeName = item.optString("parentRelativeName"),
-                            size = item.optLong("size"),
-                            lastModifiedMs = item.optLong("lastModifiedMs"),
-                            pageCount = item.optInt("pageCount"),
-                            hidden = hidden,
-                            virtual = virtual,
-                        )
-                        KIND_VIDEO -> BrowseEntryRemote.VideoFile(
-                            name = name,
-                            fileName = item.optString("fileName", name),
-                            size = item.optLong("size"),
-                            lastModifiedMs = item.optLong("lastModifiedMs"),
-                            hidden = hidden,
-                            virtual = virtual,
-                        )
-                        KIND_FILE -> BrowseEntryRemote.RegularFile(
-                            name = name,
-                            fileName = item.optString("fileName", name),
-                            size = item.optLong("size"),
-                            lastModifiedMs = item.optLong("lastModifiedMs"),
-                            hidden = hidden,
-                            virtual = virtual,
-                        )
-                        else -> error("Unknown network folder index entry")
-                    },
-                )
+        /**
+         * Rebuild current-dir image file rows omitted by [compactListingEntries].
+         * Existing RegularFile rows (legacy listings, hidden files) are kept.
+         */
+        internal fun expandListingEntries(entries: List<BrowseEntryRemote>): List<BrowseEntryRemote> {
+            val existing = HashSet<String>()
+            for (entry in entries) {
+                if (entry !is BrowseEntryRemote.RegularFile) continue
+                directChildName(entry.fileName)?.let { existing += it }
             }
+            val added = ArrayList<BrowseEntryRemote.RegularFile>()
+            for (entry in entries) {
+                if (entry !is BrowseEntryRemote.FolderGallery) continue
+                if (normalizeRel(entry.relativeName).isNotEmpty()) continue
+                for (name in entry.imageFileNames) {
+                    val leaf = directChildName(name) ?: continue
+                    if (!existing.add(leaf)) continue
+                    added += BrowseEntryRemote.RegularFile(name = leaf, fileName = leaf)
+                }
+            }
+            if (added.isEmpty()) return entries
+            return entries + added
         }
 
         internal fun normalizeDir(relativeDir: String) = relativeDir.replace('\\', '/').trim('/')
@@ -331,50 +273,28 @@ internal class FolderIndexDisk(val sourceDir: File) {
         }
 
         private fun parseListingFile(file: File): ParsedListing? {
-            val root = readJsonObject(file) ?: return null
-            if (root.optInt("version", -1) != LAYOUT_VERSION) return null
-            val array = root.optJSONArray("entries") ?: return null
-            val dir = normalizeDir(root.optString("dir"))
-            val entries = runCatching { decodeEntries(array) }
-                .onFailure { logcat("FolderIndex", it) }
-                .getOrNull()
-                ?: return null
-            return ParsedListing(dir, entries)
+            val parsed = decodeFile<FolderIndexListingFile>(file) ?: return null
+            if (parsed.version != LAYOUT_VERSION) return null
+            val entries = runCatching {
+                expandListingEntries(parsed.entries.map { it.toRemote() })
+            }.onFailure { logcat("FolderIndex", it) }.getOrNull() ?: return null
+            return ParsedListing(normalizeDir(parsed.dir), entries)
         }
 
-        private fun readJsonObject(file: File): JSONObject? {
+        @OptIn(ExperimentalSerializationApi::class)
+        private inline fun <reified T> decodeFile(file: File): T? {
             if (!file.isFile || file.length() <= 0L) return null
-            return runCatching { JSONObject(file.readText()) }
-                .onFailure { logcat("FolderIndex", it) }
-                .getOrNull()
+            return runCatching {
+                file.inputStream().buffered().use { json.decodeFromStream<T>(it) }
+            }.onFailure { logcat("FolderIndex", it) }.getOrNull()
         }
 
-        /**
-         * Stream one listing so a 5 000-file folder does not build a single giant
-         * [JSONObject.toString] in RAM (that OOM / cancel drops the cache).
-         */
-        private fun writeListingFile(
-            file: File,
-            dir: String,
-            entries: List<BrowseEntryRemote>,
-        ): Boolean = writeJsonBytes(file) { writer ->
-            writer.append("{\"version\":").append(LAYOUT_VERSION.toString())
-            writer.append(",\"dir\":").append(JSONObject.quote(dir))
-            writer.append(",\"entries\":[")
-            entries.forEachIndexed { i, entry ->
-                if (i > 0) writer.append(',')
-                writer.append(encodeEntry(entry).toString())
-            }
-            writer.append("]}")
-        }
-
-        private fun writeJsonFile(file: File, root: JSONObject): Boolean = writeJsonBytes(file) { it.append(root.toString()) }
-
-        private fun writeJsonBytes(file: File, write: (Appendable) -> Unit): Boolean {
+        @OptIn(ExperimentalSerializationApi::class)
+        private inline fun <reified T> encodeFile(file: File, value: T): Boolean {
             file.parentFile?.mkdirs()
             val tmp = File(file.parentFile, "${file.name}.tmp.${System.nanoTime()}")
             return try {
-                tmp.bufferedWriter().use { write(it) }
+                tmp.outputStream().buffered().use { json.encodeToStream(value, it) }
                 if (CachePagePublish.atomicReplaceFile(tmp, file)) {
                     file.setLastModified(System.currentTimeMillis())
                     true
@@ -398,11 +318,172 @@ internal class FolderIndexDisk(val sourceDir: File) {
             }
         }
 
-        private fun JSONObject.optNullableString(name: String): String? = if (has(name) && !isNull(name)) getString(name) else null
+        private fun normalizeRel(relativeName: String) = relativeName.replace('\\', '/').trim('/')
 
-        private fun JSONArray?.toStringList(): List<String> {
-            if (this == null) return emptyList()
-            return List(length()) { getString(it) }
+        private fun directChildName(relativeName: String): String? {
+            val normalized = normalizeRel(relativeName)
+            if (normalized.isEmpty() || '/' in normalized) return null
+            return normalized
+        }
+    }
+}
+
+@Serializable
+private data class FolderIndexMetaFile(
+    val version: Int,
+    val configKey: String = "",
+)
+
+@Serializable
+private data class FolderIndexListingFile(
+    val version: Int,
+    val dir: String = "",
+    val entries: List<FolderIndexEntryFile> = emptyList(),
+)
+
+@Serializable
+private data class FolderIndexEntryFile(
+    val kind: String,
+    val name: String,
+    val hidden: Boolean = false,
+    val virtual: Boolean = false,
+    val relativeName: String? = null,
+    val hasVideo: Boolean = false,
+    val hasGallery: Boolean = false,
+    val presence: String? = null,
+    val coverFileName: String? = null,
+    val lastModifiedMs: Long = 0L,
+    val size: Long = 0L,
+    val unreachable: Boolean = false,
+    val zipStale: Boolean = false,
+    val pageCount: Int = 0,
+    val pageCountCapped: Boolean = false,
+    val imageFileNames: List<String> = emptyList(),
+    val fileName: String? = null,
+    val parentRelativeName: String? = null,
+) {
+    fun toRemote(): BrowseEntryRemote = when (kind) {
+        KIND_DIRECTORY -> BrowseEntryRemote.Directory(
+            name = name,
+            relativeName = relativeName ?: name,
+            hasVideo = hasVideo,
+            hasGallery = hasGallery,
+            presence = presence?.let { runCatching { DirPresence.valueOf(it) }.getOrNull() }
+                ?: DirPresence.Navigable,
+            coverFileName = coverFileName,
+            lastModifiedMs = lastModifiedMs,
+            size = size,
+            hidden = hidden,
+            virtual = virtual,
+            unreachable = unreachable,
+            zipStale = zipStale,
+        )
+        KIND_FOLDER_GALLERY -> BrowseEntryRemote.FolderGallery(
+            name = name,
+            relativeName = relativeName ?: "",
+            pageCount = pageCount,
+            pageCountCapped = pageCountCapped,
+            coverFileName = coverFileName,
+            imageFileNames = imageFileNames,
+            lastModifiedMs = lastModifiedMs,
+            size = size,
+            hidden = hidden,
+            virtual = virtual,
+        )
+        KIND_ARCHIVE -> BrowseEntryRemote.ArchiveGallery(
+            name = name,
+            fileName = fileName ?: name,
+            parentRelativeName = parentRelativeName.orEmpty(),
+            size = size,
+            lastModifiedMs = lastModifiedMs,
+            pageCount = pageCount,
+            hidden = hidden,
+            virtual = virtual,
+        )
+        KIND_VIDEO -> BrowseEntryRemote.VideoFile(
+            name = name,
+            fileName = fileName ?: name,
+            size = size,
+            lastModifiedMs = lastModifiedMs,
+            hidden = hidden,
+            virtual = virtual,
+        )
+        KIND_FILE -> BrowseEntryRemote.RegularFile(
+            name = name,
+            fileName = fileName ?: name,
+            size = size,
+            lastModifiedMs = lastModifiedMs,
+            hidden = hidden,
+            virtual = virtual,
+        )
+        else -> error("Unknown network folder index entry")
+    }
+
+    companion object {
+        private const val KIND_DIRECTORY = "directory"
+        private const val KIND_FOLDER_GALLERY = "folder_gallery"
+        private const val KIND_ARCHIVE = "archive"
+        private const val KIND_VIDEO = "video"
+        private const val KIND_FILE = "file"
+
+        fun fromRemote(entry: BrowseEntryRemote) = when (entry) {
+            is BrowseEntryRemote.Directory -> FolderIndexEntryFile(
+                kind = KIND_DIRECTORY,
+                name = entry.name,
+                hidden = entry.hidden,
+                virtual = entry.virtual,
+                relativeName = entry.relativeName,
+                hasVideo = entry.hasVideo,
+                hasGallery = entry.hasGallery,
+                presence = entry.presence.name,
+                coverFileName = entry.coverFileName,
+                lastModifiedMs = entry.lastModifiedMs,
+                size = entry.size,
+                unreachable = entry.unreachable,
+                zipStale = entry.zipStale,
+            )
+            is BrowseEntryRemote.FolderGallery -> FolderIndexEntryFile(
+                kind = KIND_FOLDER_GALLERY,
+                name = entry.name,
+                hidden = entry.hidden,
+                virtual = entry.virtual,
+                relativeName = entry.relativeName,
+                coverFileName = entry.coverFileName,
+                lastModifiedMs = entry.lastModifiedMs,
+                size = entry.size,
+                pageCount = entry.pageCount,
+                pageCountCapped = entry.pageCountCapped,
+                imageFileNames = entry.imageFileNames,
+            )
+            is BrowseEntryRemote.ArchiveGallery -> FolderIndexEntryFile(
+                kind = KIND_ARCHIVE,
+                name = entry.name,
+                hidden = entry.hidden,
+                virtual = entry.virtual,
+                lastModifiedMs = entry.lastModifiedMs,
+                size = entry.size,
+                pageCount = entry.pageCount,
+                fileName = entry.fileName,
+                parentRelativeName = entry.parentRelativeName,
+            )
+            is BrowseEntryRemote.VideoFile -> FolderIndexEntryFile(
+                kind = KIND_VIDEO,
+                name = entry.name,
+                hidden = entry.hidden,
+                virtual = entry.virtual,
+                lastModifiedMs = entry.lastModifiedMs,
+                size = entry.size,
+                fileName = entry.fileName,
+            )
+            is BrowseEntryRemote.RegularFile -> FolderIndexEntryFile(
+                kind = KIND_FILE,
+                name = entry.name,
+                hidden = entry.hidden,
+                virtual = entry.virtual,
+                lastModifiedMs = entry.lastModifiedMs,
+                size = entry.size,
+                fileName = entry.fileName,
+            )
         }
     }
 }

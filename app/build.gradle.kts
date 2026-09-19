@@ -228,8 +228,6 @@ dependencies {
     implementation(libs.zxing.core)
     // Share enumeration: in-house [MsSrvsShareEnum] (NetrShareEnum over IPC$), no dcerpc.
     testImplementation("junit:junit:4.13.2")
-    // Android unit tests stub org.json; FolderIndexDisk round-trips need the real implementation.
-    testImplementation("org.json:json:20240303")
     implementation(libs.material.motion.core)
     implementation(libs.material.kolor)
 
