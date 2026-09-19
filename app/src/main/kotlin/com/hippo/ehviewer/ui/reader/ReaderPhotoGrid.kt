@@ -1,6 +1,9 @@
 package com.hippo.ehviewer.ui.reader
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.Composable
@@ -20,6 +23,11 @@ import com.hippo.ehviewer.ui.main.BrowseCover
 import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import okio.Path.Companion.toPath
+
+/** Galleries this small open the sheet at half screen; grid scroll does not grow it. */
+const val READER_PHOTO_GRID_FULL_EXPAND_MIN = 50
+
+fun readerPhotoGridHalfScreen(pageCount: Int): Boolean = pageCount < READER_PHOTO_GRID_FULL_EXPAND_MIN
 
 /**
  * Folder galleries and ZIP/CBZ (zip-as-dir) can open a reader photo grid.
@@ -93,6 +101,7 @@ fun ReaderPhotoGridSheet(
     pageLoader: ReaderSession,
     currentPage: Int,
     onJumpToPage: (Int) -> Unit,
+    halfScreen: Boolean = false,
 ) {
     val pageCount = pageLoader.size
     val gridState = rememberLazyGridState(
@@ -103,24 +112,33 @@ fun ReaderPhotoGridSheet(
     var allowRemoteFetch by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { allowRemoteFetch = true }
     val gridSpacing = GalleryGridDefaults.spacedBy()
-    FastScrollLazyVerticalGrid(
-        columns = GalleryGridDefaults.columns(),
-        state = gridState,
-        modifier = Modifier.fillMaxSize().navigationBarsPadding(),
-        contentPadding = GalleryGridDefaults.contentPadding(),
-        horizontalArrangement = gridSpacing,
-        verticalArrangement = gridSpacing,
-    ) {
-        items(count = pageCount, key = { it }) { index ->
-            val name = readerPageFileName(args, pageLoader, index)
-            BrowsePhotoGridImageItem(
-                name = name,
-                cover = readerPageCover(args, name),
-                showPhotoThumb = true,
-                allowRemoteFetch = allowRemoteFetch,
-                onClick = { onJumpToPage(index + 1) },
-                onLongClick = { onJumpToPage(index + 1) },
-            )
+    val sheetModifier = if (halfScreen) {
+        // Cap measured sheet height at 50% so Expanded is the bottom half.
+        // fillMaxSize() would make the sheet full-screen with empty space below.
+        Modifier.fillMaxWidth().fillMaxHeight(0.5f)
+    } else {
+        Modifier.fillMaxSize()
+    }
+    Box(sheetModifier) {
+        FastScrollLazyVerticalGrid(
+            columns = GalleryGridDefaults.columns(),
+            state = gridState,
+            modifier = Modifier.fillMaxSize().navigationBarsPadding(),
+            contentPadding = GalleryGridDefaults.contentPadding(),
+            horizontalArrangement = gridSpacing,
+            verticalArrangement = gridSpacing,
+        ) {
+            items(count = pageCount, key = { it }) { index ->
+                val name = readerPageFileName(args, pageLoader, index)
+                BrowsePhotoGridImageItem(
+                    name = name,
+                    cover = readerPageCover(args, name),
+                    showPhotoThumb = true,
+                    allowRemoteFetch = allowRemoteFetch,
+                    onClick = { onJumpToPage(index + 1) },
+                    onLongClick = { onJumpToPage(index + 1) },
+                )
+            }
         }
     }
 }

@@ -38,6 +38,15 @@ class ReaderPhotoGridTest {
     }
 
     @Test
+    fun smallGalleriesUseHalfScreenSheet() {
+        assertTrue(readerPhotoGridHalfScreen(0))
+        assertTrue(readerPhotoGridHalfScreen(1))
+        assertTrue(readerPhotoGridHalfScreen(49))
+        assertFalse(readerPhotoGridHalfScreen(50))
+        assertFalse(readerPhotoGridHalfScreen(500))
+    }
+
+    @Test
     fun localZipPageCoverUsesEncodedMemberPath() {
         val cover = readerPageCover(
             ReaderScreenArgs.LocalZipFolder("/sdcard/pack.zip", "Album", listOf("a.jpg")),
