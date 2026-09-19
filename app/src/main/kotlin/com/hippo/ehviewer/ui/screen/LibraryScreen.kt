@@ -386,7 +386,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 rootId = root.id,
                 relativePath = rel,
                 title = item.title,
-                thumbKey = item.coverPath,
+                thumbKey = item.coverPath?.let(HistoryThumbKey::coerceVideoCoverKey),
                 pages = item.pageCount,
             )
         }
