@@ -409,9 +409,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             frame.path.toPath(),
             preferMediaStore = frame.preferMediaStore,
         )
+        val key = BrowseSession.pathKey(effective)
+        val previous = BrowseSession.getLocalCachedListing(key)?.entries
         BrowseSession.putLocalListing(
-            BrowseSession.pathKey(effective),
-            FolderGalleryIndex.listingFromVideoNames(names),
+            key,
+            FolderGalleryIndex.mergeLibraryFolderVideos(previous, names),
             sessionCurrent = false,
         )
         entries = FolderGalleryIndex.videoFolderLocalFiles(frame.path, names)

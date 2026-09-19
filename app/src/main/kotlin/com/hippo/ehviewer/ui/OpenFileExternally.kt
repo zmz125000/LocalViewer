@@ -22,17 +22,17 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
-import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.NetworkFolderIndexCache
 import com.hippo.ehviewer.library.OPEN_CACHE_WARN_BYTES
 import com.hippo.ehviewer.library.OriginDiskCache
+import com.hippo.ehviewer.library.RemoteChild
 import com.hippo.ehviewer.library.SidecarSubtitles
 import com.hippo.ehviewer.library.VideoDirectLinkByteSource
+import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipMemberByteSource
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isBrowseVideoFileName
 import com.hippo.ehviewer.library.isHtmlFileName
-import com.hippo.ehviewer.library.isMediaStorePath
 import com.hippo.ehviewer.library.listBrowseChildrenRaw
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.library.needsOpenCacheConfirm
@@ -517,15 +517,16 @@ object OpenFileExternally {
         val accessDir = accessDirEnabled()
         val dirKey = httpSessionKey(localDirKey(pathStr), accessDir, displayName)
         val (session, reused) = withIOContext {
-            withDirHttpSession(network = false, dirKey = dirKey) { session, _ ->
-                // Skip live dir list only when session already has a folder playlist (≥2
-                // media). A single-file session must re-list or next/prev stays broken.
+            withDirHttpSession(network = false, dirKey = dirKey) { session, wasReused ->
+                // Skip a live folder list when the HTTP session already has a playlist,
+                // or when BrowseSession / folder-index already named the siblings.
                 val skipLiveList = accessDir && sessionHasFolderPlaylist(session)
                 session.put(localFileEntry(pathStr, displayName, mimeType))
                 val extras = if (accessDir) {
                     val cached = siblingMediaNamesFromCacheLocal(pathStr)
                         .filterNot { it.equals(displayName, ignoreCase = true) }
-                    val live = if (skipLiveList) {
+                    val usedListing = skipLiveList || cached.isNotEmpty()
+                    val live = if (usedListing) {
                         emptyList()
                     } else {
                         listLocalDirMediaNames(pathStr)
@@ -542,13 +543,14 @@ object OpenFileExternally {
                         session.put(localFileEntry(subPath, name, mediaMimeForName(name)))
                     }.onFailure { logcat("OpenFileExternally", it) }
                 }
+                logcat("OpenFileExternally") {
+                    "HTTP local video session=${session.id} file=${PrivacyLog.file(displayName)} " +
+                        "files=${session.files.size} accessDir=$accessDir reused=$wasReused " +
+                        "skipLive=${skipLiveList || extras.isNotEmpty()} extras=${extras.size}"
+                }
             }
         }
         val videoUri = ExternalHttpStreamServer.uriFor(session.id, displayName)
-        logcat("OpenFileExternally") {
-            "HTTP local video session=${session.id} file=${PrivacyLog.file(displayName)} " +
-                "files=${session.files.size} accessDir=$accessDir reused=$reused"
-        }
         return PreparedHttpVideo(session, reused, videoUri, displayName, mimeType, accessDir)
     }
 
@@ -918,16 +920,20 @@ object OpenFileExternally {
     }
 
     private fun findLocalSidecarNames(videoPathStr: String, videoName: String): List<String> {
-        val siblings = findLocalSiblingNames(videoPathStr).ifEmpty {
-            // SAF/Okio-backed paths may support sibling opens without a listable java.io parent.
-            SidecarSubtitles.probeCandidateNames(videoName).filter { name ->
-                val path = siblingPath(videoPathStr, name) ?: return@filter false
-                runCatching { localFileEntry(path, name, mediaMimeForName(name)) }.isSuccess
-            }
+        val siblings = findLocalSiblingNames(videoPathStr)
+        val matched = SidecarSubtitles.matchSiblings(
+            videoName,
+            siblings.filter(ExternalHttpStreamServer::isSafeFileName),
+        )
+        if (matched.isNotEmpty()) return matched
+        // Video-folder overlay listings are video-only; probe sidecars without File.list().
+        val probed = SidecarSubtitles.probeCandidateNames(videoName).filter { name ->
+            val path = siblingPath(videoPathStr, name) ?: return@filter false
+            runCatching { localFileEntry(path, name, mediaMimeForName(name)) }.isSuccess
         }
         return SidecarSubtitles.matchSiblings(
             videoName,
-            siblings.filter(ExternalHttpStreamServer::isSafeFileName),
+            probed.filter(ExternalHttpStreamServer::isSafeFileName),
         )
     }
 
@@ -939,36 +945,117 @@ object OpenFileExternally {
         .take(MAX_DIR_MEDIA_FILES)
 
     /**
-     * Prefer BrowseSession / folder-index names (folder view, library overlay) so HTTP
-     * access-dir works for SAF/MediaStore paths that [File.list] cannot see.
+     * BrowseSession classified rows + raw folder children + disk folder index.
+     * Folder view already listed these files; do not [File.list] again.
      */
     private suspend fun siblingMediaNamesFromCacheLocal(videoPathStr: String): List<String> {
-        if (ZipPaths.parse(videoPathStr) != null) return emptyList()
-        val parent = videoPathStr.toPath().parent ?: return emptyList()
-        val parentKey = BrowseSession.pathKey(parent)
-        var listing = BrowseSession.getLocalCachedListing(parentKey)?.entries
-        if (listing.isNullOrEmpty()) {
-            val frame = BrowseSession.localStack.lastOrNull()
-            if (frame != null && !frame.isZipBrowse) {
-                val framePath = runCatching {
-                    resolveBrowsePath(frame.path.toPath(), preferMediaStore = frame.preferMediaStore)
-                }.getOrNull() ?: frame.path.toPath()
-                if (BrowseSession.pathKey(framePath) == parentKey || frame.path == parent.toString()) {
-                    val root = LocalLibrary.loadRoot(frame.rootId)
-                    val rootPath = root?.let { LocalLibrary.rootPath(it) }
-                    listing = if (rootPath != null) {
-                        NetworkFolderIndexCache.loadLocal(
-                            frame.rootId,
-                            LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
-                            frame.relativePath,
-                        )
-                    } else {
-                        null
-                    }
+        val names = LinkedHashSet<String>()
+        siblingNamesFromLocalRam(videoPathStr).forEach { names += it }
+        if (ZipPaths.parse(videoPathStr) == null) {
+            siblingNamesFromLocalFolderIndex(videoPathStr).forEach { names += it }
+        }
+        return names.filter { isHttpExposedMediaName(it) }
+    }
+
+    private fun siblingNamesFromLocalRam(videoPathStr: String): List<String> {
+        val names = LinkedHashSet<String>()
+        siblingNamesFromLocalZipRam(videoPathStr).forEach { names += it }
+        for (key in localParentListingKeys(videoPathStr)) {
+            siblingNamesFromListing(BrowseSession.getLocalCachedListing(key)?.entries)
+                .forEach { names += it }
+            BrowseSession.peekLocalRawChildren(key)?.forEach { child ->
+                if (!child.isDirectory) {
+                    directChildName(child.name)?.let { names += it }
                 }
             }
         }
-        return siblingNamesFromListing(listing).filter { isHttpExposedMediaName(it) }
+        return names.toList()
+    }
+
+    private fun siblingNamesFromLocalZipRam(videoPathStr: String): List<String> {
+        val (zipAbs, member) = ZipPaths.parse(videoPathStr) ?: return emptyList()
+        val prefix = member.substringBeforeLast('/', missingDelimiterValue = "")
+        val frame = BrowseSession.localStack.lastOrNull() ?: return emptyList()
+        if (!frame.isZipBrowse || frame.path != zipAbs) return emptyList()
+        val inner = frame.zipInnerRel.orEmpty()
+        if (BrowseSession.normalizeBrowseRelativeDir(inner) !=
+            BrowseSession.normalizeBrowseRelativeDir(prefix)
+        ) {
+            return emptyList()
+        }
+        val virtualDir = ZipAsDirListing.virtualRelativeDir(frame.relativePath, inner)
+        return siblingNamesFromListing(
+            BrowseSession.getLocalCachedListing(
+                BrowseSession.localZipListingKey(frame.rootId, virtualDir),
+            )?.entries,
+        )
+    }
+
+    private suspend fun siblingNamesFromLocalFolderIndex(videoPathStr: String): List<String> {
+        val parent = localParentPath(videoPathStr) ?: return emptyList()
+        val frame = matchingLocalFrame(parent) ?: return emptyList()
+        val root = LocalLibrary.loadRoot(frame.rootId) ?: return emptyList()
+        val rootPath = LocalLibrary.rootPath(root) ?: return emptyList()
+        return siblingNamesFromListing(
+            NetworkFolderIndexCache.loadLocal(
+                frame.rootId,
+                LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
+                frame.relativePath,
+            ),
+        )
+    }
+
+    private fun localParentPath(videoPathStr: String): Path? {
+        if (ZipPaths.parse(videoPathStr) != null) return null
+        if (videoPathStr.startsWith('/')) {
+            return File(videoPathStr).parentFile?.path?.toPath()
+        }
+        return runCatching { videoPathStr.toPath().parent }.getOrNull()
+    }
+
+    private fun localParentListingKeys(videoPathStr: String): List<String> {
+        val parent = localParentPath(videoPathStr) ?: return emptyList()
+        return localListingKeysForDir(parent)
+    }
+
+    private fun localListingKeysForDir(dir: Path): List<String> {
+        val keys = LinkedHashSet<String>()
+        fun add(path: Path) {
+            keys += BrowseSession.pathKey(path)
+        }
+        add(dir)
+        runCatching { add(resolveBrowsePath(dir, preferMediaStore = true)) }
+        runCatching { add(resolveBrowsePath(dir, preferMediaStore = false)) }
+        val frame = matchingLocalFrame(dir)
+        if (frame != null) {
+            add(frame.path.toPath())
+            runCatching {
+                add(resolveBrowsePath(frame.path.toPath(), preferMediaStore = frame.preferMediaStore))
+            }
+        }
+        return keys.toList()
+    }
+
+    private fun matchingLocalFrame(parent: Path): BrowseSession.LocalFrame? {
+        val frame = BrowseSession.localStack.lastOrNull() ?: return null
+        if (frame.isZipBrowse) return null
+        val framePath = frame.path.toPath()
+        val resolved = runCatching {
+            resolveBrowsePath(framePath, preferMediaStore = frame.preferMediaStore)
+        }.getOrNull()
+        val parentKey = BrowseSession.pathKey(parent)
+        val parentResolved = runCatching {
+            resolveBrowsePath(parent, preferMediaStore = frame.preferMediaStore)
+        }.getOrNull()
+        val matches = parentKey == BrowseSession.pathKey(framePath) ||
+            parent.toString() == frame.path ||
+            (resolved != null && parentKey == BrowseSession.pathKey(resolved)) ||
+            (parentResolved != null && BrowseSession.pathKey(parentResolved) == BrowseSession.pathKey(framePath)) ||
+            (
+                parentResolved != null && resolved != null &&
+                    BrowseSession.pathKey(parentResolved) == BrowseSession.pathKey(resolved)
+                )
+        return frame.takeIf { matches }
     }
 
     private suspend fun findSmbSidecarNames(
@@ -1683,6 +1770,10 @@ object OpenFileExternally {
     }
 
     private fun findLocalSiblingNames(videoPathStr: String): List<String> {
+        val fromListing = siblingNamesFromLocalRam(videoPathStr)
+        if (fromListing.isNotEmpty()) {
+            return fromListing.filter { isHttpExposedMediaName(it) }
+        }
         ZipPaths.parse(videoPathStr)?.let { (zipAbs, member) ->
             val prefix = member.substringBeforeLast('/', missingDelimiterValue = "")
             return withLocalZipCentralDirectory(zipAbs.toPath()) { cd ->
@@ -1696,23 +1787,34 @@ object OpenFileExternally {
                 }
             }.orEmpty()
         }
-        if (videoPathStr.startsWith('/')) {
-            val parent = File(videoPathStr).parentFile ?: return emptyList()
-            return parent.list()?.toList().orEmpty()
-        }
+        return listLocalFolderChildren(videoPathStr)
+    }
+
+    /** Same child list folder browse uses ([listBrowseChildrenRaw]), cached on the session. */
+    private fun listLocalFolderChildren(videoPathStr: String): List<String> {
+        val parent = localParentPath(videoPathStr) ?: return emptyList()
+        val frame = matchingLocalFrame(parent)
+        val preferMs = frame?.preferMediaStore ?: true
+        val effective = runCatching {
+            resolveBrowsePath(parent, preferMediaStore = preferMs)
+        }.getOrDefault(parent)
+        val key = BrowseSession.pathKey(effective)
         return runCatching {
-            val path = videoPathStr.toPath()
-            val parent = path.parent ?: return@runCatching emptyList()
-            if (parent.isMediaStorePath()) {
-                return@runCatching MediaStoreFs.listChildren(parent).mapNotNull { child ->
-                    child.name.takeIf { !child.isDirectory && isHttpExposedMediaName(it) }
+            BrowseSession.rememberLocalRawChildren(key) {
+                effective.listBrowseChildrenRaw(lightSafMeta = true).map { child ->
+                    RemoteChild(
+                        name = child.name,
+                        isDirectory = child.isDirectory,
+                        path = child.name,
+                        size = child.size,
+                        lastModifiedMs = child.lastModifiedMs,
+                        hidden = child.hidden,
+                        readOnly = child.readOnly,
+                        mimeType = child.mimeType,
+                    )
                 }
-            }
-            val parentFile = File(parent.toString())
-            if (parentFile.isDirectory) {
-                parentFile.list()?.toList().orEmpty()
-            } else {
-                emptyList()
+            }.mapNotNull { child ->
+                if (child.isDirectory) null else child.name.takeIf { isHttpExposedMediaName(it) }
             }
         }.getOrDefault(emptyList())
     }

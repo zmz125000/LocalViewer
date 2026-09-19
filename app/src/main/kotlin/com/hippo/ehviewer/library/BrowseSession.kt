@@ -417,6 +417,8 @@ object BrowseSession {
         return localRawChildren.putIfAbsent(pathKey, children) ?: children
     }
 
+    fun peekLocalRawChildren(pathKey: String): List<RemoteChild>? = localRawChildren[pathKey]
+
     suspend fun rememberSmbRawChildren(
         sourceId: Long,
         relativeDir: String,
