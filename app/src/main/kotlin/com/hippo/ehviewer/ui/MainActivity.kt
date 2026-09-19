@@ -499,7 +499,7 @@ class MainActivity : AppCompatActivity() {
                                     scope.launch {
                                         with(shareDialogState) {
                                             with(this@MainActivity) {
-                                                awaitHttpShareQr(item.url, item.title)
+                                                awaitHttpShareQr(item)
                                             }
                                         }
                                     }

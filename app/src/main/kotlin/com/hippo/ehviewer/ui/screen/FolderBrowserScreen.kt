@@ -1667,7 +1667,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         launchIO {
             try {
                 val item = block()
-                withUIContext { awaitHttpShareQr(item.url, item.title) }
+                withUIContext { awaitHttpShareQr(item) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {

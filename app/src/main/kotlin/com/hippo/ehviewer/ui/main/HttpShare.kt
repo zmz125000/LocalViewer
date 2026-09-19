@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -261,8 +262,8 @@ object HttpShare {
 }
 
 context(_: DialogState, ctx: Context)
-suspend fun awaitHttpShareQr(url: String, title: String) = dialog { cont ->
-    val qr = remember(url) { encodeQrBitmap(url).asImageBitmap() }
+suspend fun awaitHttpShareQr(item: HttpShareItem) = dialog { cont ->
+    val qr = remember(item.url) { encodeQrBitmap(item.url).asImageBitmap() }
     AlertDialog(
         onDismissRequest = { cont.resume(Unit) },
         confirmButton = {
@@ -270,7 +271,26 @@ suspend fun awaitHttpShareQr(url: String, title: String) = dialog { cont ->
                 Text(text = stringResource(id = android.R.string.ok))
             }
         },
-        title = { Text(text = title.ifBlank { stringResource(R.string.browse_share_via_http) }) },
+        dismissButton = {
+            Row {
+                TextButton(
+                    onClick = { with(ctx) { addTextToClipboard(item.url) } },
+                    shapes = ButtonDefaults.shapes(),
+                ) {
+                    Text(text = stringResource(R.string.browse_http_share_copy))
+                }
+                TextButton(
+                    onClick = {
+                        HttpShare.stop(item.id)
+                        cont.resume(Unit)
+                    },
+                    shapes = ButtonDefaults.shapes(),
+                ) {
+                    Text(text = stringResource(R.string.browse_http_share_stop))
+                }
+            }
+        },
+        title = { Text(text = item.title.ifBlank { stringResource(R.string.browse_share_via_http) }) },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -278,19 +298,13 @@ suspend fun awaitHttpShareQr(url: String, title: String) = dialog { cont ->
             ) {
                 Image(
                     bitmap = qr,
-                    contentDescription = url,
+                    contentDescription = item.url,
                     modifier = Modifier
                         .size(220.dp)
                         .padding(bottom = 16.dp),
                 )
                 SelectionContainer {
-                    Text(text = url)
-                }
-                TextButton(
-                    onClick = { with(ctx) { addTextToClipboard(url) } },
-                    shapes = ButtonDefaults.shapes(),
-                ) {
-                    Text(text = stringResource(R.string.browse_http_share_copy))
+                    Text(text = item.url)
                 }
             }
         },
