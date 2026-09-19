@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.reader
 
+import android.content.res.Configuration
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.library.FolderSearch
@@ -29,10 +31,18 @@ const val READER_SHEET_HEIGHT_FRACTION = 0.7f
 
 fun Modifier.readerSheetExpandBox(): Modifier = fillMaxWidth().fillMaxHeight(READER_SHEET_HEIGHT_FRACTION)
 
+fun Modifier.readerSheetBox(capHeight: Boolean): Modifier = if (capHeight) readerSheetExpandBox() else fillMaxSize()
+
+/**
+ * Portrait keeps the 0.7 cap. Landscape is full — same
+ * [Configuration.ORIENTATION_LANDSCAPE] check as [GalleryGridDefaults.listColumnCount].
+ */
+fun readerSheetCapHeight(landscape: Boolean): Boolean = !landscape
+
 /** Photo grid uses the capped box below this page count; larger galleries fill the screen. */
 const val READER_PHOTO_GRID_FULL_EXPAND_MIN = 40
 
-fun readerPhotoGridHalfScreen(pageCount: Int): Boolean = pageCount < READER_PHOTO_GRID_FULL_EXPAND_MIN
+fun readerPhotoGridHalfScreen(pageCount: Int, landscape: Boolean): Boolean = readerSheetCapHeight(landscape) && pageCount < READER_PHOTO_GRID_FULL_EXPAND_MIN
 
 /**
  * Folder galleries and ZIP/CBZ (zip-as-dir) can open a reader photo grid.
@@ -116,12 +126,9 @@ fun ReaderPhotoGridSheet(
     var allowRemoteFetch by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { allowRemoteFetch = true }
     val gridSpacing = GalleryGridDefaults.spacedBy()
-    val sheetModifier = if (readerPhotoGridHalfScreen(pageCount)) {
-        Modifier.readerSheetExpandBox()
-    } else {
-        Modifier.fillMaxSize()
-    }
-    Box(sheetModifier) {
+    val landscape =
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    Box(Modifier.readerSheetBox(readerPhotoGridHalfScreen(pageCount, landscape))) {
         FastScrollLazyVerticalGrid(
             columns = GalleryGridDefaults.columns(),
             state = gridState,

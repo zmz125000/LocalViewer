@@ -1176,7 +1176,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                             dragHandle = null,
                             contentWindowInsets = { WindowInsets() },
                         ) {
-                            Box(Modifier.readerSheetExpandBox()) {
+                            Box(Modifier.readerSheetBox(readerSheetCapHeight(isLandscape))) {
                                 SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize())
                             }
                         }
