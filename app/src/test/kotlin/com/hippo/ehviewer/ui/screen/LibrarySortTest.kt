@@ -67,7 +67,9 @@ class LibrarySortTest {
             ) == 0L,
         )
         assertFalse(LibrarySection.fromPref(1) == LibrarySection.Galleries)
+        assertEquals(LibraryVideoMode.Folders, LibraryVideoMode.fromPref(0))
         assertEquals(LibraryVideoMode.Files, LibraryVideoMode.fromPref(1))
+        assertEquals(LibraryVideoMode.Folders, LibraryVideoMode.fromPref(99))
     }
 
     private fun item(

@@ -459,8 +459,8 @@ object Settings : DataStorePreferences(null) {
     val librarySection = intPref("library_section", 0)
 
     /**
-     * Video library listing: 0 = folders that contain videos (default),
-     * 1 = flat list of every video file.
+     * Library Videos listing via the All videos toggle: 0 = folders that contain
+     * videos (off, default), 1 = flat list of every video file (on).
      */
     val libraryVideoMode = intPref("library_video_mode", 0)
 

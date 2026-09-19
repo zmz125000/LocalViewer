@@ -270,6 +270,51 @@ fun openLocalFolderPhotoGrid(
 }
 
 /**
+ * Open a local video folder as a Video-filter overlay (Library tap).
+ * Same stack idea as [openLocalFolderPhotoGrid]: does not write global content mode.
+ */
+context(nav: DestinationsNavigator)
+fun openLocalVideoFolder(
+    rootId: Long,
+    rootDisplayName: String,
+    rootPath: Path,
+    relativePath: String,
+    preferMediaStore: Boolean = true,
+    title: String? = null,
+    fromHistory: Boolean = false,
+    fromLibrary: Boolean = false,
+) {
+    val folderStack = buildLocalBrowseStack(
+        rootId = rootId,
+        rootDisplayName = rootDisplayName,
+        rootPath = rootPath,
+        relativePath = relativePath,
+        preferMediaStore = preferMediaStore,
+    )
+    val overlayFrame = folderStack.last().copy(
+        videoFolder = true,
+        title = title?.takeIf { it.isNotBlank() } ?: folderStack.last().title,
+    )
+    val walkParents = walkUpperDirsForBrowseOpen(fromHistory, fromLibrary)
+    BrowseSession.localStack = if (walkParents) {
+        val parentRel = parentRelativeOfFile(relativePath)
+        val parentStack = buildLocalBrowseStack(
+            rootId = rootId,
+            rootDisplayName = rootDisplayName,
+            rootPath = rootPath,
+            relativePath = parentRel,
+            preferMediaStore = preferMediaStore,
+        )
+        parentStack + overlayFrame
+    } else {
+        listOf(overlayFrame)
+    }
+    nav.navigate(FolderBrowserScreenDestination(fromHistory = fromHistory, fromLibrary = fromLibrary)) {
+        launchSingleTop = true
+    }
+}
+
+/**
  * Open an SMB folder gallery as photo-grid (History / Library tap).
  */
 context(nav: DestinationsNavigator)

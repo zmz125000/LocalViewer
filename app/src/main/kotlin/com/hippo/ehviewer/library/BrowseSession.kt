@@ -33,6 +33,11 @@ object BrowseSession {
          */
         val photoGrid: Boolean = false,
         /**
+         * Virtual video-folder overlay (Library video folder tap). Locks Video
+         * content filter for this frame; does not change global list/content mode.
+         */
+        val videoFolder: Boolean = false,
+        /**
          * When non-null, [path] is a ZIP/CBZ file and this frame browses inside it.
          * `""` = zip root; `"Album"` / `"S/leaf"` = prefix inside the archive.
          * Null = normal filesystem folder.

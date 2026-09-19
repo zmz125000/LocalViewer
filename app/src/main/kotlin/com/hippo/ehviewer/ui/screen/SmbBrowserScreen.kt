@@ -361,6 +361,15 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                         allTypes = liveSearch,
                     )
                     .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
+            BrowseVirtualKind.VideoFolder ->
+                displayEntries
+                    .filterRemoteByContentMode(
+                        BrowseContentMode.Video,
+                        showHiddenFiles,
+                        showVirtualGalleries,
+                        allTypes = liveSearch,
+                    )
+                    .filterRemoteSmallGalleries(showSmallGalleries, smallGalleryMinPages)
             BrowseVirtualKind.None ->
                 displayEntries
                     .filterRemoteByContentMode(

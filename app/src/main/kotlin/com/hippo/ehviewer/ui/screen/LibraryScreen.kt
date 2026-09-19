@@ -119,6 +119,7 @@ import com.hippo.ehviewer.ui.navToLocalZipFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.openLocalBrowseDir
 import com.hippo.ehviewer.ui.openLocalFolderPhotoGrid
+import com.hippo.ehviewer.ui.openLocalVideoFolder
 import com.hippo.ehviewer.ui.openSmbBrowseDir
 import com.hippo.ehviewer.ui.openWebDavBrowseDir
 import com.hippo.ehviewer.webdav.WebDavRepository
@@ -389,12 +390,13 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                 pages = item.pageCount,
             )
         }
-        openLocalBrowseDir(
+        openLocalVideoFolder(
             rootId = root.id,
             rootDisplayName = root.displayName,
             rootPath = rootPath,
             relativePath = rel,
             preferMediaStore = root.prefersMediaStore,
+            title = item.title,
             fromLibrary = true,
         )
     }

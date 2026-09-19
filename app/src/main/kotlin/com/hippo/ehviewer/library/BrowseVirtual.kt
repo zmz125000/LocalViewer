@@ -8,6 +8,7 @@ package com.hippo.ehviewer.library
  * - Does not change global [BrowseContentMode] / listMode prefs
  *
  * [PhotoGrid] additionally forces grid layout (like a dedicated image browser).
+ * [VideoFolder] locks Video content filter (list/grid follow the global pref).
  * [RpcShareRoot] is the SMB empty-share host listing (disk share names only).
  * [ZipPlainFolder] is a mixed zip-as-dir interior: Folder filter, no gallery promote.
  */
@@ -19,6 +20,9 @@ enum class BrowseVirtualKind {
 
     /** Folder-gallery image list (virtual photo grid). */
     PhotoGrid,
+
+    /** Library video-folder overlay: Video filter, not the global content mode. */
+    VideoFolder,
 
     /** Mixed zip virtual tree: same Folder view as RPC root (menu hidden). */
     ZipPlainFolder,
@@ -39,6 +43,7 @@ enum class BrowseVirtualKind {
             PhotoGrid -> 100
             RpcShareRoot -> 1000
             ZipPlainFolder -> 2000
+            VideoFolder -> 3000
         }
 }
 
@@ -75,6 +80,21 @@ fun smbBrowseVirtual(
 ): BrowseVirtualKind = when {
     photoGridDir != null && photoGridDir == relativeDir -> BrowseVirtualKind.PhotoGrid
     isServerRootSource && relativeDir.isEmpty() -> BrowseVirtualKind.RpcShareRoot
+    zipPlainFolder -> BrowseVirtualKind.ZipPlainFolder
+    else -> BrowseVirtualKind.None
+}
+
+/**
+ * Resolve the virtual layer for a local folder-browser frame.
+ * Photo-grid wins when both overlays could apply.
+ */
+fun localBrowseVirtual(
+    photoGrid: Boolean,
+    videoFolder: Boolean,
+    zipPlainFolder: Boolean = false,
+): BrowseVirtualKind = when {
+    photoGrid -> BrowseVirtualKind.PhotoGrid
+    videoFolder -> BrowseVirtualKind.VideoFolder
     zipPlainFolder -> BrowseVirtualKind.ZipPlainFolder
     else -> BrowseVirtualKind.None
 }
