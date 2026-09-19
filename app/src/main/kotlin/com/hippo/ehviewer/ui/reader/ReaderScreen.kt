@@ -1196,6 +1196,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 onDismissRequest = { photoGridOpen = false },
                 modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
                 sheetState = sheetState,
+                sheetMaxWidth = readerPhotoGridSheetMaxWidth(),
                 scrimColor = Color.Transparent,
                 dragHandle = null,
                 contentWindowInsets = { WindowInsets() },
