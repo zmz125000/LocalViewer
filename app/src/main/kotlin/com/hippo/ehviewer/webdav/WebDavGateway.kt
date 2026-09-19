@@ -74,8 +74,7 @@ object WebDavGateway {
         }
     }
 
-    fun isListing(sourceId: Long, relativeDir: String): Boolean =
-        isListJobActive(BrowseSession.webDavListingKey(sourceId, relativeDir))
+    fun isListing(sourceId: Long, relativeDir: String): Boolean = isListJobActive(BrowseSession.webDavListingKey(sourceId, relativeDir))
 
     suspend fun listDirectory(
         source: WebDavSourceEntity,

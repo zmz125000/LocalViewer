@@ -139,11 +139,11 @@ import com.hippo.ehviewer.ui.main.BrowseSaveSnackbars
 import com.hippo.ehviewer.ui.main.HttpShareSnackbars
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.navToReader
+import com.hippo.ehviewer.ui.screen.toggleLibrarySection
 import com.hippo.ehviewer.ui.settings.showNewVersion
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.ui.tools.awaitInputText
-import com.hippo.ehviewer.ui.screen.toggleLibrarySection
 import com.hippo.ehviewer.updater.AppUpdater
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.addTextToClipboard
