@@ -853,11 +853,7 @@ object LocalFolderListing {
     ): List<RemoteChild> {
         val path = resolveBrowsePath(dir, preferMediaStore = preferMediaStore)
         return BrowseSession.rememberLocalRawChildren(BrowseSession.pathKey(path)) {
-            // Raw list: `.nomedia` dirs are tagged after child peeks (same as SMB),
-            // so we do not SAF-list every subdirectory twice.
-            // Full SIZE/LAST_MODIFIED on SAF remainder so archive/PDF list cells
-            // keep mtime/size when MediaStore overlay already listed images.
-            path.listBrowseChildrenRaw(lightSafMeta = false).map { it.toRemoteChild() }
+            path.listBrowseChildrenRaw().map { it.toRemoteChild() }
         }
     }
 
