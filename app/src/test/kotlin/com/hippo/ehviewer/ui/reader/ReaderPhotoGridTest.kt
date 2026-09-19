@@ -39,11 +39,20 @@ class ReaderPhotoGridTest {
 
     @Test
     fun smallGalleriesUseCappedSheet() {
-        assertTrue(readerPhotoGridHalfScreen(0))
-        assertTrue(readerPhotoGridHalfScreen(1))
-        assertTrue(readerPhotoGridHalfScreen(49))
-        assertFalse(readerPhotoGridHalfScreen(50))
-        assertFalse(readerPhotoGridHalfScreen(500))
+        assertTrue(readerPhotoGridHalfScreen(0, landscape = false))
+        assertTrue(readerPhotoGridHalfScreen(1, landscape = false))
+        assertTrue(readerPhotoGridHalfScreen(READER_PHOTO_GRID_FULL_EXPAND_MIN - 1, landscape = false))
+        assertFalse(readerPhotoGridHalfScreen(READER_PHOTO_GRID_FULL_EXPAND_MIN, landscape = false))
+        assertFalse(readerPhotoGridHalfScreen(500, landscape = false))
+    }
+
+    @Test
+    fun landscapeSheetsDropHeightCap() {
+        assertTrue(readerSheetCapHeight(landscape = false))
+        assertFalse(readerSheetCapHeight(landscape = true))
+        assertTrue(readerPhotoGridHalfScreen(1, landscape = false))
+        assertFalse(readerPhotoGridHalfScreen(1, landscape = true))
+        assertFalse(readerPhotoGridHalfScreen(READER_PHOTO_GRID_FULL_EXPAND_MIN, landscape = true))
     }
 
     @Test
