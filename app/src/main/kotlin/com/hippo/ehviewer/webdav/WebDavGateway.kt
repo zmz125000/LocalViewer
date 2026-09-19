@@ -94,7 +94,9 @@ object WebDavGateway {
         val configKey = sourceConfigKey(source)
         if (useCache) {
             val ram = BrowseSession.getWebDavCachedListing(source.id, relativeDir)
-            val needDisk = ram == null || isShallowIncompleteListing(ram.entries)
+            val needDisk = ram == null ||
+                !ram.sessionCurrent ||
+                isShallowIncompleteListing(ram.entries)
             val disk = if (needDisk) {
                 NetworkFolderIndexCache.loadWebDav(source.id, configKey, relativeDir)
             } else {

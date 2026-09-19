@@ -514,14 +514,22 @@ fun selectCachedFolderListing(
     ramSessionCurrent: Boolean,
     diskEntries: List<BrowseEntryRemote>?,
 ): Pair<List<BrowseEntryRemote>, Boolean>? {
+    // This process already finished a full/slim list — slim must not replace it
+    // with a disk hydrate that has not been parsed yet.
+    if (ramEntries != null && ramSessionCurrent && !isShallowIncompleteListing(ramEntries)) {
+        return ramEntries to true
+    }
+    // Non-current RAM (overlay / library stub / previous-process hydrate) can look
+    // complete while JSON is still unread. Prefer the disk listing so slim waits
+    // for parse and cannot wipe a richer index.
+    if (diskEntries != null && !isShallowIncompleteListing(diskEntries)) {
+        return diskEntries to false
+    }
     if (ramEntries != null && !isShallowIncompleteListing(ramEntries)) {
         return ramEntries to ramSessionCurrent
     }
-    if (diskEntries != null && (ramEntries == null || !isShallowIncompleteListing(diskEntries))) {
-        return diskEntries to false
-    }
-    if (ramEntries != null) return ramEntries to ramSessionCurrent
     if (diskEntries != null) return diskEntries to false
+    if (ramEntries != null) return ramEntries to ramSessionCurrent
     return null
 }
 

@@ -266,7 +266,9 @@ object LocalFolderListing {
 
         if (useCache) {
             val ram = BrowseSession.getLocalCachedListing(pathKey)
-            val needDisk = ram == null || isShallowIncompleteListing(ram.entries)
+            val needDisk = ram == null ||
+                !ram.sessionCurrent ||
+                isShallowIncompleteListing(ram.entries)
             val disk = if (needDisk) {
                 NetworkFolderIndexCache.loadLocal(rootId, configKey, relativeDir)
             } else {
