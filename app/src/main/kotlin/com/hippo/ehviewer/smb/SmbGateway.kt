@@ -1862,7 +1862,9 @@ object SmbGateway {
         if (useCache) {
             // RAM hit keeps its generation unless it is a shallow stub hiding a complete disk index.
             val ram = BrowseSession.getSmbCachedListing(source.id, relativeDir)
-            val needDisk = ram == null || isShallowIncompleteListing(ram.entries)
+            val needDisk = ram == null ||
+                !ram.sessionCurrent ||
+                isShallowIncompleteListing(ram.entries)
             val disk = if (needDisk) {
                 NetworkFolderIndexCache.loadSmb(source.id, configKey, relativeDir)
             } else {

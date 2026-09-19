@@ -217,6 +217,31 @@ class SlimIndexWipeTest {
     }
 
     @Test
+    fun selectCached_prefersDiskOverNonCurrentRamSoSlimWaitsForParse() {
+        val overlay = listOf(
+            BrowseEntryRemote.VideoFile(name = "a.mp4", fileName = "a.mp4"),
+            BrowseEntryRemote.VideoFile(name = "b.mp4", fileName = "b.mp4"),
+        )
+        val selected = selectCachedFolderListing(
+            ramEntries = overlay,
+            ramSessionCurrent = false,
+            diskEntries = cached,
+        )
+        assertEquals(cached, selected?.first)
+        assertEquals(false, selected?.second)
+    }
+
+    @Test
+    fun selectCached_sessionCurrentRamWinsOverDisk() {
+        val selected = selectCachedFolderListing(
+            ramEntries = cached,
+            ramSessionCurrent = true,
+            diskEntries = listOf(BrowseEntryRemote.RegularFile(name = "stale.txt")),
+        )
+        assertEquals(cached to true, selected)
+    }
+
+    @Test
     fun slimMarksMissingDirUnreachableAndKeepsClassification() {
         val live = listOf(
             RemoteChild(name = "Comics", isDirectory = true),
