@@ -616,6 +616,10 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                         BrowseSession.isWebDavListingSessionCurrent(sourceId, loadDir)
                     error = null
                     loading = false
+                    refreshing = true
+                },
+                onRefreshDone = {
+                    if (listedDir == loadDir) refreshing = false
                 },
             )
             // Still the active effect for this path (not cancelled) → safe to commit.
@@ -626,7 +630,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
             WebDavRepository.markOk(src.id)
             error = null
             loading = false
-            refreshing = false
+            refreshing = WebDavGateway.isListing(sourceId, loadDir)
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Path changed or refreshToken bumped — new effect owns loading state.
             throw e

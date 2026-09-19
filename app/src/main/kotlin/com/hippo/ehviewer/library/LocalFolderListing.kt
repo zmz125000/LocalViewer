@@ -253,6 +253,7 @@ object LocalFolderListing {
         preferMediaStore: Boolean = true,
         useCache: Boolean = true,
         onCached: ((List<BrowseEntry>) -> Unit)? = null,
+        onRefreshDone: (() -> Unit)? = null,
     ): List<BrowseEntry> = withContext(Dispatchers.IO) {
         if (Settings.browseZipAsDir.value) {
             val split = ZipAsDirListing.splitZipBrowsePath(relativeDir)
@@ -349,6 +350,8 @@ object LocalFolderListing {
                                     "(${e.message}); keeping cache"
                             }
                             materialized
+                        } finally {
+                            publishRefreshDoneOnMain(onRefreshDone)
                         }
                     }
                     return@withContext materialized
@@ -607,6 +610,13 @@ object LocalFolderListing {
         if (onCached == null) return
         withContext(Dispatchers.Main.immediate) {
             onCached(entries)
+        }
+    }
+
+    private suspend fun publishRefreshDoneOnMain(onRefreshDone: (() -> Unit)?) {
+        if (onRefreshDone == null) return
+        withContext(Dispatchers.Main.immediate) {
+            onRefreshDone()
         }
     }
 

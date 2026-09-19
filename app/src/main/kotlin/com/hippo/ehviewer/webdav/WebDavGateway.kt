@@ -74,12 +74,16 @@ object WebDavGateway {
         }
     }
 
+    fun isListing(sourceId: Long, relativeDir: String): Boolean =
+        isListJobActive(BrowseSession.webDavListingKey(sourceId, relativeDir))
+
     suspend fun listDirectory(
         source: WebDavSourceEntity,
         password: String,
         relativeDir: String,
         useCache: Boolean = true,
         onCached: ((List<BrowseEntryRemote>) -> Unit)? = null,
+        onRefreshDone: (() -> Unit)? = null,
     ): List<BrowseEntryRemote> {
         if (Settings.browseZipAsDir.value) {
             ZipAsDirListing.splitZipBrowsePath(relativeDir)?.let { (zipRel, inner) ->
@@ -205,6 +209,8 @@ object WebDavGateway {
                     } catch (_: Throwable) {
                         // Leave non-current so a later visit can retry quick scan.
                         presented
+                    } finally {
+                        publishRefreshDoneOnMain(onRefreshDone)
                     }
                 }
                 return presented
@@ -263,6 +269,13 @@ object WebDavGateway {
         if (onCached == null) return
         withContext(Dispatchers.Main.immediate) {
             onCached(entries)
+        }
+    }
+
+    private suspend fun publishRefreshDoneOnMain(onRefreshDone: (() -> Unit)?) {
+        if (onRefreshDone == null) return
+        withContext(Dispatchers.Main.immediate) {
+            onRefreshDone()
         }
     }
 

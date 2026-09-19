@@ -88,6 +88,7 @@ import com.hippo.ehviewer.library.LOCAL_GALLERY_TOKEN
 import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.LocalListingJobs
 import com.hippo.ehviewer.library.MediaStoreFs
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
 import com.hippo.ehviewer.library.VideoThumbnail
@@ -638,6 +639,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                         listedPath = targetPath
                         error = null
                         loading = false
+                        refreshing = true
+                    }
+                },
+                onRefreshDone = {
+                    if (stack.lastOrNull()?.let { frameListKey(it) } == targetPath) {
+                        refreshing = false
                     }
                 },
             )
@@ -647,7 +654,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             listedPath = targetPath
             error = null
             loading = false
-            refreshing = false
+            refreshing = LocalListingJobs.isActive(
+                BrowseSession.localFolderListingKey(frame.rootId, frame.relativePath),
+            )
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Path change / new reload owns loading — do not clear here (same as SMB).
             throw e
