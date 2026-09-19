@@ -651,27 +651,20 @@ object MediaStoreFs {
                     includeData = includeData,
                 )
             }
-            if (MediaPermissions.hasMediaAccess()) {
-                val mediaType =
-                    "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ${MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE} OR " +
-                        "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ${MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO}"
-                absorbCollection(
-                    MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
-                    extraSelection = mediaType,
-                    pathSelection = pathSelection,
-                    pathArgs = pathArgs,
-                    includeData = includeData,
-                )
-            }
+            // Do not also query Files (IMAGE|VIDEO): that re-reads the same rows
+            // library scan already gets from Images + Video.
         }
 
-        // RELATIVE_PATH prefix only (no DATA LIKE). Empty-path OEM rows come next.
+        // RELATIVE_PATH prefix only (no DATA LIKE). Empty-path OEM rows: only at
+        // the media root — nested browse must not scan the whole volume for them.
         absorbAll(pathFilter?.first, pathFilter?.second, includeData = false)
-        absorbAll(
-            MediaStorePathQuery.emptyRelativePathSelection(),
-            pathArgs = null,
-            includeData = true,
-        )
+        if (relativeDir.isEmpty()) {
+            absorbAll(
+                MediaStorePathQuery.emptyRelativePathSelection(),
+                pathArgs = null,
+                includeData = true,
+            )
+        }
 
         val dirChildren = dirs.map { (name, path) -> Child(name, true, path) }
             .sortedWith { a, b -> naturalCompare(a.name, b.name) }
