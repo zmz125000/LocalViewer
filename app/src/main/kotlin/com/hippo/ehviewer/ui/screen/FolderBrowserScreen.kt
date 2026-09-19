@@ -401,9 +401,17 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         error = null
     }
 
+    fun applyLocalVideoFolderFiles(frame: BrowseSession.LocalFrame, names: List<String>) {
+        entries = FolderGalleryIndex.videoFolderLocalFiles(frame.path, names)
+        listedPath = frameListKey(frame)
+        loading = false
+        refreshing = false
+        error = null
+    }
+
     /** Paint RAM listing immediately (return-from-reader / remount) like SMB. */
     fun applyCachedLocalListing(frame: BrowseSession.LocalFrame): Boolean {
-        if (frame.photoGrid) return false
+        if (frame.photoGrid || frame.videoFolder) return false
         if (frame.isZipBrowse) {
             val virtualDir = ZipAsDirListing.virtualRelativeDir(
                 frame.relativePath,
@@ -500,6 +508,33 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             } ?: MediaStoreFs.imageFileNames(frame.path.toPath())
             if (!names.isNullOrEmpty()) {
                 applyLocalPhotoGridFiles(frame, names)
+                return
+            }
+        }
+        // Video-folder overlay: library index / DB file list — no browse classify scan.
+        if (!force && frame.videoFolder && !frame.isZipBrowse) {
+            val alreadyShown = listedPath == targetPath &&
+                entries.any { it is BrowseEntry.VideoFile }
+            if (alreadyShown) {
+                loading = false
+                refreshing = false
+                return
+            }
+            val root = LocalLibrary.loadRoot(frame.rootId)
+            val rootPath = root?.let { LocalLibrary.rootPath(it) }
+            val names = if (rootPath != null) {
+                FolderGalleryIndex.loadLocalVideos(
+                    frame.rootId,
+                    LocalFolderListing.rootConfigKey(rootPath, frame.preferMediaStore),
+                    frame.relativePath,
+                    rootAbs = rootPath,
+                )
+            } else {
+                null
+            } ?: LocalLibrary.videoFileNamesInFolder(frame.rootId, frame.relativePath)
+                ?: MediaStoreFs.videoFileNames(frame.path.toPath())
+            if (!names.isNullOrEmpty()) {
+                applyLocalVideoFolderFiles(frame, names)
                 return
             }
         }

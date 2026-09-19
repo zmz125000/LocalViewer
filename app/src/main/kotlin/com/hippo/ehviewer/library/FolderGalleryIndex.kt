@@ -1,6 +1,8 @@
 package com.hippo.ehviewer.library
 
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
+import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.model.GalleryInfo
 import okio.Path
 import okio.Path.Companion.toPath
@@ -211,6 +213,52 @@ object FolderGalleryIndex {
         BrowseEntry.RegularFile(name = name, path = path)
     }
 
+    /** Video rows for a library video-folder overlay; same order as [listingFromVideoNames]. */
+    fun videoFolderLocalFiles(dirPath: String, names: List<String>): List<BrowseEntry.VideoFile> = names.map { name -> BrowseEntry.VideoFile(name = name, path = dirPath.toPath() / name) }
+
+    /**
+     * Direct video basenames from a classified listing of [folderDir].
+     * Promoted multi-segment rows are skipped — the overlay is this folder's files.
+     */
+    fun videoNamesFromListing(
+        listedDir: String,
+        entries: List<BrowseEntryRemote>,
+        folderDir: String,
+    ): List<String>? {
+        val listed = BrowseSession.normalizeBrowseRelativeDir(listedDir)
+        val folder = BrowseSession.normalizeBrowseRelativeDir(folderDir)
+        if (listed != folder) return null
+        val fromFiles = entries.mapNotNull { entry ->
+            val video = entry as? BrowseEntryRemote.VideoFile ?: return@mapNotNull null
+            val path = video.fileName.replace('\\', '/').trim('/')
+            if (path.isEmpty() || '/' in path) return@mapNotNull null
+            path.takeIf { isVideoFileName(it) }
+        }
+        return fromFiles.takeIf { it.isNotEmpty() }?.sortedWith { a, b -> naturalCompare(a, b) }
+    }
+
+    /**
+     * Direct video files the library scan stored as [LOCAL_GALLERY_KIND_VIDEO_FILE]
+     * rows under [relativeDir] (`""` / `"."` = root).
+     */
+    fun videoFileNamesFromLibraryRows(
+        relativeDir: String,
+        rows: List<LocalGalleryEntity>,
+    ): List<String>? {
+        val folder = normalizeGalleryRelativeDir(relativeDir)
+        val names = ArrayList<String>()
+        for (row in rows) {
+            if (row.kind != LOCAL_GALLERY_KIND_VIDEO_FILE) continue
+            val rel = normalizeGalleryRelativeDir(row.relativePath)
+            if (parentRelativeOfFile(rel) != folder) continue
+            val name = rel.substringAfterLast('/').ifEmpty { row.title }
+            if (isVideoFileName(name) && !isSampleVideoFileName(name)) names += name
+        }
+        if (names.isEmpty()) return null
+        names.sortWith { a, b -> naturalCompare(a, b) }
+        return names
+    }
+
     /**
      * Names from the parent folder's RAM listing — same source photo-grid open uses.
      * [zipInnerRel] non-null means [parentPath] is a zip/cbz browse frame.
@@ -382,6 +430,28 @@ object FolderGalleryIndex {
         rootAbs: Path? = null,
     ): List<String>? = namesWalkingParents(galleryDir) { dir ->
         localListing(rootId, configKey, dir, rootAbs)
+    }
+
+    /**
+     * Direct video names from RAM / disk folder index for a library video-folder overlay.
+     * Self-listing [BrowseEntryRemote.VideoFile] rows — never lists SAF.
+     */
+    suspend fun loadLocalVideos(
+        rootId: Long,
+        configKey: String,
+        folderDir: String,
+        rootAbs: Path? = null,
+    ): List<String>? {
+        val folder = normalizeGalleryRelativeDir(folderDir)
+        var listed = folder
+        while (true) {
+            localListing(rootId, configKey, listed, rootAbs)?.let { entries ->
+                videoNamesFromListing(listed, entries, folder)?.let { return it }
+            }
+            if (listed.isEmpty()) break
+            listed = parentRelativeOfFile(listed)
+        }
+        return null
     }
 
     private suspend fun loadLocalFromRoot(rootId: Long, galleryDir: String): List<String>? {

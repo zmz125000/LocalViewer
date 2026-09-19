@@ -62,6 +62,15 @@ object LocalLibrary {
 
     suspend fun loadGalleryByContentPath(path: String): LocalGalleryEntity? = db.localGalleryDao().loadByContentPath(path)
 
+    /**
+     * Video file basenames the library scan stored under [relativeDir] for [rootId].
+     * Used by the video-folder overlay so a Library tap does not browse-scan.
+     */
+    suspend fun videoFileNamesInFolder(rootId: Long, relativeDir: String): List<String>? {
+        val rows = db.localGalleryDao().listByRootId(rootId)
+        return FolderGalleryIndex.videoFileNamesFromLibraryRows(relativeDir, rows)
+    }
+
     suspend fun updateGalleryPageAndCover(id: Long, pageCount: Int, coverPath: String?) = db.localGalleryDao().updatePageAndCover(id, pageCount, coverPath)
 
     suspend fun updateGalleryPageAndCoverByContentPath(
