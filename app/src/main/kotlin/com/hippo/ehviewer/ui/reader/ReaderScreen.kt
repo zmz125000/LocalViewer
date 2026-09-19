@@ -560,7 +560,6 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val syncState = rememberSliderPagerDoubleSyncState(lazyListState, pagerState, pageLoader)
     var appbarVisible by remember { mutableStateOf(false) }
     var photoGridOpen by remember { mutableStateOf(false) }
-    var photoGridHalfScreen by remember { mutableStateOf(false) }
     val isWebtoon by rememberUpdatedState(ReadingModeType.isWebtoon(readingMode))
     val focusRequester = remember { FocusRequester() }
 
@@ -1168,23 +1167,24 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                         }
                         // No dim overlay while settings are open (was BottomSheetDefaults.ScrimColor
                         // with color-filter tab force-undim). Keep reader fully visible underneath.
+                        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
                         ModalBottomSheet(
                             onDismissRequest = { dispose() },
                             modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+                            sheetState = sheetState,
                             scrimColor = Color.Transparent,
                             dragHandle = null,
                             contentWindowInsets = { WindowInsets() },
                         ) {
-                            SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize())
+                            Box(Modifier.readerSheetExpandBox()) {
+                                SettingsPager(isWebtoon = isWebtoon, modifier = Modifier.fillMaxSize())
+                            }
                         }
                     }
                 }
             },
             onClickPhotoGrid = if (readerPhotoGrid && readerGallerySupportsPhotoGrid(args)) {
-                {
-                    photoGridHalfScreen = readerPhotoGridHalfScreen(pageLoader.size)
-                    photoGridOpen = true
-                }
+                { photoGridOpen = true }
             } else {
                 null
             },
@@ -1207,7 +1207,6 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                         syncState.sliderScrollTo(page)
                         photoGridOpen = false
                     },
-                    halfScreen = photoGridHalfScreen,
                 )
             }
         }
