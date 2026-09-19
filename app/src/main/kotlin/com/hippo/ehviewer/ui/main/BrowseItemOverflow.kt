@@ -57,6 +57,8 @@ data class BrowseOverflowActions(
     val onOpenInBrowser: (() -> Unit)? = null,
     val onOpenIncognito: (() -> Unit)? = null,
     val onUnsupported: () -> Unit,
+    /** Null hides the item (zip-as-dir and other skipped targets). */
+    val onShareViaHttp: (() -> Unit)? = null,
 )
 
 @Composable
@@ -166,6 +168,12 @@ fun BrowseItemOverflowButton(
                 text = { Text(stringResource(R.string.share)) },
                 onClick = { run(actions.onShare) },
             )
+            if (actions.onShareViaHttp != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.browse_share_via_http)) },
+                    onClick = { run(actions.onShareViaHttp) },
+                )
+            }
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.browse_open_folder)) },
                 onClick = {

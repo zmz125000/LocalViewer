@@ -136,6 +136,8 @@ import com.hippo.ehviewer.ui.destinations.SettingsScreenDestination
 import com.hippo.ehviewer.ui.destinations.SmbBrowserScreenDestination
 import com.hippo.ehviewer.ui.destinations.WebDavBrowserScreenDestination
 import com.hippo.ehviewer.ui.main.BrowseSaveSnackbars
+import com.hippo.ehviewer.ui.main.HttpShareSnackbars
+import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.settings.showNewVersion
 import com.hippo.ehviewer.ui.tools.DialogState
@@ -336,6 +338,7 @@ class MainActivity : AppCompatActivity() {
         setReaderColorMode(hdr = false, wideColor = false)
         enableEdgeToEdge()
         setMD3Content {
+            val shareDialogState = this
             val navDrawerState = rememberDrawerState(DrawerValue.Closed)
             val sideSheetState = rememberDrawerState2(DrawerValue.Closed)
             val snackbarState = remember { SnackbarHostState() }
@@ -493,6 +496,17 @@ class MainActivity : AppCompatActivity() {
                             },
                         ) {
                             BrowseSaveSnackbars()
+                            HttpShareSnackbars(
+                                onShare = { item ->
+                                    scope.launch {
+                                        with(shareDialogState) {
+                                            with(this@MainActivity) {
+                                                awaitHttpShareQr(item.url, item.title)
+                                            }
+                                        }
+                                    }
+                                },
+                            )
                             SnackbarHost(hostState = snackbarState)
                         }
                     },

@@ -57,7 +57,8 @@ object StreamKeepAlivePolicy {
         ExternalHttpStreamServer.networkActivityCount() > 0
 
     fun hasIdleGrant(): Boolean = StreamDocumentRegistry.networkTokenCount() > 0 ||
-        ExternalHttpStreamServer.networkSessionCount() > 0
+        ExternalHttpStreamServer.networkSessionCount() > 0 ||
+        ExternalHttpStreamServer.shareSessionCount() > 0
 
     fun shouldHoldFgs(): Boolean = isPlaying() || hasIdleGrant()
 
@@ -104,6 +105,7 @@ object StreamKeepAlivePolicy {
             append(" streamdocTokens=").append(StreamDocumentRegistry.networkTokenCount())
             append(" httpTransfers=").append(ExternalHttpStreamServer.networkActivityCount())
             append(" httpSessions=").append(ExternalHttpStreamServer.sessionCount())
+            append(" lanShares=").append(ExternalHttpStreamServer.shareSessionCount())
             append(" httpWarm=").append(ExternalHttpStreamServer.warmBodyCount())
             append(" httpLiveSess=").append(ExternalHttpStreamServer.liveSocketCount())
             append(" smbStickyTcp=").append(SmbGateway.stickyConnectionCount())

@@ -100,6 +100,12 @@
     <string name="browse_play">Play</string>
     <string name="browse_external_player">External player</string>
     <string name="browse_copy_url">Copy URL</string>
+    <string name="browse_share_via_http">Share via HTTP</string>
+    <string name="browse_http_share_copy">Copy</string>
+    <string name="browse_http_share_stop">Stop</string>
+    <string name="browse_http_share_snackbar">Sharing %s</string>
+    <string name="browse_http_share_no_address">No LAN address found</string>
+    <string name="browse_http_share_failed">Couldn\'t start HTTP share</string>
     <string name="browse_open_in_browser">Open in browser</string>
     <string name="browse_open_in_incognito">Open in incognito</string>
     <string name="browse_chrome_incognito_failed">Private browsing needs Chrome 136 or later</string>

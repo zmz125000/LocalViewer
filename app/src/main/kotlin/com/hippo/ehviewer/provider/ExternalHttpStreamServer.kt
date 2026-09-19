@@ -513,6 +513,9 @@ object ExternalHttpStreamServer {
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
+
+    /** LAN “Share via HTTP” sessions. Separate from loopback player tokens. */
+    private val shareSessions = ConcurrentHashMap<String, Session>()
     private val onVideoPlayGeneration: () -> Unit = { evictAllSmbVideoBodies("video-play") }
     private val tokenSaltLock = Any()
 
@@ -551,6 +554,13 @@ object ExternalHttpStreamServer {
     @Volatile
     private var port: Int = -1
 
+    private val lanLock = Any()
+    private var lanServerSocket: ServerSocket? = null
+    private var lanAcceptThread: Thread? = null
+
+    @Volatile
+    private var lanPort: Int = -1
+
     private val activeTransfers = AtomicInteger(0)
     private val sessionLock = Any()
     private val pruneLock = Any()
@@ -567,14 +577,20 @@ object ExternalHttpStreamServer {
     /** Registered HTTP session tokens (warm body optional). */
     fun sessionCount(): Int = sessions.size
 
+    /** LAN share sessions (stay until the user stops them). */
+    fun shareSessionCount(): Int = shareSessions.size
+
     /** Network HTTP sessions (idle grants that hold slim FGS). */
-    fun networkSessionCount(): Int = sessions.values.count { it.network }
+    fun networkSessionCount(): Int = sessions.values.count { it.network } +
+        shareSessions.values.count { it.network }
 
     /** Process-wide warm video/network bodies still held. */
-    fun warmBodyCount(): Int = sessions.values.sumOf { it.warmBodyCount() }
+    fun warmBodyCount(): Int = sessions.values.sumOf { it.warmBodyCount() } +
+        shareSessions.values.sumOf { it.warmBodyCount() }
 
     /** Live client sockets currently serving a Range. */
-    fun liveSocketCount(): Int = sessions.values.sumOf { it.liveSocketCount() }
+    fun liveSocketCount(): Int = sessions.values.sumOf { it.liveSocketCount() } +
+        shareSessions.values.sumOf { it.liveSocketCount() }
 
     /**
      * Tear down loopback listener, all sessions, warm bodies, and keep-alive timers.
@@ -590,6 +606,7 @@ object ExternalHttpStreamServer {
         for (id in doomed) {
             sessions.remove(id)?.closeBodies()
         }
+        shutdownLan(reason)
         activeTransfers.set(0)
         synchronized(lock) {
             val ss = serverSocket
@@ -604,7 +621,7 @@ object ExternalHttpStreamServer {
 
     fun evictAllSmbVideoBodies(reason: String): Int {
         var n = 0
-        for (session in sessions.values) {
+        for (session in sessions.values + shareSessions.values) {
             n += session.evictAllSmbBodies(reason)
         }
         if (n > 0) {
@@ -620,11 +637,11 @@ object ExternalHttpStreamServer {
      */
     fun relieveSmbPoolPressure(): Int {
         var n = 0
-        for (session in sessions.values) {
+        for (session in sessions.values + shareSessions.values) {
             n += session.evictIdleSmbBodies()
         }
         if (n == 0 && SmbGateway.httpStickyPoolAvailable() == 0) {
-            val victim = sessions.values
+            val victim = (sessions.values + shareSessions.values)
                 .flatMap { it.snapshotWarmBodies() }
                 .filter { it.evictOnSmbPoolPressure }
                 .minByOrNull { it.lastAccessMs }
@@ -658,7 +675,7 @@ object ExternalHttpStreamServer {
     ) {
         if (max < 0) return
         while (true) {
-            val all = sessions.values.flatMap { it.snapshotWarmBodies() }
+            val all = (sessions.values + shareSessions.values).flatMap { it.snapshotWarmBodies() }
             if (all.size <= max) return
             val victim = all
                 .filter { it.idle }
@@ -702,7 +719,7 @@ object ExternalHttpStreamServer {
                         }
                         runCatching { TrafficStats.tagSocket(socket) }
                         runCatching {
-                            connectionPool.execute { handleClient(socket) }
+                            connectionPool.execute { handleClient(socket, sessions) }
                         }.onFailure {
                             // Bound loopback resource use if another local app floods the port.
                             runCatching { socket.close() }
@@ -726,10 +743,10 @@ object ExternalHttpStreamServer {
         port
     }
 
-    private fun createServerSocket(randomizePort: Boolean): ServerSocket {
-        val address = InetAddress.getByName("127.0.0.1")
+    private fun createServerSocket(randomizePort: Boolean, bindAll: Boolean = false): ServerSocket {
+        val address = InetAddress.getByName(if (bindAll) "0.0.0.0" else "127.0.0.1")
         // Tag on this thread before ServerSocket() — accept-thread tag is too late for bind.
-        TrafficStats.setThreadStatsTag(LOOPBACK_HTTP_TRAFFIC_TAG)
+        TrafficStats.setThreadStatsTag(if (bindAll) LAN_HTTP_TRAFFIC_TAG else LOOPBACK_HTTP_TRAFFIC_TAG)
         return try {
             if (randomizePort) {
                 ServerSocket(0, 50, address)
@@ -885,6 +902,133 @@ object ExternalHttpStreamServer {
         return Uri.parse("http://127.0.0.1:$p/s/$sessionId/$encoded")
     }
 
+    /**
+     * LAN share URL (`http://{host}:{lanPort}/s/{sessionId}/[file]`).
+     * [fileName] empty → directory index of the share root.
+     */
+    fun lanUriFor(sessionId: String, fileName: String, host: String): Uri {
+        val p = ensureLanStarted()
+        val encoded = if (fileName.isEmpty()) "" else encodeRelativePath(fileName)
+        val path = if (encoded.isEmpty()) "/s/$sessionId/" else "/s/$sessionId/$encoded"
+        return Uri.parse("http://$host:$p$path")
+    }
+
+    fun lanPort(): Int = lanPort
+
+    fun findShareSessionByDirKey(dirKey: String): Session? {
+        val key = dirKey.trim()
+        if (key.isEmpty()) return null
+        return shareSessions.values.firstOrNull { it.dirKey == key }?.also { it.touch() }
+    }
+
+    /**
+     * Dedicated 0.0.0.0 listener for [obtainShareSession]. Not the loopback player.
+     */
+    fun ensureLanStarted(): Int = synchronized(lanLock) {
+        lanServerSocket?.let { return lanPort }
+        val ss = createServerSocket(randomizePort = true, bindAll = true)
+        lanPort = ss.localPort
+        lanServerSocket = ss
+        lanAcceptThread = Thread(
+            {
+                TrafficStats.setThreadStatsTag(LAN_HTTP_TRAFFIC_TAG)
+                try {
+                    while (!ss.isClosed) {
+                        val socket = try {
+                            ss.accept()
+                        } catch (_: Throwable) {
+                            break
+                        }
+                        runCatching { TrafficStats.tagSocket(socket) }
+                        runCatching {
+                            connectionPool.execute { handleClient(socket, shareSessions) }
+                        }.onFailure {
+                            runCatching { socket.close() }
+                        }
+                    }
+                } catch (e: Throwable) {
+                    logcat("LanHttp", e)
+                } finally {
+                    TrafficStats.clearThreadStatsTag()
+                }
+            },
+            "lan-http-accept",
+        ).apply {
+            isDaemon = true
+            start()
+        }
+        logcat("LanHttp") { "LAN HTTP listening on 0.0.0.0:$lanPort" }
+        lanPort
+    }
+
+    /**
+     * Create or reuse a LAN share session. Tokens are always random.
+     * Sessions are **not** idle-pruned — [removeShareSession] stops them.
+     */
+    fun obtainShareSession(network: Boolean, dirKey: String): Pair<Session, Boolean> {
+        ensureLanStarted()
+        val key = dirKey.trim().ifEmpty { "share:${UUID.randomUUID()}" }
+        val result = synchronized(sessionLock) {
+            findShareSessionByDirKey(key)?.let { existing ->
+                return@synchronized existing to true
+            }
+            val id = UUID.randomUUID().toString().replace("-", "")
+            val session = Session(
+                id = id,
+                network = network,
+                randomizedToken = true,
+                dirKey = key,
+            )
+            shareSessions[id] = session
+            session to false
+        }
+        if (network) {
+            onNetworkSessionRegistered()
+        } else {
+            StreamKeepAlivePolicy.reconcileFgs()
+        }
+        if (result.second) {
+            logcat("LanHttp") {
+                "reuse share session ${result.first.id} dirKey=${PrivacyLog.dirKey(key)}"
+            }
+        } else {
+            logcat("LanHttp") {
+                "new share session ${result.first.id} dirKey=${PrivacyLog.dirKey(key)}"
+            }
+        }
+        return result
+    }
+
+    fun removeShareSession(id: String) {
+        val removed = shareSessions.remove(id)
+        removed?.closeBodies()
+        if (shareSessions.isEmpty()) {
+            stopLanListener()
+        }
+        StreamKeepAlivePolicy.reconcileFgs()
+    }
+
+    fun hasShareSession(id: String): Boolean = shareSessions.containsKey(id)
+
+    fun shutdownLan(reason: String = "lan-shutdown") {
+        val doomed = shareSessions.keys.toList()
+        if (doomed.isNotEmpty()) {
+            logcat("LanHttp") { "shutdown LAN ($reason) shares=${doomed.size}" }
+        }
+        for (sid in doomed) {
+            shareSessions.remove(sid)?.closeBodies()
+        }
+        stopLanListener()
+    }
+
+    private fun stopLanListener() = synchronized(lanLock) {
+        val ss = lanServerSocket
+        lanServerSocket = null
+        lanPort = -1
+        lanAcceptThread = null
+        runCatching { ss?.close() }
+    }
+
     fun pathKey(displayName: String): String {
         val n = normalizeRelativePath(displayName)
         return n.ifEmpty { "file" }
@@ -990,7 +1134,7 @@ object ExternalHttpStreamServer {
 
     // endregion
 
-    private fun handleClient(socket: Socket) {
+    private fun handleClient(socket: Socket, table: ConcurrentHashMap<String, Session>) {
         var boundSession: Session? = null
         try {
             val input = BufferedInputStream(socket.getInputStream())
@@ -1013,7 +1157,7 @@ object ExternalHttpStreamServer {
                 val clientWantsKeepAlive = wantsKeepAlive(request) && moreAllowed
                 val keepAlive = when (request.method) {
                     "GET", "HEAD" -> {
-                        val session = sessionForPath(request.path)
+                        val session = sessionForPath(request.path, table)
                         if (session != null && session !== boundSession) {
                             boundSession?.detachSocket(socket)
                             session.attachSocket(socket)
@@ -1023,6 +1167,7 @@ object ExternalHttpStreamServer {
                             request,
                             output,
                             socket,
+                            table,
                             headOnly = request.method == "HEAD",
                             preferKeepAlive = clientWantsKeepAlive,
                         )
@@ -1043,13 +1188,13 @@ object ExternalHttpStreamServer {
         }
     }
 
-    private fun sessionForPath(path: String): Session? {
+    private fun sessionForPath(path: String, table: ConcurrentHashMap<String, Session>): Session? {
         val rawPath = path.substringBefore('?')
         val segs = runCatching {
             rawPath.trim('/').split('/').map { URLDecoder.decode(it, Charsets.UTF_8) }
         }.getOrNull() ?: return null
         if (segs.size < 2 || segs[0] != "s") return null
-        return sessions[segs[1]]
+        return table[segs[1]]
     }
 
     private data class HttpRequest(
@@ -1111,6 +1256,7 @@ object ExternalHttpStreamServer {
         request: HttpRequest,
         output: OutputStream,
         socket: Socket,
+        table: ConcurrentHashMap<String, Session>,
         headOnly: Boolean,
         preferKeepAlive: Boolean,
     ): Boolean {
@@ -1132,7 +1278,7 @@ object ExternalHttpStreamServer {
             return preferKeepAlive
         }
         val sessionId = segs[1]
-        val session = sessions[sessionId]
+        val session = table[sessionId]
         if (session == null) {
             writeSimple(output, 404, "Session expired", keepAlive = preferKeepAlive)
             return preferKeepAlive
@@ -1474,6 +1620,9 @@ object ExternalHttpStreamServer {
 
     /** TrafficStats tag for loopback HTTP ("LHTTP" truncated). Must be set before accept/create. */
     private const val LOOPBACK_HTTP_TRAFFIC_TAG = 0x4C485454
+
+    /** TrafficStats tag for LAN share HTTP ("LANH"). */
+    private const val LAN_HTTP_TRAFFIC_TAG = 0x4C414E48
 
     /**
      * No successful body write for this long → player paused (full buffer) or stopped.
