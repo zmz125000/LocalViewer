@@ -1389,7 +1389,7 @@ object SmbGateway {
             shareName: String,
             kind: ShareOp,
             openSession: suspend (reservedForList: Boolean) -> PooledSession,
-            block: (DiskShare) -> T,
+            block: suspend (DiskShare) -> T,
         ): T {
             check(!closed.get()) { "SMB host pool closed" }
             val acquired = acquire(credKey, shareName, kind, openSession)
@@ -1719,16 +1719,30 @@ object SmbGateway {
     fun onNetworkPathChanged(reason: String) {
         val now = System.currentTimeMillis()
         val prev = lastPathChangeMs.getAndSet(now)
-        if (prev != 0L && now - prev < PATH_CHANGE_DEBOUNCE_MS) return
-
-        val hadWork = hostPools.isNotEmpty() || listJobs.isNotEmpty()
-        hostCircuits.clear()
-        if (!hadWork) {
-            logcat { "SmbGateway: network path changed ($reason) — idle, cooldowns cleared" }
+        val debounced = prev != 0L && now - prev < PATH_CHANGE_DEBOUNCE_MS
+        val hasSticky = stickyConnections.isNotEmpty() ||
+            synchronized(reusableStickyLock) { reusableSticky != null }
+        val hasBrowse = hostPools.isNotEmpty() || listJobs.isNotEmpty()
+        val plan = planSmbNetworkPathChange(
+            debounced = debounced,
+            hasBrowseWork = hasBrowse,
+            hasStickyWork = hasSticky,
+        )
+        if (plan.clearCircuits) hostCircuits.clear()
+        if (plan.dropSticky) dropStickySessions(reason)
+        if (plan.dropBrowse) {
+            logcat { "SmbGateway: network path changed ($reason) — dropping SMB sessions + lists (async close)" }
+            dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
             return
         }
-        logcat { "SmbGateway: network path changed ($reason) — dropping SMB sessions + lists (async close)" }
-        dropAllSessionsAsync(cancelLists = true, clearCircuits = false)
+        if (plan.dropSticky) {
+            logcat { "SmbGateway: network path changed ($reason) — sticky dropped, browse idle" }
+        } else {
+            logcat {
+                "SmbGateway: network path changed ($reason) — " +
+                    if (debounced) "debounced, circuits cleared" else "idle, cooldowns cleared"
+            }
+        }
     }
 
     /**
@@ -3353,13 +3367,23 @@ object SmbGateway {
         share: String,
     ): ReusableSticky? {
         val key = stickyShareKey(source, host, share)
-        synchronized(reusableStickyLock) {
+        val dead = synchronized(reusableStickyLock) {
             val live = reusableSticky ?: return null
-            if (live.key != key || !live.connection.isConnected) {
-                return null
+            val connected = try {
+                live.connection.isConnected && live.share.isConnected
+            } catch (_: Throwable) {
+                false
             }
-            return live
+            if (live.key == key && connected) return live
+            if (!connected) {
+                reusableSticky = null
+                live
+            } else {
+                null
+            }
         }
+        if (dead != null) retireReusable(dead, "disconnected")
+        return null
     }
 
     private fun <T> connectReusableSticky(
@@ -3472,7 +3496,14 @@ object SmbGateway {
         password: String,
         relativeFilePath: String,
         out: OutputStream,
-        yieldable: Boolean = false,
+    ) = downloadFile(source, password, relativeFilePath, out, yieldable = false)
+
+    suspend fun downloadFile(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        out: OutputStream,
+        yieldable: Boolean,
     ) = withIOContext {
         ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, member) ->
             val bytes = ZipMemberCover.extractBytes("smb:${source.id}:$zipRel", member) {
@@ -3491,7 +3522,7 @@ object SmbGateway {
         val kind = if (yieldable) ShareOp.Background else ShareOp.Data
         val copy = suspend {
             copyOpenFile(source, password, relativeFilePath, downloadContext, kind) { file ->
-                SmbSequentialCopy.copy(
+                SmbSequentialCopy.copySuspending(
                     read = SmbSequentialCopy.of(file),
                     start = 0L,
                     maxBytes = Long.MAX_VALUE,
@@ -3517,7 +3548,7 @@ object SmbGateway {
         val downloadContext = coroutineContext
         copyOpenFile(source, password, relativeFilePath, downloadContext) { file ->
             destination.outputStream().buffered().use { out ->
-                SmbSequentialCopy.copy(
+                SmbSequentialCopy.copySuspending(
                     read = SmbSequentialCopy.of(file),
                     start = 0L,
                     maxBytes = maxBytes,
@@ -3550,7 +3581,7 @@ object SmbGateway {
                 RandomAccessFile(destination, "rw").use { out ->
                     out.setLength(size)
                     out.seek(tailStart)
-                    SmbSequentialCopy.copy(
+                    SmbSequentialCopy.copySuspending(
                         read = SmbSequentialCopy.of(file),
                         start = tailStart,
                         maxBytes = size - tailStart,
@@ -3567,8 +3598,8 @@ object SmbGateway {
      * Open [relativeFilePath] and run [block]. If the caller is cancelled, close the
      * handle **as soon as the job enters cancelling** ([Job.closeFileOnCancelling]) so a
      * blocking smbj READ unblocks and the host-pool slot is released. Default
-     * [Job.invokeOnCompletion] waits until the coroutine body returns — too late inside
-     * [SmbSequentialCopy] `runBlocking`. The pooled [Connection] is kept unless the
+     * [Job.invokeOnCompletion] waits until the coroutine body returns — too late for a
+     * pipelined [SmbSequentialCopy] read. The pooled [Connection] is kept unless the
      * socket itself is dead.
      */
     private suspend fun <T> copyOpenFile(
@@ -3577,7 +3608,7 @@ object SmbGateway {
         relativeFilePath: String,
         downloadContext: kotlin.coroutines.CoroutineContext,
         kind: ShareOp = ShareOp.Data,
-        block: (com.hierynomus.smbj.share.File) -> T,
+        block: suspend (com.hierynomus.smbj.share.File) -> T,
     ): T {
         val activeFile = AtomicReference<com.hierynomus.smbj.share.File?>(null)
         val cancelClose = downloadContext[Job]?.closeFileOnCancelling(activeFile)
@@ -3615,7 +3646,7 @@ object SmbGateway {
         password: String,
         kind: ShareOp = ShareOp.Data,
         shareName: String = fixedShare(source),
-        block: (DiskShare) -> T,
+        block: suspend (DiskShare) -> T,
     ): T = withContext(Dispatchers.IO) {
         require(shareName.isNotBlank()) { "SMB share name required" }
         val host = endpointHost(source)
@@ -3895,6 +3926,33 @@ internal fun smbUiHostConnected(liveSessionCount: Int): Boolean = liveSessionCou
 
 /** First reconnect probe after resume is immediate; later attempts wait [gapMs]. */
 internal fun smbReconnectProbeDelayMs(attemptIndex: Int, gapMs: Long): Long = if (attemptIndex <= 0) 0L else gapMs
+
+/**
+ * Wi-Fi / VPN identity change. Browse pools used to be the only work considered, so an
+ * HTTP external player (sticky-only) kept a half-open TCP and never reconnected.
+ * Debounce skips a second drop so lost→up within 1s does not kill the reconnect;
+ * circuits still clear so [ensureHostNotCoolingDown] cannot block the new path.
+ */
+internal data class SmbNetworkPathPlan(
+    val clearCircuits: Boolean,
+    val dropSticky: Boolean,
+    val dropBrowse: Boolean,
+)
+
+internal fun planSmbNetworkPathChange(
+    debounced: Boolean,
+    hasBrowseWork: Boolean,
+    hasStickyWork: Boolean,
+): SmbNetworkPathPlan {
+    if (debounced) {
+        return SmbNetworkPathPlan(clearCircuits = true, dropSticky = false, dropBrowse = false)
+    }
+    return SmbNetworkPathPlan(
+        clearCircuits = true,
+        dropSticky = hasStickyWork,
+        dropBrowse = hasBrowseWork,
+    )
+}
 
 /**
  * smbj [com.hierynomus.smbj.share.Share] throws [com.hierynomus.smbj.common.SMBRuntimeException]

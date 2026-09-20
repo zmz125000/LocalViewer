@@ -121,4 +121,40 @@ class SmbHostPoolPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun pathChangeDropsStickyWhenBrowseIsIdle() {
+        val plan = planSmbNetworkPathChange(
+            debounced = false,
+            hasBrowseWork = false,
+            hasStickyWork = true,
+        )
+        assertTrue(plan.clearCircuits)
+        assertTrue(plan.dropSticky)
+        assertFalse(plan.dropBrowse)
+    }
+
+    @Test
+    fun pathChangeDebounceClearsCircuitsWithoutKillingReconnect() {
+        val plan = planSmbNetworkPathChange(
+            debounced = true,
+            hasBrowseWork = true,
+            hasStickyWork = true,
+        )
+        assertTrue(plan.clearCircuits)
+        assertFalse(plan.dropSticky)
+        assertFalse(plan.dropBrowse)
+    }
+
+    @Test
+    fun pathChangeDropsBrowseAndStickyTogether() {
+        val plan = planSmbNetworkPathChange(
+            debounced = false,
+            hasBrowseWork = true,
+            hasStickyWork = true,
+        )
+        assertTrue(plan.clearCircuits)
+        assertTrue(plan.dropSticky)
+        assertTrue(plan.dropBrowse)
+    }
 }

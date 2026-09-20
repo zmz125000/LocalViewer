@@ -22,20 +22,22 @@ internal object SmbAsyncClose {
         4,
         30L,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(32),
+        LinkedBlockingQueue(256),
         { r -> Thread(r, "smb-async-close").apply { isDaemon = true } },
-        // Prefer running on caller over dropping closes (handle leak); rare under pressure.
-        ThreadPoolExecutor.CallerRunsPolicy(),
+        ThreadPoolExecutor.AbortPolicy(),
     )
 
     fun run(block: () -> Unit) {
+        val task = Runnable { runCatching(block) }
         try {
-            pool.execute {
-                runCatching(block)
-            }
+            pool.execute(task)
         } catch (_: Throwable) {
-            // Executor shutdown / reject — best-effort close on this thread.
-            runCatching(block)
+            // Never CallerRuns: after path-change mass close, that can freeze Main
+            // (snackbar Cancel) for the SMB SO timeout.
+            Thread(task, "smb-async-close-overflow").apply {
+                isDaemon = true
+                start()
+            }
         }
     }
 }

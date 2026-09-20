@@ -569,6 +569,8 @@ class ReadAheadArchiveByteSource(
 
     override fun dropQueuedReads() = inner.dropQueuedReads()
 
+    override fun requestReconnect() = inner.requestReconnect()
+
     override fun close() {
         synchronized(lock) {
             closed = true

@@ -72,10 +72,17 @@ class BlockCacheArchiveByteSource(
         if (expected <= 0) return null
         val bytes = ByteArray(expected)
         var filled = 0
+        var reconnects = 0
         while (filled < expected && !closed) {
             val n = inner.readAt(blockStart + filled, bytes, filled, expected - filled)
-            if (n <= 0) break
-            filled += n
+            if (n > 0) {
+                filled += n
+                continue
+            }
+            if (n == 0 && blockStart + filled >= size) break
+            if (closed || reconnects >= 4) break
+            reconnects++
+            inner.requestReconnect()
         }
         if (filled <= 0) return null
         val block = Block(bytes, filled)
@@ -95,6 +102,10 @@ class BlockCacheArchiveByteSource(
         // Do not wait for readAt's cache monitor: remote close must cancel a blocked range read.
         inner.close()
     }
+
+    override fun dropQueuedReads() = inner.dropQueuedReads()
+
+    override fun requestReconnect() = inner.requestReconnect()
 
     companion object {
         /** PDF / general sparse: small probes share one fetch. */

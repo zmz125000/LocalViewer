@@ -35,6 +35,30 @@ internal class LargeAsyncPacketReader<D : PacketData<*>>(
     private val stopped = AtomicBoolean(false)
     private var remoteHost: String = ""
     private var soTimeout = 0
+    private val completion = object : CompletionHandler<Int, LargePacketBufferReader> {
+        override fun completed(bytesRead: Int, reader: LargePacketBufferReader) {
+            if (bytesRead < 0) {
+                if (!stopped.get()) {
+                    handleAsyncFailure(EOFException("Connection closed by server"))
+                }
+                return
+            }
+            try {
+                var packetBytes = reader.readNext()
+                while (packetBytes != null) {
+                    readAndHandlePacket(packetBytes)
+                    packetBytes = reader.readNext()
+                }
+                initiateNextRead(reader)
+            } catch (e: RuntimeException) {
+                handleAsyncFailure(e)
+            }
+        }
+
+        override fun failed(exc: Throwable, attachment: LargePacketBufferReader) {
+            handleAsyncFailure(exc)
+        }
+    }
 
     fun start(remoteHost: String, soTimeout: Int) {
         this.remoteHost = remoteHost
@@ -48,30 +72,6 @@ internal class LargeAsyncPacketReader<D : PacketData<*>>(
 
     private fun initiateNextRead(bufferReader: LargePacketBufferReader) {
         if (stopped.get()) return
-        val completion = object : CompletionHandler<Int, LargePacketBufferReader> {
-            override fun completed(bytesRead: Int, reader: LargePacketBufferReader) {
-                if (bytesRead < 0) {
-                    if (!stopped.get()) {
-                        handleAsyncFailure(EOFException("Connection closed by server"))
-                    }
-                    return
-                }
-                try {
-                    var packetBytes = reader.readNext()
-                    while (packetBytes != null) {
-                        readAndHandlePacket(packetBytes)
-                        packetBytes = reader.readNext()
-                    }
-                    initiateNextRead(reader)
-                } catch (e: RuntimeException) {
-                    handleAsyncFailure(e)
-                }
-            }
-
-            override fun failed(exc: Throwable, attachment: LargePacketBufferReader) {
-                handleAsyncFailure(exc)
-            }
-        }
         // Idle header wait has no SO timeout: keep-alive is paused on ON_STOP, and a
         // 120s read timeout would kill pooled sockets in the background. Mid-packet
         // stalls still use soTimeout.
@@ -145,6 +145,13 @@ internal fun isExpectedAsyncDisconnect(exc: Throwable): Boolean {
 
 /**
  * Direct-TCP SMB framing over a 1 MiB NIO buffer (smbj's is 9000 bytes).
+ *
+ * Recv is a **direct** buffer: Android's [AsynchronousSocketChannel] is a
+ * thread-pool wrapper around a blocking socket, and a heap buffer can fail
+ * or return empty reads (folder listing then never fills).
+ *
+ * Each [readNext] returns a **new** byte array. smbj [PacketFactory.read] keeps
+ * that array; reusing it corrupted QUERY_DIRECTORY / READ payloads.
  */
 internal class LargePacketBufferReader(
     capacity: Int = READ_BUFFER_CAPACITY,

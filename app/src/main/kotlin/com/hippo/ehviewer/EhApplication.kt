@@ -71,9 +71,11 @@ import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.library.VideoThumbnail
+import com.hippo.ehviewer.provider.ExternalHttpStreamServer
 import com.hippo.ehviewer.provider.StreamKeepAlivePolicy
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.ui.keepNoMediaFileStatus
+import com.hippo.ehviewer.ui.main.BrowseSaveTransfers
 import com.hippo.ehviewer.ui.tools.dataStateFlow
 import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.CrashHandler
@@ -233,6 +235,10 @@ class EhApplication : Application(), SingletonImageLoader.Factory {
             runCatching {
                 SmbGateway.onNetworkPathChanged(reason)
                 WebDavClient.onNetworkPathChanged(reason)
+                // Warm HTTP video bodies keep a KeepOpen worker across sticky drop; seek
+                // Ranges reuse that lane until an in-app open evicts it. Drop them here.
+                ExternalHttpStreamServer.evictAllSmbVideoBodies(reason)
+                BrowseSaveTransfers.abortRunningForNetwork()
             }.onFailure { logcat(it) }
         }
 
