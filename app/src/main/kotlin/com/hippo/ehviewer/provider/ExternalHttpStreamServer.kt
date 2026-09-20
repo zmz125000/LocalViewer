@@ -125,12 +125,16 @@ object ExternalHttpStreamServer {
         fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int
 
         fun warm(offset: Long, length: Int) = Unit
+
+        /** Re-open a dead sticky SMB/WebDAV handle. Default no-op for local bodies. */
+        fun requestReconnect() = Unit
     }
 
     class ArchiveBody(private val source: ArchiveByteSource) : StreamBody {
         override val size: Long get() = source.size
         override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int = source.readAt(offset, buf, off, len)
         override fun warm(offset: Long, length: Int) = source.warm(offset, length)
+        override fun requestReconnect() = source.requestReconnect()
         override fun close() = source.close()
     }
 
@@ -496,6 +500,10 @@ object ExternalHttpStreamServer {
             override fun warm(offset: Long, length: Int) {
                 cached.touch()
                 cached.body.warm(offset, length)
+            }
+
+            override fun requestReconnect() {
+                cached.body.requestReconnect()
             }
 
             fun prepareRange(start: Long, streaming: Boolean) {
@@ -1431,15 +1439,32 @@ object ExternalHttpStreamServer {
                 val buf = ByteArray(64 * 1024)
                 var remaining = contentLength
                 var offset = start
+                var lastWriteMs = lastProgressMs.get()
                 while (remaining > 0L) {
                     val want = minOf(buf.size.toLong(), remaining).toInt()
                     val n = body.readAt(offset, buf, 0, want)
-                    if (n <= 0) break
-                    output.write(buf, 0, n)
+                    if (n > 0) {
+                        output.write(buf, 0, n)
+                        val now = SystemClock.elapsedRealtime()
+                        lastWriteMs = now
+                        lastProgressMs.set(now)
+                        offset += n
+                        remaining -= n
+                        session.touch()
+                        continue
+                    }
+                    // Mid-range n<=0 is a dead sticky handle, not HTTP EOF. Fuse retries;
+                    // loopback HTTP used to close the Range and the player stopped.
+                    if (!httpBodyShouldRetryRead(n, remaining)) break
+                    if (SystemClock.elapsedRealtime() - lastWriteMs >= BODY_STALL_MS) break
+                    body.requestReconnect()
                     lastProgressMs.set(SystemClock.elapsedRealtime())
-                    offset += n
-                    remaining -= n
-                    session.touch()
+                    try {
+                        Thread.sleep(HTTP_BODY_RECONNECT_DELAY_MS)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break
+                    }
                 }
                 // Incomplete body → client must not reuse the connection.
                 if (remaining > 0L) {
@@ -1630,6 +1655,7 @@ object ExternalHttpStreamServer {
      */
     private const val BODY_STALL_MS = 15_000L
     private const val BODY_STALL_CHECK_MS = 3_000L
+    private const val HTTP_BODY_RECONNECT_DELAY_MS = 400L
 
     /**
      * No [StreamBody.readAt] for this long → drop the SMB lane. Session token stays;
@@ -1640,3 +1666,6 @@ object ExternalHttpStreamServer {
     /** Max warm video bodies (each ≈ one VideoDirectLink RAM window) process-wide. */
     private const val MAX_WARM_CACHE_FILES = 2
 }
+
+/** Mid-range 0/-1 is a dead sticky handle. Remaining 0 is a finished Range, not a retry. */
+internal fun httpBodyShouldRetryRead(n: Int, remaining: Long): Boolean = n <= 0 && remaining > 0L

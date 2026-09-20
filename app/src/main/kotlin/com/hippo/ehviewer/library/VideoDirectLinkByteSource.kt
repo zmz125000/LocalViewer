@@ -217,14 +217,21 @@ class VideoDirectLinkByteSource(
         val source = if (usePrefetchLane) prefetchSource else demand
         val bytes = ByteArray(expected)
         var filled = 0
+        var reconnects = 0
         while (filled < expected && !closed.get()) {
             val n = try {
                 source.readAt(blockStart + filled, bytes, filled, expected - filled)
             } catch (_: Throwable) {
                 -1
             }
-            if (n <= 0) break
-            filled += n
+            if (n > 0) {
+                filled += n
+                continue
+            }
+            if (n == 0 && blockStart + filled >= size) break
+            if (closed.get() || reconnects >= BLOCK_RECONNECT_ATTEMPTS) break
+            reconnects++
+            source.requestReconnect()
         }
         if (filled <= 0 || closed.get()) return null
         val block = Block(bytes, filled)
@@ -311,7 +318,20 @@ class VideoDirectLinkByteSource(
         }
     }
 
+    override fun dropQueuedReads() {
+        demand.dropQueuedReads()
+        prefetch?.dropQueuedReads()
+    }
+
+    override fun requestReconnect() {
+        demand.requestReconnect()
+        prefetch?.requestReconnect()
+    }
+
     companion object {
+        /** Transient mid-block SMB death: re-arm sticky open and finish the aligned fetch. */
+        const val BLOCK_RECONNECT_ATTEMPTS = 4
+
         /** Aligned network fetch size — amortizes SMB RTT for ~100+ Mbps LAN. */
         const val VIDEO_BLOCK = 2 * 1024 * 1024
 

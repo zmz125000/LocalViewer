@@ -335,6 +335,7 @@ private class SourceProxyCallback(
 
             if (System.nanoTime() >= deadline) break
             attempt++
+            source.requestReconnect()
             val sleepMs = minOf(
                 RETRY_BACKOFF_MS * attempt,
                 RETRY_BACKOFF_MAX_MS,
