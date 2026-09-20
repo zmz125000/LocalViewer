@@ -109,10 +109,13 @@ object BrowseSaveTransfers {
             } catch (e: CancellationException) {
                 ticker?.cancel()
                 val current = _items.value.find { it.id == id }?.status
+                if (current !is SaveTransferStatus.Success &&
+                    current !is SaveTransferStatus.Cancelled &&
+                    current !is SaveTransferStatus.Failed
+                ) {
+                    patch(id) { copy(status = SaveTransferStatus.Cancelled) }
+                }
                 if (current !is SaveTransferStatus.Success) {
-                    if (current !is SaveTransferStatus.Cancelled) {
-                        patch(id) { copy(status = SaveTransferStatus.Cancelled) }
-                    }
                     withContext(NonCancellable) { delay(1500) }
                 }
                 throw e
@@ -140,9 +143,34 @@ object BrowseSaveTransfers {
     fun cancel(id: Long) {
         val item = _items.value.find { it.id == id } ?: return
         when (item.status) {
-            is SaveTransferStatus.Confirming -> item.confirmGate?.complete(false)
-            is SaveTransferStatus.Running -> item.job.cancel()
+            is SaveTransferStatus.Confirming -> {
+                patch(id) { copy(status = SaveTransferStatus.Cancelled) }
+                item.confirmGate?.complete(false)
+            }
+            is SaveTransferStatus.Running -> {
+                patch(id) { copy(status = SaveTransferStatus.Cancelled) }
+                item.job.cancel()
+            }
+            is SaveTransferStatus.Failed, SaveTransferStatus.Cancelled -> {
+                item.job.cancel()
+                _items.update { list -> list.filterNot { it.id == id } }
+            }
             else -> Unit
+        }
+    }
+
+    /**
+     * Path change: in-flight Share/Save/Open copies sit on a dropped SMB/WebDAV client.
+     * Fail them immediately so the snackbar can be dismissed; Confirming stays so
+     * Continue after restore opens a fresh transfer.
+     */
+    fun abortRunningForNetwork() {
+        val running = _items.value.filter { it.status is SaveTransferStatus.Running }
+        if (running.isEmpty()) return
+        val msg = appCtx.getString(R.string.browse_save_failed)
+        for (item in running) {
+            patch(item.id) { copy(status = SaveTransferStatus.Failed(msg), speedBps = 0L) }
+            item.job.cancel()
         }
     }
 
@@ -222,7 +250,7 @@ fun BrowseSaveSnackbars(modifier: Modifier = Modifier) {
                                 Text(st.action)
                             }
                         }
-                        is SaveTransferStatus.Running -> {
+                        is SaveTransferStatus.Running, is SaveTransferStatus.Failed -> {
                             TextButton(onClick = { BrowseSaveTransfers.cancel(item.id) }) {
                                 Text(stringResource(android.R.string.cancel))
                             }

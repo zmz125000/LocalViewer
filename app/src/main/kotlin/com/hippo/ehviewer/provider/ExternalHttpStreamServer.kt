@@ -1453,8 +1453,8 @@ object ExternalHttpStreamServer {
                         session.touch()
                         continue
                     }
-                    // Mid-range n<=0 is a dead sticky handle, not HTTP EOF. Fuse retries;
-                    // loopback HTTP used to close the Range and the player stopped.
+                    // `-1` is a dead sticky handle (retry + reconnect). `0` is EOF, including
+                    // playhead supersede when the player seeks a new Range on this body.
                     if (!httpBodyShouldRetryRead(n, remaining)) break
                     if (SystemClock.elapsedRealtime() - lastWriteMs >= BODY_STALL_MS) break
                     body.requestReconnect()
@@ -1667,5 +1667,8 @@ object ExternalHttpStreamServer {
     private const val MAX_WARM_CACHE_FILES = 2
 }
 
-/** Mid-range 0/-1 is a dead sticky handle. Remaining 0 is a finished Range, not a retry. */
-internal fun httpBodyShouldRetryRead(n: Int, remaining: Long): Boolean = n <= 0 && remaining > 0L
+/**
+ * Retry only transport/sticky death (`-1`). `0` is EOF: playhead supersede on a seek
+ * Range, or a finished read — reconnecting the shared warm body fights the new Range.
+ */
+internal fun httpBodyShouldRetryRead(n: Int, remaining: Long): Boolean = n < 0 && remaining > 0L

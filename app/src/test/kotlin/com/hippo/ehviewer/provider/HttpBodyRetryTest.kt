@@ -8,7 +8,12 @@ class HttpBodyRetryTest {
     @Test
     fun midRangeFailureRetries() {
         assertTrue(httpBodyShouldRetryRead(-1, remaining = 1024L))
-        assertTrue(httpBodyShouldRetryRead(0, remaining = 1L))
+    }
+
+    @Test
+    fun playheadEofDoesNotReconnectSharedBody() {
+        assertFalse(httpBodyShouldRetryRead(0, remaining = 1L))
+        assertFalse(httpBodyShouldRetryRead(0, remaining = 1024L))
     }
 
     @Test

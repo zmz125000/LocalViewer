@@ -1388,7 +1388,7 @@ object SmbGateway {
             shareName: String,
             kind: ShareOp,
             openSession: suspend (reservedForList: Boolean) -> PooledSession,
-            block: (DiskShare) -> T,
+            block: suspend (DiskShare) -> T,
         ): T {
             check(!closed.get()) { "SMB host pool closed" }
             val acquired = acquire(credKey, shareName, kind, openSession)
@@ -3515,7 +3515,7 @@ object SmbGateway {
         val kind = if (yieldable) ShareOp.Background else ShareOp.Data
         val copy = suspend {
             copyOpenFile(source, password, relativeFilePath, downloadContext, kind) { file ->
-                SmbSequentialCopy.copy(
+                SmbSequentialCopy.copySuspending(
                     read = SmbSequentialCopy.of(file),
                     start = 0L,
                     maxBytes = Long.MAX_VALUE,
@@ -3541,7 +3541,7 @@ object SmbGateway {
         val downloadContext = coroutineContext
         copyOpenFile(source, password, relativeFilePath, downloadContext) { file ->
             destination.outputStream().buffered().use { out ->
-                SmbSequentialCopy.copy(
+                SmbSequentialCopy.copySuspending(
                     read = SmbSequentialCopy.of(file),
                     start = 0L,
                     maxBytes = maxBytes,
@@ -3574,7 +3574,7 @@ object SmbGateway {
                 RandomAccessFile(destination, "rw").use { out ->
                     out.setLength(size)
                     out.seek(tailStart)
-                    SmbSequentialCopy.copy(
+                    SmbSequentialCopy.copySuspending(
                         read = SmbSequentialCopy.of(file),
                         start = tailStart,
                         maxBytes = size - tailStart,
@@ -3591,8 +3591,8 @@ object SmbGateway {
      * Open [relativeFilePath] and run [block]. If the caller is cancelled, close the
      * handle **as soon as the job enters cancelling** ([Job.closeFileOnCancelling]) so a
      * blocking smbj READ unblocks and the host-pool slot is released. Default
-     * [Job.invokeOnCompletion] waits until the coroutine body returns — too late inside
-     * [SmbSequentialCopy] `runBlocking`. The pooled [Connection] is kept unless the
+     * [Job.invokeOnCompletion] waits until the coroutine body returns — too late for a
+     * pipelined [SmbSequentialCopy] read. The pooled [Connection] is kept unless the
      * socket itself is dead.
      */
     private suspend fun <T> copyOpenFile(
@@ -3601,7 +3601,7 @@ object SmbGateway {
         relativeFilePath: String,
         downloadContext: kotlin.coroutines.CoroutineContext,
         kind: ShareOp = ShareOp.Data,
-        block: (com.hierynomus.smbj.share.File) -> T,
+        block: suspend (com.hierynomus.smbj.share.File) -> T,
     ): T {
         val activeFile = AtomicReference<com.hierynomus.smbj.share.File?>(null)
         val cancelClose = downloadContext[Job]?.closeFileOnCancelling(activeFile)
@@ -3639,7 +3639,7 @@ object SmbGateway {
         password: String,
         kind: ShareOp = ShareOp.Data,
         shareName: String = fixedShare(source),
-        block: (DiskShare) -> T,
+        block: suspend (DiskShare) -> T,
     ): T = withContext(Dispatchers.IO) {
         require(shareName.isNotBlank()) { "SMB share name required" }
         val host = endpointHost(source)
