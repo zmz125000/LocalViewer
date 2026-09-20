@@ -1146,7 +1146,7 @@ object ExternalHttpStreamServer {
         var boundSession: Session? = null
         try {
             val input = BufferedInputStream(socket.getInputStream())
-            val output = BufferedOutputStream(socket.getOutputStream())
+            val output = BufferedOutputStream(socket.getOutputStream(), HTTP_BODY_BUFFER)
             var requests = 0
             while (requests < MAX_REQUESTS_PER_CONNECTION) {
                 socket.soTimeout = REQUEST_HEADER_TIMEOUT_MS
@@ -1436,7 +1436,7 @@ object ExternalHttpStreamServer {
                 null
             }
             try {
-                val buf = ByteArray(64 * 1024)
+                val buf = ByteArray(HTTP_BODY_BUFFER)
                 var remaining = contentLength
                 var offset = start
                 var lastWriteMs = lastProgressMs.get()
@@ -1665,6 +1665,9 @@ object ExternalHttpStreamServer {
 
     /** Max warm video bodies (each ≈ one VideoDirectLink RAM window) process-wide. */
     private const val MAX_WARM_CACHE_FILES = 2
+
+    /** Loopback Range body + socket buffer. 64 KiB was 80 copies/syscalls per 40 Mbps. */
+    private const val HTTP_BODY_BUFFER = 256 * 1024
 }
 
 /**

@@ -3496,7 +3496,14 @@ object SmbGateway {
         password: String,
         relativeFilePath: String,
         out: OutputStream,
-        yieldable: Boolean = false,
+    ) = downloadFile(source, password, relativeFilePath, out, yieldable = false)
+
+    suspend fun downloadFile(
+        source: SmbSourceEntity,
+        password: String,
+        relativeFilePath: String,
+        out: OutputStream,
+        yieldable: Boolean,
     ) = withIOContext {
         ZipAsDirListing.zipMemberPath(relativeFilePath)?.let { (zipRel, member) ->
             val bytes = ZipMemberCover.extractBytes("smb:${source.id}:$zipRel", member) {

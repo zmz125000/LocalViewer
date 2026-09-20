@@ -56,8 +56,10 @@ class LargePacketBufferReaderTest {
         val b = byteArrayOf(2, 2, 2)
         reader.buffer.put(frame(a))
         reader.buffer.put(frame(b))
-        assertArrayEquals(a, reader.readNext())
+        val first = reader.readNext()
+        assertArrayEquals(a, first)
         assertArrayEquals(b, reader.readNext())
+        assertArrayEquals(a, first)
         assertNull(reader.readNext())
     }
 
