@@ -2,6 +2,8 @@ package com.hippo.ehviewer.smb
 
 import com.hierynomus.security.Mac
 import com.hierynomus.security.SecurityException
+import java.security.NoSuchAlgorithmException
+import java.security.NoSuchProviderException
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -13,32 +15,47 @@ import javax.crypto.spec.SecretKeySpec
  * (one JNI `doFinal` per [update], not per 16-byte block). The last block still
  * applies K1/K2 then AES-ECB. Per-block `AES/ECB` `doFinal` capped SMB3 signing
  * at ~150 Mbps on Android 12–13.
+ *
+ * smbj [com.hierynomus.smbj.connection.PacketSignatory] constructs a Mac on every
+ * signed packet. Keep [Cipher] instances and K1/K2 on this object so a pooled
+ * instance does not redo `Cipher.getInstance` / subkey derive per 1 MiB READ.
  */
 internal class JceAesCmac : Mac {
-    private val ecb: Cipher = Cipher.getInstance(ECB)
-    private val cbc: Cipher = Cipher.getInstance(CBC)
+    private val ecb: Cipher = aesCipher(ECB)
+    private val cbc: Cipher = aesCipher(CBC)
     private var key: SecretKeySpec? = null
+    private var rawKey: ByteArray? = null
     private val k1 = ByteArray(BLOCK)
     private val k2 = ByteArray(BLOCK)
     private val state = ByteArray(BLOCK)
     private val scratch = ByteArray(BLOCK)
+    private val last = ByteArray(BLOCK)
     private val pending = ByteArray(BLOCK)
     private val one = ByteArray(1)
+    private val iv = ByteArray(BLOCK)
     private var cbcOut = ByteArray(0)
     private var pendingLen = 0
     private var sawBytes = false
 
     override fun init(keyBytes: ByteArray) {
-        val spec = SecretKeySpec(keyBytes, "AES")
+        val prev = rawKey
+        if (prev != null && prev.contentEquals(keyBytes)) {
+            reset()
+            return
+        }
+        val copy = keyBytes.copyOf()
+        val spec = SecretKeySpec(copy, "AES")
         try {
             ecb.init(Cipher.ENCRYPT_MODE, spec)
-            val l = ecb.doFinal(ByteArray(BLOCK))
-            dbl(l, k1)
+            scratch.fill(0)
+            ecb.doFinal(scratch, 0, BLOCK, last, 0)
+            dbl(last, k1)
             dbl(k1, k2)
         } catch (e: Exception) {
             throw SecurityException(e)
         }
         key = spec
+        rawKey = copy
         reset()
     }
 
@@ -77,17 +94,18 @@ internal class JceAesCmac : Mac {
     }
 
     override fun doFinal(): ByteArray {
-        val last = ByteArray(BLOCK)
         if (sawBytes && pendingLen == BLOCK) {
             xor16(pending, k1, last)
         } else {
+            last.fill(0)
             System.arraycopy(pending, 0, last, 0, pendingLen)
             last[pendingLen] = 0x80.toByte()
             xor16(last, k2, last)
         }
         xor16(state, last, last)
-        val out = try {
-            ecb.doFinal(last)
+        val out = ByteArray(BLOCK)
+        try {
+            ecb.doFinal(last, 0, BLOCK, out, 0)
         } catch (e: Exception) {
             throw IllegalStateException(e)
         }
@@ -115,7 +133,8 @@ internal class JceAesCmac : Mac {
         val spec = key ?: return
         if (cbcOut.size < length) cbcOut = ByteArray(length)
         try {
-            cbc.init(Cipher.ENCRYPT_MODE, spec, IvParameterSpec(state))
+            System.arraycopy(state, 0, iv, 0, BLOCK)
+            cbc.init(Cipher.ENCRYPT_MODE, spec, IvParameterSpec(iv))
             cbc.doFinal(array, offset, length, cbcOut, 0)
         } catch (e: Exception) {
             throw IllegalStateException(e)
@@ -123,10 +142,23 @@ internal class JceAesCmac : Mac {
         System.arraycopy(cbcOut, length - BLOCK, state, 0, BLOCK)
     }
 
-    private companion object {
+    internal companion object {
         const val ECB = "AES/ECB/NoPadding"
         const val CBC = "AES/CBC/NoPadding"
         const val BLOCK = 16
+
+        private val AES_PROVIDERS = arrayOf("AndroidOpenSSL", "Conscrypt", "SunJCE")
+
+        fun aesCipher(transformation: String): Cipher {
+            for (provider in AES_PROVIDERS) {
+                try {
+                    return Cipher.getInstance(transformation, provider)
+                } catch (_: NoSuchProviderException) {
+                } catch (_: NoSuchAlgorithmException) {
+                }
+            }
+            return Cipher.getInstance(transformation)
+        }
 
         fun dbl(input: ByteArray, out: ByteArray) {
             var carry = 0
