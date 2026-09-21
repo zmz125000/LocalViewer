@@ -707,15 +707,19 @@ internal class PdfParser(
         val expected = w.toLong() * h * cs
         if (samples.size.toLong() < expected) return null
         val csVal = dict["/ColorSpace"]?.let { resolveValue(it) }
-        val isIndexed = csVal is PdfArray && (csVal.items.firstOrNull() as? PdfName)?.name.let { it == "/Indexed" || it == "/I" }
-        val indexedBaseCs = if (isIndexed) {
-            val baseVal = (csVal as PdfArray).items.getOrNull(1)?.let { resolveValue(it) }
+        val indexedArray = (csVal as? PdfArray)?.takeIf { arr ->
+            val name = (arr.items.firstOrNull() as? PdfName)?.name
+            name == "/Indexed" || name == "/I"
+        }
+        val isIndexed = indexedArray != null
+        val indexedBaseCs = if (indexedArray != null) {
+            val baseVal = indexedArray.items.getOrNull(1)?.let { resolveValue(it) }
             colorSpaceChannels(baseVal).takeIf { it in 1..4 } ?: 3
         } else {
             0
         }
-        val indexedPalette: ByteArray? = if (isIndexed) {
-            val lookupItem = (csVal as PdfArray).items.getOrNull(3)
+        val indexedPalette: ByteArray? = if (indexedArray != null) {
+            val lookupItem = indexedArray.items.getOrNull(3)
             val lookupRef = lookupItem as? PdfRef ?: (lookupItem?.let { resolveValue(it) } as? PdfDict)?.let { d ->
                 d.objNum?.let { PdfRef(it, d.gen) }
             }
