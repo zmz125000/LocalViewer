@@ -121,6 +121,7 @@ class PdfImageEngine private constructor(
         if (DocumentExtractCache.isPageCached(cacheKey, index, ref.ext)) {
             return DocumentExtractCache.pagePath(cacheKey, index, ref.ext)
         }
+        DocumentExtractCache.findCachedPage(cacheKey, index)?.let { return it }
         val bytes = synchronized(discoveryLock) {
             val current = pages.getOrNull(index) ?: return@synchronized null
             val effectiveRef = if (!current.hasSeek) {
@@ -523,8 +524,9 @@ internal class PdfParser(
         val ext = when {
             filter.any { it == "/DCTDecode" || it == "/DCT" } -> "jpg"
             filter.any { it == "/JPXDecode" } -> "jp2"
-            filter.any { it == "/FlateDecode" || it == "/Fl" } -> "png"
-            filter.isEmpty() -> "png"
+            // Flate/raw samples are not a file format; re-encode lossless WebP for the reader cache.
+            filter.any { it == "/FlateDecode" || it == "/Fl" } -> "webp"
+            filter.isEmpty() -> "webp"
             else -> return null // CCITT, JBIG2, etc.
         }
         val streamOffset = streamDataOffsets[objNum] ?: -1L
@@ -679,11 +681,11 @@ internal class PdfParser(
                 else -> return null
             }
         }
-        // No filter or after Flate: raw samples → PNG
-        return rawSamplesToPng(dict, data)
+        // No filter or after Flate: raw samples → lossless WebP.
+        return encodeRawSamples(dict, data)
     }
 
-    private fun rawSamplesToPng(dict: PdfDict, data: ByteArray): ByteArray? {
+    private fun encodeRawSamples(dict: PdfDict, data: ByteArray): ByteArray? {
         val w = dict.intValue("/Width") ?: return null
         val h = dict.intValue("/Height") ?: return null
         if (w <= 0 || h <= 0 || w > 20000 || h > 20000) return null
@@ -821,11 +823,17 @@ internal class PdfParser(
             }
         }
         return try {
-            val bos = ByteArrayOutputStream()
-            if (!bmp.compress(Bitmap.CompressFormat.PNG, 100, bos)) null else bos.toByteArray()
+            encodeExtractedBitmap(bmp)
         } finally {
             bmp.recycle()
         }
+    }
+
+    /** Lossless WebP for comic Flate pages. Quality is encoder effort (0–100), not loss. */
+    private fun encodeExtractedBitmap(bmp: Bitmap): ByteArray? {
+        val bos = ByteArrayOutputStream()
+        if (!bmp.compress(Bitmap.CompressFormat.WEBP_LOSSLESS, EXTRACT_WEBP_EFFORT, bos)) return null
+        return bos.toByteArray().takeIf { it.isNotEmpty() }
     }
 
     private fun colorSpaceChannels(v: PdfValue?): Int = when (val r = v?.let { resolveValue(it) }) {
@@ -1636,6 +1644,8 @@ internal class PdfParser(
         const val MAX_PAGES = 100_000
         const val MAX_STREAM_HEADER_BYTES = 32 * 1024L
         const val MAX_IMAGE_STREAM_BYTES = 256L * 1024L * 1024L
+        /** Bitmap lossless-WebP effort. Higher = smaller + slower extract. */
+        const val EXTRACT_WEBP_EFFORT = 75
     }
 }
 
