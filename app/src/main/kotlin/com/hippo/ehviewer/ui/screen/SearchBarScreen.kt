@@ -47,9 +47,10 @@ import androidx.compose.material3.InputChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SearchBarDefaults
-import androidx.compose.material3.SearchBarDefaults.InputField
+import androidx.compose.material3.SearchBarValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSearchBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -218,6 +219,8 @@ fun SearchBarScreen(
     val historyVisibleState = remember { MutableTransitionState(false) }
     historyVisibleState.targetState = wantHistory
     val searchBarColors = SearchBarDefaults.colors()
+    // Keep collapsed: history lives in this surface, not an M3 expanded SearchBar.
+    val searchBarState = rememberSearchBarState(initialValue = SearchBarValue.Collapsed)
     val searchChromeHeight = with(density) {
         if (searchChromeHeightPx > 0) {
             searchChromeHeightPx.toDp()
@@ -308,14 +311,13 @@ fun SearchBarScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.fillMaxWidth()) {
-                    InputField(
-                        state = searchFieldState,
+                    SearchBarDefaults.InputField(
+                        textFieldState = searchFieldState,
+                        searchBarState = searchBarState,
                         onSearch = {
                             recordCurrentQuery()
                             focusManager.clearFocus()
                         },
-                        expanded = false,
-                        onExpandedChange = { /* docked surface holds history; never full-screen */ },
                         modifier = Modifier
                             .fillMaxWidth()
                             .onFocusChanged { searchFocused = it.isFocused },

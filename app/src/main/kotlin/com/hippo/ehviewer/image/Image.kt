@@ -192,6 +192,19 @@ class Image private constructor(
         }
     }
 
+    /**
+     * Upload this still into GPU memory used by RenderThread.
+     *
+     * Must run on the main thread. [Bitmap.prepareToDraw] from Coil's decoder
+     * thread does not populate that cache, so the first on-screen frame still
+     * sync-uploads (~20–40ms hitch on high-res SMB manga).
+     */
+    fun prepareToDraw() {
+        // innerImage already unwraps BitmapImageWithExtraInfo in the constructor.
+        val bm = (innerImage as? BitmapImage)?.bitmap
+        bm?.prepareToDraw()
+    }
+
     private fun bitmapIsWideGamut(image: CoilImage): Boolean {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return false
         val bm = when (image) {

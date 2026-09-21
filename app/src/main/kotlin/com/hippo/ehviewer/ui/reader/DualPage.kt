@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.reader
 
+import androidx.compose.ui.geometry.Size
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
 
 /**
@@ -46,3 +47,30 @@ fun dualLeftRight(spreadIndex: Int, pageCount: Int, isRtl: Boolean): Pair<Int?, 
     val second = b.takeIf { it < pageCount }
     return if (isRtl) second to first else first to second
 }
+
+/**
+ * Size of a no-gap dual spread with [combinedAspect] (width/height) fitted into [viewport].
+ * Same as ContentScale.Fit of that aspect: never exceeds pager constraints.
+ */
+fun fitSpreadSize(combinedAspect: Float, viewport: Size): Size {
+    if (viewport.width <= 0f || viewport.height <= 0f) return Size.Zero
+    val aspect = combinedAspect.coerceAtLeast(MIN_SPREAD_ASPECT)
+    val widthIfFullHeight = viewport.height * aspect
+    return if (widthIfFullHeight <= viewport.width) {
+        Size(widthIfFullHeight, viewport.height)
+    } else {
+        Size(viewport.width, viewport.width / aspect)
+    }
+}
+
+/** Screen-X of the gutter between left and right pages for a centered no-gap spread. */
+fun spreadGutterX(leftAspect: Float, rightAspect: Float, viewport: Size): Float {
+    val left = leftAspect.coerceAtLeast(MIN_SPREAD_ASPECT)
+    val right = rightAspect.coerceAtLeast(MIN_SPREAD_ASPECT)
+    val combined = left + right
+    val fitted = fitSpreadSize(combined, viewport)
+    val originX = (viewport.width - fitted.width) / 2f
+    return originX + fitted.width * (left / combined)
+}
+
+private const val MIN_SPREAD_ASPECT = 0.01f

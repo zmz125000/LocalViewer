@@ -13,9 +13,10 @@ class ReaderDemandPlannerTest {
         )
 
         assertEquals(listOf(10), demand.visibleDecode)
-        assertEquals(listOf(11, 12), demand.decodeAhead)
-        assertEquals(listOf(13, 14, 15), demand.sourceOnly)
-        assertEquals(setOf(10, 11, 12, 13, 14, 15), demand.sourcePages)
+        // decodeAhead=2 keeps one page behind while moving forward.
+        assertEquals(listOf(11, 9), demand.decodeAhead)
+        assertEquals(listOf(12, 13, 14), demand.sourceOnly)
+        assertEquals(setOf(9, 10, 11, 12, 13, 14), demand.sourcePages)
     }
 
     @Test
@@ -26,7 +27,7 @@ class ReaderDemandPlannerTest {
             policy = ReaderLoadPolicy(sourceAhead = 0, decodeAhead = 2),
         )
 
-        assertEquals(listOf(5, 6), demand.decodeAhead)
+        assertEquals(listOf(5, 3), demand.decodeAhead)
         assertEquals(emptyList<Int>(), demand.sourceOnly)
     }
 
@@ -44,12 +45,12 @@ class ReaderDemandPlannerTest {
         )
 
         assertEquals(ReadingDirection.Backward, backward.direction)
-        assertEquals(listOf(10, 9), backward.decodeAhead)
-        assertEquals(listOf(8, 7, 6), backward.sourceOnly)
+        assertEquals(listOf(10, 12), backward.decodeAhead)
+        assertEquals(listOf(9, 8, 7), backward.sourceOnly)
     }
 
     @Test
-    fun `dual visible pages are demanded equally`() {
+    fun `dual visible jump reserves look-behind within the same budget`() {
         val demand = ReaderDemandPlanner().plan(
             navigation = ReaderNavigation(8, 8..9, NavigationKind.Jump),
             pageCount = 20,
@@ -57,8 +58,8 @@ class ReaderDemandPlannerTest {
         )
 
         assertEquals(listOf(8, 9), demand.visibleDecode)
-        assertEquals(listOf(10, 11), demand.decodeAhead)
-        assertEquals(listOf(12, 13, 14), demand.sourceOnly)
+        assertEquals(listOf(10, 7), demand.decodeAhead)
+        assertEquals(listOf(11, 12, 6), demand.sourceOnly)
     }
 
     @Test
@@ -69,8 +70,9 @@ class ReaderDemandPlannerTest {
             policy = ReaderLoadPolicy(sourceAhead = 5, decodeAhead = 2),
         )
 
-        assertEquals(emptyList<Int>(), demand.decodeAhead)
-        assertEquals(emptyList<Int>(), demand.sourceOnly)
+        // Last page cannot look ahead; look-behind still uses the remaining budget.
+        assertEquals(listOf(8), demand.decodeAhead)
+        assertEquals(listOf(7), demand.sourceOnly)
     }
 
     @Test
@@ -113,6 +115,6 @@ class ReaderDemandPlannerTest {
 
         assertEquals(ReadingDirection.Backward, settled.direction)
         assertEquals(listOf(6), settled.decodeAhead)
-        assertEquals(listOf(5, 4), settled.sourceOnly)
+        assertEquals(listOf(5, 8), settled.sourceOnly)
     }
 }

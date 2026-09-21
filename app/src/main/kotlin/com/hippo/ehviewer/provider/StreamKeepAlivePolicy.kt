@@ -5,6 +5,7 @@ import android.os.Process
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.smb.SmbGateway
+import com.hippo.ehviewer.ui.main.HttpShare
 import com.hippo.ehviewer.webdav.WebDavClient
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.system.exitProcess
@@ -150,6 +151,24 @@ object StreamKeepAlivePolicy {
     }
 
     private val processExiting = AtomicBoolean(false)
+
+    /**
+     * User tapped **Stop streaming** on the FGS notification. Close loopback HTTP playback,
+     * LAN shares, streamdoc grants, and sticky stream backends. Keep the process and
+     * HTTP worker pool so a later open/share can listen again.
+     */
+    fun stopStreaming(reason: String = "notification") {
+        logcat("StreamKeepAlive") { "stopStreaming ($reason) ${runtimeSnapshot()}" }
+        runCatching { HttpShare.stopAll() }
+        runCatching { ExternalHttpStreamServer.stopStreaming(reason) }
+        runCatching { StreamDocumentRegistry.clearAll(reason) }
+        runCatching { dropStickyNetwork(reason) }
+        synchronized(reconcileLock) {
+            stopJob?.cancel()
+            stopJob = null
+        }
+        runCatching { StreamKeepAliveService.stop(appCtx) }
+    }
 
     /**
      * User swiped the app away from Recents. Tear down stream infrastructure and **kill the

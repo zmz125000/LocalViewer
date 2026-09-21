@@ -1465,7 +1465,6 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun smbHttpShareFile(fileName: String): (() -> Unit)? {
         val src = source ?: return null
-        if (!HttpShare.canShareRemote(relativeDir, fileName, folderLike = false)) return null
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else SmbGateway.joinRelativePath(relativeDir, fileName)
         return {
@@ -1483,9 +1482,22 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun smbHttpShareFolder(relativeName: String, displayName: String = relativeName.substringAfterLast('/')): (() -> Unit)? {
         val src = source ?: return null
-        if (!HttpShare.canShareRemote(relativeDir, relativeName, folderLike = true)) return null
         val remote = if (relativeDir.isEmpty()) relativeName else SmbGateway.joinRelativePath(relativeDir, relativeName)
         val name = displayName.ifEmpty { relativeName.substringAfterLast('/') }
+        HttpShare.zipFileRelativeForFolderShare(remote)?.let { zipRel ->
+            val zipName = zipRel.substringAfterLast('/').ifEmpty { name }
+            return {
+                shareSmbViaHttp {
+                    HttpShare.startSmbFile(
+                        context,
+                        src.id,
+                        zipRel,
+                        zipName,
+                        mimeTypeForFileName(zipName),
+                    )
+                }
+            }
+        }
         return {
             shareSmbViaHttp { HttpShare.startSmbFolder(context, src.id, remote, name) }
         }

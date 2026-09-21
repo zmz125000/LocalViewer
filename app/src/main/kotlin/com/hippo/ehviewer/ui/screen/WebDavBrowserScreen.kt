@@ -1343,7 +1343,6 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun webDavHttpShareFile(fileName: String): (() -> Unit)? {
         val src = source ?: return null
-        if (!HttpShare.canShareRemote(relativeDir, fileName, folderLike = false)) return null
         val actualName = fileName.substringAfterLast('/').substringAfterLast('\\')
         val remote = if (relativeDir.isEmpty()) fileName else WebDavGateway.joinRelative(relativeDir, fileName)
         return {
@@ -1361,9 +1360,22 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
 
     fun webDavHttpShareFolder(relativeName: String, displayName: String = relativeName.substringAfterLast('/')): (() -> Unit)? {
         val src = source ?: return null
-        if (!HttpShare.canShareRemote(relativeDir, relativeName, folderLike = true)) return null
         val remote = if (relativeDir.isEmpty()) relativeName else WebDavGateway.joinRelative(relativeDir, relativeName)
         val name = displayName.ifEmpty { relativeName.substringAfterLast('/') }
+        HttpShare.zipFileRelativeForFolderShare(remote)?.let { zipRel ->
+            val zipName = zipRel.substringAfterLast('/').ifEmpty { name }
+            return {
+                shareWebDavViaHttp {
+                    HttpShare.startWebDavFile(
+                        context,
+                        src.id,
+                        zipRel,
+                        zipName,
+                        mimeTypeForFileName(zipName),
+                    )
+                }
+            }
+        }
         return {
             shareWebDavViaHttp { HttpShare.startWebDavFolder(context, src.id, remote, name) }
         }

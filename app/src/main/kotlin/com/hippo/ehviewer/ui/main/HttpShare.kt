@@ -27,7 +27,6 @@ import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.library.ZipAsDirListing
-import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.mimeTypeForFileName
 import com.hippo.ehviewer.provider.ExternalHttpStreamServer
 import com.hippo.ehviewer.provider.requestStreamNotificationPermission
@@ -61,29 +60,19 @@ object HttpShare {
     private val _items = MutableStateFlow<List<HttpShareItem>>(emptyList())
     val items: StateFlow<List<HttpShareItem>> = _items
 
-    fun canShareLocal(pathStr: String, isZipBrowse: Boolean): Boolean {
-        if (isZipBrowse) return false
-        return ZipPaths.parse(pathStr) == null
-    }
+    /**
+     * Zip-as-dir presents archives as folders. HTTP-share the zip file itself —
+     * Open / Share already stream that file (members via [ZipAsDirListing.zipMemberPath]).
+     */
+    fun zipFileRelativeForFolderShare(remoteRelative: String): String? = ZipAsDirListing.splitZipBrowsePath(remoteRelative)?.first
 
-    fun canShareLocalFolder(relativeName: String, isZipBrowse: Boolean): Boolean {
-        if (isZipBrowse) return false
-        return ZipAsDirListing.zipFileSegment(relativeName) == null &&
-            ZipAsDirListing.splitZipBrowsePath(relativeName) == null
-    }
-
-    fun canShareRemote(listedDir: String, itemRelative: String = "", folderLike: Boolean = false): Boolean {
-        if (ZipAsDirListing.splitZipBrowsePath(listedDir) != null) return false
-        val target = listOf(listedDir, itemRelative)
-            .filter { it.isNotBlank() }
-            .joinToString("/")
-            .replace('\\', '/')
-            .trim('/')
-        if (target.isEmpty()) return true
-        if (folderLike && ZipAsDirListing.zipFileSegment(itemRelative.ifEmpty { target }) != null) {
-            return false
+    fun stopAll() {
+        val current = _items.value
+        if (current.isEmpty()) return
+        _items.value = emptyList()
+        for (item in current) {
+            ExternalHttpStreamServer.removeShareSession(item.id)
         }
-        return ZipAsDirListing.splitZipBrowsePath(target) == null || !folderLike
     }
 
     suspend fun startLocalFile(

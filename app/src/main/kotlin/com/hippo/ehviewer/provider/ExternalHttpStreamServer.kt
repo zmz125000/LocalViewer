@@ -601,11 +601,14 @@ object ExternalHttpStreamServer {
         shareSessions.values.sumOf { it.liveSocketCount() }
 
     /**
-     * Tear down loopback listener, all sessions, warm bodies, and keep-alive timers.
-     * Used when the user swipes the app from Recents ([StreamKeepAliveService.onTaskRemoved]).
+     * Stop loopback HTTP playback and LAN shares without killing the worker pool.
+     * Used by the FGS **Stop streaming** action so a later share/open can listen again.
      */
-    fun shutdown(reason: String = "shutdown") {
-        logcat("ExtHttp") { "shutdown ($reason) sessions=${sessionCount()} warm=${warmBodyCount()} transfers=${activeTransfers.get()}" }
+    fun stopStreaming(reason: String = "stop-streaming") {
+        logcat("ExtHttp") {
+            "stop streaming ($reason) sessions=${sessionCount()} shares=${shareSessionCount()} " +
+                "warm=${warmBodyCount()} transfers=${activeTransfers.get()}"
+        }
         synchronized(pruneLock) {
             pruneJob?.cancel()
             pruneJob = null
@@ -624,6 +627,14 @@ object ExternalHttpStreamServer {
             runCatching { ss?.close() }
             acceptThread = null
         }
+    }
+
+    /**
+     * Tear down loopback listener, all sessions, warm bodies, and the worker pool.
+     * Used when the user swipes the app from Recents ([StreamKeepAliveService.onTaskRemoved]).
+     */
+    fun shutdown(reason: String = "shutdown") {
+        stopStreaming(reason)
         runCatching { connectionPool.shutdownNow() }
     }
 

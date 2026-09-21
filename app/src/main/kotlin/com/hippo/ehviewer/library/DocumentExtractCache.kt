@@ -94,6 +94,21 @@ object DocumentExtractCache {
 
     fun isPageCached(cacheKey: String, index: Int, ext: String): Boolean = isCachedFile(pagePath(cacheKey, index, ext), ext = ext)
 
+    fun isPageCached(cacheKey: String, index: Int): Boolean = findCachedPage(cacheKey, index) != null
+
+    fun findCachedPage(cacheKey: String, index: Int): Path? {
+        val pagesDir = File((dirFor(cacheKey) / "pages").toString())
+        if (!pagesDir.isDirectory) return null
+        val prefix = "%06d.".format(index)
+        val file = pagesDir.listFiles()?.firstOrNull { f ->
+            f.name.startsWith(prefix) &&
+                !f.name.contains(".tmp.") &&
+                !f.name.contains(".pub.") &&
+                f.length() > 0L
+        } ?: return null
+        return dirFor(cacheKey) / "pages" / file.name
+    }
+
     fun isCachedFile(path: Path, ext: String = ""): Boolean {
         val f = File(path.toString())
         return CachePagePublish.isCompleteCachedFile(f, ext = ext)

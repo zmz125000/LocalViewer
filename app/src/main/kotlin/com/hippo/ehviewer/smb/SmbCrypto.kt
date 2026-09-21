@@ -17,6 +17,11 @@ import com.hierynomus.security.jce.JceSecurityProvider
  *
  * SMB 3.x signing cannot be turned off in smbj 0.14.0 — this only changes *who*
  * computes the mandatory MAC.
+ *
+ * [PacketSignatory][com.hierynomus.smbj.connection.PacketSignatory] calls
+ * [SecurityProvider.getMac] on every signed request and response (including 1 MiB
+ * READ payloads). Return a **thread-local** Mac so `Cipher.getInstance` and the
+ * 1 MiB CBC scratch are not allocated per packet — that was ~30% CPU at 40 Mbps.
  */
 internal object SmbCrypto {
     const val AES_CMAC = "AESCMAC"
@@ -52,12 +57,23 @@ internal object SmbCrypto {
         return CompositeSecurityProvider(jce, bc, mode)
     }
 
-    private class CompositeSecurityProvider(
+    internal class CompositeSecurityProvider(
         private val jce: SecurityProvider,
         private val bc: SecurityProvider,
         private val aesCmacMode: AesCmacMode,
     ) : SecurityProvider {
+        private val macs = ThreadLocal<HashMap<String, Mac>>()
+
         override fun getMac(name: String): Mac {
+            val key = name.lowercase()
+            val map = macs.get() ?: HashMap<String, Mac>(4).also { macs.set(it) }
+            map[key]?.let { return it }
+            val created = createMac(name)
+            map[key] = created
+            return created
+        }
+
+        private fun createMac(name: String): Mac {
             if (name.equals(AES_CMAC, ignoreCase = true)) {
                 return when (aesCmacMode) {
                     AesCmacMode.JCE_MAC -> jce.getMac(name)

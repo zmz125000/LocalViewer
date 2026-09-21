@@ -5,34 +5,17 @@ import com.hippo.ehviewer.ui.main.LanAddresses
 import java.net.Inet4Address
 import java.net.InetAddress
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HttpShareTest {
     @Test
-    fun localZipBrowseAndZipMemberAreSkipped() {
-        assertFalse(HttpShare.canShareLocal("/data/clip.mp4", isZipBrowse = true))
-        assertFalse(HttpShare.canShareLocal("zipfile:/data/pack.zip!inner.mp4", isZipBrowse = false))
-        assertTrue(HttpShare.canShareLocal("/data/clip.mp4", isZipBrowse = false))
-    }
-
-    @Test
-    fun localZipAsDirFolderIsSkipped() {
-        assertFalse(HttpShare.canShareLocalFolder("pack.zip", isZipBrowse = false))
-        assertFalse(HttpShare.canShareLocalFolder("dir/pack.zip/Album", isZipBrowse = false))
-        assertFalse(HttpShare.canShareLocalFolder("Album", isZipBrowse = true))
-        assertTrue(HttpShare.canShareLocalFolder("Album", isZipBrowse = false))
-    }
-
-    @Test
-    fun remoteZipAsDirIsSkippedButZipFileShareIsAllowed() {
-        assertFalse(HttpShare.canShareRemote("share/pack.zip", "Album", folderLike = true))
-        assertFalse(HttpShare.canShareRemote("share", "pack.zip", folderLike = true))
-        assertTrue(HttpShare.canShareRemote("share", "pack.zip", folderLike = false))
-        assertTrue(HttpShare.canShareRemote("share", "clip.mp4", folderLike = false))
-        assertTrue(HttpShare.canShareRemote("share", "Album", folderLike = true))
+    fun zipAsDirFolderSharesTheZipFile() {
+        assertEquals("share/pack.zip", HttpShare.zipFileRelativeForFolderShare("share/pack.zip"))
+        assertEquals("share/pack.zip", HttpShare.zipFileRelativeForFolderShare("share/pack.zip/Album"))
+        assertEquals("pack.cbz", HttpShare.zipFileRelativeForFolderShare("pack.cbz"))
+        assertNull(HttpShare.zipFileRelativeForFolderShare("share/Album"))
+        assertNull(HttpShare.zipFileRelativeForFolderShare("clip.mp4"))
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.hippo.ehviewer.ui.reader
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.pager.HorizontalPager
@@ -79,6 +80,7 @@ fun PagerViewer(
     val realPageCount = pageLoader.size
     val items = pageLoader.pages
     val scaleType by Settings.imageScaleType.collectAsState()
+    val dualPageGap by Settings.dualPageGap.collectAsState()
     val landscapeZoom by Settings.landscapeZoom.collectAsState()
     val autoRotateMode by Settings.autoRotateMode.collectAsState()
     val zoomStart by Settings.zoomStart.collectAsState()
@@ -118,6 +120,7 @@ fun PagerViewer(
                 rightPage = right,
                 pageLoader = pageLoader,
                 isRtl = dualRtl,
+                gap = dualPageGap,
                 layoutSize = layoutSize,
                 navigator = navigator,
                 pagerState = pagerState,
@@ -151,7 +154,7 @@ fun PagerViewer(
         VerticalPager(
             state = pagerState,
             modifier = modifier,
-            beyondViewportPageCount = 1,
+            beyondViewportPageCount = 2,
             userScrollEnabled = canScroll,
             key = { it },
         ) { index ->
@@ -162,7 +165,7 @@ fun PagerViewer(
         HorizontalPager(
             state = pagerState,
             modifier = modifier,
-            beyondViewportPageCount = 1,
+            beyondViewportPageCount = 2,
             reverseLayout = isRtl xor isRtlLayout,
             userScrollEnabled = canScroll,
             key = { it },
@@ -182,6 +185,7 @@ private fun DualPageContainer(
     rightPage: Page?,
     pageLoader: ReaderSession,
     isRtl: Boolean,
+    gap: Boolean,
     layoutSize: Size,
     navigator: () -> NavigationRegions,
     pagerState: PagerState,
@@ -202,13 +206,21 @@ private fun DualPageContainer(
     } else {
         Size(layoutSize.width / 2f, layoutSize.height)
     }
+    val leftAspect = spreadAspect(leftPage)
+    val rightAspect = spreadAspect(rightPage)
+    val combinedAspect = (leftAspect + rightAspect).coerceAtLeast(0.01f)
+    val fittedSpread = if (layoutSize == Size.Zero) {
+        Size.Zero
+    } else {
+        fitSpreadSize(combinedAspect, layoutSize)
+    }
 
     if (layoutSize != Size.Zero) {
-        // Spread fills the viewport; telephoto zooms the pair as one unit.
+        val contentSize = if (gap || solo) layoutSize else fittedSpread
         zoomableState.contentScale = ContentScale.Fit
-        LaunchedEffect(layoutSize) {
+        LaunchedEffect(contentSize) {
             zoomableState.setContentLocation(
-                ZoomableContentLocation.scaledInsideAndCenterAligned(layoutSize),
+                ZoomableContentLocation.scaledInsideAndCenterAligned(contentSize),
             )
             zoomableState.contentAlignment = Alignment.Center
         }
@@ -217,6 +229,9 @@ private fun DualPageContainer(
     val onLongClick: (Offset) -> Unit = { offset ->
         val page = when {
             solo -> leftPage ?: rightPage
+            !gap && layoutSize.width > 0f -> {
+                if (offset.x < spreadGutterX(leftAspect, rightAspect, layoutSize)) leftPage else rightPage
+            }
             offset.x < layoutSize.width / 2f -> leftPage
             else -> rightPage
         }
@@ -255,7 +270,14 @@ private fun DualPageContainer(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(onTap) {
+                detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
+            },
+        contentAlignment = Alignment.Center,
+    ) {
         val zoomMod = Modifier.zoomable(
             state = zoomableState,
             onClick = onTap.partially1(zoomableState),
@@ -270,19 +292,11 @@ private fun DualPageContainer(
                 pageLoader = pageLoader,
                 contentScale = ContentScale.Inside,
                 viewportSize = layoutSize,
-                modifier = Modifier.pointerInput(onTap) {
-                    detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
-                },
                 contentModifier = zoomMod,
             )
-        } else {
+        } else if (gap) {
             Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(onTap) {
-                        detectTapGestures(onLongPress = onLongClick, onTap = onTap.partially1(null))
-                    }
-                    .then(zoomMod),
+                modifier = Modifier.fillMaxSize().then(zoomMod),
             ) {
                 Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
                     if (leftPage != null) {
@@ -301,6 +315,47 @@ private fun DualPageContainer(
                             pageLoader = pageLoader,
                             contentScale = ContentScale.Fit,
                             viewportSize = halfSize,
+                        )
+                    }
+                }
+            }
+        } else {
+            val leftCell = Size(
+                (fittedSpread.width * leftAspect / combinedAspect).coerceAtLeast(1f),
+                fittedSpread.height.coerceAtLeast(1f),
+            )
+            val rightCell = Size(
+                (fittedSpread.width * rightAspect / combinedAspect).coerceAtLeast(1f),
+                fittedSpread.height.coerceAtLeast(1f),
+            )
+            // Zoom viewport must be the full pager slot. Putting zoomable on the fitted
+            // aspectRatio row made pinch-zoom scale inside the image box instead of the screen.
+            Box(
+                modifier = Modifier.fillMaxSize().then(zoomMod),
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(
+                    modifier = Modifier.aspectRatio(
+                        combinedAspect,
+                        matchHeightConstraintsFirst = true,
+                    ),
+                ) {
+                    if (leftPage != null) {
+                        PagerItem(
+                            page = leftPage,
+                            pageLoader = pageLoader,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.weight(leftAspect).fillMaxHeight(),
+                            viewportSize = leftCell,
+                        )
+                    }
+                    if (rightPage != null) {
+                        PagerItem(
+                            page = rightPage,
+                            pageLoader = pageLoader,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.weight(rightAspect).fillMaxHeight(),
+                            viewportSize = rightCell,
                         )
                     }
                 }
@@ -463,3 +518,15 @@ private val PagerZoomSpec = ZoomSpec(
     maximum = ZoomLimit(factor = 5f),
     minimum = ZoomLimit(factor = 1f, overzoomEffect = OverzoomEffect.Disabled),
 )
+
+/** Placeholder / unknown page aspect (A4-ish), same as [PagerItem] default. */
+private const val DUAL_PAGE_DEFAULT_ASPECT = 1 / 1.4125f
+
+@Composable
+private fun spreadAspect(page: Page?): Float {
+    val decoded = (page?.statusObserved as? PageStatus.Ready)?.image?.intrinsicSize
+    if (decoded != null && decoded.width > 0 && decoded.height > 0) {
+        return decoded.width.toFloat() / decoded.height.toFloat()
+    }
+    return page?.layoutAspect?.takeIf { it > 0f } ?: DUAL_PAGE_DEFAULT_ASPECT
+}

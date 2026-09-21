@@ -369,7 +369,7 @@ object OriginDiskCache {
             path.contains("/cache/smb_thumb_cache/") -> SmbCache.markAbsent(okio)
             path.contains("/cache/webdav_thumb_cache/") -> WebDavCache.markAbsent(okio)
             path.contains("/cache/archive_thumb/") -> ArchiveCoverCache.markAbsent(okio)
-            // video_thumb_cache: no in-memory hit map to clear
+            path.contains("/cache/video_thumb_cache/") -> VideoThumbnail.markAbsent(file)
         }
     }
 }

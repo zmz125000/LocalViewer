@@ -37,6 +37,10 @@ class PdfImageEngine private constructor(
         val hasSeek: Boolean get() = streamOffset >= 0L && streamLen > 0L
     }
 
+    /**
+     * Serializes all [PdfParser] access. The parser's xref / object cache / cursor
+     * are not concurrent-safe, and the underlying [ArchiveByteSource] may not be either.
+     */
     private val discoveryLock = Any()
 
     @Volatile
@@ -117,25 +121,43 @@ class PdfImageEngine private constructor(
         if (DocumentExtractCache.isPageCached(cacheKey, index, ref.ext)) {
             return DocumentExtractCache.pagePath(cacheKey, index, ref.ext)
         }
-        val bytes = if (ref.hasSeek) {
+        DocumentExtractCache.findCachedPage(cacheKey, index)?.let { return it }
+        val effectiveRef = if (!ref.hasSeek) {
+            val offset = parser.locateStreamDataOffset(ref.objNum) ?: -1L
+            if (offset >= 0L) {
+                ref.copy(streamOffset = offset).also { updated ->
+                    synchronized(discoveryLock) {
+                        if (index < pages.size && pages[index].objNum == ref.objNum) {
+                            pages[index] = updated
+                        }
+                    }
+                }
+            } else {
+                ref
+            }
+        } else {
+            ref
+        }
+
+        val bytes = if (effectiveRef.hasSeek) {
             when (
                 val direct = parser.extractImageBytesAt(
-                    ref.streamOffset,
-                    ref.streamLen,
-                    ref.objNum,
-                    ref.gen,
+                    effectiveRef.streamOffset,
+                    effectiveRef.streamLen,
+                    effectiveRef.objNum,
+                    effectiveRef.gen,
                 )
             ) {
                 is PdfParser.DirectExtractResult.Success -> direct.bytes
                 PdfParser.DirectExtractResult.RetryWithXref -> {
                     // A stale/old index may lack enough object metadata. Rebuild once;
                     // transport failures deliberately do not trigger a duplicate fetch.
-                    if (parser.bootstrap()) parser.extractImageBytes(ref.objNum, ref.gen) else null
+                    if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
                 }
                 PdfParser.DirectExtractResult.Failed -> null
             }
         } else {
-            if (parser.bootstrap()) parser.extractImageBytes(ref.objNum, ref.gen) else null
+            if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
         } ?: return null
         return DocumentExtractCache.writePage(cacheKey, index, ref.ext, bytes)
     }
@@ -502,11 +524,12 @@ internal class PdfParser(
         val ext = when {
             filter.any { it == "/DCTDecode" || it == "/DCT" } -> "jpg"
             filter.any { it == "/JPXDecode" } -> "jp2"
-            filter.any { it == "/FlateDecode" || it == "/Fl" } -> "png"
-            filter.isEmpty() -> "png"
+            // Flate/raw samples are not a file format; re-encode lossless WebP for the reader cache.
+            filter.any { it == "/FlateDecode" || it == "/Fl" } -> "webp"
+            filter.isEmpty() -> "webp"
             else -> return null // CCITT, JBIG2, etc.
         }
-        val streamOffset = streamDataOffsets[objNum] ?: locateStreamDataOffset(objNum) ?: -1L
+        val streamOffset = streamDataOffsets[objNum] ?: -1L
         return PdfImageEngine.ImageRef(
             objNum = objNum,
             gen = gen,
@@ -522,7 +545,7 @@ internal class PdfParser(
      * File offset of the stream payload for [objNum] using a small header probe
      * (no full image body download during index walk).
      */
-    private fun locateStreamDataOffset(objNum: Int): Long? {
+    internal fun locateStreamDataOffset(objNum: Int): Long? {
         val entry = xref[objNum] ?: return null
         if (entry.free || entry.offset <= 0L) return null
         val probe = readBytes(entry.offset, minOf(16 * 1024, (fileSize - entry.offset).toInt()))
@@ -559,6 +582,9 @@ internal class PdfParser(
     )
 
     private fun loadStreamObject(objNum: Int, gen: Int): StreamObj? {
+        if (xref.isEmpty()) {
+            bootstrap()
+        }
         val entry = xref[objNum] ?: return null
         if (entry.free || entry.offset <= 0L) {
             // Object stream (PDF 1.5): offset == 0 and gen is index — limited support
@@ -576,6 +602,20 @@ internal class PdfParser(
         }
         val data = readBytes(streamOffset, length.toInt(), requireFull = true) ?: return null
         return StreamObj(dict, data)
+    }
+
+    private fun loadStreamPayload(objNum: Int, gen: Int = 0): ByteArray? {
+        val st = loadStreamObject(objNum, gen) ?: return null
+        var data = st.data
+        for (f in filterNames(st.dict["/Filter"])) {
+            data = when (f) {
+                "/FlateDecode", "/Fl" -> inflate(data) ?: return null
+                "/ASCII85Decode", "/A85" -> ascii85Decode(data) ?: return null
+                "/ASCIIHexDecode", "/AHx" -> asciiHexDecode(data) ?: return null
+                else -> return null
+            }
+        }
+        return data
     }
 
     private fun loadFromObjectStream(_objNum: Int): StreamObj? {
@@ -641,11 +681,11 @@ internal class PdfParser(
                 else -> return null
             }
         }
-        // No filter or after Flate: raw samples → PNG
-        return rawSamplesToPng(dict, data)
+        // No filter or after Flate: raw samples → lossless WebP.
+        return encodeRawSamples(dict, data)
     }
 
-    private fun rawSamplesToPng(dict: PdfDict, data: ByteArray): ByteArray? {
+    private fun encodeRawSamples(dict: PdfDict, data: ByteArray): ByteArray? {
         val w = dict.intValue("/Width") ?: return null
         val h = dict.intValue("/Height") ?: return null
         if (w <= 0 || h <= 0 || w > 20000 || h > 20000) return null
@@ -666,57 +706,57 @@ internal class PdfParser(
         }
         val expected = w.toLong() * h * cs
         if (samples.size.toLong() < expected) return null
-        // CMYK → approximate RGB
-        val bmp = when (cs) {
-            1 -> {
-                val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                var p = 0
-                for (y in 0 until h) {
-                    for (x in 0 until w) {
-                        val g = samples[p++].toInt() and 0xff
-                        b.setPixel(x, y, (0xff shl 24) or (g shl 16) or (g shl 8) or g)
-                    }
-                }
-                b
-            }
-            3 -> {
-                val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                var p = 0
-                for (y in 0 until h) {
-                    for (x in 0 until w) {
-                        val r = samples[p++].toInt() and 0xff
-                        val g = samples[p++].toInt() and 0xff
-                        val bl = samples[p++].toInt() and 0xff
-                        b.setPixel(x, y, (0xff shl 24) or (r shl 16) or (g shl 8) or bl)
-                    }
-                }
-                b
-            }
-            4 -> {
-                val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                var p = 0
-                for (y in 0 until h) {
-                    for (x in 0 until w) {
-                        val c = (samples[p++].toInt() and 0xff) / 255f
-                        val m = (samples[p++].toInt() and 0xff) / 255f
-                        val ye = (samples[p++].toInt() and 0xff) / 255f
-                        val k = (samples[p++].toInt() and 0xff) / 255f
-                        val r = ((1 - c) * (1 - k) * 255).toInt().coerceIn(0, 255)
-                        val g = ((1 - m) * (1 - k) * 255).toInt().coerceIn(0, 255)
-                        val bl = ((1 - ye) * (1 - k) * 255).toInt().coerceIn(0, 255)
-                        b.setPixel(x, y, (0xff shl 24) or (r shl 16) or (g shl 8) or bl)
-                    }
-                }
-                b
-            }
-            else -> return null
+        val csVal = dict["/ColorSpace"]?.let { resolveValue(it) }
+        val indexedArray = (csVal as? PdfArray)?.takeIf { arr ->
+            val name = (arr.items.firstOrNull() as? PdfName)?.name
+            name == "/Indexed" || name == "/I"
         }
+        val isIndexed = indexedArray != null
+        val indexedBaseCs = if (indexedArray != null) {
+            val baseVal = indexedArray.items.getOrNull(1)?.let { resolveValue(it) }
+            colorSpaceChannels(baseVal).takeIf { it in 1..4 } ?: 3
+        } else {
+            0
+        }
+        val indexedPalette: ByteArray? = if (indexedArray != null) {
+            val lookupItem = indexedArray.items.getOrNull(3)
+            val lookupRef = lookupItem as? PdfRef ?: (lookupItem?.let { resolveValue(it) } as? PdfDict)?.let { d ->
+                d.objNum?.let { PdfRef(it, d.gen) }
+            }
+            when {
+                lookupRef != null -> loadStreamPayload(lookupRef.num, lookupRef.gen)
+                lookupItem is PdfString -> lookupItem.bytes
+                else -> (lookupItem?.let { resolveValue(it) } as? PdfString)?.bytes
+            }
+        } else {
+            null
+        }
+
+        val pixelCount = w * h
+        val pixels = if (isIndexed && indexedPalette != null) {
+            PdfRawSamples.argbFromIndexed(samples, pixelCount, indexedPalette, indexedBaseCs)
+        } else {
+            when (cs) {
+                1 -> PdfRawSamples.argbFromGray(samples, pixelCount)
+                3 -> PdfRawSamples.argbFromRgb(samples, pixelCount)
+                4 -> PdfRawSamples.argbFromCmyk(samples, pixelCount)
+                else -> return null
+            }
+        }
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        bmp.setPixels(pixels, 0, w, 0, 0, w, h)
         return try {
-            val bos = ByteArrayOutputStream()
-            if (!bmp.compress(Bitmap.CompressFormat.PNG, 100, bos)) null else bos.toByteArray()
+            encodeExtractedBitmap(bmp)
         } finally {
             bmp.recycle()
         }
+    }
+
+    /** Lossless WebP for comic Flate pages. Quality is encoder effort (0–100), not loss. */
+    private fun encodeExtractedBitmap(bmp: Bitmap): ByteArray? {
+        val bos = ByteArrayOutputStream()
+        if (!bmp.compress(Bitmap.CompressFormat.WEBP_LOSSLESS, EXTRACT_WEBP_EFFORT, bos)) return null
+        return bos.toByteArray().takeIf { it.isNotEmpty() }
     }
 
     private fun colorSpaceChannels(v: PdfValue?): Int = when (val r = v?.let { resolveValue(it) }) {
@@ -741,7 +781,7 @@ internal class PdfParser(
                 "/CalRGB", "/DeviceRGB" -> 3
                 "/CalGray", "/DeviceGray" -> 1
                 "/DeviceCMYK" -> 4
-                "/Indexed" -> 1
+                "/Indexed", "/I" -> 1
                 else -> 0
             }
         }
@@ -1120,6 +1160,9 @@ internal class PdfParser(
     // --- object resolve ---
 
     private fun resolve(ref: PdfRef): PdfValue? {
+        if (xref.isEmpty()) {
+            bootstrap()
+        }
         val key = ref.num
         objCache[key.toLong()]?.let { return it }
         val entry = xref[ref.num]
@@ -1524,6 +1567,9 @@ internal class PdfParser(
         const val MAX_PAGES = 100_000
         const val MAX_STREAM_HEADER_BYTES = 32 * 1024L
         const val MAX_IMAGE_STREAM_BYTES = 256L * 1024L * 1024L
+
+        /** Bitmap lossless-WebP effort. Higher = smaller + slower extract. */
+        const val EXTRACT_WEBP_EFFORT = 75
     }
 }
 

@@ -702,6 +702,13 @@ object Settings : DataStorePreferences(null) {
      * - Vertical paged / portrait: unchanged.
      */
     val dualPageLandscape = boolPref("pref_dual_page_landscape", true)
+
+    /**
+     * Pager dual (LTR / RTL / vertical): when on, each page occupies half the
+     * screen (gutter gap). When off, the pair is height-fitted and centered
+     * with no gap between pages.
+     */
+    val dualPageGap = boolPref("pref_dual_page_gap", false)
     val zoomStart = intPref("pref_zoom_start_key", 1)
     val showNavigationOverlayNewUser = boolPref("reader_navigation_overlay_new_user", true)
     val showNavigationOverlayOnStart = boolPref("reader_navigation_overlay_on_start", false)

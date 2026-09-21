@@ -21,6 +21,12 @@ interface ReaderSession : AutoCloseable {
     fun retryPage(index: Int, orgImg: Boolean = false)
     fun getImageFilename(index: Int): String?
     fun save(index: Int, file: Path): Boolean
+
+    /**
+     * Ensure page [index] is on disk for photo-grid thumbs (extract only, no decode).
+     * Default no-op for sessions that are not document extract.
+     */
+    fun requestPageSource(index: Int) = Unit
 }
 
 /** Why the reader's viewport changed. All indices are real image indices. */
@@ -115,6 +121,9 @@ class ReaderDemandPlanner(
 
         val lastPage = pageCount - 1
         val anchor = navigation.anchor.coerceIn(0, lastPage)
+        val isJump = navigation.kind == NavigationKind.Jump ||
+            (previousAnchor != null && kotlin.math.abs(anchor - (previousAnchor ?: anchor)) >= 3)
+
         previousAnchor?.let { previous ->
             direction = when {
                 anchor > previous -> ReadingDirection.Forward
@@ -129,19 +138,89 @@ class ReaderDemandPlanner(
         val visible = (visibleStart..visibleEnd).toList()
             .sortedBy { kotlin.math.abs(it - anchor) }
 
-        fun ahead(count: Int): List<Int> {
-            if (count <= 0) return emptyList()
-            return when (direction) {
-                ReadingDirection.Forward ->
-                    ((visibleEnd + 1)..minOf(lastPage, visibleEnd + count)).toList()
-                ReadingDirection.Backward ->
-                    (visibleStart - 1 downTo maxOf(0, visibleStart - count)).toList()
+        // Partition user's decodeAhead budget (Settings.readerDecodeAhead)
+        // into primary reading direction and backward reserve window
+        val totalDecode = policy.decodeAhead
+        val (decodeForwardCount, decodeBackwardCount) = when {
+            totalDecode <= 0 -> 0 to 0
+            totalDecode == 1 -> if (direction == ReadingDirection.Forward) 1 to 0 else 0 to 1
+            isJump -> {
+                val behind = minOf(2, totalDecode / 2).coerceAtLeast(1)
+                val ahead = (totalDecode - behind).coerceAtLeast(1)
+                if (direction == ReadingDirection.Forward) ahead to behind else behind to ahead
+            }
+            direction == ReadingDirection.Forward -> {
+                val behind = if (totalDecode >= 2) 1 else 0
+                (totalDecode - behind) to behind
+            }
+            else -> {
+                val forward = if (totalDecode >= 2) 1 else 0
+                forward to (totalDecode - forward)
             }
         }
 
-        val decode = ahead(policy.decodeAhead)
+        // Partition user's sourceAhead budget (Settings.preloadImage)
+        // into forward prefetch and backward prefetch
+        val totalSource = policy.sourceAhead
+        val (sourceForwardCount, sourceBackwardCount) = when {
+            totalSource <= 0 -> 0 to 0
+            totalSource == 1 -> if (direction == ReadingDirection.Forward) 1 to 0 else 0 to 1
+            isJump -> {
+                val behind = minOf(2, totalSource / 2).coerceAtLeast(1)
+                val ahead = (totalSource - behind).coerceAtLeast(1)
+                if (direction == ReadingDirection.Forward) ahead to behind else behind to ahead
+            }
+            direction == ReadingDirection.Forward -> {
+                val behind = minOf(2, totalSource / 3).coerceAtLeast(if (totalSource >= 3) 1 else 0)
+                (totalSource - behind) to behind
+            }
+            else -> {
+                val forward = minOf(2, totalSource / 3).coerceAtLeast(if (totalSource >= 3) 1 else 0)
+                forward to (totalSource - forward)
+            }
+        }
+
+        val forwardDecode = if (decodeForwardCount > 0) {
+            ((visibleEnd + 1)..minOf(lastPage, visibleEnd + decodeForwardCount)).toList()
+        } else {
+            emptyList()
+        }
+
+        val backwardDecode = if (decodeBackwardCount > 0) {
+            ((visibleStart - 1) downTo maxOf(0, visibleStart - decodeBackwardCount)).toList()
+        } else {
+            emptyList()
+        }
+
+        // Order decodeAhead: primary reading direction first, then backward reserve
+        val decode = if (direction == ReadingDirection.Forward) {
+            forwardDecode + backwardDecode
+        } else {
+            backwardDecode + forwardDecode
+        }
+
         val decoded = (visible + decode).toHashSet()
-        val sourceOnly = ahead(policy.sourceAhead).filterNot(decoded::contains)
+
+        val forwardSource = if (sourceForwardCount > 0) {
+            ((visibleEnd + 1)..minOf(lastPage, visibleEnd + sourceForwardCount)).toList()
+        } else {
+            emptyList()
+        }
+
+        val backwardSource = if (sourceBackwardCount > 0) {
+            ((visibleStart - 1) downTo maxOf(0, visibleStart - sourceBackwardCount)).toList()
+        } else {
+            emptyList()
+        }
+
+        val allSource = if (direction == ReadingDirection.Forward) {
+            forwardSource + backwardSource
+        } else {
+            backwardSource + forwardSource
+        }
+
+        val sourceOnly = allSource.filterNot(decoded::contains)
+
         return ReaderDemand(
             navigation = navigation.copy(anchor = anchor, visiblePages = visibleStart..visibleEnd),
             direction = direction,

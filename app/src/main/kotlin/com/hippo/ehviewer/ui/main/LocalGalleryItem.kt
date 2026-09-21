@@ -241,6 +241,7 @@ fun LocalGalleryListItem(
                         .size(LibraryListLeadSize)
                         .clip(ShapeDefaults.Medium),
                     iconSize = BrowseListLeadingIconSize,
+                    decodeSizePx = listDecodePx,
                 )
             } else {
                 CoverImage(
@@ -614,6 +615,7 @@ fun LocalGalleryGridItem(
                             ?.let { VideoThumbnailSource.Local(it) },
                         modifier = Modifier.fillMaxSize(),
                         iconSize = BrowseGridPlaceholderIconSize,
+                        decodeSizePx = gridDecodePx,
                     )
                 } else {
                     CoverImage(

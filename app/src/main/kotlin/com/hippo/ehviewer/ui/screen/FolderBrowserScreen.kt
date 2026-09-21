@@ -1710,10 +1710,9 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
-    fun localHttpShareFile(path: okio.Path): (() -> Unit)? {
+    fun localHttpShareFile(path: okio.Path): () -> Unit {
         val pathStr = path.toString()
-        if (!HttpShare.canShareLocal(pathStr, stack.lastOrNull()?.isZipBrowse == true)) return null
-        val name = path.name
+        val name = ZipPaths.memberLeafName(pathStr) ?: path.name
         return {
             shareLocalViaHttp {
                 HttpShare.startLocalFile(context, pathStr, name, mimeTypeForFileName(name))
@@ -1721,9 +1720,14 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
-    fun localHttpShareFolder(dir: okio.Path, displayName: String, relativeName: String): (() -> Unit)? {
-        if (!HttpShare.canShareLocalFolder(relativeName, stack.lastOrNull()?.isZipBrowse == true)) {
-            return null
+    fun localHttpShareFolder(dir: okio.Path, displayName: String, relativeName: String): () -> Unit {
+        val leaf = relativeName.substringAfterLast('/').ifEmpty { displayName }
+        // Zip-as-dir rows are not real directories; share the zip file like Open / Share.
+        if (stack.lastOrNull()?.isZipBrowse == true ||
+            isZipArchiveFileName(leaf) ||
+            isZipArchiveFileName(dir.name)
+        ) {
+            return localHttpShareFile(dir)
         }
         return {
             shareLocalViaHttp {
