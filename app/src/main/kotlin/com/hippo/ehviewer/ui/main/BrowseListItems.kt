@@ -1673,7 +1673,7 @@ fun BrowseCoverThumb(
                 is BrowseCover.WebDavZipMember ->
                     "davz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${WebDavCache.THUMB_DISK_EDGE}"
                 is BrowseCover.DocumentPage ->
-                    "doc-page:${cover.cacheKey}:${cover.index}@${resolvedDecodePx}"
+                    "doc-page:${cover.cacheKey}:${cover.index}@$resolvedDecodePx"
                 is BrowseCover.Local -> cover.path.toString()
                 null -> path.toString()
             }
