@@ -328,29 +328,36 @@ private fun DualPageContainer(
                 (fittedSpread.width * rightAspect / combinedAspect).coerceAtLeast(1f),
                 fittedSpread.height.coerceAtLeast(1f),
             )
-            // Bounded Fit of the pair: aspectRatio stays inside pager max W/H (no wrapContentWidth).
-            Row(
-                modifier = Modifier
-                    .aspectRatio(combinedAspect, matchHeightConstraintsFirst = true)
-                    .then(zoomMod),
+            // Zoom viewport must be the full pager slot. Putting zoomable on the fitted
+            // aspectRatio row made pinch-zoom scale inside the image box instead of the screen.
+            Box(
+                modifier = Modifier.fillMaxSize().then(zoomMod),
+                contentAlignment = Alignment.Center,
             ) {
-                if (leftPage != null) {
-                    PagerItem(
-                        page = leftPage,
-                        pageLoader = pageLoader,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.weight(leftAspect).fillMaxHeight(),
-                        viewportSize = leftCell,
-                    )
-                }
-                if (rightPage != null) {
-                    PagerItem(
-                        page = rightPage,
-                        pageLoader = pageLoader,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.weight(rightAspect).fillMaxHeight(),
-                        viewportSize = rightCell,
-                    )
+                Row(
+                    modifier = Modifier.aspectRatio(
+                        combinedAspect,
+                        matchHeightConstraintsFirst = true,
+                    ),
+                ) {
+                    if (leftPage != null) {
+                        PagerItem(
+                            page = leftPage,
+                            pageLoader = pageLoader,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.weight(leftAspect).fillMaxHeight(),
+                            viewportSize = leftCell,
+                        )
+                    }
+                    if (rightPage != null) {
+                        PagerItem(
+                            page = rightPage,
+                            pageLoader = pageLoader,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.weight(rightAspect).fillMaxHeight(),
+                            viewportSize = rightCell,
+                        )
+                    }
                 }
             }
         }
