@@ -711,7 +711,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 if (pages.isEmpty()) {
                     around(pagerState.currentPage)
                 } else {
-                    // visiblePagesInfo already includes beyondViewportPageCount (=2).
+                    // visiblePagesInfo already includes beyondViewportPageCount (=1).
                     pages.first().index..pages.last().index
                 }
             }
