@@ -1213,12 +1213,12 @@ fun BrowseCoverThumb(
         is BrowseCover.Local -> "local\u0000${cover.path}"
         null -> null
     }
-    // Local image paths set immediately. Archive/network thumbs: never trust main-thread
-    // [knownPresent] alone (file may be trimmed) — LaunchedEffect probes disk / re-extracts.
+    // Local image paths: bind immediately when [allowRemoteFetch] (browse). Reader
+    // photo-grid starts false so the first frame is placeholders only.
     var localPath by remember(remoteKey) {
         mutableStateOf(
             when (cover) {
-                is BrowseCover.Local -> cover.path
+                is BrowseCover.Local -> cover.path.takeIf { allowRemoteFetch }
                 is BrowseCover.LocalArchive,
                 is BrowseCover.SmbArchive,
                 is BrowseCover.WebDavArchive,
@@ -1271,6 +1271,12 @@ fun BrowseCoverThumb(
         allowRemoteFetch,
     ) {
         when (cover) {
+            is BrowseCover.Local -> {
+                // Reader photo-grid first frame: placeholders only. Browse passes
+                // allowRemoteFetch=true so localPath is already set above.
+                if (allowRemoteFetch) localPath = cover.path
+                return@LaunchedEffect
+            }
             is BrowseCover.LocalArchive -> {
                 // ZIP/TAR mmap page 0; RAR/CBR/7z first-page (same open as local reader).
                 when (val result = withIOContext { ArchiveCoverCache.ensureCover(cover.archivePath) }) {

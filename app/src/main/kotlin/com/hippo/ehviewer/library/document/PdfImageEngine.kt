@@ -711,7 +711,9 @@ internal class PdfParser(
         val indexedBaseCs = if (isIndexed) {
             val baseVal = (csVal as PdfArray).items.getOrNull(1)?.let { resolveValue(it) }
             colorSpaceChannels(baseVal).takeIf { it in 1..4 } ?: 3
-        } else 0
+        } else {
+            0
+        }
         val indexedPalette: ByteArray? = if (isIndexed) {
             val lookupItem = (csVal as PdfArray).items.getOrNull(3)
             val lookupRef = lookupItem as? PdfRef ?: (lookupItem?.let { resolveValue(it) } as? PdfDict)?.let { d ->
@@ -722,7 +724,9 @@ internal class PdfParser(
                 lookupItem is PdfString -> lookupItem.bytes
                 else -> (lookupItem?.let { resolveValue(it) } as? PdfString)?.bytes
             }
-        } else null
+        } else {
+            null
+        }
 
         val bmp = if (isIndexed && indexedPalette != null) {
             val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -1644,6 +1648,7 @@ internal class PdfParser(
         const val MAX_PAGES = 100_000
         const val MAX_STREAM_HEADER_BYTES = 32 * 1024L
         const val MAX_IMAGE_STREAM_BYTES = 256L * 1024L * 1024L
+
         /** Bitmap lossless-WebP effort. Higher = smaller + slower extract. */
         const val EXTRACT_WEBP_EFFORT = 75
     }

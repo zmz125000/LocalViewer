@@ -176,11 +176,15 @@ class ReaderDemandPlanner(
 
         val forwardDecode = if (decodeForwardCount > 0) {
             ((visibleEnd + 1)..minOf(lastPage, visibleEnd + decodeForwardCount)).toList()
-        } else emptyList()
+        } else {
+            emptyList()
+        }
 
         val backwardDecode = if (decodeBackwardCount > 0) {
             ((visibleStart - 1) downTo maxOf(0, visibleStart - decodeBackwardCount)).toList()
-        } else emptyList()
+        } else {
+            emptyList()
+        }
 
         // Order decodeAhead: primary reading direction first, then backward reserve
         val decode = if (direction == ReadingDirection.Forward) {
@@ -193,11 +197,15 @@ class ReaderDemandPlanner(
 
         val forwardSource = if (sourceForwardCount > 0) {
             ((visibleEnd + 1)..minOf(lastPage, visibleEnd + sourceForwardCount)).toList()
-        } else emptyList()
+        } else {
+            emptyList()
+        }
 
         val backwardSource = if (sourceBackwardCount > 0) {
             ((visibleStart - 1) downTo maxOf(0, visibleStart - sourceBackwardCount)).toList()
-        } else emptyList()
+        } else {
+            emptyList()
+        }
 
         val allSource = if (direction == ReadingDirection.Forward) {
             forwardSource + backwardSource

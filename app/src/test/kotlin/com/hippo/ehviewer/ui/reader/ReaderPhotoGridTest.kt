@@ -73,6 +73,13 @@ class ReaderPhotoGridTest {
     }
 
     @Test
+    fun sheetHeightUsesScreenPixelsNotUnboundedFill() {
+        assertEquals(560.dp, readerSheetHeightDp(screenHeightDp = 800, capHeight = true))
+        assertEquals(800.dp, readerSheetHeightDp(screenHeightDp = 800, capHeight = false))
+        assertEquals((411 * READER_SHEET_HEIGHT_FRACTION).dp, readerSheetHeightDp(411, capHeight = true))
+    }
+
+    @Test
     fun localZipPageCoverUsesEncodedMemberPath() {
         val cover = readerPageCover(
             ReaderScreenArgs.LocalZipFolder("/sdcard/pack.zip", "Album", listOf("a.jpg")),
