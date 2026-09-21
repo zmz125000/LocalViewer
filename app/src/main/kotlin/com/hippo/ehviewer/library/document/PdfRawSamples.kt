@@ -13,8 +13,7 @@ internal object PdfRawSamples {
         return (0xff shl 24) or (v shl 16) or (v shl 8) or v
     }
 
-    fun packRgb(r: Int, g: Int, b: Int): Int =
-        (0xff shl 24) or ((r and 0xff) shl 16) or ((g and 0xff) shl 8) or (b and 0xff)
+    fun packRgb(r: Int, g: Int, b: Int): Int = (0xff shl 24) or ((r and 0xff) shl 16) or ((g and 0xff) shl 8) or (b and 0xff)
 
     fun packCmyk(cIn: Int, mIn: Int, yIn: Int, kIn: Int): Int {
         val c = (cIn and 0xff) / 255f
