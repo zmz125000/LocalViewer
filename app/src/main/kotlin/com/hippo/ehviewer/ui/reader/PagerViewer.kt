@@ -154,7 +154,7 @@ fun PagerViewer(
         VerticalPager(
             state = pagerState,
             modifier = modifier,
-            beyondViewportPageCount = 2,
+            beyondViewportPageCount = 1,
             userScrollEnabled = canScroll,
             key = { it },
         ) { index ->
@@ -165,7 +165,7 @@ fun PagerViewer(
         HorizontalPager(
             state = pagerState,
             modifier = modifier,
-            beyondViewportPageCount = 2,
+            beyondViewportPageCount = 1,
             reverseLayout = isRtl xor isRtlLayout,
             userScrollEnabled = canScroll,
             key = { it },
