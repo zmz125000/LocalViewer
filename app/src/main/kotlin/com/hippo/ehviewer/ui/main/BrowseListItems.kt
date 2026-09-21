@@ -1029,11 +1029,15 @@ internal fun BrowseVideoThumbnail(
     modifier: Modifier,
     iconSize: Dp,
     allowRemoteFetch: Boolean = true,
+    decodeSizePx: Int? = null,
 ) {
     val context = LocalContext.current
     val downloadNetworkVideoThumbs by Settings.downloadNetworkVideoThumbs.collectAsState()
     val extractEnabled by VideoThumbnail.extractEnabled.collectAsState()
-    var thumbnail by remember(source) { mutableStateOf<java.io.File?>(null) }
+    val sizePx = decodeSizePx ?: CoverThumb.listDecodePx()
+    var thumbnail by remember(source) {
+        mutableStateOf(source?.let { VideoThumbnail.cachedPathIfKnown(it) })
+    }
     // Disk first (same as gallery covers). Extract only while the app is foreground
     // and (for network) when video thumbs are enabled. extractEnabled is the ON_STOP
     // cancel: leaving Recents must not keep starting local library MMR.
@@ -1042,13 +1046,29 @@ internal fun BrowseVideoThumbnail(
             thumbnail = null
             return@LaunchedEffect
         }
-        thumbnail = withIOContext {
-            VideoThumbnail.cachedJpegIfPresent(src)
+        suspend fun load(): String? = withIOContext {
+            VideoThumbnail.cachedJpegIfPresent(src)?.absolutePath
                 ?: if (allowRemoteFetch && extractEnabled) {
-                    VideoThumbnail.getOrCreate(context, src)
+                    VideoThumbnail.getOrCreate(context, src)?.absolutePath
                 } else {
                     null
                 }
+        }
+        thumbnail = load()
+        if (thumbnail == null && allowRemoteFetch && extractEnabled) {
+            kotlinx.coroutines.delay(400)
+            thumbnail = load()
+        }
+    }
+    val request = remember(source, thumbnail, sizePx) {
+        val path = thumbnail ?: return@remember null
+        val src = source ?: return@remember null
+        with(context) {
+            coverThumbRequest(
+                path = path,
+                sizePx = sizePx,
+                memoryKey = src.cacheIdentity,
+            )
         }
     }
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
@@ -1059,9 +1079,9 @@ internal fun BrowseVideoThumbnail(
             // Match [BrowseCoverThumb] list placeholder tint.
             tint = MaterialTheme.colorScheme.secondary,
         )
-        thumbnail?.let {
+        if (request != null) {
             AsyncImage(
-                model = it,
+                model = request,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,

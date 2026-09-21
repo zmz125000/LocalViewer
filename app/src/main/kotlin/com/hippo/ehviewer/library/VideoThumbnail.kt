@@ -3,7 +3,10 @@ package com.hippo.ehviewer.library
 import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
+import android.net.Uri
+import android.util.Size
 import com.ehviewer.core.files.openFileDescriptor
+import com.ehviewer.core.files.toUri
 import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.Settings
@@ -188,6 +191,9 @@ object VideoThumbnail {
     private val leftoverMarkersCleared = AtomicBoolean(false)
     private val poolLock = Any()
 
+    /** cacheIdentity → absolute thumb path. Main-thread hits must not stat the file. */
+    private val knownPresent = ConcurrentHashMap<String, String>()
+
     /** Empty string = no visible folder (root picker / screen disposed / library left). */
     private val browseFolderKey = AtomicReference("")
 
@@ -314,13 +320,38 @@ object VideoThumbnail {
 
     fun cachedJpegIfPresent(source: VideoThumbnailSource): File? = cachedIfPresent(source)
 
+    /**
+     * Memory-only path for Compose first paint (no File I/O / StrictMode).
+     * May be stale after LRU trim — [cachedIfPresent] revalidates on IO.
+     */
+    fun cachedPathIfKnown(source: VideoThumbnailSource): String? {
+        for (identity in cacheIdentities(source)) {
+            knownPresent[identity]?.let { return it }
+        }
+        return null
+    }
+
+    fun markAbsent(file: File) {
+        val abs = file.absolutePath
+        knownPresent.entries.removeIf { it.value == abs || it.value == file.path }
+    }
+
     fun cachedIfPresent(source: VideoThumbnailSource): File? {
         val directory = cacheDirectory()
-        val key = cacheKey(source)
-        val webp = File(directory, "$key.${OriginDiskCache.THUMB_EXT}")
-        if (isCachedThumb(webp)) return webp
-        val jpg = File(directory, "$key.${OriginDiskCache.THUMB_LEGACY_EXT}")
-        return jpg.takeIf(::isCachedThumb)
+        for (identity in cacheIdentities(source)) {
+            val key = sha256(identity)
+            val webp = File(directory, "$key.${OriginDiskCache.THUMB_EXT}")
+            if (isCachedThumb(webp)) {
+                rememberPresent(identity, webp)
+                return webp
+            }
+            val jpg = File(directory, "$key.${OriginDiskCache.THUMB_LEGACY_EXT}")
+            if (isCachedThumb(jpg)) {
+                rememberPresent(identity, jpg)
+                return jpg
+            }
+        }
+        return null
     }
 
     @Suppress("UNUSED_PARAMETER")
@@ -347,18 +378,29 @@ object VideoThumbnail {
                 return@withLock null
             }
             if (skipIfPaused(privacyLogLabel(source))) return@withLock null
+            // Library flatten / local browse: MediaStore already has a thumb cache.
+            // Seed video_thumb_cache from it before MMR so a grid of hundreds of
+            // files is not stuck on 3 native extractors + 24h failure markers.
+            if (source is VideoThumbnailSource.Local &&
+                ZipPaths.parse(source.path) == null &&
+                persistOsThumbnail(source, target)
+            ) {
+                failure.delete()
+                rememberPresent(source.cacheIdentity, target)
+                return@withLock target
+            }
             val frame = try {
                 extractThumbnailFrame(source, persistTarget = target)
             } catch (e: CancellationException) {
                 throw e
+            } catch (_: TransientVideoThumbException) {
+                return@withLock null
             } catch (_: Throwable) {
                 writeFailureMarker(failure)
                 return@withLock null
             }
             if (frame == null) {
-                // May still land later via abandoned-waiter persist; don't mark failed yet
-                // if a late write could succeed — only mark when extract returned null after
-                // the worker finished (no pending native work for this call).
+                if (extractPaused.get()) return@withLock null
                 writeFailureMarker(failure)
                 return@withLock null
             }
@@ -366,6 +408,7 @@ object VideoThumbnail {
                 return@withLock null
             }
             failure.delete()
+            rememberPresent(source.cacheIdentity, target)
             target
         }
     }
@@ -409,6 +452,45 @@ object VideoThumbnail {
     }
 
     private fun isCachedThumb(target: File): Boolean = target.isFile && target.length() > 0L
+
+    private fun rememberPresent(identity: String, file: File) {
+        knownPresent[identity] = file.absolutePath
+    }
+
+    private fun cacheIdentities(source: VideoThumbnailSource): List<String> = when (source) {
+        is VideoThumbnailSource.Local ->
+            localVideoPathAliases(source.path).map { "v1:local:$it" }
+        else -> listOf(source.cacheIdentity)
+    }
+
+    /**
+     * Copy a MediaStore/OS video thumb into [video_thumb_cache] when it is not a
+     * black first frame. Binder IPC — does not occupy the MMR decode pool.
+     */
+    private fun persistOsThumbnail(source: VideoThumbnailSource.Local, target: File): Boolean {
+        val uri = localVideoContentUri(source.path) ?: return false
+        val frame = runCatching {
+            appCtx.contentResolver.loadThumbnail(uri, Size(EDGE_PX, EDGE_PX), null)
+        }.getOrNull() ?: return false
+        if (visibleSampleCount(frame) < MIN_VISIBLE_SAMPLES) {
+            frame.recycle()
+            return false
+        }
+        return persistThumb(target, frame)
+    }
+
+    private fun localVideoContentUri(path: String): Uri? {
+        if (path.isBlank() || ZipPaths.parse(path) != null) return null
+        val okio = path.toPath()
+        if (okio.isMediaStorePath()) {
+            return MediaStoreFs.resolveContentUri(okio)
+        }
+        if (path.contains("content:")) {
+            return runCatching { okio.toUri() }.getOrNull()
+        }
+        val ms = filesystemToMediaStorePath(path) ?: return null
+        return MediaStoreFs.resolveContentUri(ms.toPath())
+    }
 
     /**
      * Local: decode only. Network: probe under [probeSemaphore] (closes remote), then
@@ -586,7 +668,7 @@ object VideoThumbnail {
                 "probe pool full (${privacyLogLabel(source)}) active=${probePool.activeCount}"
             }
             runCatching { raw.close() }
-            return null
+            throw TransientVideoThumbException()
         }
         return try {
             withTimeout(PROBE_IO_TIMEOUT_MS) { done.await() }
@@ -597,7 +679,7 @@ object VideoThumbnail {
                 "probe timeout ${PROBE_IO_TIMEOUT_MS}ms (${privacyLogLabel(source)}) — " +
                     "abandon waiter (active=${probePool.activeCount})"
             }
-            null
+            throw TransientVideoThumbException()
         } catch (e: CancellationException) {
             runCatching { raw.close() }
             logcat("VideoThumb") {
@@ -911,7 +993,7 @@ object VideoThumbnail {
             }
             runCatching { retriever.release() }
             runCatching { cleanup() }
-            return null
+            throw TransientVideoThumbException()
         }
         return try {
             withTimeout(timeoutMs) { done.await() }
@@ -922,7 +1004,7 @@ object VideoThumbnail {
                 "mmr timeout ${timeoutMs}ms ($label) — abandon waiter " +
                     "(active=${decodePool.activeCount})"
             }
-            null
+            throw TransientVideoThumbException()
         } catch (e: CancellationException) {
             cancelled.set(true)
             runCatching { onAbandon() }
@@ -949,6 +1031,53 @@ object VideoThumbnail {
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray())
         .joinToString("") { "%02x".format(it) }
+}
+
+/** Pool-full / timeout / leave-folder — retry next compose, do not write `.failed`. */
+private class TransientVideoThumbException : Exception()
+
+/**
+ * Local video paths that should share a [VideoThumbnail] disk identity.
+ * Library flatten stores `mediastore:/…`; folder browse often uses `/storage/emulated/0/…`.
+ */
+internal fun localVideoPathAliases(path: String): List<String> {
+    val out = LinkedHashSet<String>()
+    if (path.isNotBlank()) out += path
+    filesystemToMediaStorePath(path)?.let { out += it }
+    mediaStoreToFilesystemPath(path)?.let { out += it }
+    if (path.contains("content:")) {
+        runCatching { tryConvertSafPathToMediaStore(path.toPath())?.toString() }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { out += it }
+    }
+    return out.toList()
+}
+
+internal fun filesystemToMediaStorePath(path: String): String? {
+    val full = path.replace('\\', '/').removePrefix("file://")
+    if (full.startsWith("mediastore:")) return null
+    val prefixes = listOf(
+        "/storage/emulated/0/",
+        "/storage/self/primary/",
+        "/sdcard/",
+        "/mnt/sdcard/",
+    )
+    for (prefix in prefixes) {
+        if (full.startsWith(prefix, ignoreCase = true)) {
+            val rel = full.substring(prefix.length).trim('/')
+            if (rel.isEmpty()) return null
+            return "$MEDIASTORE_PATH_ROOT$rel"
+        }
+    }
+    return null
+}
+
+internal fun mediaStoreToFilesystemPath(path: String): String? {
+    if (!path.startsWith("mediastore:")) return null
+    val rel = path.removePrefix("mediastore:").trimStart('/')
+    if (rel.isEmpty()) return null
+    return "/storage/emulated/0/$rel"
 }
 
 private enum class ProbeMode {

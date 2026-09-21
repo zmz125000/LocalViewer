@@ -93,6 +93,24 @@ class VideoThumbProbeTest {
         )
     }
 
+    @Test
+    fun localVideoPathAliasesPairMediaStoreAndFilesystem() {
+        val fs = "/storage/emulated/0/Movies/clip.mp4"
+        val ms = "mediastore:/Movies/clip.mp4"
+        val fromFs = localVideoPathAliases(fs)
+        assertTrue(fromFs.contains(fs))
+        assertTrue(fromFs.contains(ms))
+        val fromMs = localVideoPathAliases(ms)
+        assertTrue(fromMs.contains(ms))
+        assertTrue(fromMs.contains(fs))
+        assertEquals(
+            ms,
+            filesystemToMediaStorePath("/sdcard/Movies/clip.mp4"),
+        )
+        assertEquals(fs, mediaStoreToFilesystemPath(ms))
+        assertEquals(null, filesystemToMediaStorePath(ms))
+    }
+
     private fun sampleMp4(): File {
         val name = "VID20260523162315.mp4"
         val cwd = File(System.getProperty("user.dir")!!)
