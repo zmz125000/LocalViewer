@@ -190,14 +190,15 @@ class Image private constructor(
             this.src?.close()
             this.src = null
         }
-        val bm = when (image) {
-            is BitmapImageWithExtraInfo -> image.image.bitmap
-            is BitmapImage -> image.bitmap
-            else -> null
-        }
-        bm?.prepareToDraw()
     }
 
+    /**
+     * Upload this still into GPU memory used by RenderThread.
+     *
+     * Must run on the main thread. [Bitmap.prepareToDraw] from Coil's decoder
+     * thread does not populate that cache, so the first on-screen frame still
+     * sync-uploads (~20–40ms hitch on high-res SMB manga).
+     */
     fun prepareToDraw() {
         // innerImage already unwraps BitmapImageWithExtraInfo in the constructor.
         val bm = (innerImage as? BitmapImage)?.bitmap
