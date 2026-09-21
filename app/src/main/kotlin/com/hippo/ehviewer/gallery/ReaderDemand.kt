@@ -21,6 +21,12 @@ interface ReaderSession : AutoCloseable {
     fun retryPage(index: Int, orgImg: Boolean = false)
     fun getImageFilename(index: Int): String?
     fun save(index: Int, file: Path): Boolean
+
+    /**
+     * Ensure page [index] is on disk for photo-grid thumbs (extract only, no decode).
+     * Default no-op for sessions that are not document extract.
+     */
+    fun requestPageSource(index: Int) = Unit
 }
 
 /** Why the reader's viewport changed. All indices are real image indices. */

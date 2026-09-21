@@ -368,6 +368,11 @@ abstract class PageLoader(
 
     protected abstract fun prefetchPages(pages: List<Int>, bounds: IntRange)
 
+    override fun requestPageSource(index: Int) {
+        if (index !in 0 until size) return
+        prefetchPages(listOf(index), index..index)
+    }
+
     /**
      * @param orgImg if true, force full-resolution decode for this page (page menu).
      *   Otherwise uses [Settings.readerDecodeSize] (1.5x…3x / origin).

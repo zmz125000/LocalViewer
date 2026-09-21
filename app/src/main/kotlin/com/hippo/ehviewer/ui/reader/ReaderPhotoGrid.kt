@@ -23,10 +23,12 @@ import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.library.FolderSearch
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
+import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
 import com.hippo.ehviewer.ui.main.BrowseCover
 import com.hippo.ehviewer.ui.main.BrowsePhotoGridImageItem
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import kotlinx.coroutines.delay
 import okio.Path.Companion.toPath
 
 /** Shared cap for reader settings / small photo-grid sheets (skip partial expand). */
@@ -79,8 +81,8 @@ fun readerPhotoGridSheetMaxWidth(): Dp {
 }
 
 /**
- * Folder galleries and ZIP/CBZ (zip-as-dir) can open a reader photo grid.
- * RAR / 7z / PDF / EPUB / TAR keep the decode-size chrome button.
+ * Folder galleries, ZIP/CBZ, and PDF can open a reader photo grid.
+ * RAR / 7z / EPUB / TAR keep the decode-size chrome button.
  */
 fun readerGallerySupportsPhotoGrid(args: ReaderScreenArgs): Boolean = when (args) {
     is ReaderScreenArgs.LocalFolder,
@@ -89,11 +91,24 @@ fun readerGallerySupportsPhotoGrid(args: ReaderScreenArgs): Boolean = when (args
     is ReaderScreenArgs.WebDavFolder,
     -> true
     is ReaderScreenArgs.Archive ->
-        isZipArchiveFileName(args.path.substringAfterLast('/').substringAfterLast('\\'))
+        isZipArchiveFileName(args.path.substringAfterLast('/').substringAfterLast('\\')) ||
+            isPdfFileName(args.path)
     is ReaderScreenArgs.SmbStreamArchive ->
-        isZipArchiveFileName(args.remotePath.substringAfterLast('/').substringAfterLast('\\'))
+        isZipArchiveFileName(args.remotePath.substringAfterLast('/').substringAfterLast('\\')) ||
+            isPdfFileName(args.remotePath)
     is ReaderScreenArgs.WebDavStreamArchive ->
-        isZipArchiveFileName(args.remotePath.substringAfterLast('/').substringAfterLast('\\'))
+        isZipArchiveFileName(args.remotePath.substringAfterLast('/').substringAfterLast('\\')) ||
+            isPdfFileName(args.remotePath)
+}
+
+/** Document-extract cache key used by the PDF reader page loader, or null if not a PDF. */
+fun readerPdfCacheKey(args: ReaderScreenArgs): String? = when (args) {
+    is ReaderScreenArgs.Archive -> args.path.takeIf { isPdfFileName(it) }
+    is ReaderScreenArgs.SmbStreamArchive ->
+        "smb:${args.sourceId}:${args.remotePath}".takeIf { isPdfFileName(args.remotePath) }
+    is ReaderScreenArgs.WebDavStreamArchive ->
+        "webdav:${args.sourceId}:${args.remotePath}".takeIf { isPdfFileName(args.remotePath) }
+    else -> null
 }
 
 fun readerPageFileName(args: ReaderScreenArgs, pageLoader: ReaderSession, index: Int): String {
@@ -109,7 +124,10 @@ fun readerPageFileName(args: ReaderScreenArgs, pageLoader: ReaderSession, index:
         ?: "${index + 1}"
 }
 
-fun readerPageCover(args: ReaderScreenArgs, fileName: String): BrowseCover? {
+fun readerPageCover(args: ReaderScreenArgs, fileName: String, index: Int = 0): BrowseCover? {
+    readerPdfCacheKey(args)?.let { cacheKey ->
+        return BrowseCover.DocumentPage(cacheKey, index)
+    }
     val name = fileName.replace('\\', '/').trim('/')
     if (name.isEmpty()) return null
     val base = name.substringAfterLast('/')
@@ -159,6 +177,7 @@ fun ReaderPhotoGridSheet(
     // Coil decode and SMB/WebDAV thumb IO start on the next frame.
     var allowRemoteFetch by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { allowRemoteFetch = true }
+    val pdfCacheKey = remember(args) { readerPdfCacheKey(args) }
     val gridSpacing = GalleryGridDefaults.spacedBy()
     Box(
         Modifier.readerSheetBox(
@@ -175,9 +194,17 @@ fun ReaderPhotoGridSheet(
         ) {
             items(count = pageCount, key = { it }) { index ->
                 val name = readerPageFileName(args, pageLoader, index)
+                if (pdfCacheKey != null && allowRemoteFetch) {
+                    LaunchedEffect(index) {
+                        while (true) {
+                            pageLoader.requestPageSource(index)
+                            delay(500)
+                        }
+                    }
+                }
                 BrowsePhotoGridImageItem(
                     name = name,
-                    cover = readerPageCover(args, name),
+                    cover = readerPageCover(args, name, index),
                     showPhotoThumb = true,
                     allowRemoteFetch = allowRemoteFetch,
                     onClick = { onJumpToPage(index + 1) },

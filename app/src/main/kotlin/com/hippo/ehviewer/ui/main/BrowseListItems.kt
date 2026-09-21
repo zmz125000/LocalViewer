@@ -73,6 +73,7 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.CoverEnsureResult
+import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.VideoThumbnail
@@ -96,6 +97,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import okio.Path
 
 private const val BROWSE_LIST_SEP = " · "
@@ -266,6 +268,9 @@ sealed class BrowseCover {
         val zipRelativeFile: String,
         val memberRel: String,
     ) : BrowseCover()
+
+    /** Extracted PDF/EPUB page in [com.hippo.ehviewer.library.DocumentExtractCache]. */
+    data class DocumentPage(val cacheKey: String, val index: Int) : BrowseCover()
 }
 
 /**
@@ -1231,6 +1236,7 @@ fun BrowseCoverThumb(
             "davz\u0000${cover.sourceId}\u0000${cover.zipRelativeFile}\u0000${cover.memberRel}"
         is BrowseCover.LocalArchive -> "arch\u0000${cover.archivePath}"
         is BrowseCover.Local -> "local\u0000${cover.path}"
+        is BrowseCover.DocumentPage -> "doc\u0000${cover.cacheKey}\u0000${cover.index}"
         null -> null
     }
     // Local image paths: bind immediately when [allowRemoteFetch] (browse). Reader
@@ -1246,6 +1252,7 @@ fun BrowseCoverThumb(
                 is BrowseCover.WebDavZipMember,
                 is BrowseCover.Smb,
                 is BrowseCover.WebDav,
+                is BrowseCover.DocumentPage,
                 null,
                 -> null
             },
@@ -1260,7 +1267,8 @@ fun BrowseCoverThumb(
             cover !is BrowseCover.LocalArchive && cover !is BrowseCover.SmbArchive &&
             cover !is BrowseCover.WebDavArchive &&
             cover !is BrowseCover.SmbZipMember &&
-            cover !is BrowseCover.WebDavZipMember
+            cover !is BrowseCover.WebDavZipMember &&
+            cover !is BrowseCover.DocumentPage
         ) {
             return@DisposableEffect onDispose { }
         }
@@ -1296,6 +1304,27 @@ fun BrowseCoverThumb(
                 // allowRemoteFetch=true so localPath is already set above.
                 if (allowRemoteFetch) localPath = cover.path
                 return@LaunchedEffect
+            }
+            is BrowseCover.DocumentPage -> {
+                suspend fun probe(): Path? = withIOContext {
+                    DocumentExtractCache.findCachedPage(cover.cacheKey, cover.index)
+                }
+                val hit = probe()
+                if (hit != null) {
+                    localPath = hit
+                    fetchFailed = false
+                    return@LaunchedEffect
+                }
+                if (!allowRemoteFetch) return@LaunchedEffect
+                // Extract is requested by the reader photo grid; poll while this
+                // cell is composed (cancelled when it leaves the viewport).
+                while (true) {
+                    delay(250)
+                    val next = probe() ?: continue
+                    localPath = next
+                    fetchFailed = false
+                    return@LaunchedEffect
+                }
             }
             is BrowseCover.LocalArchive -> {
                 // ZIP/TAR mmap page 0; RAR/CBR/7z first-page (same open as local reader).
@@ -1643,6 +1672,8 @@ fun BrowseCoverThumb(
                     "smbz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${SmbCache.THUMB_DISK_EDGE}"
                 is BrowseCover.WebDavZipMember ->
                     "davz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${WebDavCache.THUMB_DISK_EDGE}"
+                is BrowseCover.DocumentPage ->
+                    "doc-page:${cover.cacheKey}:${cover.index}@${resolvedDecodePx}"
                 is BrowseCover.Local -> cover.path.toString()
                 null -> path.toString()
             }

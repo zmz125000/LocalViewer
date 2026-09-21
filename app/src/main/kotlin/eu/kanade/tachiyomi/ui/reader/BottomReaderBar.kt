@@ -67,7 +67,7 @@ fun BottomReaderBar(
         imageVector = autoRotate.icon,
         contentDescription = stringResource(autoRotate.stringRes),
     )
-    // 3. Photo grid (folder / ZIP) or decode size
+    // 3. Photo grid (folder / ZIP / PDF) or decode size
     if (onClickPhotoGrid != null) {
         ActionButton(
             onClick = onClickPhotoGrid,

@@ -31,12 +31,38 @@ class ReaderPhotoGridTest {
 
     @Test
     fun nonZipArchivesKeepDecodeSizeChrome() {
-        assertFalse(readerGallerySupportsPhotoGrid(ReaderScreenArgs.Archive("/sdcard/book.pdf")))
         assertFalse(readerGallerySupportsPhotoGrid(ReaderScreenArgs.Archive("/sdcard/book.epub")))
         assertFalse(readerGallerySupportsPhotoGrid(ReaderScreenArgs.Archive("/sdcard/book.rar")))
         assertFalse(readerGallerySupportsPhotoGrid(ReaderScreenArgs.Archive("/sdcard/book.7z")))
         assertFalse(readerGallerySupportsPhotoGrid(ReaderScreenArgs.SmbStreamArchive(1L, "Share/book.tar")))
         assertFalse(readerGallerySupportsPhotoGrid(ReaderScreenArgs.WebDavStreamArchive(2L, "book.cbr")))
+    }
+
+    @Test
+    fun pdfArchivesSupportPhotoGrid() {
+        assertTrue(readerGallerySupportsPhotoGrid(ReaderScreenArgs.Archive("/sdcard/book.pdf")))
+        assertTrue(readerGallerySupportsPhotoGrid(ReaderScreenArgs.SmbStreamArchive(1L, "Share/book.pdf")))
+        assertTrue(readerGallerySupportsPhotoGrid(ReaderScreenArgs.WebDavStreamArchive(2L, "book.PDF")))
+        assertEquals(
+            "/sdcard/book.pdf",
+            readerPdfCacheKey(ReaderScreenArgs.Archive("/sdcard/book.pdf")),
+        )
+        assertEquals(
+            "smb:1:Share/book.pdf",
+            readerPdfCacheKey(ReaderScreenArgs.SmbStreamArchive(1L, "Share/book.pdf")),
+        )
+        assertEquals(
+            "webdav:2:book.PDF",
+            readerPdfCacheKey(ReaderScreenArgs.WebDavStreamArchive(2L, "book.PDF")),
+        )
+        val cover = readerPageCover(
+            ReaderScreenArgs.Archive("/sdcard/book.pdf"),
+            "page.webp",
+            index = 3,
+        )
+        val page = cover as com.hippo.ehviewer.ui.main.BrowseCover.DocumentPage
+        assertEquals("/sdcard/book.pdf", page.cacheKey)
+        assertEquals(3, page.index)
     }
 
     @Test
