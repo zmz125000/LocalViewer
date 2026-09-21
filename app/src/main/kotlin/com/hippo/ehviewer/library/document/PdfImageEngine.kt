@@ -121,7 +121,6 @@ class PdfImageEngine private constructor(
         if (DocumentExtractCache.isPageCached(cacheKey, index, ref.ext)) {
             return DocumentExtractCache.pagePath(cacheKey, index, ref.ext)
         }
-        DocumentExtractCache.findCachedPage(cacheKey, index)?.let { return it }
         val bytes = synchronized(discoveryLock) {
             val current = pages.getOrNull(index) ?: return@synchronized null
             val effectiveRef = if (!current.hasSeek) {
