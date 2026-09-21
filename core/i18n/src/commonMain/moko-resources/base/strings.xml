@@ -304,6 +304,7 @@
     <string name="stream_keepalive_channel_desc">Keeps network files available while another app is reading them</string>
     <string name="stream_keepalive_title">Streaming to another app</string>
     <string name="stream_keepalive_text">Keeping the connection alive for external playback</string>
+    <string name="stream_keepalive_stop">Stop streaming</string>
     <string name="open_pdf_no_app">No app found to open PDF</string>
     <string name="open_pdf_external_failed">Could not open PDF externally: %s</string>
     <string name="clear_image_cache">Clear image cache</string>

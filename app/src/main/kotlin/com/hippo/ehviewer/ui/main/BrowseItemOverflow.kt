@@ -57,7 +57,7 @@ data class BrowseOverflowActions(
     val onOpenInBrowser: (() -> Unit)? = null,
     val onOpenIncognito: (() -> Unit)? = null,
     val onUnsupported: () -> Unit,
-    /** Null hides the item (zip-as-dir and other skipped targets). */
+    /** Null hides the item (missing remote source). */
     val onShareViaHttp: (() -> Unit)? = null,
 )
 

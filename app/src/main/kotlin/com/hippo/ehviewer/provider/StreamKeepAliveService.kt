@@ -34,6 +34,13 @@ class StreamKeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP_STREAMING) {
+            logcat("StreamKeepAlive") { "notification Stop streaming" }
+            StreamKeepAlivePolicy.stopStreaming("notification")
+            runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+            stopSelf()
+            return START_NOT_STICKY
+        }
         ensureChannel()
         if (!promoteForeground()) {
             runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
@@ -101,17 +108,29 @@ class StreamKeepAliveService : Service() {
     }
 
     private fun buildNotification(): Notification {
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val openApp = PendingIntent.getActivity(
             this,
             0,
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            flags,
+        )
+        val stopStreaming = PendingIntent.getService(
+            this,
+            STOP_REQUEST_CODE,
+            Intent(this, StreamKeepAliveService::class.java).setAction(ACTION_STOP_STREAMING),
+            flags,
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_play_arrow_108dp)
             .setContentTitle(getString(I18nR.string.stream_keepalive_title))
             .setContentText(getString(I18nR.string.stream_keepalive_text))
             .setContentIntent(openApp)
+            .addAction(
+                R.drawable.ic_pause_108dp,
+                getString(I18nR.string.stream_keepalive_stop),
+                stopStreaming,
+            )
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setLocalOnly(true)
@@ -123,8 +142,10 @@ class StreamKeepAliveService : Service() {
     }
 
     companion object {
+        const val ACTION_STOP_STREAMING = "com.hippo.ehviewer.STOP_STREAMING"
         private const val CHANNEL_ID = "stream_keepalive"
         private const val NOTIFICATION_ID = 0x535444 // "STD"
+        private const val STOP_REQUEST_CODE = 1
 
         @Volatile
         private var instance: StreamKeepAliveService? = null
