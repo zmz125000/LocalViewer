@@ -115,8 +115,11 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         val extractJobs = ConcurrentHashMap<Int, Job>()
         val backgroundJobs = ConcurrentHashMap.newKeySet<Int>()
         val interactivePending = ConcurrentHashMap.newKeySet<Int>()
+        val deferredExtracts = ConcurrentHashMap.newKeySet<Int>()
         val extractMutex = Mutex()
+        var visiblePages: IntRange? = null
         val coverWritten = AtomicBoolean(false)
+        val sessionClosed = AtomicBoolean(false)
         val discoveryJob = AtomicReference<Job?>(null)
         val hostScope = this
         val resumePage = startPage.coerceIn(0, (engine.pageCount - 1).coerceAtLeast(0))
@@ -228,34 +231,52 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 }
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
-                    // A PDF page is commonly a multi-megabyte Range request. Queueing the
-                    // whole preload set behind one mutex lets stale background work delay
-                    // the visible page. Keep at most one opportunistic extraction active.
+                    // PdfParser is 1-wide. Prefetch Range reads must not stall the page
+                    // tree; skip until listing finishes. Keep at most one opportunistic
+                    // extraction active afterwards.
+                    if (deferDocumentBackgroundWork(progressiveEngine?.structureComplete ?: true)) {
+                        return
+                    }
                     pages.firstOrNull { !isPageMapped(it) }?.let {
                         ensureExtract(it, interactive = false)
                     }
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
-                    // Extract first: progressive index shares [extractMutex] with page I/O.
-                    // Queue the visible page before discovery so scroll does not wait on a
-                    // multi-page page-tree walk (TAR index never holds the extract mutex).
-                    ensureExtract(index, interactive = true) {
+                    // Only the viewport may snatch [extractMutex] from discovery.
+                    // Decode-ahead used to be interactive and cancelled the walk for the
+                    // first preload window (typically 3 decode + 5 source pages).
+                    val interactive = documentExtractIsVisible(index, visiblePages, orgImg)
+                    ensureExtract(index, interactive) {
                         notifySourceReady(index, orgImg)
                     }
-                    // Interactive extract cancels [discoveryJob] so the mutex can be snatched.
-                    // Restart here: [onNavigation] used to start discovery, then [requestDecode]
-                    // cancelled it and never resumed, so the PDF page list froze at the open prefix.
-                    requestDiscovery()
+                    if (interactivePending.isEmpty()) requestDiscovery()
                 }
 
                 override fun onNavigation(demand: ReaderDemand) {
-                    requestDiscovery()
+                    visiblePages = demand.navigation.visiblePages
+                    // Decode-ahead may already own inflight and have deferred extract.
+                    // requestDecode is then a no-op — promote the new viewport here.
+                    demand.visibleDecode.forEach { index ->
+                        val wasDeferred = deferredExtracts.remove(index)
+                        val running = extractJobs[index]
+                        val alreadyVisible = running != null &&
+                            running.isActive &&
+                            !backgroundJobs.contains(index)
+                        if (alreadyVisible || isPageMapped(index)) return@forEach
+                        if (wasDeferred || readyWaiters.containsKey(index)) {
+                            ensureExtract(index, interactive = true)
+                        }
+                    }
+                    if (interactivePending.isEmpty()) requestDiscovery()
                 }
 
                 override fun close() {
                     // Snapshot: cancel handlers remove from extractJobs concurrently
                     // (live CHM.values iter on main → NoSuchElementException).
+                    sessionClosed.set(true)
+                    deferredExtracts.clear()
+                    progressiveEngine?.pauseDiscovery()
                     discoveryJob.getAndSet(null)?.cancel()
                     extractJobs.values.toList().forEach { it.cancel() }
                     extractJobs.clear()
@@ -320,12 +341,22 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     readyWaiters.remove(index)?.forEach { runCatching { it() } }
                 }
 
+                private fun drainDeferredExtracts() {
+                    if (sessionClosed.get()) {
+                        deferredExtracts.clear()
+                        return
+                    }
+                    val pending = deferredExtracts.toTypedArray()
+                    deferredExtracts.clear()
+                    pending.forEach { ensureExtract(it, interactive = false) }
+                }
+
                 private fun ensureExtract(
                     index: Int,
                     interactive: Boolean,
                     onReady: (() -> Unit)? = null,
                 ) {
-                    if (index !in 0 until engine.pageCount) return
+                    if (sessionClosed.get() || index !in 0 until engine.pageCount) return
                     if (onReady != null) {
                         readyWaiters.getOrPut(index) { CopyOnWriteArrayList() }.add(onReady)
                         if (isPageMapped(index)) {
@@ -335,12 +366,15 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     } else if (isPageMapped(index)) {
                         return
                     }
+                    if (!interactive &&
+                        deferDocumentBackgroundWork(progressiveEngine?.structureComplete ?: true)
+                    ) {
+                        deferredExtracts.add(index)
+                        return
+                    }
+                    deferredExtracts.remove(index)
                     if (interactive) {
                         interactivePending.add(index)
-                        // Stop index walk so the mutex frees for this extract. Mapped pages
-                        // return above and must not cancel: growTo → replan re-requests the
-                        // current page and used to kill a live page-tree walk.
-                        discoveryJob.get()?.cancel()
                     }
                     val existing = extractJobs[index]
                     if (existing != null && existing.isActive) {
@@ -353,15 +387,24 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                             return
                         }
                     }
+                    if (interactive) {
+                        // Stop the current tree-walk step (not the whole job queue) so
+                        // extract can take the parser. Mapped pages return above and must
+                        // not pause: growTo → replan re-requests the current page.
+                        progressiveEngine?.pauseDiscovery()
+                        discoveryJob.get()?.cancel()
+                    }
                     if (!interactive) backgroundJobs.add(index)
                     val job = hostScope.launch(Dispatchers.IO) {
                         try {
                             ensureActive()
+                            if (interactive) runCatching { source.dropQueuedReads() }
                             if (probePageOnDisk(index)) {
                                 markReady(index)
                                 return@launch
                             }
-                            if (interactive) {
+                            val waitForMutex = interactive || readyWaiters.containsKey(index)
+                            if (waitForMutex) {
                                 extractMutex.withLock {
                                     ensureActive()
                                     if (!probePageOnDisk(index)) {
@@ -369,9 +412,13 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                     }
                                 }
                             } else {
-                                // Background work never queues behind another extraction and
-                                // never starts while a visible-page request is pending.
-                                if (interactivePending.isNotEmpty() || !extractMutex.tryLock()) {
+                                // Opportunistic prefetch: never queue behind extract/index.
+                                if (interactivePending.isNotEmpty() ||
+                                    deferDocumentBackgroundWork(
+                                        progressiveEngine?.structureComplete ?: true,
+                                    ) ||
+                                    !extractMutex.tryLock()
+                                ) {
                                     return@launch
                                 }
                                 try {
@@ -408,9 +455,18 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                 notifyPageFailed(index, e.message)
                             }
                         } finally {
-                            if (interactive) interactivePending.remove(index)
+                            val thisJob = coroutineContext[Job]
+                            val wonSlot = extractJobs[index] === thisJob ||
+                                extractJobs[index] == null
+                            if (interactive && wonSlot) {
+                                interactivePending.remove(index)
+                                if (interactivePending.isEmpty() && !sessionClosed.get()) {
+                                    progressiveEngine?.resumeDiscovery()
+                                    requestDiscovery()
+                                }
+                            }
                             if (!interactive) backgroundJobs.remove(index)
-                            extractJobs.remove(index, coroutineContext[Job])
+                            extractJobs.remove(index, thisJob)
                         }
                     }
                     val prev = extractJobs.putIfAbsent(index, job)
@@ -428,13 +484,17 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                  * Keep listing playable PDF pages until the page tree ends.
                  *
                  * Discovery shares [extractMutex] with [extractToCache] because [PdfParser]
-                 * is not concurrent-safe. One image page per hold so scroll can snatch the
-                 * lock; [growTo] (seek bar / pager) is published at most every
+                 * is not concurrent-safe. Priority while incomplete:
+                 * visible extract > discovery > decode-ahead / prefetch.
+                 * [tryLock] so a visible extract never waits behind a queued tree-walk;
+                 * [pauseDiscovery] aborts the in-flight cursor step.
+                 * [growTo] (seek bar / pager) is published at most every
                  * [PDF_INDEX_PUBLISH_MS], same update as the old per-page grow.
                  */
                 private fun requestDiscovery() {
                     val progressive = progressiveEngine ?: return
-                    if (progressive.structureComplete) return
+                    if (sessionClosed.get() || progressive.structureComplete) return
+                    if (interactivePending.isNotEmpty()) return
                     while (true) {
                         val active = discoveryJob.get()
                         if (active?.isActive == true) return
@@ -461,15 +521,22 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                         delay(PDF_INDEX_YIELD_MS)
                                         continue
                                     }
+                                    // Never queue behind extract — tryLock + yield instead of
+                                    // withLock, which used to starve the visible page.
+                                    if (!extractMutex.tryLock()) {
+                                        delay(PDF_INDEX_YIELD_MS)
+                                        continue
+                                    }
                                     val before = progressive.pageCount
-                                    // One image page per mutex hold so scroll can snatch the lock
-                                    // between kids/resource walks (BATCH>1 blocked extract for seconds).
-                                    val after = extractMutex.withLock {
+                                    val after = try {
                                         ensureActive()
                                         if (interactivePending.isNotEmpty()) {
-                                            return@withLock progressive.pageCount
+                                            before
+                                        } else {
+                                            progressive.ensureListedThrough(before)
                                         }
-                                        progressive.ensureListedThrough(before)
+                                    } finally {
+                                        extractMutex.unlock()
                                     }
                                     if (after > before) {
                                         publishListed()
@@ -482,7 +549,8 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                             )
                                         }
                                     } else {
-                                        // No progress: transport blip or true end — do not spin hot.
+                                        // No progress: paused for extract, transport blip, or true
+                                        // end. Do not spin hot; extract/onNavigation restarts us.
                                         if (interactivePending.isNotEmpty()) {
                                             delay(PDF_INDEX_YIELD_MS)
                                             continue
@@ -496,6 +564,8 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                     DocumentExtractCache.saveIndexAsync(
                                         progressive.toIndex(cacheKey, complete = false),
                                     )
+                                    drainDeferredExtracts()
+                                    if (!sessionClosed.get()) replan()
                                 }
                             } catch (e: CancellationException) {
                                 growTo(progressive.pageCount)
@@ -534,6 +604,21 @@ internal const val PDF_INDEX_PUBLISH_MS = 500L
 /** Back off while interactive pages wait for [extractMutex]. */
 @PublishedApi
 internal const val PDF_INDEX_YIELD_MS = 16L
+
+/**
+ * PdfParser is 1-wide. Decode-ahead / prefetch are multi-megabyte Range reads
+ * and must not run until the page tree is listed.
+ */
+@PublishedApi
+internal fun deferDocumentBackgroundWork(structureComplete: Boolean): Boolean = !structureComplete
+
+/** Viewport (or original-size) pages may snatch the parser from discovery. */
+@PublishedApi
+internal fun documentExtractIsVisible(
+    index: Int,
+    visiblePages: IntRange?,
+    orgImg: Boolean,
+): Boolean = orgImg || visiblePages?.let { index in it } ?: true
 
 suspend inline fun <T> useLocalDocumentExtractPageLoader(
     file: Path,

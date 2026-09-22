@@ -36,4 +36,12 @@ interface ProgressiveDocumentImageEngine : DocumentImageEngine {
      * Returns the current number of discovered playable pages.
      */
     fun ensureListedThrough(index: Int): Int
+
+    /**
+     * Cooperative abort of the current page-tree step so a visible-page extract can
+     * take the parser. Does not mark the tree complete.
+     */
+    fun pauseDiscovery() = Unit
+
+    fun resumeDiscovery() = Unit
 }
