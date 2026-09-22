@@ -68,7 +68,23 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="video/x-matroska" />
         </intent>
-        <!-- Chrome Custom Tabs: detect ephemeral (private) browsing support. -->
+        <!-- PDF viewers for Settings “Default PDF reader” (API 30+ package visibility). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/pdf" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data
+                android:mimeType="application/pdf"
+                android:scheme="content" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data
+                android:mimeType="application/pdf"
+                android:scheme="file" />
+        </intent>
         <intent>
             <action android:name="android.support.customtabs.action.CustomTabsService" />
         </intent>
@@ -169,6 +185,12 @@
             android:launchMode="singleTop"
             android:supportsPictureInPicture="false"
             android:theme="@style/AppTheme.VideoPlayer" />
+        <activity
+            android:name=".ui.PdfReaderActivity"
+            android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize|keyboardHidden"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/AppTheme" />
 
         <activity
             android:name=".shortcuts.ShortcutsActivity"

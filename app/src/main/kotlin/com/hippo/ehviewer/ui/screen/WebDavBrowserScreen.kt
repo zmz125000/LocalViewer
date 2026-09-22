@@ -66,6 +66,7 @@ import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
+import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
@@ -111,6 +112,7 @@ import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.OpenPdfExternally
+import com.hippo.ehviewer.ui.PdfReaderMode
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
@@ -1012,7 +1014,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         return BrowseCover.WebDav(sourceId, remote)
     }
 
-    fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery) {
+    fun openPdfInOtherApp(entry: BrowseEntryRemote.ArchiveGallery, usePreferredReader: Boolean = true) {
         if (!isPdfFileName(entry.fileName)) return
         val src = source ?: return
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
@@ -1026,12 +1028,55 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                     sourceId = src.id,
                     remoteRelativeFile = remote,
                     displayName = entry.name,
+                    usePreferredReader = usePreferredReader,
                 )
             } catch (e: Throwable) {
                 if (e.isZipMemberTooLarge()) return@launchIO
                 snackbar(
                     context.getString(
                         R.string.open_pdf_external_failed,
+                        e.message ?: e.toString(),
+                    ),
+                )
+            }
+        }
+    }
+
+    fun openPdfReader(entry: BrowseEntryRemote.ArchiveGallery) {
+        if (!isPdfFileName(entry.fileName)) return
+        val src = source ?: return
+        val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
+        launchIO {
+            recordCurrentBrowseFolderHistory(src.id)
+            val remoteNorm = remote.trim('/')
+            val info = BaseGalleryInfo(
+                gid = stableGalleryId(src.id, "dava:$remoteNorm"),
+                token = WEBDAV_ARCHIVE_TOKEN,
+                title = entry.name,
+                pages = 0,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = HistoryThumbKey.webdavArchive(src.id, remoteNorm),
+                uploader = "${src.id}\u0000$remoteNorm",
+                category = 1,
+            )
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordWebDavStreamArchive(src.id, remoteNorm, title = entry.name, info = info)
+            val page = runCatching { EhDB.getReadProgress(info.gid) }.getOrDefault(0)
+            try {
+                OpenPdfExternally.openInternalWebDav(
+                    context = context,
+                    sourceId = src.id,
+                    remoteRelativeFile = remote,
+                    displayName = entry.name,
+                    progressGid = info.gid,
+                    startPage = page,
+                )
+            } catch (e: Throwable) {
+                if (e.isZipMemberTooLarge()) return@launchIO
+                snackbar(
+                    context.getString(
+                        R.string.pdf_reader_open_failed,
                         e.message ?: e.toString(),
                     ),
                 )
@@ -1188,8 +1233,21 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         if (Settings.useMedia3Player.value) openExternalFile(fileName) else playVideo(fileName)
     }
 
-    fun openArchive(entry: BrowseEntryRemote.ArchiveGallery) {
+    fun openArchive(entry: BrowseEntryRemote.ArchiveGallery, skipPdfPrimary: Boolean = false) {
         val src = source ?: return
+        if (!skipPdfPrimary && isPdfFileName(entry.fileName)) {
+            when (Settings.pdfReaderMode.value) {
+                PdfReaderMode.PDF -> {
+                    openPdfReader(entry)
+                    return
+                }
+                PdfReaderMode.EXTERNAL -> {
+                    openPdfInOtherApp(entry)
+                    return
+                }
+                else -> Unit
+            }
+        }
         if (browseZipAsDir && isZipArchiveFileName(entry.fileName)) {
             enterDir(entry.fileName)
             return
@@ -1227,6 +1285,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     sourceId = src.id,
                                     remotePath = remoteNorm,
                                     info = info,
+                                    skipPdfPrimary = skipPdfPrimary,
                                 ),
                             ),
                         ) { launchSingleTop = true }
@@ -1268,6 +1327,21 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                 if (e.isZipMemberTooLarge()) return@launchIO
                 snackbar(string(R.string.archive_download_failed, e.message ?: e.toString()))
             }
+        }
+    }
+
+    fun openPdfSecondary(entry: BrowseEntryRemote.ArchiveGallery) {
+        when (Settings.pdfReaderMode.value) {
+            PdfReaderMode.PDF, PdfReaderMode.EXTERNAL -> openArchive(entry, skipPdfPrimary = true)
+            else -> openPdfReader(entry)
+        }
+    }
+
+    fun openArchiveSecondary(entry: BrowseEntryRemote.ArchiveGallery) {
+        if (isPdfFileName(entry.fileName)) {
+            openPdfSecondary(entry)
+        } else {
+            openArchiveInOtherApp(entry)
         }
     }
 
@@ -1405,35 +1479,69 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onUnsupported = { notSupportedAction() },
     )
 
-    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery) = BrowseOverflowActions(
-        kind = BrowseOverflowKind.Gallery,
-        onRead = { openArchive(entry) },
-        onOpenWith = { openArchiveInOtherApp(entry) },
-        onSaveAs = {
-            saveWebDavFile(
-                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                entry.fileName.substringAfterLast('/'),
-            )
-        },
-        onShare = {
-            shareWebDavFile(
-                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                entry.fileName.substringAfterLast('/'),
-            )
-        },
-        onShareViaHttp = webDavHttpShareFile(
-            joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-        ),
-        onOpenFolder = {
-            openBrowseFolder(
-                FolderSearch.openFolderTarget(
+    fun archiveOverflow(entry: BrowseEntryRemote.ArchiveGallery) = if (isPdfFileName(entry.fileName)) {
+        BrowseOverflowActions(
+            kind = BrowseOverflowKind.Pdf,
+            onRead = { openArchive(entry, skipPdfPrimary = true) },
+            onPlay = { openPdfReader(entry) },
+            onExternalPlayer = { openPdfInOtherApp(entry) },
+            onOpenWith = { openPdfInOtherApp(entry, usePreferredReader = false) },
+            onSaveAs = {
+                saveWebDavFile(
                     joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
-                    isDirectory = false,
-                ),
-            )
-        },
-        onUnsupported = { notSupportedAction() },
-    )
+                    entry.fileName.substringAfterLast('/'),
+                )
+            },
+            onShare = {
+                shareWebDavFile(
+                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                    entry.fileName.substringAfterLast('/'),
+                )
+            },
+            onShareViaHttp = webDavHttpShareFile(
+                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+            ),
+            onOpenFolder = {
+                openBrowseFolder(
+                    FolderSearch.openFolderTarget(
+                        joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                        isDirectory = false,
+                    ),
+                )
+            },
+            onUnsupported = { notSupportedAction() },
+        )
+    } else {
+        BrowseOverflowActions(
+            kind = BrowseOverflowKind.Gallery,
+            onRead = { openArchive(entry) },
+            onOpenWith = { openArchiveInOtherApp(entry) },
+            onSaveAs = {
+                saveWebDavFile(
+                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                    entry.fileName.substringAfterLast('/'),
+                )
+            },
+            onShare = {
+                shareWebDavFile(
+                    joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                    entry.fileName.substringAfterLast('/'),
+                )
+            },
+            onShareViaHttp = webDavHttpShareFile(
+                joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+            ),
+            onOpenFolder = {
+                openBrowseFolder(
+                    FolderSearch.openFolderTarget(
+                        joinRemoteArchivePath("", entry.parentRelativeName, entry.fileName),
+                        isDirectory = false,
+                    ),
+                )
+            },
+            onUnsupported = { notSupportedAction() },
+        )
+    }
 
     fun videoOverflow(fileName: String) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Video,
@@ -1809,7 +1917,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         thumbRetryKey = refreshToken,
                                         allowRemoteFetch = allowRemoteThumbs,
                                         onClick = { openArchive(entry) },
-                                        onLongClick = { openArchiveInOtherApp(entry) },
+                                        onLongClick = { openArchiveSecondary(entry) },
                                         overflow = archiveOverflow(entry),
                                     )
                                 } else {
@@ -1820,7 +1928,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         thumbRetryKey = refreshToken,
                                         allowRemoteFetch = allowRemoteThumbs,
                                         onClick = { openArchive(entry) },
-                                        onLongClick = { openArchiveInOtherApp(entry) },
+                                        onLongClick = { openArchiveSecondary(entry) },
                                         fileName = entry.fileName,
                                         sizeBytes = entry.size,
                                         lastModifiedMs = entry.lastModifiedMs,
@@ -2033,7 +2141,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     thumbRetryKey = refreshToken,
                                                     allowRemoteFetch = allowRemoteThumbs,
                                                     onClick = { openArchive(entry) },
-                                                    onLongClick = { openArchiveInOtherApp(entry) },
+                                                    onLongClick = { openArchiveSecondary(entry) },
                                                     overflow = archiveOverflow(entry),
                                                 )
                                             else -> Unit
@@ -2184,7 +2292,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                                     thumbRetryKey = refreshToken,
                                                     allowRemoteFetch = allowRemoteThumbs,
                                                     onClick = { openArchive(entry) },
-                                                    onLongClick = { openArchiveInOtherApp(entry) },
+                                                    onLongClick = { openArchiveSecondary(entry) },
                                                     fileName = entry.fileName,
                                                     sizeBytes = entry.size,
                                                     lastModifiedMs = entry.lastModifiedMs,

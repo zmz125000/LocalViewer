@@ -29,6 +29,7 @@ import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.ui.DefaultPdfReader
 import com.hippo.ehviewer.ui.DefaultVideoPlayer
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.NavigationIcon
@@ -147,6 +148,53 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
                 title = stringResource(id = R.string.settings_use_media3_player),
                 state = Settings.useMedia3Player.asMutableState(),
             )
+            val context = LocalContext.current
+            val pdfReaderMode = Settings.pdfReaderMode.asMutableState()
+            SimpleMenuPreferenceInt(
+                title = stringResource(id = R.string.settings_pdf_reader),
+                summary = stringResource(id = R.string.settings_pdf_reader_summary),
+                entry = com.hippo.ehviewer.R.array.pdf_reader_mode_entries,
+                entryValueRes = com.hippo.ehviewer.R.array.pdf_reader_mode_values,
+                state = pdfReaderMode,
+            )
+            var defaultPdfReader by Settings.defaultPdfReaderComponent.asMutableState()
+            val alwaysAskPdf = stringResource(id = R.string.settings_default_video_player_always_ask)
+            val noPdfApps = stringResource(id = R.string.settings_default_pdf_reader_none)
+            Preference(
+                title = stringResource(id = R.string.settings_default_pdf_reader),
+                summary = DefaultPdfReader.summary(context, defaultPdfReader, alwaysAskPdf),
+            ) {
+                launchIO {
+                    val candidates = DefaultPdfReader.listCandidates(context)
+                    if (candidates.isEmpty() && defaultPdfReader.isBlank()) {
+                        launchSnackbar(noPdfApps)
+                        return@launchIO
+                    }
+                    val labels = buildList {
+                        add(alwaysAskPdf)
+                        candidates.forEach { c ->
+                            add("${c.label}\n${c.flattened}")
+                        }
+                    }
+                    val selected = when {
+                        defaultPdfReader.isBlank() -> 0
+                        else -> {
+                            val i = candidates.indexOfFirst { it.flattened == defaultPdfReader }
+                            if (i >= 0) i + 1 else 0
+                        }
+                    }
+                    val index = awaitSelectItem(
+                        items = labels,
+                        title = R.string.settings_default_pdf_reader,
+                        selected = selected,
+                    )
+                    defaultPdfReader = if (index <= 0) {
+                        ""
+                    } else {
+                        candidates[index - 1].flattened
+                    }
+                }
+            }
             val openHtmlWithBrowser = Settings.openHtmlWithBrowser.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_open_html_with_browser),
@@ -161,7 +209,6 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             var defaultVideoPlayer by Settings.defaultVideoPlayerComponent.asMutableState()
             val alwaysAsk = stringResource(id = R.string.settings_default_video_player_always_ask)
             val noVideoApps = stringResource(id = R.string.settings_default_video_player_none)
-            val context = LocalContext.current
             Preference(
                 title = stringResource(id = R.string.settings_default_video_player),
                 summary = DefaultVideoPlayer.summary(context, defaultVideoPlayer, alwaysAsk),
