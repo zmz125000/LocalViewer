@@ -5,6 +5,7 @@ import com.ehviewer.core.database.model.LocalGalleryEntity
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
+import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.smb.SmbRepository
@@ -726,9 +727,9 @@ object LocalHistory {
     }
 
     /** Disk-hit only: [ArchiveCoverCache] first-page JPEG for a local archive path. */
-    private fun cachedLocalArchiveCover(path: String): String? {
+    private suspend fun cachedLocalArchiveCover(path: String): String? {
         val dest = ArchiveCoverCache.resolveCoverDest(path)
-        return if (ArchiveCoverCache.isCachedOnDisk(dest)) dest.toString() else null
+        return if (withIOContext { ArchiveCoverCache.isCachedOnDisk(dest) }) dest.toString() else null
     }
 
     /**
