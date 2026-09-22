@@ -20,3 +20,5 @@ fun libraryBrowseRelative(relativePath: String): String = if (relativePath.isEmp
 fun libraryVideoFolderId(rootId: Long, folderKey: String): Long = stableGalleryId(rootId, "v:$folderKey")
 
 fun libraryVideoFileId(rootId: Long, fileRel: String): Long = stableGalleryId(rootId, "vf:$fileRel")
+
+fun libraryImageFileId(rootId: Long, fileRel: String): Long = stableGalleryId(rootId, "if:$fileRel")

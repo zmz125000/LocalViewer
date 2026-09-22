@@ -53,7 +53,7 @@ suspend fun keepNoMediaFileStatus(
 }
 
 context(_: DestinationsNavigator)
-fun navToReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1) = navToReader(ReaderScreenArgs.Archive(path, page = page, info = info))
+fun navToReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1, skipPdfPrimary: Boolean = false) = navToReader(ReaderScreenArgs.Archive(path, page = page, info = info, skipPdfPrimary = skipPdfPrimary))
 
 context(_: DestinationsNavigator)
 fun navToLocalFolderReader(
@@ -62,6 +62,12 @@ fun navToLocalFolderReader(
     page: Int = -1,
     imageNames: List<String> = emptyList(),
 ) = navToReader(ReaderScreenArgs.LocalFolder(path, page, info, imageNames))
+
+context(_: DestinationsNavigator)
+fun navToLocalImageListReader(
+    page: Int,
+    title: String = "",
+) = navToReader(ReaderScreenArgs.LocalImageList(page, title))
 
 context(_: DestinationsNavigator)
 fun navToLocalZipFolderReader(
@@ -96,7 +102,8 @@ fun navToSmbStreamArchiveReader(
     remotePath: String,
     info: BaseGalleryInfo? = null,
     page: Int = -1,
-) = navToReader(ReaderScreenArgs.SmbStreamArchive(sourceId, remotePath, page, info))
+    skipPdfPrimary: Boolean = false,
+) = navToReader(ReaderScreenArgs.SmbStreamArchive(sourceId, remotePath, page, info, skipPdfPrimary))
 
 context(_: DestinationsNavigator)
 fun navToWebDavStreamArchiveReader(
@@ -104,7 +111,8 @@ fun navToWebDavStreamArchiveReader(
     remotePath: String,
     info: BaseGalleryInfo? = null,
     page: Int = -1,
-) = navToReader(ReaderScreenArgs.WebDavStreamArchive(sourceId, remotePath, page, info))
+    skipPdfPrimary: Boolean = false,
+) = navToReader(ReaderScreenArgs.WebDavStreamArchive(sourceId, remotePath, page, info, skipPdfPrimary))
 
 context(nav: DestinationsNavigator)
 private fun navToReader(args: ReaderScreenArgs) = nav.navigate(ReaderScreenDestination(args)) { launchSingleTop = true }

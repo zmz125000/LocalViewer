@@ -1712,7 +1712,8 @@ fun BrowseCoverThumb(
 
 /**
  * Section label for folder browse lists (Directories / Galleries / …).
- * Optional [onClick] / [onLongClick] use **no ripple** (`indication = null`).
+ * Optional [onClick] / [onLongClick] (e.g. collapse, library flatten) uses **no ripple**
+ * (`indication = null`).
  * When clickable, the hit target is the full header row (text + trailing space),
  * same in list and grid — not only the label glyphs.
  */
@@ -1752,6 +1753,19 @@ fun BrowseSectionHeader(
                                 interactionSource = null,
                                 indication = null,
                                 onClick = onClick,
+                            )
+                    }
+                    onLongClick != null -> {
+                        Modifier
+                            .fillMaxWidth()
+                            .combinedClickable(
+                                interactionSource = null,
+                                indication = null,
+                                onClick = {},
+                                onLongClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onLongClick()
+                                },
                             )
                     }
                     else -> Modifier

@@ -28,6 +28,7 @@
     <string name="library_empty_videos">動画がありません。ブラウズ画面の上部バーからライブラリソースを追加してください。</string>
     <string name="library_video_folders">動画フォルダ</string>
     <string name="library_video_all">すべての動画</string>
+    <string name="library_photo_all">すべての写真</string>
     <string name="library_add_root">ライブラリフォルダを追加</string>
     <string name="library_add_library_source">ライブラリソースを追加</string>
     <string name="library_add_folder_source">フォルダソースを追加</string>

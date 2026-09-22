@@ -2,6 +2,7 @@ package com.hippo.ehviewer.library
 
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_FOLDER
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_IMAGE_FILE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FOLDER
 import com.ehviewer.core.database.model.LocalGalleryEntity
@@ -28,7 +29,8 @@ object LibraryScanner {
      * Scan [rootPath] for galleries.
      *
      * Rules:
-     * - Any directory (including root) whose **direct** children include image files is a gallery.
+     * - Any directory (including root) whose **direct** children include image files is a gallery,
+     *   plus per-file image rows for the All photos flatten.
      * - Direct video files in a directory become a video-folder row plus per-file rows.
      * - Images/videos in subfolders are **not** part of the parent; subfolders are scanned recursively.
      * - zip/cbz (and other archive types) in a directory are each a separate gallery
@@ -58,6 +60,7 @@ object LibraryScanner {
         val folderPages = LinkedHashMap<String, List<String>>()
         val folderVideos = LinkedHashMap<String, List<String>>()
         val indexedFolders = LinkedHashSet<String>()
+        val indexedImageFiles = LinkedHashSet<String>()
         val indexedVideoFolders = LinkedHashSet<String>()
         val indexedVideoFiles = LinkedHashSet<String>()
         val msRoot = mediaStoreRootForScan(rootPath)
@@ -69,6 +72,7 @@ object LibraryScanner {
                 msRoot = msRoot,
                 rootDisplayName = rootDisplayName,
                 indexedFolders = indexedFolders,
+                indexedImageFiles = indexedImageFiles,
                 out = results,
                 folderPages = folderPages,
             )
@@ -90,6 +94,7 @@ object LibraryScanner {
                 relativePath = "",
                 rootDisplayName = rootDisplayName,
                 indexedFolders = indexedFolders,
+                indexedImageFiles = indexedImageFiles,
                 indexedVideoFolders = indexedVideoFolders,
                 indexedVideoFiles = indexedVideoFiles,
                 includeArchives = includeArchives,
@@ -135,12 +140,15 @@ object LibraryScanner {
         msRoot: Path,
         rootDisplayName: String,
         indexedFolders: MutableSet<String>,
+        indexedImageFiles: MutableSet<String>,
         out: MutableList<LocalGalleryEntity>,
         folderPages: MutableMap<String, List<String>>,
     ) {
+        val files = MediaStoreFs.listDescendantImageFiles(msRoot.mediaStoreRelativeDir())
+        val root = msRoot.mediaStoreRelativeDir()
         val folders = SafMediaStoreListing.imageFoldersUnderRoot(
-            rootRelativeDir = msRoot.mediaStoreRelativeDir(),
-            files = MediaStoreFs.listDescendantImageFiles(msRoot.mediaStoreRelativeDir()),
+            rootRelativeDir = root,
+            files = files,
         )
         for ((rel, folder) in folders) {
             if (folder.names.isEmpty()) continue
@@ -167,6 +175,20 @@ object LibraryScanner {
                 mtime = folder.latestImageMs,
             )
             folderPages[rel] = folder.names
+        }
+        for (file in files) {
+            if (!isImageFileName(file.name)) continue
+            val parent = SafMediaStoreListing.relativeUnderRoot(root, file.parentRelativePath) ?: continue
+            val dir = if (parent.isEmpty()) safRoot else safRoot.resolveRelative(parent)
+            emitImageFile(
+                rootId = rootId,
+                parentRel = parent,
+                name = file.name,
+                path = dir / file.name,
+                mtime = file.lastModifiedMs,
+                indexedImageFiles = indexedImageFiles,
+                out = out,
+            )
         }
     }
 
@@ -270,6 +292,7 @@ object LibraryScanner {
         relativePath: String,
         rootDisplayName: String,
         indexedFolders: MutableSet<String>,
+        indexedImageFiles: MutableSet<String>,
         indexedVideoFolders: MutableSet<String>,
         indexedVideoFiles: MutableSet<String>,
         includeArchives: Boolean,
@@ -341,6 +364,17 @@ object LibraryScanner {
                     mtime = mtime,
                 )
                 folderPages[relativePath] = images.map { it.name }
+            }
+            for (image in images) {
+                emitImageFile(
+                    rootId = rootId,
+                    parentRel = relativePath,
+                    name = image.name,
+                    path = image.path,
+                    mtime = childMtime(image),
+                    indexedImageFiles = indexedImageFiles,
+                    out = out,
+                )
             }
         }
 
@@ -430,6 +464,7 @@ object LibraryScanner {
                 rel,
                 rootDisplayName,
                 indexedFolders,
+                indexedImageFiles,
                 indexedVideoFolders,
                 indexedVideoFiles,
                 includeArchives,
@@ -520,6 +555,30 @@ object LibraryScanner {
             pageCount = names.size,
             coverPath = (coverPath ?: (dir / coverName)).toString(),
             contentPath = dir.toString(),
+            mtime = mtime,
+        )
+    }
+
+    private fun emitImageFile(
+        rootId: Long,
+        parentRel: String,
+        name: String,
+        path: Path,
+        mtime: Long,
+        indexedImageFiles: MutableSet<String>,
+        out: MutableList<LocalGalleryEntity>,
+    ) {
+        val fileRel = if (parentRel.isEmpty()) name else "$parentRel/$name"
+        if (!indexedImageFiles.add(fileRel)) return
+        out += LocalGalleryEntity(
+            id = libraryImageFileId(rootId, fileRel),
+            rootId = rootId,
+            relativePath = fileRel,
+            title = name,
+            kind = LOCAL_GALLERY_KIND_IMAGE_FILE,
+            pageCount = 0,
+            coverPath = path.toString(),
+            contentPath = path.toString(),
             mtime = mtime,
         )
     }

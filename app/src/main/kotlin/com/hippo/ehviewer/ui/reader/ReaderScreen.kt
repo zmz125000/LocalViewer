@@ -112,6 +112,7 @@ import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaStoreFs
+import com.hippo.ehviewer.library.ReaderImageList
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isDocumentFileName
@@ -123,6 +124,7 @@ import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbPasswordStore
 import com.hippo.ehviewer.smb.SmbRepository
 import com.hippo.ehviewer.ui.MainActivity
+import com.hippo.ehviewer.ui.OpenPdfBySettings
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
@@ -159,6 +161,7 @@ import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.Serializable
+import moe.tarsin.snackbar
 import moe.tarsin.string
 import okio.Path.Companion.toPath
 
@@ -173,12 +176,16 @@ private val activeReaderSessions = AtomicInteger(0)
 
 @Serializable
 sealed interface ReaderScreenArgs {
+    /** When true, do not honor [com.hippo.ehviewer.Settings.pdfReaderMode] (overflow Image). */
+    val skipPdfPrimary: Boolean get() = false
+
     /** Local archive file (ZIP/RAR/7z/PDF/EPUB). [info]/[page] optional; resolved on open. */
     @Serializable
     data class Archive(
         val path: String,
         val page: Int = -1,
         val info: BaseGalleryInfo? = null,
+        override val skipPdfPrimary: Boolean = false,
     ) : ReaderScreenArgs
 
     /** Local image folder (direct children only). */
@@ -189,6 +196,16 @@ sealed interface ReaderScreenArgs {
         val info: BaseGalleryInfo? = null,
         /** Basenames from the browse listing; empty → resolve from folder index, else list. */
         val imageNames: List<String> = emptyList(),
+    ) : ReaderScreenArgs
+
+    /**
+     * Flattened All photos list. Paths live in [com.hippo.ehviewer.library.ReaderImageList]
+     * (not nav args). No [info] → no reading progress; start at [page].
+     */
+    @Serializable
+    data class LocalImageList(
+        val page: Int = 0,
+        val title: String = "",
     ) : ReaderScreenArgs
 
     /**
@@ -234,6 +251,7 @@ sealed interface ReaderScreenArgs {
         val remotePath: String,
         val page: Int = -1,
         val info: BaseGalleryInfo? = null,
+        override val skipPdfPrimary: Boolean = false,
     ) : ReaderScreenArgs
 
     /** Stream-open WebDAV archive (ZIP/CBZ/TAR/CBT). */
@@ -243,6 +261,7 @@ sealed interface ReaderScreenArgs {
         val remotePath: String,
         val page: Int = -1,
         val info: BaseGalleryInfo? = null,
+        override val skipPdfPrimary: Boolean = false,
     ) : ReaderScreenArgs
 }
 
@@ -317,60 +336,80 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
         }
     }
 
-    Await(
-        block = asyncInVM(args) { alive ->
-            suspendCancellableCoroutine { cont ->
-                with(alive) {
-                    launchIO {
-                        catch {
-                            usePageLoader(args) { loader ->
-                                cont.resume(loader.right())
-                                awaitCancellation()
-                            }
-                        }.let { left -> cont.resume(left) }
+    val context = LocalContext.current
+    if (OpenPdfBySettings.shouldRedirect(args)) {
+        LaunchedEffect(args) {
+            runCatching { OpenPdfBySettings.open(context, args) }
+                .onFailure { e ->
+                    snackbar(
+                        context.getString(
+                            R.string.pdf_reader_open_failed,
+                            e.message ?: e.toString(),
+                        ),
+                    )
+                }
+            navigator.popBackStack()
+        }
+        Background(bgColor) {
+            CircularWavyProgressIndicator()
+        }
+    } else {
+        Await(
+            block = asyncInVM(args) { alive ->
+                suspendCancellableCoroutine { cont ->
+                    with(alive) {
+                        launchIO {
+                            catch {
+                                usePageLoader(args) { loader ->
+                                    cont.resume(loader.right())
+                                    awaitCancellation()
+                                }
+                            }.let { left -> cont.resume(left) }
+                        }
                     }
                 }
-            }
-        }.value.run {
-            { await() }
-        },
-        placeholder = {
-            Background(bgColor) {
-                CircularWavyProgressIndicator()
-            }
-        },
-    ) { result ->
-        when (result) {
-            is Either.Left -> Background(bgColor) {
-                Text(
-                    text = result.value.displayString(),
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.titleLarge,
-                )
-            }
-            is Either.Right -> {
-                val loader = result.value
-                val info = when (args) {
-                    is ReaderScreenArgs.LocalFolder -> args.info
-                    is ReaderScreenArgs.LocalZipFolder -> args.info
-                    is ReaderScreenArgs.SmbFolder -> args.info
-                    is ReaderScreenArgs.WebDavFolder -> args.info
-                    is ReaderScreenArgs.SmbStreamArchive -> args.info
-                    is ReaderScreenArgs.WebDavStreamArchive -> args.info
-                    // Prefer args.info; PageLoader also carries resolved local-archive info.
-                    is ReaderScreenArgs.Archive ->
-                        args.info
-                            ?: loader.info as? BaseGalleryInfo
+            }.value.run {
+                { await() }
+            },
+            placeholder = {
+                Background(bgColor) {
+                    CircularWavyProgressIndicator()
                 }
-                // Explicit dispose path: system back / pop also abort archive extract so
-                // ArchiveAccess is not held after the reader leaves.
-                DisposableEffect(loader) {
-                    onDispose {
-                        runCatching { loader.close() }
+            },
+        ) { result ->
+            when (result) {
+                is Either.Left -> Background(bgColor) {
+                    Text(
+                        text = result.value.displayString(),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                }
+                is Either.Right -> {
+                    val loader = result.value
+                    val info = when (args) {
+                        is ReaderScreenArgs.LocalFolder -> args.info
+                        is ReaderScreenArgs.LocalImageList -> null
+                        is ReaderScreenArgs.LocalZipFolder -> args.info
+                        is ReaderScreenArgs.SmbFolder -> args.info
+                        is ReaderScreenArgs.WebDavFolder -> args.info
+                        is ReaderScreenArgs.SmbStreamArchive -> args.info
+                        is ReaderScreenArgs.WebDavStreamArchive -> args.info
+                        // Prefer args.info; PageLoader also carries resolved local-archive info.
+                        is ReaderScreenArgs.Archive ->
+                            args.info
+                                ?: loader.info as? BaseGalleryInfo
                     }
-                }
-                key(loader) {
-                    ReaderScreen(pageLoader = loader, info = info, args = args)
+                    // Explicit dispose path: system back / pop also abort archive extract so
+                    // ArchiveAccess is not held after the reader leaves.
+                    DisposableEffect(loader) {
+                        onDispose {
+                            runCatching { loader.close() }
+                        }
+                    }
+                    key(loader) {
+                        ReaderScreen(pageLoader = loader, info = info, args = args)
+                    }
                 }
             }
         }
@@ -468,6 +507,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     pages = args.info?.pages ?: 0,
                     info = args.info,
                 )
+                is ReaderScreenArgs.LocalImageList -> Unit
             }
         }
     }
@@ -955,6 +995,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                         s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
                                     }
                                 }
+                                is ReaderScreenArgs.LocalImageList -> Unit
                             }
                         }
                     }
@@ -1150,6 +1191,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         }
         ReaderAppBars(
             visible = appbarVisible,
+            onNavigateUp = { nav.popBackStack() },
             showTopBar = !hideTopBar,
             title = pageLoader.title,
             // Dual webtoon strip is reverseLayout RTL (e4682de); seek bar must match
@@ -1219,6 +1261,17 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
 
 context(_: Context, _: DialogState, nav: DestinationsNavigator)
 suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: suspend (ReaderSession) -> T) = when (args) {
+    is ReaderScreenArgs.LocalImageList -> {
+        val files = ReaderImageList.paths.map { it.toPath() }
+        check(files.isNotEmpty()) { "All photos list is empty" }
+        useFolderPageLoader(
+            files = files,
+            info = null,
+            startPage = args.page,
+            title = args.title.ifBlank { files.getOrNull(args.page)?.name ?: files.first().name },
+            block = block,
+        )
+    }
     is ReaderScreenArgs.LocalFolder -> {
         val info = args.info
         val page = when {

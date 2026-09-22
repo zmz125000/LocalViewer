@@ -142,6 +142,30 @@ object OpenFileExternally {
             mimeType = mimeType,
             networkStream = false,
             internalPlayer = false,
+            usePreferredPlayer = usePreferredPlayer,
+        )
+    }
+
+    suspend fun playPdfLocal(
+        context: Context,
+        pathStr: String,
+        displayName: String = File(pathStr).name,
+        progressGid: Long = 0L,
+        startPage: Int = 0,
+    ) {
+        val token = registerLocalStreamdoc(pathStr, displayName, DefaultPdfReader.MIME_TYPE)
+        launchStreamdoc(
+            context = context,
+            token = token,
+            displayName = displayName,
+            mimeType = DefaultPdfReader.MIME_TYPE,
+            networkStream = false,
+            internalPlayer = false,
+            internalPdf = true,
+            progressGid = progressGid,
+            startPage = startPage,
+            pdfKind = PdfReaderActivity.KIND_LOCAL,
+            pdfLocalPath = pathStr,
         )
     }
 
@@ -207,6 +231,7 @@ object OpenFileExternally {
                     counter,
                 )
             },
+            usePreferredPlayer = usePreferredPlayer,
         )
     }
 
@@ -273,6 +298,7 @@ object OpenFileExternally {
                     counter,
                 )
             },
+            usePreferredPlayer = usePreferredPlayer,
         )
     }
 
@@ -287,6 +313,66 @@ object OpenFileExternally {
         val current = InternalVideoSource.WebDav(sourceId, remoteRelativeFile)
         val candidates = playlistRemoteFiles.map { InternalVideoSource.WebDav(sourceId, it) }
         launchInternalVideo(context, current, candidates, displayName, mimeType)
+    }
+
+    suspend fun playPdfSmb(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        progressGid: Long = 0L,
+        startPage: Int = 0,
+    ) {
+        val token = registerSmbStreamdoc(
+            sourceId,
+            remoteRelativeFile,
+            displayName,
+            DefaultPdfReader.MIME_TYPE,
+        )
+        launchStreamdoc(
+            context = context,
+            token = token,
+            displayName = displayName,
+            mimeType = DefaultPdfReader.MIME_TYPE,
+            networkStream = true,
+            internalPlayer = false,
+            internalPdf = true,
+            progressGid = progressGid,
+            startPage = startPage,
+            pdfKind = PdfReaderActivity.KIND_SMB,
+            pdfSourceId = sourceId,
+            pdfRemotePath = remoteRelativeFile,
+        )
+    }
+
+    suspend fun playPdfWebDav(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        progressGid: Long = 0L,
+        startPage: Int = 0,
+    ) {
+        val token = registerWebDavStreamdoc(
+            sourceId,
+            remoteRelativeFile,
+            displayName,
+            DefaultPdfReader.MIME_TYPE,
+        )
+        launchStreamdoc(
+            context = context,
+            token = token,
+            displayName = displayName,
+            mimeType = DefaultPdfReader.MIME_TYPE,
+            networkStream = true,
+            internalPlayer = false,
+            internalPdf = true,
+            progressGid = progressGid,
+            startPage = startPage,
+            pdfKind = PdfReaderActivity.KIND_WEBDAV,
+            pdfSourceId = sourceId,
+            pdfRemotePath = remoteRelativeFile,
+        )
     }
 
     private suspend fun launchInternalVideo(
@@ -1904,10 +1990,11 @@ object OpenFileExternally {
         hit: suspend () -> Path?,
         size: suspend () -> Long?,
         ensure: suspend (ByteCounter) -> Path,
+        usePreferredPlayer: Boolean = true,
     ) {
         val cached = withIOContext { hit() }
         if (cached != null) {
-            openCachedOrigin(context, cached, displayName, mimeType)
+            openCachedOrigin(context, cached, displayName, mimeType, usePreferredPlayer)
             return
         }
         val bytes = withIOContext { size() }
@@ -1918,7 +2005,7 @@ object OpenFileExternally {
         }
         BrowseSaveTransfers.start(displayName, confirmMessage = confirm) { counter ->
             val path = withIOContext { ensure(counter) }
-            openCachedOrigin(context, path, displayName, mimeType)
+            openCachedOrigin(context, path, displayName, mimeType, usePreferredPlayer)
         }
     }
 
@@ -1927,6 +2014,7 @@ object OpenFileExternally {
         path: Path,
         displayName: String,
         mimeType: String,
+        usePreferredPlayer: Boolean = true,
     ) {
         val file = File(path.toString())
         check(file.isFile && file.length() > 0L) { "Open cache missing" }
@@ -1948,6 +2036,7 @@ object OpenFileExternally {
             mimeType = mimeType,
             networkStream = false,
             internalPlayer = false,
+            usePreferredPlayer = usePreferredPlayer,
         )
     }
 
@@ -1960,11 +2049,38 @@ object OpenFileExternally {
         internalPlayer: Boolean,
         playlistSessionId: String? = null,
         playlistIndex: Int = 0,
+        internalPdf: Boolean = false,
+        usePreferredPlayer: Boolean = true,
+        progressGid: Long = 0L,
+        startPage: Int = 0,
+        pdfKind: String? = null,
+        pdfLocalPath: String? = null,
+        pdfSourceId: Long = 0L,
+        pdfRemotePath: String? = null,
     ) {
         val uri = StreamDocumentProvider.uriFor(token, displayName)
         try {
-            if (networkStream && !internalPlayer) requestStreamNotificationPermission(context)
-            if (internalPlayer) {
+            if (networkStream && !internalPlayer && !internalPdf) {
+                requestStreamNotificationPermission(context)
+            }
+            if (internalPdf) {
+                val intent = PdfReaderActivity.intent(
+                    context = context,
+                    uri = uri,
+                    title = displayName,
+                    streamToken = token,
+                    progressGid = progressGid,
+                    startPage = startPage,
+                    sourceKind = pdfKind,
+                    localPath = pdfLocalPath,
+                    sourceId = pdfSourceId,
+                    remotePath = pdfRemotePath,
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                }
+                withUIContext { context.startActivity(intent) }
+            } else if (internalPlayer) {
                 val intent = VideoPlayerActivity.intent(
                     context = context,
                     uri = uri,
@@ -1978,6 +2094,8 @@ object OpenFileExternally {
                     addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 }
                 withUIContext { context.startActivity(intent) }
+            } else if (DefaultPdfReader.isPdfMime(mimeType)) {
+                DefaultPdfReader.startView(context, uri, displayName, usePreferredPlayer)
             } else {
                 val view = Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(uri, mimeType)

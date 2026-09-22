@@ -13,7 +13,12 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.systemBarsIgnoringVisibility
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.BottomAppBarDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -23,15 +28,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import com.hippo.ehviewer.ui.main.NavigationIcon
-import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 
 private val animationSpec = tween<IntOffset>(200)
 
 @Composable
-context(navigator: DestinationsNavigator)
 fun BoxScope.ReaderAppBars(
     visible: Boolean,
+    onNavigateUp: () -> Unit,
     /** When false, title/top bar stays hidden even if chrome [visible] is true. */
     showTopBar: Boolean = true,
     title: String,
@@ -40,7 +43,7 @@ fun BoxScope.ReaderAppBars(
     currentPage: Int,
     totalPages: Int,
     onSliderValueChange: (Int) -> Unit,
-    onClickSettings: () -> Unit,
+    onClickSettings: (() -> Unit)? = null,
     onClickPhotoGrid: (() -> Unit)? = null,
     showScaleFitCycle: Boolean = false,
 ) {
@@ -60,7 +63,14 @@ fun BoxScope.ReaderAppBars(
         TopAppBar(
             title = { Text(text = title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = backgroundColor),
-            navigationIcon = { NavigationIcon() },
+            navigationIcon = {
+                IconButton(onClick = onNavigateUp, shapes = IconButtonDefaults.shapes()) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = null,
+                    )
+                }
+            },
         )
     }
 
@@ -80,12 +90,14 @@ fun BoxScope.ReaderAppBars(
                     containerColor = backgroundColor,
                 )
             }
-            BottomReaderBar(
-                onClickSettings = onClickSettings,
-                containerColor = backgroundColor,
-                onClickPhotoGrid = onClickPhotoGrid,
-                showScaleFitCycle = showScaleFitCycle,
-            )
+            if (onClickSettings != null) {
+                BottomReaderBar(
+                    onClickSettings = onClickSettings,
+                    containerColor = backgroundColor,
+                    onClickPhotoGrid = onClickPhotoGrid,
+                    showScaleFitCycle = showScaleFitCycle,
+                )
+            }
         }
     }
 }

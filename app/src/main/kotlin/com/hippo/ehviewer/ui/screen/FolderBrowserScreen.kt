@@ -116,6 +116,7 @@ import com.hippo.ehviewer.library.withLocalZipCentralDirectory
 import com.hippo.ehviewer.ui.LocalShowNavShortcutFab
 import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.OpenPdfExternally
+import com.hippo.ehviewer.ui.PdfReaderMode
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
@@ -1451,7 +1452,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         navToLocalFolderReader(frame.path, info, page, images.map { it.name })
     }
 
-    fun openArchiveReader(entry: BrowseEntry.ArchiveGallery) {
+    fun openArchiveReader(entry: BrowseEntry.ArchiveGallery, skipPdfPrimary: Boolean = false) {
         val frame = stack.lastOrNull()
         if (frame != null && !frame.isZipBrowse) {
             ReaderGalleryPlaylist.setFromLocalBrowse(
@@ -1467,29 +1468,10 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             recordCurrentBrowseFolderHistory()
             LocalHistory.recordLocalArchive(path, title = entry.name)
         }
-        navToReader(path)
+        navToReader(path, skipPdfPrimary = skipPdfPrimary)
     }
 
-    fun openArchive(entry: BrowseEntry.ArchiveGallery) {
-        val frame = stack.lastOrNull()
-        // Nested archive inside a ZIP — stub in v1.
-        if (frame?.isZipBrowse == true || ZipPaths.isZipPath(entry.path.toString())) {
-            launchIO {
-                snackbar(context.getString(R.string.zip_nested_archive_stub))
-            }
-            return
-        }
-        // Zip-as-dir: always enter as a virtual folder (classify via DirectoryListing).
-        // Flat CBZ roots show as FolderGallery like a normal image folder.
-        if (browseZipAsDir && isZipArchiveFileName(entry.name)) {
-            enterZip(entry)
-            return
-        }
-        openArchiveReader(entry)
-    }
-
-    /** Long-press PDF → system / third-party reader (tap still uses in-app image PDF engine). */
-    fun openPdfInOtherApp(entry: BrowseEntry.ArchiveGallery) {
+    fun openPdfInOtherApp(entry: BrowseEntry.ArchiveGallery, usePreferredReader: Boolean = true) {
         if (!isPdfFileName(entry.name)) return
         val path = entry.path.toString()
         launchIO {
@@ -1497,7 +1479,12 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             recordCurrentBrowseFolderHistory()
             LocalHistory.recordLocalFile(path, title = entry.name)
             try {
-                OpenPdfExternally.openLocal(context, path, displayName = entry.name)
+                OpenPdfExternally.openLocal(
+                    context,
+                    path,
+                    displayName = entry.name,
+                    usePreferredReader = usePreferredReader,
+                )
             } catch (e: Throwable) {
                 snackbar(
                     context.getString(
@@ -1506,6 +1493,49 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                     ),
                 )
             }
+        }
+    }
+
+    fun openPdfReader(entry: BrowseEntry.ArchiveGallery) {
+        if (!isPdfFileName(entry.name)) return
+        val path = entry.path.toString()
+        launchIO {
+            recordCurrentBrowseFolderHistory()
+            val info = LocalHistory.galleryInfoForLocalArchive(path, title = entry.name)
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordLocalArchive(path, title = entry.name)
+            val page = runCatching { EhDB.getReadProgress(info.gid) }.getOrDefault(0)
+            try {
+                OpenPdfExternally.openInternalLocal(
+                    context,
+                    path,
+                    displayName = entry.name,
+                    progressGid = info.gid,
+                    startPage = page,
+                )
+            } catch (e: Throwable) {
+                snackbar(
+                    context.getString(
+                        R.string.pdf_reader_open_failed,
+                        e.message ?: e.toString(),
+                    ),
+                )
+            }
+        }
+    }
+
+    fun openPdfPrimary(entry: BrowseEntry.ArchiveGallery) {
+        when (Settings.pdfReaderMode.value) {
+            PdfReaderMode.PDF -> openPdfReader(entry)
+            PdfReaderMode.EXTERNAL -> openPdfInOtherApp(entry)
+            else -> openArchiveReader(entry)
+        }
+    }
+
+    fun openPdfSecondary(entry: BrowseEntry.ArchiveGallery) {
+        when (Settings.pdfReaderMode.value) {
+            PdfReaderMode.PDF, PdfReaderMode.EXTERNAL -> openArchiveReader(entry, skipPdfPrimary = true)
+            else -> openPdfReader(entry)
         }
     }
 
@@ -1537,6 +1567,36 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                 )
             }
         }
+    }
+
+    fun openArchiveSecondary(entry: BrowseEntry.ArchiveGallery) {
+        if (isPdfFileName(entry.name)) {
+            openPdfSecondary(entry)
+        } else {
+            openArchiveInOtherApp(entry)
+        }
+    }
+
+    fun openArchive(entry: BrowseEntry.ArchiveGallery) {
+        if (isPdfFileName(entry.name)) {
+            openPdfPrimary(entry)
+            return
+        }
+        val frame = stack.lastOrNull()
+        // Nested archive inside a ZIP — stub in v1.
+        if (frame?.isZipBrowse == true || ZipPaths.isZipPath(entry.path.toString())) {
+            launchIO {
+                snackbar(context.getString(R.string.zip_nested_archive_stub))
+            }
+            return
+        }
+        // Zip-as-dir: always enter as a virtual folder (classify via DirectoryListing).
+        // Flat CBZ roots show as FolderGallery like a normal image folder.
+        if (browseZipAsDir && isZipArchiveFileName(entry.name)) {
+            enterZip(entry)
+            return
+        }
+        openArchiveReader(entry)
     }
 
     fun openExternalFile(path: okio.Path, asFile: Boolean = false, usePreferredPlayer: Boolean = true) {
@@ -1767,18 +1827,35 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onUnsupported = { notSupportedAction() },
     )
 
-    fun archiveOverflow(entry: BrowseEntry.ArchiveGallery) = BrowseOverflowActions(
-        kind = BrowseOverflowKind.Gallery,
-        onRead = { openArchive(entry) },
-        onOpenWith = { openArchiveInOtherApp(entry) },
-        onSaveAs = { saveLocalFile(entry.path) },
-        onShare = { shareLocalFile(entry.path) },
-        onShareViaHttp = localHttpShareFile(entry.path),
-        onOpenFolder = {
-            openBrowseFolder(FolderSearch.openFolderTarget(entry.name, isDirectory = false))
-        },
-        onUnsupported = { notSupportedAction() },
-    )
+    fun archiveOverflow(entry: BrowseEntry.ArchiveGallery) = if (isPdfFileName(entry.name)) {
+        BrowseOverflowActions(
+            kind = BrowseOverflowKind.Pdf,
+            onRead = { openArchiveReader(entry, skipPdfPrimary = true) },
+            onPlay = { openPdfReader(entry) },
+            onExternalPlayer = { openPdfInOtherApp(entry) },
+            onOpenWith = { openPdfInOtherApp(entry, usePreferredReader = false) },
+            onSaveAs = { saveLocalFile(entry.path) },
+            onShare = { shareLocalFile(entry.path) },
+            onShareViaHttp = localHttpShareFile(entry.path),
+            onOpenFolder = {
+                openBrowseFolder(FolderSearch.openFolderTarget(entry.name, isDirectory = false))
+            },
+            onUnsupported = { notSupportedAction() },
+        )
+    } else {
+        BrowseOverflowActions(
+            kind = BrowseOverflowKind.Gallery,
+            onRead = { openArchive(entry) },
+            onOpenWith = { openArchiveInOtherApp(entry) },
+            onSaveAs = { saveLocalFile(entry.path) },
+            onShare = { shareLocalFile(entry.path) },
+            onShareViaHttp = localHttpShareFile(entry.path),
+            onOpenFolder = {
+                openBrowseFolder(FolderSearch.openFolderTarget(entry.name, isDirectory = false))
+            },
+            onUnsupported = { notSupportedAction() },
+        )
+    }
 
     fun videoOverflow(path: okio.Path, relativeName: String = path.name) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Video,
@@ -2106,7 +2183,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         name = entry.name,
                                         cover = BrowseCover.LocalArchive(entry.path),
                                         onClick = { openArchive(entry) },
-                                        onLongClick = { openArchiveInOtherApp(entry) },
+                                        onLongClick = { openArchiveSecondary(entry) },
                                         pageCount = entry.pageCount,
                                         showPages = showGalleryPages,
                                         overflow = archiveOverflow(entry),
@@ -2117,7 +2194,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         name = entry.name,
                                         cover = BrowseCover.LocalArchive(entry.path),
                                         onClick = { openArchive(entry) },
-                                        onLongClick = { openArchiveInOtherApp(entry) },
+                                        onLongClick = { openArchiveSecondary(entry) },
                                         fileName = entry.name,
                                         sizeBytes = entry.size,
                                         lastModifiedMs = entry.lastModifiedMs,
@@ -2321,7 +2398,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 name = entry.name,
                                                 cover = BrowseCover.LocalArchive(entry.path),
                                                 onClick = { openArchive(entry) },
-                                                onLongClick = { openArchiveInOtherApp(entry) },
+                                                onLongClick = { openArchiveSecondary(entry) },
                                                 pageCount = entry.pageCount,
                                                 showPages = showGalleryPages,
                                                 overflow = archiveOverflow(entry),
@@ -2470,7 +2547,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 name = entry.name,
                                                 cover = BrowseCover.LocalArchive(entry.path),
                                                 onClick = { openArchive(entry) },
-                                                onLongClick = { openArchiveInOtherApp(entry) },
+                                                onLongClick = { openArchiveSecondary(entry) },
                                                 fileName = entry.path.name,
                                                 sizeBytes = entry.size,
                                                 lastModifiedMs = entry.lastModifiedMs,

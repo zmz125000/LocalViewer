@@ -27,6 +27,7 @@
     <string name="library_empty_videos">No videos yet. Add a library source from the Browse top bar.</string>
     <string name="library_video_folders">Video folders</string>
     <string name="library_video_all">All videos</string>
+    <string name="library_photo_all">All photos</string>
     <string name="library_add_root">Add library folder</string>
     <string name="library_add_library_source">Add Library Source</string>
     <string name="library_add_folder_source">Add Folder Source</string>
@@ -79,6 +80,13 @@
     <string name="settings_browse_folder_thumbs_summary">Show cover thumbs for folders.</string>
     <string name="settings_use_media3_player">Use Media3 player</string>
     <string name="settings_use_media3_player_summary">On: tap opens in-app player, long-press opens external app. Off: tap external, long-press in-app.</string>
+    <string name="settings_pdf_reader">PDF reader</string>
+    <string name="settings_pdf_reader_summary">Tap opens the selected reader. Long-press opens the other built-in reader, or the image reader when External is selected.</string>
+    <string name="settings_pdf_reader_mode_image">Image reader</string>
+    <string name="settings_pdf_reader_mode_pdf">PDF reader</string>
+    <string name="settings_pdf_reader_mode_external">External</string>
+    <string name="settings_default_pdf_reader">Default PDF app</string>
+    <string name="settings_default_pdf_reader_none">No PDF apps found</string>
     <string name="settings_open_html_with_browser">Open HTML with browser</string>
     <string name="settings_open_html_with_browser_summary">On: tap HTML starts a local HTTP server for the folder and opens the default browser. Off: treat HTML as a regular file.</string>
     <string name="settings_open_html_in_incognito">Open in incognito</string>
@@ -99,6 +107,9 @@
     <string name="browse_open_folder">Open folder</string>
     <string name="browse_play">Play</string>
     <string name="browse_external_player">External player</string>
+    <string name="browse_image_reader">Image reader</string>
+    <string name="browse_pdf_reader">PDF reader</string>
+    <string name="browse_external_reader">External</string>
     <string name="browse_copy_url">Copy URL</string>
     <string name="browse_share_via_http">Share via HTTP</string>
     <string name="browse_http_share_copy">Copy</string>
@@ -309,6 +320,8 @@
     <string name="stream_keepalive_stop">Stop streaming</string>
     <string name="open_pdf_no_app">No app found to open PDF</string>
     <string name="open_pdf_external_failed">Could not open PDF externally: %s</string>
+    <string name="pdf_reader_open_failed">Could not open PDF: %s</string>
+    <string name="pdf_reader_page">Page %1$d of %2$d</string>
     <string name="clear_image_cache">Clear image cache</string>
     <string name="clear_image_cache_confirm">Clear all cached images for this gallery?</string>
     <string name="image_cache_cleared">Image cache cleared</string>
