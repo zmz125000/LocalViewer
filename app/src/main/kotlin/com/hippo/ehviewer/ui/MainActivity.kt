@@ -37,6 +37,9 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -90,8 +93,11 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
@@ -139,6 +145,7 @@ import com.hippo.ehviewer.ui.main.HttpShareSnackbars
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.reader.PendingReaderOpen
+import com.hippo.ehviewer.ui.screen.toggleLibraryFlattenMode
 import com.hippo.ehviewer.ui.screen.toggleLibrarySection
 import com.hippo.ehviewer.ui.settings.showNewVersion
 import com.hippo.ehviewer.ui.tools.DialogState
@@ -167,6 +174,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import moe.tarsin.coroutines.runSuspendCatching
 import splitties.systemservices.clipboardManager
 import splitties.systemservices.connectivityManager
@@ -315,6 +323,37 @@ private fun navigateMainTab(
         launchSingleTop = true
         restoreState = true
     }
+}
+
+@Composable
+private fun MainNavDestinationIcon(
+    item: MainNavItem,
+    selected: Boolean,
+    onLongClick: (() -> Unit)? = null,
+) {
+    val haptic = LocalHapticFeedback.current
+    Icon(
+        imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
+        contentDescription = null,
+        modifier = if (onLongClick != null) {
+            // Long-press only: short taps stay on NavigationBarItem/RailItem onClick.
+            Modifier.pointerInput(onLongClick) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    val releasedBeforeTimeout = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                        waitForUpOrCancellation()
+                    }
+                    if (releasedBeforeTimeout == null) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onLongClick()
+                        waitForUpOrCancellation()
+                    }
+                }
+            }
+        } else {
+            Modifier
+        },
+    )
 }
 
 class MainActivity : AppCompatActivity() {
@@ -546,13 +585,14 @@ class MainActivity : AppCompatActivity() {
                                             navigateMainTab(navigator, item, selectedTab, currentDestination)
                                         },
                                         icon = {
-                                            Icon(
-                                                imageVector = if (selected) {
-                                                    item.selectedIcon
+                                            MainNavDestinationIcon(
+                                                item = item,
+                                                selected = selected,
+                                                onLongClick = if (item.direction == LibraryScreenDestination) {
+                                                    { toggleLibraryFlattenMode() }
                                                 } else {
-                                                    item.unselectedIcon
+                                                    null
                                                 },
-                                                contentDescription = null,
                                             )
                                         },
                                         label = {
@@ -591,13 +631,14 @@ class MainActivity : AppCompatActivity() {
                                                 navigateMainTab(navigator, item, selectedTab, currentDestination)
                                             },
                                             icon = {
-                                                Icon(
-                                                    imageVector = if (selected) {
-                                                        item.selectedIcon
+                                                MainNavDestinationIcon(
+                                                    item = item,
+                                                    selected = selected,
+                                                    onLongClick = if (item.direction == LibraryScreenDestination) {
+                                                        { toggleLibraryFlattenMode() }
                                                     } else {
-                                                        item.unselectedIcon
+                                                        null
                                                     },
-                                                    contentDescription = null,
                                                 )
                                             },
                                             label = {

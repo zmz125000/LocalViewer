@@ -281,7 +281,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val sectionHeaderText = if (librarySection == LibrarySection.Videos) {
         stringResource(R.string.browse_videos)
     } else {
-        stringResource(R.string.library)
+        stringResource(R.string.browse_photos)
     }
 
     val listMode by Settings.listMode.collectAsState()
@@ -678,7 +678,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             // Extra list margin so section titles are not flush to the screen edge
                             // (rows stay edge-aligned with folder ListItems).
                             BrowseSectionHeader(
-                                stringResource(R.string.favourite),
+                                stringResource(R.string.browse_favorites),
                                 modifier = Modifier.padding(horizontal = marginH),
                             )
                         }
@@ -709,13 +709,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                 sectionHeaderText,
                                 modifier = Modifier.padding(horizontal = marginH),
                                 onClick = { toggleLibrarySection() },
-                                onLongClick = {
-                                    if (librarySection == LibrarySection.Videos) {
-                                        toggleLibraryVideoMode()
-                                    } else {
-                                        toggleLibraryPhotoMode()
-                                    }
-                                },
+                                onLongClick = { toggleLibraryFlattenMode() },
                             )
                         }
                     }
@@ -745,7 +739,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             key = "fav-hdr",
                             span = { GridItemSpan(maxLineSpan) },
                         ) {
-                            BrowseSectionHeader(stringResource(R.string.favourite))
+                            BrowseSectionHeader(stringResource(R.string.browse_favorites))
                         }
                         items(favorites, key = { "fav-${it.key}" }) { fav ->
                             FavoriteSourceGridCell(
@@ -763,13 +757,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             BrowseSectionHeader(
                                 sectionHeaderText,
                                 onClick = { toggleLibrarySection() },
-                                onLongClick = {
-                                    if (librarySection == LibrarySection.Videos) {
-                                        toggleLibraryVideoMode()
-                                    } else {
-                                        toggleLibraryPhotoMode()
-                                    }
-                                },
+                                onLongClick = { toggleLibraryFlattenMode() },
                             )
                         }
                     }

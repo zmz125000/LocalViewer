@@ -58,7 +58,7 @@ enum class LibrarySortMode(val prefValue: Int) {
     }
 }
 
-/** Library screen section ([Settings.librarySection]). Tap the section header to swap. */
+/** Library screen section ([Settings.librarySection]). Tap the section header to swap Photos ↔ Videos. */
 enum class LibrarySection(val prefValue: Int) {
     Galleries(0),
     Videos(1),
@@ -72,11 +72,19 @@ enum class LibrarySection(val prefValue: Int) {
     }
 }
 
-/** Swap Library ↔ Videos. Same action as tapping the library section header. */
+/** Swap Photos ↔ Videos. Same action as tapping the library section header. */
 fun toggleLibrarySection() {
     Settings.librarySection.value = when (LibrarySection.fromPref(Settings.librarySection.value)) {
         LibrarySection.Galleries -> LibrarySection.Videos.prefValue
         LibrarySection.Videos -> LibrarySection.Galleries.prefValue
+    }
+}
+
+/** All photos or All videos, matching the visible library section. Same as long-pressing the section header. */
+fun toggleLibraryFlattenMode() {
+    when (LibrarySection.fromPref(Settings.librarySection.value)) {
+        LibrarySection.Videos -> toggleLibraryVideoMode()
+        LibrarySection.Galleries -> toggleLibraryPhotoMode()
     }
 }
 

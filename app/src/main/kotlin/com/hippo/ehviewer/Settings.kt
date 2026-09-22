@@ -466,8 +466,8 @@ object Settings : DataStorePreferences(null) {
     val librarySortMode = intPref("library_sort_mode", 0)
 
     /**
-     * Library screen section: 0 = galleries (default), 1 = videos.
-     * Toggled by tapping the Library / Videos section header.
+     * Library screen section: 0 = photos (default), 1 = videos.
+     * Toggled by tapping the Photos / Videos section header.
      */
     val librarySection = intPref("library_section", 0)
 
