@@ -26,8 +26,10 @@ import androidx.compose.ui.geometry.toRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.FixedScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.times
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.toSize
 import arrow.core.partially1
@@ -41,6 +43,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.NavigationRegions
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import eu.kanade.tachiyomi.ui.reader.viewer.getAction
 import kotlin.contracts.contract
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -224,6 +227,19 @@ private fun DualPageContainer(
     }
     val leftDecoded = spreadDecodedSize(leftPage)
     val rightDecoded = spreadDecodedSize(rightPage)
+    // Glued pair at decoded pixels. Visual row must match this or small pages
+    // letterbox in fitted cells and sit on the left/right instead of together.
+    val unscaledSpread = if (solo) {
+        val raw = leftDecoded ?: rightDecoded
+        if (raw != null && layoutSize != Size.Zero) {
+            fitDisplaySize(raw, shouldAutoRotate(raw, layoutSize, autoRotateMode))
+        } else {
+            fittedSpread
+        }
+    } else {
+        unscaledSpreadSize(leftDecoded, rightDecoded, leftAspect, rightAspect)
+            .takeIf { it != Size.Zero } ?: fittedSpread
+    }
 
     if (layoutSize != Size.Zero) {
         if (gap) {
@@ -235,32 +251,21 @@ private fun DualPageContainer(
                 zoomableState.contentAlignment = Alignment.Center
             }
         } else {
-            val unscaled = if (solo) {
-                val raw = leftDecoded ?: rightDecoded
-                if (raw != null) {
-                    fitDisplaySize(raw, shouldAutoRotate(raw, layoutSize, autoRotateMode))
-                } else {
-                    fittedSpread
-                }
-            } else {
-                unscaledSpreadSize(leftDecoded, rightDecoded, leftAspect, rightAspect)
-                    .takeIf { it != Size.Zero } ?: fittedSpread
-            }
             val rotate = solo && run {
                 val raw = leftDecoded ?: rightDecoded
                 raw != null && shouldAutoRotate(raw, layoutSize, autoRotateMode)
             }
-            val contentScale = ContentScale.fromPreferences(scaleType, unscaled, layoutSize)
+            val contentScale = ContentScale.fromPreferences(scaleType, unscaledSpread, layoutSize)
             zoomableState.contentScale = contentScale
-            LaunchedEffect(unscaled, contentScale, alignment) {
-                zoomableState.applyPagerContentAlignment(unscaled, contentScale, layoutSize, alignment)
+            LaunchedEffect(unscaledSpread, contentScale, alignment) {
+                zoomableState.applyPagerContentAlignment(unscaledSpread, contentScale, layoutSize, alignment)
             }
-            LaunchedEffect(unscaled) {
+            LaunchedEffect(unscaledSpread) {
                 zoomableState.setContentLocation(
-                    ZoomableContentLocation.scaledInsideAndCenterAligned(unscaled),
+                    ZoomableContentLocation.scaledInsideAndCenterAligned(unscaledSpread),
                 )
             }
-            if (landscapeZoom && !rotate && contentScale == ContentScale.Fit && unscaled.width > unscaled.height) {
+            if (landscapeZoom && !rotate && contentScale == ContentScale.Fit && unscaledSpread.width > unscaledSpread.height) {
                 LaunchedEffect(alignment) {
                     val zoomFraction = snapshotFlow { zoomableState.zoomFraction }.first { it != null }
                     if (zoomFraction == 0f) {
@@ -378,31 +383,35 @@ private fun DualPageContainer(
                 }
             }
         } else {
+            val spreadPx = insideSpreadSize(unscaledSpread, layoutSize).takeIf { it != Size.Zero }
+                ?: fittedSpread
             val leftCell = Size(
-                (fittedSpread.width * leftAspect / combinedAspect).coerceAtLeast(1f),
-                fittedSpread.height.coerceAtLeast(1f),
+                (spreadPx.width * leftAspect / combinedAspect).coerceAtLeast(1f),
+                spreadPx.height.coerceAtLeast(1f),
             )
             val rightCell = Size(
-                (fittedSpread.width * rightAspect / combinedAspect).coerceAtLeast(1f),
-                fittedSpread.height.coerceAtLeast(1f),
+                (spreadPx.width * rightAspect / combinedAspect).coerceAtLeast(1f),
+                spreadPx.height.coerceAtLeast(1f),
             )
-            // Zoom viewport must be the full pager slot. Putting zoomable on the fitted
-            // aspectRatio row made pinch-zoom scale inside the image box instead of the screen.
+            // Zoom viewport must be the full pager slot. Putting zoomable on the image
+            // box made pinch-zoom scale inside the pair instead of the screen.
             Box(
                 modifier = Modifier.fillMaxSize().then(zoomMod),
                 contentAlignment = Alignment.Center,
             ) {
                 Row(
-                    modifier = Modifier.aspectRatio(
-                        combinedAspect,
-                        matchHeightConstraintsFirst = true,
-                    ),
+                    modifier = if (spreadPx != Size.Zero) {
+                        Modifier.fixedPxSize(spreadPx)
+                    } else {
+                        Modifier.aspectRatio(combinedAspect, matchHeightConstraintsFirst = true)
+                    },
                 ) {
                     if (leftPage != null) {
                         PagerItem(
                             page = leftPage,
                             pageLoader = pageLoader,
-                            contentScale = ContentScale.Inside,
+                            // Fill the unscaled cell (height-matched). Telephoto Fits the pair.
+                            contentScale = ContentScale.Fit,
                             modifier = Modifier.weight(leftAspect).fillMaxHeight(),
                             viewportSize = leftCell,
                         )
@@ -411,7 +420,7 @@ private fun DualPageContainer(
                         PagerItem(
                             page = rightPage,
                             pageLoader = pageLoader,
-                            contentScale = ContentScale.Inside,
+                            contentScale = ContentScale.Fit,
                             modifier = Modifier.weight(rightAspect).fillMaxHeight(),
                             viewportSize = rightCell,
                         )
@@ -584,6 +593,14 @@ private fun ZoomableState.applyPagerContentAlignment(
         Alignment.CenterVertically
     }
     contentAlignment = horizontalAlignment + verticalAlignment
+}
+
+/** Lay out [size] in pixels so the no-gap pair matches telephoto's unscaled content. */
+private fun Modifier.fixedPxSize(size: Size) = layout { measurable, _ ->
+    val w = size.width.roundToInt().coerceAtLeast(1)
+    val h = size.height.roundToInt().coerceAtLeast(1)
+    val placeable = measurable.measure(Constraints.fixed(w, h))
+    layout(w, h) { placeable.place(0, 0) }
 }
 
 /** Placeholder / unknown page aspect (A4-ish), same as [PagerItem] default. */

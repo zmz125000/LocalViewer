@@ -65,6 +65,8 @@ fun fitSpreadSize(combinedAspect: Float, viewport: Size): Size {
 
 /**
  * Pixel size of a no-gap spread: pages share the taller decoded height, widths from aspect.
+ * Telephoto uses this as contentLocation. Visual layout uses [insideSpreadSize] so small
+ * pages stay glued; a viewport-fitted row letterboxed them to the left and right.
  * [left]/[right] are decoded sizes; a side with aspect 0 is absent.
  * [Size.Zero] if neither page has a decoded height yet.
  */
@@ -79,6 +81,17 @@ fun unscaledSpreadSize(
     val lw = if (leftAspect > 0f) h * leftAspect else 0f
     val rw = if (rightAspect > 0f) h * rightAspect else 0f
     return Size((lw + rw).coerceAtLeast(1f), h)
+}
+
+/**
+ * Visual size of a no-gap pair: [unscaled] if it fits, otherwise the same as [fitSpreadSize].
+ * Never exceeds [viewport], so the row is not clipped before telephoto scales.
+ */
+fun insideSpreadSize(unscaled: Size, viewport: Size): Size {
+    if (unscaled.width <= 0f || unscaled.height <= 0f) return Size.Zero
+    if (viewport.width <= 0f || viewport.height <= 0f) return unscaled
+    val scale = minOf(1f, viewport.width / unscaled.width, viewport.height / unscaled.height)
+    return Size(unscaled.width * scale, unscaled.height * scale)
 }
 
 /** Screen-X of the gutter between left and right pages for a centered no-gap spread. */
