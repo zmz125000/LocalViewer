@@ -96,6 +96,7 @@ import com.hippo.ehviewer.library.LocalFolderListing
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderGalleryPlaylist
+import com.hippo.ehviewer.library.ReaderImageList
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
@@ -122,6 +123,7 @@ import com.hippo.ehviewer.ui.main.LocalGalleryListItem
 import com.hippo.ehviewer.ui.main.browseFileExtensionLabel
 import com.hippo.ehviewer.ui.main.browseListSupportingLine
 import com.hippo.ehviewer.ui.navToLocalFolderReader
+import com.hippo.ehviewer.ui.navToLocalImageListReader
 import com.hippo.ehviewer.ui.navToLocalZipFolderReader
 import com.hippo.ehviewer.ui.navToReader
 import com.hippo.ehviewer.ui.openLocalBrowseDir
@@ -145,6 +147,7 @@ import okio.Path.Companion.toPath
 fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Screen(navigator) {
     val context = LocalContext.current
     val title = stringResource(id = R.string.library)
+    val allPhotosTitle = stringResource(R.string.library_photo_all)
     val hint = stringResource(R.string.search_bar_hint, title)
     val addedToFavourites = stringResource(id = R.string.add_to_favourites)
     val removedFromFavourites = stringResource(id = R.string.remove_from_favourites)
@@ -462,6 +465,14 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
     }
 
+    fun openAllPhotosReader(item: LocalGalleryEntity) {
+        val (paths, page) = allPhotosReaderStart(galleries, item)
+        if (keyword.isNotBlank()) launchIO { recordDeviceSearchHistory(keyword) }
+        ReaderGalleryPlaylist.clear()
+        ReaderImageList.set(paths)
+        navToLocalImageListReader(page = page, title = allPhotosTitle)
+    }
+
     fun openImageFile(item: LocalGalleryEntity, photoGrid: Boolean) {
         val parentRel = libraryBrowseRelative(parentRelativeOfFile(item.relativePath))
         val folderKey = parentRel.ifEmpty { "." }
@@ -515,7 +526,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         when (item.kind) {
             LOCAL_GALLERY_KIND_VIDEO_FILE -> openVideoFile(item, inApp = Settings.useMedia3Player.value)
             LOCAL_GALLERY_KIND_VIDEO_FOLDER -> openVideoFolder(item)
-            LOCAL_GALLERY_KIND_IMAGE_FILE -> openImageFile(item, photoGrid = Settings.photoGridMode.value)
+            LOCAL_GALLERY_KIND_IMAGE_FILE -> openAllPhotosReader(item)
             else -> openGalleryPrimary(item)
         }
     }

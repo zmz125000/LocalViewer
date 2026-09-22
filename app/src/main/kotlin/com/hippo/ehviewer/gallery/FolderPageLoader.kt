@@ -21,24 +21,41 @@ suspend inline fun <T> useFolderPageLoader(
     startPage: Int = 0,
     imageNames: List<String> = emptyList(),
     crossinline block: suspend (PageLoader) -> T,
+): T {
+    val files = if (imageNames.isNotEmpty()) {
+        imageNames.map { dir / it }
+    } else {
+        dir.list()
+            .filter { it.isFile && isImageFileName(it.name) }
+            .sortedWith { a, b -> naturalCompare(a.name, b.name) }
+    }
+    check(files.isNotEmpty()) { "Folder has no images: $dir" }
+    return useFolderPageLoader(
+        files = files,
+        info = info,
+        startPage = startPage,
+        title = info?.title ?: FileUtils.getNameFromFilename(dir.displayName) ?: dir.name,
+        block = block,
+    )
+}
+
+/**
+ * Open a list of image files as reader pages. [info] null skips reading progress.
+ */
+suspend inline fun <T> useFolderPageLoader(
+    files: List<Path>,
+    info: GalleryInfo? = null,
+    startPage: Int = 0,
+    title: String? = null,
+    crossinline block: suspend (PageLoader) -> T,
 ) = autoCloseScope {
     coroutineScope {
-        // Browse/photo-grid already classified these names. Join onto [dir] so SAF
-        // trees skip DocumentsContract children queries (MediaStore list is cheap).
-        val files = if (imageNames.isNotEmpty()) {
-            imageNames.map { dir / it }
-        } else {
-            dir.list()
-                .filter { it.isFile && isImageFileName(it.name) }
-                .sortedWith { a, b -> naturalCompare(a.name, b.name) }
-        }
-        check(files.isNotEmpty()) { "Folder has no images: $dir" }
+        check(files.isNotEmpty()) { "No images" }
         val size = files.size
+        val loaderTitle = title ?: files.first().name
         val loader = install(
             object : PageLoader(this, info, startPage.coerceIn(0, size - 1), size) {
-                override val title by lazy {
-                    info?.title ?: FileUtils.getNameFromFilename(dir.displayName) ?: dir.name
-                }
+                override val title get() = loaderTitle
 
                 override fun getImageExtension(index: Int) = FileUtils.getExtensionFromFilename(files[index].name)
 
@@ -51,7 +68,6 @@ suspend inline fun <T> useFolderPageLoader(
 
                 override fun openSource(index: Int): ImageSource {
                     val path = files[index]
-                    // Lib HDR/SDR → Coil-ready file in DisplaySource.ensureReady (PageLoader).
                     return object : PathSource {
                         override val source = path
                         override val type by lazy {

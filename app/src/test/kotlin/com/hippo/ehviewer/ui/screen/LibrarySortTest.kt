@@ -159,6 +159,37 @@ class LibrarySortTest {
         assertEquals(listOf("a.jpg", "zeta.zip", "b.jpg"), sorted.map { it.title })
     }
 
+    @Test
+    fun allPhotosReaderStartsAtTappedPageAndSkipsArchives() {
+        val older = LocalGalleryEntity(
+            id = libraryImageFileId(1L, "b.jpg"),
+            rootId = 1L,
+            relativePath = "b.jpg",
+            title = "b.jpg",
+            kind = LOCAL_GALLERY_KIND_IMAGE_FILE,
+            pageCount = 0,
+            coverPath = "/sdcard/b.jpg",
+            contentPath = "/sdcard/b.jpg",
+            mtime = 10L,
+        )
+        val newer = LocalGalleryEntity(
+            id = libraryImageFileId(1L, "a.jpg"),
+            rootId = 1L,
+            relativePath = "a.jpg",
+            title = "a.jpg",
+            kind = LOCAL_GALLERY_KIND_IMAGE_FILE,
+            pageCount = 0,
+            coverPath = "/sdcard/a.jpg",
+            contentPath = "/sdcard/a.jpg",
+            mtime = 30L,
+        )
+        val archive = item(2, "zeta.zip", mtime = 20L, kind = LOCAL_GALLERY_KIND_ARCHIVE)
+        val visible = listOf(newer, archive, older)
+        val (paths, page) = allPhotosReaderStart(visible, older)
+        assertEquals(listOf("/sdcard/a.jpg", "/sdcard/b.jpg"), paths)
+        assertEquals(1, page)
+    }
+
     private fun item(
         id: Long,
         title: String,

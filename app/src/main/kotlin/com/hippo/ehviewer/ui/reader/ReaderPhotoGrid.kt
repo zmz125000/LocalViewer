@@ -21,6 +21,7 @@ import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOW
 import com.ehviewer.core.ui.component.FastScrollLazyVerticalGrid
 import com.hippo.ehviewer.gallery.ReaderSession
 import com.hippo.ehviewer.library.FolderSearch
+import com.hippo.ehviewer.library.ReaderImageList
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isPdfFileName
@@ -86,6 +87,7 @@ fun readerPhotoGridSheetMaxWidth(): Dp {
  */
 fun readerGallerySupportsPhotoGrid(args: ReaderScreenArgs): Boolean = when (args) {
     is ReaderScreenArgs.LocalFolder,
+    is ReaderScreenArgs.LocalImageList,
     is ReaderScreenArgs.LocalZipFolder,
     is ReaderScreenArgs.SmbFolder,
     is ReaderScreenArgs.WebDavFolder,
@@ -114,6 +116,7 @@ fun readerPdfCacheKey(args: ReaderScreenArgs): String? = when (args) {
 fun readerPageFileName(args: ReaderScreenArgs, pageLoader: ReaderSession, index: Int): String {
     val fromArgs = when (args) {
         is ReaderScreenArgs.LocalFolder -> args.imageNames.getOrNull(index)
+        is ReaderScreenArgs.LocalImageList -> ReaderImageList.paths.getOrNull(index)
         is ReaderScreenArgs.LocalZipFolder -> args.imageNames.getOrNull(index)
         is ReaderScreenArgs.SmbFolder -> args.imageNames.getOrNull(index)
         is ReaderScreenArgs.WebDavFolder -> args.imageNames.getOrNull(index)
@@ -133,6 +136,8 @@ fun readerPageCover(args: ReaderScreenArgs, fileName: String, index: Int = 0): B
     val base = name.substringAfterLast('/')
     return when (args) {
         is ReaderScreenArgs.LocalFolder -> BrowseCover.Local(args.path.toPath() / base)
+        is ReaderScreenArgs.LocalImageList ->
+            ReaderImageList.paths.getOrNull(index)?.let { BrowseCover.Local(it.toPath()) }
         is ReaderScreenArgs.LocalZipFolder -> {
             val member = ZipAsDirListing.joinPrefix(args.innerRel, name)
             BrowseCover.Local(ZipPaths.encodePath(args.zipPath, member))

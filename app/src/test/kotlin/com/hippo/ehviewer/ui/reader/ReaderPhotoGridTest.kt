@@ -12,6 +12,7 @@ class ReaderPhotoGridTest {
     @Test
     fun folderGalleriesSupportPhotoGrid() {
         assertTrue(readerGallerySupportsPhotoGrid(ReaderScreenArgs.LocalFolder("/sdcard/Album")))
+        assertTrue(readerGallerySupportsPhotoGrid(ReaderScreenArgs.LocalImageList(page = 3)))
         assertTrue(
             readerGallerySupportsPhotoGrid(
                 ReaderScreenArgs.LocalZipFolder("/sdcard/pack.zip", "Album", listOf("a.jpg")),

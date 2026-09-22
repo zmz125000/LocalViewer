@@ -112,6 +112,7 @@ import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaStoreFs
+import com.hippo.ehviewer.library.ReaderImageList
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isDocumentFileName
@@ -189,6 +190,16 @@ sealed interface ReaderScreenArgs {
         val info: BaseGalleryInfo? = null,
         /** Basenames from the browse listing; empty → resolve from folder index, else list. */
         val imageNames: List<String> = emptyList(),
+    ) : ReaderScreenArgs
+
+    /**
+     * Flattened All photos list. Paths live in [com.hippo.ehviewer.library.ReaderImageList]
+     * (not nav args). No [info] → no reading progress; start at [page].
+     */
+    @Serializable
+    data class LocalImageList(
+        val page: Int = 0,
+        val title: String = "",
     ) : ReaderScreenArgs
 
     /**
@@ -352,6 +363,7 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                 val loader = result.value
                 val info = when (args) {
                     is ReaderScreenArgs.LocalFolder -> args.info
+                    is ReaderScreenArgs.LocalImageList -> null
                     is ReaderScreenArgs.LocalZipFolder -> args.info
                     is ReaderScreenArgs.SmbFolder -> args.info
                     is ReaderScreenArgs.WebDavFolder -> args.info
@@ -468,6 +480,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     pages = args.info?.pages ?: 0,
                     info = args.info,
                 )
+                is ReaderScreenArgs.LocalImageList -> Unit
             }
         }
     }
@@ -955,6 +968,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                                         s.info?.let { LocalHistory.ensureGalleryForProgress(it) }
                                     }
                                 }
+                                is ReaderScreenArgs.LocalImageList -> Unit
                             }
                         }
                     }
@@ -1219,6 +1233,17 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
 
 context(_: Context, _: DialogState, nav: DestinationsNavigator)
 suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: suspend (ReaderSession) -> T) = when (args) {
+    is ReaderScreenArgs.LocalImageList -> {
+        val files = ReaderImageList.paths.map { it.toPath() }
+        check(files.isNotEmpty()) { "All photos list is empty" }
+        useFolderPageLoader(
+            files = files,
+            info = null,
+            startPage = args.page,
+            title = args.title.ifBlank { files.getOrNull(args.page)?.name ?: files.first().name },
+            block = block,
+        )
+    }
     is ReaderScreenArgs.LocalFolder -> {
         val info = args.info
         val page = when {

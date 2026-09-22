@@ -123,8 +123,7 @@ fun toggleLibraryPhotoMode() {
 }
 
 /** Zip-as-dir interiors stay as folder galleries when All photos flatten is on. */
-fun isZipAsDirLibraryFolder(item: LocalGalleryEntity): Boolean =
-    item.kind == LOCAL_GALLERY_KIND_FOLDER && ZipPaths.parseGallery(item.contentPath) != null
+fun isZipAsDirLibraryFolder(item: LocalGalleryEntity): Boolean = item.kind == LOCAL_GALLERY_KIND_FOLDER && ZipPaths.parseGallery(item.contentPath) != null
 
 fun filterLibraryItems(
     items: List<LocalGalleryEntity>,
@@ -173,6 +172,21 @@ fun libraryFlattenPhotos(
 ): Boolean = section == LibrarySection.Galleries &&
     photoMode == LibraryPhotoMode.Files &&
     items.any { it.kind == LOCAL_GALLERY_KIND_IMAGE_FILE }
+
+/**
+ * Date-sorted flatten pages for the All photos reader. Archives are skipped.
+ * [page] is the tapped image's index in that list.
+ */
+fun allPhotosReaderStart(
+    visibleItems: List<LocalGalleryEntity>,
+    tapped: LocalGalleryEntity,
+): Pair<List<String>, Int> {
+    val photos = visibleItems.filter { it.kind == LOCAL_GALLERY_KIND_IMAGE_FILE }
+    if (photos.isEmpty()) return listOf(tapped.contentPath) to 0
+    val page = photos.indexOfFirst { it.id == tapped.id }
+    if (page < 0) return listOf(tapped.contentPath) to 0
+    return photos.map { it.contentPath } to page
+}
 
 fun libraryItemLastOpenTime(item: LocalGalleryEntity, historyTimeByGid: Map<Long, Long>): Long {
     historyTimeByGid[item.id]?.takeIf { it > 0L }?.let { return it }

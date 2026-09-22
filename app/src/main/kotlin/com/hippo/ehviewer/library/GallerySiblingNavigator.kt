@@ -36,6 +36,7 @@ object GallerySiblingNavigator {
             is ReaderScreenArgs.SmbStreamArchive -> smbPathSibling(args.sourceId, args.remotePath, next)
             is ReaderScreenArgs.WebDavFolder -> webDavPathSibling(args.sourceId, args.remoteDir, next)
             is ReaderScreenArgs.WebDavStreamArchive -> webDavPathSibling(args.sourceId, args.remotePath, next)
+            is ReaderScreenArgs.LocalImageList -> null
         }
     }
 
