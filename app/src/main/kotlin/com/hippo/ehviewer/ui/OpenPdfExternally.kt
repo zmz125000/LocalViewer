@@ -1,16 +1,9 @@
 package com.hippo.ehviewer.ui
 
-import android.content.ActivityNotFoundException
-import android.content.ClipData
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.ehviewer.core.files.openFileDescriptor
-import com.ehviewer.core.i18n.R
-import com.ehviewer.core.util.logcat
 import com.ehviewer.core.util.withIOContext
-import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
@@ -30,7 +23,7 @@ import okio.Path.Companion.toPath
  * (spaces in tree ids like `Quick Share` make it worse). We open the PFD ourselves and
  * re-export via streamdoc.
  *
- * Tap-to-open in the in-app image PDF engine is unchanged; call this from long-press.
+ * Tap-to-open follows [Settings.pdfReaderMode]; call this for External / Open with.
  */
 object OpenPdfExternally {
     fun isPdf(name: String): Boolean = isPdfFileName(name)
@@ -44,7 +37,12 @@ object OpenPdfExternally {
      * which uses [com.ehviewer.core.files.toUri] to restore `content://` and rebuild
      * tree/document ids (spaces like `Quick Share`, multi-segment document paths).
      */
-    suspend fun openLocal(context: Context, pathStr: String, displayName: String = File(pathStr).name) {
+    suspend fun openLocal(
+        context: Context,
+        pathStr: String,
+        displayName: String = File(pathStr).name,
+        usePreferredReader: Boolean = true,
+    ) {
         val openPfd: () -> ParcelFileDescriptor = {
             val file = File(pathStr)
             // Real absolute file only — do not treat content:/… as File.
@@ -60,12 +58,12 @@ object OpenPdfExternally {
             }
             StreamDocumentRegistry.registerDirect(
                 displayName = displayName,
-                mimeType = "application/pdf",
+                mimeType = DefaultPdfReader.MIME_TYPE,
                 sizeBytes = sizeBytes,
                 openFileDescriptor = openPfd,
             )
         }
-        launchRegistered(context, token, displayName)
+        launchRegistered(context, token, displayName, usePreferredReader = usePreferredReader)
     }
 
     private suspend fun launchRegistered(
@@ -73,11 +71,12 @@ object OpenPdfExternally {
         token: String,
         displayName: String,
         networkStream: Boolean = false,
+        usePreferredReader: Boolean = true,
     ) {
         val uri = StreamDocumentProvider.uriFor(token, displayName)
         try {
             if (networkStream) requestStreamNotificationPermission(context)
-            launchView(context, uri, displayName)
+            DefaultPdfReader.startView(context, uri, displayName, usePreferredReader)
         } catch (e: Throwable) {
             StreamDocumentRegistry.remove(token)
             throw e
@@ -89,14 +88,16 @@ object OpenPdfExternally {
         sourceId: Long,
         remoteRelativeFile: String,
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        usePreferredReader: Boolean = true,
     ) {
         OpenFileExternally.openSmb(
             context = context,
             sourceId = sourceId,
             remoteRelativeFile = remoteRelativeFile,
             displayName = displayName,
-            mimeType = "application/pdf",
+            mimeType = DefaultPdfReader.MIME_TYPE,
             asFile = true,
+            usePreferredPlayer = usePreferredReader,
         )
     }
 
@@ -105,40 +106,42 @@ object OpenPdfExternally {
         sourceId: Long,
         remoteRelativeFile: String,
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        usePreferredReader: Boolean = true,
     ) {
         OpenFileExternally.openWebDav(
             context = context,
             sourceId = sourceId,
             remoteRelativeFile = remoteRelativeFile,
             displayName = displayName,
-            mimeType = "application/pdf",
+            mimeType = DefaultPdfReader.MIME_TYPE,
             asFile = true,
+            usePreferredPlayer = usePreferredReader,
         )
     }
 
-    private suspend fun launchView(context: Context, uri: Uri, displayName: String) {
-        val view = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/pdf")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            // Chooser may run in a new task when not started from an Activity base.
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            putExtra(Intent.EXTRA_TITLE, displayName)
-            // Without ClipData, FLAG_GRANT_READ_URI_PERMISSION is often ignored for the
-            // app the user picks in createChooser (streamdoc grant would not reach Drive).
-            clipData = ClipData.newRawUri(displayName, uri)
-        }
-        val title = context.getString(R.string.open_in_other_app)
-        val chooser = Intent.createChooser(view, title).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        withUIContext {
-            try {
-                context.startActivity(chooser)
-            } catch (e: ActivityNotFoundException) {
-                logcat("OpenPdfExternally", e)
-                error(context.getString(R.string.open_pdf_no_app))
-            }
-        }
+    suspend fun openInternalLocal(
+        context: Context,
+        pathStr: String,
+        displayName: String = File(pathStr).name,
+    ) {
+        OpenFileExternally.playPdfLocal(context, pathStr, displayName)
+    }
+
+    suspend fun openInternalSmb(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+    ) {
+        OpenFileExternally.playPdfSmb(context, sourceId, remoteRelativeFile, displayName)
+    }
+
+    suspend fun openInternalWebDav(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+    ) {
+        OpenFileExternally.playPdfWebDav(context, sourceId, remoteRelativeFile, displayName)
     }
 }

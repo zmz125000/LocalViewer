@@ -29,6 +29,7 @@ enum class BrowseOverflowKind {
     Gallery,
     Video,
     Webpage,
+    Pdf,
 }
 
 enum class BrowseOverflowPlacement {
@@ -141,6 +142,21 @@ fun BrowseItemOverflowButton(
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.browse_copy_url)) },
                         onClick = { run(actions.onCopyUrl) },
+                    )
+                    HorizontalDivider()
+                }
+                BrowseOverflowKind.Pdf -> {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.browse_image_reader)) },
+                        onClick = { run(actions.onRead) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.browse_pdf_reader)) },
+                        onClick = { run(actions.onPlay) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.browse_external_reader)) },
+                        onClick = { run(actions.onExternalPlayer) },
                     )
                     HorizontalDivider()
                 }

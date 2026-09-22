@@ -79,6 +79,13 @@
     <string name="settings_browse_folder_thumbs_summary">在瀏覽中為資料夾顯示封面縮圖（共用圖庫封面的縮圖快取）。</string>
     <string name="settings_use_media3_player">使用 Media3 播放器</string>
     <string name="settings_use_media3_player_summary">開啟：單擊應用內播放，長按外部應用。關閉：單擊外部應用，長按應用內播放。</string>
+    <string name="settings_pdf_reader">PDF 閱讀器</string>
+    <string name="settings_pdf_reader_summary">單擊開啟所選閱讀器。長按開啟外部應用；若預設是外部，則長按開啟圖片閱讀器。</string>
+    <string name="settings_pdf_reader_mode_image">圖片閱讀器</string>
+    <string name="settings_pdf_reader_mode_pdf">PDF 閱讀器</string>
+    <string name="settings_pdf_reader_mode_external">外部</string>
+    <string name="settings_default_pdf_reader">預設 PDF 應用</string>
+    <string name="settings_default_pdf_reader_none">找不到 PDF 應用</string>
     <string name="settings_open_html_with_browser">用瀏覽器開啟 HTML</string>
     <string name="settings_open_html_with_browser_summary">開啟：單擊 HTML 會啟動本機 HTTP 並開啟預設瀏覽器（提供整個資料夾）。關閉：當作一般檔案開啟。</string>
     <string name="settings_open_html_in_incognito">無痕模式開啟</string>
@@ -99,6 +106,9 @@
     <string name="browse_open_folder">開啟資料夾</string>
     <string name="browse_play">播放</string>
     <string name="browse_external_player">外部播放器</string>
+    <string name="browse_image_reader">圖片閱讀器</string>
+    <string name="browse_pdf_reader">PDF 閱讀器</string>
+    <string name="browse_external_reader">外部</string>
     <string name="browse_copy_url">複製連結</string>
     <string name="browse_share_via_http">透過 HTTP 分享</string>
     <string name="browse_http_share_copy">複製</string>
@@ -350,6 +360,8 @@
     <string name="refresh">重新整理</string>
     <string name="view_original">查看原圖</string>
     <string name="open_in_other_app">在其他應用程式中開啟</string>
+    <string name="pdf_reader_open_failed">無法開啟 PDF：%s</string>
+    <string name="pdf_reader_page">第 %1$d / %2$d 頁</string>
     <string name="stream_keepalive_channel">外部串流</string>
     <string name="stream_keepalive_channel_desc">其他應用讀取網路檔案時保持連線</string>
     <string name="stream_keepalive_title">正在向其他應用串流</string>

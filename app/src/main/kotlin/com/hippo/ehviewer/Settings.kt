@@ -151,6 +151,19 @@ object Settings : DataStorePreferences(null) {
     val defaultVideoPlayerComponent = stringPref("default_video_player_component", "")
 
     /**
+     * Tap PDF: 0 = image reader (default), 1 = built-in PDF reader, 2 = external app.
+     * Long-press opens External, or the image reader when External is selected.
+     * Settings → General.
+     */
+    val pdfReaderMode = intPref("pdf_reader_mode", 0)
+
+    /**
+     * Preferred external PDF app as flattened [android.content.ComponentName]
+     * (`package/class`). Empty = system chooser. Settings → General.
+     */
+    val defaultPdfReaderComponent = stringPref("default_pdf_reader_component", "")
+
+    /**
      * When true, external HTTP video open exposes **all** videos and subtitle files in the
      * current directory (playlist / next-prev friendly). When false (default), only the
      * opened video plus matching sidecar subs are published. Settings → General.
