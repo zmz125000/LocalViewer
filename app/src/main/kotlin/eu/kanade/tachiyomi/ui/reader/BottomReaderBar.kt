@@ -34,12 +34,14 @@ import eu.kanade.tachiyomi.ui.reader.setting.AutoRotateMode
 import eu.kanade.tachiyomi.ui.reader.setting.DecodeSizeType
 import eu.kanade.tachiyomi.ui.reader.setting.PreferenceType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import eu.kanade.tachiyomi.ui.reader.setting.ScaleFitCycle
 
 @Composable
 fun BottomReaderBar(
     onClickSettings: () -> Unit,
     containerColor: Color,
     onClickPhotoGrid: (() -> Unit)? = null,
+    showScaleFitCycle: Boolean = false,
 ) = FlexibleBottomAppBar(
     containerColor = containerColor,
     contentPadding = PaddingValues.Zero,
@@ -67,7 +69,16 @@ fun BottomReaderBar(
         imageVector = autoRotate.icon,
         contentDescription = stringResource(autoRotate.stringRes),
     )
-    // 3. Photo grid (folder / ZIP / PDF) or decode size
+    // 3. Fit width / height / screen — paged single-page only
+    if (showScaleFitCycle) {
+        val scaleFit by Settings.imageScaleType.collectAsState { ScaleFitCycle.fromPreference(it) }
+        ActionButton(
+            onClick = { Settings.imageScaleType.value = ScaleFitCycle.next(scaleFit.prefValue).prefValue },
+            imageVector = scaleFit.icon,
+            contentDescription = stringResource(scaleFit.stringRes),
+        )
+    }
+    // 4. Photo grid (folder / ZIP / PDF) or decode size
     if (onClickPhotoGrid != null) {
         ActionButton(
             onClick = onClickPhotoGrid,
@@ -86,7 +97,7 @@ fun BottomReaderBar(
             minMenuWidth = 160.dp,
         )
     }
-    // 4. Settings
+    // 5. Settings
     ActionButton(
         onClick = onClickSettings,
         imageVector = Icons.Outlined.Settings,
