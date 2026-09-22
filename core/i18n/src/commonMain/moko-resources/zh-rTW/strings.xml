@@ -666,6 +666,9 @@
     <string name="settings_privacy_clear_folder_index_cache">清除資料夾索引快取</string>
     <string name="settings_privacy_clear_folder_index_cache_summary">刪除本機與網路來源已儲存的資料夾列表。下次開啟時將重新掃描。</string>
     <string name="folder_index_cache_cleared">已清除資料夾索引快取</string>
+    <string name="settings_privacy_clear_cache">清除快取</string>
+    <string name="settings_privacy_clear_cache_summary">刪除應用程式快取資料夾中的全部檔案</string>
+    <string name="app_cache_cleared">已清除快取</string>
     <string name="download_service">下載服務</string>
     <string name="favorite_name">收藏圖庫</string>
     <string name="black_dark_theme">純黑深色主題</string>
