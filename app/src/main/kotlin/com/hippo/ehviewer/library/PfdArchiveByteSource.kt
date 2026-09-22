@@ -11,14 +11,23 @@ import java.io.IOException
  * (real files and SAF `content://` tree documents).
  *
  * Android FUSE (SAF, sdcardfs, AppFuse proxy descriptors) often rejects a single
- * multi-megabyte `pread` with EINVAL/EIO. Image-PDF streams are typically several
- * MiB, so reads are issued in FUSE-sized chunks and transient errors are retried.
+ * multi-megabyte `pread` with EINVAL/EIO, and a closed sibling fd can disconnect
+ * the mount (`ENOTCONN`). Image-PDF streams are typically several MiB, so reads
+ * are issued in FUSE-sized chunks, transient errors are retried, and a dead fd
+ * is reopened when [reopen] is provided.
  */
 class PfdArchiveByteSource(
-    private val pfd: ParcelFileDescriptor,
-    private val ownsPfd: Boolean = true,
+    private var pfd: ParcelFileDescriptor,
+    private var ownsPfd: Boolean = true,
+    private val reopen: (() -> ParcelFileDescriptor)? = null,
 ) : ArchiveByteSource {
     override val size: Long = pfd.statSize.coerceAtLeast(0L)
+    private val reopenLock = Any()
+
+    /** Take ownership of [pfd] so [close] and stale-fd reopen may close it. */
+    fun adoptPfd() {
+        ownsPfd = true
+    }
 
     override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
         if (len <= 0) return 0
@@ -29,13 +38,20 @@ class PfdArchiveByteSource(
         val want = minOf(len.toLong(), size - offset).toInt()
         var got = 0
         var chunkCap = PREAD_CHUNK
+        var reopened = false
         while (got < want) {
             val chunk = minOf(want - got, chunkCap)
             val n = try {
-                preadChunk(offset + got, buf, off + got, chunk)
+                synchronized(reopenLock) {
+                    preadChunk(pfd, offset + got, buf, off + got, chunk)
+                }
             } catch (e: ErrnoException) {
                 if (e.errno == OsConstants.EINVAL && chunkCap > FUSE_MAX_READ) {
                     chunkCap = FUSE_MAX_READ
+                    continue
+                }
+                if (!reopened && isStaleFd(e.errno) && reopenIfPossible()) {
+                    reopened = true
                     continue
                 }
                 throw IOException(
@@ -52,12 +68,18 @@ class PfdArchiveByteSource(
         return got
     }
 
-    private fun preadChunk(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+    private fun preadChunk(
+        current: ParcelFileDescriptor,
+        offset: Long,
+        buf: ByteArray,
+        off: Int,
+        len: Int,
+    ): Int {
         var attempt = 0
         var last: ErrnoException? = null
         while (attempt < MAX_RETRIES) {
             try {
-                val n = Os.pread(pfd.fileDescriptor, buf, off, len, offset)
+                val n = Os.pread(current.fileDescriptor, buf, off, len, offset)
                 return if (n < 0) -1 else n
             } catch (e: ErrnoException) {
                 last = e
@@ -83,8 +105,25 @@ class PfdArchiveByteSource(
         throw last ?: ErrnoException("pread", OsConstants.EIO)
     }
 
+    private fun isStaleFd(errno: Int): Boolean = errno == OsConstants.ENOTCONN ||
+        errno == OsConstants.EBADF ||
+        errno == OsConstants.EPIPE ||
+        errno == OsConstants.EIO
+
+    private fun reopenIfPossible(): Boolean {
+        val factory = reopen ?: return false
+        if (!ownsPfd) return false
+        val next = runCatching { factory() }.getOrNull() ?: return false
+        synchronized(reopenLock) {
+            val old = pfd
+            pfd = next
+            runCatching { old.close() }
+        }
+        return true
+    }
+
     override fun close() {
-        if (ownsPfd) runCatching { pfd.close() }
+        if (ownsPfd) synchronized(reopenLock) { runCatching { pfd.close() } }
     }
 
     private companion object {

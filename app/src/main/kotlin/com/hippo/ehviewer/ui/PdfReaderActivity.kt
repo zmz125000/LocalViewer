@@ -89,11 +89,13 @@ import com.hippo.ehviewer.gallery.NavigationKind
 import com.hippo.ehviewer.gallery.PdfRamPageLoader
 import com.hippo.ehviewer.gallery.ReaderNavigation
 import com.hippo.ehviewer.library.ArchiveByteSource
+import com.hippo.ehviewer.library.BlockCacheArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
+import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
@@ -134,6 +136,7 @@ import me.saket.telephoto.zoomable.ZoomLimit
 import me.saket.telephoto.zoomable.ZoomSpec
 import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.zoomable
+import okio.Path.Companion.toPath
 
 /**
  * Full-screen in-app PDF reader.
@@ -141,8 +144,8 @@ import me.saket.telephoto.zoomable.zoomable
  * Text / generic PDFs: [PdfRenderer] at the current zoom (vector drawing stays sharp).
  * Image / comic PDFs: native embedded bitmaps via [PdfImageEngine].
  *
- * Local: streamdoc content URI (seekable PFD). Network: same URI through
- * [StreamDocumentProvider] proxy FD (PDF sparse block cache).
+ * Local / SMB / WebDAV image PDFs read the origin [ArchiveByteSource] directly.
+ * Vector PDFs still use a streamdoc PFD with [PdfRenderer].
  */
 class PdfReaderActivity : AppCompatActivity() {
     private var doc by mutableStateOf<PdfDocumentModel?>(null)
@@ -214,12 +217,32 @@ class PdfReaderActivity : AppCompatActivity() {
         openJob = lifecycleScope.launch {
             var pfd: ParcelFileDescriptor? = null
             var opened: PdfDocumentModel? = null
+            var direct: ArchiveByteSource? = null
             try {
-                pfd = withContext(Dispatchers.IO) {
-                    runCatching { contentResolver.openFileDescriptor(uri, "r") }.getOrNull()
+                val cacheKey = pdfCacheKeyFromIntent(intent)
+                opened = withContext(Dispatchers.IO) {
+                    direct = runCatching { openDirectArchiveSource(intent, token) }
+                        .onFailure { logcat("PdfReader", it) }
+                        .getOrNull()
+                    val fromDirect = direct?.let { src ->
+                        tryOpenImagePdf(src, nextStart, cacheKey)
+                    }
+                    if (fromDirect != null) {
+                        direct = null
+                        return@withContext fromDirect
+                    }
+                    runCatching { direct?.close() }
+                    direct = null
+                    val descriptor = runCatching {
+                        contentResolver.openFileDescriptor(uri, "r")
+                    }.getOrNull()
+                    pfd = descriptor
+                    if (descriptor == null) return@withContext null
+                    val reopen = token?.let { StreamDocumentRegistry.get(it)?.openFileDescriptor }
+                    openPdfDocument(descriptor, nextStart, cacheKey, reopen)
                 }
-                val descriptor = pfd
-                if (descriptor == null) {
+                val model = opened
+                if (model == null) {
                     token?.let(StreamDocumentRegistry::remove)
                     error = getString(R.string.pdf_reader_open_failed, "descriptor")
                     return@launch
@@ -234,13 +257,9 @@ class PdfReaderActivity : AppCompatActivity() {
                 lastVisiblePage = nextStart
                 sourceArgs = nextArgs
                 error = null
-                val cacheKey = pdfCacheKeyFromIntent(intent)
-                opened = withContext(Dispatchers.IO) {
-                    openPdfDocument(descriptor, startPage, cacheKey)
-                }
                 pfd = null
-                doc = opened
-                imageLoader = (opened as? PdfDocumentModel.Images)?.let { images ->
+                doc = model
+                imageLoader = (model as? PdfDocumentModel.Images)?.let { images ->
                     PdfRamPageLoader(
                         scope = lifecycleScope,
                         engine = images.engine,
@@ -252,10 +271,13 @@ class PdfReaderActivity : AppCompatActivity() {
                 opened = null
             } catch (e: kotlinx.coroutines.CancellationException) {
                 pfd?.let { runCatching { it.close() } }
+                direct?.let { runCatching { it.close() } }
                 throw e
             } catch (e: Throwable) {
                 logcat("PdfReader", e)
                 pfd?.let { runCatching { it.close() } }
+                direct?.let { runCatching { it.close() } }
+                closeSession(removeToken = false)
                 token?.let(StreamDocumentRegistry::remove)
                 streamToken = null
                 error = getString(R.string.pdf_reader_open_failed, e.message ?: e.toString())
@@ -392,49 +414,79 @@ private fun pdfCacheKeyFromIntent(intent: Intent): String? {
     }
 }
 
+private fun openDirectArchiveSource(intent: Intent, token: String?): ArchiveByteSource? {
+    val entry = token?.let { StreamDocumentRegistry.get(it) }
+    entry?.openSource?.let { open ->
+        val raw = open()
+        val (blockSize, maxBlocks) = BlockCacheArchiveByteSource.forMimeType(
+            entry.mimeType,
+            entry.displayName,
+        )
+        return BlockCacheArchiveByteSource(
+            raw,
+            knownSize = entry.sizeBytes,
+            blockSize = blockSize,
+            maxBlocks = maxBlocks,
+        )
+    }
+    val local = intent.getStringExtra(PdfReaderActivity.EXTRA_LOCAL_PATH)?.takeIf { it.isNotBlank() }
+        ?: return null
+    return openLocalArchiveByteSource(local.toPath())
+}
+
+private fun tryOpenImagePdf(
+    source: ArchiveByteSource,
+    startPage: Int,
+    cacheKey: String?,
+): PdfDocumentModel.Images? {
+    val size = source.size
+    val kind = runCatching { PdfImageEngine.classify(source, size) }
+        .getOrDefault(PdfContentKind.Vector)
+    if (kind != PdfContentKind.Image) return null
+    val cached = cacheKey?.let { DocumentExtractCache.loadUsableIndex(it, size) }
+    val engine = if (cached != null) {
+        PdfImageEngine.openFromIndex(
+            source,
+            cached,
+            remoteSize = size,
+            progressive = true,
+        ) ?: PdfImageEngine.open(
+            source,
+            remoteSize = size,
+            coverOnly = false,
+            progressive = true,
+        )
+    } else {
+        PdfImageEngine.open(
+            source,
+            remoteSize = size,
+            coverOnly = false,
+            progressive = true,
+        )
+    }
+    if (engine == null || engine.ensureListedThrough(startPage.coerceAtLeast(0)) <= 0) {
+        runCatching { engine?.close() }
+        return null
+    }
+    logcat("PdfReader") {
+        "image PDF pages=${engine.pageCount} cached=${cached != null} " +
+            "structureComplete=${engine.structureComplete}"
+    }
+    return PdfDocumentModel.Images(engine, source)
+}
+
 private fun openPdfDocument(
     pfd: ParcelFileDescriptor,
     startPage: Int,
     cacheKey: String?,
+    reopenPfd: (() -> ParcelFileDescriptor)? = null,
 ): PdfDocumentModel {
-    val dup = runCatching { pfd.dup() }.getOrNull()
-    if (dup != null) {
-        val source = PfdArchiveByteSource(dup, ownsPfd = true)
-        val size = source.size
-        val kind = runCatching { PdfImageEngine.classify(source, size) }
-            .getOrDefault(PdfContentKind.Vector)
-        if (kind == PdfContentKind.Image) {
-            val cached = cacheKey?.let { DocumentExtractCache.loadUsableIndex(it, size) }
-            val engine = if (cached != null) {
-                PdfImageEngine.openFromIndex(
-                    source,
-                    cached,
-                    remoteSize = size,
-                    progressive = true,
-                ) ?: PdfImageEngine.open(
-                    source,
-                    remoteSize = size,
-                    coverOnly = false,
-                    progressive = true,
-                )
-            } else {
-                PdfImageEngine.open(
-                    source,
-                    remoteSize = size,
-                    coverOnly = false,
-                    progressive = true,
-                )
-            }
-            if (engine != null && engine.ensureListedThrough(startPage.coerceAtLeast(0)) > 0) {
-                logcat("PdfReader") {
-                    "image PDF pages=${engine.pageCount} cached=${cached != null} " +
-                        "structureComplete=${engine.structureComplete}"
-                }
-                runCatching { pfd.close() }
-                return PdfDocumentModel.Images(engine, source)
-            }
-        }
-        runCatching { source.close() }
+    // Do not dup()+close the original PFD: AppFuse/SAF FUSE tears down the
+    // connection when the original fd is closed (ENOTCONN on later preads).
+    val source = PfdArchiveByteSource(pfd, ownsPfd = false, reopen = reopenPfd)
+    tryOpenImagePdf(source, startPage, cacheKey)?.let { images ->
+        source.adoptPfd()
+        return images
     }
     val renderer = runCatching { PdfRenderer(pfd) }.getOrElse { e ->
         runCatching { pfd.close() }
