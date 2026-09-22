@@ -9,26 +9,38 @@ import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -38,9 +50,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -56,6 +70,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -64,6 +79,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.ehviewer.core.i18n.R
+import com.ehviewer.core.ui.util.rememberSystemUiController
+import com.ehviewer.core.ui.util.thenIf
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
@@ -72,6 +89,7 @@ import com.hippo.ehviewer.gallery.NavigationKind
 import com.hippo.ehviewer.gallery.PdfRamPageLoader
 import com.hippo.ehviewer.gallery.ReaderNavigation
 import com.hippo.ehviewer.library.ArchiveByteSource
+import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
@@ -80,6 +98,8 @@ import com.hippo.ehviewer.provider.StreamDocumentRegistry
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
 import com.hippo.ehviewer.ui.reader.NavigationOverlay
 import com.hippo.ehviewer.ui.reader.PagerItem
+import com.hippo.ehviewer.ui.reader.PendingReaderOpen
+import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import com.hippo.ehviewer.ui.reader.SettingsPager
 import com.hippo.ehviewer.ui.reader.doubleTapAction
 import com.hippo.ehviewer.ui.reader.readerSheetBox
@@ -133,6 +153,8 @@ class PdfReaderActivity : AppCompatActivity() {
     private var startPage by mutableStateOf(0)
     private var lastVisiblePage = 0
     private var openJob: Job? = null
+    private var sourceArgs by mutableStateOf<ReaderScreenArgs?>(null)
+    private val hopBusy = java.util.concurrent.atomic.AtomicBoolean(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -148,6 +170,8 @@ class PdfReaderActivity : AppCompatActivity() {
                 progressGid = progressGid,
                 onPageChanged = { lastVisiblePage = it },
                 onClose = { finish() },
+                onHopSibling = { next -> hopSibling(next) },
+                sourceArgs = sourceArgs,
             )
         }
     }
@@ -196,6 +220,7 @@ class PdfReaderActivity : AppCompatActivity() {
         progressGid = intent.getLongExtra(EXTRA_PROGRESS_GID, 0L)
         startPage = intent.getIntExtra(EXTRA_START_PAGE, 0).coerceAtLeast(0)
         lastVisiblePage = startPage
+        sourceArgs = readerArgsFromIntent(intent)
         error = null
         openJob?.cancel()
         openJob = lifecycleScope.launch {
@@ -246,11 +271,47 @@ class PdfReaderActivity : AppCompatActivity() {
         }
     }
 
+    private fun hopSibling(next: Boolean) {
+        val current = sourceArgs ?: return
+        if (!hopBusy.compareAndSet(false, true)) return
+        lifecycleScope.launch {
+            try {
+                val sibling = withContext(Dispatchers.IO) {
+                    runCatching { GallerySiblingNavigator.sibling(current, next) }.getOrNull()
+                } ?: return@launch
+                flushProgress()
+                if (OpenPdfBySettings.shouldRedirect(sibling)) {
+                    OpenPdfBySettings.open(this@PdfReaderActivity, sibling)
+                } else {
+                    PendingReaderOpen.offer(sibling)
+                    startActivity(
+                        Intent(this@PdfReaderActivity, MainActivity::class.java).apply {
+                            action = PendingReaderOpen.ACTION
+                            addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        },
+                    )
+                    finish()
+                }
+            } finally {
+                hopBusy.set(false)
+            }
+        }
+    }
+
     companion object {
         const val EXTRA_STREAM_TOKEN = "stream_token"
         const val EXTRA_TITLE = "title"
         const val EXTRA_PROGRESS_GID = "progress_gid"
         const val EXTRA_START_PAGE = "start_page"
+        const val EXTRA_SOURCE_KIND = "source_kind"
+        const val EXTRA_LOCAL_PATH = "local_path"
+        const val EXTRA_SOURCE_ID = "source_id"
+        const val EXTRA_REMOTE_PATH = "remote_path"
+
+        const val KIND_LOCAL = "local"
+        const val KIND_SMB = "smb"
+        const val KIND_WEBDAV = "webdav"
 
         fun intent(
             context: Context,
@@ -259,14 +320,48 @@ class PdfReaderActivity : AppCompatActivity() {
             streamToken: String,
             progressGid: Long = 0L,
             startPage: Int = 0,
+            sourceKind: String? = null,
+            localPath: String? = null,
+            sourceId: Long = 0L,
+            remotePath: String? = null,
         ): Intent = Intent(context, PdfReaderActivity::class.java).apply {
             setDataAndType(uri, DefaultPdfReader.MIME_TYPE)
             putExtra(EXTRA_STREAM_TOKEN, streamToken)
             putExtra(EXTRA_TITLE, title)
             putExtra(EXTRA_PROGRESS_GID, progressGid)
             putExtra(EXTRA_START_PAGE, startPage)
+            sourceKind?.let { putExtra(EXTRA_SOURCE_KIND, it) }
+            localPath?.let { putExtra(EXTRA_LOCAL_PATH, it) }
+            if (sourceId != 0L) putExtra(EXTRA_SOURCE_ID, sourceId)
+            remotePath?.let { putExtra(EXTRA_REMOTE_PATH, it) }
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+    }
+}
+
+private fun readerArgsFromIntent(intent: Intent): ReaderScreenArgs? {
+    val remote = intent.getStringExtra(PdfReaderActivity.EXTRA_REMOTE_PATH).orEmpty().trim('/')
+    val sourceId = intent.getLongExtra(PdfReaderActivity.EXTRA_SOURCE_ID, 0L)
+    return when (intent.getStringExtra(PdfReaderActivity.EXTRA_SOURCE_KIND)) {
+        PdfReaderActivity.KIND_LOCAL -> {
+            val path = intent.getStringExtra(PdfReaderActivity.EXTRA_LOCAL_PATH) ?: return null
+            ReaderScreenArgs.Archive(path)
+        }
+        PdfReaderActivity.KIND_SMB -> {
+            if (sourceId == 0L || remote.isEmpty()) {
+                null
+            } else {
+                ReaderScreenArgs.SmbStreamArchive(sourceId, remote)
+            }
+        }
+        PdfReaderActivity.KIND_WEBDAV -> {
+            if (sourceId == 0L || remote.isEmpty()) {
+                null
+            } else {
+                ReaderScreenArgs.WebDavStreamArchive(sourceId, remote)
+            }
+        }
+        else -> null
     }
 }
 
@@ -372,19 +467,48 @@ private fun PdfReaderScreen(
     progressGid: Long,
     onPageChanged: (Int) -> Unit,
     onClose: () -> Unit,
+    onHopSibling: (next: Boolean) -> Unit,
+    sourceArgs: ReaderScreenArgs?,
 ) {
     val pageCount = imageLoader?.size ?: (doc?.pageCount ?: 0)
     val initial = startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initial)
-    val currentPage by remember {
+    val currentPage by remember(imageLoader, doc) {
         derivedStateOf {
-            if (pageCount <= 0) 0 else listState.firstVisibleItemIndex + 1
+            val n = imageLoader?.size ?: (doc?.pageCount ?: 0)
+            if (n <= 0) 0 else (listState.firstVisibleItemIndex + 1).coerceIn(1, n)
         }
     }
     val scope = rememberCoroutineScope()
     val showSeekbar by Settings.showReaderSeekbar.collectAsState()
     val hideTopBar by Settings.readerHideTopBar.collectAsState()
     val showPageNumber by Settings.showPageNumber.collectAsState()
+    val fullscreen by Settings.fullscreen.collectAsState()
+    val cutoutShort by Settings.cutoutShort.collectAsState()
+    val keepScreenOn by Settings.keepScreenOn.collectAsState()
+    val uiController = rememberSystemUiController()
+    val appDarkTheme = isSystemInDarkTheme()
+    SideEffect {
+        uiController.statusBarDarkContentEnabled = appDarkTheme
+    }
+    DisposableEffect(uiController) {
+        uiController.showTransientSystemBarsBySwipe = true
+        if (Settings.fullscreen.value) {
+            uiController.isSystemBarsVisible = false
+        }
+        onDispose {
+            uiController.isSystemBarsVisible = true
+            uiController.showTransientSystemBarsBySwipe = false
+        }
+    }
+    LaunchedEffect(fullscreen, uiController) {
+        if (fullscreen) {
+            uiController.isSystemBarsVisible = false
+            uiController.showTransientSystemBarsBySwipe = true
+        } else {
+            uiController.isSystemBarsVisible = true
+        }
+    }
     val readingMode by Settings.readingMode.collectAsState { ReadingModeType.fromPreference(it) }
     val isWebtoon = ReadingModeType.isWebtoon(readingMode)
     val pagerNavigation by Settings.readerPagerNav.collectAsState()
@@ -424,8 +548,15 @@ private fun PdfReaderScreen(
     }
     var appbarVisible by remember { mutableStateOf(false) }
     val chromeVisible by rememberUpdatedState(appbarVisible)
+    LaunchedEffect(fullscreen) {
+        snapshotFlow { appbarVisible }.collect { visible ->
+            uiController.isSystemBarsVisible = visible || !fullscreen
+            uiController.showTransientSystemBarsBySwipe = true
+        }
+    }
     var suppressPageClick by remember { mutableStateOf(false) }
     var viewportPx by remember { mutableStateOf(IntSize.Zero) }
+    val hopSibling by rememberUpdatedState(onHopSibling)
     val doubleTap = remember(navigator, onClose, viewportPx) {
         doubleTapAction(
             isRtl = false,
@@ -433,8 +564,8 @@ private fun PdfReaderScreen(
                 Size(viewportPx.width.toFloat(), viewportPx.height.toFloat())
             },
             getNavigator = { navigator },
-            onPrevFolder = {},
-            onNextFolder = {},
+            onPrevFolder = { hopSibling(false) },
+            onNextFolder = { hopSibling(true) },
             onBack = onClose,
         )
     }
@@ -513,7 +644,18 @@ private fun PdfReaderScreen(
                 runCatching { EhDB.putReadProgress(progressGid, page) }
             }
     }
-    Box(modifier = Modifier.fillMaxSize().background(PageBackdrop)) {
+    val contentInsets = if (fullscreen) {
+        if (cutoutShort) WindowInsets() else WindowInsets.displayCutout
+    } else {
+        WindowInsets.systemBars
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(PageBackdrop)
+            .windowInsetsPadding(contentInsets)
+            .thenIf(keepScreenOn) { keepScreenOn() },
+    ) {
         when {
             error != null -> {
                 Box(
@@ -695,6 +837,49 @@ private fun PdfReaderScreen(
                     currentPage = currentPage,
                     totalPages = pageCount,
                     modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding(),
+                )
+            }
+        }
+        var showNextGalleryFab by remember { mutableStateOf(false) }
+        var hasNextGallery by remember { mutableStateOf(false) }
+        var lastTrackedPage by remember { mutableIntStateOf(currentPage) }
+        LaunchedEffect(sourceArgs) {
+            hasNextGallery = withContext(Dispatchers.IO) {
+                val current = sourceArgs
+                if (current == null) {
+                    false
+                } else {
+                    runCatching { GallerySiblingNavigator.sibling(current, next = true) }
+                        .getOrNull() != null
+                }
+            }
+        }
+        LaunchedEffect(Unit) {
+            snapshotFlow { Triple(currentPage, pageCount, hasNextGallery) }
+                .collect { (page, total, canNext) ->
+                    val prev = lastTrackedPage
+                    lastTrackedPage = page
+                    val onLast = total > 0 && page >= total
+                    showNextGalleryFab = when {
+                        page < prev -> false
+                        onLast && canNext -> true
+                        else -> false
+                    }
+                }
+        }
+        AnimatedVisibility(
+            visible = showNextGalleryFab && pageCount > 0 && currentPage >= pageCount,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(end = 16.dp, bottom = 16.dp),
+            enter = fadeIn() + scaleIn(),
+            exit = fadeOut() + scaleOut(),
+        ) {
+            FloatingActionButton(onClick = { hopSibling(true) }) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.NavigateNext,
+                    contentDescription = stringResource(R.string.go_to_next_gallery),
                 )
             }
         }

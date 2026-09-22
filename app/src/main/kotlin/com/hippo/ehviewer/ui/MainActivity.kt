@@ -138,6 +138,7 @@ import com.hippo.ehviewer.ui.main.BrowseSaveSnackbars
 import com.hippo.ehviewer.ui.main.HttpShareSnackbars
 import com.hippo.ehviewer.ui.main.awaitHttpShareQr
 import com.hippo.ehviewer.ui.navToReader
+import com.hippo.ehviewer.ui.reader.PendingReaderOpen
 import com.hippo.ehviewer.ui.screen.toggleLibrarySection
 import com.hippo.ehviewer.ui.settings.showNewVersion
 import com.hippo.ehviewer.ui.tools.DialogState
@@ -393,8 +394,17 @@ class MainActivity : AppCompatActivity() {
 
             val cannotParse = stringResource(R.string.error_cannot_parse_the_url)
             LaunchedEffect(Unit) {
+                fun openPendingReader() {
+                    PendingReaderOpen.take()?.let { args ->
+                        navigator.navigate(ReaderScreenDestination(args)) {
+                            launchSingleTop = true
+                        }
+                    }
+                }
+                openPendingReader()
                 intentFlow.collect { intent ->
                     when (intent.action) {
+                        PendingReaderOpen.ACTION -> openPendingReader()
                         Intent.ACTION_VIEW -> with(navigator) {
                             val uri = intent.data ?: return@collect
                             when (uri.scheme) {

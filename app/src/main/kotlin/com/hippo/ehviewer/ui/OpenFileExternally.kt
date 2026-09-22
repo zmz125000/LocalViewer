@@ -164,6 +164,8 @@ object OpenFileExternally {
             internalPdf = true,
             progressGid = progressGid,
             startPage = startPage,
+            pdfKind = PdfReaderActivity.KIND_LOCAL,
+            pdfLocalPath = pathStr,
         )
     }
 
@@ -337,6 +339,9 @@ object OpenFileExternally {
             internalPdf = true,
             progressGid = progressGid,
             startPage = startPage,
+            pdfKind = PdfReaderActivity.KIND_SMB,
+            pdfSourceId = sourceId,
+            pdfRemotePath = remoteRelativeFile,
         )
     }
 
@@ -364,6 +369,9 @@ object OpenFileExternally {
             internalPdf = true,
             progressGid = progressGid,
             startPage = startPage,
+            pdfKind = PdfReaderActivity.KIND_WEBDAV,
+            pdfSourceId = sourceId,
+            pdfRemotePath = remoteRelativeFile,
         )
     }
 
@@ -2045,6 +2053,10 @@ object OpenFileExternally {
         usePreferredPlayer: Boolean = true,
         progressGid: Long = 0L,
         startPage: Int = 0,
+        pdfKind: String? = null,
+        pdfLocalPath: String? = null,
+        pdfSourceId: Long = 0L,
+        pdfRemotePath: String? = null,
     ) {
         val uri = StreamDocumentProvider.uriFor(token, displayName)
         try {
@@ -2059,6 +2071,10 @@ object OpenFileExternally {
                     streamToken = token,
                     progressGid = progressGid,
                     startPage = startPage,
+                    sourceKind = pdfKind,
+                    localPath = pdfLocalPath,
+                    sourceId = pdfSourceId,
+                    remotePath = pdfRemotePath,
                 ).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
