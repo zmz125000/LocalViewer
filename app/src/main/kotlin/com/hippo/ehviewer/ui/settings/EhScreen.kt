@@ -23,6 +23,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.integerArrayResource
+import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.launch
@@ -150,9 +152,13 @@ fun AnimatedVisibilityScope.EhScreen(navigator: DestinationsNavigator) = Screen(
             )
             val context = LocalContext.current
             val pdfReaderMode = Settings.pdfReaderMode.asMutableState()
+            val pdfModeEntries = stringArrayResource(id = com.hippo.ehviewer.R.array.pdf_reader_mode_entries)
+            val pdfModeValues = integerArrayResource(id = com.hippo.ehviewer.R.array.pdf_reader_mode_values)
+            val pdfModeIndex = pdfModeValues.indexOf(pdfReaderMode.value).let { if (it >= 0) it else 0 }
+            val pdfModeLabel = pdfModeEntries.getOrElse(pdfModeIndex) { pdfModeEntries.firstOrNull().orEmpty() }
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_pdf_reader),
-                summary = stringResource(id = R.string.settings_pdf_reader_summary),
+                summary = stringResource(id = R.string.settings_pdf_reader_summary, pdfModeLabel),
                 entry = com.hippo.ehviewer.R.array.pdf_reader_mode_entries,
                 entryValueRes = com.hippo.ehviewer.R.array.pdf_reader_mode_values,
                 state = pdfReaderMode,

@@ -1001,12 +1001,26 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     }
                     // Stop this archive extract before replace so the next reader can
                     // preempt ArchiveAccess without waiting on solid decompress.
-                    runCatching { pageLoader.close() }
-                    // Replace current reader so back still returns to folder browser once
-                    nav.navigate(ReaderScreenDestination(sibling)) {
-                        launchSingleTop = true
-                        popUpTo(ReaderScreenDestination) {
-                            inclusive = true
+                    if (OpenPdfBySettings.shouldRedirect(sibling)) {
+                        runCatching { OpenPdfBySettings.open(context, sibling) }
+                            .onFailure { e ->
+                                snackbar(
+                                    context.getString(
+                                        R.string.pdf_reader_open_failed,
+                                        e.message ?: e.toString(),
+                                    ),
+                                )
+                                return@launch
+                            }
+                        runCatching { pageLoader.close() }
+                        nav.popBackStack()
+                    } else {
+                        runCatching { pageLoader.close() }
+                        nav.navigate(ReaderScreenDestination(sibling)) {
+                            launchSingleTop = true
+                            popUpTo(ReaderScreenDestination) {
+                                inclusive = true
+                            }
                         }
                     }
                 } finally {

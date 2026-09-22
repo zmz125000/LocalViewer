@@ -206,27 +206,35 @@ class PdfReaderActivity : AppCompatActivity() {
             }
             return
         }
-        val pfd = runCatching { contentResolver.openFileDescriptor(uri, "r") }.getOrNull()
-        if (pfd == null) {
-            token?.let(StreamDocumentRegistry::remove)
-            error = getString(R.string.pdf_reader_open_failed, "descriptor")
-            return
-        }
-        val oldToken = streamToken
-        closeSession(removeToken = false)
-        if (oldToken != null && oldToken != token) StreamDocumentRegistry.remove(oldToken)
-        streamToken = token
-        title = nextTitle.ifBlank { uri.lastPathSegment.orEmpty() }
-        progressGid = intent.getLongExtra(EXTRA_PROGRESS_GID, 0L)
-        startPage = intent.getIntExtra(EXTRA_START_PAGE, 0).coerceAtLeast(0)
-        lastVisiblePage = startPage
-        sourceArgs = readerArgsFromIntent(intent)
-        error = null
+        val nextGid = intent.getLongExtra(EXTRA_PROGRESS_GID, 0L)
+        val nextStart = intent.getIntExtra(EXTRA_START_PAGE, 0).coerceAtLeast(0)
+        val nextArgs = readerArgsFromIntent(intent)
         openJob?.cancel()
         openJob = lifecycleScope.launch {
+            var pfd: ParcelFileDescriptor? = null
             var opened: PdfDocumentModel? = null
             try {
-                opened = withContext(Dispatchers.IO) { openPdfDocument(pfd, startPage) }
+                pfd = withContext(Dispatchers.IO) {
+                    runCatching { contentResolver.openFileDescriptor(uri, "r") }.getOrNull()
+                }
+                val descriptor = pfd
+                if (descriptor == null) {
+                    token?.let(StreamDocumentRegistry::remove)
+                    error = getString(R.string.pdf_reader_open_failed, "descriptor")
+                    return@launch
+                }
+                val oldToken = streamToken
+                closeSession(removeToken = false)
+                if (oldToken != null && oldToken != token) StreamDocumentRegistry.remove(oldToken)
+                streamToken = token
+                title = nextTitle.ifBlank { uri.lastPathSegment.orEmpty() }
+                progressGid = nextGid
+                startPage = nextStart
+                lastVisiblePage = nextStart
+                sourceArgs = nextArgs
+                error = null
+                opened = withContext(Dispatchers.IO) { openPdfDocument(descriptor, startPage) }
+                pfd = null
                 doc = opened
                 imageLoader = (opened as? PdfDocumentModel.Images)?.let { images ->
                     PdfRamPageLoader(
@@ -238,11 +246,11 @@ class PdfReaderActivity : AppCompatActivity() {
                 }
                 opened = null
             } catch (e: kotlinx.coroutines.CancellationException) {
-                if (opened == null) runCatching { pfd.close() }
+                pfd?.let { runCatching { it.close() } }
                 throw e
             } catch (e: Throwable) {
                 logcat("PdfReader", e)
-                runCatching { pfd.close() }
+                pfd?.let { runCatching { it.close() } }
                 token?.let(StreamDocumentRegistry::remove)
                 streamToken = null
                 error = getString(R.string.pdf_reader_open_failed, e.message ?: e.toString())

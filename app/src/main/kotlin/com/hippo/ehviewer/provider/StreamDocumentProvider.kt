@@ -10,6 +10,7 @@ import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.os.ProxyFileDescriptorCallback
+import android.os.StrictMode
 import android.os.storage.StorageManager
 import android.provider.OpenableColumns
 import android.system.ErrnoException
@@ -69,6 +70,18 @@ class StreamDocumentProvider : ContentProvider() {
     }
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
+        // ContentProvider.openFile runs on a binder thread that inherits the caller's
+        // StrictMode. Local/SAF openFileDescriptor hits File.exists / File.length in
+        // ExternalStorageProvider; permit disk reads for the duration of this open.
+        val oldPolicy = StrictMode.allowThreadDiskReads()
+        try {
+            return openFileInner(uri, mode)
+        } finally {
+            StrictMode.setThreadPolicy(oldPolicy)
+        }
+    }
+
+    private fun openFileInner(uri: Uri, mode: String): ParcelFileDescriptor {
         if (!mode.startsWith("r")) {
             throw FileNotFoundException("StreamDocumentProvider is read-only (mode=$mode)")
         }

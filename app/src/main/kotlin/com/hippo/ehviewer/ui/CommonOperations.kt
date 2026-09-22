@@ -26,6 +26,7 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okio.Path
+import splitties.init.appCtx
 
 private fun removeNoMediaFile(downloadDir: Path) {
     (downloadDir / ".nomedia").delete()
@@ -115,7 +116,13 @@ fun navToWebDavStreamArchiveReader(
 ) = navToReader(ReaderScreenArgs.WebDavStreamArchive(sourceId, remotePath, page, info, skipPdfPrimary))
 
 context(nav: DestinationsNavigator)
-private fun navToReader(args: ReaderScreenArgs) = nav.navigate(ReaderScreenDestination(args)) { launchSingleTop = true }
+private fun navToReader(args: ReaderScreenArgs) {
+    if (OpenPdfBySettings.shouldRedirect(args)) {
+        OpenPdfBySettings.launch(appCtx, args)
+        return
+    }
+    nav.navigate(ReaderScreenDestination(args)) { launchSingleTop = true }
+}
 
 /**
  * Whether folder / photo-grid back should walk parent directories for this open.
