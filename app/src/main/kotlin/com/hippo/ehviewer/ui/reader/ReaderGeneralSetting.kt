@@ -65,6 +65,10 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         field = Settings.readerPhotoGrid.asMutableState(),
     )
     SwitchChoice(
+        title = stringResource(id = R.string.pref_reader_generate_page_thumb),
+        field = Settings.readerGeneratePageThumb.asMutableState(),
+    )
+    SwitchChoice(
         title = stringResource(id = R.string.pref_show_page_number),
         field = Settings.showPageNumber.asMutableState(),
     )

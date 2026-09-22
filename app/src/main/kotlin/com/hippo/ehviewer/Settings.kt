@@ -603,9 +603,15 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * Reader bottom bar: photo-grid button instead of decode size.
-     * Default on. Non-ZIP archives keep decode size either way.
+     * Default on. RAR / 7z / EPUB / TAR keep decode size either way.
      */
     val readerPhotoGrid = boolPref("pref_reader_photo_grid", true)
+
+    /**
+     * After a reader page decodes, write a 768px photo-grid thumb for later grid use.
+     * Default on.
+     */
+    val readerGeneratePageThumb = boolPref("pref_reader_generate_page_thumb", true)
 
     /** Last open tab in the reader settings bottom sheet (0=mode, 1=general, 2=filter). */
     val readerSettingsTab = intPref("pref_reader_settings_tab", 0)

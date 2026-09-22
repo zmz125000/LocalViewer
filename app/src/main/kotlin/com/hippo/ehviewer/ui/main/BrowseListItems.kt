@@ -76,6 +76,7 @@ import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
 import com.hippo.ehviewer.library.LocalLibrary
+import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipMemberCover
@@ -271,6 +272,23 @@ sealed class BrowseCover {
 
     /** Extracted PDF/EPUB page in [com.hippo.ehviewer.library.DocumentExtractCache]. */
     data class DocumentPage(val cacheKey: String, val index: Int) : BrowseCover()
+}
+
+/** Stable identity for [ReaderPageThumb] (reader photo-grid thumbs written after decode). */
+fun browseCoverThumbIdentity(cover: BrowseCover?): String? = when (cover) {
+    is BrowseCover.Local -> "local:${cover.path}"
+    is BrowseCover.DocumentPage -> "doc:${cover.cacheKey}:${cover.index}"
+    is BrowseCover.Smb -> "smb:${cover.sourceId}:${cover.remoteRelativeFile}"
+    is BrowseCover.WebDav -> "dav:${cover.sourceId}:${cover.remoteRelativeFile}"
+    is BrowseCover.SmbZipMember ->
+        "smbz:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}"
+    is BrowseCover.WebDavZipMember ->
+        "davz:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}"
+    is BrowseCover.LocalArchive,
+    is BrowseCover.SmbArchive,
+    is BrowseCover.WebDavArchive,
+    null,
+    -> null
 }
 
 /**
@@ -1298,6 +1316,15 @@ fun BrowseCoverThumb(
         downloadNetworkArchiveThumbs,
         allowRemoteFetch,
     ) {
+        val pageThumbId = browseCoverThumbIdentity(cover)
+        if (pageThumbId != null) {
+            val cached = withIOContext { ReaderPageThumb.find(pageThumbId) }
+            if (cached != null) {
+                localPath = cached
+                fetchFailed = false
+                return@LaunchedEffect
+            }
+        }
         when (cover) {
             is BrowseCover.Local -> {
                 // Reader photo-grid first frame: placeholders only. Browse passes
@@ -1657,25 +1684,29 @@ fun BrowseCoverThumb(
     // Disk thumbs are already ~768px JPEG (OriginDiskCache.THUMB_EDGE); Coil is a light second pass.
     val request = remember(cover, localPath, resolvedDecodePx) {
         localPath?.let { path ->
-            val cacheKey = when (cover) {
-                is BrowseCover.Smb ->
-                    "smb-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${SmbCache.THUMB_DISK_EDGE}"
-                is BrowseCover.WebDav ->
-                    "dav-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${WebDavCache.THUMB_DISK_EDGE}"
-                is BrowseCover.SmbArchive ->
-                    "smba-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${ArchiveCoverCache.THUMB_EDGE}"
-                is BrowseCover.WebDavArchive ->
-                    "dava-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${ArchiveCoverCache.THUMB_EDGE}"
-                is BrowseCover.LocalArchive ->
-                    "arch-thumb:${cover.archivePath}@${ArchiveCoverCache.THUMB_EDGE}"
-                is BrowseCover.SmbZipMember ->
-                    "smbz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${SmbCache.THUMB_DISK_EDGE}"
-                is BrowseCover.WebDavZipMember ->
-                    "davz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${WebDavCache.THUMB_DISK_EDGE}"
-                is BrowseCover.DocumentPage ->
-                    "doc-page:${cover.cacheKey}:${cover.index}@$resolvedDecodePx"
-                is BrowseCover.Local -> cover.path.toString()
-                null -> path.toString()
+            val cacheKey = if (ReaderPageThumb.isThumbPath(path)) {
+                "pgt:${browseCoverThumbIdentity(cover) ?: path}@$resolvedDecodePx"
+            } else {
+                when (cover) {
+                    is BrowseCover.Smb ->
+                        "smb-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${SmbCache.THUMB_DISK_EDGE}"
+                    is BrowseCover.WebDav ->
+                        "dav-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${WebDavCache.THUMB_DISK_EDGE}"
+                    is BrowseCover.SmbArchive ->
+                        "smba-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${ArchiveCoverCache.THUMB_EDGE}"
+                    is BrowseCover.WebDavArchive ->
+                        "dava-thumb:${cover.sourceId}:${cover.remoteRelativeFile}@${ArchiveCoverCache.THUMB_EDGE}"
+                    is BrowseCover.LocalArchive ->
+                        "arch-thumb:${cover.archivePath}@${ArchiveCoverCache.THUMB_EDGE}"
+                    is BrowseCover.SmbZipMember ->
+                        "smbz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${SmbCache.THUMB_DISK_EDGE}"
+                    is BrowseCover.WebDavZipMember ->
+                        "davz-thumb:${cover.sourceId}:${cover.zipRelativeFile}!${cover.memberRel}@${WebDavCache.THUMB_DISK_EDGE}"
+                    is BrowseCover.DocumentPage ->
+                        "doc-page:${cover.cacheKey}:${cover.index}@$resolvedDecodePx"
+                    is BrowseCover.Local -> cover.path.toString()
+                    null -> path.toString()
+                }
             }
             with(context) {
                 coverThumbRequest(

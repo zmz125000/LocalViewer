@@ -3,6 +3,7 @@ package com.hippo.ehviewer.ui.reader
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.ui.unit.dp
 import com.hippo.ehviewer.library.ZipPaths
+import com.hippo.ehviewer.ui.main.browseCoverThumbIdentity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -64,6 +65,27 @@ class ReaderPhotoGridTest {
         val page = cover as com.hippo.ehviewer.ui.main.BrowseCover.DocumentPage
         assertEquals("/sdcard/book.pdf", page.cacheKey)
         assertEquals(3, page.index)
+        assertEquals("doc:/sdcard/book.pdf:3", browseCoverThumbIdentity(cover))
+    }
+
+    @Test
+    fun pageThumbIdentityMatchesFolderAndRemoteCovers() {
+        val local = readerPageCover(ReaderScreenArgs.LocalFolder("/sdcard/Album"), "a.jpg", 0)
+        assertEquals("local:/sdcard/Album/a.jpg", browseCoverThumbIdentity(local))
+        val smb = readerPageCover(
+            ReaderScreenArgs.SmbFolder(1L, "Share/Album", listOf("b.jpg")),
+            "b.jpg",
+            0,
+        )
+        assertEquals("smb:1:Share/Album/b.jpg", browseCoverThumbIdentity(smb))
+        val zip = readerPageCover(
+            ReaderScreenArgs.LocalZipFolder("/sdcard/pack.zip", "Album", listOf("a.jpg")),
+            "a.jpg",
+        )
+        assertEquals(
+            "local:${ZipPaths.encodePath("/sdcard/pack.zip", "Album/a.jpg")}",
+            browseCoverThumbIdentity(zip),
+        )
     }
 
     @Test
