@@ -802,6 +802,8 @@
     <string name="pref_auto_rotate_cw">時計回り 90°</string>
     <string name="pref_auto_rotate_ccw">反時計回り 90°</string>
     <string name="pref_reader_photo_grid">フォトグリッド</string>
+    <string name="pref_reader_generate_page_thumb">ページサムネイルを生成</string>
+    <string name="pref_reader_generate_page_thumb_summary">ページ読み込み後にフォトグリッド用サムネイルを書き出す</string>
     <string name="pref_decode_size">デコードサイズ</string>
     <string name="pref_decode_size_1_5x">画面の 1.5×</string>
     <string name="pref_decode_size_2x">画面の 2×</string>

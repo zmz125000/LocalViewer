@@ -799,6 +799,8 @@
     <string name="pref_auto_rotate_cw">顺时针 90°</string>
     <string name="pref_auto_rotate_ccw">逆时针 90°</string>
     <string name="pref_reader_photo_grid">照片墙</string>
+    <string name="pref_reader_generate_page_thumb">生成页缩略图</string>
+    <string name="pref_reader_generate_page_thumb_summary">页面加载完成后生成照片墙缩略图，供稍后使用</string>
     <string name="pref_decode_size">解码尺寸</string>
     <string name="pref_decode_size_1_5x">1.5× 屏幕</string>
     <string name="pref_decode_size_2x">2× 屏幕</string>

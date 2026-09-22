@@ -90,6 +90,7 @@ import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.NavigationKind
 import com.hippo.ehviewer.gallery.Page
+import com.hippo.ehviewer.gallery.PageLoader
 import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.PasswdProvider
 import com.hippo.ehviewer.gallery.ReaderNavigation
@@ -128,6 +129,7 @@ import com.hippo.ehviewer.ui.OpenPdfBySettings
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.ReaderScreenDestination
 import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.main.browseCoverThumbIdentity
 import com.hippo.ehviewer.ui.theme.EhTheme
 import com.hippo.ehviewer.ui.tools.DialogState
 import com.hippo.ehviewer.ui.tools.awaitInputText
@@ -387,6 +389,17 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                 }
                 is Either.Right -> {
                     val loader = result.value
+                    if (loader is PageLoader && readerGallerySupportsPhotoGrid(args)) {
+                        loader.pageThumbIdentity = { index ->
+                            browseCoverThumbIdentity(
+                                readerPageCover(
+                                    args,
+                                    readerPageFileName(args, loader, index),
+                                    index,
+                                ),
+                            )
+                        }
+                    }
                     val info = when (args) {
                         is ReaderScreenArgs.LocalFolder -> args.info
                         is ReaderScreenArgs.LocalImageList -> null
@@ -404,6 +417,7 @@ fun AnimatedVisibilityScope.ReaderScreen(args: ReaderScreenArgs, navigator: Dest
                     // ArchiveAccess is not held after the reader leaves.
                     DisposableEffect(loader) {
                         onDispose {
+                            (loader as? PageLoader)?.pageThumbIdentity = null
                             runCatching { loader.close() }
                         }
                     }

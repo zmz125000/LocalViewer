@@ -25,7 +25,7 @@ import splitties.init.appCtx
  * Network folder index metadata is preserved across this image LRU, like archive
  * `index.json` files. Other folder layouts are unchanged (smb_cache, webdav_cache,
  * zip_folder_pages, archive_pages, solid_extract, document_extract, *_thumb_cache,
- * archive_thumb, video_thumb_cache).
+ * archive_thumb, video_thumb_cache, page_thumb).
  *
  * 1. **Origin pics** (reader pages + remote folder/archive files): one shared cap =
  *    [Settings.readCacheSize] (Advanced “image disk cache”). No per-store pool.
@@ -33,7 +33,7 @@ import splitties.init.appCtx
  *    [WebDavCache.isPageCachedOnDisk] and extract [touch]/includePages=true)] bump
  *    on access). Never protects “complete” archive caches. **Never deletes
  *    `index.json`** under extract dirs.
- * 2. **Thumbs** (SMB/WebDAV/archive/video covers): long edge [THUMB_EDGE], fixed
+ * 2. **Thumbs** (SMB/WebDAV/archive/video/page-grid covers): long edge [THUMB_EDGE], fixed
  *    [THUMB_BUDGET_BYTES] — separate from origin budget and settings.
  */
 object OriginDiskCache {
@@ -330,6 +330,7 @@ object OriginDiskCache {
         collectThumbFiles(cacheDir("archive_thumb"), candidates)
         // Video frames (local + network) — same shared byte budget as other covers.
         collectThumbFiles(cacheDir("video_thumb_cache"), candidates)
+        collectThumbFiles(cacheDir("page_thumb"), candidates)
 
         var total = candidates.sumOf { it.size }
         if (total <= THUMB_BUDGET_BYTES) return

@@ -6,6 +6,7 @@ import android.util.LruCache
 import androidx.compose.runtime.mutableIntStateOf
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.bracketCase
+import coil3.BitmapImage
 import com.ehviewer.core.files.sendTo
 import com.ehviewer.core.model.GalleryInfo
 import com.ehviewer.core.util.logcat
@@ -22,6 +23,7 @@ import com.hippo.ehviewer.image.hdr.classify
 import com.hippo.ehviewer.image.hdr.classifyPath
 import com.hippo.ehviewer.image.hdr.exportImageExtension
 import com.hippo.ehviewer.image.hdr.needsLibDecode
+import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
 import com.hippo.ehviewer.util.detectAds
@@ -203,6 +205,8 @@ abstract class PageLoader(
                 if (!commitDecodedImage(index, image, runningJob)) {
                     // Navigation changed or this job was replaced before publication.
                     image.unpin()
+                } else {
+                    schedulePhotoGridThumb(index, raw, image)
                 }
             },
             { src, case -> if (case !is ExitCase.Completed) src.close() },
@@ -231,6 +235,36 @@ abstract class PageLoader(
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
         val direct = LibDirectDecode.decode(raw, nameHint, maxEdge) ?: return null
         return Image.fromLibDirect(direct, raw)
+    }
+
+    /**
+     * Photo-grid thumb identity for [index], or null to skip.
+     * Set by the reader UI from [com.hippo.ehviewer.ui.main.browseCoverThumbIdentity].
+     */
+    @Volatile
+    var pageThumbIdentity: ((Int) -> String?)? = null
+
+    private fun schedulePhotoGridThumb(index: Int, source: ImageSource, image: Image) {
+        if (!Settings.readerGeneratePageThumb.value) return
+        val identity = pageThumbIdentity?.invoke(index) ?: return
+        val path = (source as? PathSource)?.source ?: exportFiles[index]
+        if (path != null) {
+            scope.launch(Dispatchers.IO) {
+                runCatching { ReaderPageThumb.ensureFromFile(identity, path) }
+            }
+            return
+        }
+        val bitmap = (image.innerImage as? BitmapImage)?.bitmap ?: return
+        if (!image.pin()) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                if (!bitmap.isRecycled) {
+                    runCatching { ReaderPageThumb.ensureFromBitmap(identity, bitmap) }
+                }
+            } finally {
+                image.unpin()
+            }
+        }
     }
 
     private val lock = ReentrantReadWriteLock()
