@@ -22,7 +22,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.yield
 import okio.Path
 
@@ -173,6 +172,9 @@ internal class PdfRamPageLoader(
         if (interactive) {
             engine.pauseDiscovery()
             discoveryJob.get()?.cancel()
+            backgroundJobs.forEach { idx ->
+                if (idx != index) extractJobs.owner(idx)?.cancel()
+            }
         }
         if (!interactive) backgroundJobs.add(index)
         val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
@@ -224,22 +226,16 @@ internal class PdfRamPageLoader(
 
     private suspend fun extractToRam(index: Int, interactive: Boolean) {
         if (ramPages.containsKey(index)) return
-        val waitForMutex = interactive || readyWaiters.containsKey(index)
-        if (!waitForMutex) {
-            if (interactivePending.isNotEmpty() ||
-                deferDocumentBackgroundWork(engine.structureComplete) ||
-                !extractMutex.tryLock()
-            ) {
-                return
-            }
-            try {
-                copyPageToRam(index)
-            } finally {
-                extractMutex.unlock()
-            }
+        val hasWaiter = readyWaiters.containsKey(index)
+        if (!interactive && !hasWaiter && deferDocumentBackgroundWork(engine.structureComplete)) {
             return
         }
-        extractMutex.withLock {
+        withDocumentParserAccess(
+            waitForParser = documentExtractWaitsForParser(interactive),
+            retryWhileIdle = !interactive && hasWaiter,
+            interactivePending = interactivePending,
+            extractMutex = extractMutex,
+        ) {
             copyPageToRam(index)
         }
     }

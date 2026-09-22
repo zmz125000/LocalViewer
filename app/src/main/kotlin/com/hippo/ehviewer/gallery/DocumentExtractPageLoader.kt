@@ -29,6 +29,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -393,6 +394,10 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                         // not pause: growTo → replan re-requests the current page.
                         progressiveEngine?.pauseDiscovery()
                         discoveryJob.get()?.cancel()
+                        // Freedom-slot extracts must not keep the 1-wide parser.
+                        backgroundJobs.forEach { idx ->
+                            if (idx != index) extractJobs[idx]?.cancel()
+                        }
                     }
                     if (!interactive) backgroundJobs.add(index)
                     val job = hostScope.launch(Dispatchers.IO) {
@@ -403,31 +408,20 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                 markReady(index)
                                 return@launch
                             }
-                            val waitForMutex = interactive || readyWaiters.containsKey(index)
-                            if (waitForMutex) {
-                                extractMutex.withLock {
-                                    ensureActive()
-                                    if (!probePageOnDisk(index)) {
-                                        engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
-                                    }
-                                }
-                            } else {
-                                // Opportunistic prefetch: never queue behind extract/index.
-                                if (interactivePending.isNotEmpty() ||
-                                    deferDocumentBackgroundWork(
-                                        progressiveEngine?.structureComplete ?: true,
-                                    ) ||
-                                    !extractMutex.tryLock()
-                                ) {
-                                    return@launch
-                                }
-                                try {
-                                    ensureActive()
-                                    if (interactivePending.isEmpty() && !probePageOnDisk(index)) {
-                                        engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
-                                    }
-                                } finally {
-                                    extractMutex.unlock()
+                            if (!interactive &&
+                                deferDocumentBackgroundWork(progressiveEngine?.structureComplete ?: true)
+                            ) {
+                                return@launch
+                            }
+                            withDocumentParserAccess(
+                                waitForParser = documentExtractWaitsForParser(interactive),
+                                retryWhileIdle = !interactive && readyWaiters.containsKey(index),
+                                interactivePending = interactivePending,
+                                extractMutex = extractMutex,
+                            ) {
+                                ensureActive()
+                                if (!probePageOnDisk(index)) {
+                                    engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
                                 }
                             }
                             if (probePageOnDisk(index)) {
@@ -611,6 +605,60 @@ internal const val PDF_INDEX_YIELD_MS = 16L
  */
 @PublishedApi
 internal fun deferDocumentBackgroundWork(structureComplete: Boolean): Boolean = !structureComplete
+
+/**
+ * Only the serial/viewport page may enqueue on [extractMutex].
+ *
+ * Decode-ahead used to wait whenever it had a UI waiter. kotlinx Mutex is FIFO, so
+ * that freedom-slot extract sat in front of the viewport and blocked the serial lane.
+ */
+@PublishedApi
+internal fun documentExtractWaitsForParser(interactive: Boolean): Boolean = interactive
+
+/**
+ * Take PdfParser without letting freedom-slot work occupy the mutex queue.
+ *
+ * [waitForParser]: viewport/serial — [Mutex.withLock].
+ * [retryWhileIdle]: decode-ahead with waiters — tryLock + yield while serial is pending.
+ * Else: one-shot prefetch; give up if the parser is busy.
+ */
+@PublishedApi
+internal suspend inline fun withDocumentParserAccess(
+    waitForParser: Boolean,
+    retryWhileIdle: Boolean,
+    interactivePending: Set<*>,
+    extractMutex: Mutex,
+    crossinline block: suspend () -> Unit,
+) {
+    if (waitForParser) {
+        extractMutex.withLock { block() }
+        return
+    }
+    while (true) {
+        currentCoroutineContext().ensureActive()
+        if (interactivePending.isNotEmpty()) {
+            if (!retryWhileIdle) return
+            delay(PDF_INDEX_YIELD_MS)
+            continue
+        }
+        if (!extractMutex.tryLock()) {
+            if (!retryWhileIdle) return
+            delay(PDF_INDEX_YIELD_MS)
+            continue
+        }
+        var done = false
+        try {
+            if (interactivePending.isEmpty()) {
+                block()
+                done = true
+            }
+        } finally {
+            extractMutex.unlock()
+        }
+        if (done || !retryWhileIdle) return
+        delay(PDF_INDEX_YIELD_MS)
+    }
+}
 
 /** Viewport (or original-size) pages may snatch the parser from discovery. */
 @PublishedApi
