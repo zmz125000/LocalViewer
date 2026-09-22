@@ -676,6 +676,9 @@
     <string name="settings_privacy_clear_folder_index_cache">フォルダーのインデックスキャッシュを消去</string>
     <string name="settings_privacy_clear_folder_index_cache_summary">ローカルおよびネットワークソースに保存したフォルダー一覧を削除します。次回開くときに再スキャンします。</string>
     <string name="folder_index_cache_cleared">フォルダーのインデックスキャッシュを消去しました</string>
+    <string name="settings_privacy_clear_cache">キャッシュを消去</string>
+    <string name="settings_privacy_clear_cache_summary">アプリのキャッシュフォルダ内のファイルをすべて削除します</string>
+    <string name="app_cache_cleared">キャッシュを消去しました</string>
     <string name="download_service">ダウンロードサービス</string>
     <string name="favorite_name">お気に入り</string>
     <string name="dark_theme">ダークテーマ</string>

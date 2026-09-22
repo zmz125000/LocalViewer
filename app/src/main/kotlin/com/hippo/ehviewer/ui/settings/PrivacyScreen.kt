@@ -28,6 +28,8 @@ import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.withIOContext
 import com.hippo.ehviewer.EhApplication.Companion.searchDatabase
+import com.hippo.ehviewer.EhApplication.Companion.thumbCache
+import com.hippo.ehviewer.EhApplication.Companion.thumbMemoryCache
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
@@ -38,6 +40,7 @@ import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.isAuthenticationSupported
 import com.hippo.ehviewer.ui.main.NavigationIcon
 import com.hippo.ehviewer.ui.screen.adaptiveTopAppBarColors
+import com.hippo.ehviewer.util.AppConfig
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -170,6 +173,15 @@ fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Sc
                     withIOContext { NetworkFolderIndexCache.clearAll() }
                     launchSnackbar(folderIndexCacheCleared)
                 }
+            }
+            val appCacheCleared = stringResource(id = R.string.app_cache_cleared)
+            WorkPreference(
+                title = stringResource(id = R.string.settings_privacy_clear_cache),
+            ) {
+                thumbMemoryCache.clear()
+                runCatching { thumbCache.clear() }
+                AppConfig.clearAppCacheFolders()
+                launchSnackbar(appCacheCleared)
             }
         }
     }

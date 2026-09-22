@@ -69,7 +69,7 @@ fun BottomReaderBar(
         imageVector = autoRotate.icon,
         contentDescription = stringResource(autoRotate.stringRes),
     )
-    // 3. Fit width / height / screen — paged single-page only
+    // 3. Fit width / height / screen — single page and dual no-gap
     if (showScaleFitCycle) {
         val scaleFit by Settings.imageScaleType.collectAsState { ScaleFitCycle.fromPreference(it) }
         ActionButton(

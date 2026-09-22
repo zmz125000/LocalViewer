@@ -527,6 +527,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val cutoutShort by Settings.cutoutShort.collectAsState()
     val keepScreenOn by Settings.keepScreenOn.collectAsState()
     val dualPagePref by Settings.dualPageLandscape.collectAsState()
+    val dualPageGap by Settings.dualPageGap.collectAsState()
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val dualActive = dualPageActive(dualPagePref, isLandscape)
     val pagerDual = isPagerDual(dualActive, readingMode)
@@ -1189,7 +1190,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             } else {
                 null
             },
-            showScaleFitCycle = !pagerDual && !isWebtoon,
+            showScaleFitCycle = !isWebtoon && (!pagerDual || !dualPageGap),
         )
         if (photoGridOpen) {
             val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)

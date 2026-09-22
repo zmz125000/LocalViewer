@@ -677,6 +677,9 @@
     <string name="settings_privacy_clear_folder_index_cache">清除文件夹索引缓存</string>
     <string name="settings_privacy_clear_folder_index_cache_summary">删除本地和网络来源已保存的文件夹列表。下次打开时将重新扫描。</string>
     <string name="folder_index_cache_cleared">已清除文件夹索引缓存</string>
+    <string name="settings_privacy_clear_cache">清除缓存</string>
+    <string name="settings_privacy_clear_cache_summary">删除应用缓存目录中的全部文件</string>
+    <string name="app_cache_cleared">已清除缓存</string>
     <string name="download_service">下载服务</string>
     <string name="favorite_name">收藏画廊</string>
     <string name="black_dark_theme">纯黑深色主题</string>
