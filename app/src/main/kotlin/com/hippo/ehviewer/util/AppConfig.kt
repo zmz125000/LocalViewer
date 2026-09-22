@@ -116,4 +116,16 @@ object AppConfig {
         get() = (appCtx.cacheDir.toOkioPath() / TEMP).apply { check(ensureDirectory()) }
     val externalTempDir
         get() = appCtx.externalCacheDir?.toOkioPath()?.let { it / TEMP }?.apply { check(ensureDirectory()) }
+
+    /** Delete every file under internal and external [android.content.Context.getCacheDir] folders. */
+    fun clearAppCacheFolders() {
+        fun wipe(dir: File?) {
+            if (dir == null || !dir.isDirectory) return
+            dir.listFiles()?.forEach { child ->
+                runCatching { child.deleteRecursively() }
+            }
+        }
+        wipe(appCtx.cacheDir)
+        appCtx.externalCacheDirs.forEach(::wipe)
+    }
 }
