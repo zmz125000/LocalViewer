@@ -9,11 +9,13 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavBackStackEntry
+import com.ehviewer.core.ui.util.LocalWindowSizeClass
 import com.ehviewer.core.ui.util.ProvideVectorPainterCache
 import com.hippo.ehviewer.ui.destinations.BrowseScreenDestination
 import com.hippo.ehviewer.ui.destinations.HistoryScreenDestination
@@ -38,7 +40,11 @@ inline fun ComponentActivity.setMD3Content(crossinline content: @Composable Dial
         ProvidePreferenceTheme(theme) {
             ProvideVectorPainterCache {
                 val dialogState = remember { DialogState() }
-                CompositionLocalProvider(LocalGlobalDialogState provides dialogState) {
+                val windowSizeClass = currentWindowAdaptiveInfoV2().windowSizeClass
+                CompositionLocalProvider(
+                    LocalGlobalDialogState provides dialogState,
+                    LocalWindowSizeClass provides windowSizeClass,
+                ) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         content(dialogState)
                         dialogState.Place()
