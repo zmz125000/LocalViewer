@@ -63,6 +63,24 @@ fun fitSpreadSize(combinedAspect: Float, viewport: Size): Size {
     }
 }
 
+/**
+ * Pixel size of a no-gap spread: pages share the taller decoded height, widths from aspect.
+ * [left]/[right] are decoded sizes; a side with aspect 0 is absent.
+ * [Size.Zero] if neither page has a decoded height yet.
+ */
+fun unscaledSpreadSize(
+    left: Size?,
+    right: Size?,
+    leftAspect: Float,
+    rightAspect: Float,
+): Size {
+    val h = maxOf(left?.height ?: 0f, right?.height ?: 0f)
+    if (h <= 0f) return Size.Zero
+    val lw = if (leftAspect > 0f) h * leftAspect else 0f
+    val rw = if (rightAspect > 0f) h * rightAspect else 0f
+    return Size((lw + rw).coerceAtLeast(1f), h)
+}
+
 /** Screen-X of the gutter between left and right pages for a centered no-gap spread. */
 fun spreadGutterX(leftAspect: Float, rightAspect: Float, viewport: Size): Float {
     val left = leftAspect.coerceAtLeast(MIN_SPREAD_ASPECT)

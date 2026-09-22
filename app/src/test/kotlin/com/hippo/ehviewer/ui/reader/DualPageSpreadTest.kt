@@ -25,6 +25,35 @@ class DualPageSpreadTest {
     }
 
     @Test
+    fun `unscaled pair is height-aligned`() {
+        val size = unscaledSpreadSize(
+            left = Size(1400f, 2000f),
+            right = Size(1400f, 2000f),
+            leftAspect = 0.7f,
+            rightAspect = 0.7f,
+        )
+        assertEquals(2800f, size.width, 0.5f)
+        assertEquals(2000f, size.height, 0.01f)
+    }
+
+    @Test
+    fun `unscaled solo is the one decoded page`() {
+        val size = unscaledSpreadSize(
+            left = Size(1400f, 2000f),
+            right = null,
+            leftAspect = 0.7f,
+            rightAspect = 0f,
+        )
+        assertEquals(1400f, size.width, 0.5f)
+        assertEquals(2000f, size.height, 0.01f)
+    }
+
+    @Test
+    fun `unscaled waits for a decoded height`() {
+        assertEquals(Size.Zero, unscaledSpreadSize(null, null, 0.7f, 0.7f))
+    }
+
+    @Test
     fun `gutter is left of center when left page is narrower`() {
         val viewport = Size(1920f, 1080f)
         val gutter = spreadGutterX(leftAspect = 0.5f, rightAspect = 0.9f, viewport = viewport)
