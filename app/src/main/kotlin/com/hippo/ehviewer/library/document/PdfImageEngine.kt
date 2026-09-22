@@ -5,6 +5,7 @@ import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.util.zip.Inflater
 import okio.Path
 
@@ -149,42 +150,56 @@ class PdfImageEngine private constructor(
     fun extractBytes(index: Int): ByteArray? {
         val ref = synchronized(pagesLock) { pages.getOrNull(index) } ?: return null
         return synchronized(parserLock) {
-            val effectiveRef = if (!ref.hasSeek) {
-                val offset = parser.locateStreamDataOffset(ref.objNum) ?: -1L
-                if (offset >= 0L) {
-                    ref.copy(streamOffset = offset).also { updated ->
-                        synchronized(pagesLock) {
-                            if (index < pages.size && pages[index].objNum == ref.objNum) {
-                                pages[index] = updated
-                            }
+            var lastIo: IOException? = null
+            repeat(EXTRACT_IO_ATTEMPTS) { attempt ->
+                try {
+                    return@synchronized extractBytesLocked(ref, index)
+                } catch (e: IOException) {
+                    lastIo = e
+                    logcat("PdfImage", e)
+                    if (attempt == EXTRACT_IO_ATTEMPTS - 1) throw e
+                }
+            }
+            throw lastIo ?: return@synchronized null
+        }
+    }
+
+    private fun extractBytesLocked(ref: ImageRef, index: Int): ByteArray? {
+        val effectiveRef = if (!ref.hasSeek) {
+            val offset = parser.locateStreamDataOffset(ref.objNum) ?: -1L
+            if (offset >= 0L) {
+                ref.copy(streamOffset = offset).also { updated ->
+                    synchronized(pagesLock) {
+                        if (index < pages.size && pages[index].objNum == ref.objNum) {
+                            pages[index] = updated
                         }
                     }
-                } else {
-                    ref
                 }
             } else {
                 ref
             }
-            if (effectiveRef.hasSeek) {
-                when (
-                    val direct = parser.extractImageBytesAt(
-                        effectiveRef.streamOffset,
-                        effectiveRef.streamLen,
-                        effectiveRef.objNum,
-                        effectiveRef.gen,
-                    )
-                ) {
-                    is PdfParser.DirectExtractResult.Success -> direct.bytes
-                    PdfParser.DirectExtractResult.RetryWithXref -> {
-                        // A stale/old index may lack enough object metadata. Rebuild once;
-                        // transport failures deliberately do not trigger a duplicate fetch.
-                        if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
-                    }
-                    PdfParser.DirectExtractResult.Failed -> null
+        } else {
+            ref
+        }
+        return if (effectiveRef.hasSeek) {
+            when (
+                val direct = parser.extractImageBytesAt(
+                    effectiveRef.streamOffset,
+                    effectiveRef.streamLen,
+                    effectiveRef.objNum,
+                    effectiveRef.gen,
+                )
+            ) {
+                is PdfParser.DirectExtractResult.Success -> direct.bytes
+                PdfParser.DirectExtractResult.RetryWithXref -> {
+                    // A stale/old index may lack enough object metadata. Rebuild once;
+                    // transport failures deliberately do not trigger a duplicate fetch.
+                    if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
                 }
-            } else {
-                if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
+                PdfParser.DirectExtractResult.Failed -> null
             }
+        } else {
+            if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
         }
     }
 
@@ -322,6 +337,7 @@ class PdfImageEngine private constructor(
         private const val MAX_COVER_SCAN_PAGES = 16
         private const val MAX_PAGES = 100_000
         private const val CLASSIFY_PAGES = 8
+        private const val EXTRACT_IO_ATTEMPTS = 2
     }
 }
 
@@ -1787,8 +1803,25 @@ internal class PdfParser(
         val buf = ByteArray(n)
         var got = 0
         var calls = 0
-        while (got < n && calls++ < MAX_READ_CALLS) {
-            val r = source.readAt(offset + got, buf, got, n - got)
+        var ioFails = 0
+        var lastIo: IOException? = null
+        // Image streams are often tens of MiB. FUSE/SMB adapters return 64–128 KiB
+        // per call, so a hard cap of 8 would abort a full-page JPEG mid-payload.
+        val maxCalls = if (requireFull) {
+            maxOf(MAX_READ_CALLS, (n + SHORT_READ_BYTES - 1) / SHORT_READ_BYTES + MAX_READ_CALLS)
+        } else {
+            MAX_READ_CALLS
+        }
+        while (got < n && calls++ < maxCalls) {
+            val r = try {
+                source.readAt(offset + got, buf, got, n - got)
+            } catch (e: IOException) {
+                lastIo = e
+                if (++ioFails >= IO_FAIL_RETRIES) throw e
+                continue
+            }
+            lastIo = null
+            ioFails = 0
             if (r <= 0) break
             // Broken adapters must not advance beyond the requested destination range.
             if (r > n - got) return null
@@ -1799,12 +1832,15 @@ internal class PdfParser(
         } else if (got > 0 && !requireFull) {
             buf.copyOf(got)
         } else {
+            lastIo?.let { throw it }
             null
         }
     }
 
     private companion object {
         const val MAX_READ_CALLS = 8
+        const val SHORT_READ_BYTES = 64 * 1024
+        const val IO_FAIL_RETRIES = 3
         const val MAX_XREF_SECTIONS = 64
         const val MAX_COVER_SCAN_PAGES = 16
         const val MAX_PAGES = 100_000

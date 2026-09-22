@@ -649,6 +649,7 @@ suspend inline fun <T> useLocalDocumentExtractPageLoader(
         hasAds = hasAds,
         remoteSize = runCatching { source.size }.getOrDefault(0L),
         localPathForLibrary = pathStr,
+        progressivePdf = format == "pdf",
         block = block,
     )
 }

@@ -89,6 +89,7 @@ import com.hippo.ehviewer.gallery.NavigationKind
 import com.hippo.ehviewer.gallery.PdfRamPageLoader
 import com.hippo.ehviewer.gallery.ReaderNavigation
 import com.hippo.ehviewer.library.ArchiveByteSource
+import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.GallerySiblingNavigator
 import com.hippo.ehviewer.library.PfdArchiveByteSource
 import com.hippo.ehviewer.library.document.PdfContentKind
@@ -233,7 +234,10 @@ class PdfReaderActivity : AppCompatActivity() {
                 lastVisiblePage = nextStart
                 sourceArgs = nextArgs
                 error = null
-                opened = withContext(Dispatchers.IO) { openPdfDocument(descriptor, startPage) }
+                val cacheKey = pdfCacheKeyFromIntent(intent)
+                opened = withContext(Dispatchers.IO) {
+                    openPdfDocument(descriptor, startPage, cacheKey)
+                }
                 pfd = null
                 doc = opened
                 imageLoader = (opened as? PdfDocumentModel.Images)?.let { images ->
@@ -242,6 +246,7 @@ class PdfReaderActivity : AppCompatActivity() {
                         engine = images.engine,
                         titleHint = title,
                         startPage = startPage,
+                        cacheKey = cacheKey,
                     )
                 }
                 opened = null
@@ -373,7 +378,25 @@ private fun readerArgsFromIntent(intent: Intent): ReaderScreenArgs? {
     }
 }
 
-private fun openPdfDocument(pfd: ParcelFileDescriptor, startPage: Int): PdfDocumentModel {
+private fun pdfCacheKeyFromIntent(intent: Intent): String? {
+    val remote = intent.getStringExtra(PdfReaderActivity.EXTRA_REMOTE_PATH).orEmpty().trim('/')
+    val sourceId = intent.getLongExtra(PdfReaderActivity.EXTRA_SOURCE_ID, 0L)
+    return when (intent.getStringExtra(PdfReaderActivity.EXTRA_SOURCE_KIND)) {
+        PdfReaderActivity.KIND_LOCAL ->
+            intent.getStringExtra(PdfReaderActivity.EXTRA_LOCAL_PATH)?.takeIf { it.isNotBlank() }
+        PdfReaderActivity.KIND_SMB ->
+            if (sourceId != 0L && remote.isNotEmpty()) "smb:$sourceId:$remote" else null
+        PdfReaderActivity.KIND_WEBDAV ->
+            if (sourceId != 0L && remote.isNotEmpty()) "webdav:$sourceId:$remote" else null
+        else -> intent.getStringExtra(PdfReaderActivity.EXTRA_LOCAL_PATH)?.takeIf { it.isNotBlank() }
+    }
+}
+
+private fun openPdfDocument(
+    pfd: ParcelFileDescriptor,
+    startPage: Int,
+    cacheKey: String?,
+): PdfDocumentModel {
     val dup = runCatching { pfd.dup() }.getOrNull()
     if (dup != null) {
         val source = PfdArchiveByteSource(dup, ownsPfd = true)
@@ -381,14 +404,32 @@ private fun openPdfDocument(pfd: ParcelFileDescriptor, startPage: Int): PdfDocum
         val kind = runCatching { PdfImageEngine.classify(source, size) }
             .getOrDefault(PdfContentKind.Vector)
         if (kind == PdfContentKind.Image) {
-            val engine = PdfImageEngine.open(
-                source,
-                remoteSize = size,
-                coverOnly = false,
-                progressive = true,
-            )
+            val cached = cacheKey?.let { DocumentExtractCache.loadUsableIndex(it, size) }
+            val engine = if (cached != null) {
+                PdfImageEngine.openFromIndex(
+                    source,
+                    cached,
+                    remoteSize = size,
+                    progressive = true,
+                ) ?: PdfImageEngine.open(
+                    source,
+                    remoteSize = size,
+                    coverOnly = false,
+                    progressive = true,
+                )
+            } else {
+                PdfImageEngine.open(
+                    source,
+                    remoteSize = size,
+                    coverOnly = false,
+                    progressive = true,
+                )
+            }
             if (engine != null && engine.ensureListedThrough(startPage.coerceAtLeast(0)) > 0) {
-                logcat("PdfReader") { "image PDF pages=${engine.pageCount}" }
+                logcat("PdfReader") {
+                    "image PDF pages=${engine.pageCount} cached=${cached != null} " +
+                        "structureComplete=${engine.structureComplete}"
+                }
                 runCatching { pfd.close() }
                 return PdfDocumentModel.Images(engine, source)
             }

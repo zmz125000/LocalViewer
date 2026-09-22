@@ -3956,20 +3956,29 @@ internal fun planSmbNetworkPathChange(
 
 /**
  * smbj [com.hierynomus.smbj.share.Share] throws [com.hierynomus.smbj.common.SMBRuntimeException]
- * ("DiskShare has already been closed") when a cached tree was closed but left in the pool map.
+ * with `getClass().getSimpleName() + " has already been closed"` when a cached tree was
+ * closed but left in the pool map. Release builds R8-rename DiskShare (e.g. `Rk1`), so
+ * do **not** require the literal "DiskShare" / "Share" in the text.
+ *
+ * [com.hierynomus.smbj.share.File] uses "File has already been closed" — that is a
+ * handle abort, not pooled session death ([isFileHandleAbortError]).
  */
 private fun isShareClosedError(t: Throwable): Boolean {
-    var cur: Throwable? = t
-    while (cur != null) {
-        val msg = cur.message.orEmpty()
-        if (msg.contains("has already been closed", ignoreCase = true) &&
-            (msg.contains("DiskShare", ignoreCase = true) || msg.contains("Share", ignoreCase = true))
-        ) {
-            return true
+    fun chain(start: Throwable?): Boolean {
+        var cur: Throwable? = start
+        while (cur != null) {
+            val msg = cur.message.orEmpty()
+            if (msg.contains("has already been closed", ignoreCase = true) &&
+                !msg.contains("file has already been closed", ignoreCase = true)
+            ) {
+                return true
+            }
+            cur = cur.cause
         }
-        cur = cur.cause
+        return false
     }
-    return false
+    if (chain(t)) return true
+    return t.suppressed.any(::chain)
 }
 
 /**
