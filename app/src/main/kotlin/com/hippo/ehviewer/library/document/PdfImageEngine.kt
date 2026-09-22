@@ -38,34 +38,54 @@ class PdfImageEngine private constructor(
     }
 
     /**
+     * Protects [pages] / [cursorImageIndex] only. Must never be held across parser I/O,
+     * or reader UI (`pageCount` / `extOf` / `growTo` → replan) freezes during a tree walk.
+     */
+    private val pagesLock = Any()
+
+    /**
      * Serializes all [PdfParser] access. The parser's xref / object cache / cursor
      * are not concurrent-safe, and the underlying [ArchiveByteSource] may not be either.
+     * Never acquire [pagesLock] and then wait for this lock (deadlock with extract).
      */
-    private val discoveryLock = Any()
+    private val parserLock = Any()
 
     @Volatile
     private var discoveryStopped = false
+
+    @Volatile
+    private var discoveryPaused = false
 
     @Volatile
     private var structureCompleteState = structureComplete
     private var cursorImageIndex = 0
 
     override val pageCount: Int
-        get() = synchronized(discoveryLock) { pages.size }
+        get() = synchronized(pagesLock) { pages.size }
 
     override val structureComplete: Boolean
         get() = structureCompleteState
 
-    override fun extOf(index: Int): String? = synchronized(discoveryLock) {
+    override fun extOf(index: Int): String? = synchronized(pagesLock) {
         pages.getOrNull(index)?.ext
     }
 
     /** File offset of page image stream for high-water ordering; -1 if unknown. */
-    fun streamOffsetOf(index: Int): Long = synchronized(discoveryLock) {
+    fun streamOffsetOf(index: Int): Long = synchronized(pagesLock) {
         pages.getOrNull(index)?.streamOffset ?: -1L
     }
 
-    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index = synchronized(discoveryLock) {
+    override fun pauseDiscovery() {
+        discoveryPaused = true
+        parser.abortWalk = true
+    }
+
+    override fun resumeDiscovery() {
+        parser.abortWalk = false
+        discoveryPaused = false
+    }
+
+    override fun toIndex(cacheKey: String, complete: Boolean): DocumentExtractCache.Index = synchronized(pagesLock) {
         DocumentExtractCache.Index(
             v = DocumentExtractCache.INDEX_VERSION,
             cacheKey = cacheKey,
@@ -86,78 +106,89 @@ class PdfImageEngine private constructor(
     }
 
     /** Walk only far enough to expose [index]; cached refs are skipped while resuming. */
-    override fun ensureListedThrough(index: Int): Int = synchronized(discoveryLock) {
+    override fun ensureListedThrough(index: Int): Int {
         if (index < 0 || structureCompleteState || discoveryStopped || !discoveryAllowed) {
-            return@synchronized pages.size
+            return synchronized(pagesLock) { pages.size }
         }
-        var cursor = pageCursor
-        if (cursor == null) {
-            if (!parser.bootstrap() || parser.encrypted) {
-                discoveryStopped = true
-                return@synchronized pages.size
+        synchronized(parserLock) {
+            if (structureCompleteState || discoveryStopped || !discoveryAllowed || discoveryPaused) {
+                return synchronized(pagesLock) { pages.size }
             }
-            cursor = parser.openPageImageCursor()
+            var cursor = pageCursor
             if (cursor == null) {
-                discoveryStopped = true
-                return@synchronized pages.size
+                if (!parser.bootstrap() || parser.encrypted) {
+                    discoveryStopped = true
+                    return synchronized(pagesLock) { pages.size }
+                }
+                cursor = parser.openPageImageCursor()
+                if (cursor == null) {
+                    discoveryStopped = true
+                    return synchronized(pagesLock) { pages.size }
+                }
+                pageCursor = cursor
             }
-            pageCursor = cursor
-        }
-        while (pages.size <= index && !cursor.isComplete) {
-            val next = cursor.nextImage() ?: break
-            // A partial disk index can serve its known seek ranges immediately. The
-            // resumed cursor replays that prefix, then appends newly discovered refs.
-            if (cursorImageIndex >= pages.size) {
-                pages += next
+            while (!cursor.isComplete) {
+                if (discoveryPaused) break
+                val size = synchronized(pagesLock) { pages.size }
+                if (size > index) break
+                val next = cursor.nextImage() ?: break
+                // A partial disk index can serve its known seek ranges immediately. The
+                // resumed cursor replays that prefix, then appends newly discovered refs.
+                synchronized(pagesLock) {
+                    if (cursorImageIndex >= pages.size) {
+                        pages += next
+                    }
+                    cursorImageIndex++
+                }
             }
-            cursorImageIndex++
+            if (cursor.isComplete) structureCompleteState = true
+            return synchronized(pagesLock) { pages.size }
         }
-        if (cursor.isComplete) structureCompleteState = true
-        pages.size
     }
 
     override fun extractToCache(cacheKey: String, index: Int): Path? {
-        val ref = synchronized(discoveryLock) { pages.getOrNull(index) } ?: return null
+        val ref = synchronized(pagesLock) { pages.getOrNull(index) } ?: return null
         if (DocumentExtractCache.isPageCached(cacheKey, index, ref.ext)) {
             return DocumentExtractCache.pagePath(cacheKey, index, ref.ext)
         }
         DocumentExtractCache.findCachedPage(cacheKey, index)?.let { return it }
-        val effectiveRef = if (!ref.hasSeek) {
-            val offset = parser.locateStreamDataOffset(ref.objNum) ?: -1L
-            if (offset >= 0L) {
-                ref.copy(streamOffset = offset).also { updated ->
-                    synchronized(discoveryLock) {
-                        if (index < pages.size && pages[index].objNum == ref.objNum) {
-                            pages[index] = updated
+        val bytes = synchronized(parserLock) {
+            val effectiveRef = if (!ref.hasSeek) {
+                val offset = parser.locateStreamDataOffset(ref.objNum) ?: -1L
+                if (offset >= 0L) {
+                    ref.copy(streamOffset = offset).also { updated ->
+                        synchronized(pagesLock) {
+                            if (index < pages.size && pages[index].objNum == ref.objNum) {
+                                pages[index] = updated
+                            }
                         }
                     }
+                } else {
+                    ref
                 }
             } else {
                 ref
             }
-        } else {
-            ref
-        }
-
-        val bytes = if (effectiveRef.hasSeek) {
-            when (
-                val direct = parser.extractImageBytesAt(
-                    effectiveRef.streamOffset,
-                    effectiveRef.streamLen,
-                    effectiveRef.objNum,
-                    effectiveRef.gen,
-                )
-            ) {
-                is PdfParser.DirectExtractResult.Success -> direct.bytes
-                PdfParser.DirectExtractResult.RetryWithXref -> {
-                    // A stale/old index may lack enough object metadata. Rebuild once;
-                    // transport failures deliberately do not trigger a duplicate fetch.
-                    if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
+            if (effectiveRef.hasSeek) {
+                when (
+                    val direct = parser.extractImageBytesAt(
+                        effectiveRef.streamOffset,
+                        effectiveRef.streamLen,
+                        effectiveRef.objNum,
+                        effectiveRef.gen,
+                    )
+                ) {
+                    is PdfParser.DirectExtractResult.Success -> direct.bytes
+                    PdfParser.DirectExtractResult.RetryWithXref -> {
+                        // A stale/old index may lack enough object metadata. Rebuild once;
+                        // transport failures deliberately do not trigger a duplicate fetch.
+                        if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
+                    }
+                    PdfParser.DirectExtractResult.Failed -> null
                 }
-                PdfParser.DirectExtractResult.Failed -> null
+            } else {
+                if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
             }
-        } else {
-            if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
         } ?: return null
         return DocumentExtractCache.writePage(cacheKey, index, ref.ext, bytes)
     }
@@ -307,6 +338,14 @@ internal class PdfParser(
     val xrefCount: Int get() = xref.size
     val objStreamMemberCount: Int get() = objStreamOf.size
 
+    /**
+     * Cooperative abort for [PageImageCursor.nextImage]. Set by [PdfImageEngine.pauseDiscovery]
+     * so a visible-page extract can take the parser after at most one object/range read.
+     * Does not mark the page tree complete.
+     */
+    @Volatile
+    var abortWalk: Boolean = false
+
     @Synchronized
     fun validateHeader(): Boolean {
         headerValid?.let { return it }
@@ -361,6 +400,9 @@ internal class PdfParser(
         /** Return the next supported dominant page image without walking later pages. */
         fun nextImage(): PdfImageEngine.ImageRef? {
             while (pending.isNotEmpty() && scannedPageCount < maxPages) {
+                // Check before mutating [pending] so a visible-page extract can snatch
+                // the parser after at most one in-flight object/range read.
+                if (abortWalk) return null
                 val task = pending.removeLast()
                 if (task.depth > 64) continue
                 val node = resolveValue(task.value) as? PdfDict
@@ -495,6 +537,7 @@ internal class PdfParser(
         // Stable name order for multi-image pages
         val names = xobj.map.keys.sorted()
         for (name in names) {
+            if (abortWalk) return false
             val raw = xobj[name] ?: continue
             val ref = raw as? PdfRef
             val obj = resolveValue(raw) as? PdfDict ?: return false

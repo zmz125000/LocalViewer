@@ -25,8 +25,7 @@ enum class ScaleFitCycle(
     ;
 
     companion object {
-        fun fromPreference(preference: Int): ScaleFitCycle =
-            entries.find { it.prefValue == preference } ?: FIT_SCREEN
+        fun fromPreference(preference: Int): ScaleFitCycle = entries.find { it.prefValue == preference } ?: FIT_SCREEN
 
         fun next(preference: Int): ScaleFitCycle {
             val index = entries.indexOfFirst { it.prefValue == preference }
