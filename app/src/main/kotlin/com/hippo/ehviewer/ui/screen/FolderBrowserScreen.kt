@@ -1501,9 +1501,18 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         val path = entry.path.toString()
         launchIO {
             recordCurrentBrowseFolderHistory()
-            LocalHistory.recordLocalFile(path, title = entry.name)
+            val info = LocalHistory.galleryInfoForLocalArchive(path, title = entry.name)
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordLocalArchive(path, title = entry.name)
+            val page = runCatching { EhDB.getReadProgress(info.gid) }.getOrDefault(0)
             try {
-                OpenPdfExternally.openInternalLocal(context, path, displayName = entry.name)
+                OpenPdfExternally.openInternalLocal(
+                    context,
+                    path,
+                    displayName = entry.name,
+                    progressGid = info.gid,
+                    startPage = page,
+                )
             } catch (e: Throwable) {
                 snackbar(
                     context.getString(
@@ -1525,8 +1534,8 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun openPdfSecondary(entry: BrowseEntry.ArchiveGallery) {
         when (Settings.pdfReaderMode.value) {
-            PdfReaderMode.EXTERNAL -> openArchiveReader(entry)
-            else -> openPdfInOtherApp(entry)
+            PdfReaderMode.PDF, PdfReaderMode.EXTERNAL -> openArchiveReader(entry)
+            else -> openPdfReader(entry)
         }
     }
 

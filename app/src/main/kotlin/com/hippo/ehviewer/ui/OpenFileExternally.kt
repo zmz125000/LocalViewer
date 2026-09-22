@@ -150,6 +150,8 @@ object OpenFileExternally {
         context: Context,
         pathStr: String,
         displayName: String = File(pathStr).name,
+        progressGid: Long = 0L,
+        startPage: Int = 0,
     ) {
         val token = registerLocalStreamdoc(pathStr, displayName, DefaultPdfReader.MIME_TYPE)
         launchStreamdoc(
@@ -160,6 +162,8 @@ object OpenFileExternally {
             networkStream = false,
             internalPlayer = false,
             internalPdf = true,
+            progressGid = progressGid,
+            startPage = startPage,
         )
     }
 
@@ -314,6 +318,8 @@ object OpenFileExternally {
         sourceId: Long,
         remoteRelativeFile: String,
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        progressGid: Long = 0L,
+        startPage: Int = 0,
     ) {
         val token = registerSmbStreamdoc(
             sourceId,
@@ -329,6 +335,8 @@ object OpenFileExternally {
             networkStream = true,
             internalPlayer = false,
             internalPdf = true,
+            progressGid = progressGid,
+            startPage = startPage,
         )
     }
 
@@ -337,6 +345,8 @@ object OpenFileExternally {
         sourceId: Long,
         remoteRelativeFile: String,
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        progressGid: Long = 0L,
+        startPage: Int = 0,
     ) {
         val token = registerWebDavStreamdoc(
             sourceId,
@@ -352,6 +362,8 @@ object OpenFileExternally {
             networkStream = true,
             internalPlayer = false,
             internalPdf = true,
+            progressGid = progressGid,
+            startPage = startPage,
         )
     }
 
@@ -2031,6 +2043,8 @@ object OpenFileExternally {
         playlistIndex: Int = 0,
         internalPdf: Boolean = false,
         usePreferredPlayer: Boolean = true,
+        progressGid: Long = 0L,
+        startPage: Int = 0,
     ) {
         val uri = StreamDocumentProvider.uriFor(token, displayName)
         try {
@@ -2043,6 +2057,8 @@ object OpenFileExternally {
                     uri = uri,
                     title = displayName,
                     streamToken = token,
+                    progressGid = progressGid,
+                    startPage = startPage,
                 ).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)

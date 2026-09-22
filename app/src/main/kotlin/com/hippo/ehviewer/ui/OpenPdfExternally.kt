@@ -123,8 +123,10 @@ object OpenPdfExternally {
         context: Context,
         pathStr: String,
         displayName: String = File(pathStr).name,
+        progressGid: Long = 0L,
+        startPage: Int = 0,
     ) {
-        OpenFileExternally.playPdfLocal(context, pathStr, displayName)
+        OpenFileExternally.playPdfLocal(context, pathStr, displayName, progressGid, startPage)
     }
 
     suspend fun openInternalSmb(
@@ -132,8 +134,17 @@ object OpenPdfExternally {
         sourceId: Long,
         remoteRelativeFile: String,
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        progressGid: Long = 0L,
+        startPage: Int = 0,
     ) {
-        OpenFileExternally.playPdfSmb(context, sourceId, remoteRelativeFile, displayName)
+        OpenFileExternally.playPdfSmb(
+            context,
+            sourceId,
+            remoteRelativeFile,
+            displayName,
+            progressGid,
+            startPage,
+        )
     }
 
     suspend fun openInternalWebDav(
@@ -141,7 +152,16 @@ object OpenPdfExternally {
         sourceId: Long,
         remoteRelativeFile: String,
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        progressGid: Long = 0L,
+        startPage: Int = 0,
     ) {
-        OpenFileExternally.playPdfWebDav(context, sourceId, remoteRelativeFile, displayName)
+        OpenFileExternally.playPdfWebDav(
+            context,
+            sourceId,
+            remoteRelativeFile,
+            displayName,
+            progressGid,
+            startPage,
+        )
     }
 }

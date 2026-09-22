@@ -80,7 +80,7 @@
     <string name="settings_use_media3_player">Use Media3 player</string>
     <string name="settings_use_media3_player_summary">On: tap opens in-app player, long-press opens external app. Off: tap external, long-press in-app.</string>
     <string name="settings_pdf_reader">PDF reader</string>
-    <string name="settings_pdf_reader_summary">Tap opens the selected reader. Long-press opens External, or the image reader when External is selected.</string>
+    <string name="settings_pdf_reader_summary">Tap opens the selected reader. Long-press opens the other built-in reader, or the image reader when External is selected.</string>
     <string name="settings_pdf_reader_mode_image">Image reader</string>
     <string name="settings_pdf_reader_mode_pdf">PDF reader</string>
     <string name="settings_pdf_reader_mode_external">External</string>

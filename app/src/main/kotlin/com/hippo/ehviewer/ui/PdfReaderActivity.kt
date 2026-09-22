@@ -41,6 +41,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -54,9 +55,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -72,6 +77,9 @@ class PdfReaderActivity : AppCompatActivity() {
     private var title by mutableStateOf("")
     private var error by mutableStateOf<String?>(null)
     private var streamToken: String? = null
+    private var progressGid by mutableStateOf(0L)
+    private var startPage by mutableStateOf(0)
+    private var lastVisiblePage = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,6 +90,9 @@ class PdfReaderActivity : AppCompatActivity() {
                 title = title,
                 session = session,
                 error = error,
+                startPage = startPage,
+                progressGid = progressGid,
+                onPageChanged = { lastVisiblePage = it },
                 onClose = { finish() },
             )
         }
@@ -90,10 +101,17 @@ class PdfReaderActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        flushProgress()
         openFromIntent(intent, replace = true)
     }
 
+    override fun onStop() {
+        flushProgress()
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        flushProgress()
         closeSession()
         super.onDestroy()
     }
@@ -128,8 +146,19 @@ class PdfReaderActivity : AppCompatActivity() {
         if (oldToken != null && oldToken != token) StreamDocumentRegistry.remove(oldToken)
         streamToken = token
         title = nextTitle.ifBlank { uri.lastPathSegment.orEmpty() }
+        progressGid = intent.getLongExtra(EXTRA_PROGRESS_GID, 0L)
+        startPage = intent.getIntExtra(EXTRA_START_PAGE, 0).coerceAtLeast(0)
+        lastVisiblePage = startPage
         error = null
         session = PdfSession(renderer)
+    }
+
+    private fun flushProgress() {
+        val gid = progressGid
+        if (gid == 0L) return
+        runBlocking {
+            runCatching { EhDB.putReadProgress(gid, lastVisiblePage.coerceAtLeast(0)) }
+        }
     }
 
     private fun closeSession(removeToken: Boolean = true) {
@@ -144,16 +173,22 @@ class PdfReaderActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_STREAM_TOKEN = "stream_token"
         const val EXTRA_TITLE = "title"
+        const val EXTRA_PROGRESS_GID = "progress_gid"
+        const val EXTRA_START_PAGE = "start_page"
 
         fun intent(
             context: Context,
             uri: Uri,
             title: String,
             streamToken: String,
+            progressGid: Long = 0L,
+            startPage: Int = 0,
         ): Intent = Intent(context, PdfReaderActivity::class.java).apply {
             setDataAndType(uri, DefaultPdfReader.MIME_TYPE)
             putExtra(EXTRA_STREAM_TOKEN, streamToken)
             putExtra(EXTRA_TITLE, title)
+            putExtra(EXTRA_PROGRESS_GID, progressGid)
+            putExtra(EXTRA_START_PAGE, startPage)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
@@ -187,14 +222,41 @@ private fun PdfReaderScreen(
     title: String,
     session: PdfSession?,
     error: String?,
+    startPage: Int,
+    progressGid: Long,
+    onPageChanged: (Int) -> Unit,
     onClose: () -> Unit,
 ) {
     val pageCount = session?.pageCount ?: 0
-    val listState = rememberLazyListState()
+    val initial = startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initial)
     val pageLabel by remember {
         derivedStateOf {
             if (pageCount <= 0) "" else "${listState.firstVisibleItemIndex + 1} / $pageCount"
         }
+    }
+    LaunchedEffect(session, startPage, pageCount) {
+        if (session == null || pageCount <= 0) return@LaunchedEffect
+        val target = startPage.coerceIn(0, pageCount - 1)
+        if (listState.firstVisibleItemIndex != target) {
+            listState.scrollToItem(target)
+        }
+        onPageChanged(target)
+    }
+    LaunchedEffect(session) {
+        if (session == null) return@LaunchedEffect
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .distinctUntilChanged()
+            .collect { onPageChanged(it) }
+    }
+    LaunchedEffect(progressGid, session) {
+        if (progressGid == 0L || session == null) return@LaunchedEffect
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .distinctUntilChanged()
+            .debounce(1_000)
+            .collect { page ->
+                runCatching { EhDB.putReadProgress(progressGid, page) }
+            }
     }
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),

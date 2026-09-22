@@ -152,7 +152,7 @@ object Settings : DataStorePreferences(null) {
 
     /**
      * Tap PDF: 0 = image reader (default), 1 = built-in PDF reader, 2 = external app.
-     * Long-press opens External, or the image reader when External is selected.
+     * Long-press opens the other built-in reader, or the image reader when External is selected.
      * Settings → General.
      */
     val pdfReaderMode = intPref("pdf_reader_mode", 0)

@@ -66,6 +66,7 @@ import com.ehviewer.core.util.launch
 import com.ehviewer.core.util.launchIO
 import com.ehviewer.core.util.withIOContext
 import com.ehviewer.core.util.withUIContext
+import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.library.ARCHIVE_DOWNLOAD_WARN_BYTES
@@ -1166,13 +1167,29 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         val remote = joinRemoteArchivePath(relativeDir, entry.parentRelativeName, entry.fileName)
         launchIO {
             recordCurrentBrowseFolderHistory(src.id)
-            LocalHistory.recordSmbFile(src.id, remote, title = entry.name)
+            val remoteNorm = remote.trim('/')
+            val info = BaseGalleryInfo(
+                gid = stableGalleryId(src.id, "smba:$remoteNorm"),
+                token = SMB_ARCHIVE_TOKEN,
+                title = entry.name,
+                pages = 0,
+                favoriteSlot = NOT_FAVORITED,
+                rating = -1f,
+                thumbKey = HistoryThumbKey.smbArchive(src.id, remoteNorm),
+                uploader = "${src.id}\u0000$remoteNorm",
+                category = 1,
+            )
+            LocalHistory.ensureGalleryForProgress(info)
+            LocalHistory.recordSmbStreamArchive(src.id, remoteNorm, title = entry.name, info = info)
+            val page = runCatching { EhDB.getReadProgress(info.gid) }.getOrDefault(0)
             try {
                 OpenPdfExternally.openInternalSmb(
                     context = context,
                     sourceId = src.id,
                     remoteRelativeFile = remote,
                     displayName = entry.name,
+                    progressGid = info.gid,
+                    startPage = page,
                 )
             } catch (e: Throwable) {
                 if (e.isZipMemberTooLarge()) return@launchIO
@@ -1436,8 +1453,8 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
 
     fun openPdfSecondary(entry: BrowseEntryRemote.ArchiveGallery) {
         when (Settings.pdfReaderMode.value) {
-            PdfReaderMode.EXTERNAL -> openArchive(entry, skipPdfPrimary = true)
-            else -> openPdfInOtherApp(entry)
+            PdfReaderMode.PDF, PdfReaderMode.EXTERNAL -> openArchive(entry, skipPdfPrimary = true)
+            else -> openPdfReader(entry)
         }
     }
 

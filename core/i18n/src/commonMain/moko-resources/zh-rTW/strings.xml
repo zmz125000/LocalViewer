@@ -80,7 +80,7 @@
     <string name="settings_use_media3_player">使用 Media3 播放器</string>
     <string name="settings_use_media3_player_summary">開啟：單擊應用內播放，長按外部應用。關閉：單擊外部應用，長按應用內播放。</string>
     <string name="settings_pdf_reader">PDF 閱讀器</string>
-    <string name="settings_pdf_reader_summary">單擊開啟所選閱讀器。長按開啟外部應用；若預設是外部，則長按開啟圖片閱讀器。</string>
+    <string name="settings_pdf_reader_summary">單擊開啟所選閱讀器。長按開啟另一個內建閱讀器；若預設是外部，則長按開啟圖片閱讀器。</string>
     <string name="settings_pdf_reader_mode_image">圖片閱讀器</string>
     <string name="settings_pdf_reader_mode_pdf">PDF 閱讀器</string>
     <string name="settings_pdf_reader_mode_external">外部</string>
