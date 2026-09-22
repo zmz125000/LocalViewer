@@ -286,7 +286,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val sectionHeaderText = if (librarySection == LibrarySection.Videos) {
         stringResource(R.string.browse_videos)
     } else {
-        stringResource(R.string.library)
+        stringResource(R.string.browse_photos)
     }
 
     val listMode by Settings.listMode.collectAsState()
@@ -683,7 +683,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             // Extra list margin so section titles are not flush to the screen edge
                             // (rows stay edge-aligned with folder ListItems).
                             BrowseSectionHeader(
-                                text = stringResource(R.string.favourite),
+                                stringResource(R.string.browse_favorites),
                                 modifier = Modifier.padding(horizontal = marginH),
                                 onClick = startEasyTierVpn,
                                 onLongClick = { showEasyTierDialog = true },
@@ -716,13 +716,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                 sectionHeaderText,
                                 modifier = Modifier.padding(horizontal = marginH),
                                 onClick = { toggleLibrarySection() },
-                                onLongClick = {
-                                    if (librarySection == LibrarySection.Videos) {
-                                        toggleLibraryVideoMode()
-                                    } else {
-                                        toggleLibraryPhotoMode()
-                                    }
-                                },
+                                onLongClick = { toggleLibraryFlattenMode() },
                             )
                         }
                     }
@@ -753,7 +747,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             span = { GridItemSpan(maxLineSpan) },
                         ) {
                             BrowseSectionHeader(
-                                text = stringResource(R.string.favourite),
+                                text = stringResource(R.string.browse_favorites),
                                 onClick = startEasyTierVpn,
                                 onLongClick = { showEasyTierDialog = true },
                             )
@@ -774,13 +768,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             BrowseSectionHeader(
                                 sectionHeaderText,
                                 onClick = { toggleLibrarySection() },
-                                onLongClick = {
-                                    if (librarySection == LibrarySection.Videos) {
-                                        toggleLibraryVideoMode()
-                                    } else {
-                                        toggleLibraryPhotoMode()
-                                    }
-                                },
+                                onLongClick = { toggleLibraryFlattenMode() },
                             )
                         }
                     }

@@ -63,6 +63,8 @@
     <string name="browse_folder_gallery_pages_many">∞ pages</string>
     <string name="browse_directories">Directories</string>
     <string name="browse_galleries">Galleries</string>
+    <string name="browse_photos">Photos</string>
+    <string name="browse_favorites">Favorites</string>
     <string name="browse_videos">Videos</string>
     <string name="browse_files">Files</string>
     <string name="browse_search">Search</string>
@@ -81,7 +83,7 @@
     <string name="settings_use_media3_player">Use Media3 player</string>
     <string name="settings_use_media3_player_summary">On: tap opens in-app player, long-press opens external app. Off: tap external, long-press in-app.</string>
     <string name="settings_pdf_reader">PDF reader</string>
-    <string name="settings_pdf_reader_summary">Tap opens the selected reader. Long-press opens the other built-in reader, or the image reader when External is selected.</string>
+    <string name="settings_pdf_reader_summary">Select the default PDF reader</string>
     <string name="settings_pdf_reader_mode_image">Image reader</string>
     <string name="settings_pdf_reader_mode_pdf">PDF reader</string>
     <string name="settings_pdf_reader_mode_external">External</string>

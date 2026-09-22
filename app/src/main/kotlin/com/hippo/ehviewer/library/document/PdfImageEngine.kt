@@ -356,6 +356,9 @@ internal class PdfParser(
     private var bootstrapAttempted = false
     private var bootstrapOk = false
     private val visitedXrefOffsets = HashSet<Long>()
+
+    /** Byte shift when `startxref` is stale but the real xref table was found later in the file. */
+    private var shiftDelta: Long = 0L
     var encrypted: Boolean = false
         private set
     val xrefCount: Int get() = xref.size
@@ -384,10 +387,42 @@ internal class PdfParser(
         if (bootstrapAttempted) return bootstrapOk
         bootstrapAttempted = true
         if (!validateHeader()) return false
-        val startxref = findStartXref() ?: return false
-        bootstrapOk = loadXref(startxref) && rootRef != null
+        val startxref = findStartXref()
+        if (startxref != null) {
+            bootstrapOk = loadXref(startxref) && rootRef != null
+        }
+        if (!bootstrapOk) {
+            val actualXref = scanTailForXref()
+            if (actualXref != null && actualXref != startxref) {
+                shiftDelta = if (startxref != null) actualXref - startxref else 0L
+                clearXrefState()
+                bootstrapOk = loadXref(actualXref) && rootRef != null
+                if (bootstrapOk) {
+                    logcat("PdfImage") { "self-healed xref offset to $actualXref (delta=$shiftDelta)" }
+                }
+            }
+        }
         return bootstrapOk
     }
+
+    private fun clearXrefState() {
+        xref.clear()
+        objCache.clear()
+        objStreamOf.clear()
+        streamDataOffsets.clear()
+        visitedXrefOffsets.clear()
+        rootRef = null
+        encrypted = false
+    }
+
+    private fun shiftedOffset(offset: Long): Long? {
+        if (shiftDelta == 0L) return null
+        val candidate = offset + shiftDelta
+        return candidate.takeIf { it in 0L until fileSize }
+    }
+
+    private fun findObjHeader(text: String, objNum: Int, gen: Int): MatchResult? = Regex("""\b$objNum\s+$gen\s+obj\b""").findAll(text).lastOrNull()
+        ?: Regex("""\b$objNum\s+\d+\s+obj\b""").findAll(text).lastOrNull()
 
     fun openPageImageCursor(maxPages: Int = MAX_PAGES): PageImageCursor? {
         val root = rootRef?.let { resolve(it) as? PdfDict } ?: run {
@@ -609,9 +644,7 @@ internal class PdfParser(
     /** Parse object dict from a header probe that may not include the full stream body. */
     private fun parseDictOnly(raw: ByteArray, objNum: Int, gen: Int): PdfDict? {
         val text = String(raw, Charsets.ISO_8859_1)
-        val objMatch = Regex("""\b$objNum\s+$gen\s+obj\b""").findAll(text).lastOrNull()
-            ?: Regex("""(\d+)\s+(\d+)\s+obj""").findAll(text).lastOrNull()
-            ?: return null
+        val objMatch = findObjHeader(text, objNum, gen) ?: return null
         val dictStart = text.indexOf("<<", objMatch.range.last)
         if (dictStart < 0) return null
         val (dict, _) = parseDict(raw, dictStart) ?: return null
@@ -690,12 +723,24 @@ internal class PdfParser(
      * (no full image body download during index walk).
      */
     internal fun locateStreamDataOffset(objNum: Int): Long? {
-        val entry = xref[objNum] ?: return null
+        var entry = xref[objNum] ?: return null
         if (entry.free || entry.offset <= 0L) return null
-        val probe = readBytes(entry.offset, minOf(16 * 1024, (fileSize - entry.offset).toInt()))
+        var probe = readBytes(entry.offset, minOf(16 * 1024, (fileSize - entry.offset).toInt()))
             ?: return null
-        val text = String(probe, Charsets.ISO_8859_1)
-        val objMatch = Regex("""\b$objNum\s+\d+\s+obj\b""").find(text) ?: return null
+        var text = String(probe, Charsets.ISO_8859_1)
+        var objMatch = Regex("""\b$objNum\s+\d+\s+obj\b""").find(text)
+        if (objMatch == null) {
+            val candidate = shiftedOffset(entry.offset) ?: return null
+            val candProbe = readBytes(candidate, minOf(16 * 1024, (fileSize - candidate).toInt()))
+                ?: return null
+            val candText = String(candProbe, Charsets.ISO_8859_1)
+            val candMatch = Regex("""\b$objNum\s+\d+\s+obj\b""").find(candText) ?: return null
+            entry = entry.copy(offset = candidate)
+            xref[objNum] = entry
+            probe = candProbe
+            text = candText
+            objMatch = candMatch
+        }
         val dictStart = text.indexOf("<<", objMatch.range.last)
         if (dictStart < 0) return null
         val (_, dictEnd) = parseDict(probe, dictStart) ?: return null
@@ -729,7 +774,7 @@ internal class PdfParser(
         if (xref.isEmpty()) {
             bootstrap()
         }
-        val entry = xref[objNum] ?: return null
+        var entry = xref[objNum] ?: return null
         if (entry.free || entry.offset <= 0L) {
             // Object stream (PDF 1.5): offset == 0 and gen is index — limited support
             return loadFromObjectStream(objNum)
@@ -737,8 +782,16 @@ internal class PdfParser(
         // Read only the object header/dictionary first, then the exact payload. Using
         // the general object reader here used to download the image once to resolve
         // its dictionary and again to extract it.
-        val raw = readObjectBytes(entry.offset, includeStreamData = false) ?: return null
-        val dict = parseDictOnly(raw, objNum, gen) ?: return null
+        var dict = readObjectBytes(entry.offset, includeStreamData = false)
+            ?.let { parseDictOnly(it, objNum, gen) }
+        if (dict == null) {
+            val candidate = shiftedOffset(entry.offset) ?: return null
+            dict = readObjectBytes(candidate, includeStreamData = false)
+                ?.let { parseDictOnly(it, objNum, gen) }
+                ?: return null
+            entry = entry.copy(offset = candidate)
+            xref[objNum] = entry
+        }
         val streamOffset = streamDataOffsets[objNum] ?: locateStreamDataOffset(objNum) ?: return null
         val length = resolveLength(dict["/Length"]) ?: return null
         if (length <= 0L || length > MAX_IMAGE_STREAM_BYTES || length > fileSize - streamOffset) {
@@ -771,7 +824,7 @@ internal class PdfParser(
     private fun parseStreamAt(raw: ByteArray, objNum: Int, gen: Int): StreamObj? {
         // "n g obj <<...>> stream ... endstream endobj"
         val text = String(raw, Charsets.ISO_8859_1)
-        val objMatch = Regex("""(\d+)\s+(\d+)\s+obj""").find(text) ?: return null
+        val objMatch = findObjHeader(text, objNum, gen) ?: return null
         val dictStart = text.indexOf("<<", objMatch.range.last)
         if (dictStart < 0) return null
         val (dict, dictEnd) = parseDict(raw, dictStart) ?: return null
@@ -1105,6 +1158,40 @@ internal class PdfParser(
         return num.toLongOrNull()
     }
 
+    /**
+     * Fallback when [findStartXref] is stale or missing. Scan backward from EOF for a
+     * classic `xref` table (`xref` as a word, then a subsection start number).
+     */
+    private fun scanTailForXref(): Long? {
+        val tailLen = minOf(fileSize, 2L * 1024 * 1024).toInt()
+        if (tailLen <= 0) return null
+        val tailOffset = fileSize - tailLen
+        val tail = readBytes(tailOffset, tailLen) ?: return null
+        val text = String(tail, Charsets.ISO_8859_1)
+        var pos = text.length
+        while (pos > 0) {
+            val idx = text.lastIndexOf("xref", pos - 1)
+            if (idx < 0) break
+            val isWordStart = idx == 0 || text[idx - 1].isPdfWs()
+            if (isWordStart) {
+                var p = idx + 4
+                while (p < text.length && text[p].isPdfWs()) p++
+                if (p < text.length && text[p].isDigit()) {
+                    val candidate = tailOffset + idx
+                    if (candidate in 0L until fileSize) return candidate
+                }
+            }
+            pos = idx
+        }
+        return null
+    }
+
+    private fun loadXrefMaybeShifted(offset: Long): Boolean {
+        if (loadXref(offset)) return true
+        val shifted = shiftedOffset(offset) ?: return false
+        return loadXref(shifted)
+    }
+
     private fun loadXref(offset: Long): Boolean {
         if (offset < 0 || offset >= fileSize) return false
         if (!visitedXrefOffsets.add(offset)) return rootRef != null
@@ -1174,13 +1261,13 @@ internal class PdfParser(
         // xref stream referenced by the classic trailer.
         val xrefStream = trailer.intValue("/XRefStm")?.toLong()
         if (xrefStream != null && xrefStream > 0L && xrefStream != offset) {
-            loadXref(xrefStream)
+            loadXrefMaybeShifted(xrefStream)
         }
         // Prev chain (older xref sections)
         val prev = trailer.intValue("/Prev")?.toLong()
             ?: (trailer["/Prev"] as? PdfNumber)?.value?.toLong()
         if (prev != null && prev > 0 && prev != offset) {
-            loadXref(prev)
+            loadXrefMaybeShifted(prev)
         }
         return rootRef != null
     }
@@ -1273,7 +1360,7 @@ internal class PdfParser(
         }
         val prev = dict.intValue("/Prev")?.toLong()
         if (prev != null && prev > 0 && prev != offset) {
-            loadXref(prev)
+            loadXrefMaybeShifted(prev)
         }
         return rootRef != null
     }
@@ -1311,10 +1398,22 @@ internal class PdfParser(
         objCache[key.toLong()]?.let { return it }
         val entry = xref[ref.num]
         if (entry != null && !entry.free && entry.offset > 0L) {
-            val raw = readObjectBytes(entry.offset, includeStreamData = false) ?: return null
-            val v = parseObjectBody(raw, ref.num, ref.gen, entry.offset) ?: return null
-            objCache[key.toLong()] = v
-            return v
+            var v = readObjectBytes(entry.offset, includeStreamData = false)
+                ?.let { parseObjectBody(it, ref.num, ref.gen, entry.offset) }
+            if (v == null) {
+                val candidate = shiftedOffset(entry.offset)
+                if (candidate != null) {
+                    v = readObjectBytes(candidate, includeStreamData = false)
+                        ?.let { parseObjectBody(it, ref.num, ref.gen, candidate) }
+                    if (v != null) {
+                        xref[ref.num] = entry.copy(offset = candidate)
+                    }
+                }
+            }
+            if (v != null) {
+                objCache[key.toLong()] = v
+                return v
+            }
         }
         // Object stream member
         val streamObjNum = objStreamOf[ref.num] ?: return null
@@ -1365,7 +1464,7 @@ internal class PdfParser(
         objectOffset: Long = -1L,
     ): PdfValue? {
         val text = String(raw, Charsets.ISO_8859_1)
-        val m = Regex("""(\d+)\s+(\d+)\s+obj""").find(text) ?: return null
+        val m = findObjHeader(text, objNum, gen) ?: return null
         var i = m.range.last + 1
         // skip ws
         while (i < raw.size && raw[i].toInt().toChar().isPdfWs()) i++
