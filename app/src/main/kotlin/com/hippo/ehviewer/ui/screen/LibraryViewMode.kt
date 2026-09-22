@@ -29,13 +29,18 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_FOLDER
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_IMAGE_FILE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FOLDER
 import com.ehviewer.core.database.model.LocalGalleryEntity
+import com.ehviewer.core.database.model.isLibraryGalleryKind
 import com.ehviewer.core.i18n.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.libraryBrowseRelative
 import com.hippo.ehviewer.library.stableGalleryId
 
@@ -89,10 +94,90 @@ enum class LibraryVideoMode(val prefValue: Int) {
     }
 }
 
+fun toggleLibraryVideoMode() {
+    Settings.libraryVideoMode.value = when (LibraryVideoMode.fromPref(Settings.libraryVideoMode.value)) {
+        LibraryVideoMode.Folders -> LibraryVideoMode.Files.prefValue
+        LibraryVideoMode.Files -> LibraryVideoMode.Folders.prefValue
+    }
+}
+
+/** Gallery library listing ([Settings.libraryPhotoMode]). */
+enum class LibraryPhotoMode(val prefValue: Int) {
+    Folders(0),
+    Files(1),
+    ;
+
+    companion object {
+        fun fromPref(value: Int): LibraryPhotoMode = when (value) {
+            Files.prefValue -> Files
+            else -> Folders
+        }
+    }
+}
+
+fun toggleLibraryPhotoMode() {
+    Settings.libraryPhotoMode.value = when (LibraryPhotoMode.fromPref(Settings.libraryPhotoMode.value)) {
+        LibraryPhotoMode.Folders -> LibraryPhotoMode.Files.prefValue
+        LibraryPhotoMode.Files -> LibraryPhotoMode.Folders.prefValue
+    }
+}
+
+/** Zip-as-dir interiors stay as folder galleries when All photos flatten is on. */
+fun isZipAsDirLibraryFolder(item: LocalGalleryEntity): Boolean =
+    item.kind == LOCAL_GALLERY_KIND_FOLDER && ZipPaths.parseGallery(item.contentPath) != null
+
+fun filterLibraryItems(
+    items: List<LocalGalleryEntity>,
+    section: LibrarySection,
+    videoMode: LibraryVideoMode,
+    photoMode: LibraryPhotoMode,
+): List<LocalGalleryEntity> = when (section) {
+    LibrarySection.Galleries -> filterLibraryGalleryItems(items, photoMode)
+    LibrarySection.Videos -> items.filter { item ->
+        when (videoMode) {
+            LibraryVideoMode.Folders -> item.kind == LOCAL_GALLERY_KIND_VIDEO_FOLDER
+            LibraryVideoMode.Files -> item.kind == LOCAL_GALLERY_KIND_VIDEO_FILE
+        }
+    }
+}
+
+/**
+ * All photos off: folder galleries + archives.
+ * All photos on: image files + archives + zip-as-dir folders (pdf/zip/rar stay as rows).
+ * Before the first scan that writes image-file rows, keep the folder listing.
+ */
+fun filterLibraryGalleryItems(
+    items: List<LocalGalleryEntity>,
+    photoMode: LibraryPhotoMode,
+): List<LocalGalleryEntity> {
+    if (photoMode == LibraryPhotoMode.Folders) {
+        return items.filter { isLibraryGalleryKind(it.kind) }
+    }
+    val imageFiles = items.filter { it.kind == LOCAL_GALLERY_KIND_IMAGE_FILE }
+    if (imageFiles.isEmpty()) {
+        return items.filter { isLibraryGalleryKind(it.kind) }
+    }
+    return items.filter { item ->
+        when (item.kind) {
+            LOCAL_GALLERY_KIND_IMAGE_FILE, LOCAL_GALLERY_KIND_ARCHIVE -> true
+            LOCAL_GALLERY_KIND_FOLDER -> isZipAsDirLibraryFolder(item)
+            else -> false
+        }
+    }
+}
+
+fun libraryFlattenPhotos(
+    items: List<LocalGalleryEntity>,
+    section: LibrarySection,
+    photoMode: LibraryPhotoMode,
+): Boolean = section == LibrarySection.Galleries &&
+    photoMode == LibraryPhotoMode.Files &&
+    items.any { it.kind == LOCAL_GALLERY_KIND_IMAGE_FILE }
+
 fun libraryItemLastOpenTime(item: LocalGalleryEntity, historyTimeByGid: Map<Long, Long>): Long {
     historyTimeByGid[item.id]?.takeIf { it > 0L }?.let { return it }
     return when (item.kind) {
-        LOCAL_GALLERY_KIND_VIDEO_FILE ->
+        LOCAL_GALLERY_KIND_VIDEO_FILE, LOCAL_GALLERY_KIND_IMAGE_FILE ->
             historyTimeByGid[stableGalleryId(0L, "local-file:${item.contentPath}")] ?: 0L
         LOCAL_GALLERY_KIND_VIDEO_FOLDER -> {
             val rel = libraryBrowseRelative(item.relativePath)
@@ -134,7 +219,7 @@ fun sortLibraryItems(
  *   - Name + Last open: HISTORY pin, then title
  *   - Date + Last open: blend max(last-open, scan mtime), then title
  * - Mid: List / Grid layout
- * - Bottom: Photo grid, All videos, zip as folder, back to dir, page count,
+ * - Bottom: Photo grid, All photos, All videos, zip as folder, back to dir, page count,
  *   reading progress, startup scan
  *
  * Tap icon → menu. Long-press → toggle list ↔ grid.
@@ -148,6 +233,8 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
     var libraryRecentOpen by Settings.libraryRecentOpen.asMutableState()
     var videoModePref by Settings.libraryVideoMode.asMutableState()
     val videoMode = LibraryVideoMode.fromPref(videoModePref)
+    var photoModePref by Settings.libraryPhotoMode.asMutableState()
+    val photoMode = LibraryPhotoMode.fromPref(photoModePref)
     val useGrid = listMode == 1
     var photoGridMode by Settings.photoGridMode.asMutableState()
     var browseZipAsDir by Settings.browseZipAsDir.asMutableState()
@@ -223,6 +310,17 @@ fun LibraryViewModeMenu(modifier: Modifier = Modifier) {
                 label = stringResource(R.string.browse_menu_photo_grid),
                 checked = photoGridMode,
                 onClick = { photoGridMode = !photoGridMode },
+            )
+            LibraryMenuToggleItem(
+                label = stringResource(R.string.library_photo_all),
+                checked = photoMode == LibraryPhotoMode.Files,
+                onClick = {
+                    photoModePref = if (photoMode == LibraryPhotoMode.Files) {
+                        LibraryPhotoMode.Folders.prefValue
+                    } else {
+                        LibraryPhotoMode.Files.prefValue
+                    }
+                },
             )
             LibraryMenuToggleItem(
                 label = stringResource(R.string.library_video_all),

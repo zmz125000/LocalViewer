@@ -27,6 +27,7 @@
     <string name="library_empty_videos">还没有视频。请从浏览页顶部栏添加图库源。</string>
     <string name="library_video_folders">视频文件夹</string>
     <string name="library_video_all">全部视频</string>
+    <string name="library_photo_all">全部图片</string>
     <string name="library_add_root">添加图库文件夹</string>
     <string name="source_access_saf">文件夹选择器 (SAF)</string>
     <string name="source_access_saf_summary">选择任意文件夹（含压缩包）。</string>

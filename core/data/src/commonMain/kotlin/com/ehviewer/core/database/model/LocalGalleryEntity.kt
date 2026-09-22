@@ -10,10 +10,13 @@ const val LOCAL_GALLERY_KIND_FOLDER = 0
 const val LOCAL_GALLERY_KIND_ARCHIVE = 1
 const val LOCAL_GALLERY_KIND_VIDEO_FOLDER = 2
 const val LOCAL_GALLERY_KIND_VIDEO_FILE = 3
+const val LOCAL_GALLERY_KIND_IMAGE_FILE = 4
 
 fun isLibraryGalleryKind(kind: Int): Boolean = kind == LOCAL_GALLERY_KIND_FOLDER || kind == LOCAL_GALLERY_KIND_ARCHIVE
 
 fun isLibraryVideoKind(kind: Int): Boolean = kind == LOCAL_GALLERY_KIND_VIDEO_FOLDER || kind == LOCAL_GALLERY_KIND_VIDEO_FILE
+
+fun isLibraryImageFileKind(kind: Int): Boolean = kind == LOCAL_GALLERY_KIND_IMAGE_FILE
 
 @Entity(
     tableName = "LOCAL_GALLERIES",

@@ -465,6 +465,13 @@ object Settings : DataStorePreferences(null) {
     val libraryVideoMode = intPref("library_video_mode", 0)
 
     /**
+     * Library Galleries listing via the All photos toggle: 0 = folder galleries
+     * (off, default), 1 = flat list of every image file (on). Archives (pdf/zip/rar)
+     * stay as gallery rows in both modes.
+     */
+    val libraryPhotoMode = intPref("library_photo_mode", 0)
+
+    /**
      * Per-file skip / failure notes (video thumb `.failed` and similar sidecars).
      * Lives in app data, not [android.content.Context.getCacheDir]. Default off.
      * Turning this off deletes existing markers.

@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_IMAGE_FILE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FOLDER
 import com.ehviewer.core.database.model.LocalGalleryEntity
@@ -203,9 +204,11 @@ fun LocalGalleryListItem(
     val isArchive = gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
     val isVideoFolder = gallery.kind == LOCAL_GALLERY_KIND_VIDEO_FOLDER
     val isVideoFile = gallery.kind == LOCAL_GALLERY_KIND_VIDEO_FILE
-    // Best-effort local size for archive / video-file rows (folder list uses listing size).
-    val archiveSizeBytes = remember(gallery.contentPath, isArchive, isVideoFile) {
-        if (!isArchive && !isVideoFile) {
+    val isImageFile = gallery.kind == LOCAL_GALLERY_KIND_IMAGE_FILE
+    val isLooseFile = isArchive || isVideoFile || isImageFile
+    // Best-effort local size for archive / video-file / image-file rows.
+    val archiveSizeBytes = remember(gallery.contentPath, isLooseFile) {
+        if (!isLooseFile) {
             0L
         } else {
             runCatching {
@@ -216,11 +219,11 @@ fun LocalGalleryListItem(
     val metaLine = browseListSupportingLine(
         typeLabel = when {
             isArchive -> browseFileExtensionLabel(gallery.contentPath)
-            isVideoFile -> browseFileExtensionLabel(gallery.title)
+            isVideoFile || isImageFile -> browseFileExtensionLabel(gallery.title)
             else -> "Folder"
         },
         sizeBytes = archiveSizeBytes,
-        pageCount = if (showPages && !isVideoFile) gallery.pageCount else 0,
+        pageCount = if (showPages && !isVideoFile && !isImageFile) gallery.pageCount else 0,
         lastModifiedMs = gallery.mtime,
     )
     val videoThumbPath = gallery.coverPath ?: gallery.contentPath.takeIf { isVideoFile || isVideoFolder }
@@ -247,10 +250,10 @@ fun LocalGalleryListItem(
                 CoverImage(
                     coverPath = gallery.coverPath,
                     sizePx = listDecodePx,
-                    placeholder = if (isArchive) {
-                        Icons.Default.Inventory2
-                    } else {
-                        Icons.Default.Folder
+                    placeholder = when {
+                        isArchive -> Icons.Default.Inventory2
+                        isImageFile -> Icons.AutoMirrored.Filled.InsertDriveFile
+                        else -> Icons.Default.Folder
                     },
                     archiveContentPath = gallery.contentPath.takeIf { isArchive },
                     modifier = Modifier
@@ -606,6 +609,7 @@ fun LocalGalleryGridItem(
                     .clip(ShapeDefaults.Medium),
             ) {
                 val isArchive = gallery.kind == LOCAL_GALLERY_KIND_ARCHIVE
+                val isImageFile = gallery.kind == LOCAL_GALLERY_KIND_IMAGE_FILE
                 val isVideo = gallery.kind == LOCAL_GALLERY_KIND_VIDEO_FILE ||
                     gallery.kind == LOCAL_GALLERY_KIND_VIDEO_FOLDER
                 if (isVideo) {
@@ -622,10 +626,10 @@ fun LocalGalleryGridItem(
                         coverPath = gallery.coverPath,
                         sizePx = gridDecodePx,
                         archiveContentPath = gallery.contentPath.takeIf { isArchive },
-                        placeholder = if (isArchive) {
-                            Icons.Default.Inventory2
-                        } else {
-                            Icons.Default.Folder
+                        placeholder = when {
+                            isArchive -> Icons.Default.Inventory2
+                            isImageFile -> Icons.AutoMirrored.Filled.InsertDriveFile
+                            else -> Icons.Default.Folder
                         },
                         placeholderSize = BrowseGridPlaceholderIconSize,
                         modifier = Modifier.fillMaxSize(),

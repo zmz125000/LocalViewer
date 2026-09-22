@@ -63,6 +63,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_ARCHIVE
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_FOLDER
+import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_IMAGE_FILE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FILE
 import com.ehviewer.core.database.model.LOCAL_GALLERY_KIND_VIDEO_FOLDER
 import com.ehviewer.core.database.model.LibraryRootEntity
@@ -100,6 +102,8 @@ import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.hideDuplicateGalleriesPreferMediaStore
 import com.hippo.ehviewer.library.libraryBrowseRelative
 import com.hippo.ehviewer.library.mimeTypeForFileName
+import com.hippo.ehviewer.library.naturalCompare
+import com.hippo.ehviewer.library.parentRelativeOfFile
 import com.hippo.ehviewer.library.resolveFavoriteBrowseSources
 import com.hippo.ehviewer.library.toBaseGalleryInfo
 import com.hippo.ehviewer.library.withLocalZipCentralDirectory
@@ -201,8 +205,10 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     val librarySection = LibrarySection.fromPref(librarySectionPref)
     val libraryVideoModePref by Settings.libraryVideoMode.collectAsState()
     val libraryVideoMode = LibraryVideoMode.fromPref(libraryVideoModePref)
-    LaunchedEffect(librarySection, libraryVideoMode) {
-        val key = "library:${librarySection.name}:${libraryVideoMode.name}"
+    val libraryPhotoModePref by Settings.libraryPhotoMode.collectAsState()
+    val libraryPhotoMode = LibraryPhotoMode.fromPref(libraryPhotoModePref)
+    LaunchedEffect(librarySection, libraryVideoMode, libraryPhotoMode) {
+        val key = "library:${librarySection.name}:${libraryVideoMode.name}:${libraryPhotoMode.name}"
         VideoThumbnail.onBrowseFolderChanged(key)
         ArchiveCoverCache.onBrowseFolderChanged(key)
     }
@@ -239,23 +245,27 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         librarySortMode,
         librarySection,
         libraryVideoMode,
+        libraryPhotoMode,
     ) {
         val q = keyword.trim()
-        val kindFiltered = when (librarySection) {
-            LibrarySection.Galleries -> allVisibleGalleries.filter { isLibraryGalleryKind(it.kind) }
-            LibrarySection.Videos -> allVisibleGalleries.filter { item ->
-                when (libraryVideoMode) {
-                    LibraryVideoMode.Folders -> item.kind == LOCAL_GALLERY_KIND_VIDEO_FOLDER
-                    LibraryVideoMode.Files -> item.kind == LOCAL_GALLERY_KIND_VIDEO_FILE
-                }
-            }
-        }
+        val kindFiltered = filterLibraryItems(
+            allVisibleGalleries,
+            librarySection,
+            libraryVideoMode,
+            libraryPhotoMode,
+        )
         val filtered = if (q.isEmpty()) {
             kindFiltered
         } else {
             kindFiltered.filter { it.title.contains(q, ignoreCase = true) }
         }
-        sortLibraryItems(filtered, librarySortMode, libraryRecentOpen, historyTimeByGid)
+        val flattenPhotos = libraryFlattenPhotos(kindFiltered, librarySection, libraryPhotoMode)
+        sortLibraryItems(
+            filtered,
+            if (flattenPhotos) LibrarySortMode.Date else librarySortMode,
+            recentOpen = if (flattenPhotos) false else libraryRecentOpen,
+            historyTimeByGid,
+        )
     }
 
     val favoriteKeys by Settings.favoriteBrowseSources.collectAsState()
@@ -452,10 +462,60 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         }
     }
 
+    fun openImageFile(item: LocalGalleryEntity, photoGrid: Boolean) {
+        val parentRel = libraryBrowseRelative(parentRelativeOfFile(item.relativePath))
+        val folderKey = parentRel.ifEmpty { "." }
+        val parent = allVisibleGalleries.firstOrNull {
+            it.rootId == item.rootId &&
+                it.kind == LOCAL_GALLERY_KIND_FOLDER &&
+                it.relativePath == folderKey
+        }
+        val names = allVisibleGalleries
+            .asSequence()
+            .filter {
+                it.rootId == item.rootId &&
+                    it.kind == LOCAL_GALLERY_KIND_IMAGE_FILE &&
+                    libraryBrowseRelative(parentRelativeOfFile(it.relativePath)) == parentRel
+            }
+            .map { it.title }
+            .sortedWith { a, b -> naturalCompare(a, b) }
+            .toList()
+            .ifEmpty { listOf(item.title) }
+        val page = names.indexOf(item.title).coerceAtLeast(0)
+        if (keyword.isNotBlank()) launchIO { recordDeviceSearchHistory(keyword) }
+        if (parent != null) {
+            if (photoGrid) {
+                launchIO { LocalHistory.recordLibraryGallery(parent) }
+                openGalleryPhotoGrid(parent, parent.toBaseGalleryInfo())
+            } else {
+                ReaderGalleryPlaylist.setFromLibrary(
+                    sortLibraryItems(
+                        allVisibleGalleries.filter { isLibraryGalleryKind(it.kind) },
+                        librarySortMode,
+                        libraryRecentOpen,
+                        historyTimeByGid,
+                    ),
+                )
+                launchIO { LocalHistory.recordLibraryGallery(parent) }
+                navToLocalFolderReader(
+                    parent.contentPath,
+                    parent.toBaseGalleryInfo(),
+                    page,
+                    names,
+                )
+            }
+            return
+        }
+        val dir = item.contentPath.toPath().parent?.toString() ?: return
+        launchIO { LocalHistory.recordLocalFile(item.contentPath, title = item.title) }
+        navToLocalFolderReader(dir, item.toBaseGalleryInfo(), page, names)
+    }
+
     fun openLibraryItemPrimary(item: LocalGalleryEntity) {
         when (item.kind) {
             LOCAL_GALLERY_KIND_VIDEO_FILE -> openVideoFile(item, inApp = Settings.useMedia3Player.value)
             LOCAL_GALLERY_KIND_VIDEO_FOLDER -> openVideoFolder(item)
+            LOCAL_GALLERY_KIND_IMAGE_FILE -> openImageFile(item, photoGrid = Settings.photoGridMode.value)
             else -> openGalleryPrimary(item)
         }
     }
@@ -464,6 +524,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
         when (item.kind) {
             LOCAL_GALLERY_KIND_VIDEO_FILE -> openVideoFile(item, inApp = !Settings.useMedia3Player.value)
             LOCAL_GALLERY_KIND_VIDEO_FOLDER -> openVideoFolder(item)
+            LOCAL_GALLERY_KIND_IMAGE_FILE -> openImageFile(item, photoGrid = !Settings.photoGridMode.value)
             else -> openGallerySecondary(item)
         }
     }
@@ -637,6 +698,13 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                                 sectionHeaderText,
                                 modifier = Modifier.padding(horizontal = marginH),
                                 onClick = { toggleLibrarySection() },
+                                onLongClick = {
+                                    if (librarySection == LibrarySection.Videos) {
+                                        toggleLibraryVideoMode()
+                                    } else {
+                                        toggleLibraryPhotoMode()
+                                    }
+                                },
                             )
                         }
                     }
@@ -684,6 +752,13 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             BrowseSectionHeader(
                                 sectionHeaderText,
                                 onClick = { toggleLibrarySection() },
+                                onLongClick = {
+                                    if (librarySection == LibrarySection.Videos) {
+                                        toggleLibraryVideoMode()
+                                    } else {
+                                        toggleLibraryPhotoMode()
+                                    }
+                                },
                             )
                         }
                     }
