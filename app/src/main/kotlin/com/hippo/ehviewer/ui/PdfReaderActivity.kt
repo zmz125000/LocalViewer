@@ -435,8 +435,9 @@ private fun PdfReaderScreen(
                 listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
                     ?: listState.firstVisibleItemIndex
                 ) + 8
-            images.engine.ensureListedThrough(ahead.coerceAtLeast(0))
-            val n = images.engine.pageCount
+            val n = withContext(Dispatchers.IO) {
+                images.engine.ensureListedThrough(ahead.coerceAtLeast(0))
+            }
             if (n != pageCount) pageCount = n
             if (images.engine.structureComplete) {
                 pageCount = images.engine.pageCount
