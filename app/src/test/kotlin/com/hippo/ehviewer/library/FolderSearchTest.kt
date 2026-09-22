@@ -61,6 +61,19 @@ class FolderSearchTest {
         assertEquals("S/leaf", FolderSearch.openFolderTarget("S/leaf", isDirectory = true))
         assertEquals("S", FolderSearch.openFolderTarget("S/clip.mp4", isDirectory = false))
         assertEquals("docs", FolderSearch.openFolderTarget("docs/a.pdf", isDirectory = false))
+        assertEquals(
+            "S",
+            FolderSearch.openFolderTarget("S/leaf", isDirectory = true, virtual = true),
+        )
+        assertEquals(
+            "S",
+            FolderSearch.openFolderTarget("S/leaf/clip.mp4", isDirectory = false, virtual = true),
+        )
+        assertEquals("S", FolderSearch.openFolderTarget("S", isDirectory = true, virtual = true))
+        assertEquals(
+            "S",
+            FolderSearch.openFolderTarget("S/clip.mp4", isDirectory = false, virtual = true),
+        )
     }
 
     @Test

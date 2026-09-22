@@ -1455,13 +1455,15 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         }
     }
 
-    fun dirOverflow(name: String, coverFileName: String? = null) = BrowseOverflowActions(
+    fun dirOverflow(name: String, coverFileName: String? = null, virtual: Boolean = false) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Common,
         favorited = isDirFavorite(name),
         onFavorite = { toggleDirFavorite(name, coverFileName) },
         onSaveAs = { saveWebDavFolder(name) },
         onShareViaHttp = webDavHttpShareFolder(name),
-        onOpenFolder = { openBrowseFolder(FolderSearch.openFolderTarget(name, isDirectory = true)) },
+        onOpenFolder = {
+            openBrowseFolder(FolderSearch.openFolderTarget(name, isDirectory = true, virtual = virtual))
+        },
         onUnsupported = { notSupportedAction() },
     )
 
@@ -1474,7 +1476,13 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onSaveAs = { saveWebDavFolder(entry.relativeName, entry.name) },
         onShareViaHttp = webDavHttpShareFolder(entry.relativeName, entry.name),
         onOpenFolder = {
-            openBrowseFolder(FolderSearch.openFolderTarget(entry.relativeName, isDirectory = true))
+            openBrowseFolder(
+                FolderSearch.openFolderTarget(
+                    entry.relativeName,
+                    isDirectory = true,
+                    virtual = entry.virtual,
+                ),
+            )
         },
         onUnsupported = { notSupportedAction() },
     )
@@ -1543,7 +1551,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         )
     }
 
-    fun videoOverflow(fileName: String) = BrowseOverflowActions(
+    fun videoOverflow(fileName: String, virtual: Boolean = false) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Video,
         onPlay = { playVideo(fileName) },
         onExternalPlayer = { openExternalFile(fileName) },
@@ -1553,7 +1561,9 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
         onShare = { shareWebDavFile(fileName) },
         onShareViaHttp = webDavHttpShareFile(fileName),
         onOpenFolder = {
-            openBrowseFolder(FolderSearch.openFolderTarget(fileName, isDirectory = false))
+            openBrowseFolder(
+                FolderSearch.openFolderTarget(fileName, isDirectory = false, virtual = virtual),
+            )
         },
         onUnsupported = { notSupportedAction() },
     )
@@ -1850,7 +1860,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         showFolderThumb = browseFolderThumbs,
                                         thumbRetryKey = refreshToken,
                                         allowRemoteFetch = allowRemoteThumbs,
-                                        overflow = dirOverflow(entry.relativeName, entry.coverFileName),
+                                        overflow = dirOverflow(entry.relativeName, entry.coverFileName, entry.virtual),
                                     )
                                 } else {
                                     BrowseDirectoryRow(
@@ -1870,7 +1880,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             entry.relativeName,
                                             entry.name,
                                         ) ?: "Dir",
-                                        overflow = dirOverflow(entry.relativeName, entry.coverFileName),
+                                        overflow = dirOverflow(entry.relativeName, entry.coverFileName, entry.virtual),
                                         showFavoriteStar = isDirFavorite(entry.relativeName),
                                     )
                                 }
@@ -1953,7 +1963,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         allowRemoteFetch = allowRemoteThumbs,
                                         onClick = { openVideoPrimary(entry.fileName) },
                                         onLongClick = { openVideoSecondary(entry.fileName) },
-                                        overflow = videoOverflow(entry.fileName),
+                                        overflow = videoOverflow(entry.fileName, entry.virtual),
                                     )
                                 } else {
                                     BrowseVideoRow(
@@ -1974,7 +1984,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                         fileName = entry.fileName,
                                         sizeBytes = entry.size,
                                         lastModifiedMs = entry.lastModifiedMs,
-                                        overflow = videoOverflow(entry.fileName),
+                                        overflow = videoOverflow(entry.fileName, entry.virtual),
                                     )
                                 }
                                 is BrowseEntryRemote.RegularFile -> {
@@ -2101,7 +2111,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             showFolderThumb = browseFolderThumbs,
                                             thumbRetryKey = refreshToken,
                                             allowRemoteFetch = allowRemoteThumbs,
-                                            overflow = dirOverflow(dir.relativeName, dir.coverFileName),
+                                            overflow = dirOverflow(dir.relativeName, dir.coverFileName, dir.virtual),
                                         )
                                     }
                                 }
@@ -2172,7 +2182,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             allowRemoteFetch = allowRemoteThumbs,
                                             onClick = { openVideoPrimary(video.fileName) },
                                             onLongClick = { openVideoSecondary(video.fileName) },
-                                            overflow = videoOverflow(video.fileName),
+                                            overflow = videoOverflow(video.fileName, video.virtual),
                                         )
                                     }
                                 }
@@ -2248,7 +2258,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             lastModifiedMs = dir.lastModifiedMs,
                                             sizeBytes = dir.size,
                                             typeLabel = browseZipAsDirTypeLabel(dir.relativeName, dir.name) ?: "Dir",
-                                            overflow = dirOverflow(dir.relativeName, dir.coverFileName),
+                                            overflow = dirOverflow(dir.relativeName, dir.coverFileName, dir.virtual),
                                             showFavoriteStar = isDirFavorite(dir.relativeName),
                                         )
                                     }
@@ -2331,7 +2341,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                             fileName = video.fileName,
                                             sizeBytes = video.size,
                                             lastModifiedMs = video.lastModifiedMs,
-                                            overflow = videoOverflow(video.fileName),
+                                            overflow = videoOverflow(video.fileName, video.virtual),
                                         )
                                     }
                                 }

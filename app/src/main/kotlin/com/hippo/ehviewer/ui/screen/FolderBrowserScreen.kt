@@ -826,6 +826,16 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         )
     }
 
+    /** Path of [path] relative to the current listing, for overflow Open folder. */
+    fun localOpenFolderRelative(path: okio.Path): String {
+        val framePath = stack.lastOrNull()?.path ?: return path.name
+        val base = framePath.replace('\\', '/').trimEnd('/')
+        val full = path.toString().replace('\\', '/')
+        if (base.isEmpty()) return full.trimStart('/')
+        val prefix = "$base/"
+        return if (full.startsWith(prefix)) full.removePrefix(prefix) else path.name
+    }
+
     /** Overflow "Open folder". No-op when the target is already this listing. */
     fun openBrowseFolder(targetRel: String) {
         if (targetRel.isEmpty()) return
@@ -1808,7 +1818,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onSaveAs = { saveLocalFolder(dir.path, dir.name, dir.relativeName) },
         onShareViaHttp = localHttpShareFolder(dir.path, dir.name, dir.relativeName),
         onOpenFolder = {
-            openBrowseFolder(FolderSearch.openFolderTarget(dir.relativeName, isDirectory = true))
+            openBrowseFolder(
+                FolderSearch.openFolderTarget(
+                    dir.relativeName,
+                    isDirectory = true,
+                    virtual = dir.virtual,
+                ),
+            )
         },
         onUnsupported = { notSupportedAction() },
     )
@@ -1822,7 +1838,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onSaveAs = { saveLocalFolder(entry.path, entry.name, entry.relativeName) },
         onShareViaHttp = localHttpShareFolder(entry.path, entry.name, entry.relativeName),
         onOpenFolder = {
-            openBrowseFolder(FolderSearch.openFolderTarget(entry.relativeName, isDirectory = true))
+            openBrowseFolder(
+                FolderSearch.openFolderTarget(
+                    entry.relativeName,
+                    isDirectory = true,
+                    virtual = entry.virtual,
+                ),
+            )
         },
         onUnsupported = { notSupportedAction() },
     )
@@ -1857,7 +1879,11 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         )
     }
 
-    fun videoOverflow(path: okio.Path, relativeName: String = path.name) = BrowseOverflowActions(
+    fun videoOverflow(
+        path: okio.Path,
+        relativeName: String = localOpenFolderRelative(path),
+        virtual: Boolean = false,
+    ) = BrowseOverflowActions(
         kind = BrowseOverflowKind.Video,
         onPlay = { playVideo(path) },
         onExternalPlayer = { openExternalFile(path) },
@@ -1867,7 +1893,13 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onShare = { shareLocalFile(path) },
         onShareViaHttp = localHttpShareFile(path),
         onOpenFolder = {
-            openBrowseFolder(FolderSearch.openFolderTarget(relativeName, isDirectory = false))
+            openBrowseFolder(
+                FolderSearch.openFolderTarget(
+                    relativeName,
+                    isDirectory = false,
+                    virtual = virtual,
+                ),
+            )
         },
         onUnsupported = { notSupportedAction() },
     )
@@ -2213,7 +2245,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         ),
                                         onClick = { openVideoPrimary(entry.path) },
                                         onLongClick = { openVideoSecondary(entry.path) },
-                                        overflow = videoOverflow(entry.path, entry.name),
+                                        overflow = videoOverflow(entry.path, virtual = entry.virtual),
                                     )
                                 } else {
                                     BrowseVideoRow(
@@ -2228,7 +2260,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         fileName = entry.name,
                                         sizeBytes = entry.size,
                                         lastModifiedMs = entry.lastModifiedMs,
-                                        overflow = videoOverflow(entry.path, entry.name),
+                                        overflow = videoOverflow(entry.path, virtual = entry.virtual),
                                     )
                                 }
                                 is BrowseEntry.RegularFile -> {
@@ -2429,7 +2461,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             ),
                                             onClick = { openVideoPrimary(video.path) },
                                             onLongClick = { openVideoSecondary(video.path) },
-                                            overflow = videoOverflow(video.path),
+                                            overflow = videoOverflow(video.path, virtual = video.virtual),
                                         )
                                     }
                                 }
@@ -2584,7 +2616,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                             fileName = video.path.name,
                                             sizeBytes = video.size,
                                             lastModifiedMs = video.lastModifiedMs,
-                                            overflow = videoOverflow(video.path),
+                                            overflow = videoOverflow(video.path, virtual = video.virtual),
                                         )
                                     }
                                 }
