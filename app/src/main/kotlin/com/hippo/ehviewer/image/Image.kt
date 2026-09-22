@@ -193,14 +193,11 @@ class Image private constructor(
     }
 
     /**
-     * Upload this still into GPU memory used by RenderThread.
-     *
-     * Must run on the main thread. [Bitmap.prepareToDraw] from Coil's decoder
-     * thread does not populate that cache, so the first on-screen frame still
-     * sync-uploads (~20–40ms hitch on high-res SMB manga).
+     * GPU hint for stills we built outside Coil (lib-direct JXL/JXR/PQ-AVIF,
+     * ProXDR software copy). Coil's [BitmapFactoryDecoder] / ImageDecoder already
+     * call [Bitmap.prepareToDraw] on JPEG/PNG/WebP/HEIC/UHDR.
      */
     fun prepareToDraw() {
-        // innerImage already unwraps BitmapImageWithExtraInfo in the constructor.
         val bm = (innerImage as? BitmapImage)?.bitmap
         bm?.prepareToDraw()
     }
@@ -322,6 +319,8 @@ class Image private constructor(
                     }
                 }
             } ?: return image
+            // Coil prepared the HEIC base; attachOrCopy may replace it with a software copy.
+            withMap.prepareToDraw()
             val wrapped = withMap.asImage()
             return BitmapImageWithExtraInfo(image = wrapped, hasGainmap = true)
         }
@@ -596,7 +595,7 @@ class Image private constructor(
                 isHdrContentDirect = result.isHdrContent,
                 contentHdrBoostOverride = result.contentHdrBoost,
                 isWideGamutDirect = result.isWideGamutSource,
-            )
+            ).also { it.prepareToDraw() }
         }
 
         /**

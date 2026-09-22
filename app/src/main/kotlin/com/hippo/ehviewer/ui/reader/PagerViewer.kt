@@ -286,14 +286,20 @@ private fun DualPageContainer(
         )
         if (solo) {
             val page = leftPage ?: rightPage!!
-            // Odd last page: full-width single page (no half-column).
-            PagerItem(
-                page = page,
-                pageLoader = pageLoader,
-                contentScale = ContentScale.Inside,
-                viewportSize = layoutSize,
-                contentModifier = zoomMod,
-            )
+            // Odd last page: full-viewport single page (same as pre-gap). Zoom viewport
+            // must be the pager slot, matching paired pages after the pinch-zoom fix.
+            Box(
+                modifier = Modifier.fillMaxSize().then(zoomMod),
+                contentAlignment = Alignment.Center,
+            ) {
+                PagerItem(
+                    page = page,
+                    pageLoader = pageLoader,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                    viewportSize = layoutSize,
+                )
+            }
         } else if (gap) {
             Row(
                 modifier = Modifier.fillMaxSize().then(zoomMod),

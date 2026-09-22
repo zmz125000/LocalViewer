@@ -45,7 +45,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock as mutexWithLock
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
 import moe.tarsin.coroutines.NamedMutex
 import moe.tarsin.coroutines.withLock
 import okio.Path
@@ -190,13 +189,6 @@ abstract class PageLoader(
                             forceOriginal = forceOriginal,
                         )
                     }
-                // Bitmap.prepareToDraw() only fills RenderThread's GPU cache on the UI
-                // thread. Decode runs on IO; local files finish early enough that the
-                // first Compose draw happens off-screen. SMB high-res pages become Ready
-                // just before the turn, so that first draw was a 20–40ms sync upload.
-                withContext(Dispatchers.Main.immediate) {
-                    image.prepareToDraw()
-                }
                 // Compressed ramPages are only needed until decode. Keep them while this
                 // index is still demanded (save / retry); drop as soon as the bitmap exists
                 // if navigation already moved on.
@@ -420,11 +412,6 @@ abstract class PageLoader(
     }
 
     private fun notifyPageSucceed(index: Int, image: Image, replaceCache: Boolean = true) {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            image.prepareToDraw()
-        } else {
-            pageLoaderMainHandler.post { image.prepareToDraw() }
-        }
         publishPageSucceed(index, image, replaceCache)
         releaseInflight(index)
     }

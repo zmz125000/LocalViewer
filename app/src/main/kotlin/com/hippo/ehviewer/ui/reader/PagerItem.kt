@@ -118,8 +118,6 @@ fun PagerItem(
                     pageLoader.retryPage(page.index)
                     return@LaunchedEffect
                 }
-                // Main-thread GPU upload while this neighbour is still off-screen.
-                image.prepareToDraw()
                 // Reuse the same painter for this Image. A new DrawablePainter on every
                 // effect start raced with the old onForgotten(stop) after scroll.
                 if (painter == null) painter = image.toPainter()
