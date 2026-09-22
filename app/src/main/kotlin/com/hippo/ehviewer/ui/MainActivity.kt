@@ -94,6 +94,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -336,17 +337,24 @@ private fun MainNavDestinationIcon(
         imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
         contentDescription = null,
         modifier = if (onLongClick != null) {
-            // Long-press only: short taps stay on NavigationBarItem/RailItem onClick.
+            // Observe the press without consuming so short taps stay on the
+            // NavigationBarItem/RailItem. After a long-press, consume the rest of
+            // the gesture (including up) so the item onClick does not fire.
             Modifier.pointerInput(onLongClick) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
-                    val releasedBeforeTimeout = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                    var timedOut = true
+                    withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
                         waitForUpOrCancellation()
+                        timedOut = false
                     }
-                    if (releasedBeforeTimeout == null) {
+                    if (timedOut) {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onLongClick()
-                        waitForUpOrCancellation()
+                        do {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            event.changes.forEach { it.consume() }
+                        } while (event.changes.any { it.pressed })
                     }
                 }
             }
