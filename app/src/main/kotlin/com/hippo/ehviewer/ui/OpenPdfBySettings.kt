@@ -1,8 +1,12 @@
 package com.hippo.ehviewer.ui
 
 import android.content.Context
+import android.widget.Toast
+import com.ehviewer.core.i18n.R
 import com.ehviewer.core.model.BaseGalleryInfo
 import com.ehviewer.core.model.GalleryInfo.Companion.NOT_FAVORITED
+import com.ehviewer.core.util.logcat
+import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.library.HistoryThumbKey
@@ -13,16 +17,38 @@ import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.ui.reader.ReaderScreenArgs
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Route a PDF [ReaderScreenArgs] (or browse path) through [Settings.pdfReaderMode].
  * Image-reader overflow / long-press pass [ReaderScreenArgs.skipPdfPrimary].
  */
 object OpenPdfBySettings {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     fun shouldRedirect(args: ReaderScreenArgs): Boolean {
         if (args.skipPdfPrimary) return false
         if (!isPdfArgs(args)) return false
         return Settings.pdfReaderMode.value != PdfReaderMode.IMAGE
+    }
+
+    /** Open PDF/external without composing [com.hippo.ehviewer.ui.reader.ReaderScreen]. */
+    fun launch(context: Context, args: ReaderScreenArgs) {
+        scope.launch {
+            runCatching { open(context, args) }.onFailure { e ->
+                logcat("OpenPdfBySettings", e)
+                withUIContext {
+                    Toast.makeText(
+                        context.applicationContext,
+                        context.getString(R.string.pdf_reader_open_failed, e.message ?: e.toString()),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }
     }
 
     fun isPdfArgs(args: ReaderScreenArgs): Boolean = when (args) {

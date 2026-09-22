@@ -83,10 +83,10 @@
     <string name="settings_use_media3_player">Use Media3 player</string>
     <string name="settings_use_media3_player_summary">On: tap opens in-app player, long-press opens external app. Off: tap external, long-press in-app.</string>
     <string name="settings_pdf_reader">PDF reader</string>
-    <string name="settings_pdf_reader_summary">Select the default PDF reader</string>
+    <string name="settings_pdf_reader_summary">%s is the current default reader.</string>
     <string name="settings_pdf_reader_mode_image">Image reader</string>
     <string name="settings_pdf_reader_mode_pdf">PDF reader</string>
-    <string name="settings_pdf_reader_mode_external">External</string>
+    <string name="settings_pdf_reader_mode_external">External app</string>
     <string name="settings_default_pdf_reader">Default PDF app</string>
     <string name="settings_default_pdf_reader_none">No PDF apps found</string>
     <string name="settings_open_html_with_browser">Open HTML with browser</string>
