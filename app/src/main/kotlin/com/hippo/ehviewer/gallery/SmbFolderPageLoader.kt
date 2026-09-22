@@ -33,10 +33,10 @@ import okio.Path
 /**
  * SMB folder reader with seek-friendly downloads:
  * - Host pool multiplexes ops ([SmbGateway.maxConcurrentOpsPerHost] ≈ sessions × ops/session).
- * - Viewport anchor prefers one reserved interactive slot so a seek does not wait
- *   behind mate / decode-ahead / source-only transfers. If that slot is still held
- *   by the previous page, the anchor falls through to the bounded prefetch lane.
- * - Cache-off keeps compressed bytes on the heap: non-anchor copies are capped at
+ * - One reserved serial slot prefetches from the viewport in demand order and
+ *   waits for that slot. Mate / decode-ahead / source-only keep using the
+ *   bounded prefetch / RAM / lib-HDR lanes.
+ * - Cache-off keeps compressed bytes on the heap: non-serial copies are capped at
  *   [RAM_PREFETCH_PERMITS] (plus the reserved slot when free) — browse-thumb width,
  *   not the full pool.
  * - Per-file mutex in [SmbCache] joins overlapping downloads (small jump / prefetch race).
@@ -58,10 +58,10 @@ suspend inline fun <T> useSmbFolderPageLoader(
         val password = SmbPasswordStore.get(source.id)
         val size = imageFileNames.size
         val maxOps = SmbGateway.maxConcurrentOpsPerHost().coerceAtLeast(1)
-        // Reserve 1 op for the viewport anchor / just-seeked page.
-        val interactiveSlots = Semaphore(1)
+        // Reserve 1 op for viewport-order serial prefetch.
+        val serialPrefetchSlots = Semaphore(1)
         val prefetchSlots = if (maxOps <= 1) {
-            interactiveSlots
+            serialPrefetchSlots
         } else {
             Semaphore(maxOps - 1)
         }
@@ -189,14 +189,15 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 private fun takeReadyWaiters(index: Int): List<() -> Unit> = readyWaiters.remove(index)?.toList().orEmpty()
 
                 private fun dispatchReady(index: Int) {
+                    markSourceReady(index)
                     takeReadyWaiters(index).forEach { runCatching { it() } }
                 }
 
                 /**
                  * Start or join a download for [index].
                  * - Small jump / same page: reuses the existing job; [onReady] is queued.
-                 * - Slot is chosen at copy time via [withFolderNetworkPermit] (anchor vs
-                 *   cache-off RAM cap vs cache-on prefetch).
+                 * - Slot is chosen at copy time via [withFolderNetworkPermit] (viewport-order
+                 *   serial vs cache-off RAM cap vs cache-on prefetch).
                  * - Always completes waiters: success → notifySourceReady; fail/cancel with waiters
                  *   → retry once or [notifyPageFailed] (never silent forever-spinner).
                  */
@@ -211,9 +212,11 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     // Never probe disk here — onRequest/retryPage run on main (lifecycle
                     // ON_RESUME). Memory-only skip for prefetch when known present.
                     if (onReady == null && !skipDisk && SmbCache.isPageCached(cache)) {
+                        markSourceReady(index)
                         return
                     }
                     if (onReady == null && skipDisk && ramPages.containsKey(index)) {
+                        markSourceReady(index)
                         return
                     }
                     if (onReady != null) {
@@ -243,10 +246,10 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             }
                             val nameForSlot = imageFileNames[index]
                             withFolderNetworkPermit(
-                                isAnchor = isAnchorPage(index),
+                                isSerial = { isSerialPrefetchPage(index) },
                                 cacheOff = skipDisk,
                                 libHdr = isLibHdrCandidate(nameForSlot),
-                                interactiveSlots = interactiveSlots,
+                                serialSlots = serialPrefetchSlots,
                                 ramPrefetchSlots = ramPrefetchSlots,
                                 libHdrPrefetchSlots = libHdrPrefetchSlots,
                                 prefetchSlots = prefetchSlots,

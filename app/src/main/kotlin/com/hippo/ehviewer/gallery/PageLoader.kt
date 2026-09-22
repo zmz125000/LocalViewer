@@ -46,7 +46,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock as mutexWithLock
-import kotlinx.coroutines.sync.withPermit
 import moe.tarsin.coroutines.NamedMutex
 import moe.tarsin.coroutines.withLock
 import okio.Path
@@ -129,14 +128,17 @@ abstract class PageLoader(
      * Peak software decode is large; keep concurrency low on a 256 MiB heap.
      * Cache-off also holds compressed bytes on the heap, so decode is 2-wide.
      * Lib-direct F16 is further serialized inside [LibDirectDecode] (one at a time).
+     *
+     * One permit is reserved for viewport-order serial decode; the rest fire as
+     * soon as source is ready (same random contention as before).
      */
-    private val semaphore = Semaphore(
-        when {
-            Settings.disableReaderNetworkCache.value -> 2
-            Settings.readerLibDirectBitmap.value -> 2
-            else -> 4
-        },
-    )
+    private val decodeSlotCount = when {
+        Settings.disableReaderNetworkCache.value -> 2
+        Settings.readerLibDirectBitmap.value -> 2
+        else -> 4
+    }
+    private val serialDecodeSlots = Semaphore(1)
+    private val parallelDecodeSlots = Semaphore((decodeSlotCount - 1).coerceAtLeast(1))
 
     /**
      * Decoded-page budget. Weight is clamped so one huge bitmap can occupy the
@@ -320,9 +322,21 @@ abstract class PageLoader(
     @Volatile
     private var desiredDecodedPages: Set<Int> = emptySet()
 
+    /** Visible + decode-ahead in demand order (viewport first, then reading direction). */
+    @Volatile
+    private var orderedDecodePages: List<Int> = emptyList()
+
+    /** [orderedDecodePages] then source-only prefetch, same order. */
+    @Volatile
+    private var orderedSourcePages: List<Int> = emptyList()
+
+    /** Pages whose compressed source is known present this session (disk, RAM, or mmap). */
+    private val sourceReady = ConcurrentHashMap.newKeySet<Int>()
+
     override fun restart() {
         cancelDecodeJobs()
         exportFiles.clear()
+        sourceReady.clear()
         lock.write { cache.evictAll() }
         pages.forEach(Page::reset)
         replan()
@@ -379,6 +393,7 @@ abstract class PageLoader(
 
     override fun retryPage(index: Int, orgImg: Boolean) {
         cancelRequest(index)
+        sourceReady.remove(index)
         notifyPageWait(index)
         lock.write { cache.remove(index) }
         if (index !in 0 until size) return
@@ -469,6 +484,7 @@ abstract class PageLoader(
     override fun close() {
         cancelDecodeJobs()
         exportFiles.clear()
+        sourceReady.clear()
         lock.write { cache.evictAll() }
         persistProgress()
     }
@@ -578,6 +594,8 @@ abstract class PageLoader(
         val demand = demandPlanner.plan(navigation, size, policy)
         lastNavigation = demand.navigation
         desiredDecodedPages = demand.decodedPages
+        orderedDecodePages = demand.visibleDecode + demand.decodeAhead
+        orderedSourcePages = demand.visibleDecode + demand.decodeAhead + demand.sourceOnly
         startPage = demand.navigation.anchor
 
         onNavigation(demand)
@@ -678,6 +696,7 @@ abstract class PageLoader(
      */
     fun notifySourceReady(index: Int, orgImg: Boolean = false) {
         if (index !in 0 until size) return
+        markSourceReady(index)
         if (!isDecodeDemanded(index)) {
             // A cancelled/old source operation completed after a seek or reversal.
             releaseInflight(index)
@@ -701,7 +720,11 @@ abstract class PageLoader(
                 val runningJob = currentCoroutineContext()[Job]
                 try {
                     mutex.withLock(index) {
-                        semaphore.withPermit {
+                        withSerialOrFallbackPermit(
+                            isSerial = { isSerialDecodePage(index) },
+                            serialSlots = serialDecodeSlots,
+                            fallbackSlots = parallelDecodeSlots,
+                        ) {
                             atomicallyDecodeAndUpdate(index, forceOriginal = orgImg)
                         }
                     }
@@ -760,4 +783,40 @@ abstract class PageLoader(
      */
     @PublishedApi
     internal fun isAnchorPage(index: Int): Boolean = (lastNavigation?.anchor ?: startPage) == index
+
+    /** Record that [index] is on disk / in RAM so the serial prefetch lane can advance. */
+    @PublishedApi
+    internal fun markSourceReady(index: Int) {
+        sourceReady.add(index)
+    }
+
+    /**
+     * True while [index] is the first source page from the viewport that is not yet
+     * available. That page waits on the reserved prefetch slot; later pages use the pool.
+     */
+    @PublishedApi
+    internal fun isSerialPrefetchPage(index: Int): Boolean {
+        val head = serialWorkHead(orderedSourcePages) { candidate ->
+            candidate in sourceReady || pages.getOrNull(candidate)?.status is PageStatus.Error
+        } ?: return false
+        return head == index
+    }
+
+    /**
+     * True while [index] is the first still-needed decode from the viewport.
+     * That page waits on the reserved decode slot; later ready pages use the rest.
+     */
+    private fun isSerialDecodePage(index: Int): Boolean {
+        val head = serialWorkHead(orderedDecodePages) { !needsSerialDecode(it) } ?: return false
+        return head == index
+    }
+
+    private fun needsSerialDecode(index: Int): Boolean {
+        if (!isDecodeDemanded(index)) return false
+        return when (val st = pages.getOrNull(index)?.status) {
+            is PageStatus.Ready -> st.image.innerImage == null
+            is PageStatus.Blocked, is PageStatus.Error -> false
+            else -> true
+        }
+    }
 }

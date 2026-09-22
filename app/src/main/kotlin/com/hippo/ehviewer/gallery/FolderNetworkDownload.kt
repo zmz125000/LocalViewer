@@ -1,10 +1,9 @@
 package com.hippo.ehviewer.gallery
 
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 
 /**
- * Extra concurrent RAM downloads besides the reserved anchor lane.
+ * Extra concurrent RAM downloads besides the reserved serial lane.
  *
  * Cache-off holds compressed bytes on the Java heap. Matching browse-thumb
  * width (1 reserved + 2) keeps peak RAM near the current stable path instead
@@ -16,36 +15,34 @@ internal const val RAM_PREFETCH_PERMITS = 2
 /**
  * Run a folder-network page copy on the right semaphore.
  *
- * The viewport anchor tries the reserved interactive lane so a seek does not
- * sit behind mate / decode-ahead / source-only work. It never *waits* on that
- * lane: if the previous page still holds it, the copy falls through to the
- * bounded prefetch/RAM lane and starts immediately.
+ * One serial slot walks source pages from the viewport in demand order and
+ * waits for that slot (it does not fall through into the pool). Mate /
+ * decode-ahead / source-only copies keep using [ramPrefetchSlots],
+ * [libHdrPrefetchSlots], or [prefetchSlots] as before.
  *
- * Cache-off always uses [ramPrefetchSlots] for that fallback (not the full
- * pool). Cache-on lib-HDR/AVIF convert uses [libHdrPrefetchSlots].
+ * Cache-off always uses [ramPrefetchSlots] for that remaining work (not the
+ * full pool). Cache-on lib-HDR/AVIF convert uses [libHdrPrefetchSlots].
  */
 @PublishedApi
 internal suspend fun <T> withFolderNetworkPermit(
-    isAnchor: Boolean,
+    isSerial: () -> Boolean,
     cacheOff: Boolean,
     libHdr: Boolean,
-    interactiveSlots: Semaphore,
+    serialSlots: Semaphore,
     ramPrefetchSlots: Semaphore,
     libHdrPrefetchSlots: Semaphore,
     prefetchSlots: Semaphore,
     block: suspend () -> T,
 ): T {
-    if (isAnchor && interactiveSlots.tryAcquire()) {
-        try {
-            return block()
-        } finally {
-            interactiveSlots.release()
-        }
-    }
     val fallback = when {
         cacheOff -> ramPrefetchSlots
         libHdr -> libHdrPrefetchSlots
         else -> prefetchSlots
     }
-    return fallback.withPermit { block() }
+    return withSerialOrFallbackPermit(
+        isSerial = isSerial,
+        serialSlots = serialSlots,
+        fallbackSlots = fallback,
+        block = block,
+    )
 }
