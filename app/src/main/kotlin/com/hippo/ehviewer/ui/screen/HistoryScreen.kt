@@ -80,6 +80,7 @@ import com.hippo.ehviewer.library.WEBDAV_FOLDER_TOKEN
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.buildLocalBrowseStack
+import com.hippo.ehviewer.library.isPdfFileName
 import com.hippo.ehviewer.library.isVideoFileName
 import com.hippo.ehviewer.library.libraryBrowseRelative
 import com.hippo.ehviewer.library.mimeTypeForFileName
@@ -666,6 +667,10 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     val path = target.path
                     val name = info.title
                         ?: path.substringAfterLast('/').substringAfterLast('\\')
+                    if (isPdfFileName(name) || isPdfFileName(path)) {
+                        navToReader(path)
+                        return@launch
+                    }
                     val mime = mimeTypeForFileName(name)
                     val isVideo = isVideoFileName(name) || isVideoFileName(path)
                     withIOContext {
@@ -694,6 +699,10 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     val remote = target.remotePath.trim('/')
                     val name = info.title
                         ?: remote.substringAfterLast('/').substringAfterLast('\\')
+                    if (isPdfFileName(name) || isPdfFileName(remote)) {
+                        navToSmbStreamArchiveReader(source.id, remote)
+                        return@launch
+                    }
                     val mime = mimeTypeForFileName(name)
                     val isVideo = isVideoFileName(name) || isVideoFileName(remote)
                     withIOContext {
@@ -739,6 +748,10 @@ fun AnimatedVisibilityScope.HistoryScreen(navigator: DestinationsNavigator) = Sc
                     val remote = target.remotePath.trim('/')
                     val name = info.title
                         ?: remote.substringAfterLast('/').substringAfterLast('\\')
+                    if (isPdfFileName(name) || isPdfFileName(remote)) {
+                        navToWebDavStreamArchiveReader(source.id, remote)
+                        return@launch
+                    }
                     val mime = mimeTypeForFileName(name)
                     val isVideo = isVideoFileName(name) || isVideoFileName(remote)
                     withIOContext {

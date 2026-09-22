@@ -53,7 +53,7 @@ suspend fun keepNoMediaFileStatus(
 }
 
 context(_: DestinationsNavigator)
-fun navToReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1) = navToReader(ReaderScreenArgs.Archive(path, page = page, info = info))
+fun navToReader(path: String, info: BaseGalleryInfo? = null, page: Int = -1, skipPdfPrimary: Boolean = false) = navToReader(ReaderScreenArgs.Archive(path, page = page, info = info, skipPdfPrimary = skipPdfPrimary))
 
 context(_: DestinationsNavigator)
 fun navToLocalFolderReader(
@@ -96,7 +96,8 @@ fun navToSmbStreamArchiveReader(
     remotePath: String,
     info: BaseGalleryInfo? = null,
     page: Int = -1,
-) = navToReader(ReaderScreenArgs.SmbStreamArchive(sourceId, remotePath, page, info))
+    skipPdfPrimary: Boolean = false,
+) = navToReader(ReaderScreenArgs.SmbStreamArchive(sourceId, remotePath, page, info, skipPdfPrimary))
 
 context(_: DestinationsNavigator)
 fun navToWebDavStreamArchiveReader(
@@ -104,7 +105,8 @@ fun navToWebDavStreamArchiveReader(
     remotePath: String,
     info: BaseGalleryInfo? = null,
     page: Int = -1,
-) = navToReader(ReaderScreenArgs.WebDavStreamArchive(sourceId, remotePath, page, info))
+    skipPdfPrimary: Boolean = false,
+) = navToReader(ReaderScreenArgs.WebDavStreamArchive(sourceId, remotePath, page, info, skipPdfPrimary))
 
 context(nav: DestinationsNavigator)
 private fun navToReader(args: ReaderScreenArgs) = nav.navigate(ReaderScreenDestination(args)) { launchSingleTop = true }

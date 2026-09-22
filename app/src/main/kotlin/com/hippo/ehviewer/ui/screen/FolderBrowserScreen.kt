@@ -1452,7 +1452,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         navToLocalFolderReader(frame.path, info, page, images.map { it.name })
     }
 
-    fun openArchiveReader(entry: BrowseEntry.ArchiveGallery) {
+    fun openArchiveReader(entry: BrowseEntry.ArchiveGallery, skipPdfPrimary: Boolean = false) {
         val frame = stack.lastOrNull()
         if (frame != null && !frame.isZipBrowse) {
             ReaderGalleryPlaylist.setFromLocalBrowse(
@@ -1468,7 +1468,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             recordCurrentBrowseFolderHistory()
             LocalHistory.recordLocalArchive(path, title = entry.name)
         }
-        navToReader(path)
+        navToReader(path, skipPdfPrimary = skipPdfPrimary)
     }
 
     fun openPdfInOtherApp(entry: BrowseEntry.ArchiveGallery, usePreferredReader: Boolean = true) {
@@ -1534,7 +1534,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     fun openPdfSecondary(entry: BrowseEntry.ArchiveGallery) {
         when (Settings.pdfReaderMode.value) {
-            PdfReaderMode.PDF, PdfReaderMode.EXTERNAL -> openArchiveReader(entry)
+            PdfReaderMode.PDF, PdfReaderMode.EXTERNAL -> openArchiveReader(entry, skipPdfPrimary = true)
             else -> openPdfReader(entry)
         }
     }
@@ -1830,7 +1830,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
     fun archiveOverflow(entry: BrowseEntry.ArchiveGallery) = if (isPdfFileName(entry.name)) {
         BrowseOverflowActions(
             kind = BrowseOverflowKind.Pdf,
-            onRead = { openArchiveReader(entry) },
+            onRead = { openArchiveReader(entry, skipPdfPrimary = true) },
             onPlay = { openPdfReader(entry) },
             onExternalPlayer = { openPdfInOtherApp(entry) },
             onOpenWith = { openPdfInOtherApp(entry, usePreferredReader = false) },

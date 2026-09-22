@@ -1285,6 +1285,7 @@ fun AnimatedVisibilityScope.WebDavBrowserScreen(
                                     sourceId = src.id,
                                     remotePath = remoteNorm,
                                     info = info,
+                                    skipPdfPrimary = skipPdfPrimary,
                                 ),
                             ),
                         ) { launchSingleTop = true }

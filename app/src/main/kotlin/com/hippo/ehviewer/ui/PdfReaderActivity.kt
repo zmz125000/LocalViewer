@@ -13,31 +13,27 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -45,19 +41,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.EhDB
+import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
+import eu.kanade.tachiyomi.ui.reader.PageIndicatorText
+import eu.kanade.tachiyomi.ui.reader.ReaderAppBars
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -219,7 +220,6 @@ private class PdfSession(private val renderer: PdfRenderer) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PdfReaderScreen(
     title: String,
@@ -233,10 +233,20 @@ private fun PdfReaderScreen(
     val pageCount = session?.pageCount ?: 0
     val initial = startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initial)
-    val pageLabel by remember {
+    val currentPage by remember {
         derivedStateOf {
-            if (pageCount <= 0) "" else "${listState.firstVisibleItemIndex + 1} / $pageCount"
+            if (pageCount <= 0) 0 else listState.firstVisibleItemIndex + 1
         }
+    }
+    val scope = rememberCoroutineScope()
+    val showSeekbar by Settings.showReaderSeekbar.collectAsState()
+    val hideTopBar by Settings.readerHideTopBar.collectAsState()
+    val showPageNumber by Settings.showPageNumber.collectAsState()
+    var appbarVisible by remember { mutableStateOf(false) }
+    val chromeVisible by rememberUpdatedState(appbarVisible)
+    var suppressPageClick by remember { mutableStateOf(false) }
+    LaunchedEffect(error) {
+        if (error != null) appbarVisible = true
     }
     LaunchedEffect(session, startPage, pageCount) {
         if (session == null || pageCount <= 0) return@LaunchedEffect
@@ -261,46 +271,11 @@ private fun PdfReaderScreen(
                 runCatching { EhDB.putReadProgress(progressGid, page) }
             }
     }
-    Scaffold(
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        containerColor = PageBackdrop,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                },
-                navigationIcon = {
-                    IconButton(onClick = onClose) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = null,
-                        )
-                    }
-                },
-                actions = {
-                    if (pageLabel.isNotEmpty()) {
-                        Text(
-                            text = pageLabel,
-                            modifier = Modifier.padding(end = 16.dp),
-                            style = MaterialTheme.typography.titleSmall,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Black.copy(alpha = 0.85f),
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White,
-                    actionIconContentColor = Color.White,
-                ),
-            )
-        },
-    ) { padding ->
+    Box(modifier = Modifier.fillMaxSize().background(PageBackdrop)) {
         when {
             error != null -> {
                 Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
+                    modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(error, color = Color.White, modifier = Modifier.padding(24.dp))
@@ -308,25 +283,18 @@ private fun PdfReaderScreen(
             }
             session == null -> {
                 Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
+                    modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
                     CircularProgressIndicator()
                 }
             }
             else -> {
-                BoxWithConstraints(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                ) {
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                     val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }
                         .coerceIn(360, 2048)
                     val pages = remember(pageCount) { (0 until pageCount).toList() }
                     val zoomableState = rememberZoomableState(zoomSpec = PdfZoomSpec)
-                    // At 1×: pinch only — one-finger drag belongs to LazyColumn.
                     val zoomedIn = (zoomableState.zoomFraction ?: 0f) > 0.01f
                     val gestures = if (zoomedIn) {
                         EnabledZoomGestures.ZoomAndPan
@@ -344,12 +312,20 @@ private fun PdfReaderScreen(
                                     while (true) {
                                         val event = awaitPointerEvent(PointerEventPass.Initial)
                                         multiTouch = event.changes.count { it.pressed } >= 2
+                                        if (event.changes.any { it.changedToDown() }) {
+                                            val hide = chromeVisible
+                                            suppressPageClick = hide
+                                            if (hide) appbarVisible = false
+                                        }
                                     }
                                 }
                             }
                             .zoomable(
                                 state = zoomableState,
                                 gestures = gestures,
+                                onClick = {
+                                    if (!suppressPageClick) appbarVisible = !appbarVisible
+                                },
                             ),
                     ) {
                         items(pages, key = { it }) { index ->
@@ -361,6 +337,32 @@ private fun PdfReaderScreen(
                         }
                     }
                 }
+            }
+        }
+        ReaderAppBars(
+            visible = appbarVisible,
+            onNavigateUp = onClose,
+            showTopBar = !hideTopBar,
+            title = title,
+            isRtl = false,
+            showSeekBar = showSeekbar,
+            currentPage = currentPage,
+            totalPages = pageCount,
+            onSliderValueChange = { page ->
+                scope.launch {
+                    val target = (page - 1).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+                    listState.scrollToItem(target)
+                    onPageChanged(target)
+                }
+            },
+        )
+        if (showPageNumber && !appbarVisible && currentPage > 0 && pageCount > 0) {
+            CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.bodySmall) {
+                PageIndicatorText(
+                    currentPage = currentPage,
+                    totalPages = pageCount,
+                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding(),
+                )
             }
         }
     }
