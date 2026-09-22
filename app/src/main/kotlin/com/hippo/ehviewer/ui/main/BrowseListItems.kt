@@ -1712,7 +1712,7 @@ fun BrowseCoverThumb(
 
 /**
  * Section label for folder browse lists (Directories / Galleries / …).
- * Optional [onClick] (e.g. collapse) uses **no ripple** (`indication = null`).
+ * Optional [onClick] / [onLongClick] use **no ripple** (`indication = null`).
  * When clickable, the hit target is the full header row (text + trailing space),
  * same in list and grid — not only the label glyphs.
  */
@@ -1721,24 +1721,40 @@ fun BrowseSectionHeader(
     text: String,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
 ) {
+    val haptic = LocalHapticFeedback.current
     Text(
         text = text,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
         modifier = modifier
             .then(
-                if (onClick != null) {
-                    // fillMaxWidth so list matches grid: tap anywhere on the header band.
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable(
-                            interactionSource = null,
-                            indication = null,
-                            onClick = onClick,
-                        )
-                } else {
-                    Modifier
+                when {
+                    onClick != null && onLongClick != null -> {
+                        // fillMaxWidth so list matches grid: tap anywhere on the header band.
+                        Modifier
+                            .fillMaxWidth()
+                            .combinedClickable(
+                                interactionSource = null,
+                                indication = null,
+                                onClick = onClick,
+                                onLongClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onLongClick()
+                                },
+                            )
+                    }
+                    onClick != null -> {
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                interactionSource = null,
+                                indication = null,
+                                onClick = onClick,
+                            )
+                    }
+                    else -> Modifier
                 },
             )
             .padding(horizontal = 16.dp, vertical = 8.dp),

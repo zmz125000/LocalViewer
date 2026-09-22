@@ -109,6 +109,7 @@ import com.hippo.ehviewer.ui.OpenFileExternally
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.destinations.EasyTierScreenDestination
 import com.hippo.ehviewer.ui.easytier.EasyTierDialog
+import com.hippo.ehviewer.ui.easytier.rememberEasyTierStartButtonAction
 import com.hippo.ehviewer.ui.main.BrowseGridPlaceholderIconSize
 import com.hippo.ehviewer.ui.main.BrowseListLeadingIconSize
 import com.hippo.ehviewer.ui.main.BrowseListSupportingContent
@@ -151,6 +152,7 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
     var searchFocused by rememberSaveable { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     var showEasyTierDialog by remember { mutableStateOf(false) }
+    val startEasyTierVpn = rememberEasyTierStartButtonAction()
 
     // Survive NavHost dispose/restore (e.g. open favourite folder → back).
     // collectAsState(initial=empty) remounted an empty list for one frame and
@@ -611,7 +613,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                             BrowseSectionHeader(
                                 text = stringResource(R.string.favourite),
                                 modifier = Modifier.padding(horizontal = marginH),
-                                onClick = { showEasyTierDialog = true },
+                                onClick = startEasyTierVpn,
+                                onLongClick = { showEasyTierDialog = true },
                             )
                         }
                         items(favorites, key = { "fav-${it.key}" }) { fav ->
@@ -672,7 +675,8 @@ fun AnimatedVisibilityScope.LibraryScreen(navigator: DestinationsNavigator) = Sc
                         ) {
                             BrowseSectionHeader(
                                 text = stringResource(R.string.favourite),
-                                onClick = { showEasyTierDialog = true },
+                                onClick = startEasyTierVpn,
+                                onLongClick = { showEasyTierDialog = true },
                             )
                         }
                         items(favorites, key = { "fav-${it.key}" }) { fav ->

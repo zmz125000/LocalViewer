@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.easytier
 
 import android.app.Activity
+import android.content.Context
 import android.net.VpnService
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -22,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -34,54 +36,80 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Same action as the EasyTier dialog Start/Stop button: start the VPN when stopped,
+ * stop it when connecting or running. [beforeStart] runs only on the start path
+ * (e.g. persist in-dialog config edits).
+ */
+@Composable
+fun rememberEasyTierStartButtonAction(beforeStart: () -> Unit = {}): () -> Unit {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val runtimeState by EasyTierRuntime.state.collectAsState()
+    val latestState by rememberUpdatedState(runtimeState)
+    val latestBeforeStart by rememberUpdatedState(beforeStart)
+
+    val vpnLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            scope.launch { startEasyTierAndToast(context) }
+        } else {
+            toastEasyTier(context, context.getString(R.string.easytier_vpn_permission_required))
+        }
+    }
+
+    return remember(vpnLauncher, context, scope) {
+        {
+            val state = latestState
+            if (!state.supported) {
+                toastEasyTier(context, context.getString(R.string.easytier_unsupported_abi))
+            } else if (state.connectingOrRunning) {
+                EasyTierRuntime.stop()
+                toastEasyTier(context, context.getString(R.string.easytier_stopped))
+            } else {
+                latestBeforeStart()
+                val prepare = VpnService.prepare(context)
+                if (prepare != null) {
+                    vpnLauncher.launch(prepare)
+                } else {
+                    scope.launch { startEasyTierAndToast(context) }
+                }
+            }
+        }
+    }
+}
+
+private fun toastEasyTier(context: Context, msg: String) {
+    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+}
+
+private suspend fun startEasyTierAndToast(context: Context) {
+    val ok = withContext(Dispatchers.IO) { EasyTierRuntime.start() }
+    if (ok) {
+        toastEasyTier(context, context.getString(R.string.easytier_starting))
+    } else {
+        val err = EasyTierRuntime.state.value.lastError ?: "?"
+        toastEasyTier(context, context.getString(R.string.easytier_start_failed, err))
+    }
+}
+
 @Composable
 fun EasyTierDialog(
     onDismiss: () -> Unit,
     onOpenFullSettings: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val runtimeState by EasyTierRuntime.state.collectAsState()
     var tab by remember { mutableStateOf(EasyTierUiTab.STATUS) }
     var config by remember { mutableStateOf(EasyTierRuntime.loadConfig()) }
     var advanced by remember { mutableStateOf(false) }
+    val startOrStopVpn = rememberEasyTierStartButtonAction {
+        EasyTierRuntime.saveConfig(config)
+    }
 
     fun toast(msg: String) {
-        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-    }
-
-    suspend fun startAndToast() {
-        val ok = withContext(Dispatchers.IO) { EasyTierRuntime.start() }
-        if (ok) {
-            toast(context.getString(R.string.easytier_starting))
-        } else {
-            val err = EasyTierRuntime.state.value.lastError ?: "?"
-            toast(context.getString(R.string.easytier_start_failed, err))
-        }
-    }
-
-    val vpnLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            scope.launch { startAndToast() }
-        } else {
-            toast(context.getString(R.string.easytier_vpn_permission_required))
-        }
-    }
-
-    fun requestStart() {
-        if (!runtimeState.supported) {
-            toast(context.getString(R.string.easytier_unsupported_abi))
-            return
-        }
-        EasyTierRuntime.saveConfig(config)
-        val prepare = VpnService.prepare(context)
-        if (prepare != null) {
-            vpnLauncher.launch(prepare)
-        } else {
-            scope.launch { startAndToast() }
-        }
+        toastEasyTier(context, msg)
     }
 
     AlertDialog(
@@ -159,16 +187,7 @@ fun EasyTierDialog(
                 ) {
                     Text(stringResource(R.string.easytier_save))
                 }
-                Button(
-                    onClick = {
-                        if (runtimeState.connectingOrRunning) {
-                            EasyTierRuntime.stop()
-                            toast(context.getString(R.string.easytier_stopped))
-                        } else {
-                            requestStart()
-                        }
-                    },
-                ) {
+                Button(onClick = startOrStopVpn) {
                     Text(
                         stringResource(
                             if (runtimeState.connectingOrRunning) {
