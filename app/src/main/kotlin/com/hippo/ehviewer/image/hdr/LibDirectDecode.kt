@@ -234,7 +234,6 @@ object LibDirectDecode {
             return@runCatching null
         }
         bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(pixels, 0, expected))
-        bitmap.prepareToDraw()
         bitmap
     }.getOrNull()
 }
