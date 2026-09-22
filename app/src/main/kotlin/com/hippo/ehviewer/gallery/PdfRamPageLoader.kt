@@ -4,6 +4,7 @@ import android.os.SystemClock
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.byteBufferSource
+import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import java.io.File
 import java.io.FileNotFoundException
@@ -29,13 +30,15 @@ import okio.Path
  * Built-in PDF reader: image/comic PDFs use the image-reader cache-off model.
  *
  * Compressed page bytes stay in [ramPages] until decode; [PageLoader] pins decoded
- * bitmaps for the viewport + decode-ahead window. No document extract disk cache.
+ * bitmaps for the viewport + decode-ahead window. Page-tree offsets persist to
+ * [DocumentExtractCache] so an unfinished index resumes after exit.
  */
 internal class PdfRamPageLoader(
     scope: CoroutineScope,
     private val engine: PdfImageEngine,
     titleHint: String,
     startPage: Int,
+    private val cacheKey: String? = null,
 ) : PageLoader(
     scope,
     info = null,
@@ -55,7 +58,11 @@ internal class PdfRamPageLoader(
     private val discoveryJob = AtomicReference<Job?>(null)
     private var visiblePages: IntRange? = null
 
+    private var lastSavedCount = 0
+
     init {
+        cacheKey?.let { DocumentExtractCache.pin(it) }
+        persistIndex()
         requestDiscovery()
     }
 
@@ -120,7 +127,16 @@ internal class PdfRamPageLoader(
         extractJobs.cancelAll()
         readyWaiters.clear()
         ramPages.clear()
+        persistIndex()
+        cacheKey?.let { DocumentExtractCache.unpin(it) }
         super.close()
+    }
+
+    /** Page bodies stay in RAM; only the listed stream table is durable. */
+    private fun persistIndex() {
+        val key = cacheKey ?: return
+        lastSavedCount = engine.pageCount
+        DocumentExtractCache.saveIndexAsync(engine.toIndex(key, complete = false))
     }
 
     private fun ensureExtract(
@@ -299,6 +315,11 @@ internal class PdfRamPageLoader(
                         }
                         if (after > before) {
                             publishListed()
+                            if (engine.structureComplete ||
+                                after - lastSavedCount >= PDF_INDEX_SAVE_EVERY
+                            ) {
+                                persistIndex()
+                            }
                         } else {
                             if (interactivePending.isNotEmpty()) {
                                 delay(PDF_INDEX_YIELD_MS)
@@ -309,12 +330,14 @@ internal class PdfRamPageLoader(
                         yield()
                     }
                     publishListed(force = true)
+                    persistIndex()
                     if (engine.structureComplete) {
                         drainDeferredExtracts()
                         if (!sessionClosed.get()) replan()
                     }
                 } catch (e: CancellationException) {
                     growTo(engine.pageCount)
+                    persistIndex()
                     throw e
                 } catch (e: Throwable) {
                     logcat("PdfRamIndex", e)
