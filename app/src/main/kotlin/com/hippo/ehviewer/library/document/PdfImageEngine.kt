@@ -356,6 +356,7 @@ internal class PdfParser(
     private var bootstrapAttempted = false
     private var bootstrapOk = false
     private val visitedXrefOffsets = HashSet<Long>()
+
     /** Byte shift when `startxref` is stale but the real xref table was found later in the file. */
     private var shiftDelta: Long = 0L
     var encrypted: Boolean = false
@@ -420,9 +421,8 @@ internal class PdfParser(
         return candidate.takeIf { it in 0L until fileSize }
     }
 
-    private fun findObjHeader(text: String, objNum: Int, gen: Int): MatchResult? =
-        Regex("""\b$objNum\s+$gen\s+obj\b""").findAll(text).lastOrNull()
-            ?: Regex("""\b$objNum\s+\d+\s+obj\b""").findAll(text).lastOrNull()
+    private fun findObjHeader(text: String, objNum: Int, gen: Int): MatchResult? = Regex("""\b$objNum\s+$gen\s+obj\b""").findAll(text).lastOrNull()
+        ?: Regex("""\b$objNum\s+\d+\s+obj\b""").findAll(text).lastOrNull()
 
     fun openPageImageCursor(maxPages: Int = MAX_PAGES): PageImageCursor? {
         val root = rootRef?.let { resolve(it) as? PdfDict } ?: run {
