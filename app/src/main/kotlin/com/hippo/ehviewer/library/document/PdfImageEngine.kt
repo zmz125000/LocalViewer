@@ -146,13 +146,9 @@ class PdfImageEngine private constructor(
         }
     }
 
-    override fun extractToCache(cacheKey: String, index: Int): Path? {
+    fun extractBytes(index: Int): ByteArray? {
         val ref = synchronized(pagesLock) { pages.getOrNull(index) } ?: return null
-        if (DocumentExtractCache.isPageCached(cacheKey, index, ref.ext)) {
-            return DocumentExtractCache.pagePath(cacheKey, index, ref.ext)
-        }
-        DocumentExtractCache.findCachedPage(cacheKey, index)?.let { return it }
-        val bytes = synchronized(parserLock) {
+        return synchronized(parserLock) {
             val effectiveRef = if (!ref.hasSeek) {
                 val offset = parser.locateStreamDataOffset(ref.objNum) ?: -1L
                 if (offset >= 0L) {
@@ -189,11 +185,37 @@ class PdfImageEngine private constructor(
             } else {
                 if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
             }
-        } ?: return null
+        }
+    }
+
+    override fun extractToCache(cacheKey: String, index: Int): Path? {
+        val ref = synchronized(pagesLock) { pages.getOrNull(index) } ?: return null
+        if (DocumentExtractCache.isPageCached(cacheKey, index, ref.ext)) {
+            return DocumentExtractCache.pagePath(cacheKey, index, ref.ext)
+        }
+        DocumentExtractCache.findCachedPage(cacheKey, index)?.let { return it }
+        val bytes = extractBytes(index) ?: return null
         return DocumentExtractCache.writePage(cacheKey, index, ref.ext, bytes)
     }
 
     companion object {
+        /**
+         * Text/generic PDFs keep vector drawing; image-only comics use embedded bitmaps.
+         */
+        internal fun classify(
+            source: ArchiveByteSource,
+            remoteSize: Long = 0L,
+        ): PdfContentKind {
+            val size = remoteSize.takeIf { it > 0L }
+                ?: runCatching { source.size }.getOrDefault(-1L)
+            if (size < 32L) return PdfContentKind.Vector
+            return runCatching {
+                val parser = PdfParser(source, size)
+                if (!parser.bootstrap() || parser.encrypted) return PdfContentKind.Vector
+                parser.sampleFrontPages(CLASSIFY_PAGES).toKind()
+            }.onFailure { logcat("PdfImage", it) }.getOrDefault(PdfContentKind.Vector)
+        }
+
         /**
          * @return engine (possibly [pageCount] 0), or null if not a PDF / encrypted / parse failure.
          */
@@ -299,6 +321,7 @@ class PdfImageEngine private constructor(
         private const val NETWORK_EAGER_PAGE_LIMIT = 24
         private const val MAX_COVER_SCAN_PAGES = 16
         private const val MAX_PAGES = 100_000
+        private const val CLASSIFY_PAGES = 8
     }
 }
 
@@ -376,6 +399,84 @@ internal class PdfParser(
             return null
         }
         return PageImageCursor(pagesNode, maxPages)
+    }
+
+    /**
+     * Walk the first [maxPages] page objects (not image hits) to decide comic vs text PDF.
+     */
+    fun sampleFrontPages(maxPages: Int = 8): PdfFrontSample {
+        val root = rootRef?.let { resolve(it) as? PdfDict } ?: return PdfFrontSample()
+        val pagesNode = root["/Pages"]?.let { resolveValue(it) } as? PdfDict
+            ?: return PdfFrontSample()
+        val declared = pagesNode.intValue("/Count")?.coerceAtLeast(0) ?: -1
+        data class Task(
+            val value: PdfValue,
+            val inheritedResources: PdfValue?,
+            val inheritedBox: PdfArray?,
+            val depth: Int,
+        )
+        val pending = ArrayDeque<Task>()
+        pending.addLast(Task(pagesNode, null, asBox(pagesNode["/MediaBox"]) ?: asBox(pagesNode["/CropBox"]), 0))
+        val visited = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<PdfDict, Boolean>())
+        var scanned = 0
+        var fullPage = 0
+        var withoutImage = 0
+        while (pending.isNotEmpty() && scanned < maxPages) {
+            val task = pending.removeLast()
+            if (task.depth > 64) continue
+            val node = resolveValue(task.value) as? PdfDict ?: break
+            if (!visited.add(node)) continue
+            val type = (node["/Type"] as? PdfName)?.name
+            val box = asBox(node["/CropBox"]) ?: asBox(node["/MediaBox"]) ?: task.inheritedBox
+            if (type == "/Page") {
+                val images = ArrayList<PdfImageEngine.ImageRef>()
+                val resourcesReady = collectImagesFromResources(
+                    node["/Resources"] ?: task.inheritedResources,
+                    images,
+                    depth = 0,
+                )
+                if (!resourcesReady) break
+                scanned++
+                val best = images.maxWithOrNull(
+                    compareBy<PdfImageEngine.ImageRef> { it.width.toLong() * it.height.toLong() }
+                        .thenBy { it.streamLen },
+                )
+                val pageSize = boxSizePts(box)
+                when {
+                    best != null &&
+                        isFullPageScan(best.width, best.height, pageSize.first, pageSize.second) -> {
+                        fullPage++
+                    }
+                    best == null -> withoutImage++
+                }
+                continue
+            }
+            val rawKids = node["/Kids"]
+            val kids = rawKids?.let { resolveValue(it) } as? PdfArray
+            if (rawKids != null && kids == null) break
+            if (kids == null) continue
+            val resources = node["/Resources"] ?: task.inheritedResources
+            for (i in kids.items.indices.reversed()) {
+                pending.addLast(Task(kids.items[i], resources, box, task.depth + 1))
+            }
+        }
+        return PdfFrontSample(
+            scannedPages = scanned,
+            fullPageImages = fullPage,
+            pagesWithoutImage = withoutImage,
+            declaredPageCount = declared,
+        )
+    }
+
+    private fun asBox(v: PdfValue?): PdfArray? = when (val r = v?.let { resolveValue(it) }) {
+        is PdfArray -> r.takeIf { it.items.size >= 4 }
+        else -> null
+    }
+
+    private fun boxSizePts(box: PdfArray?): Pair<Float, Float> {
+        if (box == null || box.items.size < 4) return 0f to 0f
+        fun num(i: Int) = (box.items[i] as? PdfNumber)?.value?.toFloat() ?: 0f
+        return kotlin.math.abs(num(2) - num(0)) to kotlin.math.abs(num(3) - num(1))
     }
 
     /** Lazy, ordered page-tree walk used by remote PDFs. */
@@ -1637,3 +1738,33 @@ internal class PdfDict(
 }
 
 private fun Char.isPdfWs(): Boolean = this == ' ' || this == '\t' || this == '\n' || this == '\r' || this == '\u0000' || this == '\u000c'
+
+internal enum class PdfContentKind { Vector, Image }
+
+internal data class PdfFrontSample(
+    val scannedPages: Int = 0,
+    val fullPageImages: Int = 0,
+    val pagesWithoutImage: Int = 0,
+    val declaredPageCount: Int = -1,
+)
+
+internal fun PdfFrontSample.toKind(): PdfContentKind {
+    if (scannedPages <= 0 || fullPageImages != scannedPages) return PdfContentKind.Vector
+    val sampledEnough = scannedPages >= 8 ||
+        (declaredPageCount > 0 && scannedPages >= declaredPageCount)
+    return if (sampledEnough) PdfContentKind.Image else PdfContentKind.Vector
+}
+
+/** Embedded image covers the page at scan/comic resolution (not a small figure). */
+internal fun isFullPageScan(imgW: Int, imgH: Int, pageWpts: Float, pageHpts: Float): Boolean {
+    if (imgW < 600 || imgH < 600) return false
+    if (pageWpts >= 50f && pageHpts >= 50f) {
+        val dpiX = imgW * 72f / pageWpts
+        val dpiY = imgH * 72f / pageHpts
+        val imgAspect = imgW.toFloat() / imgH.coerceAtLeast(1)
+        val pageAspect = pageWpts / pageHpts
+        val aspectOk = kotlin.math.abs(imgAspect - pageAspect) / pageAspect < 0.25f
+        if (aspectOk && dpiX >= 100f && dpiY >= 100f) return true
+    }
+    return minOf(imgW, imgH) >= 1000 && maxOf(imgW, imgH) >= 1400
+}

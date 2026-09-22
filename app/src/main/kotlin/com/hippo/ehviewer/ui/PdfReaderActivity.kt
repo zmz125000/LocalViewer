@@ -3,6 +3,7 @@ package com.hippo.ehviewer.ui
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Bundle
@@ -13,6 +14,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -30,6 +32,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -46,16 +50,25 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
 import com.ehviewer.core.i18n.R
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
+import com.hippo.ehviewer.library.ArchiveByteSource
+import com.hippo.ehviewer.library.PfdArchiveByteSource
+import com.hippo.ehviewer.library.document.PdfContentKind
+import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
 import eu.kanade.tachiyomi.ui.reader.PageIndicatorText
 import eu.kanade.tachiyomi.ui.reader.ReaderAppBars
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -71,19 +84,23 @@ import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.zoomable
 
 /**
- * Full-screen in-app PDF reader ([PdfRenderer] page bitmaps).
+ * Full-screen in-app PDF reader.
+ *
+ * Text / generic PDFs: [PdfRenderer] at the current zoom (vector drawing stays sharp).
+ * Image / comic PDFs: native embedded bitmaps via [PdfImageEngine].
  *
  * Local: streamdoc content URI (seekable PFD). Network: same URI through
  * [StreamDocumentProvider] proxy FD (PDF sparse block cache).
  */
 class PdfReaderActivity : AppCompatActivity() {
-    private var session by mutableStateOf<PdfSession?>(null)
+    private var doc by mutableStateOf<PdfDocumentModel?>(null)
     private var title by mutableStateOf("")
     private var error by mutableStateOf<String?>(null)
     private var streamToken: String? = null
     private var progressGid by mutableStateOf(0L)
     private var startPage by mutableStateOf(0)
     private var lastVisiblePage = 0
+    private var openJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,7 +109,7 @@ class PdfReaderActivity : AppCompatActivity() {
         setMD3Content {
             PdfReaderScreen(
                 title = title,
-                session = session,
+                doc = doc,
                 error = error,
                 startPage = startPage,
                 progressGid = progressGid,
@@ -116,6 +133,7 @@ class PdfReaderActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         flushProgress()
+        openJob?.cancel()
         closeSession()
         super.onDestroy()
     }
@@ -135,14 +153,6 @@ class PdfReaderActivity : AppCompatActivity() {
         if (pfd == null) {
             token?.let(StreamDocumentRegistry::remove)
             error = getString(R.string.pdf_reader_open_failed, "descriptor")
-            if (!replace) return
-            return
-        }
-        val renderer = runCatching { PdfRenderer(pfd) }.getOrElse { e ->
-            logcat("PdfReader", e)
-            runCatching { pfd.close() }
-            token?.let(StreamDocumentRegistry::remove)
-            error = getString(R.string.pdf_reader_open_failed, e.message ?: e.toString())
             return
         }
         val oldToken = streamToken
@@ -154,7 +164,26 @@ class PdfReaderActivity : AppCompatActivity() {
         startPage = intent.getIntExtra(EXTRA_START_PAGE, 0).coerceAtLeast(0)
         lastVisiblePage = startPage
         error = null
-        session = PdfSession(renderer)
+        openJob?.cancel()
+        openJob = lifecycleScope.launch {
+            var opened: PdfDocumentModel? = null
+            try {
+                opened = withContext(Dispatchers.IO) { openPdfDocument(pfd) }
+                doc = opened
+                opened = null
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                if (opened == null) runCatching { pfd.close() }
+                throw e
+            } catch (e: Throwable) {
+                logcat("PdfReader", e)
+                runCatching { pfd.close() }
+                token?.let(StreamDocumentRegistry::remove)
+                streamToken = null
+                error = getString(R.string.pdf_reader_open_failed, e.message ?: e.toString())
+            } finally {
+                opened?.close()
+            }
+        }
     }
 
     private fun flushProgress() {
@@ -166,8 +195,8 @@ class PdfReaderActivity : AppCompatActivity() {
     }
 
     private fun closeSession(removeToken: Boolean = true) {
-        session?.close()
-        session = null
+        doc?.close()
+        doc = null
         if (removeToken) {
             streamToken?.let(StreamDocumentRegistry::remove)
             streamToken = null
@@ -198,6 +227,57 @@ class PdfReaderActivity : AppCompatActivity() {
     }
 }
 
+private fun openPdfDocument(pfd: ParcelFileDescriptor): PdfDocumentModel {
+    val dup = runCatching { pfd.dup() }.getOrNull()
+    if (dup != null) {
+        val source = PfdArchiveByteSource(dup, ownsPfd = true)
+        val size = source.size
+        val kind = runCatching { PdfImageEngine.classify(source, size) }
+            .getOrDefault(PdfContentKind.Vector)
+        if (kind == PdfContentKind.Image) {
+            val engine = PdfImageEngine.open(
+                source,
+                remoteSize = size,
+                coverOnly = false,
+                progressive = true,
+            )
+            if (engine != null && engine.ensureListedThrough(0) > 0) {
+                logcat("PdfReader") { "image PDF pages=${engine.pageCount}" }
+                runCatching { pfd.close() }
+                return PdfDocumentModel.Images(engine, source)
+            }
+        }
+        runCatching { source.close() }
+    }
+    val renderer = runCatching { PdfRenderer(pfd) }.getOrElse { e ->
+        runCatching { pfd.close() }
+        throw e
+    }
+    logcat("PdfReader") { "vector PDF pages=${renderer.pageCount}" }
+    return PdfDocumentModel.Vector(PdfSession(renderer))
+}
+
+private sealed interface PdfDocumentModel {
+    val pageCount: Int
+    fun close()
+
+    class Vector(val session: PdfSession) : PdfDocumentModel {
+        override val pageCount get() = session.pageCount
+        override fun close() = session.close()
+    }
+
+    class Images(
+        val engine: PdfImageEngine,
+        private val source: ArchiveByteSource,
+    ) : PdfDocumentModel {
+        override val pageCount get() = engine.pageCount
+        override fun close() {
+            runCatching { engine.close() }
+            runCatching { source.close() }
+        }
+    }
+}
+
 private class PdfSession(private val renderer: PdfRenderer) {
     val pageCount: Int get() = renderer.pageCount
     private val mutex = Mutex()
@@ -208,7 +288,8 @@ private class PdfSession(private val renderer: PdfRenderer) {
             val h = ((page.height.toFloat() / page.width.coerceAtLeast(1)) * w)
                 .toInt()
                 .coerceAtLeast(1)
-            Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bitmap ->
+            val (rw, rh) = cappedBitmapSize(w, h)
+            Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888).also { bitmap ->
                 bitmap.eraseColor(android.graphics.Color.WHITE)
                 page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             }
@@ -220,17 +301,34 @@ private class PdfSession(private val renderer: PdfRenderer) {
     }
 }
 
+private fun cappedBitmapSize(width: Int, height: Int): Pair<Int, Int> {
+    val pixels = width.toLong() * height
+    if (pixels <= MAX_VECTOR_PIXELS && width <= MAX_VECTOR_EDGE && height <= MAX_VECTOR_EDGE) {
+        return width to height
+    }
+    val edgeScale = minOf(
+        MAX_VECTOR_EDGE.toFloat() / width.coerceAtLeast(1),
+        MAX_VECTOR_EDGE.toFloat() / height.coerceAtLeast(1),
+        1f,
+    )
+    val pixelScale = kotlin.math.sqrt(MAX_VECTOR_PIXELS.toDouble() / pixels.coerceAtLeast(1L)).toFloat()
+        .coerceAtMost(1f)
+    val scale = minOf(edgeScale, pixelScale)
+    return (width * scale).roundToInt().coerceAtLeast(1) to
+        (height * scale).roundToInt().coerceAtLeast(1)
+}
+
 @Composable
 private fun PdfReaderScreen(
     title: String,
-    session: PdfSession?,
+    doc: PdfDocumentModel?,
     error: String?,
     startPage: Int,
     progressGid: Long,
     onPageChanged: (Int) -> Unit,
     onClose: () -> Unit,
 ) {
-    val pageCount = session?.pageCount ?: 0
+    var pageCount by remember(doc) { mutableIntStateOf(doc?.pageCount ?: 0) }
     val initial = startPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initial)
     val currentPage by remember {
@@ -248,22 +346,42 @@ private fun PdfReaderScreen(
     LaunchedEffect(error) {
         if (error != null) appbarVisible = true
     }
-    LaunchedEffect(session, startPage, pageCount) {
-        if (session == null || pageCount <= 0) return@LaunchedEffect
+    LaunchedEffect(doc) {
+        val images = doc as? PdfDocumentModel.Images ?: run {
+            pageCount = doc?.pageCount ?: 0
+            return@LaunchedEffect
+        }
+        while (true) {
+            val ahead = (
+                listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+                    ?: listState.firstVisibleItemIndex
+                ) + 8
+            images.engine.ensureListedThrough(ahead.coerceAtLeast(0))
+            val n = images.engine.pageCount
+            if (n != pageCount) pageCount = n
+            if (images.engine.structureComplete) {
+                pageCount = images.engine.pageCount
+                break
+            }
+            delay(80)
+        }
+    }
+    LaunchedEffect(doc, startPage, pageCount) {
+        if (doc == null || pageCount <= 0) return@LaunchedEffect
         val target = startPage.coerceIn(0, pageCount - 1)
         if (listState.firstVisibleItemIndex != target) {
             listState.scrollToItem(target)
         }
         onPageChanged(target)
     }
-    LaunchedEffect(session) {
-        if (session == null) return@LaunchedEffect
+    LaunchedEffect(doc) {
+        if (doc == null) return@LaunchedEffect
         snapshotFlow { listState.firstVisibleItemIndex }
             .distinctUntilChanged()
             .collect { onPageChanged(it) }
     }
-    LaunchedEffect(progressGid, session) {
-        if (progressGid == 0L || session == null) return@LaunchedEffect
+    LaunchedEffect(progressGid, doc) {
+        if (progressGid == 0L || doc == null) return@LaunchedEffect
         snapshotFlow { listState.firstVisibleItemIndex }
             .distinctUntilChanged()
             .debounce(1_000)
@@ -281,7 +399,7 @@ private fun PdfReaderScreen(
                     Text(error, color = Color.White, modifier = Modifier.padding(24.dp))
                 }
             }
-            session == null -> {
+            doc == null -> {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
@@ -301,6 +419,21 @@ private fun PdfReaderScreen(
                     } else {
                         EnabledZoomGestures(zoom = true, pan = false)
                     }
+                    val liveZoom by remember {
+                        derivedStateOf {
+                            val t = zoomableState.contentTransformation
+                            if (!t.isSpecified) 1f else t.scale.scaleX.coerceAtLeast(1f)
+                        }
+                    }
+                    var renderZoom by remember { mutableFloatStateOf(1f) }
+                    LaunchedEffect(zoomableState) {
+                        snapshotFlow { liveZoom }
+                            .debounce(120)
+                            .distinctUntilChanged { a, b -> abs(a - b) < 0.08f }
+                            .collect { renderZoom = it }
+                    }
+                    val vectorWidthPx = (widthPx * renderZoom).roundToInt()
+                        .coerceIn(widthPx, MAX_VECTOR_EDGE)
                     var multiTouch by remember { mutableStateOf(false) }
                     LazyColumn(
                         state = listState,
@@ -329,11 +462,17 @@ private fun PdfReaderScreen(
                             ),
                     ) {
                         items(pages, key = { it }) { index ->
-                            PdfPageImage(
-                                session = session,
-                                index = index,
-                                widthPx = widthPx,
-                            )
+                            when (doc) {
+                                is PdfDocumentModel.Vector -> PdfVectorPage(
+                                    session = doc.session,
+                                    index = index,
+                                    widthPx = vectorWidthPx,
+                                )
+                                is PdfDocumentModel.Images -> PdfEmbeddedImage(
+                                    engine = doc.engine,
+                                    index = index,
+                                )
+                            }
                         }
                     }
                 }
@@ -369,33 +508,86 @@ private fun PdfReaderScreen(
 }
 
 @Composable
-private fun PdfPageImage(
+private fun PdfVectorPage(
     session: PdfSession,
     index: Int,
     widthPx: Int,
 ) {
-    var bitmap by remember(index, widthPx) { mutableStateOf<Bitmap?>(null) }
+    var bitmap by remember(index) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(session, index, widthPx) {
-        bitmap = withContext(Dispatchers.IO) {
-            runCatching { session.render(index, widthPx) }.getOrNull()
+        var next: Bitmap? = null
+        try {
+            next = withContext(Dispatchers.IO) {
+                runCatching { session.render(index, widthPx) }.getOrNull()
+            }
+            if (next != null) {
+                val prev = bitmap
+                bitmap = next
+                next = null
+                if (prev != null && prev !== bitmap) prev.recycle()
+            }
+        } finally {
+            next?.recycle()
         }
     }
-    DisposableEffect(index, widthPx) {
+    DisposableEffect(index) {
         onDispose {
             bitmap?.recycle()
         }
     }
-    val page = bitmap
+    PdfPageBitmap(bitmap = bitmap, pageLabel = index + 1, pageCount = session.pageCount)
+}
+
+@Composable
+private fun PdfEmbeddedImage(
+    engine: PdfImageEngine,
+    index: Int,
+) {
+    var bitmap by remember(index) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(engine, index) {
+        var next: Bitmap? = null
+        try {
+            next = withContext(Dispatchers.IO) {
+                runCatching {
+                    engine.ensureListedThrough(index)
+                    engine.extractBytes(index)?.let(::decodeFullResBitmap)
+                }.getOrNull()
+            }
+            if (next != null) {
+                val prev = bitmap
+                bitmap = next
+                next = null
+                if (prev != null && prev !== bitmap) prev.recycle()
+            }
+        } finally {
+            next?.recycle()
+        }
+    }
+    DisposableEffect(index) {
+        onDispose {
+            bitmap?.recycle()
+        }
+    }
+    PdfPageBitmap(bitmap = bitmap, pageLabel = index + 1, pageCount = engine.pageCount)
+}
+
+@Composable
+private fun PdfPageBitmap(
+    bitmap: Bitmap?,
+    pageLabel: Int,
+    pageCount: Int,
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .background(PageBackdrop),
         contentAlignment = Alignment.Center,
     ) {
-        if (page == null || page.isRecycled) {
+        if (bitmap == null || bitmap.isRecycled) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .aspectRatio(1f / 1.414f)
                     .padding(vertical = 48.dp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -403,12 +595,34 @@ private fun PdfPageImage(
             }
         } else {
             Image(
-                bitmap = page.asImageBitmap(),
-                contentDescription = stringResource(R.string.pdf_reader_page, index + 1, session.pageCount),
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = stringResource(R.string.pdf_reader_page, pageLabel, pageCount),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
     }
+}
+
+private fun decodeFullResBitmap(bytes: ByteArray): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val w = bounds.outWidth
+    val h = bounds.outHeight
+    var sample = 1
+    if (w > 0 && h > 0) {
+        var pw = w.toLong()
+        var ph = h.toLong()
+        while (pw * ph > MAX_IMAGE_PIXELS && sample < 16) {
+            sample *= 2
+            pw = w / sample.toLong()
+            ph = h / sample.toLong()
+        }
+    }
+    val opts = BitmapFactory.Options().apply {
+        inSampleSize = sample
+        inPreferredConfig = Bitmap.Config.ARGB_8888
+    }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
 }
 
 private val PageBackdrop = Color(0xFF2B2B2B)
@@ -417,3 +631,7 @@ private val PdfZoomSpec = ZoomSpec(
     maximum = ZoomLimit(factor = 5f),
     minimum = ZoomLimit(factor = 1f, overzoomEffect = OverzoomEffect.Disabled),
 )
+
+private const val MAX_VECTOR_EDGE = 4096
+private const val MAX_VECTOR_PIXELS = 12_000_000
+private const val MAX_IMAGE_PIXELS = 24_000_000
