@@ -1002,10 +1002,10 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                     // Stop this archive extract before replace so the next reader can
                     // preempt ArchiveAccess without waiting on solid decompress.
                     if (OpenPdfBySettings.shouldRedirect(sibling)) {
-                        runCatching { OpenPdfBySettings.open(context, sibling) }
+                        runCatching { OpenPdfBySettings.open(activity, sibling) }
                             .onFailure { e ->
                                 snackbar(
-                                    context.getString(
+                                    activity.getString(
                                         R.string.pdf_reader_open_failed,
                                         e.message ?: e.toString(),
                                     ),
