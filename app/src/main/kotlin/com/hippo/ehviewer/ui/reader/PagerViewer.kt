@@ -121,6 +121,10 @@ fun PagerViewer(
                 pageLoader = pageLoader,
                 isRtl = dualRtl,
                 gap = dualPageGap,
+                scaleType = scaleType,
+                landscapeZoom = landscapeZoom,
+                autoRotateMode = autoRotateMode,
+                alignment = alignment,
                 layoutSize = layoutSize,
                 navigator = navigator,
                 pagerState = pagerState,
@@ -186,6 +190,10 @@ private fun DualPageContainer(
     pageLoader: ReaderSession,
     isRtl: Boolean,
     gap: Boolean,
+    scaleType: Int,
+    landscapeZoom: Boolean,
+    autoRotateMode: Int,
+    alignment: Alignment.Horizontal,
     layoutSize: Size,
     navigator: () -> NavigationRegions,
     pagerState: PagerState,
@@ -214,15 +222,59 @@ private fun DualPageContainer(
     } else {
         fitSpreadSize(combinedAspect, layoutSize)
     }
+    val leftDecoded = spreadDecodedSize(leftPage)
+    val rightDecoded = spreadDecodedSize(rightPage)
 
     if (layoutSize != Size.Zero) {
-        val contentSize = if (gap || solo) layoutSize else fittedSpread
-        zoomableState.contentScale = ContentScale.Fit
-        LaunchedEffect(contentSize) {
-            zoomableState.setContentLocation(
-                ZoomableContentLocation.scaledInsideAndCenterAligned(contentSize),
-            )
-            zoomableState.contentAlignment = Alignment.Center
+        if (gap) {
+            zoomableState.contentScale = ContentScale.Fit
+            LaunchedEffect(layoutSize) {
+                zoomableState.setContentLocation(
+                    ZoomableContentLocation.scaledInsideAndCenterAligned(layoutSize),
+                )
+                zoomableState.contentAlignment = Alignment.Center
+            }
+        } else {
+            val unscaled = if (solo) {
+                val raw = leftDecoded ?: rightDecoded
+                if (raw != null) {
+                    fitDisplaySize(raw, shouldAutoRotate(raw, layoutSize, autoRotateMode))
+                } else {
+                    fittedSpread
+                }
+            } else {
+                unscaledSpreadSize(leftDecoded, rightDecoded, leftAspect, rightAspect)
+                    .takeIf { it != Size.Zero } ?: fittedSpread
+            }
+            val rotate = solo && run {
+                val raw = leftDecoded ?: rightDecoded
+                raw != null && shouldAutoRotate(raw, layoutSize, autoRotateMode)
+            }
+            val contentScale = ContentScale.fromPreferences(scaleType, unscaled, layoutSize)
+            zoomableState.contentScale = contentScale
+            LaunchedEffect(unscaled, contentScale, alignment) {
+                zoomableState.applyPagerContentAlignment(unscaled, contentScale, layoutSize, alignment)
+            }
+            LaunchedEffect(unscaled) {
+                zoomableState.setContentLocation(
+                    ZoomableContentLocation.scaledInsideAndCenterAligned(unscaled),
+                )
+            }
+            if (landscapeZoom && !rotate && contentScale == ContentScale.Fit && unscaled.width > unscaled.height) {
+                LaunchedEffect(alignment) {
+                    val zoomFraction = snapshotFlow { zoomableState.zoomFraction }.first { it != null }
+                    if (zoomFraction == 0f) {
+                        delay(500)
+                        val contentSize = with(zoomableState.coordinateSystem) {
+                            unscaledContentBounds(false).sizeIn(CoordinateSpace.Viewport)
+                        }
+                        val scale = ContentScale.FillHeight.computeScaleFactor(contentSize, layoutSize)
+                        val targetScale = scale.scaleX.coerceAtMost(zoomableState.zoomSpec.maximum.factor)
+                        val offset = alignment.align(0, layoutSize.width.toInt(), LayoutDirection.Ltr)
+                        zoomableState.zoomTo(targetScale, Offset(offset.toFloat(), 0f))
+                    }
+                }
+            }
         }
     }
 
@@ -295,7 +347,7 @@ private fun DualPageContainer(
                 PagerItem(
                     page = page,
                     pageLoader = pageLoader,
-                    contentScale = ContentScale.Fit,
+                    contentScale = ContentScale.Inside,
                     modifier = Modifier.fillMaxSize(),
                     viewportSize = layoutSize,
                 )
@@ -350,7 +402,7 @@ private fun DualPageContainer(
                         PagerItem(
                             page = leftPage,
                             pageLoader = pageLoader,
-                            contentScale = ContentScale.Fit,
+                            contentScale = ContentScale.Inside,
                             modifier = Modifier.weight(leftAspect).fillMaxHeight(),
                             viewportSize = leftCell,
                         )
@@ -359,7 +411,7 @@ private fun DualPageContainer(
                         PagerItem(
                             page = rightPage,
                             pageLoader = pageLoader,
-                            contentScale = ContentScale.Fit,
+                            contentScale = ContentScale.Inside,
                             modifier = Modifier.weight(rightAspect).fillMaxHeight(),
                             viewportSize = rightCell,
                         )
@@ -402,22 +454,7 @@ private fun PageContainer(
         val contentScale = ContentScale.fromPreferences(scaleType, size, layoutSize)
         zoomableState.contentScale = contentScale
         LaunchedEffect(size, contentScale, alignment) {
-            val contentSize = if (contentScale is FixedScale) { // Original
-                size
-            } else {
-                size * contentScale.computeScaleFactor(size, layoutSize)
-            }
-            val horizontalAlignment = if (contentSize.width > layoutSize.width) {
-                alignment
-            } else {
-                Alignment.CenterHorizontally
-            }
-            val verticalAlignment = if (contentSize.height > layoutSize.height) {
-                Alignment.Top
-            } else {
-                Alignment.CenterVertically
-            }
-            zoomableState.contentAlignment = horizontalAlignment + verticalAlignment
+            zoomableState.applyPagerContentAlignment(size, contentScale, layoutSize, alignment)
         }
         LaunchedEffect(size) {
             val contentLocation = ZoomableContentLocation.scaledInsideAndCenterAligned(size)
@@ -525,14 +562,48 @@ private val PagerZoomSpec = ZoomSpec(
     minimum = ZoomLimit(factor = 1f, overzoomEffect = OverzoomEffect.Disabled),
 )
 
+private fun ZoomableState.applyPagerContentAlignment(
+    size: Size,
+    contentScale: ContentScale,
+    layoutSize: Size,
+    alignment: Alignment.Horizontal,
+) {
+    val contentSize = if (contentScale is FixedScale) { // Original
+        size
+    } else {
+        size * contentScale.computeScaleFactor(size, layoutSize)
+    }
+    val horizontalAlignment = if (contentSize.width > layoutSize.width) {
+        alignment
+    } else {
+        Alignment.CenterHorizontally
+    }
+    val verticalAlignment = if (contentSize.height > layoutSize.height) {
+        Alignment.Top
+    } else {
+        Alignment.CenterVertically
+    }
+    contentAlignment = horizontalAlignment + verticalAlignment
+}
+
 /** Placeholder / unknown page aspect (A4-ish), same as [PagerItem] default. */
 private const val DUAL_PAGE_DEFAULT_ASPECT = 1 / 1.4125f
 
 @Composable
-private fun spreadAspect(page: Page?): Float {
+private fun spreadDecodedSize(page: Page?): Size? {
     val decoded = (page?.statusObserved as? PageStatus.Ready)?.image?.intrinsicSize
     if (decoded != null && decoded.width > 0 && decoded.height > 0) {
-        return decoded.width.toFloat() / decoded.height.toFloat()
+        return Size(decoded.width.toFloat(), decoded.height.toFloat())
     }
-    return page?.layoutAspect?.takeIf { it > 0f } ?: DUAL_PAGE_DEFAULT_ASPECT
+    return null
+}
+
+@Composable
+private fun spreadAspect(page: Page?): Float {
+    val decoded = spreadDecodedSize(page)
+    if (decoded != null) {
+        return decoded.width / decoded.height
+    }
+    if (page == null) return 0f
+    return page.layoutAspect.takeIf { it > 0f } ?: DUAL_PAGE_DEFAULT_ASPECT
 }
