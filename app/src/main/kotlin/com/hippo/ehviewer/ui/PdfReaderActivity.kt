@@ -12,20 +12,29 @@ import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -42,13 +51,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.ehviewer.core.i18n.R
@@ -62,8 +75,23 @@ import com.hippo.ehviewer.library.document.PdfContentKind
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.provider.StreamDocumentProvider
 import com.hippo.ehviewer.provider.StreamDocumentRegistry
+import com.hippo.ehviewer.ui.main.GalleryGridDefaults
+import com.hippo.ehviewer.ui.reader.NavigationOverlay
+import com.hippo.ehviewer.ui.reader.SettingsPager
+import com.hippo.ehviewer.ui.reader.doubleTapAction
+import com.hippo.ehviewer.ui.reader.readerSheetBox
+import com.hippo.ehviewer.ui.reader.scrollDown
+import com.hippo.ehviewer.ui.reader.scrollUp
+import com.hippo.ehviewer.ui.tools.DialogState
+import com.hippo.ehviewer.ui.tools.dialog
 import eu.kanade.tachiyomi.ui.reader.PageIndicatorText
 import eu.kanade.tachiyomi.ui.reader.ReaderAppBars
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingModeType
+import eu.kanade.tachiyomi.ui.reader.setting.TappingInvertMode
+import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
+import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
+import eu.kanade.tachiyomi.ui.reader.viewer.getAction
+import kotlin.coroutines.resume
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -319,6 +347,7 @@ private fun cappedBitmapSize(width: Int, height: Int): Pair<Int, Int> {
 }
 
 @Composable
+context(_: DialogState)
 private fun PdfReaderScreen(
     title: String,
     doc: PdfDocumentModel?,
@@ -340,9 +369,59 @@ private fun PdfReaderScreen(
     val showSeekbar by Settings.showReaderSeekbar.collectAsState()
     val hideTopBar by Settings.readerHideTopBar.collectAsState()
     val showPageNumber by Settings.showPageNumber.collectAsState()
+    val readingMode by Settings.readingMode.collectAsState { ReadingModeType.fromPreference(it) }
+    val isWebtoon = ReadingModeType.isWebtoon(readingMode)
+    val pagerNavigation by Settings.readerPagerNav.collectAsState()
+    val pagerInvertMode by Settings.readerPagerNavInverted.collectAsState()
+    val webtoonNavigation by Settings.readerWebtoonNav.collectAsState()
+    val webtoonInvertMode by Settings.readerWebtoonNavInverted.collectAsState()
+    val navigationType = if (isWebtoon) webtoonNavigation else pagerNavigation
+    val invertMode = if (isWebtoon) webtoonInvertMode else pagerInvertMode
+    val navigation = remember(navigationType, readingMode) {
+        ViewerNavigation.fromPreference(navigationType, ReadingModeType.isVertical(readingMode))
+    }
+    val regions = remember(navigation, invertMode) {
+        navigation.regions(TappingInvertMode.entries[invertMode])
+    }
+    val navigator by rememberUpdatedState(regions)
+    var showNavigationOverlay by remember {
+        val showOnStart = Settings.showNavigationOverlayNewUser.value ||
+            Settings.showNavigationOverlayOnStart.value
+        Settings.showNavigationOverlayNewUser.value = false
+        mutableStateOf(showOnStart)
+    }
+    var skipPagerNavHint by remember { mutableStateOf(true) }
+    var skipWebtoonNavHint by remember { mutableStateOf(true) }
+    LaunchedEffect(pagerNavigation, pagerInvertMode) {
+        if (skipPagerNavHint) {
+            skipPagerNavHint = false
+            return@LaunchedEffect
+        }
+        if (!isWebtoon) showNavigationOverlay = true
+    }
+    LaunchedEffect(webtoonNavigation, webtoonInvertMode) {
+        if (skipWebtoonNavHint) {
+            skipWebtoonNavHint = false
+            return@LaunchedEffect
+        }
+        if (isWebtoon) showNavigationOverlay = true
+    }
     var appbarVisible by remember { mutableStateOf(false) }
     val chromeVisible by rememberUpdatedState(appbarVisible)
     var suppressPageClick by remember { mutableStateOf(false) }
+    var viewportPx by remember { mutableStateOf(IntSize.Zero) }
+    val doubleTap = remember(navigator, onClose, viewportPx) {
+        doubleTapAction(
+            isRtl = false,
+            getViewportSize = {
+                Size(viewportPx.width.toFloat(), viewportPx.height.toFloat())
+            },
+            getNavigator = { navigator },
+            onPrevFolder = {},
+            onNextFolder = {},
+            onBack = onClose,
+        )
+    }
     LaunchedEffect(error) {
         if (error != null) appbarVisible = true
     }
@@ -440,6 +519,9 @@ private fun PdfReaderScreen(
                         userScrollEnabled = !multiTouch,
                         modifier = Modifier
                             .fillMaxSize()
+                            .onSizeChanged { size ->
+                                if (size != viewportPx) viewportPx = size
+                            }
                             .pointerInput(Unit) {
                                 awaitPointerEventScope {
                                     while (true) {
@@ -453,12 +535,34 @@ private fun PdfReaderScreen(
                                     }
                                 }
                             }
+                            .pointerInput(Unit) {
+                                awaitEachGesture {
+                                    waitForUpOrCancellation()
+                                    showNavigationOverlay = false
+                                }
+                            }
                             .zoomable(
                                 state = zoomableState,
                                 gestures = gestures,
-                                onClick = {
-                                    if (!suppressPageClick) appbarVisible = !appbarVisible
+                                onClick = { offset ->
+                                    val w = viewportPx.width.takeIf { it > 0 }
+                                        ?: listState.layoutInfo.viewportSize.width
+                                    val h = viewportPx.height.takeIf { it > 0 }
+                                        ?: listState.layoutInfo.viewportSize.height
+                                    if (w <= 0 || h <= 0) return@zoomable
+                                    when (navigator.getAction(Offset(offset.x / w, offset.y / h))) {
+                                        NavigationRegion.MENU -> {
+                                            if (!suppressPageClick) appbarVisible = !appbarVisible
+                                        }
+                                        NavigationRegion.NEXT, NavigationRegion.RIGHT -> {
+                                            scope.launch { listState.scrollDown() }
+                                        }
+                                        NavigationRegion.PREV, NavigationRegion.LEFT -> {
+                                            scope.launch { listState.scrollUp() }
+                                        }
+                                    }
                                 },
+                                onDoubleClick = doubleTap,
                             ),
                     ) {
                         items(pages, key = { it }) { index ->
@@ -475,6 +579,11 @@ private fun PdfReaderScreen(
                             }
                         }
                     }
+                    NavigationOverlay(
+                        visible = showNavigationOverlay,
+                        regions = regions,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
             }
         }
@@ -494,6 +603,37 @@ private fun PdfReaderScreen(
                     onPageChanged(target)
                 }
             },
+            onClickSettings = {
+                scope.launch {
+                    dialog { cont ->
+                        fun dispose() {
+                            if (cont.isActive) cont.resume(Unit)
+                        }
+                        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                        ModalBottomSheet(
+                            onDismissRequest = { dispose() },
+                            modifier = Modifier.windowInsetsPadding(
+                                WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
+                            ),
+                            sheetState = sheetState,
+                            scrimColor = Color.Transparent,
+                            dragHandle = null,
+                            contentWindowInsets = { WindowInsets() },
+                        ) {
+                            Box(Modifier.readerSheetBox(GalleryGridDefaults.capReaderSheet())) {
+                                val sheetMode by Settings.readingMode.collectAsState {
+                                    ReadingModeType.fromPreference(it)
+                                }
+                                SettingsPager(
+                                    isWebtoon = ReadingModeType.isWebtoon(sheetMode),
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            showScaleFitCycle = !isWebtoon,
         )
         if (showPageNumber && !appbarVisible && currentPage > 0 && pageCount > 0) {
             CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.bodySmall) {
