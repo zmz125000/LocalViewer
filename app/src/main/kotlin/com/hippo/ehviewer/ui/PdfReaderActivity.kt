@@ -11,7 +11,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.WindowInsets
@@ -37,17 +36,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -65,6 +62,12 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import me.saket.telephoto.zoomable.EnabledZoomGestures
+import me.saket.telephoto.zoomable.OverzoomEffect
+import me.saket.telephoto.zoomable.ZoomLimit
+import me.saket.telephoto.zoomable.ZoomSpec
+import me.saket.telephoto.zoomable.rememberZoomableState
+import me.saket.telephoto.zoomable.zoomable
 
 /**
  * Full-screen in-app PDF reader ([PdfRenderer] page bitmaps).
@@ -322,9 +325,32 @@ private fun PdfReaderScreen(
                     val widthPx = with(LocalDensity.current) { maxWidth.roundToPx() }
                         .coerceIn(360, 2048)
                     val pages = remember(pageCount) { (0 until pageCount).toList() }
+                    val zoomableState = rememberZoomableState(zoomSpec = PdfZoomSpec)
+                    // At 1×: pinch only — one-finger drag belongs to LazyColumn.
+                    val zoomedIn = (zoomableState.zoomFraction ?: 0f) > 0.01f
+                    val gestures = if (zoomedIn) {
+                        EnabledZoomGestures.ZoomAndPan
+                    } else {
+                        EnabledZoomGestures(zoom = true, pan = false)
+                    }
+                    var multiTouch by remember { mutableStateOf(false) }
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize(),
+                        userScrollEnabled = !multiTouch,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        multiTouch = event.changes.count { it.pressed } >= 2
+                                    }
+                                }
+                            }
+                            .zoomable(
+                                state = zoomableState,
+                                gestures = gestures,
+                            ),
                     ) {
                         items(pages, key = { it }) { index ->
                             PdfPageImage(
@@ -347,8 +373,6 @@ private fun PdfPageImage(
     widthPx: Int,
 ) {
     var bitmap by remember(index, widthPx) { mutableStateOf<Bitmap?>(null) }
-    var scale by remember(index) { mutableFloatStateOf(1f) }
-    var offset by remember(index) { mutableStateOf(Offset.Zero) }
     LaunchedEffect(session, index, widthPx) {
         bitmap = withContext(Dispatchers.IO) {
             runCatching { session.render(index, widthPx) }.getOrNull()
@@ -379,24 +403,15 @@ private fun PdfPageImage(
             Image(
                 bitmap = page.asImageBitmap(),
                 contentDescription = stringResource(R.string.pdf_reader_page, index + 1, session.pageCount),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
-                    }
-                    .pointerInput(index) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            val next = (scale * zoom).coerceIn(1f, 5f)
-                            scale = next
-                            offset = if (next == 1f) Offset.Zero else offset + pan
-                        }
-                    },
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
 }
 
 private val PageBackdrop = Color(0xFF2B2B2B)
+
+private val PdfZoomSpec = ZoomSpec(
+    maximum = ZoomLimit(factor = 5f),
+    minimum = ZoomLimit(factor = 1f, overzoomEffect = OverzoomEffect.Disabled),
+)
