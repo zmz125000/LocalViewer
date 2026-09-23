@@ -1507,20 +1507,24 @@ fun BrowseCoverThumb(
                 var lastError: Throwable? = null
                 repeat(3) { attempt ->
                     try {
-                        val source = SmbRepository.load(cover.sourceId) ?: error("SMB source missing")
-                        val password = SmbPasswordStore.get(cover.sourceId)
-                        localPath = SmbCache.ensureBrowseThumb(
-                            cover.sourceId,
-                            cover.remoteRelativeFile,
-                            cacheOriginal = cacheThumbOriginal,
-                        ) { out ->
-                            SmbGateway.downloadFile(
-                                source,
-                                password,
+                        // Password decrypt runBlocks if called on Main. Keep the whole
+                        // fetch on IO so scrolling is not stalled per image row.
+                        localPath = withIOContext {
+                            val source = SmbRepository.load(cover.sourceId) ?: error("SMB source missing")
+                            val password = SmbPasswordStore.get(cover.sourceId)
+                            SmbCache.ensureBrowseThumb(
+                                cover.sourceId,
                                 cover.remoteRelativeFile,
-                                out,
-                                yieldable = true,
-                            )
+                                cacheOriginal = cacheThumbOriginal,
+                            ) { out ->
+                                SmbGateway.downloadFile(
+                                    source,
+                                    password,
+                                    cover.remoteRelativeFile,
+                                    out,
+                                    yieldable = true,
+                                )
+                            }
                         }
                         fetchFailed = false
                         return@LaunchedEffect
@@ -1551,14 +1555,16 @@ fun BrowseCoverThumb(
                 var lastError: Throwable? = null
                 repeat(3) { attempt ->
                     try {
-                        val source = WebDavRepository.load(cover.sourceId) ?: error("WebDAV source missing")
-                        val password = WebDavPasswordStore.get(cover.sourceId)
-                        localPath = WebDavCache.ensureBrowseThumb(
-                            cover.sourceId,
-                            cover.remoteRelativeFile,
-                            cacheOriginal = cacheThumbOriginal,
-                        ) { out ->
-                            WebDavClient.downloadFile(source, password, cover.remoteRelativeFile, out)
+                        localPath = withIOContext {
+                            val source = WebDavRepository.load(cover.sourceId) ?: error("WebDAV source missing")
+                            val password = WebDavPasswordStore.get(cover.sourceId)
+                            WebDavCache.ensureBrowseThumb(
+                                cover.sourceId,
+                                cover.remoteRelativeFile,
+                                cacheOriginal = cacheThumbOriginal,
+                            ) { out ->
+                                WebDavClient.downloadFile(source, password, cover.remoteRelativeFile, out)
+                            }
                         }
                         fetchFailed = false
                         return@LaunchedEffect

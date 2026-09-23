@@ -7,6 +7,7 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import com.ehviewer.core.util.logcat
 import java.security.KeyStore
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -28,6 +29,9 @@ internal class KeystoreSecretStore(
         appCtx.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
     }
 
+    /** Decrypted passwords. Repeat reads must not touch Keystore, especially from the UI thread. */
+    private val plainCache = ConcurrentHashMap<Long, String>()
+
     /** Keystore crypto must not run on the main thread (StrictMode). */
     private inline fun <T> keystoreIo(crossinline block: () -> T): T {
         if (Looper.getMainLooper().isCurrentThread) {
@@ -36,24 +40,33 @@ internal class KeystoreSecretStore(
         return block()
     }
 
-    fun get(sourceId: Long): String = keystoreIo {
-        val packed = prefs.getString(keyPrefix + sourceId, null) ?: return@keystoreIo ""
-        runCatching { decrypt(packed) }.getOrElse { e ->
-            logcat(e)
-            ""
+    fun get(sourceId: Long): String {
+        plainCache[sourceId]?.let { return it }
+        return keystoreIo {
+            plainCache[sourceId]?.let { return@keystoreIo it }
+            val packed = prefs.getString(keyPrefix + sourceId, null) ?: return@keystoreIo ""
+            val plain = runCatching { decrypt(packed) }.getOrElse { e ->
+                logcat(e)
+                return@keystoreIo ""
+            }
+            plainCache[sourceId] = plain
+            plain
         }
     }
 
     fun set(sourceId: Long, password: String) = keystoreIo {
         if (password.isEmpty()) {
             prefs.edit().remove(keyPrefix + sourceId).apply()
+            plainCache.remove(sourceId)
             return@keystoreIo
         }
         prefs.edit().putString(keyPrefix + sourceId, encrypt(password)).apply()
+        plainCache[sourceId] = password
     }
 
     fun remove(sourceId: Long) = keystoreIo {
         prefs.edit().remove(keyPrefix + sourceId).apply()
+        plainCache.remove(sourceId)
     }
 
     private fun getOrCreateKey(): SecretKey {
