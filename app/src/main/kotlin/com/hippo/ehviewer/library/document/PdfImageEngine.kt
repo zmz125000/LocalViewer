@@ -1,11 +1,13 @@
 package com.hippo.ehviewer.library.document
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.image.presentForReader
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
+import com.hippo.ehviewer.library.OriginDiskCache
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.zip.Inflater
@@ -173,6 +175,45 @@ class PdfImageEngine private constructor(
             gen = ref.gen,
             onIndexedBitmap = onIndexedBitmap,
         )
+    }
+
+    /**
+     * Photo-grid thumb. Samples at [OriginDiskCache.THUMB_EDGE] and does not
+     * publish a reader bitmap or take the parser for a full-page encode.
+     * An indirect palette is one small locked read; the image body stays on [source].
+     */
+    fun extractGridThumb(
+        index: Int,
+        source: ArchiveByteSource,
+        stillWanted: () -> Boolean = { true },
+    ): ByteArray? {
+        if (!stillWanted()) return null
+        val ref = synchronized(pagesLock) {
+            pages.getOrNull(index)?.takeIf { it.hasSeek }
+        } ?: return null
+        val raw = parser.extractKnownImage(
+            readSource = source,
+            streamOffset = ref.streamOffset,
+            streamLen = ref.streamLen,
+            objNum = ref.objNum,
+            gen = ref.gen,
+            thumbEdge = OriginDiskCache.THUMB_EDGE,
+            stillWanted = stillWanted,
+            resolvePayload = { num, gen ->
+                if (!stillWanted()) {
+                    null
+                } else {
+                    synchronized(parserLock) {
+                        if (!stillWanted()) {
+                            null
+                        } else {
+                            parser.loadSmallPayload(num, gen, 64 * 1024)
+                        }
+                    }
+                }
+            },
+        ) ?: return null
+        return if (stillWanted()) raw else null
     }
 
     fun extractBytes(index: Int, onIndexedBitmap: ((Bitmap) -> Boolean)? = null): ByteArray? {
@@ -715,7 +756,11 @@ internal class PdfParser(
         objNum: Int,
         gen: Int,
         onIndexedBitmap: ((Bitmap) -> Boolean)? = null,
+        thumbEdge: Int = 0,
+        stillWanted: () -> Boolean = { true },
+        resolvePayload: ((Int, Int) -> ByteArray?)? = null,
     ): ByteArray? {
+        if (!stillWanted()) return null
         if (streamOffset < 0L || streamLen <= 0L || streamLen > MAX_IMAGE_STREAM_BYTES) return null
         if (streamLen > Int.MAX_VALUE) return null
         if (streamOffset >= fileSize || streamLen > fileSize - streamOffset) return null
@@ -723,8 +768,21 @@ internal class PdfParser(
         if (dictLen <= 0) return null
         val probe = readRange(readSource, streamOffset - dictLen, dictLen) ?: return null
         val dict = parseDictOnly(probe, objNum, gen) ?: return null
+        if (!stillWanted()) return null
         val data = readRange(readSource, streamOffset, streamLen.toInt()) ?: return null
-        return decodeKnownStream(StreamObj(dict, data), onIndexedBitmap)
+        val decoded = decodeKnownStream(
+            StreamObj(dict, data),
+            onIndexedBitmap,
+            thumbEdge,
+            stillWanted,
+            resolvePayload,
+        ) ?: return null
+        if (thumbEdge <= 0 || !stillWanted()) return decoded
+        return if (decoded.size >= 2 && decoded[0] == 0xFF.toByte() && decoded[1] == 0xD8.toByte()) {
+            subsampleJpeg(decoded, thumbEdge)
+        } else {
+            decoded
+        }
     }
 
     /** Names only. A ref means the shared parser has to resolve it. */
@@ -744,6 +802,9 @@ internal class PdfParser(
     private fun decodeKnownStream(
         stream: StreamObj,
         onIndexedBitmap: ((Bitmap) -> Boolean)?,
+        thumbEdge: Int = 0,
+        stillWanted: () -> Boolean = { true },
+        resolvePayload: ((Int, Int) -> ByteArray?)? = null,
     ): ByteArray? {
         val filters = directNames(stream.dict["/Filter"]) ?: return null
         var data = stream.data
@@ -757,7 +818,14 @@ internal class PdfParser(
                 else -> return null
             }
         }
-        return encodeKnownSamples(stream.dict, data, onIndexedBitmap)
+        return encodeKnownSamples(
+            stream.dict,
+            data,
+            onIndexedBitmap,
+            thumbEdge,
+            stillWanted,
+            resolvePayload,
+        )
     }
 
     /** Device color, or Indexed with an inline palette string. Indirect palettes fall back. */
@@ -765,6 +833,9 @@ internal class PdfParser(
         dict: PdfDict,
         data: ByteArray,
         onIndexedBitmap: ((Bitmap) -> Boolean)?,
+        thumbEdge: Int = 0,
+        stillWanted: () -> Boolean = { true },
+        resolvePayload: ((Int, Int) -> ByteArray?)? = null,
     ): ByteArray? {
         val w = dict.intValue("/Width") ?: return null
         val h = dict.intValue("/Height") ?: return null
@@ -772,6 +843,7 @@ internal class PdfParser(
         val bpc = dict.intValue("/BitsPerComponent") ?: 8
         if (bpc != 1 && bpc != 2 && bpc != 4 && bpc != 8) return null
         val indexed = inlineIndexedColor(dict["/ColorSpace"])
+            ?: if (thumbEdge > 0) indirectIndexedColor(dict["/ColorSpace"], resolvePayload) else null
         val channels = when {
             indexed != null -> 1
             else -> when (val cs = dict["/ColorSpace"]) {
@@ -804,6 +876,51 @@ internal class PdfParser(
         }
         val expected = w.toLong() * h * channels
         if (samples.size.toLong() < expected) return null
+        if (thumbEdge > 0) {
+            if (!stillWanted()) return null
+            val step = PdfRawSamples.thumbStep(w, h, thumbEdge)
+            val (tw, th) = PdfRawSamples.thumbSize(w, h, step)
+            val pixels = if (indexed != null) {
+                PdfRawSamples.argbSubsampledIndexed(
+                    samples,
+                    w,
+                    h,
+                    step,
+                    indexed.palette,
+                    indexed.baseChannels,
+                )
+            } else {
+                when (channels) {
+                    1 -> PdfRawSamples.argbSubsampled(samples, w, h, 1, step) { off ->
+                        PdfRawSamples.packGray(samples[off].toInt())
+                    }
+                    3 -> PdfRawSamples.argbSubsampled(samples, w, h, 3, step) { off ->
+                        PdfRawSamples.packRgb(
+                            samples[off].toInt(),
+                            samples[off + 1].toInt(),
+                            samples[off + 2].toInt(),
+                        )
+                    }
+                    4 -> PdfRawSamples.argbSubsampled(samples, w, h, 4, step) { off ->
+                        PdfRawSamples.packCmyk(
+                            samples[off].toInt(),
+                            samples[off + 1].toInt(),
+                            samples[off + 2].toInt(),
+                            samples[off + 3].toInt(),
+                        )
+                    }
+                    else -> return null
+                }
+            }
+            if (!stillWanted()) return null
+            val bmp = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
+            return try {
+                bmp.setPixels(pixels, 0, tw, 0, 0, tw, th)
+                encodeLossyThumb(bmp)
+            } finally {
+                bmp.recycle()
+            }
+        }
         val pixelCount = w * h
         val pixels = if (indexed != null) {
             PdfRawSamples.argbFromIndexed(samples, pixelCount, indexed.palette, indexed.baseChannels)
@@ -1003,7 +1120,7 @@ internal class PdfParser(
         val data: ByteArray,
     )
 
-    private fun loadStreamObject(objNum: Int, gen: Int): StreamObj? {
+    private fun loadStreamObject(objNum: Int, gen: Int, maxBytes: Int = Int.MAX_VALUE): StreamObj? {
         if (xref.isEmpty()) {
             bootstrap()
         }
@@ -1027,11 +1144,25 @@ internal class PdfParser(
         }
         val streamOffset = streamDataOffsets[objNum] ?: locateStreamDataOffset(objNum) ?: return null
         val length = resolveLength(dict["/Length"]) ?: return null
-        if (length <= 0L || length > MAX_IMAGE_STREAM_BYTES || length > fileSize - streamOffset) {
+        if (length <= 0L || length > maxBytes || length > MAX_IMAGE_STREAM_BYTES || length > fileSize - streamOffset) {
             return null
         }
         val data = readBytes(streamOffset, length.toInt(), requireFull = true) ?: return null
         return StreamObj(dict, data)
+    }
+
+    internal fun loadSmallPayload(objNum: Int, gen: Int, maxBytes: Int): ByteArray? {
+        val st = loadStreamObject(objNum, gen, maxBytes) ?: return null
+        var data = st.data
+        for (f in filterNames(st.dict["/Filter"])) {
+            data = when (f) {
+                "/FlateDecode", "/Fl" -> inflate(data) ?: return null
+                "/ASCII85Decode", "/A85" -> ascii85Decode(data) ?: return null
+                "/ASCIIHexDecode", "/AHx" -> asciiHexDecode(data) ?: return null
+                else -> return null
+            }
+        }
+        return data.takeIf { it.size <= maxBytes }
     }
 
     private fun loadStreamPayload(objNum: Int, gen: Int = 0): ByteArray? {
@@ -1229,6 +1360,47 @@ internal class PdfParser(
         }
     }
 
+    /** Lossy WebP at the photo-grid thumb edge. Not used for the reader page file. */
+    private fun encodeLossyThumb(bmp: Bitmap): ByteArray? {
+        val bos = ByteArrayOutputStream()
+        if (!bmp.compress(Bitmap.CompressFormat.WEBP_LOSSY, OriginDiskCache.THUMB_QUALITY, bos)) {
+            return null
+        }
+        return bos.toByteArray().takeIf { it.isNotEmpty() }
+    }
+
+    private fun subsampleJpeg(data: ByteArray, edge: Int): ByteArray? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > edge * 2) sample *= 2
+        val decoded = BitmapFactory.decodeByteArray(
+            data,
+            0,
+            data.size,
+            BitmapFactory.Options().apply { inSampleSize = sample },
+        ) ?: return null
+        val longEdge = maxOf(decoded.width, decoded.height)
+        val scaled = if (longEdge > edge) {
+            val scale = edge.toFloat() / longEdge
+            Bitmap.createScaledBitmap(
+                decoded,
+                (decoded.width * scale).toInt().coerceAtLeast(1),
+                (decoded.height * scale).toInt().coerceAtLeast(1),
+                true,
+            )
+        } else {
+            decoded
+        }
+        return try {
+            encodeLossyThumb(scaled)
+        } finally {
+            if (scaled !== decoded && !scaled.isRecycled) scaled.recycle()
+            if (!decoded.isRecycled) decoded.recycle()
+        }
+    }
+
     /** Lossless WebP for comic Flate pages. Quality is encoder effort (0–100), not loss. */
     private fun encodeExtractedBitmap(bmp: Bitmap): ByteArray? {
         val bos = ByteArrayOutputStream()
@@ -1280,6 +1452,32 @@ internal class PdfParser(
             else -> return null
         }
         val palette = (arr.items.getOrNull(3) as? PdfString)?.bytes ?: return null
+        return InlineIndexed(baseChannels, palette)
+    }
+
+    /** Indexed palette stored as its own stream. Only used for grid thumbs. */
+    private fun indirectIndexedColor(
+        v: PdfValue?,
+        resolvePayload: ((Int, Int) -> ByteArray?)?,
+    ): InlineIndexed? {
+        if (resolvePayload == null) return null
+        val arr = v as? PdfArray ?: return null
+        val name = (arr.items.firstOrNull() as? PdfName)?.name ?: return null
+        if (name != "/Indexed" && name != "/I") return null
+        val base = arr.items.getOrNull(1) as? PdfName ?: return null
+        val baseChannels = when (base.name) {
+            "/DeviceGray", "/G" -> 1
+            "/DeviceRGB", "/RGB" -> 3
+            "/DeviceCMYK", "/CMYK" -> 4
+            else -> return null
+        }
+        val lookup = arr.items.getOrNull(3)
+        val palette = when (lookup) {
+            is PdfString -> lookup.bytes
+            is PdfRef -> resolvePayload(lookup.num, lookup.gen)
+            else -> null
+        } ?: return null
+        if (palette.isEmpty() || palette.size > MAX_GRID_PALETTE_BYTES) return null
         return InlineIndexed(baseChannels, palette)
     }
 
@@ -2084,6 +2282,9 @@ internal class PdfParser(
 
         /** Bitmap lossless-WebP effort. Higher = smaller + slower extract. */
         const val EXTRACT_WEBP_EFFORT = 75
+
+        /** Indirect indexed palettes above this are not grid-thumb material. */
+        const val MAX_GRID_PALETTE_BYTES = 64 * 1024
     }
 }
 
