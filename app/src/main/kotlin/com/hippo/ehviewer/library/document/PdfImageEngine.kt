@@ -147,6 +147,26 @@ class PdfImageEngine private constructor(
         }
     }
 
+    /**
+     * Range-read a page whose stream offset is already known.
+     *
+     * Does not take [parserLock] and does not touch the parser xref, so several
+     * pages can extract while [ensureListedThrough] keeps walking the page tree.
+     * Indirect filters / color spaces return null; the caller then uses [extractBytes].
+     */
+    fun extractKnownBytes(index: Int, source: ArchiveByteSource): ByteArray? {
+        val ref = synchronized(pagesLock) {
+            pages.getOrNull(index)?.takeIf { it.hasSeek }
+        } ?: return null
+        return parser.extractKnownImage(
+            readSource = source,
+            streamOffset = ref.streamOffset,
+            streamLen = ref.streamLen,
+            objNum = ref.objNum,
+            gen = ref.gen,
+        )
+    }
+
     fun extractBytes(index: Int): ByteArray? {
         val ref = synchronized(pagesLock) { pages.getOrNull(index) } ?: return null
         return synchronized(parserLock) {
@@ -655,6 +675,129 @@ internal class PdfParser(
         val decoded = decodeImageStream(StreamObj(dict, data))
             ?: return DirectExtractResult.Failed
         return DirectExtractResult.Success(decoded)
+    }
+
+    /**
+     * Extract one image stream from [readSource] without xref or object-cache state.
+     * Safe to call beside [PageImageCursor] on another source. Returns null when the
+     * stream needs the shared parser (indirect length, indexed palette, ICC, …).
+     */
+    fun extractKnownImage(
+        readSource: ArchiveByteSource,
+        streamOffset: Long,
+        streamLen: Long,
+        objNum: Int,
+        gen: Int,
+    ): ByteArray? {
+        if (streamOffset < 0L || streamLen <= 0L || streamLen > MAX_IMAGE_STREAM_BYTES) return null
+        if (streamLen > Int.MAX_VALUE) return null
+        if (streamOffset >= fileSize || streamLen > fileSize - streamOffset) return null
+        val dictLen = minOf(MAX_STREAM_HEADER_BYTES, streamOffset).toInt()
+        if (dictLen <= 0) return null
+        val probe = readRange(readSource, streamOffset - dictLen, dictLen) ?: return null
+        val dict = parseDictOnly(probe, objNum, gen) ?: return null
+        val data = readRange(readSource, streamOffset, streamLen.toInt()) ?: return null
+        return decodeKnownStream(StreamObj(dict, data))
+    }
+
+    /** Names only. A ref means the shared parser has to resolve it. */
+    private fun directNames(v: PdfValue?): List<String>? = when (v) {
+        null -> emptyList()
+        is PdfName -> listOf(v.name)
+        is PdfArray -> {
+            val names = ArrayList<String>(v.items.size)
+            for (item in v.items) {
+                names += (item as? PdfName)?.name ?: return null
+            }
+            names
+        }
+        else -> null
+    }
+
+    private fun decodeKnownStream(stream: StreamObj): ByteArray? {
+        val filters = directNames(stream.dict["/Filter"]) ?: return null
+        var data = stream.data
+        for (f in filters) {
+            data = when (f) {
+                "/DCTDecode", "/DCT", "/JPXDecode" -> return data
+                "/FlateDecode", "/Fl" -> inflate(data) ?: return null
+                "/ASCII85Decode", "/A85" -> ascii85Decode(data) ?: return null
+                "/ASCIIHexDecode", "/AHx" -> asciiHexDecode(data) ?: return null
+                else -> return null
+            }
+        }
+        return encodeKnownSamples(stream.dict, data)
+    }
+
+    /** Device color spaces and inline decode params only. */
+    private fun encodeKnownSamples(dict: PdfDict, data: ByteArray): ByteArray? {
+        val w = dict.intValue("/Width") ?: return null
+        val h = dict.intValue("/Height") ?: return null
+        if (w <= 0 || h <= 0 || w > 20000 || h > 20000) return null
+        val bpc = dict.intValue("/BitsPerComponent") ?: 8
+        if (bpc != 8) return null
+        val channels = when (val cs = dict["/ColorSpace"]) {
+            is PdfName -> when (cs.name) {
+                "/DeviceGray", "/G" -> 1
+                "/DeviceRGB", "/RGB" -> 3
+                "/DeviceCMYK", "/CMYK" -> 4
+                else -> return null
+            }
+            else -> return null
+        }
+        val params = when (val raw = dict["/DecodeParms"]) {
+            null -> null
+            is PdfDict -> raw
+            else -> return null
+        }
+        val predictor = params?.intValue("/Predictor") ?: 1
+        val columns = params?.intValue("/Columns") ?: w
+        val colors = params?.intValue("/Colors") ?: channels
+        val bits = params?.intValue("/BitsPerComponent") ?: bpc
+        val samples = if (predictor >= 10) {
+            undoPngPredictor(data, columns, colors, bits) ?: return null
+        } else {
+            data
+        }
+        val expected = w.toLong() * h * channels
+        if (samples.size.toLong() < expected) return null
+        val pixelCount = w * h
+        val pixels = when (channels) {
+            1 -> PdfRawSamples.argbFromGray(samples, pixelCount)
+            3 -> PdfRawSamples.argbFromRgb(samples, pixelCount)
+            4 -> PdfRawSamples.argbFromCmyk(samples, pixelCount)
+            else -> return null
+        }
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        bmp.setPixels(pixels, 0, w, 0, 0, w, h)
+        return try {
+            encodeExtractedBitmap(bmp)
+        } finally {
+            bmp.recycle()
+        }
+    }
+
+    private fun readRange(readSource: ArchiveByteSource, offset: Long, len: Int): ByteArray? {
+        if (len <= 0 || offset < 0L || offset >= fileSize) return null
+        val n = minOf(len.toLong(), fileSize - offset).toInt()
+        val buf = ByteArray(n)
+        var got = 0
+        var calls = 0
+        var ioFails = 0
+        val maxCalls = maxOf(MAX_READ_CALLS, (n + SHORT_READ_BYTES - 1) / SHORT_READ_BYTES + MAX_READ_CALLS)
+        while (got < n && calls++ < maxCalls) {
+            val r = try {
+                readSource.readAt(offset + got, buf, got, n - got)
+            } catch (_: IOException) {
+                if (++ioFails >= IO_FAIL_RETRIES) return null
+                continue
+            }
+            ioFails = 0
+            if (r <= 0) return null
+            if (r > n - got) return null
+            got += r
+        }
+        return if (got == n) buf else null
     }
 
     /** Parse object dict from a header probe that may not include the full stream body. */

@@ -4,6 +4,7 @@ import android.os.SystemClock
 import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.byteBufferSource
+import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.document.PdfImageEngine
 import java.io.File
@@ -21,7 +22,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.yield
 import okio.Path
 
@@ -31,6 +31,9 @@ import okio.Path
  * Compressed page bytes stay in [ramPages] until decode; [PageLoader] pins decoded
  * bitmaps for the viewport + decode-ahead window. Page-tree offsets persist to
  * [DocumentExtractCache] so an unfinished index resumes after exit.
+ *
+ * Indexing stays on the engine parser (one walker). Listed pages extract in
+ * parallel through [openExtractSource] and do not take that parser.
  */
 internal class PdfRamPageLoader(
     scope: CoroutineScope,
@@ -38,6 +41,7 @@ internal class PdfRamPageLoader(
     titleHint: String,
     startPage: Int,
     private val cacheKey: String? = null,
+    openExtractSource: (() -> ArchiveByteSource)? = null,
 ) : PageLoader(
     scope,
     info = null,
@@ -47,7 +51,7 @@ internal class PdfRamPageLoader(
     override val title = titleHint
 
     private val ramPages = ConcurrentHashMap<Int, ByteArray>()
-    private val extractMutex = Mutex()
+    private val extractPool = openExtractSource?.let { PdfExtractPool(it) }
     private val extractJobs = KeyedJobRegistry<Int>()
     private val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
     private val interactivePending = ConcurrentHashMap.newKeySet<Int>()
@@ -124,6 +128,7 @@ internal class PdfRamPageLoader(
         engine.pauseDiscovery()
         discoveryJob.getAndSet(null)?.cancel()
         extractJobs.cancelAll()
+        extractPool?.close()
         readyWaiters.clear()
         ramPages.clear()
         persistIndex()
@@ -153,12 +158,15 @@ internal class PdfRamPageLoader(
         } else if (ramPages.containsKey(index)) {
             return
         }
-        if (!interactive && deferDocumentBackgroundWork(engine.structureComplete)) {
+        // Unlisted pages wait for the serial walker. Listed pages extract now.
+        if (!interactive && index >= engine.pageCount &&
+            deferDocumentBackgroundWork(engine.structureComplete)
+        ) {
             deferredExtracts.add(index)
             return
         }
         deferredExtracts.remove(index)
-        if (interactive) interactivePending.add(index)
+        if (interactive && extractPool == null) interactivePending.add(index)
         val existing = extractJobs.owner(index)
         if (existing != null && !existing.isCompleted) {
             if (interactive && backgroundJobs.contains(index)) {
@@ -169,7 +177,8 @@ internal class PdfRamPageLoader(
                 return
             }
         }
-        if (interactive) {
+        // No side sources: the viewport still has to take the one parser.
+        if (interactive && extractPool == null) {
             engine.pauseDiscovery()
             discoveryJob.get()?.cancel()
             backgroundJobs.forEach { idx ->
@@ -227,23 +236,34 @@ internal class PdfRamPageLoader(
     private suspend fun extractToRam(index: Int, interactive: Boolean) {
         if (ramPages.containsKey(index)) return
         val hasWaiter = readyWaiters.containsKey(index)
-        if (!interactive && !hasWaiter && deferDocumentBackgroundWork(engine.structureComplete)) {
+        if (!interactive && !hasWaiter && index >= engine.pageCount &&
+            deferDocumentBackgroundWork(engine.structureComplete)
+        ) {
             return
         }
-        withDocumentParserAccess(
-            waitForParser = documentExtractWaitsForParser(interactive),
-            retryWhileIdle = !interactive && hasWaiter,
-            interactivePending = interactivePending,
-            extractMutex = extractMutex,
-        ) {
-            copyPageToRam(index)
+        if (index >= engine.pageCount) {
+            if (!interactive && !engine.structureComplete) return
+            if (interactive) {
+                interactivePending.add(index)
+                engine.pauseDiscovery()
+            }
+            try {
+                engine.ensureListedThrough(index)
+            } finally {
+                if (interactive) {
+                    interactivePending.remove(index)
+                    if (interactivePending.isEmpty()) engine.resumeDiscovery()
+                }
+            }
         }
-    }
-
-    private fun copyPageToRam(index: Int) {
-        if (ramPages.containsKey(index)) return
-        engine.ensureListedThrough(index)
-        val bytes = engine.extractBytes(index) ?: return
+        if (index >= engine.pageCount || ramPages.containsKey(index)) return
+        val pool = extractPool
+        val known = if (pool != null && engine.streamOffsetOf(index) >= 0L) {
+            pool.use { source -> engine.extractKnownBytes(index, source) }
+        } else {
+            null
+        }
+        val bytes = known ?: engine.extractBytes(index) ?: return
         if (isDecodedDemand(index)) ramPages[index] = bytes
     }
 
@@ -264,8 +284,9 @@ internal class PdfRamPageLoader(
     }
 
     /**
-     * List playable pages until the page tree ends. Visible extract wins the parser
-     * (pause + tryLock) so the current page is never stuck behind listing I/O.
+     * List playable pages on the parser only. Page bodies extract on [extractPool]
+     * and do not take this walker. Without a pool, a visible extract still pauses
+     * the walker so it can use the one parser source.
      */
     private fun requestDiscovery() {
         if (sessionClosed.get() || engine.structureComplete) return
@@ -294,10 +315,6 @@ internal class PdfRamPageLoader(
                             delay(PDF_INDEX_YIELD_MS)
                             continue
                         }
-                        if (!extractMutex.tryLock()) {
-                            delay(PDF_INDEX_YIELD_MS)
-                            continue
-                        }
                         val before = engine.pageCount
                         val after = try {
                             ensureActive()
@@ -306,8 +323,8 @@ internal class PdfRamPageLoader(
                             } else {
                                 engine.ensureListedThrough(before)
                             }
-                        } finally {
-                            extractMutex.unlock()
+                        } catch (e: CancellationException) {
+                            throw e
                         }
                         if (after > before) {
                             publishListed()
