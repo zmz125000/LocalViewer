@@ -474,7 +474,7 @@ abstract class PageLoader(
 
     override fun retryPage(index: Int, orgImg: Boolean) {
         cancelRequest(index)
-        sourceReady.remove(index)
+        clearSourceReady(index)
         notifyPageWait(index)
         lock.write { cache.remove(index) }
         if (index !in 0 until size) return
@@ -900,6 +900,16 @@ abstract class PageLoader(
     @PublishedApi
     internal fun markSourceReady(index: Int) {
         sourceReady.add(index)
+    }
+
+    /**
+     * The ordered window skips [index] while this is set. Cache-off drops the RAM
+     * copy on scroll-away; the flag has to drop with it or the re-download polls
+     * outside the window (no network, spinner). Long-press reload already clears it.
+     */
+    @PublishedApi
+    internal fun clearSourceReady(index: Int) {
+        sourceReady.remove(index)
     }
 
     /**
