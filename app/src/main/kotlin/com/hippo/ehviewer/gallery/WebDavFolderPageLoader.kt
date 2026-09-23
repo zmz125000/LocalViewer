@@ -137,7 +137,10 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 private fun cancelStaleDownloads(sourcePages: Set<Int>, decodedPages: Set<Int>) {
                     readyWaiters.forEach { idx, _ -> if (idx !in decodedPages) readyWaiters.remove(idx) }
                     ramPages.keys.toList().forEach { idx ->
-                        if (idx !in decodedPages) ramPages.remove(idx)
+                        if (idx !in decodedPages) {
+                            ramPages.remove(idx)
+                            clearSourceReady(idx)
+                        }
                     }
                     downloadJobs.cancelOutside(sourcePages)
                 }
@@ -146,6 +149,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
 
                 override fun releaseRamPage(index: Int) {
                     ramPages.remove(index)
+                    if (!isDecodedDemand(index)) clearSourceReady(index)
                 }
 
                 private fun addReadyWaiter(index: Int, onReady: () -> Unit) {
@@ -197,6 +201,9 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                 dispatchReady(index)
                                 return@launch
                             }
+                            // Bytes are missing. sourceReady would park this job outside the
+                            // ordered window; 1.12.4 still ran it on a free slot.
+                            clearSourceReady(index)
                             withFolderNetworkPermit(
                                 rank = { prefetchRank(index) },
                                 cacheOff = skipDisk,

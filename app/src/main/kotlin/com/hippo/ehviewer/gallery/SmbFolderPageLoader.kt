@@ -168,7 +168,10 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     // cancellation handler cannot resurrect an obsolete interactive transfer.
                     readyWaiters.forEach { idx, _ -> if (idx !in decodedPages) readyWaiters.remove(idx) }
                     ramPages.keys.toList().forEach { idx ->
-                        if (idx !in decodedPages) ramPages.remove(idx)
+                        if (idx !in decodedPages) {
+                            ramPages.remove(idx)
+                            clearSourceReady(idx)
+                        }
                     }
                     // ConcurrentHashMap.forEach (BiConsumer) — never entries/keys iterator.
                     // Android EntryIterator.next can throw NoSuchElementException under concurrent
@@ -180,6 +183,9 @@ suspend inline fun <T> useSmbFolderPageLoader(
 
                 override fun releaseRamPage(index: Int) {
                     ramPages.remove(index)
+                    // Still on screen: decode may have persisted a file and the page stays
+                    // in the ordered window. Clearing here would pin rank 0 with no job.
+                    if (!isDecodedDemand(index)) clearSourceReady(index)
                 }
 
                 private fun addReadyWaiter(index: Int, onReady: () -> Unit) {
@@ -244,6 +250,10 @@ suspend inline fun <T> useSmbFolderPageLoader(
                                 dispatchReady(index)
                                 return@launch
                             }
+                            // 1.12.4 still copied this page on a free slot: sourceReady made
+                            // it not the serial head. The ordered window instead returns
+                            // NOT_IN_ORDER and polls forever once cache-off has dropped the RAM.
+                            clearSourceReady(index)
                             val nameForSlot = imageFileNames[index]
                             withFolderNetworkPermit(
                                 rank = { prefetchRank(index) },

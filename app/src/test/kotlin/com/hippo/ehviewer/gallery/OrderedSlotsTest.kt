@@ -90,6 +90,30 @@ class OrderedSlotsTest {
     }
 
     @Test
+    fun `page left ready does not take a slot until it needs another copy`() = runBlocking {
+        val serial = Semaphore(1)
+        val fallback = Semaphore(1)
+        val stillReady = AtomicBoolean(true)
+        val started = CompletableDeferred<Unit>()
+        val job = async {
+            withOrderedPermits(
+                rank = { if (stillReady.get()) NOT_IN_ORDER else 0 },
+                serialSlots = serial,
+                fallbackSlots = fallback,
+                fallbackPermits = 1,
+            ) {
+                started.complete(Unit)
+            }
+        }
+        delay(40)
+        assertFalse(started.isCompleted)
+        assertEquals(1, serial.availablePermits)
+        stillReady.set(false)
+        withTimeout(1_000) { started.await() }
+        job.await()
+    }
+
+    @Test
     fun `second head waits for the reserved slot`() = runBlocking {
         val serial = Semaphore(1)
         val fallback = Semaphore(2)
