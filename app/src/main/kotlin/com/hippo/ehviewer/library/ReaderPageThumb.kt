@@ -71,8 +71,8 @@ object ReaderPageThumb {
     }
 
     /**
-     * Fallback when the page has no on-disk source (mmap ZIP). Encodes a software
-     * copy of [bitmap]; does not recycle the caller's bitmap.
+     * Fallback when the page has no on-disk source (mmap ZIP, software bitmap only).
+     * HARDWARE bitmaps are refused — GPU readback hitch the reader viewport.
      */
     suspend fun ensureFromBitmap(identity: String, bitmap: Bitmap): Path? = withContext(Dispatchers.IO) {
         val destPath = dest(identity)
@@ -92,11 +92,8 @@ object ReaderPageThumb {
                 var software: Bitmap? = null
                 var scaled: Bitmap? = null
                 try {
-                    software = if (bitmap.config == Bitmap.Config.HARDWARE) {
-                        bitmap.copy(Bitmap.Config.ARGB_8888, false)
-                    } else {
-                        bitmap
-                    }
+                    if (bitmap.config == Bitmap.Config.HARDWARE) return@withLock null
+                    software = bitmap
                     if (software == null || software.isRecycled) return@withLock null
                     val w = software.width
                     val h = software.height
