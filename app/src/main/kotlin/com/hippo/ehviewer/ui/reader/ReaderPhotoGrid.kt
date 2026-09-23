@@ -201,9 +201,13 @@ fun ReaderPhotoGridSheet(
                 val name = readerPageFileName(args, pageLoader, index)
                 if (pdfCacheKey != null && allowRemoteFetch) {
                     LaunchedEffect(index) {
-                        while (true) {
-                            pageLoader.requestPageSource(index)
-                            delay(500)
+                        try {
+                            while (true) {
+                                pageLoader.requestPageSource(index)
+                                delay(500)
+                            }
+                        } finally {
+                            pageLoader.releasePageSource(index)
                         }
                     }
                 }

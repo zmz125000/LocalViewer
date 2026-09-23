@@ -27,6 +27,12 @@ interface ReaderSession : AutoCloseable {
      * Default no-op for sessions that are not document extract.
      */
     fun requestPageSource(index: Int) = Unit
+
+    /**
+     * The photo-grid cell for [index] left composition. Drop a grid-only extract
+     * so it does not keep an extract handle after the cell is gone.
+     */
+    fun releasePageSource(index: Int) = Unit
 }
 
 /** Why the reader's viewport changed. All indices are real image indices. */
