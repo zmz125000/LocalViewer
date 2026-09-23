@@ -1,7 +1,9 @@
 package com.hippo.ehviewer.gallery
 
+import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import android.util.LruCache
 import androidx.compose.runtime.mutableIntStateOf
 import arrow.fx.coroutines.ExitCase
@@ -22,6 +24,7 @@ import com.hippo.ehviewer.image.hdr.LibDirectDecode
 import com.hippo.ehviewer.image.hdr.classify
 import com.hippo.ehviewer.image.hdr.classifyPath
 import com.hippo.ehviewer.image.hdr.exportImageExtension
+import com.hippo.ehviewer.image.hdr.isLibStillExtension
 import com.hippo.ehviewer.image.hdr.needsLibDecode
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.util.FileUtils
@@ -46,7 +49,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock as mutexWithLock
-import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.yield
 import moe.tarsin.coroutines.NamedMutex
 import moe.tarsin.coroutines.withLock
 import okio.Path
@@ -54,6 +57,10 @@ import okio.Path
 private val progressScope = CoroutineScope(Dispatchers.IO)
 
 private const val PERSIST_DEBOUNCE_MS = 1_000L
+
+/** Wait for in-flight reader decode before thumb encode (40 × 50ms). */
+private const val PAGE_THUMB_IDLE_POLLS = 40
+private const val PAGE_THUMB_IDLE_POLL_MS = 50L
 
 /** Publish [PageLoader] size Snapshot updates onto the main looper. */
 private val pageLoaderMainHandler = Handler(Looper.getMainLooper())
@@ -129,14 +136,18 @@ abstract class PageLoader(
      * Peak software decode is large; keep concurrency low on a 256 MiB heap.
      * Cache-off also holds compressed bytes on the heap, so decode is 2-wide.
      * Lib-direct F16 is further serialized inside [LibDirectDecode] (one at a time).
+     *
+     * Every slot decodes the next still-needed page from the viewport. The first
+     * waits on one reserved permit; the rest fill the following pages in that
+     * same order and do not start past the window.
      */
-    private val semaphore = Semaphore(
-        when {
-            Settings.disableReaderNetworkCache.value -> 2
-            Settings.readerLibDirectBitmap.value -> 2
-            else -> 4
-        },
-    )
+    private val decodeSlotCount = when {
+        Settings.disableReaderNetworkCache.value -> 2
+        Settings.readerLibDirectBitmap.value -> 2
+        else -> 4
+    }
+    private val serialDecodeSlots = Semaphore(1)
+    private val parallelDecodeSlots = Semaphore((decodeSlotCount - 1).coerceAtLeast(1))
 
     /**
      * Decoded-page budget. Weight is clamped so one huge bitmap can occupy the
@@ -247,23 +258,58 @@ abstract class PageLoader(
     private fun schedulePhotoGridThumb(index: Int, source: ImageSource, image: Image) {
         if (!Settings.readerGeneratePageThumb.value) return
         val identity = pageThumbIdentity?.invoke(index) ?: return
+        // Local JPEG/PNG/WebP/HEIC already paint from the file in the photo grid.
+        // Only local lib stills (JXL/JXR) need a generated thumb.
+        if (identity.startsWith("local:") && !isLibStillExtension(getImageExtension(index))) return
         val path = (source as? PathSource)?.source ?: exportFiles[index]
         if (path != null) {
             scope.launch(Dispatchers.IO) {
-                runCatching { ReaderPageThumb.ensureFromFile(identity, path) }
+                waitForDecodeIdle()
+                withBackgroundThreadPriority {
+                    runCatching { ReaderPageThumb.ensureFromFile(identity, path) }
+                }
             }
             return
         }
         val bitmap = (image.innerImage as? BitmapImage)?.bitmap ?: return
+        // HARDWARE copy is a GPU readback and can hitch the viewport. Skip.
+        if (bitmap.config == Bitmap.Config.HARDWARE) return
         if (!image.pin()) return
         scope.launch(Dispatchers.IO) {
             try {
-                if (!bitmap.isRecycled) {
-                    runCatching { ReaderPageThumb.ensureFromBitmap(identity, bitmap) }
+                waitForDecodeIdle()
+                withBackgroundThreadPriority {
+                    if (!bitmap.isRecycled) {
+                        runCatching { ReaderPageThumb.ensureFromBitmap(identity, bitmap) }
+                    }
                 }
             } finally {
                 image.unpin()
             }
+        }
+    }
+
+    /**
+     * Let this page's decode job (and any in-flight neighbors) finish so thumb
+     * ImageDecoder / WebP encode does not share the heap with reader decode.
+     */
+    private suspend fun waitForDecodeIdle() {
+        yield()
+        repeat(PAGE_THUMB_IDLE_POLLS) {
+            val busy = synchronized(jobs) { jobs.values.any { it.isActive } }
+            if (!busy) return
+            delay(PAGE_THUMB_IDLE_POLL_MS)
+        }
+    }
+
+    private suspend inline fun <T> withBackgroundThreadPriority(block: suspend () -> T): T {
+        val tid = Process.myTid()
+        val previous = Process.getThreadPriority(tid)
+        Process.setThreadPriority(tid, Process.THREAD_PRIORITY_BACKGROUND)
+        try {
+            return block()
+        } finally {
+            Process.setThreadPriority(tid, previous)
         }
     }
 
@@ -320,9 +366,21 @@ abstract class PageLoader(
     @Volatile
     private var desiredDecodedPages: Set<Int> = emptySet()
 
+    /** Visible + decode-ahead in demand order (viewport first, then reading direction). */
+    @Volatile
+    private var orderedDecodePages: List<Int> = emptyList()
+
+    /** [orderedDecodePages] then source-only prefetch, same order. */
+    @Volatile
+    private var orderedSourcePages: List<Int> = emptyList()
+
+    /** Pages whose compressed source is known present this session (disk, RAM, or mmap). */
+    private val sourceReady = ConcurrentHashMap.newKeySet<Int>()
+
     override fun restart() {
         cancelDecodeJobs()
         exportFiles.clear()
+        sourceReady.clear()
         lock.write { cache.evictAll() }
         pages.forEach(Page::reset)
         replan()
@@ -379,6 +437,7 @@ abstract class PageLoader(
 
     override fun retryPage(index: Int, orgImg: Boolean) {
         cancelRequest(index)
+        sourceReady.remove(index)
         notifyPageWait(index)
         lock.write { cache.remove(index) }
         if (index !in 0 until size) return
@@ -469,6 +528,7 @@ abstract class PageLoader(
     override fun close() {
         cancelDecodeJobs()
         exportFiles.clear()
+        sourceReady.clear()
         lock.write { cache.evictAll() }
         persistProgress()
     }
@@ -578,6 +638,8 @@ abstract class PageLoader(
         val demand = demandPlanner.plan(navigation, size, policy)
         lastNavigation = demand.navigation
         desiredDecodedPages = demand.decodedPages
+        orderedDecodePages = demand.visibleDecode + demand.decodeAhead
+        orderedSourcePages = demand.visibleDecode + demand.decodeAhead + demand.sourceOnly
         startPage = demand.navigation.anchor
 
         onNavigation(demand)
@@ -678,6 +740,7 @@ abstract class PageLoader(
      */
     fun notifySourceReady(index: Int, orgImg: Boolean = false) {
         if (index !in 0 until size) return
+        markSourceReady(index)
         if (!isDecodeDemanded(index)) {
             // A cancelled/old source operation completed after a seek or reversal.
             releaseInflight(index)
@@ -701,7 +764,12 @@ abstract class PageLoader(
                 val runningJob = currentCoroutineContext()[Job]
                 try {
                     mutex.withLock(index) {
-                        semaphore.withPermit {
+                        withOrderedPermits(
+                            rank = { decodeRank(index) },
+                            serialSlots = serialDecodeSlots,
+                            fallbackSlots = parallelDecodeSlots,
+                            fallbackPermits = decodeSlotCount - 1,
+                        ) {
                             atomicallyDecodeAndUpdate(index, forceOriginal = orgImg)
                         }
                     }
@@ -760,4 +828,35 @@ abstract class PageLoader(
      */
     @PublishedApi
     internal fun isAnchorPage(index: Int): Boolean = (lastNavigation?.anchor ?: startPage) == index
+
+    /** Record that [index] is on disk / in RAM so the ordered prefetch window can advance. */
+    @PublishedApi
+    internal fun markSourceReady(index: Int) {
+        sourceReady.add(index)
+    }
+
+    /**
+     * Position of [index] among source pages from the viewport that are not yet
+     * available. 0 waits on the reserved prefetch slot; the next ranks fill the
+     * remaining slots. [NOT_IN_ORDER] waits outside the window.
+     */
+    @PublishedApi
+    internal fun prefetchRank(index: Int): Int = orderedWorkRank(orderedSourcePages, index) { candidate ->
+        candidate in sourceReady || pages.getOrNull(candidate)?.status is PageStatus.Error
+    }
+
+    /**
+     * Position of [index] among still-needed decodes from the viewport.
+     * Same window rule as [prefetchRank].
+     */
+    private fun decodeRank(index: Int): Int = orderedWorkRank(orderedDecodePages, index) { !needsSerialDecode(it) }
+
+    private fun needsSerialDecode(index: Int): Boolean {
+        if (!isDecodeDemanded(index)) return false
+        return when (val st = pages.getOrNull(index)?.status) {
+            is PageStatus.Ready -> st.image.innerImage == null
+            is PageStatus.Blocked, is PageStatus.Error -> false
+            else -> true
+        }
+    }
 }

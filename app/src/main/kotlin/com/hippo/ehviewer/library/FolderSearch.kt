@@ -81,11 +81,20 @@ object FolderSearch {
      *
      * Directories / folder galleries: the item itself. Files / videos / archives:
      * the parent of [relativePath].
+     *
+     * Promoted virtual galleries / videos lifted from a nested leaf (`S/leaf`) open
+     * the parent subfolder (`S`), not the leaf.
      */
-    fun openFolderTarget(relativePath: String, isDirectory: Boolean): String {
+    fun openFolderTarget(
+        relativePath: String,
+        isDirectory: Boolean,
+        virtual: Boolean = false,
+    ): String {
         val rel = relativePath.replace('\\', '/').trim('/')
         if (rel.isEmpty()) return ""
-        return if (isDirectory) rel else parentRelative(rel)
+        val folder = if (isDirectory) rel else parentRelative(rel)
+        if (!virtual) return folder
+        return parentRelative(folder).ifEmpty { folder }
     }
 
     /**

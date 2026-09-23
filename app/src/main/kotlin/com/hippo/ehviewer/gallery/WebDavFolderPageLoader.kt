@@ -33,9 +33,9 @@ import okio.Path
 /**
  * WebDAV folder reader — same waiter/prefetch shape as SMB, without TCP pool.
  * HTTP client multiplexes; download fan-out is capped inside [WebDavClient].
- * Viewport anchor prefers one reserved slot; mate / decode-ahead use a bounded
- * lane ([RAM_PREFETCH_PERMITS] when cache-off) so decode-demand does not
- * serialize on the reserved slot.
+ * Every download slot takes the next page from the viewport in demand order.
+ * The head waits on one reserved slot; the rest fill the following pages.
+ * Cache-off width is that slot plus [RAM_PREFETCH_PERMITS].
  * Convert-mode lib-HDR/avif: cache-on prefetch capped at 2 (B1). Direct-Bitmap
  * uses the normal prefetch slots.
  */
@@ -51,11 +51,12 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         check(imageFileNames.isNotEmpty()) { "No images in WebDAV folder" }
         val password = WebDavPasswordStore.get(source.id)
         val size = imageFileNames.size
-        val interactiveSlots = Semaphore(1)
-        val prefetchSlots = Semaphore(3)
+        val serialPrefetchSlots = Semaphore(1)
+        val prefetchPermitCount = 3
+        val prefetchSlots = Semaphore(prefetchPermitCount)
         val ramPrefetchSlots = Semaphore(RAM_PREFETCH_PERMITS)
         // Cap concurrent lib downloads; full UHDR convert is serial in HdrConvertCache.
-        val libHdrPrefetchSlots = Semaphore(2)
+        val libHdrPrefetchSlots = Semaphore(LIB_HDR_PREFETCH_PERMITS)
         val downloadJobs = KeyedJobRegistry<Int>()
         val closed = AtomicBoolean(false)
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
@@ -154,6 +155,7 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                 private fun takeReadyWaiters(index: Int): List<() -> Unit> = readyWaiters.remove(index)?.toList().orEmpty()
 
                 private fun dispatchReady(index: Int) {
+                    markSourceReady(index)
                     takeReadyWaiters(index).forEach { runCatching { it() } }
                 }
 
@@ -167,9 +169,11 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                     val skipDisk = Settings.disableReaderNetworkCache.value
                     // Never probe disk here — onRequest/retryPage run on main (lifecycle).
                     if (onReady == null && !skipDisk && WebDavCache.isPageCached(cache)) {
+                        markSourceReady(index)
                         return
                     }
                     if (onReady == null && skipDisk && ramPages.containsKey(index)) {
+                        markSourceReady(index)
                         return
                     }
                     if (onReady != null) addReadyWaiter(index, onReady)
@@ -194,13 +198,14 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                 return@launch
                             }
                             withFolderNetworkPermit(
-                                isAnchor = isAnchorPage(index),
+                                rank = { prefetchRank(index) },
                                 cacheOff = skipDisk,
                                 libHdr = isLibHdrCandidate(name),
-                                interactiveSlots = interactiveSlots,
+                                serialSlots = serialPrefetchSlots,
                                 ramPrefetchSlots = ramPrefetchSlots,
                                 libHdrPrefetchSlots = libHdrPrefetchSlots,
                                 prefetchSlots = prefetchSlots,
+                                prefetchPermitCount = prefetchPermitCount,
                             ) {
                                 if (skipDisk) {
                                     if (ramPages.containsKey(index) || WebDavCache.isPageCachedOnDisk(cache)) {

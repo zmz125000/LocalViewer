@@ -75,7 +75,8 @@ import okio.Path.Companion.toPath
  *
  * - **External video** → loopback [ExternalHttpStreamServer]
  *   (`http://127.0.0.1/…/movie.webm`) so players auto-load sibling subs like SMB explorers.
- * - **External non-video** → [StreamDocumentProvider] content URI.
+ * - **External PDF** → [StreamDocumentProvider] range I/O (no full download).
+ * - **Other external network files** → origin cache, then a real descriptor.
  * - **In-app Media3** ([playLocal]/[playSmb]/[playWebDav]) → streamdoc / StreamDocDataSource.
  */
 object OpenFileExternally {
@@ -342,6 +343,62 @@ object OpenFileExternally {
             pdfKind = PdfReaderActivity.KIND_SMB,
             pdfSourceId = sourceId,
             pdfRemotePath = remoteRelativeFile,
+        )
+    }
+
+    /**
+     * External PDF viewer over streamdoc. Same SMB registration as [playPdfSmb]
+     * (sticky range I/O, zip-as-dir members included). Does not download the file
+     * into the origin cache.
+     */
+    suspend fun openExternalPdfSmb(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        usePreferredReader: Boolean = true,
+    ) {
+        val token = registerSmbStreamdoc(
+            sourceId,
+            remoteRelativeFile,
+            displayName,
+            DefaultPdfReader.MIME_TYPE,
+        )
+        launchStreamdoc(
+            context = context,
+            token = token,
+            displayName = displayName,
+            mimeType = DefaultPdfReader.MIME_TYPE,
+            networkStream = true,
+            internalPlayer = false,
+            usePreferredPlayer = usePreferredReader,
+        )
+    }
+
+    /**
+     * External PDF viewer over streamdoc. Same WebDAV registration as [playPdfWebDav].
+     */
+    suspend fun openExternalPdfWebDav(
+        context: Context,
+        sourceId: Long,
+        remoteRelativeFile: String,
+        displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
+        usePreferredReader: Boolean = true,
+    ) {
+        val token = registerWebDavStreamdoc(
+            sourceId,
+            remoteRelativeFile,
+            displayName,
+            DefaultPdfReader.MIME_TYPE,
+        )
+        launchStreamdoc(
+            context = context,
+            token = token,
+            displayName = displayName,
+            mimeType = DefaultPdfReader.MIME_TYPE,
+            networkStream = true,
+            internalPlayer = false,
+            usePreferredPlayer = usePreferredReader,
         )
     }
 

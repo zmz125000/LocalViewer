@@ -33,12 +33,11 @@ import okio.Path
 /**
  * SMB folder reader with seek-friendly downloads:
  * - Host pool multiplexes ops ([SmbGateway.maxConcurrentOpsPerHost] ≈ sessions × ops/session).
- * - Viewport anchor prefers one reserved interactive slot so a seek does not wait
- *   behind mate / decode-ahead / source-only transfers. If that slot is still held
- *   by the previous page, the anchor falls through to the bounded prefetch lane.
- * - Cache-off keeps compressed bytes on the heap: non-anchor copies are capped at
- *   [RAM_PREFETCH_PERMITS] (plus the reserved slot when free) — browse-thumb width,
- *   not the full pool.
+ * - Every download slot takes the next page from the viewport in demand order.
+ *   The head waits on one reserved slot; the rest fill the following pages and
+ *   do not jump ahead. Lane caps still apply (RAM / lib-HDR / pool).
+ * - Cache-off keeps compressed bytes on the heap: the window is the reserved
+ *   slot plus [RAM_PREFETCH_PERMITS] — browse-thumb width, not the full pool.
  * - Per-file mutex in [SmbCache] joins overlapping downloads (small jump / prefetch race).
  * - Large jumps cancel far-away prefetch jobs so they stop holding pool op slots.
  * - UI waiters ([onReady] / notifySourceReady) are registered on a list so cancel/join
@@ -58,19 +57,20 @@ suspend inline fun <T> useSmbFolderPageLoader(
         val password = SmbPasswordStore.get(source.id)
         val size = imageFileNames.size
         val maxOps = SmbGateway.maxConcurrentOpsPerHost().coerceAtLeast(1)
-        // Reserve 1 op for the viewport anchor / just-seeked page.
-        val interactiveSlots = Semaphore(1)
-        val prefetchSlots = if (maxOps <= 1) {
-            interactiveSlots
+        // One reserved slot for the next page; the rest of the pool continues in order.
+        val serialPrefetchSlots = Semaphore(1)
+        val prefetchPermitCount = (maxOps - 1).coerceAtLeast(0)
+        val prefetchSlots = if (prefetchPermitCount == 0) {
+            serialPrefetchSlots
         } else {
-            Semaphore(maxOps - 1)
+            Semaphore(prefetchPermitCount)
         }
         // Cache-off: bounded extra copies so decode-ahead does not serialize on the
         // reserved slot and does not open the full pool onto the Java heap.
         val ramPrefetchSlots = Semaphore(RAM_PREFETCH_PERMITS)
         // B1 convert mode: cap concurrent lib downloads (full convert is serial in
         // HdrConvertCache.fullConvertSlots). Direct-Bitmap uses normal prefetchSlots.
-        val libHdrPrefetchSlots = Semaphore(2)
+        val libHdrPrefetchSlots = Semaphore(LIB_HDR_PREFETCH_PERMITS)
         // In-flight downloads by page index — join small-jump overlap, cancel large jumps.
         val downloadJobs = KeyedJobRegistry<Int>()
         val closed = AtomicBoolean(false)
@@ -189,14 +189,15 @@ suspend inline fun <T> useSmbFolderPageLoader(
                 private fun takeReadyWaiters(index: Int): List<() -> Unit> = readyWaiters.remove(index)?.toList().orEmpty()
 
                 private fun dispatchReady(index: Int) {
+                    markSourceReady(index)
                     takeReadyWaiters(index).forEach { runCatching { it() } }
                 }
 
                 /**
                  * Start or join a download for [index].
                  * - Small jump / same page: reuses the existing job; [onReady] is queued.
-                 * - Slot is chosen at copy time via [withFolderNetworkPermit] (anchor vs
-                 *   cache-off RAM cap vs cache-on prefetch).
+                 * - Slot is chosen at copy time via [withFolderNetworkPermit] (next pages in
+                 *   demand order, capped by cache-off RAM / lib-HDR / pool width).
                  * - Always completes waiters: success → notifySourceReady; fail/cancel with waiters
                  *   → retry once or [notifyPageFailed] (never silent forever-spinner).
                  */
@@ -211,9 +212,11 @@ suspend inline fun <T> useSmbFolderPageLoader(
                     // Never probe disk here — onRequest/retryPage run on main (lifecycle
                     // ON_RESUME). Memory-only skip for prefetch when known present.
                     if (onReady == null && !skipDisk && SmbCache.isPageCached(cache)) {
+                        markSourceReady(index)
                         return
                     }
                     if (onReady == null && skipDisk && ramPages.containsKey(index)) {
+                        markSourceReady(index)
                         return
                     }
                     if (onReady != null) {
@@ -243,13 +246,14 @@ suspend inline fun <T> useSmbFolderPageLoader(
                             }
                             val nameForSlot = imageFileNames[index]
                             withFolderNetworkPermit(
-                                isAnchor = isAnchorPage(index),
+                                rank = { prefetchRank(index) },
                                 cacheOff = skipDisk,
                                 libHdr = isLibHdrCandidate(nameForSlot),
-                                interactiveSlots = interactiveSlots,
+                                serialSlots = serialPrefetchSlots,
                                 ramPrefetchSlots = ramPrefetchSlots,
                                 libHdrPrefetchSlots = libHdrPrefetchSlots,
                                 prefetchSlots = prefetchSlots,
+                                prefetchPermitCount = prefetchPermitCount,
                             ) {
                                 if (skipDisk) {
                                     downloadToRam(index)

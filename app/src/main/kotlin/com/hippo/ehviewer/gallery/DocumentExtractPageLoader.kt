@@ -18,6 +18,7 @@ import com.hippo.ehviewer.library.document.PdfImageEngine
 import com.hippo.ehviewer.library.document.ProgressiveDocumentImageEngine
 import com.hippo.ehviewer.library.isEpubFileName
 import com.hippo.ehviewer.library.isPdfFileName
+import com.hippo.ehviewer.library.openLocalArchiveByteSource
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -29,6 +30,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -57,6 +59,8 @@ suspend inline fun <T> useDocumentExtractPageLoader(
     progressivePdf: Boolean = false,
     /** Optional local path for library page-count updates. */
     localPathForLibrary: String? = null,
+    /** Extra handles for parallel PDF page extract. Null keeps the single parser lane. */
+    noinline openExtractSource: (() -> ArchiveByteSource)? = null,
     crossinline block: suspend (PageLoader) -> T,
 ): T = autoCloseScope {
     coroutineScope {
@@ -116,6 +120,9 @@ suspend inline fun <T> useDocumentExtractPageLoader(
         val backgroundJobs = ConcurrentHashMap.newKeySet<Int>()
         val interactivePending = ConcurrentHashMap.newKeySet<Int>()
         val deferredExtracts = ConcurrentHashMap.newKeySet<Int>()
+        val extractPool = openExtractSource?.let { open ->
+            install({ PdfExtractPool(open) }, { pool, _ -> pool.close() })
+        }
         val extractMutex = Mutex()
         var visiblePages: IntRange? = null
         val coverWritten = AtomicBoolean(false)
@@ -231,13 +238,14 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                 }
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
-                    // PdfParser is 1-wide. Prefetch Range reads must not stall the page
-                    // tree; skip until listing finishes. Keep at most one opportunistic
-                    // extraction active afterwards.
-                    if (deferDocumentBackgroundWork(progressiveEngine?.structureComplete ?: true)) {
-                        return
+                    val parallel = extractPool != null
+                    val listed = engine.pageCount
+                    val structureDone = progressiveEngine?.structureComplete ?: true
+                    if (!parallel && deferDocumentBackgroundWork(structureDone)) return
+                    val ready = pages.filter { index ->
+                        !isPageMapped(index) && (parallel && index < listed || structureDone)
                     }
-                    pages.firstOrNull { !isPageMapped(it) }?.let {
+                    ready.take(if (parallel) PDF_EXTRACT_SLOTS else 1).forEach {
                         ensureExtract(it, interactive = false)
                     }
                 }
@@ -366,14 +374,18 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     } else if (isPageMapped(index)) {
                         return
                     }
-                    if (!interactive &&
-                        deferDocumentBackgroundWork(progressiveEngine?.structureComplete ?: true)
-                    ) {
+                    val parallel = extractPool != null
+                    val structureDone = progressiveEngine?.structureComplete ?: true
+                    if (!interactive && !parallel && deferDocumentBackgroundWork(structureDone)) {
+                        deferredExtracts.add(index)
+                        return
+                    }
+                    if (!interactive && parallel && index >= engine.pageCount && !structureDone) {
                         deferredExtracts.add(index)
                         return
                     }
                     deferredExtracts.remove(index)
-                    if (interactive) {
+                    if (interactive && extractPool == null) {
                         interactivePending.add(index)
                     }
                     val existing = extractJobs[index]
@@ -387,47 +399,69 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                             return
                         }
                     }
-                    if (interactive) {
+                    if (interactive && extractPool == null) {
                         // Stop the current tree-walk step (not the whole job queue) so
                         // extract can take the parser. Mapped pages return above and must
                         // not pause: growTo → replan re-requests the current page.
                         progressiveEngine?.pauseDiscovery()
                         discoveryJob.get()?.cancel()
+                        // Freedom-slot extracts must not keep the 1-wide parser.
+                        backgroundJobs.forEach { idx ->
+                            if (idx != index) extractJobs[idx]?.cancel()
+                        }
                     }
                     if (!interactive) backgroundJobs.add(index)
                     val job = hostScope.launch(Dispatchers.IO) {
                         try {
                             ensureActive()
-                            if (interactive) runCatching { source.dropQueuedReads() }
+                            if (interactive && extractPool == null) {
+                                runCatching { source.dropQueuedReads() }
+                            }
                             if (probePageOnDisk(index)) {
                                 markReady(index)
                                 return@launch
                             }
-                            val waitForMutex = interactive || readyWaiters.containsKey(index)
-                            if (waitForMutex) {
-                                extractMutex.withLock {
+                            val structureDone = progressiveEngine?.structureComplete ?: true
+                            if (!interactive && extractPool == null &&
+                                deferDocumentBackgroundWork(structureDone)
+                            ) {
+                                return@launch
+                            }
+                            if (!interactive && extractPool != null &&
+                                index >= engine.pageCount && !structureDone
+                            ) {
+                                return@launch
+                            }
+                            if (extractPool != null) {
+                                ensureActive()
+                                val needsList = interactive &&
+                                    index >= engine.pageCount &&
+                                    !(progressiveEngine?.structureComplete ?: true)
+                                if (needsList) {
+                                    interactivePending.add(index)
+                                    progressiveEngine?.pauseDiscovery()
+                                }
+                                try {
+                                    extractListedPage(index)
+                                } finally {
+                                    if (needsList) {
+                                        interactivePending.remove(index)
+                                        if (interactivePending.isEmpty()) {
+                                            progressiveEngine?.resumeDiscovery()
+                                        }
+                                    }
+                                }
+                            } else {
+                                withDocumentParserAccess(
+                                    waitForParser = documentExtractWaitsForParser(interactive),
+                                    retryWhileIdle = !interactive && readyWaiters.containsKey(index),
+                                    interactivePending = interactivePending,
+                                    extractMutex = extractMutex,
+                                ) {
                                     ensureActive()
                                     if (!probePageOnDisk(index)) {
                                         engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
                                     }
-                                }
-                            } else {
-                                // Opportunistic prefetch: never queue behind extract/index.
-                                if (interactivePending.isNotEmpty() ||
-                                    deferDocumentBackgroundWork(
-                                        progressiveEngine?.structureComplete ?: true,
-                                    ) ||
-                                    !extractMutex.tryLock()
-                                ) {
-                                    return@launch
-                                }
-                                try {
-                                    ensureActive()
-                                    if (interactivePending.isEmpty() && !probePageOnDisk(index)) {
-                                        engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
-                                    }
-                                } finally {
-                                    extractMutex.unlock()
                                 }
                             }
                             if (probePageOnDisk(index)) {
@@ -480,6 +514,26 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                     }
                 }
 
+                private suspend fun extractListedPage(index: Int) {
+                    if (index >= engine.pageCount) {
+                        progressiveEngine?.ensureListedThrough(index)
+                    }
+                    if (probePageOnDisk(index) || index >= engine.pageCount) return
+                    val pdf = engine as? PdfImageEngine
+                    val pool = extractPool
+                    val known = if (pdf != null && pool != null && pdf.streamOffsetOf(index) >= 0L) {
+                        pool.use { source -> pdf.extractKnownBytes(index, source) }
+                    } else {
+                        null
+                    }
+                    if (known != null && pdf != null) {
+                        val ext = pdf.extOf(index) ?: "bin"
+                        pagePaths[index] = DocumentExtractCache.writePage(cacheKey, index, ext, known)
+                        return
+                    }
+                    engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
+                }
+
                 /**
                  * Keep listing playable PDF pages until the page tree ends.
                  *
@@ -521,9 +575,10 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                         delay(PDF_INDEX_YIELD_MS)
                                         continue
                                     }
-                                    // Never queue behind extract — tryLock + yield instead of
-                                    // withLock, which used to starve the visible page.
-                                    if (!extractMutex.tryLock()) {
+                                    // Single-source mode: never queue behind extract.
+                                    // Parallel mode: the walker only shares the parser lock
+                                    // with extracts that still need xref.
+                                    if (extractPool == null && !extractMutex.tryLock()) {
                                         delay(PDF_INDEX_YIELD_MS)
                                         continue
                                     }
@@ -536,7 +591,7 @@ suspend inline fun <T> useDocumentExtractPageLoader(
                                             progressive.ensureListedThrough(before)
                                         }
                                     } finally {
-                                        extractMutex.unlock()
+                                        if (extractPool == null) extractMutex.unlock()
                                     }
                                     if (after > before) {
                                         publishListed()
@@ -612,6 +667,60 @@ internal const val PDF_INDEX_YIELD_MS = 16L
 @PublishedApi
 internal fun deferDocumentBackgroundWork(structureComplete: Boolean): Boolean = !structureComplete
 
+/**
+ * Only the serial/viewport page may enqueue on [extractMutex].
+ *
+ * Decode-ahead used to wait whenever it had a UI waiter. kotlinx Mutex is FIFO, so
+ * that freedom-slot extract sat in front of the viewport and blocked the serial lane.
+ */
+@PublishedApi
+internal fun documentExtractWaitsForParser(interactive: Boolean): Boolean = interactive
+
+/**
+ * Take PdfParser without letting freedom-slot work occupy the mutex queue.
+ *
+ * [waitForParser]: viewport/serial — [Mutex.withLock].
+ * [retryWhileIdle]: decode-ahead with waiters — tryLock + yield while serial is pending.
+ * Else: one-shot prefetch; give up if the parser is busy.
+ */
+@PublishedApi
+internal suspend inline fun withDocumentParserAccess(
+    waitForParser: Boolean,
+    retryWhileIdle: Boolean,
+    interactivePending: Set<*>,
+    extractMutex: Mutex,
+    crossinline block: suspend () -> Unit,
+) {
+    if (waitForParser) {
+        extractMutex.withLock { block() }
+        return
+    }
+    while (true) {
+        currentCoroutineContext().ensureActive()
+        if (interactivePending.isNotEmpty()) {
+            if (!retryWhileIdle) return
+            delay(PDF_INDEX_YIELD_MS)
+            continue
+        }
+        if (!extractMutex.tryLock()) {
+            if (!retryWhileIdle) return
+            delay(PDF_INDEX_YIELD_MS)
+            continue
+        }
+        var done = false
+        try {
+            if (interactivePending.isEmpty()) {
+                block()
+                done = true
+            }
+        } finally {
+            extractMutex.unlock()
+        }
+        if (done || !retryWhileIdle) return
+        delay(PDF_INDEX_YIELD_MS)
+    }
+}
+
 /** Viewport (or original-size) pages may snatch the parser from discovery. */
 @PublishedApi
 internal fun documentExtractIsVisible(
@@ -650,6 +759,11 @@ suspend inline fun <T> useLocalDocumentExtractPageLoader(
         remoteSize = runCatching { source.size }.getOrDefault(0L),
         localPathForLibrary = pathStr,
         progressivePdf = format == "pdf",
+        openExtractSource = if (format == "pdf") {
+            { openLocalArchiveByteSource(file) ?: error("Cannot open PDF extract source") }
+        } else {
+            null
+        },
         block = block,
     )
 }
