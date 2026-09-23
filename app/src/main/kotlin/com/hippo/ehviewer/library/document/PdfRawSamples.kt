@@ -60,6 +60,94 @@ internal object PdfRawSamples {
         return pixels
     }
 
+    /** Packed row length after PNG prediction: ceil(columns × colors × bits / 8). */
+    fun pngSampleRowBytes(columns: Int, colors: Int, bits: Int): Int {
+        if (columns <= 0 || colors <= 0 || bits <= 0) return 0
+        val bitsPerRow = columns.toLong() * colors * bits
+        if (bitsPerRow <= 0L || bitsPerRow > Int.MAX_VALUE.toLong() * 8) return 0
+        return ((bitsPerRow + 7) / 8).toInt()
+    }
+
+    /**
+     * PNG filter distance in bytes. Sub-byte samples (1/2/4) filter one byte at a time.
+     */
+    fun pngFilterBytes(colors: Int, bits: Int): Int {
+        if (colors <= 0 || bits <= 0) return 0
+        return ((colors.toLong() * bits + 7) / 8).toInt().coerceAtLeast(1)
+    }
+
+    /**
+     * Undo PDF predictors 10–15. Each row starts with a PNG filter byte, then
+     * [pngSampleRowBytes] of packed samples.
+     */
+    fun undoPngPredictor(data: ByteArray, columns: Int, colors: Int, bits: Int): ByteArray? {
+        if (bits != 1 && bits != 2 && bits != 4 && bits != 8) return null
+        val rowSize = pngSampleRowBytes(columns, colors, bits)
+        val bpp = pngFilterBytes(colors, bits)
+        if (rowSize <= 0 || bpp <= 0) return null
+        val stride = rowSize + 1
+        if (data.size < stride) return null
+        val rows = data.size / stride
+        if (rows <= 0) return null
+        val out = ByteArray(rows * rowSize)
+        val prev = ByteArray(rowSize)
+        var di = 0
+        var oi = 0
+        for (y in 0 until rows) {
+            if (di >= data.size) break
+            val filter = data[di++].toInt() and 0xff
+            if (di + rowSize > data.size) return null
+            for (x in 0 until rowSize) {
+                val raw = data[di++].toInt() and 0xff
+                val left = if (x >= bpp) out[oi + x - bpp].toInt() and 0xff else 0
+                val up = prev[x].toInt() and 0xff
+                val upLeft = if (x >= bpp) prev[x - bpp].toInt() and 0xff else 0
+                val valByte = when (filter) {
+                    0 -> raw
+                    1 -> raw + left and 0xff
+                    2 -> raw + up and 0xff
+                    3 -> raw + ((left + up) / 2) and 0xff
+                    4 -> raw + paeth(left, up, upLeft) and 0xff
+                    else -> raw
+                }
+                out[oi + x] = valByte.toByte()
+            }
+            System.arraycopy(out, oi, prev, 0, rowSize)
+            oi += rowSize
+        }
+        return out.copyOf(oi)
+    }
+
+    /**
+     * High-bit-first unpack of 1/2/4-bit samples into one byte per sample.
+     * Each row is padded to a byte boundary. 8-bit input is returned as-is.
+     */
+    fun expandPackedSamples(packed: ByteArray, columns: Int, colors: Int, bits: Int): ByteArray? {
+        if (bits == 8) return packed
+        if (bits != 1 && bits != 2 && bits != 4) return null
+        if (columns <= 0 || colors <= 0) return null
+        val rowBytes = pngSampleRowBytes(columns, colors, bits)
+        val samplesPerRow = columns * colors
+        if (rowBytes <= 0 || samplesPerRow <= 0 || packed.size < rowBytes) return null
+        val rows = packed.size / rowBytes
+        if (rows <= 0) return null
+        val out = ByteArray(rows * samplesPerRow)
+        val mask = (1 shl bits) - 1
+        var src = 0
+        var dst = 0
+        for (y in 0 until rows) {
+            var bitPos = 0
+            for (s in 0 until samplesPerRow) {
+                val b = packed[src + bitPos / 8].toInt() and 0xff
+                val shift = 8 - bits - (bitPos and 7)
+                out[dst++] = ((b ushr shift) and mask).toByte()
+                bitPos += bits
+            }
+            src += rowBytes
+        }
+        return out
+    }
+
     fun argbFromCmyk(samples: ByteArray, pixelCount: Int): IntArray {
         val pixels = IntArray(pixelCount)
         var p = 0
@@ -115,5 +203,17 @@ internal object PdfRawSamples {
             }
         }
         return lut
+    }
+
+    private fun paeth(a: Int, b: Int, c: Int): Int {
+        val p = a + b - c
+        val pa = kotlin.math.abs(p - a)
+        val pb = kotlin.math.abs(p - b)
+        val pc = kotlin.math.abs(p - c)
+        return when {
+            pa <= pb && pa <= pc -> a
+            pb <= pc -> b
+            else -> c
+        }
     }
 }

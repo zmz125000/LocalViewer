@@ -732,22 +732,27 @@ internal class PdfParser(
         return encodeKnownSamples(stream.dict, data)
     }
 
-    /** Device color spaces and inline decode params only. */
+    /** Device color, or Indexed with an inline palette string. Indirect palettes fall back. */
     private fun encodeKnownSamples(dict: PdfDict, data: ByteArray): ByteArray? {
         val w = dict.intValue("/Width") ?: return null
         val h = dict.intValue("/Height") ?: return null
         if (w <= 0 || h <= 0 || w > 20000 || h > 20000) return null
         val bpc = dict.intValue("/BitsPerComponent") ?: 8
-        if (bpc != 8) return null
-        val channels = when (val cs = dict["/ColorSpace"]) {
-            is PdfName -> when (cs.name) {
-                "/DeviceGray", "/G" -> 1
-                "/DeviceRGB", "/RGB" -> 3
-                "/DeviceCMYK", "/CMYK" -> 4
+        if (bpc != 1 && bpc != 2 && bpc != 4 && bpc != 8) return null
+        val indexed = inlineIndexedColor(dict["/ColorSpace"])
+        val channels = when {
+            indexed != null -> 1
+            else -> when (val cs = dict["/ColorSpace"]) {
+                is PdfName -> when (cs.name) {
+                    "/DeviceGray", "/G" -> 1
+                    "/DeviceRGB", "/RGB" -> 3
+                    "/DeviceCMYK", "/CMYK" -> 4
+                    else -> return null
+                }
                 else -> return null
             }
-            else -> return null
         }
+        if (bpc != 8 && indexed == null) return null
         val params = when (val raw = dict["/DecodeParms"]) {
             null -> null
             is PdfDict -> raw
@@ -757,19 +762,26 @@ internal class PdfParser(
         val columns = params?.intValue("/Columns") ?: w
         val colors = params?.intValue("/Colors") ?: channels
         val bits = params?.intValue("/BitsPerComponent") ?: bpc
-        val samples = if (predictor >= 10) {
+        var samples = if (predictor >= 10) {
             undoPngPredictor(data, columns, colors, bits) ?: return null
         } else {
             data
         }
+        if (bits < 8) {
+            samples = PdfRawSamples.expandPackedSamples(samples, columns, colors, bits) ?: return null
+        }
         val expected = w.toLong() * h * channels
         if (samples.size.toLong() < expected) return null
         val pixelCount = w * h
-        val pixels = when (channels) {
-            1 -> PdfRawSamples.argbFromGray(samples, pixelCount)
-            3 -> PdfRawSamples.argbFromRgb(samples, pixelCount)
-            4 -> PdfRawSamples.argbFromCmyk(samples, pixelCount)
-            else -> return null
+        val pixels = if (indexed != null) {
+            PdfRawSamples.argbFromIndexed(samples, pixelCount, indexed.palette, indexed.baseChannels)
+        } else {
+            when (channels) {
+                1 -> PdfRawSamples.argbFromGray(samples, pixelCount)
+                3 -> PdfRawSamples.argbFromRgb(samples, pixelCount)
+                4 -> PdfRawSamples.argbFromCmyk(samples, pixelCount)
+                else -> return null
+            }
         }
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         bmp.setPixels(pixels, 0, w, 0, 0, w, h)
@@ -1050,7 +1062,7 @@ internal class PdfParser(
         val h = dict.intValue("/Height") ?: return null
         if (w <= 0 || h <= 0 || w > 20000 || h > 20000) return null
         val bpc = dict.intValue("/BitsPerComponent") ?: 8
-        if (bpc != 8) return null
+        if (bpc != 1 && bpc != 2 && bpc != 4 && bpc != 8) return null
         val cs = colorSpaceChannels(dict["/ColorSpace"])
         if (cs != 1 && cs != 3 && cs != 4) return null
         // Predictor in DecodeParms
@@ -1063,6 +1075,9 @@ internal class PdfParser(
         var samples = data
         if (predictor >= 10) {
             samples = undoPngPredictor(data, columns, colors, bits) ?: return null
+        }
+        if (bits < 8) {
+            samples = PdfRawSamples.expandPackedSamples(samples, columns, colors, bits) ?: return null
         }
         val expected = w.toLong() * h * cs
         if (samples.size.toLong() < expected) return null
@@ -1092,6 +1107,7 @@ internal class PdfParser(
             null
         }
 
+        if (bits < 8 && (!isIndexed || indexedPalette == null)) return null
         val pixelCount = w * h
         val pixels = if (isIndexed && indexedPalette != null) {
             PdfRawSamples.argbFromIndexed(samples, pixelCount, indexedPalette, indexedBaseCs)
@@ -1158,54 +1174,26 @@ internal class PdfParser(
         else -> 0
     }
 
-    private fun undoPngPredictor(data: ByteArray, columns: Int, colors: Int, bits: Int): ByteArray? {
-        if (bits != 8) return null
-        val rowSize = columns * colors
-        if (rowSize <= 0) return null
-        val stride = rowSize + 1 // filter byte
-        if (data.size < stride) return null
-        val rows = data.size / stride
-        if (rows <= 0) return null
-        val out = ByteArray(rows * rowSize)
-        val prev = ByteArray(rowSize)
-        var di = 0
-        var oi = 0
-        for (y in 0 until rows) {
-            if (di >= data.size) break
-            val filter = data[di++].toInt() and 0xff
-            if (di + rowSize > data.size) return null
-            for (x in 0 until rowSize) {
-                val raw = data[di++].toInt() and 0xff
-                val left = if (x >= colors) out[oi + x - colors].toInt() and 0xff else 0
-                val up = prev[x].toInt() and 0xff
-                val upLeft = if (x >= colors) prev[x - colors].toInt() and 0xff else 0
-                val valByte = when (filter) {
-                    0 -> raw
-                    1 -> raw + left and 0xff
-                    2 -> raw + up and 0xff
-                    3 -> raw + ((left + up) / 2) and 0xff
-                    4 -> raw + paeth(left, up, upLeft) and 0xff
-                    else -> raw
-                }
-                out[oi + x] = valByte.toByte()
-            }
-            System.arraycopy(out, oi, prev, 0, rowSize)
-            oi += rowSize
+    private fun undoPngPredictor(data: ByteArray, columns: Int, colors: Int, bits: Int): ByteArray? =
+        PdfRawSamples.undoPngPredictor(data, columns, colors, bits)
+
+    /** Indexed color whose palette is an inline string, so a side reader can decode it. */
+    private fun inlineIndexedColor(v: PdfValue?): InlineIndexed? {
+        val arr = v as? PdfArray ?: return null
+        val name = (arr.items.firstOrNull() as? PdfName)?.name ?: return null
+        if (name != "/Indexed" && name != "/I") return null
+        val base = arr.items.getOrNull(1) as? PdfName ?: return null
+        val baseChannels = when (base.name) {
+            "/DeviceGray", "/G" -> 1
+            "/DeviceRGB", "/RGB" -> 3
+            "/DeviceCMYK", "/CMYK" -> 4
+            else -> return null
         }
-        return out.copyOf(oi)
+        val palette = (arr.items.getOrNull(3) as? PdfString)?.bytes ?: return null
+        return InlineIndexed(baseChannels, palette)
     }
 
-    private fun paeth(a: Int, b: Int, c: Int): Int {
-        val p = a + b - c
-        val pa = kotlin.math.abs(p - a)
-        val pb = kotlin.math.abs(p - b)
-        val pc = kotlin.math.abs(p - c)
-        return when {
-            pa <= pb && pa <= pc -> a
-            pb <= pc -> b
-            else -> c
-        }
-    }
+    private class InlineIndexed(val baseChannels: Int, val palette: ByteArray)
 
     private fun inflate(data: ByteArray): ByteArray? {
         // PDF Flate is zlib wrapper (Inflater false = zlib)
