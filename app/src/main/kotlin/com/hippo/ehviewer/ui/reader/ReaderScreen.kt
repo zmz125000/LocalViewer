@@ -1552,6 +1552,20 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 startPage = page,
                 remoteSize = runCatching { byteSource.size }.getOrDefault(0L),
                 progressivePdf = documentFormat == "pdf",
+                openExtractSource = if (documentFormat == "pdf") {
+                    {
+                        com.hippo.ehviewer.smb.SmbArchiveByteSource(
+                            source,
+                            password,
+                            remote,
+                            preferSequential = false,
+                            pipeline = false,
+                            readahead = false,
+                        )
+                    }
+                } else {
+                    null
+                },
                 block = block,
             )
         } else if (solid) {
@@ -1655,6 +1669,20 @@ suspend inline fun <T> usePageLoader(args: ReaderScreenArgs, crossinline block: 
                 startPage = page,
                 remoteSize = runCatching { byteSource.size }.getOrDefault(0L),
                 progressivePdf = documentFormat == "pdf",
+                openExtractSource = if (documentFormat == "pdf") {
+                    {
+                        com.hippo.ehviewer.webdav.WebDavArchiveByteSource(
+                            source,
+                            password,
+                            remote,
+                            preferSequential = false,
+                            pipeline = false,
+                            readahead = false,
+                        )
+                    }
+                } else {
+                    null
+                },
                 block = block,
             )
         } else if (solid) {

@@ -208,8 +208,14 @@ object CachePagePublish {
                             header[4] == 'J'.code.toByte() && header[5] == 'X'.code.toByte() &&
                             header[6] == 'L'.code.toByte() && header[7] == ' '.code.toByte()
                         )
-            "jp2" ->
-                n >= 12 // JPEG 2000 — skip strict check
+            "jp2", "jpx" ->
+                n >= 12 &&
+                    header[4] == 'j'.code.toByte() && header[5] == 'P'.code.toByte() &&
+                    header[6] == ' '.code.toByte() && header[7] == ' '.code.toByte()
+            "j2k", "j2c", "jpc" ->
+                n >= 2 &&
+                    header[0].toInt() and 0xff == 0xff &&
+                    header[1].toInt() and 0xff == 0x4f
             else -> true
         }
     }

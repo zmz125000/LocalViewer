@@ -10,6 +10,7 @@ import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.image.tryHardwareF16FromPixels
 import com.hippo.ehviewer.jni.decodeAvifBytesToDirect
+import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
 import com.hippo.ehviewer.jni.decodeJxlBytesToDirect
 import com.hippo.ehviewer.jni.decodeJxrBytesToDirect
 import java.nio.ByteBuffer
@@ -138,6 +139,7 @@ object LibDirectDecode {
             val pixels = when (route.codec) {
                 LibCodec.Jxl -> decodeJxlBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
                 LibCodec.Jxr -> decodeJxrBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
+                LibCodec.Jpeg2000 -> packJpeg2000(bytes, maxEdge, outInfo, outBoost)
                 LibCodec.AvifPq -> decodeAvifBytesToDirect(bytes, maxEdge, advanced, outInfo, outBoost)
             } ?: return null
             // [bytes] ends with this block; only packed pixels + meta remain.
@@ -173,6 +175,40 @@ object LibDirectDecode {
             contentHdrBoost = if (isHdr) boost else 1f,
             isWideGamutSource = wide,
         )
+    }
+
+    private fun packJpeg2000(
+        bytes: ByteArray,
+        maxEdge: Int,
+        outInfo: IntArray,
+        outBoost: FloatArray,
+    ): ByteArray? {
+        val bmp = runCatching { decodeJpeg2000Bitmap(bytes, maxEdge) }.getOrNull() ?: return null
+        return try {
+            val w = bmp.width
+            val h = bmp.height
+            if (w <= 0 || h <= 0) return null
+            val argb = IntArray(w * h)
+            bmp.getPixels(argb, 0, w, 0, 0, w, h)
+            val packed = ByteArray(w * h * 4)
+            var i = 0
+            for (p in argb) {
+                packed[i++] = ((p shr 16) and 0xff).toByte()
+                packed[i++] = ((p shr 8) and 0xff).toByte()
+                packed[i++] = (p and 0xff).toByte()
+                packed[i++] = ((p ushr 24) and 0xff).toByte()
+            }
+            outInfo[0] = w
+            outInfo[1] = h
+            outInfo[2] = 0
+            outInfo[3] = 0
+            outInfo[4] = 0
+            outInfo[5] = 0
+            if (outBoost.isNotEmpty()) outBoost[0] = 1f
+            packed
+        } finally {
+            bmp.recycle()
+        }
     }
 
     private class PackedPixels(

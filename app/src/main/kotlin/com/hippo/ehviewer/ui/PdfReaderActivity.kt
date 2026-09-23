@@ -266,6 +266,7 @@ class PdfReaderActivity : AppCompatActivity() {
                         titleHint = title,
                         startPage = startPage,
                         cacheKey = cacheKey,
+                        openExtractSource = pdfExtractOpener(intent, token),
                     )
                 }
                 opened = null
@@ -412,6 +413,39 @@ private fun pdfCacheKeyFromIntent(intent: Intent): String? {
             if (sourceId != 0L && remote.isNotEmpty()) "webdav:$sourceId:$remote" else null
         else -> intent.getStringExtra(PdfReaderActivity.EXTRA_LOCAL_PATH)?.takeIf { it.isNotBlank() }
     }
+}
+
+/**
+ * Extra SMB/WebDAV/file handles for page-body extract. The engine source stays
+ * with the serial page-tree walk.
+ */
+private fun pdfExtractOpener(intent: Intent, token: String?): (() -> ArchiveByteSource)? {
+    val entry = token?.let { StreamDocumentRegistry.get(it) }
+    val open = entry?.openSource
+    if (entry != null && open != null) {
+        val (blockSize, maxBlocks) = BlockCacheArchiveByteSource.forMimeType(
+            entry.mimeType,
+            entry.displayName,
+        )
+        val knownSize = entry.sizeBytes
+        return {
+            BlockCacheArchiveByteSource(
+                open(),
+                knownSize = knownSize,
+                blockSize = blockSize,
+                maxBlocks = maxBlocks,
+            )
+        }
+    }
+    val local = intent.getStringExtra(PdfReaderActivity.EXTRA_LOCAL_PATH)?.takeIf { it.isNotBlank() }
+    if (local != null) {
+        return { openLocalArchiveByteSource(local.toPath()) ?: error("PDF extract source") }
+    }
+    val reopen = entry?.openFileDescriptor
+    if (reopen != null) {
+        return { PfdArchiveByteSource(reopen(), ownsPfd = true) }
+    }
+    return null
 }
 
 private fun openDirectArchiveSource(intent: Intent, token: String?): ArchiveByteSource? {

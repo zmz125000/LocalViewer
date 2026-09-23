@@ -2,7 +2,7 @@ package com.hippo.ehviewer.jni
 
 /**
  * Native still codecs for formats the platform cannot open reliably
- * (libultrahdr + jxrlib + libavif + libjxl).
+ * (libultrahdr + jxrlib + libavif + libjxl + OpenJPEG).
  *
  * Linked only for **arm64-v8a** and **x86_64** ([EHVIEWER_HDR_CODECS] in CMake).
  * On armeabi-v7a the same JNI symbols are stubs (convert → -100, probe → 0).

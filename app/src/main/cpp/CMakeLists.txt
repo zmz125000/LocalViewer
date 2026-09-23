@@ -377,9 +377,37 @@ else ()
     set(EHVIEWER_HDR_SOURCES hdr_stubs.cpp)
 endif ()
 
+# JPEG 2000 (JP2 / J2K). ImageDecoder cannot open it. Static OpenJPEG, all ABIs.
+set(_eh_build_shared "${BUILD_SHARED_LIBS}")
+set(BUILD_CODEC OFF CACHE BOOL "" FORCE)
+set(BUILD_JAVA OFF CACHE BOOL "" FORCE)
+set(BUILD_DOC OFF CACHE BOOL "" FORCE)
+set(BUILD_VIEWER OFF CACHE BOOL "" FORCE)
+set(BUILD_JPIP OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(BUILD_PKGCONFIG_FILES OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+        openjpeg
+        GIT_REPOSITORY https://github.com/uclouvain/openjpeg.git
+        GIT_TAG v2.5.3
+        GIT_SHALLOW 1
+)
+FetchContent_MakeAvailable(openjpeg)
+set(BUILD_SHARED_LIBS "${_eh_build_shared}" CACHE BOOL "" FORCE)
+if (NOT TARGET openjp2)
+    message(FATAL_ERROR "openjpeg target openjp2 not found")
+endif ()
+set_source_files_properties(jp2_decode.cpp PROPERTIES COMPILE_DEFINITIONS OPJ_STATIC)
+
 # Build and link our app's native lib
-add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c
+add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c jp2_decode.cpp
         ${EHVIEWER_HDR_SOURCES})
+target_include_directories(${PROJECT_NAME} PRIVATE
+        ${openjpeg_SOURCE_DIR}/src/lib/openjp2
+        ${openjpeg_BINARY_DIR}/src/lib/openjp2
+)
 if (EHVIEWER_HDR_CODECS)
     # libjpeg-turbo is built as an ExternalProject of libultrahdr (baseline SDR JPEG).
     set(EH_JPEG_INCLUDE_DIRS
@@ -402,7 +430,7 @@ if (EHVIEWER_HDR_CODECS)
     list(APPEND EHVIEWER_HDR_LIBS ${EH_JPEG_LIB})
 endif ()
 target_link_libraries(
-        ${PROJECT_NAME} archive_static ehviewer_rust z ${EHVIEWER_HDR_LIBS} log
+        ${PROJECT_NAME} archive_static ehviewer_rust z ${EHVIEWER_HDR_LIBS} openjp2 jnigraphics log
         -Wl,-u,JNI_OnLoad -Wl,--undefined-glob,Java_*
         -Wl,--version-script,${CMAKE_SOURCE_DIR}/libehviewer.map.txt
 )

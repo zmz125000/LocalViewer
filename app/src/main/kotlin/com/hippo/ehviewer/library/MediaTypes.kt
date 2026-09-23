@@ -11,7 +11,7 @@ import com.hippo.ehviewer.util.FileUtils
  * HDR / lib-still inventory (see [com.hippo.ehviewer.image.hdr.StillRoute]):
  * - Gain-map JPEG/AVIF/HEIC: Android 14+ platform decode.
  * - HEIC/HEIF (HEVC): platform ImageDecoder (not libavif).
- * - JPEG XR / JPEG XL: always lib → Ultra HDR JPEG (platform cannot open either).
+ * - JPEG XR / JPEG XL / JPEG 2000: always lib → Coil-ready JPEG (platform cannot open them).
  * - Absolute PQ/HLG **AVIF**: libavif → Ultra HDR when CICP sniff hits.
  * Native codecs link only arm64-v8a + x86_64 ([EHVIEWER_HDR_CODECS]).
  */
@@ -30,6 +30,8 @@ val IMAGE_EXTENSIONS = setOf(
     "jxr", "wdp", "hdp",
     // JPEG XL — converted to Ultra HDR before decode
     "jxl",
+    // JPEG 2000 — OpenJPEG, then a Coil-ready JPEG
+    "jp2", "j2k", "j2c", "jpc", "jpx",
 )
 
 val ARCHIVE_EXTENSIONS = setOf(
@@ -214,6 +216,8 @@ fun mimeTypeForFileName(name: String): String {
             "jpg", "jpe", "jfif" -> "image/jpeg"
             "svg", "svgz" -> "image/svg+xml"
             "jxr", "wdp", "hdp" -> "image/vnd.ms-photo"
+            "jp2", "j2k", "j2c", "jpc" -> "image/jp2"
+            "jpx" -> "image/jpx"
             "ico" -> "image/x-icon"
             "heics", "heifs", "hif" -> "image/heif"
             else -> "image/$ext"

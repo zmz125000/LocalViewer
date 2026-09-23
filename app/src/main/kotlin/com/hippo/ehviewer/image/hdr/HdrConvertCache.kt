@@ -13,6 +13,7 @@ import com.hippo.ehviewer.jni.convertJxlBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdr
 import com.hippo.ehviewer.jni.convertJxrBytesToUltraHdrMaxEdge
 import com.hippo.ehviewer.jni.convertJxrToUltraHdr
+import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
 import com.hippo.ehviewer.jni.probeAvifHdrKind
 import com.hippo.ehviewer.library.OriginDiskCache
 import com.hippo.ehviewer.util.FileUtils
@@ -169,7 +170,7 @@ object HdrConvertCache {
     /**
      * Reader/cache chokepoint: any path → **Coil / ImageDecoder-ready** file.
      * - Platform / gain-map / ProXDR HEIC → [source] (ProXDR attaches Gainmap after decode)
-     * - Lib (JXR/JXL/PQ-AVIF) → Ultra HDR JPEG under [localRoot]
+     * - Lib (JXR/JXL/JPEG 2000/PQ-AVIF) → JPEG under [localRoot]
      */
     suspend fun ensureCoilReady(source: Path, fileNameHint: String = source.name): Path = withContext(Dispatchers.IO) {
         val ext = FileUtils.getExtensionFromFilename(fileNameHint)?.lowercase()
@@ -490,12 +491,14 @@ object HdrConvertCache {
                         when (codec) {
                             LibCodec.Jxr -> convertJxrBytesToUltraHdrMaxEdge(input, tmp.absolutePath, maxEdge)
                             LibCodec.Jxl -> convertJxlBytesToUltraHdrMaxEdge(input, tmp.absolutePath, maxEdge)
+                            LibCodec.Jpeg2000 -> convertJpeg2000ToJpeg(input, tmp, maxEdge)
                             LibCodec.AvifPq -> convertAvifBytesToUltraHdrMaxEdge(input, tmp.absolutePath, maxEdge)
                         }
                     } else {
                         when (codec) {
                             LibCodec.Jxr -> convertJxrBytesToUltraHdr(input, tmp.absolutePath)
                             LibCodec.Jxl -> convertJxlBytesToUltraHdr(input, tmp.absolutePath)
+                            LibCodec.Jpeg2000 -> convertJpeg2000ToJpeg(input, tmp, 0)
                             LibCodec.AvifPq -> convertAvifBytesToUltraHdr(input, tmp.absolutePath)
                         }
                     }
@@ -513,6 +516,20 @@ object HdrConvertCache {
                     false
                 }
             }
+        }
+    }
+
+    /** OpenJPEG → baseline JPEG. SDR only; the convert cache is always `.jpg`. */
+    private fun convertJpeg2000ToJpeg(input: ByteArray, dest: File, maxEdge: Int): Int {
+        val bmp = runCatching { decodeJpeg2000Bitmap(input, maxEdge) }.getOrNull() ?: return -1
+        return try {
+            FileOutputStream(dest).use { out ->
+                if (bmp.compress(Bitmap.CompressFormat.JPEG, 95, out)) 0 else -2
+            }
+        } catch (_: Throwable) {
+            -3
+        } finally {
+            bmp.recycle()
         }
     }
 
