@@ -80,8 +80,12 @@ class PdfRawSamplesTest {
         // Sub: each component subtracts the same component of the previous pixel.
         val encoded = byteArrayOf(
             1,
-            10, 20, 30,
-            (1 - 10).toByte(), (2 - 20).toByte(), (3 - 30).toByte(),
+            10,
+            20,
+            30,
+            (1 - 10).toByte(),
+            (2 - 20).toByte(),
+            (3 - 30).toByte(),
         )
         val samples = PdfRawSamples.undoPngPredictor(encoded, columns = 2, colors = 3, bits = 8)
         assertEquals(byteArrayOf(10, 20, 30, 1, 2, 3).toList(), samples!!.toList())

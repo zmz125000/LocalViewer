@@ -1174,8 +1174,7 @@ internal class PdfParser(
         else -> 0
     }
 
-    private fun undoPngPredictor(data: ByteArray, columns: Int, colors: Int, bits: Int): ByteArray? =
-        PdfRawSamples.undoPngPredictor(data, columns, colors, bits)
+    private fun undoPngPredictor(data: ByteArray, columns: Int, colors: Int, bits: Int): ByteArray? = PdfRawSamples.undoPngPredictor(data, columns, colors, bits)
 
     /** Indexed color whose palette is an inline string, so a side reader can decode it. */
     private fun inlineIndexedColor(v: PdfValue?): InlineIndexed? {
