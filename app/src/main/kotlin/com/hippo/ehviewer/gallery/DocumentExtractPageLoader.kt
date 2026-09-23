@@ -153,6 +153,9 @@ internal suspend fun <T> runDocumentExtractPageLoader(
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         val extractJobs = ConcurrentHashMap<Int, Job>()
         val backgroundJobs = ConcurrentHashMap.newKeySet<Int>()
+        val gridWanted = ConcurrentHashMap.newKeySet<Int>()
+        val gridJobs = ConcurrentHashMap<Int, Job>()
+        val gridSources = ConcurrentHashMap<Int, ArchiveByteSource>()
         val interactivePending = ConcurrentHashMap.newKeySet<Int>()
         val deferredExtracts = ConcurrentHashMap.newKeySet<Int>()
         val extractPool = openExtractSource?.let { open ->
@@ -287,8 +290,22 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                 override fun requestPageSource(index: Int) {
                     // Photo-grid thumbs. Not the reader prefetch window: those ranks
                     // are NOT_IN_ORDER for cells outside the viewport and never run.
-                    if (index !in 0 until size || isPageMapped(index)) return
+                    if (index !in 0 until size) return
+                    gridWanted.add(index)
+                    if (isPageMapped(index)) return
                     ensureExtract(index, interactive = false, fromGrid = true)
+                }
+
+                override fun releasePageSource(index: Int) {
+                    gridWanted.remove(index)
+                    // Reader viewport / prefetch still owns this page. Leave its extract.
+                    if (prefetchRank(index) != NOT_IN_ORDER) return
+                    val job = gridJobs[index] ?: return
+                    gridJobs.remove(index, job)
+                    gridSources.remove(index)?.let { extractPool?.retire(it) }
+                    backgroundJobs.remove(index)
+                    extractJobs.remove(index, job)
+                    job.cancel()
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
@@ -432,6 +449,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     if (existing != null && existing.isActive) {
                         if (interactive && backgroundJobs.contains(index)) {
                             // Upgrade an enqueued prefetch into a visible-page request.
+                            gridJobs.remove(index)
                             existing.cancel()
                             extractJobs.remove(index, existing)
                         } else {
@@ -451,7 +469,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                         }
                     }
                     if (!interactive) backgroundJobs.add(index)
-                    val job = hostScope.launch(Dispatchers.IO) {
+                    val job = hostScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                         try {
                             ensureActive()
                             if (interactive && extractPool == null) {
@@ -467,13 +485,16 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                             }
                             if (fromGrid) {
                                 ensureActive()
+                                if (index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) {
+                                    return@launch
+                                }
                                 val pdf = engine as? PdfImageEngine
                                 val listed = pdf == null ||
                                     pdf.streamOffsetOf(index) >= 0L ||
                                     structureDone
                                 // Unknown offset still needs the parser. Leave the index
                                 // walker alone; the sheet polls again once the page is listed.
-                                if (listed) extractListedPage(index)
+                                if (listed) extractListedPage(index, fromGrid = true)
                                 return@launch
                             }
                             withOrderedPermits(
@@ -558,21 +579,28 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                 }
                             }
                             if (!interactive) backgroundJobs.remove(index)
+                            if (fromGrid) gridJobs.remove(index, thisJob)
                             extractJobs.remove(index, thisJob)
                         }
                     }
+                    if (fromGrid) gridJobs.putIfAbsent(index, job)
                     val prev = extractJobs.putIfAbsent(index, job)
                     if (prev != null) {
                         if (prev.isActive) {
+                            if (fromGrid) gridJobs.remove(index, job)
                             job.cancel()
                             if (!interactive) backgroundJobs.remove(index)
                         } else {
                             extractJobs[index] = job
+                            job.start()
                         }
+                    } else {
+                        job.start()
                     }
                 }
 
-                private suspend fun extractListedPage(index: Int) {
+                private suspend fun extractListedPage(index: Int, fromGrid: Boolean = false) {
+                    if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) return
                     if (index >= engine.pageCount) {
                         progressiveEngine?.ensureListedThrough(index)
                     }
@@ -580,7 +608,20 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     val pdf = engine as? PdfImageEngine
                     val pool = extractPool
                     val known = if (pdf != null && pool != null && pdf.streamOffsetOf(index) >= 0L) {
-                        pool.use { source -> pdf.extractKnownBytes(index, source) }
+                        if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) {
+                            return
+                        }
+                        pool.use { readSource ->
+                            if (fromGrid) gridSources[index] = readSource
+                            try {
+                                if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) {
+                                    return@use null
+                                }
+                                pdf.extractKnownBytes(index, readSource)
+                            } finally {
+                                if (fromGrid) gridSources.remove(index, readSource)
+                            }
+                        }
                     } else {
                         null
                     }
@@ -589,6 +630,8 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                         pagePaths[index] = DocumentExtractCache.writePage(cacheKey, index, ext, known)
                         return
                     }
+                    // A cell that left the sheet must not fall through onto the parser.
+                    if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) return
                     engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
                 }
 
