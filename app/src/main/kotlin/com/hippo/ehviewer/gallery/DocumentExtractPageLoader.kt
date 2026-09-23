@@ -493,7 +493,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                         !(progressiveEngine?.structureComplete ?: true)
                                     if (needsList) {
                                         interactivePending.add(index)
-                                        progressiveEngine?.pauseDiscovery()
+                                        progressiveEngine.pauseDiscovery()
                                     }
                                     try {
                                         extractListedPage(index)
@@ -501,7 +501,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                         if (needsList) {
                                             interactivePending.remove(index)
                                             if (interactivePending.isEmpty()) {
-                                                progressiveEngine?.resumeDiscovery()
+                                                progressiveEngine.resumeDiscovery()
                                             }
                                         }
                                     }
