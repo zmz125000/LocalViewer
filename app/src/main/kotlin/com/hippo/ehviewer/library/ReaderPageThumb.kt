@@ -43,6 +43,38 @@ object ReaderPageThumb {
 
     fun find(identity: String): Path? = OriginDiskCache.existingThumb(dest(identity))
 
+    /** Store an already-encoded thumb (photo-grid WebP). Does not decode it again. */
+    fun writeEncoded(identity: String, bytes: ByteArray): Path? {
+        if (bytes.isEmpty()) return null
+        val destPath = dest(identity)
+        OriginDiskCache.existingThumb(destPath)?.let { return it }
+        val key = destPath.toString()
+        val mutex = pathLocks.getOrPut(key) { Mutex() }
+        return runCatching {
+            // Called from the extract worker, which is already off the main thread.
+            if (!mutex.tryLock()) return@runCatching OriginDiskCache.existingThumb(destPath)
+            try {
+                OriginDiskCache.existingThumb(destPath)?.let { return@runCatching it }
+                File(destPath.parent!!.toString()).mkdirs()
+                val destFile = File(destPath.toString())
+                val tmp = File("${destFile.absolutePath}.tmp.${System.nanoTime()}")
+                try {
+                    FileOutputStream(tmp).use { it.write(bytes) }
+                    if (!tmp.renameTo(destFile) && !(destFile.isFile && destFile.length() > 0L)) {
+                        tmp.copyTo(destFile, overwrite = true)
+                        tmp.delete()
+                    }
+                    OriginDiskCache.scheduleTrim()
+                    OriginDiskCache.existingThumb(destPath)
+                } finally {
+                    if (tmp.exists() && tmp.absolutePath != destFile.absolutePath) tmp.delete()
+                }
+            } finally {
+                mutex.unlock()
+            }
+        }.onFailure { logcat("PageThumb", it) }.getOrNull()
+    }
+
     suspend fun ensureFromFile(identity: String, source: Path): Path? = withContext(Dispatchers.IO) {
         val destPath = dest(identity)
         OriginDiskCache.existingThumb(destPath)?.let { return@withContext it }

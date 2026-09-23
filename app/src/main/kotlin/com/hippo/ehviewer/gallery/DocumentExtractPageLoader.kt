@@ -13,6 +13,7 @@ import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.PfdArchiveByteSource
+import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.document.DocumentImageEngine
 import com.hippo.ehviewer.library.document.EpubEngine
 import com.hippo.ehviewer.library.document.PdfImageEngine
@@ -155,6 +156,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
         val extractJobs = ConcurrentHashMap<Int, Job>()
         val backgroundJobs = ConcurrentHashMap.newKeySet<Int>()
         val gridWanted = ConcurrentHashMap.newKeySet<Int>()
+        val gridReady = ConcurrentHashMap.newKeySet<Int>()
         val gridJobs = ConcurrentHashMap<Int, Job>()
         val gridSources = ConcurrentHashMap<Int, ArchiveByteSource>()
         val interactivePending = ConcurrentHashMap.newKeySet<Int>()
@@ -316,7 +318,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     // are NOT_IN_ORDER for cells outside the viewport and never run.
                     if (index !in 0 until size) return
                     gridWanted.add(index)
-                    if (isPageMapped(index)) return
+                    if (isPageMapped(index) || index in gridReady) return
                     ensureExtract(index, interactive = false, fromGrid = true)
                 }
 
@@ -642,7 +644,10 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                 }
 
                 private suspend fun extractListedPage(index: Int, fromGrid: Boolean = false) {
-                    if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) return
+                    if (fromGrid) {
+                        extractGridThumb(index)
+                        return
+                    }
                     if (index >= engine.pageCount) {
                         progressiveEngine?.ensureListedThrough(index)
                     }
@@ -685,6 +690,38 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                         return
                     }
                     engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
+                }
+
+                /**
+                 * Grid cells get a 768px thumb, not a full page. Indexed color used to
+                 * queue a full lossless encode on the shared parser for every cell that
+                 * scrolled by, and cancel could not pull those jobs off the lock.
+                 */
+                private suspend fun extractGridThumb(index: Int) {
+                    fun wanted() = index in gridWanted || prefetchRank(index) != NOT_IN_ORDER
+                    if (!wanted() || index in gridReady) return
+                    val identity = "doc:$cacheKey:$index"
+                    if (ReaderPageThumb.find(identity) != null) {
+                        gridReady.add(index)
+                        return
+                    }
+                    val pdf = engine as? PdfImageEngine ?: return
+                    val pool = extractPool ?: return
+                    if (pdf.streamOffsetOf(index) < 0L) return
+                    val bytes = pool.use { readSource ->
+                        if (!wanted()) return@use null
+                        gridSources[index] = readSource
+                        try {
+                            if (!wanted()) return@use null
+                            pdf.extractGridThumb(index, readSource, ::wanted)
+                        } finally {
+                            gridSources.remove(index, readSource)
+                        }
+                    } ?: return
+                    if (!wanted()) return
+                    if (ReaderPageThumb.writeEncoded(identity, bytes) != null) {
+                        gridReady.add(index)
+                    }
                 }
 
                 /**

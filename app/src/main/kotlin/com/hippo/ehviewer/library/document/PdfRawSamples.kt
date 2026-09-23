@@ -26,6 +26,66 @@ internal object PdfRawSamples {
         return packRgb(r, g, b)
     }
 
+    fun thumbStep(width: Int, height: Int, edge: Int): Int {
+        if (edge <= 0) return 1
+        val longEdge = maxOf(width, height)
+        if (longEdge <= edge) return 1
+        return (longEdge / edge).coerceAtLeast(1)
+    }
+
+    fun thumbSize(width: Int, height: Int, step: Int): Pair<Int, Int> {
+        val safe = step.coerceAtLeast(1)
+        return (width - 1) / safe + 1 to (height - 1) / safe + 1
+    }
+
+    /**
+     * One color per [step] pixels. Grid thumbs use this so an indexed page does
+     * not allocate a full-size ARGB buffer.
+     */
+    fun argbSubsampled(
+        samples: ByteArray,
+        width: Int,
+        height: Int,
+        channels: Int,
+        step: Int,
+        colorAt: (sampleOffset: Int) -> Int,
+    ): IntArray {
+        val safe = step.coerceAtLeast(1)
+        val (tw, th) = thumbSize(width, height, safe)
+        val pixels = IntArray(tw * th)
+        var out = 0
+        var y = 0
+        while (y < height && out < pixels.size) {
+            var x = 0
+            val row = y * width
+            while (x < width && out < pixels.size) {
+                val off = (row + x) * channels
+                pixels[out++] = if (off >= 0 && off + channels <= samples.size) {
+                    colorAt(off)
+                } else {
+                    0xff shl 24
+                }
+                x += safe
+            }
+            y += safe
+        }
+        return pixels
+    }
+
+    fun argbSubsampledIndexed(
+        samples: ByteArray,
+        width: Int,
+        height: Int,
+        step: Int,
+        palette: ByteArray,
+        baseChannels: Int,
+    ): IntArray {
+        val lut = indexedLut(palette, baseChannels)
+        return argbSubsampled(samples, width, height, channels = 1, step = step) { off ->
+            lut[samples[off].toInt() and 0xff]
+        }
+    }
+
     fun argbFromIndexed(
         samples: ByteArray,
         pixelCount: Int,

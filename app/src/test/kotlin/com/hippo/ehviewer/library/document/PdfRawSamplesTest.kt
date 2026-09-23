@@ -101,4 +101,38 @@ class PdfRawSamplesTest {
         assertEquals(PdfRawSamples.packRgb(1, 2, 3), rgb[0])
         assertEquals(PdfRawSamples.packRgb(4, 5, 6), rgb[1])
     }
+
+    @Test
+    fun subsampledIndexedKeepsEveryStepPixel() {
+        val palette = byteArrayOf(
+            0xff.toByte(),
+            0x00,
+            0x00,
+            0x00,
+            0xff.toByte(),
+            0x00,
+        )
+        assertEquals(2, PdfRawSamples.thumbStep(width = 4, height = 2, edge = 2))
+        val samples = byteArrayOf(
+            0,
+            1,
+            0,
+            1,
+            1,
+            0,
+            1,
+            0,
+        )
+        val pixels = PdfRawSamples.argbSubsampledIndexed(
+            samples,
+            width = 4,
+            height = 2,
+            step = 2,
+            palette = palette,
+            baseChannels = 3,
+        )
+        assertEquals(2, pixels.size)
+        assertEquals(PdfRawSamples.packRgb(0xff, 0, 0), pixels[0])
+        assertEquals(PdfRawSamples.packRgb(0xff, 0, 0), pixels[1])
+    }
 }

@@ -1342,6 +1342,10 @@ fun BrowseCoverThumb(
             }
             is BrowseCover.DocumentPage -> {
                 suspend fun probe(): Path? = withIOContext {
+                    val thumbId = browseCoverThumbIdentity(cover)
+                    if (thumbId != null) {
+                        ReaderPageThumb.find(thumbId)?.let { return@withIOContext it }
+                    }
                     DocumentExtractCache.findCachedPage(cover.cacheKey, cover.index)
                 }
                 val hit = probe()
