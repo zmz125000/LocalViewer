@@ -156,7 +156,11 @@ class PdfImageEngine private constructor(
      * pages can extract while [ensureListedThrough] keeps walking the page tree.
      * Indirect filters / color spaces return null; the caller then uses [extractBytes].
      */
-    fun extractKnownBytes(index: Int, source: ArchiveByteSource): ByteArray? {
+    fun extractKnownBytes(
+        index: Int,
+        source: ArchiveByteSource,
+        onIndexedBitmap: ((Bitmap) -> Boolean)? = null,
+    ): ByteArray? {
         val ref = synchronized(pagesLock) {
             pages.getOrNull(index)?.takeIf { it.hasSeek }
         } ?: return null
@@ -166,16 +170,17 @@ class PdfImageEngine private constructor(
             streamLen = ref.streamLen,
             objNum = ref.objNum,
             gen = ref.gen,
+            onIndexedBitmap = onIndexedBitmap,
         )
     }
 
-    fun extractBytes(index: Int): ByteArray? {
+    fun extractBytes(index: Int, onIndexedBitmap: ((Bitmap) -> Boolean)? = null): ByteArray? {
         val ref = synchronized(pagesLock) { pages.getOrNull(index) } ?: return null
         return synchronized(parserLock) {
             var lastIo: IOException? = null
             repeat(EXTRACT_IO_ATTEMPTS) { attempt ->
                 try {
-                    return@synchronized extractBytesLocked(ref, index)
+                    return@synchronized extractBytesLocked(ref, index, onIndexedBitmap)
                 } catch (e: IOException) {
                     lastIo = e
                     logcat("PdfImage", e)
@@ -186,7 +191,11 @@ class PdfImageEngine private constructor(
         }
     }
 
-    private fun extractBytesLocked(ref: ImageRef, index: Int): ByteArray? {
+    private fun extractBytesLocked(
+        ref: ImageRef,
+        index: Int,
+        onIndexedBitmap: ((Bitmap) -> Boolean)?,
+    ): ByteArray? {
         val effectiveRef = if (!ref.hasSeek) {
             val offset = parser.locateStreamDataOffset(ref.objNum) ?: -1L
             if (offset >= 0L) {
@@ -210,18 +219,27 @@ class PdfImageEngine private constructor(
                     effectiveRef.streamLen,
                     effectiveRef.objNum,
                     effectiveRef.gen,
+                    onIndexedBitmap,
                 )
             ) {
                 is PdfParser.DirectExtractResult.Success -> direct.bytes
                 PdfParser.DirectExtractResult.RetryWithXref -> {
                     // A stale/old index may lack enough object metadata. Rebuild once;
                     // transport failures deliberately do not trigger a duplicate fetch.
-                    if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
+                    if (parser.bootstrap()) {
+                        parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen, onIndexedBitmap)
+                    } else {
+                        null
+                    }
                 }
                 PdfParser.DirectExtractResult.Failed -> null
             }
         } else {
-            if (parser.bootstrap()) parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen) else null
+            if (parser.bootstrap()) {
+                parser.extractImageBytes(effectiveRef.objNum, effectiveRef.gen, onIndexedBitmap)
+            } else {
+                null
+            }
         }
     }
 
@@ -638,9 +656,13 @@ internal class PdfParser(
         }
     }
 
-    fun extractImageBytes(objNum: Int, gen: Int): ByteArray? {
+    fun extractImageBytes(
+        objNum: Int,
+        gen: Int,
+        onIndexedBitmap: ((Bitmap) -> Boolean)? = null,
+    ): ByteArray? {
         val stream = loadStreamObject(objNum, gen) ?: return null
-        return decodeImageStream(stream)
+        return decodeImageStream(stream, onIndexedBitmap)
     }
 
     /**
@@ -652,6 +674,7 @@ internal class PdfParser(
         streamLen: Long,
         objNum: Int,
         gen: Int,
+        onIndexedBitmap: ((Bitmap) -> Boolean)? = null,
     ): DirectExtractResult {
         if (streamOffset < 0L || streamLen <= 0L || streamLen > MAX_IMAGE_STREAM_BYTES) {
             return DirectExtractResult.RetryWithXref
@@ -674,7 +697,7 @@ internal class PdfParser(
         // fall through into a second full-object network request.
         val data = readBytes(streamOffset, streamLen.toInt(), requireFull = true)
             ?: return DirectExtractResult.Failed
-        val decoded = decodeImageStream(StreamObj(dict, data))
+        val decoded = decodeImageStream(StreamObj(dict, data), onIndexedBitmap)
             ?: return DirectExtractResult.Failed
         return DirectExtractResult.Success(decoded)
     }
@@ -690,6 +713,7 @@ internal class PdfParser(
         streamLen: Long,
         objNum: Int,
         gen: Int,
+        onIndexedBitmap: ((Bitmap) -> Boolean)? = null,
     ): ByteArray? {
         if (streamOffset < 0L || streamLen <= 0L || streamLen > MAX_IMAGE_STREAM_BYTES) return null
         if (streamLen > Int.MAX_VALUE) return null
@@ -699,7 +723,7 @@ internal class PdfParser(
         val probe = readRange(readSource, streamOffset - dictLen, dictLen) ?: return null
         val dict = parseDictOnly(probe, objNum, gen) ?: return null
         val data = readRange(readSource, streamOffset, streamLen.toInt()) ?: return null
-        return decodeKnownStream(StreamObj(dict, data))
+        return decodeKnownStream(StreamObj(dict, data), onIndexedBitmap)
     }
 
     /** Names only. A ref means the shared parser has to resolve it. */
@@ -716,7 +740,10 @@ internal class PdfParser(
         else -> null
     }
 
-    private fun decodeKnownStream(stream: StreamObj): ByteArray? {
+    private fun decodeKnownStream(
+        stream: StreamObj,
+        onIndexedBitmap: ((Bitmap) -> Boolean)?,
+    ): ByteArray? {
         val filters = directNames(stream.dict["/Filter"]) ?: return null
         var data = stream.data
         for (f in filters) {
@@ -729,11 +756,15 @@ internal class PdfParser(
                 else -> return null
             }
         }
-        return encodeKnownSamples(stream.dict, data)
+        return encodeKnownSamples(stream.dict, data, onIndexedBitmap)
     }
 
     /** Device color, or Indexed with an inline palette string. Indirect palettes fall back. */
-    private fun encodeKnownSamples(dict: PdfDict, data: ByteArray): ByteArray? {
+    private fun encodeKnownSamples(
+        dict: PdfDict,
+        data: ByteArray,
+        onIndexedBitmap: ((Bitmap) -> Boolean)?,
+    ): ByteArray? {
         val w = dict.intValue("/Width") ?: return null
         val h = dict.intValue("/Height") ?: return null
         if (w <= 0 || h <= 0 || w > 20000 || h > 20000) return null
@@ -785,10 +816,14 @@ internal class PdfParser(
         }
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         bmp.setPixels(pixels, 0, w, 0, 0, w, h)
-        return try {
-            encodeExtractedBitmap(bmp)
-        } finally {
-            bmp.recycle()
+        return if (indexed != null) {
+            finishExtractedBitmap(bmp, onIndexedBitmap)
+        } else {
+            try {
+                encodeExtractedBitmap(bmp)
+            } finally {
+                bmp.recycle()
+            }
         }
     }
 
@@ -1038,7 +1073,10 @@ internal class PdfParser(
         return StreamObj(dict, data)
     }
 
-    private fun decodeImageStream(stream: StreamObj): ByteArray? {
+    private fun decodeImageStream(
+        stream: StreamObj,
+        onIndexedBitmap: ((Bitmap) -> Boolean)? = null,
+    ): ByteArray? {
         val dict = stream.dict
         val filters = filterNames(dict["/Filter"])
         var data = stream.data
@@ -1054,10 +1092,14 @@ internal class PdfParser(
             }
         }
         // No filter or after Flate: raw samples → lossless WebP.
-        return encodeRawSamples(dict, data)
+        return encodeRawSamples(dict, data, onIndexedBitmap)
     }
 
-    private fun encodeRawSamples(dict: PdfDict, data: ByteArray): ByteArray? {
+    private fun encodeRawSamples(
+        dict: PdfDict,
+        data: ByteArray,
+        onIndexedBitmap: ((Bitmap) -> Boolean)? = null,
+    ): ByteArray? {
         val w = dict.intValue("/Width") ?: return null
         val h = dict.intValue("/Height") ?: return null
         if (w <= 0 || h <= 0 || w > 20000 || h > 20000) return null
@@ -1121,10 +1163,30 @@ internal class PdfParser(
         }
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         bmp.setPixels(pixels, 0, w, 0, 0, w, h)
+        return if (isIndexed && indexedPalette != null) {
+            finishExtractedBitmap(bmp, onIndexedBitmap)
+        } else {
+            try {
+                encodeExtractedBitmap(bmp)
+            } finally {
+                bmp.recycle()
+            }
+        }
+    }
+
+    /**
+     * Hand an indexed bitmap to the reader before the lossless WebP encode.
+     * A false offer recycles it after the cache bytes are produced.
+     */
+    private fun finishExtractedBitmap(
+        bmp: Bitmap,
+        onIndexedBitmap: ((Bitmap) -> Boolean)?,
+    ): ByteArray? {
+        val keep = onIndexedBitmap?.invoke(bmp) == true
         return try {
             encodeExtractedBitmap(bmp)
         } finally {
-            bmp.recycle()
+            if (!keep) bmp.recycle()
         }
     }
 

@@ -265,11 +265,17 @@ internal class PdfRamPageLoader(
             }
             val pool = extractPool
             val known = if (pool != null && engine.streamOffsetOf(index) >= 0L) {
-                pool.use { source -> engine.extractKnownBytes(index, source) }
+                pool.use { source ->
+                    engine.extractKnownBytes(index, source) { bitmap ->
+                        publishPreparedBitmap(index, bitmap)
+                    }
+                }
             } else {
                 null
             }
-            val bytes = known ?: engine.extractBytes(index) ?: return@withOrderedPermits
+            val bytes = known ?: engine.extractBytes(index) { bitmap ->
+                publishPreparedBitmap(index, bitmap)
+            } ?: return@withOrderedPermits
             if (isDecodedDemand(index)) ramPages[index] = bytes
             if (ramPages.containsKey(index)) markSourceReady(index)
         }

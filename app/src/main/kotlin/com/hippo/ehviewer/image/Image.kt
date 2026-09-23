@@ -599,6 +599,18 @@ class Image private constructor(
         }
 
         /**
+         * Indexed PDF page already expanded to ARGB. Coil is not used.
+         * [Bitmap.prepareToDraw] uploads the software bitmap before the first frame.
+         */
+        fun fromPreparedBitmap(bitmap: Bitmap): Image {
+            bitmap.prepareToDraw()
+            return Image(
+                image = bitmap.asImage(),
+                src = byteBufferSource(ByteBuffer.allocate(0)) {},
+            ).also { it.prepareToDraw() }
+        }
+
+        /**
          * Long-edge target for lib-direct decode (0 = full file resolution).
          */
         fun maxEdgeForReader(forceOriginal: Boolean): Int {
