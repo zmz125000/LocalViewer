@@ -397,7 +397,7 @@ object Settings : DataStorePreferences(null) {
     val timeoutSpeed = intPref("timeout_speed_level", 6)
 
     /** Source files/pages to download or extract ahead of the reader anchor. */
-    val preloadImage = intPref("preload_image_2", 5)
+    val preloadImage = intPref("preload_image_2", 3)
 
     /**
      * Skip all SMB/WebDAV/stream-archive page writes to flash (prefetch and current
