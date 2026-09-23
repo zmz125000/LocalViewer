@@ -104,7 +104,10 @@ internal class PdfRamPageLoader(
             if (idx !in demand.decodedPages) readyWaiters.remove(idx)
         }
         ramPages.keys.toList().forEach { idx ->
-            if (idx !in demand.decodedPages) ramPages.remove(idx)
+            if (idx !in demand.decodedPages) {
+                ramPages.remove(idx)
+                clearSourceReady(idx)
+            }
         }
         extractJobs.cancelOutside(demand.sourcePages)
         demand.visibleDecode.forEach { index ->
@@ -123,6 +126,7 @@ internal class PdfRamPageLoader(
 
     override fun releaseRamPage(index: Int) {
         ramPages.remove(index)
+        if (!isDecodedDemand(index)) clearSourceReady(index)
     }
 
     override fun close() {
@@ -253,6 +257,9 @@ internal class PdfRamPageLoader(
             }
         }
         if (index >= engine.pageCount || ramPages.containsKey(index)) return
+        // Same stall as cache-off SMB: sourceReady outlives the RAM copy, so a
+        // non-visible re-extract polls outside the ordered window.
+        clearSourceReady(index)
         withOrderedPermits(
             rank = { pdfExtractOrderRank(prefetchRank(index), interactive) },
             serialSlots = serialExtractSlots,

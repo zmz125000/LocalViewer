@@ -111,6 +111,7 @@ class OrderedSlotsTest {
         stillReady.set(false)
         withTimeout(1_000) { started.await() }
         job.await()
+        assertTrue(started.isCompleted)
     }
 
     @Test

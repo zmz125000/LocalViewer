@@ -158,7 +158,7 @@ suspend inline fun <T> useSolidExtractPageLoader(
             val extractJobs = ConcurrentHashMap<Int, Job>()
             val coverWritten = AtomicBoolean(false)
             val hostScope = this
-            val prefetchN = Settings.preloadImage.value.coerceAtLeast(1)
+            val prefetchN = Settings.preloadImage.value.coerceIn(0, 6)
 
             /** High-water extract target; advanced as the user moves so list grows past init+prefetch. */
             val extractTarget = AtomicInteger((startPage + prefetchN).coerceAtLeast(0))
