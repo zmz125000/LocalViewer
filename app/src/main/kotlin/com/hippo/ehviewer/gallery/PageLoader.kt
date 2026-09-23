@@ -501,6 +501,16 @@ abstract class PageLoader(
             }
         }
         pages[index].rememberLayout(image.intrinsicSize.width, image.intrinsicSize.height)
+        if (index == 0) {
+            val gid = info?.gid ?: 0L
+            if (gid != 0L) {
+                com.hippo.ehviewer.library.LandscapeCoverMarks.note(
+                    gid,
+                    image.intrinsicSize.width,
+                    image.intrinsicSize.height,
+                )
+            }
+        }
         pages[index].statusFlow.update { if (image.hasQrCode) PageStatus.Blocked(image) else PageStatus.Ready(image) }
     }
 

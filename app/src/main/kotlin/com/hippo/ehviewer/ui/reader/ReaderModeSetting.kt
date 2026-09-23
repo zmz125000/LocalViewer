@@ -38,10 +38,26 @@ fun ReaderModeSetting(isWebtoon: Boolean) = Column(modifier = Modifier.verticalS
     )
     if (!isWebtoon) {
         AnimatedVisibility(visible = dualPageLandscape.value) {
-            SwitchChoice(
-                title = stringResource(id = R.string.pref_dual_page_gap),
-                field = Settings.dualPageGap.asMutableState(),
-            )
+            Column {
+                SpinnerChoice(
+                    title = stringResource(id = R.string.pref_landscape_cover),
+                    entries = arrayOf(
+                        stringResource(id = R.string.pref_landscape_cover_auto),
+                        stringResource(id = R.string.pref_landscape_cover_on),
+                        stringResource(id = R.string.pref_landscape_cover_off),
+                    ),
+                    values = listOf(
+                        Settings.LANDSCAPE_COVER_AUTO,
+                        Settings.LANDSCAPE_COVER_ON,
+                        Settings.LANDSCAPE_COVER_OFF,
+                    ),
+                    field = Settings.landscapeCover.asMutableState(),
+                )
+                SwitchChoice(
+                    title = stringResource(id = R.string.pref_dual_page_gap),
+                    field = Settings.dualPageGap.asMutableState(),
+                )
+            }
         }
     }
     SpinnerChoice(

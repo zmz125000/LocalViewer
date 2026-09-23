@@ -40,6 +40,58 @@ class PdfRawSamplesTest {
     }
 
     @Test
+    fun fourBitIndexedRowUsesByteFiltersThenNibbleIndices() {
+        // Width 4, 4-bit indexed, Colors 1: two bytes per row, PNG filter distance 1.
+        // Sub filter: second byte is stored as value - left.
+        val encoded = byteArrayOf(
+            1,
+            0x12,
+            (0x34 - 0x12).toByte(),
+        )
+        val packed = PdfRawSamples.undoPngPredictor(encoded, columns = 4, colors = 1, bits = 4)
+        assertEquals(byteArrayOf(0x12, 0x34).toList(), packed!!.toList())
+        val indices = PdfRawSamples.expandPackedSamples(packed, columns = 4, colors = 1, bits = 4)
+        assertEquals(byteArrayOf(1, 2, 3, 4).toList(), indices!!.toList())
+        val palette = ByteArray(16 * 3)
+        palette[4 * 3] = 0xff.toByte()
+        val pixels = PdfRawSamples.argbFromIndexed(indices, indices.size, palette, baseChannels = 3)
+        assertEquals(PdfRawSamples.packRgb(0xff, 0, 0), pixels[3])
+    }
+
+    @Test
+    fun fourBitPageRowMatches3050ColumnPredictor15() {
+        val columns = 3050
+        val rowBytes = PdfRawSamples.pngSampleRowBytes(columns, colors = 1, bits = 4)
+        assertEquals(1525, rowBytes)
+        assertEquals(1, PdfRawSamples.pngFilterBytes(colors = 1, bits = 4))
+        val encoded = ByteArray(rowBytes + 1)
+        encoded[0] = 0
+        java.util.Arrays.fill(encoded, 1, encoded.size, 0xff.toByte())
+        val packed = PdfRawSamples.undoPngPredictor(encoded, columns, colors = 1, bits = 4)
+        assertEquals(rowBytes, packed!!.size)
+        val indices = PdfRawSamples.expandPackedSamples(packed, columns, colors = 1, bits = 4)
+        assertEquals(columns, indices!!.size)
+        assertEquals(15, indices[0].toInt() and 0xff)
+        assertEquals(15, indices[columns - 1].toInt() and 0xff)
+    }
+
+    @Test
+    fun eightBitRgbPredictorStillFiltersByComponent() {
+        // Sub: each component subtracts the same component of the previous pixel.
+        val encoded = byteArrayOf(
+            1,
+            10,
+            20,
+            30,
+            (1 - 10).toByte(),
+            (2 - 20).toByte(),
+            (3 - 30).toByte(),
+        )
+        val samples = PdfRawSamples.undoPngPredictor(encoded, columns = 2, colors = 3, bits = 8)
+        assertEquals(byteArrayOf(10, 20, 30, 1, 2, 3).toList(), samples!!.toList())
+    }
+
+    @Test
     fun deviceRgbAndGrayExpandInScanOrder() {
         val gray = PdfRawSamples.argbFromGray(byteArrayOf(0x01, 0xfe.toByte()), 2)
         assertEquals(PdfRawSamples.packGray(0x01), gray[0])

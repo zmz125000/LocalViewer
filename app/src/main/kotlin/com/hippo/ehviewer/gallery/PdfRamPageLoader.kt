@@ -22,6 +22,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.yield
 import okio.Path
 
@@ -52,6 +53,8 @@ internal class PdfRamPageLoader(
 
     private val ramPages = ConcurrentHashMap<Int, ByteArray>()
     private val extractPool = openExtractSource?.let { PdfExtractPool(it) }
+    private val serialExtractSlots = Semaphore(1)
+    private val parallelExtractSlots = Semaphore((PDF_EXTRACT_SLOTS - 1).coerceAtLeast(1))
     private val extractJobs = KeyedJobRegistry<Int>()
     private val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
     private val interactivePending = ConcurrentHashMap.newKeySet<Int>()
@@ -158,10 +161,8 @@ internal class PdfRamPageLoader(
         } else if (ramPages.containsKey(index)) {
             return
         }
-        // Unlisted pages wait for the serial walker. Listed pages extract now.
-        if (!interactive && index >= engine.pageCount &&
-            deferDocumentBackgroundWork(engine.structureComplete)
-        ) {
+        // Incomplete index: only the pages on screen. Prefetch and decode-ahead wait.
+        if (!interactive && deferDocumentBackgroundWork(engine.structureComplete)) {
             deferredExtracts.add(index)
             return
         }
@@ -235,12 +236,7 @@ internal class PdfRamPageLoader(
 
     private suspend fun extractToRam(index: Int, interactive: Boolean) {
         if (ramPages.containsKey(index)) return
-        val hasWaiter = readyWaiters.containsKey(index)
-        if (!interactive && !hasWaiter && index >= engine.pageCount &&
-            deferDocumentBackgroundWork(engine.structureComplete)
-        ) {
-            return
-        }
+        if (!interactive && deferDocumentBackgroundWork(engine.structureComplete)) return
         if (index >= engine.pageCount) {
             if (!interactive && !engine.structureComplete) return
             if (interactive) {
@@ -257,14 +253,26 @@ internal class PdfRamPageLoader(
             }
         }
         if (index >= engine.pageCount || ramPages.containsKey(index)) return
-        val pool = extractPool
-        val known = if (pool != null && engine.streamOffsetOf(index) >= 0L) {
-            pool.use { source -> engine.extractKnownBytes(index, source) }
-        } else {
-            null
+        withOrderedPermits(
+            rank = { pdfExtractOrderRank(prefetchRank(index), interactive) },
+            serialSlots = serialExtractSlots,
+            fallbackSlots = parallelExtractSlots,
+            fallbackPermits = PDF_EXTRACT_SLOTS - 1,
+        ) {
+            if (ramPages.containsKey(index)) {
+                markSourceReady(index)
+                return@withOrderedPermits
+            }
+            val pool = extractPool
+            val known = if (pool != null && engine.streamOffsetOf(index) >= 0L) {
+                pool.use { source -> engine.extractKnownBytes(index, source) }
+            } else {
+                null
+            }
+            val bytes = known ?: engine.extractBytes(index) ?: return@withOrderedPermits
+            if (isDecodedDemand(index)) ramPages[index] = bytes
+            if (ramPages.containsKey(index)) markSourceReady(index)
         }
-        val bytes = known ?: engine.extractBytes(index) ?: return
-        if (isDecodedDemand(index)) ramPages[index] = bytes
     }
 
     private fun dispatchReady(index: Int) {

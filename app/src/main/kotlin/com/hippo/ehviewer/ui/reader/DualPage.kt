@@ -28,20 +28,56 @@ fun isPagerDual(dualActive: Boolean, type: ReadingModeType): Boolean = dualActiv
  */
 fun isWebtoonHorizontal(dualActive: Boolean, type: ReadingModeType): Boolean = dualActive && ReadingModeType.isWebtoon(type)
 
-fun dualSpreadCount(pageCount: Int): Int = if (pageCount <= 0) 0 else (pageCount + 1) / 2
+/**
+ * @param cover first page is a persisted landscape cover: slot 0 is that page alone,
+ *   and pairing of the rest starts at page 1.
+ */
+fun dualSpreadCount(pageCount: Int, cover: Boolean = false): Int {
+    if (pageCount <= 0) return 0
+    if (!cover) return (pageCount + 1) / 2
+    val rest = pageCount - 1
+    return 1 + if (rest <= 0) 0 else (rest + 1) / 2
+}
 
-fun dualSpreadIndex(pageIndex: Int): Int = (pageIndex / 2).coerceAtLeast(0)
+fun dualSpreadIndex(pageIndex: Int, cover: Boolean = false): Int {
+    if (pageIndex <= 0) return 0
+    if (!cover) return pageIndex / 2
+    return 1 + (pageIndex - 1) / 2
+}
 
 /** First real page index of a spread (always the lower index of the pair). */
-fun dualFirstPageIndex(spreadIndex: Int): Int = (spreadIndex * 2).coerceAtLeast(0)
+fun dualFirstPageIndex(spreadIndex: Int, cover: Boolean = false): Int {
+    if (spreadIndex <= 0) return 0
+    if (!cover) return spreadIndex * 2
+    return 1 + (spreadIndex - 1) * 2
+}
+
+/** Last real page in [spreadIndex], inclusive. Cover slot 0 is page 0 only. */
+fun dualLastPageIndex(spreadIndex: Int, pageCount: Int, cover: Boolean = false): Int {
+    if (pageCount <= 0) return 0
+    val first = dualFirstPageIndex(spreadIndex, cover).coerceIn(0, pageCount - 1)
+    if (cover && spreadIndex <= 0) return first
+    val second = first + 1
+    return if (second < pageCount) second else first
+}
 
 /**
  * Left/right real page indices for a spread.
  * LTR / Vertical: left = 2i, right = 2i+1
  * RTL: left = 2i+1, right = 2i (manga book order)
+ * [cover]: spread 0 is page 0 alone.
  */
-fun dualLeftRight(spreadIndex: Int, pageCount: Int, isRtl: Boolean): Pair<Int?, Int?> {
-    val a = spreadIndex * 2
+fun dualLeftRight(
+    spreadIndex: Int,
+    pageCount: Int,
+    isRtl: Boolean,
+    cover: Boolean = false,
+): Pair<Int?, Int?> {
+    if (cover && spreadIndex <= 0) {
+        val page = 0.takeIf { pageCount > 0 }
+        return if (isRtl) null to page else page to null
+    }
+    val a = if (cover) dualFirstPageIndex(spreadIndex, cover = true) else spreadIndex * 2
     val b = a + 1
     val first = a.takeIf { it < pageCount }
     val second = b.takeIf { it < pageCount }

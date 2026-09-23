@@ -412,7 +412,7 @@ object ArchiveCoverCache {
         val dest = resolveCoverDest(archiveKey, destHintMtime, destHintSize)
         existingCover(dest)?.let { return it }
         return try {
-            encodePage0Jpeg(bytes, extHint, dest)
+            encodePage0Jpeg(archiveKey, bytes, extHint, dest)
             existingCover(dest)
         } catch (e: CancellationException) {
             throw e
@@ -437,7 +437,7 @@ object ArchiveCoverCache {
             if (!src.isFile || src.length() == 0L) return null
             File(dest.parent!!.toString()).mkdirs()
             val destFile = File(dest.toString())
-            writeSubsampledThumb(src, destFile, THUMB_EDGE, THUMB_WEBP_QUALITY)
+            writeSubsampledThumb(archiveKey, src, destFile, THUMB_EDGE, THUMB_WEBP_QUALITY)
             existingCover(dest)?.also { OriginDiskCache.scheduleTrim() }
         } catch (e: CancellationException) {
             throw e
@@ -592,7 +592,7 @@ object ArchiveCoverCache {
                 // Release both ArchiveAccess and the scarce extraction permit before conversion.
                 currentCoroutineContext().ensureActive()
                 val thumb = try {
-                    encodePage0Jpeg(outcome.bytes, outcome.extHint, dest)
+                    encodePage0Jpeg(cacheKey, outcome.bytes, outcome.extHint, dest)
                     existingCover(dest)
                 } catch (e: CancellationException) {
                     throw e
@@ -1020,7 +1020,7 @@ object ArchiveCoverCache {
      * Page 0 bytes → small WebP, or Ultra HDR JPEG for lib stills, under [dest]'s hash.
      * Safe outside [ArchiveAccess] (ImageDecoder / libultrahdr). No full-page dump under archive_thumb.
      */
-    private suspend fun encodePage0Jpeg(bytes: ByteArray, ext: String, dest: Path) {
+    private suspend fun encodePage0Jpeg(archiveKey: String, bytes: ByteArray, ext: String, dest: Path) {
         val hint = "page0.$ext"
         File(dest.parent!!.toString()).mkdirs()
         val destFile = File(dest.toString())
@@ -1030,6 +1030,7 @@ object ArchiveCoverCache {
             maxEdge = THUMB_EDGE,
             quality = THUMB_WEBP_QUALITY,
             fileNameHint = hint,
+            onDecoded = { w, h -> noteCoverDecoded(archiveKey, w, h) },
         )
         val hit = OriginDiskCache.existingThumb(dest)
         check(ok && hit != null) {
@@ -1039,16 +1040,29 @@ object ArchiveCoverCache {
         OriginDiskCache.scheduleTrim()
     }
 
-    private suspend fun writeSubsampledThumb(source: File, dest: File, maxEdge: Int, quality: Int) {
+    private suspend fun writeSubsampledThumb(
+        archiveKey: String,
+        source: File,
+        dest: File,
+        maxEdge: Int,
+        quality: Int,
+    ) {
         val ok = HdrConvertCache.writeThumb(
             source = source.toOkioPath(),
             dest = dest,
             maxEdge = maxEdge,
             quality = quality,
             fileNameHint = source.name,
+            onDecoded = { w, h -> noteCoverDecoded(archiveKey, w, h) },
         )
         check(ok && OriginDiskCache.existingThumb(dest) != null) {
             "thumb encode failed: ${source.name}"
+        }
+    }
+
+    private fun noteCoverDecoded(archiveKey: String, width: Int, height: Int) {
+        coverEncodeScope.launch {
+            runCatching { LandscapeCoverMarks.noteArchiveKey(archiveKey, width, height) }
         }
     }
 

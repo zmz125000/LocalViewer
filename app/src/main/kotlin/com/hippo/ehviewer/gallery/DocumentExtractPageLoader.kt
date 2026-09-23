@@ -35,6 +35,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.yield
 import moe.tarsin.kt.install
@@ -152,11 +153,16 @@ internal suspend fun <T> runDocumentExtractPageLoader(
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
         val extractJobs = ConcurrentHashMap<Int, Job>()
         val backgroundJobs = ConcurrentHashMap.newKeySet<Int>()
+        val gridWanted = ConcurrentHashMap.newKeySet<Int>()
+        val gridJobs = ConcurrentHashMap<Int, Job>()
+        val gridSources = ConcurrentHashMap<Int, ArchiveByteSource>()
         val interactivePending = ConcurrentHashMap.newKeySet<Int>()
         val deferredExtracts = ConcurrentHashMap.newKeySet<Int>()
         val extractPool = openExtractSource?.let { open ->
             install({ PdfExtractPool(open) }, { pool, _ -> pool.close() })
         }
+        val serialExtractSlots = Semaphore(1)
+        val parallelExtractSlots = Semaphore((PDF_EXTRACT_SLOTS - 1).coerceAtLeast(1))
         val extractMutex = Mutex()
         var visiblePages: IntRange? = null
         val coverWritten = AtomicBoolean(false)
@@ -272,16 +278,34 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                 }
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
-                    val parallel = extractPool != null
-                    val listed = engine.pageCount
-                    val structureDone = progressiveEngine?.structureComplete ?: true
-                    if (!parallel && deferDocumentBackgroundWork(structureDone)) return
-                    val ready = pages.filter { index ->
-                        !isPageMapped(index) && (parallel && index < listed || structureDone)
+                    // Same gate as decode-ahead: no prefetch until the page tree is listed.
+                    if (deferDocumentBackgroundWork(progressiveEngine?.structureComplete ?: true)) {
+                        return
                     }
-                    ready.take(if (parallel) PDF_EXTRACT_SLOTS else 1).forEach {
-                        ensureExtract(it, interactive = false)
+                    pages.forEach { index ->
+                        if (!isPageMapped(index)) ensureExtract(index, interactive = false)
                     }
+                }
+
+                override fun requestPageSource(index: Int) {
+                    // Photo-grid thumbs. Not the reader prefetch window: those ranks
+                    // are NOT_IN_ORDER for cells outside the viewport and never run.
+                    if (index !in 0 until size) return
+                    gridWanted.add(index)
+                    if (isPageMapped(index)) return
+                    ensureExtract(index, interactive = false, fromGrid = true)
+                }
+
+                override fun releasePageSource(index: Int) {
+                    gridWanted.remove(index)
+                    // Reader viewport / prefetch still owns this page. Leave its extract.
+                    if (prefetchRank(index) != NOT_IN_ORDER) return
+                    val job = gridJobs[index] ?: return
+                    gridJobs.remove(index, job)
+                    gridSources.remove(index)?.let { extractPool?.retire(it) }
+                    backgroundJobs.remove(index)
+                    extractJobs.remove(index, job)
+                    job.cancel()
                 }
 
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
@@ -358,6 +382,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                 }
 
                 private fun markReady(index: Int) {
+                    markSourceReady(index)
                     val path = pagePaths[index] ?: return
                     if (index == 0 && coverWritten.compareAndSet(false, true)) {
                         ArchiveCoverCache.scheduleEncodeFromExtractedPage(cacheKey, path) { cover ->
@@ -396,6 +421,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                 private fun ensureExtract(
                     index: Int,
                     interactive: Boolean,
+                    fromGrid: Boolean = false,
                     onReady: (() -> Unit)? = null,
                 ) {
                     if (sessionClosed.get() || index !in 0 until engine.pageCount) return
@@ -408,13 +434,10 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     } else if (isPageMapped(index)) {
                         return
                     }
-                    val parallel = extractPool != null
                     val structureDone = progressiveEngine?.structureComplete ?: true
-                    if (!interactive && !parallel && deferDocumentBackgroundWork(structureDone)) {
-                        deferredExtracts.add(index)
-                        return
-                    }
-                    if (!interactive && parallel && index >= engine.pageCount && !structureDone) {
+                    // Grid cells poll until the page is listed. Do not park them in
+                    // the reader prefetch queue, which stays closed until the tree ends.
+                    if (!fromGrid && !interactive && deferDocumentBackgroundWork(structureDone)) {
                         deferredExtracts.add(index)
                         return
                     }
@@ -426,6 +449,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     if (existing != null && existing.isActive) {
                         if (interactive && backgroundJobs.contains(index)) {
                             // Upgrade an enqueued prefetch into a visible-page request.
+                            gridJobs.remove(index)
                             existing.cancel()
                             extractJobs.remove(index, existing)
                         } else {
@@ -445,7 +469,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                         }
                     }
                     if (!interactive) backgroundJobs.add(index)
-                    val job = hostScope.launch(Dispatchers.IO) {
+                    val job = hostScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                         try {
                             ensureActive()
                             if (interactive && extractPool == null) {
@@ -456,47 +480,68 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                 return@launch
                             }
                             val structureDone = progressiveEngine?.structureComplete ?: true
-                            if (!interactive && extractPool == null &&
-                                deferDocumentBackgroundWork(structureDone)
-                            ) {
+                            if (!fromGrid && !interactive && deferDocumentBackgroundWork(structureDone)) {
                                 return@launch
                             }
-                            if (!interactive && extractPool != null &&
-                                index >= engine.pageCount && !structureDone
-                            ) {
-                                return@launch
-                            }
-                            if (extractPool != null) {
+                            if (fromGrid) {
                                 ensureActive()
-                                val needsList = interactive &&
-                                    index >= engine.pageCount &&
-                                    !(progressiveEngine?.structureComplete ?: true)
-                                if (needsList) {
-                                    interactivePending.add(index)
-                                    progressiveEngine?.pauseDiscovery()
+                                if (index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) {
+                                    return@launch
                                 }
-                                try {
-                                    extractListedPage(index)
-                                } finally {
+                                val pdf = engine as? PdfImageEngine
+                                val listed = pdf == null ||
+                                    pdf.streamOffsetOf(index) >= 0L ||
+                                    structureDone
+                                // Unknown offset still needs the parser. Leave the index
+                                // walker alone; the sheet polls again once the page is listed.
+                                if (listed) extractListedPage(index, fromGrid = true)
+                                return@launch
+                            }
+                            withOrderedPermits(
+                                rank = { pdfExtractOrderRank(prefetchRank(index), interactive) },
+                                serialSlots = serialExtractSlots,
+                                fallbackSlots = parallelExtractSlots,
+                                fallbackPermits = PDF_EXTRACT_SLOTS - 1,
+                            ) {
+                                ensureActive()
+                                if (probePageOnDisk(index)) {
+                                    markReady(index)
+                                    return@withOrderedPermits
+                                }
+                                if (extractPool != null) {
+                                    val needsList = interactive &&
+                                        index >= engine.pageCount &&
+                                        !(progressiveEngine?.structureComplete ?: true)
                                     if (needsList) {
-                                        interactivePending.remove(index)
-                                        if (interactivePending.isEmpty()) {
-                                            progressiveEngine?.resumeDiscovery()
+                                        interactivePending.add(index)
+                                        progressiveEngine.pauseDiscovery()
+                                    }
+                                    try {
+                                        extractListedPage(index)
+                                    } finally {
+                                        if (needsList) {
+                                            interactivePending.remove(index)
+                                            if (interactivePending.isEmpty()) {
+                                                progressiveEngine.resumeDiscovery()
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    withDocumentParserAccess(
+                                        waitForParser = documentExtractWaitsForParser(interactive),
+                                        retryWhileIdle = !interactive && readyWaiters.containsKey(index),
+                                        interactivePending = interactivePending,
+                                        extractMutex = extractMutex,
+                                    ) {
+                                        ensureActive()
+                                        if (!probePageOnDisk(index)) {
+                                            engine.extractToCache(cacheKey, index)?.let {
+                                                pagePaths[index] = it
+                                            }
                                         }
                                     }
                                 }
-                            } else {
-                                withDocumentParserAccess(
-                                    waitForParser = documentExtractWaitsForParser(interactive),
-                                    retryWhileIdle = !interactive && readyWaiters.containsKey(index),
-                                    interactivePending = interactivePending,
-                                    extractMutex = extractMutex,
-                                ) {
-                                    ensureActive()
-                                    if (!probePageOnDisk(index)) {
-                                        engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
-                                    }
-                                }
+                                if (probePageOnDisk(index)) markSourceReady(index)
                             }
                             if (probePageOnDisk(index)) {
                                 markReady(index)
@@ -534,21 +579,28 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                 }
                             }
                             if (!interactive) backgroundJobs.remove(index)
+                            if (fromGrid) gridJobs.remove(index, thisJob)
                             extractJobs.remove(index, thisJob)
                         }
                     }
+                    if (fromGrid) gridJobs.putIfAbsent(index, job)
                     val prev = extractJobs.putIfAbsent(index, job)
                     if (prev != null) {
                         if (prev.isActive) {
+                            if (fromGrid) gridJobs.remove(index, job)
                             job.cancel()
                             if (!interactive) backgroundJobs.remove(index)
                         } else {
                             extractJobs[index] = job
+                            job.start()
                         }
+                    } else {
+                        job.start()
                     }
                 }
 
-                private suspend fun extractListedPage(index: Int) {
+                private suspend fun extractListedPage(index: Int, fromGrid: Boolean = false) {
+                    if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) return
                     if (index >= engine.pageCount) {
                         progressiveEngine?.ensureListedThrough(index)
                     }
@@ -556,7 +608,20 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     val pdf = engine as? PdfImageEngine
                     val pool = extractPool
                     val known = if (pdf != null && pool != null && pdf.streamOffsetOf(index) >= 0L) {
-                        pool.use { source -> pdf.extractKnownBytes(index, source) }
+                        if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) {
+                            return
+                        }
+                        pool.use { readSource ->
+                            if (fromGrid) gridSources[index] = readSource
+                            try {
+                                if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) {
+                                    return@use null
+                                }
+                                pdf.extractKnownBytes(index, readSource)
+                            } finally {
+                                if (fromGrid) gridSources.remove(index, readSource)
+                            }
+                        }
                     } else {
                         null
                     }
@@ -565,6 +630,8 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                         pagePaths[index] = DocumentExtractCache.writePage(cacheKey, index, ext, known)
                         return
                     }
+                    // A cell that left the sheet must not fall through onto the parser.
+                    if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) return
                     engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
                 }
 

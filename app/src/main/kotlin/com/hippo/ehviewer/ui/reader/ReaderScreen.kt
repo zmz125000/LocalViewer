@@ -45,6 +45,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -110,6 +111,7 @@ import com.hippo.ehviewer.gallery.useZipFolderPageLoader
 import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.FolderGalleryIndex
 import com.hippo.ehviewer.library.GallerySiblingNavigator
+import com.hippo.ehviewer.library.LandscapeCoverMarks
 import com.hippo.ehviewer.library.LocalHistory
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaStoreFs
@@ -586,6 +588,18 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val dualActive = dualPageActive(dualPagePref, isLandscape)
     val pagerDual = isPagerDual(dualActive, readingMode)
     val webtoonHorizontal = isWebtoonHorizontal(dualActive, readingMode)
+    val landscapeCoverMode by Settings.landscapeCover.collectAsState()
+    val coverGid = pageLoader.info?.gid ?: 0L
+    val coverMark by remember(coverGid) { LandscapeCoverMarks.flow(coverGid) }
+        .collectAsState(initial = LandscapeCoverMarks.isLandscape(coverGid))
+    // Auto uses the saved mark. On always solos page 0. Off never does.
+    // The mark itself is written on thumb / page-0 decode in every mode.
+    val landscapeCover = pagerDual && when (landscapeCoverMode) {
+        Settings.LANDSCAPE_COVER_ON -> true
+        Settings.LANDSCAPE_COVER_OFF -> false
+        else -> coverMark
+    }
+    val landscapeCoverState = rememberUpdatedState(landscapeCover)
     val uiController = rememberSystemUiController()
     // Immersive enter/exit is owned by the outer ReaderScreen destination so loading
     // placeholders and sibling replace do not drop fullscreen. Only sync chrome here.
@@ -602,13 +616,13 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     // Dual LTR/RTL/Vertical: pager pages are spreads; slider/startPage stay on real page indices.
     val pagerState = rememberPagerState(
         initialPage = if (pagerDual) {
-            dualSpreadIndex(pageLoader.startPage)
+            dualSpreadIndex(pageLoader.startPage, landscapeCover)
         } else {
             pageLoader.startPage
         },
     ) {
         if (pagerDual) {
-            dualSpreadCount(pageLoader.size).coerceAtLeast(1)
+            dualSpreadCount(pageLoader.size, landscapeCover).coerceAtLeast(1)
         } else {
             pageLoader.size.coerceAtLeast(1)
         }
@@ -622,10 +636,11 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     // Both viewport states are remembered across recomposition. Re-align the newly active
     // axis from the real-page anchor whenever mode/orientation/dual layout changes, before
     // its page collector can publish a stale index back into [pageLoader.startPage].
-    LaunchedEffect(readingMode, pagerDual, webtoonHorizontal, isLandscape) {
+    LaunchedEffect(readingMode, pagerDual, webtoonHorizontal, isLandscape, landscapeCover) {
         syncState.alignToPage(
             webtoon = ReadingModeType.isWebtoon(readingMode),
             pagerDual = pagerDual,
+            landscapeCover = landscapeCover,
         )
     }
 
@@ -633,14 +648,17 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     // request work; only real pages intersecting the viewport are interactive demand.
     LaunchedEffect(pageLoader, readingMode, pagerDual, webtoonHorizontal) {
         snapshotFlow {
+            val cover = landscapeCoverState.value
             val count = pageLoader.size
             if (count <= 0) return@snapshotFlow null
             val last = count - 1
             syncState.pendingJumpPage?.let { pending ->
                 val target = pending.coerceIn(0, last)
                 val visible = if (pagerDual) {
-                    val first = dualFirstPageIndex(dualSpreadIndex(target))
-                    first..minOf(first + 1, last)
+                    val spread = dualSpreadIndex(target, cover)
+                    val first = dualFirstPageIndex(spread, cover).coerceIn(0, last)
+                    val end = dualLastPageIndex(spread, count, cover).coerceIn(first, last)
+                    first..end
                 } else {
                     target..target
                 }
@@ -675,10 +693,10 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 val firstSlot = visibleSlots.minOrNull() ?: pagerState.currentPage
                 val lastSlot = visibleSlots.maxOrNull() ?: pagerState.currentPage
                 if (pagerDual) {
-                    val first = dualFirstPageIndex(firstSlot).coerceIn(0, last)
-                    val end = (dualFirstPageIndex(lastSlot) + 1).coerceIn(first, last)
+                    val first = dualFirstPageIndex(firstSlot, cover).coerceIn(0, last)
+                    val end = dualLastPageIndex(lastSlot, count, cover).coerceIn(first, last)
                     ReaderNavigation(
-                        anchor = dualFirstPageIndex(pagerState.currentPage).coerceIn(0, last),
+                        anchor = dualFirstPageIndex(pagerState.currentPage, cover).coerceIn(0, last),
                         visiblePages = first..end,
                         kind = if (pagerState.isScrollInProgress) NavigationKind.Scroll else NavigationKind.Settled,
                     )
@@ -732,6 +750,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
         // Compose range from layout (pager beyondViewport / list visible) with ±1 fallback.
         // Status is Flow-backed — nest collectLatest and re-scan Ready pages in range.
         snapshotFlow {
+            val cover = landscapeCoverState.value
             val size = pageLoader.size
             if (size <= 0) return@snapshotFlow IntRange.EMPTY
             val last = size - 1
@@ -758,8 +777,8 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 } else {
                     pages.first().index..pages.last().index
                 }
-                val firstReal = dualFirstPageIndex(spreadRange.first).coerceAtLeast(0)
-                val lastReal = (dualFirstPageIndex(spreadRange.last) + 1).coerceAtMost(last)
+                val firstReal = dualFirstPageIndex(spreadRange.first, cover).coerceAtLeast(0)
+                val lastReal = dualLastPageIndex(spreadRange.last, size, cover).coerceAtMost(last)
                 (firstReal - 1).coerceAtLeast(0)..(lastReal + 1).coerceAtMost(last)
             } else {
                 val pages = pagerState.layoutInfo.visiblePagesInfo
@@ -856,6 +875,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
             webtoon = isWebtoon,
             pagerDual = pagerDual,
             webtoonHorizontal = webtoonHorizontal,
+            landscapeCover = landscapeCover,
         )
         val bgColor by collectBackgroundColorAsState()
         LaunchedEffect(fullscreen) {
@@ -1070,6 +1090,7 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
                 // Same path as edge-swipe / system back (OnBackPressedDispatcher callbacks).
                 onBack = { activity.onBackPressedDispatcher.onBackPressed() },
                 dualActive = dualActive,
+                landscapeCover = landscapeCover,
                 modifier = Modifier.background(bgColor)
                     // Finger-down on the page hides chrome without consuming the stream,
                     // so the same gesture can still scroll. Bars sit above this and keep hits.

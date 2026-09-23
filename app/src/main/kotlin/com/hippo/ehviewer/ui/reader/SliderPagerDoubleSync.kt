@@ -27,6 +27,9 @@ class SliderPagerDoubleSync(
 ) {
     private var sliderFollowPager by mutableStateOf(true)
     private var pendingJumpIndex by mutableIntStateOf(-1)
+
+    /** Latest landscape-cover bit. Not snapshot state, so a mark write does not fake a page turn. */
+    private var landscapeCover: Boolean = false
     var sliderValue by mutableIntStateOf(pageLoader.startPage + 1)
         private set
 
@@ -48,12 +51,13 @@ class SliderPagerDoubleSync(
     }
 
     /** Align the newly active viewport with the last real page anchor. */
-    suspend fun alignToPage(webtoon: Boolean, pagerDual: Boolean) {
+    suspend fun alignToPage(webtoon: Boolean, pagerDual: Boolean, landscapeCover: Boolean = this.landscapeCover) {
+        if (pagerDual) this.landscapeCover = landscapeCover
         val page = pageLoader.startPage.coerceIn(0, (pageLoader.size - 1).coerceAtLeast(0))
         if (webtoon) {
             lazyListState.scrollToItem(page)
         } else {
-            val target = if (pagerDual) dualSpreadIndex(page) else page
+            val target = if (pagerDual) dualSpreadIndex(page, landscapeCover) else page
             pagerState.scrollToPage(
                 target.coerceIn(0, (pagerState.pageCount - 1).coerceAtLeast(0)),
             )
@@ -75,7 +79,7 @@ class SliderPagerDoubleSync(
         }.filterNotNull()
     } else if (pagerDual) {
         // Pager page = spread; expose first real page of the spread.
-        snapshotFlow { dualFirstPageIndex(pagerState.currentPage) }
+        snapshotFlow { dualFirstPageIndex(pagerState.currentPage, landscapeCover) }
     } else {
         snapshotFlow { pagerState.currentPage }
     }
@@ -85,7 +89,9 @@ class SliderPagerDoubleSync(
         webtoon: Boolean,
         pagerDual: Boolean = false,
         webtoonHorizontal: Boolean = false,
+        landscapeCover: Boolean = false,
     ) {
+        if (pagerDual) this.landscapeCover = landscapeCover
         // Drag on the list/pager reclaims follow (volume keys / fling after seek).
         val listDragged by lazyListState.interactionSource.collectIsDraggedAsState()
         val pagerDragged by pagerState.interactionSource.collectIsDraggedAsState()
@@ -114,7 +120,9 @@ class SliderPagerDoubleSync(
                     if (webtoon) {
                         lazyListState.scrollToItem(safe)
                     } else if (pagerDual) {
-                        pagerState.animateScrollToPage(dualSpreadIndex(safe))
+                        pagerState.animateScrollToPage(
+                            dualSpreadIndex(safe, this@SliderPagerDoubleSync.landscapeCover),
+                        )
                     } else {
                         pagerState.animateScrollToPage(safe)
                     }
