@@ -1,7 +1,9 @@
 package com.hippo.ehviewer.gallery
 
+import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import android.util.LruCache
 import androidx.compose.runtime.mutableIntStateOf
 import arrow.fx.coroutines.ExitCase
@@ -43,6 +45,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock as mutexWithLock
@@ -53,6 +56,10 @@ import okio.Path
 private val progressScope = CoroutineScope(Dispatchers.IO)
 
 private const val PERSIST_DEBOUNCE_MS = 1_000L
+
+/** Wait for in-flight reader decode before thumb encode (40 × 50ms). */
+private const val PAGE_THUMB_IDLE_POLLS = 40
+private const val PAGE_THUMB_IDLE_POLL_MS = 50L
 
 /** Publish [PageLoader] size Snapshot updates onto the main looper. */
 private val pageLoaderMainHandler = Handler(Looper.getMainLooper())
@@ -253,20 +260,52 @@ abstract class PageLoader(
         val path = (source as? PathSource)?.source ?: exportFiles[index]
         if (path != null) {
             scope.launch(Dispatchers.IO) {
-                runCatching { ReaderPageThumb.ensureFromFile(identity, path) }
+                waitForDecodeIdle()
+                withBackgroundThreadPriority {
+                    runCatching { ReaderPageThumb.ensureFromFile(identity, path) }
+                }
             }
             return
         }
         val bitmap = (image.innerImage as? BitmapImage)?.bitmap ?: return
+        // HARDWARE copy is a GPU readback and can hitch the viewport. Skip.
+        if (bitmap.config == Bitmap.Config.HARDWARE) return
         if (!image.pin()) return
         scope.launch(Dispatchers.IO) {
             try {
-                if (!bitmap.isRecycled) {
-                    runCatching { ReaderPageThumb.ensureFromBitmap(identity, bitmap) }
+                waitForDecodeIdle()
+                withBackgroundThreadPriority {
+                    if (!bitmap.isRecycled) {
+                        runCatching { ReaderPageThumb.ensureFromBitmap(identity, bitmap) }
+                    }
                 }
             } finally {
                 image.unpin()
             }
+        }
+    }
+
+    /**
+     * Let this page's decode job (and any in-flight neighbors) finish so thumb
+     * ImageDecoder / WebP encode does not share the heap with reader decode.
+     */
+    private suspend fun waitForDecodeIdle() {
+        yield()
+        repeat(PAGE_THUMB_IDLE_POLLS) {
+            val busy = synchronized(jobs) { jobs.values.any { it.isActive } }
+            if (!busy) return
+            delay(PAGE_THUMB_IDLE_POLL_MS)
+        }
+    }
+
+    private suspend inline fun <T> withBackgroundThreadPriority(block: suspend () -> T): T {
+        val tid = Process.myTid()
+        val previous = Process.getThreadPriority(tid)
+        Process.setThreadPriority(tid, Process.THREAD_PRIORITY_BACKGROUND)
+        try {
+            return block()
+        } finally {
+            Process.setThreadPriority(tid, previous)
         }
     }
 
