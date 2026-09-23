@@ -129,8 +129,9 @@ abstract class PageLoader(
      * Cache-off also holds compressed bytes on the heap, so decode is 2-wide.
      * Lib-direct F16 is further serialized inside [LibDirectDecode] (one at a time).
      *
-     * One permit is reserved for viewport-order serial decode; the rest fire as
-     * soon as source is ready (same random contention as before).
+     * Every slot decodes the next still-needed page from the viewport. The first
+     * waits on one reserved permit; the rest fill the following pages in that
+     * same order and do not start past the window.
      */
     private val decodeSlotCount = when {
         Settings.disableReaderNetworkCache.value -> 2
@@ -720,10 +721,11 @@ abstract class PageLoader(
                 val runningJob = currentCoroutineContext()[Job]
                 try {
                     mutex.withLock(index) {
-                        withSerialOrFallbackPermit(
-                            isSerial = { isSerialDecodePage(index) },
+                        withOrderedPermits(
+                            rank = { decodeRank(index) },
                             serialSlots = serialDecodeSlots,
                             fallbackSlots = parallelDecodeSlots,
+                            fallbackPermits = decodeSlotCount - 1,
                         ) {
                             atomicallyDecodeAndUpdate(index, forceOriginal = orgImg)
                         }
@@ -784,32 +786,27 @@ abstract class PageLoader(
     @PublishedApi
     internal fun isAnchorPage(index: Int): Boolean = (lastNavigation?.anchor ?: startPage) == index
 
-    /** Record that [index] is on disk / in RAM so the serial prefetch lane can advance. */
+    /** Record that [index] is on disk / in RAM so the ordered prefetch window can advance. */
     @PublishedApi
     internal fun markSourceReady(index: Int) {
         sourceReady.add(index)
     }
 
     /**
-     * True while [index] is the first source page from the viewport that is not yet
-     * available. That page waits on the reserved prefetch slot; later pages use the pool.
+     * Position of [index] among source pages from the viewport that are not yet
+     * available. 0 waits on the reserved prefetch slot; the next ranks fill the
+     * remaining slots. [NOT_IN_ORDER] waits outside the window.
      */
     @PublishedApi
-    internal fun isSerialPrefetchPage(index: Int): Boolean {
-        val head = serialWorkHead(orderedSourcePages) { candidate ->
-            candidate in sourceReady || pages.getOrNull(candidate)?.status is PageStatus.Error
-        } ?: return false
-        return head == index
+    internal fun prefetchRank(index: Int): Int = orderedWorkRank(orderedSourcePages, index) { candidate ->
+        candidate in sourceReady || pages.getOrNull(candidate)?.status is PageStatus.Error
     }
 
     /**
-     * True while [index] is the first still-needed decode from the viewport.
-     * That page waits on the reserved decode slot; later ready pages use the rest.
+     * Position of [index] among still-needed decodes from the viewport.
+     * Same window rule as [prefetchRank].
      */
-    private fun isSerialDecodePage(index: Int): Boolean {
-        val head = serialWorkHead(orderedDecodePages) { !needsSerialDecode(it) } ?: return false
-        return head == index
-    }
+    private fun decodeRank(index: Int): Int = orderedWorkRank(orderedDecodePages, index) { !needsSerialDecode(it) }
 
     private fun needsSerialDecode(index: Int): Boolean {
         if (!isDecodeDemanded(index)) return false

@@ -33,9 +33,9 @@ import okio.Path
 /**
  * WebDAV folder reader — same waiter/prefetch shape as SMB, without TCP pool.
  * HTTP client multiplexes; download fan-out is capped inside [WebDavClient].
- * One reserved serial slot prefetches from the viewport in demand order and
- * waits for that slot. Mate / decode-ahead use a bounded lane
- * ([RAM_PREFETCH_PERMITS] when cache-off) so they do not take the serial slot.
+ * Every download slot takes the next page from the viewport in demand order.
+ * The head waits on one reserved slot; the rest fill the following pages.
+ * Cache-off width is that slot plus [RAM_PREFETCH_PERMITS].
  * Convert-mode lib-HDR/avif: cache-on prefetch capped at 2 (B1). Direct-Bitmap
  * uses the normal prefetch slots.
  */
@@ -52,10 +52,11 @@ suspend inline fun <T> useWebDavFolderPageLoader(
         val password = WebDavPasswordStore.get(source.id)
         val size = imageFileNames.size
         val serialPrefetchSlots = Semaphore(1)
-        val prefetchSlots = Semaphore(3)
+        val prefetchPermitCount = 3
+        val prefetchSlots = Semaphore(prefetchPermitCount)
         val ramPrefetchSlots = Semaphore(RAM_PREFETCH_PERMITS)
         // Cap concurrent lib downloads; full UHDR convert is serial in HdrConvertCache.
-        val libHdrPrefetchSlots = Semaphore(2)
+        val libHdrPrefetchSlots = Semaphore(LIB_HDR_PREFETCH_PERMITS)
         val downloadJobs = KeyedJobRegistry<Int>()
         val closed = AtomicBoolean(false)
         val readyWaiters = ConcurrentHashMap<Int, CopyOnWriteArrayList<() -> Unit>>()
@@ -197,13 +198,14 @@ suspend inline fun <T> useWebDavFolderPageLoader(
                                 return@launch
                             }
                             withFolderNetworkPermit(
-                                isSerial = { isSerialPrefetchPage(index) },
+                                rank = { prefetchRank(index) },
                                 cacheOff = skipDisk,
                                 libHdr = isLibHdrCandidate(name),
                                 serialSlots = serialPrefetchSlots,
                                 ramPrefetchSlots = ramPrefetchSlots,
                                 libHdrPrefetchSlots = libHdrPrefetchSlots,
                                 prefetchSlots = prefetchSlots,
+                                prefetchPermitCount = prefetchPermitCount,
                             ) {
                                 if (skipDisk) {
                                     if (ramPages.containsKey(index) || WebDavCache.isPageCachedOnDisk(cache)) {

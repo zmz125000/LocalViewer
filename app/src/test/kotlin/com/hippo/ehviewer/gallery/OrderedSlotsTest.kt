@@ -1,20 +1,24 @@
 package com.hippo.ehviewer.gallery
 
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OrderedSlotsTest {
     @Test
-    fun `serial page uses reserved slot while later page uses fallback`() = runBlocking {
+    fun `head uses the reserved slot and the next page uses fallback`() = runBlocking {
         val serial = Semaphore(1)
-        val fallback = Semaphore(3)
+        val fallback = Semaphore(2)
         val hold = CompletableDeferred<Unit>()
         val bothEntered = CompletableDeferred<Unit>()
         val entered = AtomicInteger(0)
@@ -22,20 +26,22 @@ class OrderedSlotsTest {
             if (entered.incrementAndGet() == 2) bothEntered.complete(Unit)
         }
         val head = async {
-            withSerialOrFallbackPermit(
-                isSerial = { true },
+            withOrderedPermits(
+                rank = { 0 },
                 serialSlots = serial,
                 fallbackSlots = fallback,
+                fallbackPermits = 2,
             ) {
                 markEntered()
                 hold.await()
             }
         }
-        val later = async {
-            withSerialOrFallbackPermit(
-                isSerial = { false },
+        val next = async {
+            withOrderedPermits(
+                rank = { 1 },
                 serialSlots = serial,
                 fallbackSlots = fallback,
+                fallbackPermits = 2,
             ) {
                 markEntered()
                 hold.await()
@@ -43,57 +49,59 @@ class OrderedSlotsTest {
         }
         bothEntered.await()
         assertEquals(0, serial.availablePermits)
-        assertEquals(2, fallback.availablePermits)
+        assertEquals(1, fallback.availablePermits)
         hold.complete(Unit)
         head.await()
-        later.await()
+        next.await()
     }
 
     @Test
-    fun `serial slot stays free when only fallback work is running`() = runBlocking {
+    fun `page past the window does not take a slot`() = runBlocking {
         val serial = Semaphore(1)
-        val fallback = Semaphore(2)
-        val hold = CompletableDeferred<Unit>()
-        val body = async {
-            withSerialOrFallbackPermit(
-                isSerial = { false },
+        val fallback = Semaphore(1)
+        val started = AtomicInteger(0)
+        val waiting = async {
+            withOrderedPermits(
+                rank = { 2 },
                 serialSlots = serial,
                 fallbackSlots = fallback,
+                fallbackPermits = 1,
             ) {
-                assertEquals(1, serial.availablePermits)
-                assertEquals(1, fallback.availablePermits)
-                hold.await()
+                started.incrementAndGet()
             }
         }
-        yield()
-        yield()
-        assertTrue(body.isActive)
+        delay(40)
+        assertEquals(0, started.get())
+        assertTrue(waiting.isActive)
         assertEquals(1, serial.availablePermits)
-        hold.complete(Unit)
-        body.await()
+        assertEquals(1, fallback.availablePermits)
+        waiting.cancel()
     }
 
     @Test
-    fun `serial work walks from the viewport and skips ready pages`() {
+    fun `rank walks from the viewport and skips ready pages`() {
         val order = listOf(10, 11, 12, 13)
-        assertEquals(10, serialWorkHead(order) { false })
-        assertEquals(12, serialWorkHead(order) { it == 10 || it == 11 })
-        assertEquals(null, serialWorkHead(order) { true })
-        assertEquals(null, serialWorkHead(emptyList()) { false })
+        assertEquals(0, orderedWorkRank(order, 10) { false })
+        assertEquals(0, orderedWorkRank(order, 12) { it == 10 || it == 11 })
+        assertEquals(1, orderedWorkRank(order, 13) { it == 10 || it == 11 })
+        assertEquals(NOT_IN_ORDER, orderedWorkRank(order, 11) { it == 10 || it == 11 })
+        assertEquals(NOT_IN_ORDER, orderedWorkRank(order, 99) { false })
+        assertEquals(NOT_IN_ORDER, orderedWorkRank(emptyList(), 0) { false })
     }
 
     @Test
-    fun `next serial page waits for the reserved slot`() = runBlocking {
+    fun `second head waits for the reserved slot`() = runBlocking {
         val serial = Semaphore(1)
         val fallback = Semaphore(2)
         val holdHead = CompletableDeferred<Unit>()
         val headEntered = CompletableDeferred<Unit>()
         val nextEntered = AtomicInteger(0)
         val head = async {
-            withSerialOrFallbackPermit(
-                isSerial = { true },
+            withOrderedPermits(
+                rank = { 0 },
                 serialSlots = serial,
                 fallbackSlots = fallback,
+                fallbackPermits = 2,
             ) {
                 headEntered.complete(Unit)
                 holdHead.await()
@@ -101,10 +109,11 @@ class OrderedSlotsTest {
         }
         headEntered.await()
         val next = async {
-            withSerialOrFallbackPermit(
-                isSerial = { true },
+            withOrderedPermits(
+                rank = { 0 },
                 serialSlots = serial,
                 fallbackSlots = fallback,
+                fallbackPermits = 2,
             ) {
                 nextEntered.incrementAndGet()
             }
@@ -118,5 +127,42 @@ class OrderedSlotsTest {
         head.await()
         next.await()
         assertEquals(1, nextEntered.get())
+    }
+
+    @Test
+    fun `page enters the window when an earlier page finishes`() = runBlocking {
+        val serial = Semaphore(1)
+        val fallback = Semaphore(1)
+        val headHold = CompletableDeferred<Unit>()
+        val headDone = AtomicBoolean(false)
+        val nextStarted = CompletableDeferred<Unit>()
+        val head = async {
+            withOrderedPermits(
+                rank = { 0 },
+                serialSlots = serial,
+                fallbackSlots = fallback,
+                fallbackPermits = 1,
+            ) {
+                headHold.await()
+                headDone.set(true)
+            }
+        }
+        val later = async {
+            withOrderedPermits(
+                rank = { if (headDone.get()) 1 else 2 },
+                serialSlots = serial,
+                fallbackSlots = fallback,
+                fallbackPermits = 1,
+            ) {
+                nextStarted.complete(Unit)
+            }
+        }
+        delay(40)
+        assertFalse(nextStarted.isCompleted)
+        headHold.complete(Unit)
+        head.await()
+        withTimeout(1_000) { nextStarted.await() }
+        later.await()
+        assertTrue(nextStarted.isCompleted)
     }
 }
