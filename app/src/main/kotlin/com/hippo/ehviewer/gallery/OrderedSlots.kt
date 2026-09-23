@@ -8,6 +8,16 @@ import kotlinx.coroutines.sync.withPermit
 internal const val NOT_IN_ORDER = Int.MAX_VALUE
 
 /**
+ * Viewport pages still extract when the demand list is not published yet.
+ * Prefetch outside that list stays [NOT_IN_ORDER] and waits.
+ */
+internal fun pdfExtractOrderRank(prefetchRank: Int, interactive: Boolean): Int = when {
+    prefetchRank != NOT_IN_ORDER -> prefetchRank
+    interactive -> 0
+    else -> NOT_IN_ORDER
+}
+
+/**
  * Position of [index] among pages in [ordered] that still need this stage.
  * 0 is the next page from the viewport. Ready / failed pages are skipped.
  */

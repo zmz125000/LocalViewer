@@ -35,6 +35,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.yield
 import moe.tarsin.kt.install
@@ -157,6 +158,8 @@ internal suspend fun <T> runDocumentExtractPageLoader(
         val extractPool = openExtractSource?.let { open ->
             install({ PdfExtractPool(open) }, { pool, _ -> pool.close() })
         }
+        val serialExtractSlots = Semaphore(1)
+        val parallelExtractSlots = Semaphore((PDF_EXTRACT_SLOTS - 1).coerceAtLeast(1))
         val extractMutex = Mutex()
         var visiblePages: IntRange? = null
         val coverWritten = AtomicBoolean(false)
@@ -272,15 +275,12 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                 }
 
                 override fun prefetchPages(pages: List<Int>, bounds: IntRange) {
-                    val parallel = extractPool != null
-                    val listed = engine.pageCount
-                    val structureDone = progressiveEngine?.structureComplete ?: true
-                    if (!parallel && deferDocumentBackgroundWork(structureDone)) return
-                    val ready = pages.filter { index ->
-                        !isPageMapped(index) && (parallel && index < listed || structureDone)
+                    // Same gate as decode-ahead: no prefetch until the page tree is listed.
+                    if (deferDocumentBackgroundWork(progressiveEngine?.structureComplete ?: true)) {
+                        return
                     }
-                    ready.take(if (parallel) PDF_EXTRACT_SLOTS else 1).forEach {
-                        ensureExtract(it, interactive = false)
+                    pages.forEach { index ->
+                        if (!isPageMapped(index)) ensureExtract(index, interactive = false)
                     }
                 }
 
@@ -358,6 +358,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                 }
 
                 private fun markReady(index: Int) {
+                    markSourceReady(index)
                     val path = pagePaths[index] ?: return
                     if (index == 0 && coverWritten.compareAndSet(false, true)) {
                         ArchiveCoverCache.scheduleEncodeFromExtractedPage(cacheKey, path) { cover ->
@@ -408,13 +409,8 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     } else if (isPageMapped(index)) {
                         return
                     }
-                    val parallel = extractPool != null
                     val structureDone = progressiveEngine?.structureComplete ?: true
-                    if (!interactive && !parallel && deferDocumentBackgroundWork(structureDone)) {
-                        deferredExtracts.add(index)
-                        return
-                    }
-                    if (!interactive && parallel && index >= engine.pageCount && !structureDone) {
+                    if (!interactive && deferDocumentBackgroundWork(structureDone)) {
                         deferredExtracts.add(index)
                         return
                     }
@@ -456,47 +452,54 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                 return@launch
                             }
                             val structureDone = progressiveEngine?.structureComplete ?: true
-                            if (!interactive && extractPool == null &&
-                                deferDocumentBackgroundWork(structureDone)
-                            ) {
+                            if (!interactive && deferDocumentBackgroundWork(structureDone)) {
                                 return@launch
                             }
-                            if (!interactive && extractPool != null &&
-                                index >= engine.pageCount && !structureDone
+                            withOrderedPermits(
+                                rank = { pdfExtractOrderRank(prefetchRank(index), interactive) },
+                                serialSlots = serialExtractSlots,
+                                fallbackSlots = parallelExtractSlots,
+                                fallbackPermits = PDF_EXTRACT_SLOTS - 1,
                             ) {
-                                return@launch
-                            }
-                            if (extractPool != null) {
                                 ensureActive()
-                                val needsList = interactive &&
-                                    index >= engine.pageCount &&
-                                    !(progressiveEngine?.structureComplete ?: true)
-                                if (needsList) {
-                                    interactivePending.add(index)
-                                    progressiveEngine?.pauseDiscovery()
+                                if (probePageOnDisk(index)) {
+                                    markReady(index)
+                                    return@withOrderedPermits
                                 }
-                                try {
-                                    extractListedPage(index)
-                                } finally {
+                                if (extractPool != null) {
+                                    val needsList = interactive &&
+                                        index >= engine.pageCount &&
+                                        !(progressiveEngine?.structureComplete ?: true)
                                     if (needsList) {
-                                        interactivePending.remove(index)
-                                        if (interactivePending.isEmpty()) {
-                                            progressiveEngine?.resumeDiscovery()
+                                        interactivePending.add(index)
+                                        progressiveEngine?.pauseDiscovery()
+                                    }
+                                    try {
+                                        extractListedPage(index)
+                                    } finally {
+                                        if (needsList) {
+                                            interactivePending.remove(index)
+                                            if (interactivePending.isEmpty()) {
+                                                progressiveEngine?.resumeDiscovery()
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    withDocumentParserAccess(
+                                        waitForParser = documentExtractWaitsForParser(interactive),
+                                        retryWhileIdle = !interactive && readyWaiters.containsKey(index),
+                                        interactivePending = interactivePending,
+                                        extractMutex = extractMutex,
+                                    ) {
+                                        ensureActive()
+                                        if (!probePageOnDisk(index)) {
+                                            engine.extractToCache(cacheKey, index)?.let {
+                                                pagePaths[index] = it
+                                            }
                                         }
                                     }
                                 }
-                            } else {
-                                withDocumentParserAccess(
-                                    waitForParser = documentExtractWaitsForParser(interactive),
-                                    retryWhileIdle = !interactive && readyWaiters.containsKey(index),
-                                    interactivePending = interactivePending,
-                                    extractMutex = extractMutex,
-                                ) {
-                                    ensureActive()
-                                    if (!probePageOnDisk(index)) {
-                                        engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
-                                    }
-                                }
+                                if (probePageOnDisk(index)) markSourceReady(index)
                             }
                             if (probePageOnDisk(index)) {
                                 markReady(index)
