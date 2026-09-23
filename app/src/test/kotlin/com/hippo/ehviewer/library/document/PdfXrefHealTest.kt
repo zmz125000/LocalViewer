@@ -31,6 +31,47 @@ class PdfXrefHealTest {
     }
 
     @Test
+    fun indexedComicIndexReadsHeadersOnly() {
+        val file = File("/home/zlx22/LocalViewer/main2/.gradle/1.pdf")
+        assumeTrue(file.isFile)
+        val counted = CountingSource(FileSource(file))
+        counted.use { source ->
+            val t0 = System.nanoTime()
+            val engine = PdfImageEngine.open(source, progressive = true)
+            assertNotNull(engine)
+            engine!!
+            var guard = 0
+            while (!engine.structureComplete && guard++ < 5000) {
+                val before = engine.pageCount
+                val after = engine.ensureListedThrough(before)
+                if (after <= before) break
+            }
+            val ms = (System.nanoTime() - t0) / 1_000_000
+            check(engine.pageCount == 299) { "pages=${engine.pageCount}" }
+            check(engine.structureComplete)
+            // Was ~903 reads: one extra open of each `/Length N 0 R` object.
+            check(counted.reads < 650) {
+                "reads=${counted.reads} bytes=${counted.bytes} ms=$ms"
+            }
+            val index = engine.toIndex("sample", complete = true)
+            RandomAccessFile(file, "r").use { raf ->
+                for (member in index.members) {
+                    check(member.offset >= 0L && member.uncSize > 0L) {
+                        "page ${member.i} offset=${member.offset} len=${member.uncSize}"
+                    }
+                    raf.seek(member.offset + member.uncSize)
+                    val tail = ByteArray(12)
+                    check(raf.read(tail) == tail.size)
+                    val text = String(tail, Charsets.ISO_8859_1)
+                    check(text.startsWith("\rendstream") || text.startsWith("\nendstream")) {
+                        "page ${member.i} trailer ${text.take(12).toByteArray().joinToString { it.toUByte().toString() }}"
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     fun githubSamplePdfOpensWhenPresent() {
         val file = File("../.github/1.pdf")
         assumeTrue("sample PDF not in .github", file.isFile)
@@ -105,5 +146,18 @@ class PdfXrefHealTest {
         override fun close() {
             raf.close()
         }
+    }
+
+    private class CountingSource(private val inner: ArchiveByteSource) : ArchiveByteSource {
+        var reads: Int = 0
+        var bytes: Long = 0L
+        override val size: Long get() = inner.size
+        override fun readAt(offset: Long, buf: ByteArray, off: Int, len: Int): Int {
+            reads++
+            val n = inner.readAt(offset, buf, off, len)
+            if (n > 0) bytes += n
+            return n
+        }
+        override fun close() = inner.close()
     }
 }

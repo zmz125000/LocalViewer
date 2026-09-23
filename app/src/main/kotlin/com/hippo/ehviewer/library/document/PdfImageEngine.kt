@@ -906,7 +906,6 @@ internal class PdfParser(
         val filter = filterNames(dict["/Filter"])
         val w = dict.intValue("/Width") ?: 0
         val h = dict.intValue("/Height") ?: 0
-        val length = resolveLength(dict["/Length"]) ?: 0L
         val ext = when {
             filter.any { it == "/DCTDecode" || it == "/DCT" } -> "jpg"
             // JPX is re-encoded to WebP; Android ImageDecoder cannot open JPEG 2000.
@@ -917,6 +916,9 @@ internal class PdfParser(
             else -> return null // CCITT, JBIG2, etc.
         }
         val streamOffset = streamDataOffsets[objNum] ?: -1L
+        val length = streamLengthFromXref(dict["/Length"], streamOffset)
+            ?: resolveLength(dict["/Length"])
+            ?: 0L
         return PdfImageEngine.ImageRef(
             objNum = objNum,
             gen = gen,
@@ -926,6 +928,26 @@ internal class PdfParser(
             streamLen = length,
             streamOffset = streamOffset,
         )
+    }
+
+    /**
+     * `/Length N 0 R` whose object sits immediately after this stream.
+     * FreePic2Pdf writes `endstream`/`endobj` as 18 bytes (`\\r` or `\\n`), so the
+     * length is the xref gap and the index walk does not open that object.
+     */
+    private fun streamLengthFromXref(length: PdfValue?, streamOffset: Long): Long? {
+        if (streamOffset < 0L) return null
+        val ref = length as? PdfRef ?: return null
+        val entry = xref[ref.num] ?: return null
+        if (entry.free || entry.offset <= streamOffset) return null
+        val gap = entry.offset - streamOffset
+        val trailer = 18L
+        if (gap <= trailer || gap - trailer > MAX_IMAGE_STREAM_BYTES) return null
+        for (other in xref.values) {
+            if (other.free || other.offset == entry.offset) continue
+            if (other.offset > streamOffset && other.offset < entry.offset) return null
+        }
+        return gap - trailer
     }
 
     /**
