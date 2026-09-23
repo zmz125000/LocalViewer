@@ -18,6 +18,7 @@ import com.hippo.ehviewer.image.ByteBufferSource
 import com.hippo.ehviewer.image.Image
 import com.hippo.ehviewer.image.ImageSource
 import com.hippo.ehviewer.image.PathSource
+import com.hippo.ehviewer.image.byteBufferSource
 import com.hippo.ehviewer.image.hdr.DisplaySource
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.LibDirectDecode
@@ -173,6 +174,27 @@ abstract class PageLoader(
     }
 
     private suspend fun atomicallyDecodeAndUpdate(index: Int, forceOriginal: Boolean) {
+        val prepared = takePreparedBitmap(index)
+        if (prepared != null) {
+            val image = Image.fromPreparedBitmap(prepared)
+            try {
+                currentCoroutineContext().ensureActive()
+            } catch (e: CancellationException) {
+                image.unpin()
+                throw e
+            }
+            val runningJob = currentCoroutineContext()[Job]
+            if (!commitDecodedImage(index, image, runningJob)) {
+                image.unpin()
+            } else {
+                schedulePhotoGridThumb(
+                    index,
+                    byteBufferSource(java.nio.ByteBuffer.allocate(0)) {},
+                    image,
+                )
+            }
+            return
+        }
         // Local archives: ByteBuffer from mmap extract stays in memory (Coil data(buffer)).
         // Lib stills (JXL/JXR/PQ-AVIF) convert to UHDR jpeg even when network cache is off —
         // ImageDecoder cannot open those codecs. Folder/network PathSource as before.
@@ -828,6 +850,26 @@ abstract class PageLoader(
 
     /** True while [index] is in the current viewport + decode-ahead window. */
     protected fun isDecodedDemand(index: Int): Boolean = index in desiredDecodedPages
+
+    /**
+     * Bitmap produced while extracting, before a WebP file exists.
+     * The opening page stashes one; later pages publish directly.
+     */
+    protected open fun takePreparedBitmap(index: Int): Bitmap? = null
+
+    /**
+     * Show [bitmap] now and skip Coil. Caller must not recycle [bitmap] when this returns true.
+     * False when the page is outside the decode window or already has a frame.
+     */
+    protected fun publishPreparedBitmap(index: Int, bitmap: Bitmap): Boolean {
+        if (index !in 0 until size || !isDecodedDemand(index)) return false
+        val status = pages.getOrNull(index)?.status
+        if (status is PageStatus.Ready && status.image.innerImage != null) return false
+        val image = Image.fromPreparedBitmap(bitmap)
+        publishPageSucceed(index, image, replaceCache = true)
+        releaseInflight(index)
+        return true
+    }
 
     /**
      * Viewport anchor of the last [navigate], or [startPage] before the first plan.

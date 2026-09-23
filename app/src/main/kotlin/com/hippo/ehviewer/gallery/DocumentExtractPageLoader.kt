@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.gallery
 
+import android.graphics.Bitmap
 import android.os.SystemClock
 import arrow.autoCloseScope
 import com.ehviewer.core.files.openFileDescriptor
@@ -170,6 +171,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
         val discoveryJob = AtomicReference<Job?>(null)
         val hostScope = this
         val resumePage = startPage.coerceIn(0, (engine.pageCount - 1).coerceAtLeast(0))
+        val pendingIndexed = ConcurrentHashMap<Int, Bitmap>()
 
         // Seed the page the reader will actually show.
         val cachedResume = DocumentExtractCache.findCachedPage(cacheKey, resumePage)
@@ -177,7 +179,25 @@ internal suspend fun <T> runDocumentExtractPageLoader(
             pagePaths[resumePage] = cachedResume
         } else {
             extractMutex.withLock {
-                engine.extractToCache(cacheKey, resumePage)?.let { pagePaths[resumePage] = it }
+                val pdf = engine as? PdfImageEngine
+                val seeded = if (pdf != null) {
+                    val bytes = pdf.extractBytes(resumePage) { bitmap ->
+                        pendingIndexed[resumePage] = bitmap
+                        true
+                    }
+                    if (bytes != null) {
+                        val ext = pdf.extOf(resumePage) ?: "bin"
+                        DocumentExtractCache.writePage(cacheKey, resumePage, ext, bytes)
+                    } else {
+                        pendingIndexed.remove(resumePage)?.let { bmp ->
+                            if (!bmp.isRecycled) bmp.recycle()
+                        }
+                        null
+                    }
+                } else {
+                    engine.extractToCache(cacheKey, resumePage)
+                }
+                seeded?.let { pagePaths[resumePage] = it }
             }
             check(
                 pagePaths[resumePage] != null ||
@@ -257,6 +277,10 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     File(path.toString()).copyTo(File(file.toString()), overwrite = true)
                     true
                 }.getOrDefault(false)
+
+                override fun takePreparedBitmap(index: Int): Bitmap? = synchronized(pendingIndexed) {
+                    if (sessionClosed.get()) null else pendingIndexed.remove(index)
+                }
 
                 override fun openSource(index: Int): ImageSource {
                     val path = pagePaths[index]
@@ -359,6 +383,12 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     // Unblock any smbj read waiting on the network source (back / hop).
                     runCatching { source.close() }
                     super.close()
+                    val leftover = synchronized(pendingIndexed) {
+                        val held = pendingIndexed.values.toList()
+                        pendingIndexed.clear()
+                        held
+                    }
+                    leftover.forEach { bmp -> if (!bmp.isRecycled) bmp.recycle() }
                 }
 
                 /** In-memory only — safe on main / onDispose. */
@@ -535,9 +565,21 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                     ) {
                                         ensureActive()
                                         if (!probePageOnDisk(index)) {
-                                            engine.extractToCache(cacheKey, index)?.let {
-                                                pagePaths[index] = it
+                                            val pdf = engine as? PdfImageEngine
+                                            val path = if (pdf != null) {
+                                                val bytes = pdf.extractBytes(index) { bitmap ->
+                                                    publishPreparedBitmap(index, bitmap)
+                                                }
+                                                if (bytes != null) {
+                                                    val ext = pdf.extOf(index) ?: "bin"
+                                                    DocumentExtractCache.writePage(cacheKey, index, ext, bytes)
+                                                } else {
+                                                    null
+                                                }
+                                            } else {
+                                                engine.extractToCache(cacheKey, index)
                                             }
+                                            path?.let { pagePaths[index] = it }
                                         }
                                     }
                                 }
@@ -617,7 +659,9 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                 if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) {
                                     return@use null
                                 }
-                                pdf.extractKnownBytes(index, readSource)
+                                pdf.extractKnownBytes(index, readSource) { bitmap ->
+                                    publishPreparedBitmap(index, bitmap)
+                                }
                             } finally {
                                 if (fromGrid) gridSources.remove(index, readSource)
                             }
@@ -632,6 +676,14 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     }
                     // A cell that left the sheet must not fall through onto the parser.
                     if (fromGrid && index !in gridWanted && prefetchRank(index) == NOT_IN_ORDER) return
+                    if (pdf != null) {
+                        val bytes = pdf.extractBytes(index) { bitmap ->
+                            publishPreparedBitmap(index, bitmap)
+                        } ?: return
+                        val ext = pdf.extOf(index) ?: "bin"
+                        pagePaths[index] = DocumentExtractCache.writePage(cacheKey, index, ext, bytes)
+                        return
+                    }
                     engine.extractToCache(cacheKey, index)?.let { pagePaths[index] = it }
                 }
 
