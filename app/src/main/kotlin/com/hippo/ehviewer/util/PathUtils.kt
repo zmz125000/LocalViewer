@@ -21,25 +21,27 @@ val Uri.displayPath: String?
         }
 
         val context = appCtx
-        if (DocumentsContract.isDocumentUri(context, this)) {
-            val (type, path) = DocumentsContract.getDocumentId(this).split(":", limit = 2).also {
-                if (it.size < 2) return toString()
-            }
-            if (authority == "com.android.externalstorage.documents") {
-                if (type == "primary") {
-                    return Environment.getExternalStorageDirectory().path + "/" + path
-                }
-            }
-
-            context.externalCacheDirs.forEach {
-                val cachePath = it.path
-                val index = cachePath.indexOf(type)
-                if (index != -1) {
-                    return cachePath.substring(0, index + type.length) + "/" + path
-                }
+        val docId = when {
+            DocumentsContract.isDocumentUri(context, this) ->
+                runCatching { DocumentsContract.getDocumentId(this) }.getOrNull()
+            DocumentsContractCompat.isTreeUri(this) ->
+                runCatching { DocumentsContract.getTreeDocumentId(this) }.getOrNull()
+            else -> null
+        } ?: return toString()
+        val parts = docId.split(":", limit = 2)
+        if (parts.size < 2) return toString()
+        val type = parts[0]
+        val relative = parts[1]
+        if (authority == "com.android.externalstorage.documents" && type == "primary") {
+            return Environment.getExternalStorageDirectory().path + "/" + relative
+        }
+        context.externalCacheDirs.forEach {
+            val cachePath = it.path
+            val index = cachePath.indexOf(type)
+            if (index != -1) {
+                return cachePath.substring(0, index + type.length) + "/" + relative
             }
         }
-
         return toString()
     }
 
