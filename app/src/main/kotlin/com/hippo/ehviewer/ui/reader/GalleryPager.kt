@@ -47,6 +47,8 @@ fun GalleryPager(
     onBack: () -> Unit = {},
     /** Landscape dual pref active (pref + landscape). */
     dualActive: Boolean = false,
+    /** First page is a persisted landscape cover (solo slot). */
+    landscapeCover: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val isPagerType = !ReadingModeType.isWebtoon(type)
@@ -105,6 +107,7 @@ fun GalleryPager(
             onNextFolder = onNextFolder,
             onBack = onBack,
             dualPage = pagerDual,
+            landscapeCover = landscapeCover,
             modifier = modifier.pointerInput(channel) {
                 awaitPointerEventScope {
                     while (true) {

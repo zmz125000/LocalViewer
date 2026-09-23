@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.image.hdr
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.util.Log
 import com.ehviewer.core.files.metadataOrNull
@@ -262,7 +263,9 @@ object HdrConvertCache {
         maxEdge: Int = OriginDiskCache.THUMB_EDGE,
         quality: Int = THUMB_WEBP_QUALITY,
         fileNameHint: String = source.name,
+        onDecoded: ((width: Int, height: Int) -> Unit)? = null,
     ): Boolean = withContext(Dispatchers.IO) {
+        // Existing thumb is not a decode — do not report a size.
         if (OriginDiskCache.existingThumb(dest) != null) return@withContext true
         val edge = maxEdge.coerceIn(64, 2048)
         val route = classifyPath(source, fileNameHint)
@@ -273,6 +276,7 @@ object HdrConvertCache {
             writePlatformThumb(source, dest, edge, quality)
         }
         if (ok && OriginDiskCache.existingThumb(dest) != null) {
+            onDecoded?.let { reportThumbSize(dest, it) }
             OriginDiskCache.scheduleTrim()
             true
         } else {
@@ -399,6 +403,7 @@ object HdrConvertCache {
         maxEdge: Int = OriginDiskCache.THUMB_EDGE,
         quality: Int = THUMB_WEBP_QUALITY,
         fileNameHint: String,
+        onDecoded: ((width: Int, height: Int) -> Unit)? = null,
     ): Boolean = withContext(Dispatchers.IO) {
         if (OriginDiskCache.existingThumb(destJpeg) != null) return@withContext true
         if (bytes.isEmpty()) return@withContext false
@@ -411,11 +416,20 @@ object HdrConvertCache {
             writePlatformThumbBytes(bytes, destJpeg, edge, quality)
         }
         if (ok && OriginDiskCache.existingThumb(destJpeg) != null) {
+            onDecoded?.let { reportThumbSize(destJpeg, it) }
             OriginDiskCache.scheduleTrim()
             true
         } else {
             false
         }
+    }
+
+    /** Aspect of a thumb just written. Uniform scale keeps landscape vs portrait. */
+    private fun reportThumbSize(dest: File, onDecoded: (Int, Int) -> Unit) {
+        val path = OriginDiskCache.existingThumb(dest)?.toString() ?: dest.takeIf { it.isFile }?.path ?: return
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, opts)
+        if (opts.outWidth > 0 && opts.outHeight > 0) onDecoded(opts.outWidth, opts.outHeight)
     }
 
     // ── private convert pipeline ──────────────────────────────────────────

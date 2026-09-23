@@ -100,4 +100,36 @@ class DualPageSpreadTest {
         assertEquals(origin + fitted.width * (0.5f / 1.4f), gutter, 0.5f)
         assertTrue(gutter < viewport.width / 2f)
     }
+
+    @Test
+    fun `cover off keeps even odd pairing`() {
+        assertEquals(3, dualSpreadCount(5, cover = false))
+        assertEquals(0, dualSpreadIndex(0, cover = false))
+        assertEquals(0, dualSpreadIndex(1, cover = false))
+        assertEquals(1, dualSpreadIndex(2, cover = false))
+        assertEquals(0, dualFirstPageIndex(0, cover = false))
+        assertEquals(2, dualFirstPageIndex(1, cover = false))
+        assertEquals(0 to 1, dualLeftRight(0, 5, isRtl = false, cover = false))
+        assertEquals(3 to 2, dualLeftRight(1, 5, isRtl = true, cover = false))
+    }
+
+    @Test
+    fun `landscape cover solos page 0 and pairs the rest`() {
+        assertEquals(3, dualSpreadCount(5, cover = true))
+        assertEquals(1, dualSpreadCount(1, cover = true))
+        assertEquals(0, dualSpreadIndex(0, cover = true))
+        assertEquals(1, dualSpreadIndex(1, cover = true))
+        assertEquals(1, dualSpreadIndex(2, cover = true))
+        assertEquals(2, dualSpreadIndex(3, cover = true))
+        assertEquals(0, dualFirstPageIndex(0, cover = true))
+        assertEquals(1, dualFirstPageIndex(1, cover = true))
+        assertEquals(3, dualFirstPageIndex(2, cover = true))
+        assertEquals(0, dualLastPageIndex(0, 5, cover = true))
+        assertEquals(2, dualLastPageIndex(1, 5, cover = true))
+        assertEquals(4, dualLastPageIndex(2, 5, cover = true))
+        assertEquals(0 to null, dualLeftRight(0, 5, isRtl = false, cover = true))
+        assertEquals(null to 0, dualLeftRight(0, 5, isRtl = true, cover = true))
+        assertEquals(1 to 2, dualLeftRight(1, 5, isRtl = false, cover = true))
+        assertEquals(4 to 3, dualLeftRight(2, 5, isRtl = true, cover = true))
+    }
 }

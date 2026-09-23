@@ -1132,6 +1132,30 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         }
     }
 
+    fun folderEntryProgressGid(entry: BrowseEntry.FolderGallery): Long {
+        val frame = stack.lastOrNull() ?: return 0L
+        if (frame.isZipBrowse) {
+            val inner = entry.relativeName.replace('\\', '/').trim('/')
+            val histRel = ZipAsDirListing.historyGalleryRelative(frame.relativePath, inner)
+            return stableGalleryId(frame.rootId, "zip:$histRel")
+        }
+        if (browseZipAsDir && isZipAsDirFolderGallery(entry)) {
+            val zipSeg = ZipAsDirListing.zipFileSegment(entry.relativeName, entry.path.name)
+                ?: ZipPaths.parse(entry.path.toString())?.first?.toPath()?.name
+                ?: ZipPaths.parse(entry.coverPath?.toString().orEmpty())?.first?.toPath()?.name
+                ?: entry.path.name
+            val inner = ZipAsDirListing.zipInnerPrefix(entry.relativeName)
+            val zipRel = when {
+                frame.relativePath.isEmpty() -> zipSeg
+                else -> "${frame.relativePath.trimEnd('/')}/$zipSeg"
+            }
+            val histRel = ZipAsDirListing.historyGalleryRelative(zipRel, inner)
+            return stableGalleryId(frame.rootId, "zip:$histRel")
+        }
+        val rel = folderGalleryRelative(entry, frame)
+        return stableGalleryId(frame.rootId, rel.ifEmpty { "." })
+    }
+
     fun openFolderGallery(entry: BrowseEntry.FolderGallery, page: Int = -1) {
         val frame = stack.lastOrNull() ?: return
         if (frame.isZipBrowse) {
@@ -2185,6 +2209,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         pageCount = entry.pageCount,
                                         pageCountCapped = entry.pageCountCapped,
                                         cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                        progressGid = folderEntryProgressGid(entry),
                                         showPages = showGalleryPages,
                                         onClick = { openFolderGalleryPrimary(entry) },
                                         onLongClick = { openFolderGallerySecondary(entry) },
@@ -2197,6 +2222,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                         pageCount = entry.pageCount,
                                         pageCountCapped = entry.pageCountCapped,
                                         cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                        progressGid = folderEntryProgressGid(entry),
                                         showPages = showGalleryPages,
                                         onClick = { openFolderGalleryPrimary(entry) },
                                         onLongClick = { openFolderGallerySecondary(entry) },
@@ -2420,6 +2446,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 pageCount = entry.pageCount,
                                                 pageCountCapped = entry.pageCountCapped,
                                                 cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                                progressGid = folderEntryProgressGid(entry),
                                                 showPages = showGalleryPages,
                                                 onClick = { openFolderGalleryPrimary(entry) },
                                                 onLongClick = { openFolderGallerySecondary(entry) },
@@ -2566,6 +2593,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
                                                 pageCount = entry.pageCount,
                                                 pageCountCapped = entry.pageCountCapped,
                                                 cover = entry.coverPath?.let { BrowseCover.Local(it) },
+                                                progressGid = folderEntryProgressGid(entry),
                                                 showPages = showGalleryPages,
                                                 onClick = { openFolderGalleryPrimary(entry) },
                                                 onLongClick = { openFolderGallerySecondary(entry) },

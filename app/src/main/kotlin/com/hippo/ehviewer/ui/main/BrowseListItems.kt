@@ -75,6 +75,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.DocumentExtractCache
 import com.hippo.ehviewer.library.EmptyArchiveRegistry
+import com.hippo.ehviewer.library.LandscapeCoverMarks
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.library.VideoThumbnail
@@ -83,6 +84,7 @@ import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
+import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbCache
 import com.hippo.ehviewer.smb.SmbGateway
@@ -476,6 +478,7 @@ fun BrowseFolderGalleryRow(
     /** Zip-as-dir uses ZIP/CBZ; real folders stay `Folder`. */
     typeLabel: String = "Folder",
     overflow: BrowseOverflowActions? = null,
+    progressGid: Long = 0L,
 ) {
     val haptic = LocalHapticFeedback.current
     val resolvedCover = cover ?: coverPath?.let { BrowseCover.Local(it) }
@@ -498,6 +501,7 @@ fun BrowseFolderGalleryRow(
                 decodeSizePx = CoverThumb.listDecodePx(),
                 retryKey = thumbRetryKey,
                 allowRemoteFetch = allowRemoteFetch,
+                progressGid = progressGid,
             )
         },
         trailingContent = overflow?.let { actions ->
@@ -869,6 +873,7 @@ fun BrowseFolderGalleryGridItem(
     /** Long-press → photo-grid virtual folder; defaults to [onClick] when null. */
     onLongClick: (() -> Unit)? = null,
     overflow: BrowseOverflowActions? = null,
+    progressGid: Long = 0L,
 ) {
     BrowseGridCell(
         name = name,
@@ -890,6 +895,7 @@ fun BrowseFolderGalleryGridItem(
                     ),
                     retryKey = thumbRetryKey,
                     allowRemoteFetch = allowRemoteFetch,
+                    progressGid = progressGid,
                 )
                 if (showPages && (pageCount > 0 || pageCountCapped)) {
                     Badge(
@@ -1233,6 +1239,8 @@ fun BrowseCoverThumb(
      */
     photoGridThumb: Boolean = false,
     placeholderIcon: ImageVector = Icons.Default.PhotoLibrary,
+    /** Read-progress gid for this cover. 0 = derive from an archive cover, or skip. */
+    progressGid: Long = 0L,
 ) {
     val resolvedDecodePx = decodeSizePx ?: CoverThumb.listDecodePx()
     val context = LocalContext.current
@@ -1718,6 +1726,18 @@ fun BrowseCoverThumb(
         }
     }
 
+    val boundGid = when {
+        progressGid != 0L -> progressGid
+        cover is BrowseCover.SmbArchive ->
+            stableGalleryId(cover.sourceId, "smba:${cover.remoteRelativeFile.trim('/')}")
+        cover is BrowseCover.WebDavArchive ->
+            stableGalleryId(cover.sourceId, "dava:${cover.remoteRelativeFile.trim('/')}")
+        else -> 0L
+    }
+    if (boundGid != 0L) {
+        localPath?.let { LandscapeCoverMarks.bindPath(it.toString(), boundGid) }
+        if (cover is BrowseCover.Local) LandscapeCoverMarks.bindPath(cover.path.toString(), boundGid)
+    }
     // Icon under AsyncImage: first load shows placeholder; cache hits paint immediately
     // without Success-only gating (which flashed on every LazyList recycle).
     Box(

@@ -730,6 +730,13 @@ object Settings : DataStorePreferences(null) {
     val dualPageLandscape = boolPref("pref_dual_page_landscape", true)
 
     /**
+     * When on, a persisted landscape first page is shown alone (full viewport) and
+     * pairing starts at page 1. The mark is written whenever that page is decoded
+     * (cover thumb or reader page 0), whether or not this toggle is on.
+     */
+    val landscapeCover = boolPref("pref_landscape_cover", false)
+
+    /**
      * Pager dual (LTR / RTL / vertical): when on, each page occupies half the
      * screen (gutter gap). When off, the pair is height-fitted and centered
      * with no gap between pages.

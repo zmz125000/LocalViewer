@@ -76,6 +76,8 @@ fun PagerViewer(
      * Used for LTR, RTL, and Vertical (same pairing; Vertical scrolls up/down between spreads).
      */
     dualPage: Boolean = false,
+    /** Persisted landscape first page: slot 0 is that page alone. */
+    landscapeCover: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -114,7 +116,7 @@ fun PagerViewer(
     @Composable
     fun SpreadOrPage(index: Int) {
         if (dualPage) {
-            val (leftIdx, rightIdx) = dualLeftRight(index, realPageCount, dualRtl)
+            val (leftIdx, rightIdx) = dualLeftRight(index, realPageCount, dualRtl, landscapeCover)
             val left = leftIdx?.let { items.getOrNull(it) }
             val right = rightIdx?.let { items.getOrNull(it) }
             if (left == null && right == null) return
@@ -163,7 +165,7 @@ fun PagerViewer(
             modifier = modifier,
             beyondViewportPageCount = 1,
             userScrollEnabled = canScroll,
-            key = { it },
+            key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
         ) { index ->
             SpreadOrPage(index)
         }
@@ -175,7 +177,7 @@ fun PagerViewer(
             beyondViewportPageCount = 1,
             reverseLayout = isRtl xor isRtlLayout,
             userScrollEnabled = canScroll,
-            key = { it },
+            key = { if (dualPage) dualFirstPageIndex(it, landscapeCover) else it },
         ) { index ->
             SpreadOrPage(index)
         }

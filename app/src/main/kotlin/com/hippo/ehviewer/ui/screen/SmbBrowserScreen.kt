@@ -928,6 +928,16 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
         )
     }
 
+    fun folderEntryProgressGid(entry: BrowseEntryRemote.FolderGallery): Long {
+        val src = source ?: return 0L
+        val remote = if (entry.relativeName.isEmpty()) {
+            relativeDir
+        } else {
+            SmbGateway.joinRelativePath(relativeDir, entry.relativeName)
+        }
+        return stableGalleryId(src.id, "smb:$remote")
+    }
+
     fun openFolderGallery(entry: BrowseEntryRemote.FolderGallery) {
         val src = source ?: return
         ReaderGalleryPlaylist.setFromSmbBrowse(src.id, relativeDir, entries)
@@ -2017,6 +2027,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                         pageCount = entry.pageCount,
                                         pageCountCapped = entry.pageCountCapped,
                                         cover = coverFor(entry),
+                                        progressGid = folderEntryProgressGid(entry),
                                         thumbRetryKey = refreshToken,
                                         allowRemoteFetch = allowRemoteThumbs,
                                         showPages = showGalleryPages,
@@ -2031,6 +2042,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                         pageCount = entry.pageCount,
                                         pageCountCapped = entry.pageCountCapped,
                                         cover = coverFor(entry),
+                                        progressGid = folderEntryProgressGid(entry),
                                         thumbRetryKey = refreshToken,
                                         allowRemoteFetch = allowRemoteThumbs,
                                         showPages = showGalleryPages,
@@ -2263,6 +2275,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                     pageCount = entry.pageCount,
                                                     pageCountCapped = entry.pageCountCapped,
                                                     cover = coverFor(entry),
+                                                    progressGid = folderEntryProgressGid(entry),
                                                     thumbRetryKey = refreshToken,
                                                     allowRemoteFetch = allowRemoteThumbs,
                                                     showPages = showGalleryPages,
@@ -2412,6 +2425,7 @@ fun AnimatedVisibilityScope.SmbBrowserScreen(
                                                     pageCount = entry.pageCount,
                                                     pageCountCapped = entry.pageCountCapped,
                                                     cover = coverFor(entry),
+                                                    progressGid = folderEntryProgressGid(entry),
                                                     thumbRetryKey = refreshToken,
                                                     allowRemoteFetch = allowRemoteThumbs,
                                                     showPages = showGalleryPages,

@@ -119,6 +119,8 @@ internal fun CoverImage(
     sizePx: Int,
     placeholder: ImageVector,
     modifier: Modifier = Modifier,
+    /** Read-progress gid. When set, a real cover decode records landscape-cover. */
+    progressGid: Long = 0L,
     /**
      * When set, extract first page if [coverPath] is empty **or** points at a missing
      * file (evicted `archive_thumb` after cache trim / clear).
@@ -175,7 +177,11 @@ internal fun CoverImage(
             modifier = Modifier.size(placeholderSize),
             tint = MaterialTheme.colorScheme.primary,
         )
-        val request = coverRequest(resolvedCover, sizePx)
+        val cover = resolvedCover
+        if (progressGid != 0L && !cover.isNullOrBlank()) {
+            com.hippo.ehviewer.library.LandscapeCoverMarks.bindPath(cover, progressGid)
+        }
+        val request = coverRequest(cover, sizePx)
         if (request != null) {
             AsyncImage(
                 model = request,
@@ -249,6 +255,7 @@ fun LocalGalleryListItem(
             } else {
                 CoverImage(
                     coverPath = gallery.coverPath,
+                    progressGid = gallery.id,
                     sizePx = listDecodePx,
                     placeholder = when {
                         isArchive -> Icons.Default.Inventory2
@@ -338,6 +345,7 @@ fun HistoryListItem(
         leadingContent = {
             CoverImage(
                 coverPath = coverKey,
+                progressGid = info.gid,
                 sizePx = listDecodePx,
                 placeholder = placeholderIcon,
                 modifier = Modifier
@@ -403,6 +411,7 @@ fun HistoryGridItem(
             ) {
                 CoverImage(
                     coverPath = coverKey,
+                    progressGid = info.gid,
                     sizePx = gridDecodePx,
                     placeholder = placeholderIcon,
                     placeholderSize = BrowseGridPlaceholderIconSize,
@@ -506,6 +515,7 @@ fun HistoryDirectoryGridItem(
             Box(Modifier.fillMaxSize().clip(ShapeDefaults.Medium)) {
                 CoverImage(
                     coverPath = coverKey,
+                    progressGid = info.gid,
                     sizePx = CoverThumb.gridDecodePx(
                         screenWidthDp = LocalConfiguration.current.screenWidthDp,
                         columns = GalleryGridDefaults.columnCount(),
@@ -624,6 +634,7 @@ fun LocalGalleryGridItem(
                 } else {
                     CoverImage(
                         coverPath = gallery.coverPath,
+                        progressGid = gallery.id,
                         sizePx = gridDecodePx,
                         archiveContentPath = gallery.contentPath.takeIf { isArchive },
                         placeholder = when {

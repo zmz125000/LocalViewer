@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.coil
 
+import android.graphics.BitmapFactory
 import coil3.ImageLoader
 import coil3.Uri as CoilUri
 import coil3.decode.ContentMetadata
@@ -14,6 +15,7 @@ import coil3.toUri as toCoilUri
 import com.ehviewer.core.files.toUri
 import com.hippo.ehviewer.image.hdr.HdrConvertCache
 import com.hippo.ehviewer.image.hdr.isHdrConvertCandidateExtension
+import com.hippo.ehviewer.library.LandscapeCoverMarks
 import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.ZipPaths
 import com.hippo.ehviewer.library.isImageFileName
@@ -52,6 +54,8 @@ class CoverPathFetcher(
         } else {
             resolved
         }
+        // Coil called fetch, so this cover is actually being decoded (not a memory hit).
+        noteCoverBounds(data.path, openPath)
         return openAsSource(openPath)
     }
 
@@ -73,6 +77,18 @@ class CoverPathFetcher(
             }
         }
         return path
+    }
+
+    private fun noteCoverBounds(requestPath: String, openPath: Path) {
+        val file = File(openPath.toString())
+        if (!file.isFile) return
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.path, opts)
+        if (opts.outWidth <= 0 || opts.outHeight <= 0) return
+        LandscapeCoverMarks.notePath(requestPath, opts.outWidth, opts.outHeight)
+        if (openPath.toString() != requestPath) {
+            LandscapeCoverMarks.notePath(openPath.toString(), opts.outWidth, opts.outHeight)
+        }
     }
 
     private fun openAsSource(openPath: Path): SourceFetchResult {
