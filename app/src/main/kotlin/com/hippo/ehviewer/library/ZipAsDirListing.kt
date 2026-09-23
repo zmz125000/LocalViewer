@@ -702,6 +702,63 @@ object ZipAsDirListing {
     }
 
     /**
+     * [relative] with [prefix] removed when it is that prefix or a child of it.
+     * Local zip browse stores gallery paths from the zip root (`S/leaf` while
+     * listed inside `S`); Open folder needs the path under the current listing.
+     */
+    fun relativeToListedPrefix(prefix: String, relative: String): String {
+        val pre = normalizePrefix(prefix)
+        val rel = relative.replace('\\', '/').trim('/')
+        if (pre.isEmpty()) return rel
+        if (rel == pre) return ""
+        val head = "$pre/"
+        return if (rel.startsWith(head)) rel.removePrefix(head) else rel
+    }
+
+    /**
+     * Filesystem path of the zip to enter for [zipRel] under [framePath].
+     * A tapped zip row already points [entryPath] at the archive. Open folder on a
+     * promoted item (`pack.zip/S/leaf` → `pack.zip/S`) builds [entryPath] as if `S`
+     * were a real directory under the zip file.
+     */
+    fun zipBrowseFilePath(framePath: Path, zipRel: String, entryPath: Path): Path {
+        val zipName = zipRel.replace('\\', '/').trim('/').substringAfterLast('/')
+        if (zipName.isNotEmpty() && entryPath.name == zipName) return entryPath
+        return framePath.resolveRelative(zipRel)
+    }
+
+    /**
+     * Overflow Open folder path of [entryPath] relative to the current listing.
+     * Zip members are `zipfile:` URIs, not children of [framePath]; recover
+     * `pack.zip/S/leaf/clip.mp4` (parent listing) or the member under [zipInnerRel].
+     */
+    fun listingRelativeForOpenFolder(
+        framePath: String,
+        zipInnerRel: String?,
+        entryPath: String,
+        fallbackName: String,
+    ): String {
+        ZipPaths.parse(entryPath)?.let { (zipAbs, member) ->
+            if (zipInnerRel != null) return relativeToListedPrefix(zipInnerRel, member)
+            val base = framePath.replace('\\', '/').trimEnd('/')
+            val zip = zipAbs.replace('\\', '/').trimEnd('/')
+            val zipRel = when {
+                base.isEmpty() -> zip.trimStart('/')
+                zip == base -> zip.substringAfterLast('/')
+                zip.startsWith("$base/") -> zip.removePrefix("$base/")
+                else -> zip.substringAfterLast('/')
+            }
+            val mem = member.replace('\\', '/').trim('/')
+            return if (mem.isEmpty()) zipRel else "$zipRel/$mem"
+        }
+        val base = framePath.replace('\\', '/').trimEnd('/')
+        val full = entryPath.replace('\\', '/')
+        if (base.isEmpty()) return full.trimStart('/')
+        val prefix = "$base/"
+        return if (full.startsWith(prefix)) full.removePrefix(prefix) else fallbackName
+    }
+
+    /**
      * Zip/cbz file names already represented as zip-as-dir rows in a classified listing.
      * Includes wrapper galleries (`file.zip/Album`) so slim refresh does not re-add them.
      */

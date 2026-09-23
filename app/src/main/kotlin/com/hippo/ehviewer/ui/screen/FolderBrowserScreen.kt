@@ -783,25 +783,30 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
             return
         }
         // Zip-as-dir: fake-folder Directory — path is the .zip/.cbz file.
-        val zipSeg = if (browseZipAsDir) {
-            ZipAsDirListing.zipFileSegment(entry.relativeName, entry.path.name)
+        // Promoted Open folder targets (`pack.zip/S`) are not real directories.
+        val zipSplit = if (browseZipAsDir) {
+            ZipAsDirListing.splitZipBrowsePath(entry.relativeName.ifEmpty { entry.name })
         } else {
             null
         }
-        if (zipSeg != null) {
-            val zipRel = when {
-                frame.relativePath.isEmpty() -> zipSeg
-                else -> "${frame.relativePath.trimEnd('/')}/$zipSeg"
-            }
+        if (zipSplit != null) {
+            val (zipRel, inner) = zipSplit
+            val parent = frame.relativePath.replace('\\', '/').trim('/')
+            val fullZipRel = if (parent.isEmpty()) zipRel else "$parent/$zipRel"
+            val zipPath = ZipAsDirListing.zipBrowseFilePath(
+                frame.path.toPath(),
+                zipRel,
+                entry.path,
+            )
             updateStack(
                 stack + BrowseSession.LocalFrame(
                     rootId = frame.rootId,
-                    path = entry.path.toString(),
+                    path = zipPath.toString(),
                     title = entry.name,
-                    relativePath = zipRel,
+                    relativePath = fullZipRel,
                     preferMediaStore = frame.preferMediaStore,
                     videoFolder = videoOverlay,
-                    zipInnerRel = ZipAsDirListing.zipInnerPrefix(entry.relativeName),
+                    zipInnerRel = inner,
                 ),
             )
             return
@@ -828,12 +833,23 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     /** Path of [path] relative to the current listing, for overflow Open folder. */
     fun localOpenFolderRelative(path: okio.Path): String {
-        val framePath = stack.lastOrNull()?.path ?: return path.name
-        val base = framePath.replace('\\', '/').trimEnd('/')
-        val full = path.toString().replace('\\', '/')
-        if (base.isEmpty()) return full.trimStart('/')
-        val prefix = "$base/"
-        return if (full.startsWith(prefix)) full.removePrefix(prefix) else path.name
+        val frame = stack.lastOrNull() ?: return path.name
+        return ZipAsDirListing.listingRelativeForOpenFolder(
+            framePath = frame.path,
+            zipInnerRel = frame.zipInnerRel,
+            entryPath = path.toString(),
+            fallbackName = path.name,
+        )
+    }
+
+    /**
+     * Gallery [BrowseEntry.FolderGallery.relativeName] inside a zip is stored from
+     * the zip root. Open folder needs it relative to the current inner prefix.
+     */
+    fun folderGalleryOpenRelative(entry: BrowseEntry.FolderGallery): String {
+        val frame = stack.lastOrNull()
+        if (frame?.isZipBrowse != true) return entry.relativeName
+        return ZipAsDirListing.relativeToListedPrefix(frame.zipInnerRel.orEmpty(), entry.relativeName)
     }
 
     /** Overflow "Open folder". No-op when the target is already this listing. */
@@ -1864,7 +1880,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
         onOpenFolder = {
             openBrowseFolder(
                 FolderSearch.openFolderTarget(
-                    entry.relativeName,
+                    folderGalleryOpenRelative(entry),
                     isDirectory = true,
                     virtual = entry.virtual,
                 ),
