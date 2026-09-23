@@ -1,47 +1,63 @@
 package com.hippo.ehviewer.gallery
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.yield
+
+/** Rank of a page that is not in the current demand list. */
+internal const val NOT_IN_ORDER = Int.MAX_VALUE
 
 /**
- * First page in viewport-order [ordered] that still needs this stage.
- * Ready / failed pages are skipped so the reserved slot walks forward in order.
+ * Position of [index] among pages in [ordered] that still need this stage.
+ * 0 is the next page from the viewport. Ready / failed pages are skipped.
  */
-internal fun serialWorkHead(ordered: List<Int>, skip: (Int) -> Boolean): Int? = ordered.firstOrNull { !skip(it) }
+internal fun orderedWorkRank(
+    ordered: List<Int>,
+    index: Int,
+    skip: (Int) -> Boolean,
+): Int {
+    var rank = 0
+    for (candidate in ordered) {
+        if (skip(candidate)) continue
+        if (candidate == index) return rank
+        rank++
+    }
+    return NOT_IN_ORDER
+}
 
 /**
- * Run [block] on one reserved serial slot when [isSerial] is true, otherwise on
- * [fallbackSlots] (the remaining randomly-fired permits).
+ * Run [block] only while [rank] is inside the slot window.
  *
- * The serial slot waits rather than stealing a fallback permit, so viewport-order
- * work cannot be delayed by decode-ahead / source-only jobs. Eligibility is
- * re-checked after acquire so a seek can move the head without deadlock.
+ * Window width is one reserved slot plus [fallbackPermits]. Rank 0 waits on
+ * [serialSlots]. The following ranks fill [fallbackSlots] in the same order.
+ * A later page does not start until an earlier one finishes and its rank
+ * moves into the window, so every slot downloads or decodes in demand order.
+ *
+ * Eligibility is re-checked after acquire so a seek can move the window
+ * without holding a permit for work that is no longer next.
  */
-@PublishedApi
-internal suspend inline fun <T> withSerialOrFallbackPermit(
-    isSerial: () -> Boolean,
+internal suspend fun <T> withOrderedPermits(
+    rank: () -> Int,
     serialSlots: Semaphore,
     fallbackSlots: Semaphore,
-    crossinline block: suspend () -> T,
+    fallbackPermits: Int,
+    block: suspend () -> T,
 ): T {
-    if (fallbackSlots === serialSlots) {
-        return serialSlots.withPermit { block() }
-    }
+    val extra = if (fallbackSlots === serialSlots) 0 else fallbackPermits.coerceAtLeast(0)
+    val window = 1 + extra
     while (true) {
-        if (isSerial()) {
-            serialSlots.withPermit {
-                if (isSerial()) {
-                    return block()
-                }
+        val current = rank()
+        when {
+            current == 0 -> serialSlots.withPermit {
+                if (rank() == 0) return block()
             }
-        } else {
-            fallbackSlots.withPermit {
-                if (!isSerial()) {
-                    return block()
-                }
+            current in 1 until window -> fallbackSlots.withPermit {
+                val now = rank()
+                if (now in 1 until window) return block()
             }
+            else -> delay(ORDER_POLL_MS)
         }
-        yield()
     }
 }
+
+private const val ORDER_POLL_MS = 16L
