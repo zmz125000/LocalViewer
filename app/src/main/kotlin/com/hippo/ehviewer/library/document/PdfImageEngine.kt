@@ -2,6 +2,7 @@ package com.hippo.ehviewer.library.document
 
 import android.graphics.Bitmap
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.image.presentForReader
 import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
@@ -1197,18 +1198,24 @@ internal class PdfParser(
     }
 
     /**
-     * Hand an indexed bitmap to the reader before the lossless WebP encode.
-     * A false offer recycles it after the cache bytes are produced.
+     * Show a GPU copy before the lossless WebP encode. The software bitmap stays
+     * available for that encode when the copy is a new instance.
      */
     private fun finishExtractedBitmap(
         bmp: Bitmap,
         onIndexedBitmap: ((Bitmap) -> Boolean)?,
     ): ByteArray? {
-        val keep = onIndexedBitmap?.invoke(bmp) == true
+        val display = bmp.presentForReader(retainSource = true)
+        val keepDisplay = onIndexedBitmap?.invoke(display) == true
         return try {
             encodeExtractedBitmap(bmp)
         } finally {
-            if (!keep) bmp.recycle()
+            if (display !== bmp) {
+                if (!bmp.isRecycled) bmp.recycle()
+                if (!keepDisplay && !display.isRecycled) display.recycle()
+            } else if (!keepDisplay) {
+                bmp.recycle()
+            }
         }
     }
 
