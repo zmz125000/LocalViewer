@@ -729,12 +729,21 @@ object Settings : DataStorePreferences(null) {
      */
     val dualPageLandscape = boolPref("pref_dual_page_landscape", true)
 
+    const val LANDSCAPE_COVER_AUTO = 0
+    const val LANDSCAPE_COVER_ON = 1
+    const val LANDSCAPE_COVER_OFF = 2
+
     /**
-     * When on, a persisted landscape first page is shown alone (full viewport) and
-     * pairing starts at page 1. The mark is written whenever that page is decoded
-     * (cover thumb or reader page 0), whether or not this toggle is on.
+     * Dual-page landscape cover.
+     * [LANDSCAPE_COVER_AUTO]: solo page 0 only when a persisted decode says it is landscape.
+     * [LANDSCAPE_COVER_ON]: always solo page 0.
+     * [LANDSCAPE_COVER_OFF]: never solo page 0.
+     * The mark is written whenever page 0 is decoded (cover thumb or reader), in every mode.
      */
-    val landscapeCover = boolPref("pref_landscape_cover", false)
+    val landscapeCover = intPref("pref_landscape_cover_mode", LANDSCAPE_COVER_OFF)
+
+    /** Previous on/off switch. True migrates to [LANDSCAPE_COVER_AUTO]. */
+    private val landscapeCoverLegacy = boolPref("pref_landscape_cover", false)
 
     /**
      * Pager dual (LTR / RTL / vertical): when on, each page occupies half the
@@ -770,6 +779,14 @@ object Settings : DataStorePreferences(null) {
             val orientation = pref[orientationMode]
             if (OrientationType.entries.none { it.prefValue == orientation }) {
                 pref.remove(orientationMode)
+            }
+            if (landscapeCover !in pref && landscapeCoverLegacy in pref) {
+                pref[landscapeCover] = if (pref[landscapeCoverLegacy]) {
+                    LANDSCAPE_COVER_AUTO
+                } else {
+                    LANDSCAPE_COVER_OFF
+                }
+                pref.remove(landscapeCoverLegacy)
             }
         }
     }

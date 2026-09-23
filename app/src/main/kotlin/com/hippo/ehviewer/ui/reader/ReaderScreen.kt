@@ -588,12 +588,17 @@ fun ReaderScreen(pageLoader: ReaderSession, info: BaseGalleryInfo?, args: Reader
     val dualActive = dualPageActive(dualPagePref, isLandscape)
     val pagerDual = isPagerDual(dualActive, readingMode)
     val webtoonHorizontal = isWebtoonHorizontal(dualActive, readingMode)
-    val landscapeCoverPref by Settings.landscapeCover.collectAsState()
+    val landscapeCoverMode by Settings.landscapeCover.collectAsState()
     val coverGid = pageLoader.info?.gid ?: 0L
     val coverMark by remember(coverGid) { LandscapeCoverMarks.flow(coverGid) }
         .collectAsState(initial = LandscapeCoverMarks.isLandscape(coverGid))
-    // Toggle applies a saved mark. The mark itself is written on thumb / page-0 decode.
-    val landscapeCover = pagerDual && landscapeCoverPref && coverMark
+    // Auto uses the saved mark. On always solos page 0. Off never does.
+    // The mark itself is written on thumb / page-0 decode in every mode.
+    val landscapeCover = pagerDual && when (landscapeCoverMode) {
+        Settings.LANDSCAPE_COVER_ON -> true
+        Settings.LANDSCAPE_COVER_OFF -> false
+        else -> coverMark
+    }
     val landscapeCoverState = rememberUpdatedState(landscapeCover)
     val uiController = rememberSystemUiController()
     // Immersive enter/exit is owned by the outer ReaderScreen destination so loading
