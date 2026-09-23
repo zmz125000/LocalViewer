@@ -284,6 +284,13 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                     }
                 }
 
+                override fun requestPageSource(index: Int) {
+                    // Photo-grid thumbs. Not the reader prefetch window: those ranks
+                    // are NOT_IN_ORDER for cells outside the viewport and never run.
+                    if (index !in 0 until size || isPageMapped(index)) return
+                    ensureExtract(index, interactive = false, fromGrid = true)
+                }
+
                 override fun onRequest(index: Int, force: Boolean, orgImg: Boolean) {
                     // Only the viewport may snatch [extractMutex] from discovery.
                     // Decode-ahead used to be interactive and cancelled the walk for the
@@ -397,6 +404,7 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                 private fun ensureExtract(
                     index: Int,
                     interactive: Boolean,
+                    fromGrid: Boolean = false,
                     onReady: (() -> Unit)? = null,
                 ) {
                     if (sessionClosed.get() || index !in 0 until engine.pageCount) return
@@ -410,7 +418,9 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                         return
                     }
                     val structureDone = progressiveEngine?.structureComplete ?: true
-                    if (!interactive && deferDocumentBackgroundWork(structureDone)) {
+                    // Grid cells poll until the page is listed. Do not park them in
+                    // the reader prefetch queue, which stays closed until the tree ends.
+                    if (!fromGrid && !interactive && deferDocumentBackgroundWork(structureDone)) {
                         deferredExtracts.add(index)
                         return
                     }
@@ -452,7 +462,18 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                 return@launch
                             }
                             val structureDone = progressiveEngine?.structureComplete ?: true
-                            if (!interactive && deferDocumentBackgroundWork(structureDone)) {
+                            if (!fromGrid && !interactive && deferDocumentBackgroundWork(structureDone)) {
+                                return@launch
+                            }
+                            if (fromGrid) {
+                                ensureActive()
+                                val pdf = engine as? PdfImageEngine
+                                val listed = pdf == null ||
+                                    pdf.streamOffsetOf(index) >= 0L ||
+                                    structureDone
+                                // Unknown offset still needs the parser. Leave the index
+                                // walker alone; the sheet polls again once the page is listed.
+                                if (listed) extractListedPage(index)
                                 return@launch
                             }
                             withOrderedPermits(

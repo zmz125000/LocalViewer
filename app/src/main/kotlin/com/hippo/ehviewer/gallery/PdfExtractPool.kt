@@ -3,7 +3,12 @@ package com.hippo.ehviewer.gallery
 import com.hippo.ehviewer.library.ArchiveByteSource
 import kotlinx.coroutines.sync.Semaphore
 
-/** Parallel page-body reads. Indexing keeps the parser source; these are extra. */
+/**
+ * Parallel page-body reads. Indexing keeps the parser source; these are extra.
+ *
+ * One SMB file serializes every read on a single worker, so each slot opens
+ * its own handle. Two slots on the index handle do not overlap.
+ */
 @PublishedApi
 internal const val PDF_EXTRACT_SLOTS = 2
 
