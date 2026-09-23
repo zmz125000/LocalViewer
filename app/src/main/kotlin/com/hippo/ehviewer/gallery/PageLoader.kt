@@ -209,7 +209,7 @@ abstract class PageLoader(
                 } else {
                     null
                 }
-                val image = tryDecodeLibDirect(raw, forceOriginal, hint)
+                val image = tryDecodeLibDirect(index, raw, forceOriginal, hint)
                     ?: run {
                         val ready = DisplaySource.ensureReady(raw, hint, persistTo = persistTo)
                         if (ready is PathSource) {
@@ -251,6 +251,7 @@ abstract class PageLoader(
      * decode straight to Bitmap. Null → fall through to convert + Coil.
      */
     private suspend fun tryDecodeLibDirect(
+        index: Int,
         raw: ImageSource,
         forceOriginal: Boolean,
         hint: String,
@@ -267,7 +268,21 @@ abstract class PageLoader(
         if (!route.needsLibDecode) return null
         val maxEdge = Image.maxEdgeForReader(forceOriginal)
         val direct = LibDirectDecode.decode(raw, nameHint, maxEdge) ?: return null
+        thumbSoftwareBitmapBeforeHardware(index, raw, direct.bitmap)
         return Image.fromLibDirect(direct, raw)
+    }
+
+    /**
+     * Photo-grid thumbs for a lib still that has no file. Must run before
+     * [Image.fromLibDirect] moves the pixels into a hardware bitmap.
+     */
+    private suspend fun thumbSoftwareBitmapBeforeHardware(index: Int, raw: ImageSource, bitmap: Bitmap) {
+        if (bitmap.config == Bitmap.Config.HARDWARE) return
+        if (raw is PathSource || exportFiles[index] != null) return
+        if (!Settings.readerGeneratePageThumb.value) return
+        val identity = pageThumbIdentity?.invoke(index) ?: return
+        if (identity.startsWith("local:") && !isLibStillExtension(getImageExtension(index))) return
+        runCatching { ReaderPageThumb.ensureFromBitmap(identity, bitmap) }
     }
 
     /**

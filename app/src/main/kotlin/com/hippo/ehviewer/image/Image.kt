@@ -588,7 +588,8 @@ class Image private constructor(
          * (no Coil / UHDR JPEG). Closes [src] when the image is retained.
          */
         fun fromLibDirect(result: LibDirectResult, src: ImageSource): Image {
-            val coil = result.bitmap.asImage()
+            val shown = result.bitmap.presentForReader()
+            val coil = shown.asImage()
             return Image(
                 image = coil,
                 src = src,
@@ -599,8 +600,8 @@ class Image private constructor(
         }
 
         /**
-         * Indexed PDF page already expanded to ARGB. Coil is not used.
-         * [Bitmap.prepareToDraw] uploads the software bitmap before the first frame.
+         * Bitmap already chosen for the reader. Indexed PDF passes a hardware copy
+         * when that copy succeeded; otherwise this is still the software buffer.
          */
         fun fromPreparedBitmap(bitmap: Bitmap): Image {
             bitmap.prepareToDraw()
