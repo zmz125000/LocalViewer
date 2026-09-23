@@ -45,6 +45,10 @@ import okio.Path
  * [DocumentExtractCache], same delivery model as solid/stream.
  *
  * Does **not** hold [com.hippo.ehviewer.library.ArchiveAccess] (pure Kotlin ZIP / PDF).
+ *
+ * The public entry stays inline so ReaderScreen can pass its loader block, but the
+ * body is [runDocumentExtractPageLoader]. Inlining that body into the SMB call site
+ * made R8 emit a continuation ART rejects (`VerifyError` on every network PDF).
  */
 suspend inline fun <T> useDocumentExtractPageLoader(
     source: ArchiveByteSource,
@@ -62,6 +66,36 @@ suspend inline fun <T> useDocumentExtractPageLoader(
     /** Extra handles for parallel PDF page extract. Null keeps the single parser lane. */
     noinline openExtractSource: (() -> ArchiveByteSource)? = null,
     crossinline block: suspend (PageLoader) -> T,
+): T = runDocumentExtractPageLoader(
+    source = source,
+    cacheKey = cacheKey,
+    titleHint = titleHint,
+    formatHint = formatHint,
+    info = info,
+    startPage = startPage,
+    hasAds = hasAds,
+    remoteSize = remoteSize,
+    progressivePdf = progressivePdf,
+    localPathForLibrary = localPathForLibrary,
+    openExtractSource = openExtractSource,
+) { loader ->
+    block(loader)
+}
+
+@PublishedApi
+internal suspend fun <T> runDocumentExtractPageLoader(
+    source: ArchiveByteSource,
+    cacheKey: String,
+    titleHint: String,
+    formatHint: String,
+    info: GalleryInfo? = null,
+    startPage: Int = 0,
+    hasAds: Boolean = false,
+    remoteSize: Long = 0L,
+    progressivePdf: Boolean = false,
+    localPathForLibrary: String? = null,
+    openExtractSource: (() -> ArchiveByteSource)? = null,
+    block: suspend (PageLoader) -> T,
 ): T = autoCloseScope {
     coroutineScope {
         val sizeHint = remoteSize.takeIf { it > 0L }
@@ -764,8 +798,9 @@ suspend inline fun <T> useLocalDocumentExtractPageLoader(
         } else {
             null
         },
-        block = block,
-    )
+    ) { loader ->
+        block(loader)
+    }
 }
 
 @PublishedApi

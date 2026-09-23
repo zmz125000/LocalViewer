@@ -18,6 +18,15 @@ class DisplaySourceTest {
         assertTrue(classify(jxr, jxr.size, "page.jxr").needsUhdr)
         assertTrue(classify(ByteBuffer.wrap(jxl), "page.bin").needsUhdr)
         assertTrue(classify(ByteBuffer.wrap(jxr), "page.bin").needsUhdr)
+        val jp2 = ByteArray(12)
+        jp2[4] = 'j'.code.toByte()
+        jp2[5] = 'P'.code.toByte()
+        jp2[6] = ' '.code.toByte()
+        jp2[7] = ' '.code.toByte()
+        assertTrue(classify(jp2, jp2.size, "page.jp2").needsUhdr)
+        assertEquals(LibCodec.Jpeg2000, (classify(jp2, jp2.size, "page.bin") as StillRoute.Lib).codec)
+        val j2k = byteArrayOf(0xff.toByte(), 0x4f, 0xff.toByte(), 0x51)
+        assertEquals(LibCodec.Jpeg2000, (classify(j2k, j2k.size, "scan.j2k") as StillRoute.Lib).codec)
     }
 
     @Test
