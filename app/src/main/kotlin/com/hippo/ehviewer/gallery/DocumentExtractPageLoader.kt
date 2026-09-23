@@ -529,6 +529,8 @@ internal suspend fun <T> runDocumentExtractPageLoader(
                                 if (listed) extractListedPage(index, fromGrid = true)
                                 return@launch
                             }
+                            // Probe above missed. A stale sourceReady flag would skip this page.
+                            clearSourceReady(index)
                             withOrderedPermits(
                                 rank = { pdfExtractOrderRank(prefetchRank(index), interactive) },
                                 serialSlots = serialExtractSlots,

@@ -177,6 +177,10 @@ fun AnimatedVisibilityScope.AdvancedScreen(navigator: DestinationsNavigator) = S
                 state = Settings.disableReaderNetworkCache.asMutableState(),
             )
             val preloadImage = Settings.preloadImage.asMutableState()
+            LaunchedEffect(preloadImage.value) {
+                val clamped = preloadImage.value.coerceIn(0, 6)
+                if (clamped != preloadImage.value) preloadImage.value = clamped
+            }
             SimpleMenuPreferenceInt(
                 title = stringResource(id = R.string.settings_reader_preload_image),
                 summary = stringResource(id = R.string.settings_reader_preload_image_summary, preloadImage.value),

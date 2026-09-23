@@ -679,7 +679,7 @@ abstract class PageLoader(
     override fun navigate(navigation: ReaderNavigation) {
         if (size <= 0) return
         val policy = ReaderLoadPolicy(
-            sourceAhead = Settings.preloadImage.value.coerceAtLeast(0),
+            sourceAhead = Settings.preloadImage.value.coerceIn(0, 6),
             decodeAhead = Settings.readerDecodeAhead.value.coerceAtLeast(0),
         )
         val demand = demandPlanner.plan(navigation, size, policy)

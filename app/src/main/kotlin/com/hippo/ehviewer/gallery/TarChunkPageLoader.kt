@@ -122,7 +122,7 @@ suspend inline fun <T> useTarChunkPageLoader(
         val extractMutex = Mutex()
         val coverWritten = AtomicBoolean(false)
         val hostScope = this
-        val prefetchN = Settings.preloadImage.value.coerceAtLeast(1)
+        val prefetchN = Settings.preloadImage.value.coerceIn(0, 6)
         val extractTarget = AtomicInteger((startPage + prefetchN).coerceAtLeast(0))
         val bgJob = AtomicReference<Job?>(null)
 
