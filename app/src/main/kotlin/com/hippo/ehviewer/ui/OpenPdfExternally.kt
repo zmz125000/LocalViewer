@@ -15,8 +15,9 @@ import okio.Path.Companion.toPath
  * Open a PDF in an external app (system / third-party reader).
  *
  * Local and SAF documents pass their real seekable descriptor through
- * [StreamDocumentProvider]. Network PDFs (including zip-as-dir members) use the
- * same origin-cache + transfer snackbar path as [OpenFileExternally].
+ * [StreamDocumentProvider]. Network PDFs (including zip-as-dir members) use the same
+ * streamdoc registration as the in-app reader: range I/O and a sparse block cache,
+ * not a full origin-cache download. Other network file types still download first.
  *
  * SAF tree document URIs (`content://…externalstorage…/tree/…/document/…`) are **not**
  * passed through: the grant lives on LocalViewer; chooser + Drive often cannot open them
@@ -90,14 +91,12 @@ object OpenPdfExternally {
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
         usePreferredReader: Boolean = true,
     ) {
-        OpenFileExternally.openSmb(
+        OpenFileExternally.openExternalPdfSmb(
             context = context,
             sourceId = sourceId,
             remoteRelativeFile = remoteRelativeFile,
             displayName = displayName,
-            mimeType = DefaultPdfReader.MIME_TYPE,
-            asFile = true,
-            usePreferredPlayer = usePreferredReader,
+            usePreferredReader = usePreferredReader,
         )
     }
 
@@ -108,14 +107,12 @@ object OpenPdfExternally {
         displayName: String = remoteRelativeFile.substringAfterLast('/').substringAfterLast('\\'),
         usePreferredReader: Boolean = true,
     ) {
-        OpenFileExternally.openWebDav(
+        OpenFileExternally.openExternalPdfWebDav(
             context = context,
             sourceId = sourceId,
             remoteRelativeFile = remoteRelativeFile,
             displayName = displayName,
-            mimeType = DefaultPdfReader.MIME_TYPE,
-            asFile = true,
-            usePreferredPlayer = usePreferredReader,
+            usePreferredReader = usePreferredReader,
         )
     }
 
