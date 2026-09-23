@@ -24,6 +24,7 @@ import com.hippo.ehviewer.image.hdr.LibDirectDecode
 import com.hippo.ehviewer.image.hdr.classify
 import com.hippo.ehviewer.image.hdr.classifyPath
 import com.hippo.ehviewer.image.hdr.exportImageExtension
+import com.hippo.ehviewer.image.hdr.isLibStillExtension
 import com.hippo.ehviewer.image.hdr.needsLibDecode
 import com.hippo.ehviewer.library.ReaderPageThumb
 import com.hippo.ehviewer.util.FileUtils
@@ -45,10 +46,10 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.yield
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock as mutexWithLock
+import kotlinx.coroutines.yield
 import moe.tarsin.coroutines.NamedMutex
 import moe.tarsin.coroutines.withLock
 import okio.Path
@@ -257,6 +258,9 @@ abstract class PageLoader(
     private fun schedulePhotoGridThumb(index: Int, source: ImageSource, image: Image) {
         if (!Settings.readerGeneratePageThumb.value) return
         val identity = pageThumbIdentity?.invoke(index) ?: return
+        // Local JPEG/PNG/WebP/HEIC already paint from the file in the photo grid.
+        // Only local lib stills (JXL/JXR) need a generated thumb.
+        if (identity.startsWith("local:") && !isLibStillExtension(getImageExtension(index))) return
         val path = (source as? PathSource)?.source ?: exportFiles[index]
         if (path != null) {
             scope.launch(Dispatchers.IO) {
