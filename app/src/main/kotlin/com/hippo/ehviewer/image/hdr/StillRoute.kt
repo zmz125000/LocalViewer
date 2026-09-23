@@ -15,14 +15,14 @@ import okio.Path.Companion.toPath
  *
  * ```
  * Platform / PlatformGainMap / OppoProxdr  → Coil / ImageDecoder (no UHDR convert)
- * Lib(codec)                               → ensureUhdr → Coil  (JXR / JXL / PQ-AVIF)
+ * Lib(codec)                               → ensureUhdr → Coil  (JXR / JXL / JPEG 2000 / PQ-AVIF)
  * ```
  *
  * OppoProxdr: same present path as PlatformGainMap (ORIGIN + [Bitmap.gainmap]); the
  * gain map is attached after decode from the proprietary trailer (not ISO/Android UHDR).
  *
- * JXR/JXL always convert: the platform cannot open them, and Ultra HDR JPEG is the
- * unified Coil-ready form for both SDR and HDR content (SDR simply yields a base JPEG).
+ * JXR/JXL/JPEG 2000 always convert: the platform cannot open them. JXR/JXL become
+ * Ultra HDR JPEG. JPEG 2000 becomes a baseline JPEG (SDR).
  */
 sealed class StillRoute {
     /** Platform ImageDecoder path (JPEG/PNG/HEIC/SDR AVIF/…). */
@@ -51,6 +51,9 @@ enum class LibCodec {
     Jxr,
     Jxl,
 
+    /** JPEG 2000 (JP2 / J2K). OpenJPEG → baseline JPEG. */
+    Jpeg2000,
+
     /** Absolute PQ/HLG AVIF only (gain-map AVIF is [StillRoute.PlatformGainMap]). */
     AvifPq,
 }
@@ -70,7 +73,9 @@ val StillRoute.isGainMap: Boolean
 /**
  * Extensions that are **not** platform ImageDecoder stills (need lib convert).
  */
-val LIB_STILL_EXTENSIONS = setOf("jxr", "wdp", "hdp", "jxl")
+val LIB_STILL_EXTENSIONS = setOf("jxr", "wdp", "hdp", "jxl", "jp2", "j2k", "j2c", "jpc", "jpx")
+
+val JPEG2000_EXTENSIONS = setOf("jp2", "j2k", "j2c", "jpc", "jpx")
 
 val HEIC_IMAGE_EXTENSIONS = setOf("heic", "heif", "heics", "heifs", "hif")
 
@@ -80,6 +85,11 @@ val HDR_MAYBE_CONVERT_EXTENSIONS = setOf("avif") + HEIC_IMAGE_EXTENSIONS
 fun isHeicImageExtension(ext: String?): Boolean {
     val e = ext?.lowercase()?.removePrefix(".") ?: return false
     return e in HEIC_IMAGE_EXTENSIONS
+}
+
+fun isJpeg2000Extension(ext: String?): Boolean {
+    val e = ext?.lowercase()?.removePrefix(".") ?: return false
+    return e in JPEG2000_EXTENSIONS
 }
 
 fun isLibStillExtension(ext: String?): Boolean {
@@ -117,6 +127,7 @@ fun classifyByExtension(fileName: String): StillRoute {
     val ext = FileUtils.getExtensionFromFilename(fileName)?.lowercase()
     return when {
         ext == "jxl" -> StillRoute.Lib(LibCodec.Jxl)
+        isJpeg2000Extension(ext) -> StillRoute.Lib(LibCodec.Jpeg2000)
         isLibStillExtension(ext) -> StillRoute.Lib(LibCodec.Jxr)
         else -> StillRoute.Platform
     }
@@ -195,6 +206,11 @@ fun classify(bytes: ByteArray, length: Int = bytes.size, fileNameHint: String? =
         return StillRoute.Lib(LibCodec.Jxl)
     }
 
+    // JPEG 2000 — platform cannot open; OpenJPEG → baseline JPEG.
+    if (isJpeg2000Magic(bytes, n) || isJpeg2000Extension(ext)) {
+        return StillRoute.Lib(LibCodec.Jpeg2000)
+    }
+
     // JPEG XR — same: always convert.
     if (isJpegXrMagic(bytes, n) || (isLibStillExtension(ext) && ext != "jxl")) {
         return StillRoute.Lib(LibCodec.Jxr)
@@ -252,6 +268,23 @@ private fun isJpegXrMagic(bytes: ByteArray, n: Int): Boolean {
         bytes[1] == 'I'.code.toByte() &&
         bytes[2].toInt() and 0xff == 0xbc &&
         bytes[3].toInt() and 0xff == 0x01
+}
+
+private fun isJpeg2000Magic(bytes: ByteArray, n: Int): Boolean {
+    if (n >= 12 &&
+        bytes[4] == 'j'.code.toByte() &&
+        bytes[5] == 'P'.code.toByte() &&
+        bytes[6] == ' '.code.toByte() &&
+        bytes[7] == ' '.code.toByte()
+    ) {
+        return true
+    }
+    // SOC + SIZ. SIZ is required immediately after SOC.
+    return n >= 4 &&
+        bytes[0].toInt() and 0xff == 0xff &&
+        bytes[1].toInt() and 0xff == 0x4f &&
+        bytes[2].toInt() and 0xff == 0xff &&
+        bytes[3].toInt() and 0xff == 0x51
 }
 
 private fun isJpegXlMagic(bytes: ByteArray, n: Int): Boolean {

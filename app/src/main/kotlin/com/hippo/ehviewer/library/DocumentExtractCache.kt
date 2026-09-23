@@ -83,6 +83,12 @@ object DocumentExtractCache {
     const val INDEX_VERSION: Int = 4
     const val MIN_USABLE_INDEX_VERSION: Int = 2
 
+    /** Raw JP2 was stored as-is; ImageDecoder cannot open it. Re-extract to WebP. */
+    private fun Index.hasUnreadableJp2(): Boolean = members.any { member ->
+        val ext = member.ext.lowercase()
+        ext == "jp2" || ext == "j2k" || ext == "j2c" || ext == "jpc" || ext == "jpx"
+    }
+
     fun dirFor(cacheKey: String): Path = root / sha256Hex(cacheKey)
 
     fun indexPath(cacheKey: String): Path = dirFor(cacheKey) / "index.json"
@@ -159,6 +165,10 @@ object DocumentExtractCache {
     fun isCompleteAndReady(cacheKey: String, remoteSize: Long = 0L): Index? {
         val idx = loadIndex(cacheKey) ?: return null
         if (idx.v < MIN_USABLE_INDEX_VERSION) return null
+        if (idx.hasUnreadableJp2()) {
+            purge(cacheKey)
+            return null
+        }
         if (remoteSize > 0L && idx.remoteSize > 0L && idx.remoteSize != remoteSize) {
             purge(cacheKey)
             return null
@@ -182,6 +192,10 @@ object DocumentExtractCache {
     fun loadUsableIndex(cacheKey: String, remoteSize: Long = 0L): Index? {
         val idx = loadIndex(cacheKey) ?: return null
         if (idx.v < MIN_USABLE_INDEX_VERSION) return null
+        if (idx.hasUnreadableJp2()) {
+            purge(cacheKey)
+            return null
+        }
         if (idx.members.isEmpty()) return null
         if (remoteSize > 0L && idx.remoteSize > 0L && idx.remoteSize != remoteSize) {
             purge(cacheKey)

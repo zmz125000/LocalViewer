@@ -2,6 +2,7 @@ package com.hippo.ehviewer.library.document
 
 import android.graphics.Bitmap
 import com.ehviewer.core.util.logcat
+import com.hippo.ehviewer.jni.decodeJpeg2000Bitmap
 import com.hippo.ehviewer.library.ArchiveByteSource
 import com.hippo.ehviewer.library.DocumentExtractCache
 import java.io.ByteArrayOutputStream
@@ -12,7 +13,8 @@ import okio.Path
 /**
  * Image-only PDF: range I/O + embedded image XObject extract (no MuPDF / PdfRenderer).
  *
- * Targets scan/comic PDFs (typically one full-page DCT/Flate image per page).
+ * Targets scan/comic PDFs (typically one full-page DCT/Flate/JPX image per page).
+ * JPEG 2000 is decoded with OpenJPEG and stored as WebP (ImageDecoder cannot open JP2).
  * Text-only or unsupported streams → [pageCount] 0 (NoImages).
  * Encrypted PDFs → open returns null (caller treats as Skip).
  */
@@ -719,7 +721,8 @@ internal class PdfParser(
         var data = stream.data
         for (f in filters) {
             data = when (f) {
-                "/DCTDecode", "/DCT", "/JPXDecode" -> return data
+                "/DCTDecode", "/DCT" -> return data
+                "/JPXDecode" -> return encodeJpeg2000(data)
                 "/FlateDecode", "/Fl" -> inflate(data) ?: return null
                 "/ASCII85Decode", "/A85" -> ascii85Decode(data) ?: return null
                 "/ASCIIHexDecode", "/AHx" -> asciiHexDecode(data) ?: return null
@@ -859,7 +862,8 @@ internal class PdfParser(
         val length = resolveLength(dict["/Length"]) ?: 0L
         val ext = when {
             filter.any { it == "/DCTDecode" || it == "/DCT" } -> "jpg"
-            filter.any { it == "/JPXDecode" } -> "jp2"
+            // JPX is re-encoded to WebP; Android ImageDecoder cannot open JPEG 2000.
+            filter.any { it == "/JPXDecode" } -> "webp"
             // Flate/raw samples are not a file format; re-encode lossless WebP for the reader cache.
             filter.any { it == "/FlateDecode" || it == "/Fl" } -> "webp"
             filter.isEmpty() -> "webp"
@@ -1030,7 +1034,7 @@ internal class PdfParser(
         for (f in filters) {
             data = when (f) {
                 "/DCTDecode", "/DCT" -> return data // JPEG payload as-is
-                "/JPXDecode" -> return data // JPEG2000 — may or may not decode in ImageDecoder
+                "/JPXDecode" -> return encodeJpeg2000(data)
                 "/FlateDecode", "/Fl" -> inflate(data) ?: return null
                 "/ASCII85Decode", "/A85" -> ascii85Decode(data) ?: return null
                 "/ASCIIHexDecode", "/AHx" -> asciiHexDecode(data) ?: return null
@@ -1101,6 +1105,16 @@ internal class PdfParser(
         }
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         bmp.setPixels(pixels, 0, w, 0, 0, w, h)
+        return try {
+            encodeExtractedBitmap(bmp)
+        } finally {
+            bmp.recycle()
+        }
+    }
+
+    /** JP2 / J2K → WebP. ImageDecoder cannot open JPEG 2000. */
+    private fun encodeJpeg2000(data: ByteArray): ByteArray? {
+        val bmp = runCatching { decodeJpeg2000Bitmap(data, 0) }.getOrNull() ?: return null
         return try {
             encodeExtractedBitmap(bmp)
         } finally {
