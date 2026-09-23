@@ -309,6 +309,23 @@ private fun extraMimeForExtension(ext: String): String? = when (ext) {
  * Okio [okio.Path.name] for a tree root is often the raw/URL-encoded document id,
  * e.g. `primary%3APictures` or `8254-36A8%3ADCIM`, not the display name.
  */
+private val SAF_VOLUME_ID = Regex("^(?:primary|[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}):")
+
+/**
+ * Folder label safe to show in Manage Sources, the library, and folder browse.
+ * Real names pass through. SAF document ids (`primary%3APictures`, `primary:Pictures`)
+ * become the last path segment.
+ */
+fun String.safFolderLabel(): String {
+    if (isEmpty()) return this
+    val decoded = runCatching {
+        java.net.URLDecoder.decode(this, Charsets.UTF_8)
+    }.getOrDefault(this)
+    val encodedId = contains("%3A", ignoreCase = true)
+    if (!encodedId && !SAF_VOLUME_ID.containsMatchIn(decoded)) return this
+    return humanizePathName(this)
+}
+
 fun humanizePathName(raw: String): String {
     if (raw.isEmpty()) return raw
     val decoded = runCatching {

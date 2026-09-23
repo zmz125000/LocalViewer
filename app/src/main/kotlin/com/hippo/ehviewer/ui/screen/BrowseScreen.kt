@@ -82,6 +82,7 @@ import com.hippo.ehviewer.library.BrowseSession
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaPermissions
 import com.hippo.ehviewer.library.displayNameForTreeUri
+import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.isMediaStoreRootUri
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
@@ -287,7 +288,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
             BrowseSession.LocalFrame(
                 rootId = root.id,
                 path = path.toString(),
-                title = root.displayName,
+                title = root.displayName.safFolderLabel(),
                 relativePath = "",
                 preferMediaStore = root.prefersMediaStore,
             ),
@@ -576,7 +577,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                     items(roots, key = { "r-${it.id}" }) { root ->
                         val favorited = BrowseFavorites.localKey(root.id) in favoriteKeys
                         BrowseRootCard(
-                            title = root.displayName,
+                            title = root.displayName.safFolderLabel(),
                             subtitle = stringResource(
                                 if (root.isLibraryRole) {
                                     R.string.library
@@ -671,7 +672,7 @@ fun AnimatedVisibilityScope.BrowseScreen(navigator: DestinationsNavigator) = Scr
                         val favorited = BrowseFavorites.localKey(root.id) in favoriteKeys
                         ListItem(
                             headlineContent = {
-                                BrowseFavoriteTitle(name = root.displayName, favorited = favorited)
+                                BrowseFavoriteTitle(name = root.displayName.safFolderLabel(), favorited = favorited)
                             },
                             supportingContent = {
                                 Text(

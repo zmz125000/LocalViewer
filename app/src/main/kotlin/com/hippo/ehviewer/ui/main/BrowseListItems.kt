@@ -84,6 +84,7 @@ import com.hippo.ehviewer.library.ZipMemberCover
 import com.hippo.ehviewer.library.isDocumentFileName
 import com.hippo.ehviewer.library.isSolidArchiveFileName
 import com.hippo.ehviewer.library.isZipArchiveFileName
+import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.stableGalleryId
 import com.hippo.ehviewer.smb.SmbArchiveByteSource
 import com.hippo.ehviewer.smb.SmbCache
@@ -411,6 +412,7 @@ fun BrowseDirectoryRow(
     /** Inline star after the name — same as Browse source list. */
     showFavoriteStar: Boolean = false,
 ) {
+    val name = name.safFolderLabel()
     val haptic = LocalHapticFeedback.current
     BrowseFolderListItem(
         headlineContent = { BrowseFavoriteTitle(name = name, favorited = showFavoriteStar) },
@@ -740,6 +742,7 @@ fun BrowseDirectoryGridItem(
     allowRemoteFetch: Boolean = true,
     overflow: BrowseOverflowActions? = null,
 ) {
+    val name = name.safFolderLabel()
     val namePadH = GalleryGridDefaults.namePaddingH()
     val namePadBottom = GalleryGridDefaults.namePaddingBottom()
     // Style is per-item: only folders with a real cover use the gallery-thumb layout.

@@ -109,7 +109,7 @@ object BrowseFavorites {
 
     fun folderDisplayName(relativePath: String, fallback: String): String {
         val rel = normalizeRel(relativePath)
-        return rel.substringAfterLast('/').ifEmpty { fallback }
+        return rel.substringAfterLast('/').ifEmpty { fallback }.safFolderLabel()
     }
 }
 
@@ -120,7 +120,7 @@ sealed class FavoriteBrowseSource {
 
     data class Local(val root: LibraryRootEntity) : FavoriteBrowseSource() {
         override val key: String get() = BrowseFavorites.localKey(root.id)
-        override val displayName: String get() = root.displayName
+        override val displayName: String get() = root.displayName.safFolderLabel()
     }
 
     data class Smb(val source: SmbSourceEntity) : FavoriteBrowseSource() {
@@ -135,7 +135,7 @@ sealed class FavoriteBrowseSource {
 
     data class Gallery(val gallery: LocalGalleryEntity) : FavoriteBrowseSource() {
         override val key: String get() = BrowseFavorites.galleryKey(gallery.id)
-        override val displayName: String get() = gallery.title
+        override val displayName: String get() = gallery.title.safFolderLabel()
     }
 
     data class LocalFolder(

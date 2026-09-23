@@ -452,6 +452,65 @@ class ZipAsDirListingTest {
     }
 
     @Test
+    fun openFolderOnPromotedLocalZipUsesZipFileNotInnerDir() {
+        val frame = "/sdcard/comics".toPath()
+        val tapped = ZipAsDirListing.zipBrowseFilePath(
+            frame,
+            "pack.zip",
+            "/sdcard/comics/pack.zip".toPath(),
+        )
+        assertEquals("/sdcard/comics/pack.zip", tapped.toString())
+        // Open folder on @S/leaf → pack.zip/S, synthesized as a real child of the zip.
+        val promoted = ZipAsDirListing.zipBrowseFilePath(
+            frame,
+            "pack.zip",
+            "/sdcard/comics/pack.zip/S".toPath(),
+        )
+        assertEquals("/sdcard/comics/pack.zip", promoted.toString())
+        val nested = ZipAsDirListing.zipBrowseFilePath(
+            frame,
+            "docs/pack.zip",
+            "/sdcard/comics/docs/pack.zip/S".toPath(),
+        )
+        assertEquals("/sdcard/comics/docs/pack.zip", nested.toString())
+    }
+
+    @Test
+    fun openFolderRelativeRecoversPromotedZipMember() {
+        val member = ZipPaths.encode("/sdcard/comics/pack.zip", "S/leaf/clip.mp4")
+        val parent = ZipAsDirListing.listingRelativeForOpenFolder(
+            framePath = "/sdcard/comics",
+            zipInnerRel = null,
+            entryPath = member,
+            fallbackName = "clip.mp4",
+        )
+        assertEquals("pack.zip/S/leaf/clip.mp4", parent)
+        assertEquals(
+            "pack.zip/S",
+            FolderSearch.openFolderTarget(parent, isDirectory = false, virtual = true),
+        )
+        val inside = ZipAsDirListing.listingRelativeForOpenFolder(
+            framePath = "/sdcard/comics/pack.zip",
+            zipInnerRel = "S",
+            entryPath = member,
+            fallbackName = "clip.mp4",
+        )
+        assertEquals("leaf/clip.mp4", inside)
+        assertEquals(
+            "leaf",
+            ZipAsDirListing.relativeToListedPrefix("S", "S/leaf"),
+        )
+        assertEquals("", ZipAsDirListing.relativeToListedPrefix("S", "S"))
+        val loose = ZipAsDirListing.listingRelativeForOpenFolder(
+            framePath = "/sdcard/comics",
+            zipInnerRel = null,
+            entryPath = "/sdcard/comics/Album/a.jpg",
+            fallbackName = "a.jpg",
+        )
+        assertEquals("Album/a.jpg", loose)
+    }
+
+    @Test
     fun materializeLocalFilePathEncodesPromotedZipMember() {
         val base = "/sdcard/Download/Quick Share".toPath()
         val path = ZipAsDirListing.materializeLocalFilePath(

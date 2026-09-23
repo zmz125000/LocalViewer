@@ -158,7 +158,7 @@ object LibraryScanner {
             val cover = dir / folder.names.first()
             val title = when {
                 rel.isEmpty() ->
-                    rootDisplayName.ifBlank { humanizePathName(safRoot.name) }.ifBlank { "Library" }
+                    rootDisplayName.safFolderLabel().ifBlank { humanizePathName(safRoot.name) }.ifBlank { "Library" }
                 else ->
                     humanizePathName(rel.substringAfterLast('/')).ifEmpty { rel.substringAfterLast('/') }
             }
@@ -346,7 +346,7 @@ object LibraryScanner {
                 val cover = images.first().path
                 val title = when {
                     relativePath.isEmpty() ->
-                        rootDisplayName.ifBlank { humanizePathName(dir.name) }.ifBlank { "Library" }
+                        rootDisplayName.safFolderLabel().ifBlank { humanizePathName(dir.name) }.ifBlank { "Library" }
                     else ->
                         humanizePathName(dir.name).ifEmpty { relativePath.substringAfterLast('/') }
                 }
@@ -542,7 +542,7 @@ object LibraryScanner {
         folderVideos[relativePath] = names
         val title = when {
             relativePath.isEmpty() ->
-                rootDisplayName.ifBlank { humanizePathName(dir.name) }.ifBlank { "Library" }
+                rootDisplayName.safFolderLabel().ifBlank { humanizePathName(dir.name) }.ifBlank { "Library" }
             else ->
                 humanizePathName(dir.name).ifEmpty { relativePath.substringAfterLast('/') }
         }

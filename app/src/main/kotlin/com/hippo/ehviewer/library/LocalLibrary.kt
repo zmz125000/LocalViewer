@@ -536,15 +536,17 @@ data class ArchiveBrowseParent(
 fun Context.displayNameForTreeUri(treeUri: String): String {
     if (isMediaStoreRootUri(treeUri)) return displayNameForMediaStoreTree(treeUri)
     val uri = treeUri.toUri()
-    return runCatching {
-        contentResolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
-            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
-    }.getOrNull()
-        ?: runCatching {
-            DocumentsContract.getTreeDocumentId(uri).substringAfterLast(':')
-                .substringAfterLast('/')
-                .ifEmpty { null }
+    return (
+        runCatching {
+            contentResolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
         }.getOrNull()
-        ?: uri.lastPathSegment
-        ?: "Library"
+            ?: runCatching {
+                DocumentsContract.getTreeDocumentId(uri).substringAfterLast(':')
+                    .substringAfterLast('/')
+                    .ifEmpty { null }
+            }.getOrNull()
+            ?: uri.lastPathSegment
+            ?: "Library"
+        ).safFolderLabel()
 }
