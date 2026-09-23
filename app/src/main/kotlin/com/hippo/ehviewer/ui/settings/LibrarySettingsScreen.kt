@@ -64,6 +64,7 @@ import com.hippo.ehviewer.library.AddRootResult
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.MediaPermissions
 import com.hippo.ehviewer.library.displayNameForTreeUri
+import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.isMediaStoreRootUri
 import com.hippo.ehviewer.smb.SmbGateway
 import com.hippo.ehviewer.smb.SmbRepository
@@ -288,7 +289,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
             }
             items(libraryRoots, key = { "lib-${it.id}" }) { root ->
                 ListItem(
-                    headlineContent = { Text(root.displayName) },
+                    headlineContent = { Text(root.displayName.safFolderLabel()) },
                     supportingContent = {
                         Text(
                             text = if (isMediaStoreRootUri(root.treeUri)) {
@@ -319,7 +320,7 @@ fun AnimatedVisibilityScope.LibrarySettingsScreen(navigator: DestinationsNavigat
             }
             items(folderRoots, key = { "fol-${it.id}" }) { root ->
                 ListItem(
-                    headlineContent = { Text(root.displayName) },
+                    headlineContent = { Text(root.displayName.safFolderLabel()) },
                     supportingContent = {
                         Text(
                             text = if (isMediaStoreRootUri(root.treeUri)) {

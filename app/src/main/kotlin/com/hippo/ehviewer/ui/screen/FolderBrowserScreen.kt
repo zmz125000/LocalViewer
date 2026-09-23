@@ -95,6 +95,7 @@ import com.hippo.ehviewer.library.VideoThumbnail
 import com.hippo.ehviewer.library.VideoThumbnailSource
 import com.hippo.ehviewer.library.ZipAsDirListing
 import com.hippo.ehviewer.library.ZipPaths
+import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.browseScrollLayoutKey
 import com.hippo.ehviewer.library.filterByContentMode
 import com.hippo.ehviewer.library.filterSmallGalleries
@@ -307,7 +308,7 @@ fun AnimatedVisibilityScope.FolderBrowserScreen(
 
     val current = stack.lastOrNull()
     val currentPath = current?.path
-    val title = current?.title ?: stringResource(R.string.folder)
+    val title = current?.title?.safFolderLabel() ?: stringResource(R.string.folder)
     val searchHint = stringResource(R.string.search_bar_hint, title)
 
     fun toggleDirFavorite(dir: BrowseEntry.Directory) {

@@ -66,6 +66,7 @@ import com.hippo.ehviewer.library.ArchiveCoverCache
 import com.hippo.ehviewer.library.CoverEnsureResult
 import com.hippo.ehviewer.library.HistoryThumbKey
 import com.hippo.ehviewer.library.LocalHistory
+import com.hippo.ehviewer.library.safFolderLabel
 import com.hippo.ehviewer.library.LocalHistoryTarget
 import com.hippo.ehviewer.library.LocalLibrary
 import com.hippo.ehviewer.library.SMB_BROWSE_TOKEN
@@ -236,7 +237,7 @@ fun LocalGalleryListItem(
     ListItem(
         headlineContent = {
             Text(
-                gallery.title,
+                gallery.title.safFolderLabel(),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -676,7 +677,7 @@ fun LocalGalleryGridItem(
                 contentAlignment = Alignment.BottomStart,
             ) {
                 Text(
-                    text = gallery.title,
+                    text = gallery.title.safFolderLabel(),
                     style = MaterialTheme.typography.labelMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
